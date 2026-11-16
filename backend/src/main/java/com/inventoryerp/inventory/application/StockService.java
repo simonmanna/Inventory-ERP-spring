@@ -487,7 +487,8 @@ public class StockService {
         requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
         product = withVariantCost(product, dto.variantId);
         String productName = str(product, "name");
-        BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
+        BigDecimal qty = dto.baseQuantity != null ? dto.baseQuantity
+                : toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }

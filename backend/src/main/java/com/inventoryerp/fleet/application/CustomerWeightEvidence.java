@@ -41,14 +41,16 @@ class CustomerWeightEvidence {
     private final WeighbridgeStationService stations;
     private final WeighbridgeUnits units;
     private final AuditService audit;
+    private final LoadLineHistory history;
 
     CustomerWeightEvidence(FleetDb db, FleetDiscrepancyService discrepancies, WeighbridgeStationService stations,
-            WeighbridgeUnits units, AuditService audit) {
+            WeighbridgeUnits units, AuditService audit, LoadLineHistory history) {
         this.db = db;
         this.discrepancies = discrepancies;
         this.stations = stations;
         this.units = units;
         this.audit = audit;
+        this.history = history;
     }
 
     /** Line facts for the ceiling: D, Δ, R, G, E and the cap (line units), kg per unit (null = no factor). */
@@ -195,6 +197,10 @@ class CustomerWeightEvidence {
         data.put("unallocatedVarianceKg", unallocated);
         Map<String, Object> after = db.update(FleetProofOfDelivery.class, (String) pod.get("id"), data);
         audit.recordInTx(AuditInput.of("FleetProofOfDelivery", (String) pod.get("id"), "update", pod, after));
+        for (LineFacts f : facts) {
+            history.record(f.row(), "customer_weight_recorded", null, null, null, note + " — " + outcome, List.of(),
+                    "pod", (String) pod.get("id"));
+        }
         return Obj.of("outcome", outcome, "customerNetKg", JsNumbers.dec(customerNet), "quarryNetKg",
                 quarry == null ? null : JsNumbers.dec(quarry), "quarryWeightSource", quarrySource, "varianceKg",
                 variance == null ? null : JsNumbers.dec(variance), "allowedVarianceKg", check == null ? null

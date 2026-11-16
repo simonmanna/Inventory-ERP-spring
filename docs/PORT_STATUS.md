@@ -121,6 +121,19 @@ stock events only after commit, cost policy / standard activation hourly on the 
 
 **Phase A2 — customer weight evidence on the proof of delivery** ([spec](spec/sales.md#customer-weight-evidence-on-the-proof-of-delivery-phase-a2-2026-11-16-v496)): the customer's weighing is compared with the quarry weight under the station tolerance. The tolerance triggers an investigation; it is not a deduction. Lighter beyond tolerance raises a full-variance weight claim through the approval engine, with the split confirmed for multi-product trucks. Heavier is flagged only. The ticket, stock and documents are unchanged. 4 new routes (2 Sales, 2 Fleet) and `confirm` accepts `customerWeight`. V496 (renumber at merge). `SalesCustomerWeightIT`, `WeightAllocationTest`. 2026-11-16; full build not run.
 
+**Phase A3 — quantity buckets, POD correction, line history** ([spec](spec/sales.md#quantity-buckets-pod-correction-and-line-history-phase-a3-2026-11-16-v497)):
+- Every delivered quantity sits in one bucket: accepted + returned + damaged + confirmed shortage + pending dispute =
+  dispatched, with excess beside it. Billable = accepted.
+- A dismissed POD shortage stays disputed until an authorised, evidenced POD correction reconciles it.
+- Claims raised before A3 keep their old meaning.
+- Damaged is its own fact with its own claim.
+- Each line has an immutable quantity history.
+- A nightly operational reconciliation records findings and repairs drifted billable quantities.
+- M-6 cumulative base rounding at dispatch.
+- 5 new routes (2 Sales, 3 Fleet), new permission `sales:delivery:pod_correct`, V497.
+- Tests: `LoadLineQuantitiesTest`, `SalesQuantityBucketsIT`.
+- 2026-11-16; full build not run. A4 pending.
+
 **Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner.
 
 **Accounting remediation (Spring-native; [verification](accounting/ACC-0-verification.md), [plan](accounting/ACC-EXECUTION-PLAN.md), [tests](accounting/ACCOUNTING-TEST-STRATEGY.md)):**

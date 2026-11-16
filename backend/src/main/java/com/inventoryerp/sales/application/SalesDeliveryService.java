@@ -121,6 +121,48 @@ public class SalesDeliveryService {
         this.weighRules = weighRules;
     }
 
+    private com.inventoryerp.fleet.application.LoadLineQuantityService quantities;
+    private com.inventoryerp.fleet.application.LoadLineHistory lineHistory;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setQuantities(com.inventoryerp.fleet.application.LoadLineQuantityService quantities,
+            com.inventoryerp.fleet.application.LoadLineHistory lineHistory) {
+        this.quantities = quantities;
+        this.lineHistory = lineHistory;
+    }
+
+    /** Phase A A3 bucket fields of a delivery (sums over its lines), added to a list / detail row. */
+    private static final List<String> BUCKETS = List.of("acceptedQty", "pendingDisputedQty", "confirmedShortageQty",
+            "excessQty");
+
+    private void addBuckets(List<Map<String, Object>> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        Map<String, Map<String, BigDecimal>> perLoad = new HashMap<>();
+        List<String> ids = rows.stream().map(r -> str(r.get("id"))).toList();
+        for (Map<String, Object> l : db.rows("SELECT id, \"loadId\" FROM \"FleetLoadLine\" WHERE \"organizationId\" = ? AND"
+                + " \"loadId\" = ANY(?::text[])", org(), ids.toArray(String[]::new))) {
+            perLoad.computeIfAbsent(str(l.get("loadId")), k -> new HashMap<>()).put(str(l.get("id")), BigDecimal.ZERO);
+        }
+        Map<String, com.inventoryerp.fleet.application.LoadLineQuantities.Buckets> b = quantities.forLoads(ids);
+        for (Map<String, Object> r : rows) {
+            BigDecimal[] sum = {BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO};
+            for (String lineId : perLoad.getOrDefault(str(r.get("id")), Map.of()).keySet()) {
+                var x = b.get(lineId);
+                if (x != null && x.delivered()) {
+                    sum[0] = sum[0].add(x.accepted());
+                    sum[1] = sum[1].add(x.pendingDisputed());
+                    sum[2] = sum[2].add(x.confirmedShortage());
+                    sum[3] = sum[3].add(x.excess());
+                }
+            }
+            for (int i = 0; i < BUCKETS.size(); i++) {
+                r.put(BUCKETS.get(i), JsNumbers.js(sum[i]));
+            }
+        }
+    }
+
     /** Deliveries of sales orders. Filters: orderId, status (csv), failed, from, to. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(Map<String, String> q) {
@@ -150,6 +192,7 @@ public class SalesDeliveryService {
         }
         List<Map<String, Object>> rows = db.rows(LIST + where + " ORDER BY t.\"createdAt\" DESC LIMIT 500", params);
         rows.forEach(SalesDeliveryService::weighVerification);
+        addBuckets(rows);
         return rows;
     }
 
@@ -212,7 +255,32 @@ public class SalesDeliveryService {
                 + " LEFT JOIN \"FleetDeliveryOrderLine\" dl ON dl.id = l.\"deliveryOrderLineId\" LEFT JOIN \"Product\" pr ON"
                 + " pr.id = l.\"productId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\"loadId\" = ? ORDER BY"
                 + " dl.\"lineNumber\", l.\"createdAt\"", id));
-        Map<String, Object> pod = db.row("SELECT \"receiverName\", \"receiverPhone\", \"receivedAt\", notes, \"signatureFileId\""
+        // Phase A A3: the quantity buckets of each line (plan §3) and the delivery's claims with their decision.
+        List<Map<String, Object>> lineRows = (List<Map<String, Object>>) t.get("lines");
+        Map<String, Map<String, Object>> views = quantities.views(lineRows.stream().map(l -> str(l.get("id"))).toList());
+        for (Map<String, Object> l : lineRows) {
+            Map<String, Object> v = views.get(str(l.get("id")));
+            if (v != null) {
+                for (String k : List.of("acceptedQty", "pendingDisputedQty", "confirmedShortageQty", "excessQty",
+                        "weightPendingQty", "weightConfirmedQty")) {
+                    l.put(k, v.get(k));
+                }
+            }
+        }
+        addBuckets(List.of(t));
+        List<Map<String, Object>> claims = db.rows("SELECT x.id, x.code, x.\"loadLineId\", x.kind, x.reason, x.status,"
+                + " x.\"differenceQty\" AS quantity, x.\"reconciledQty\", x.\"claimKg\", x.\"resolutionModel\","
+                + " x.\"withdrawnAt\", x.\"decidedAt\", x.\"decisionNotes\", x.\"dismissReason\", x.\"createdAt\" FROM"
+                + " \"FleetDeliveryDiscrepancy\" x WHERE x.\"loadId\" = ? AND x.\"organizationId\" = ? ORDER BY"
+                + " x.\"createdAt\"", id, org());
+        for (Map<String, Object> c : claims) {
+            c.put("claimDecision", com.inventoryerp.fleet.application.LoadLineQuantities.Claim.decision(
+                    str(c.get("status")), c.get("withdrawnAt") != null));
+            c.put("openQty", JsNumbers.js(dec(c.get("quantity")).subtract(dec(c.get("reconciledQty"))).max(BigDecimal.ZERO)));
+        }
+        t.put("claims", claims);
+        Map<String, Object> pod = db.row("SELECT \"receiverName\", \"receiverPhone\", \"receivedAt\", notes, \"signatureFileId\","
+                + " \"recordedBy\""
                 + " FROM \"FleetProofOfDelivery\" WHERE \"loadId\" = ? AND \"organizationId\" = ?", id, org());
         if (pod != null) {
             pod.put("signatureUrl", url(str(pod.remove("signatureFileId"))));
@@ -709,6 +777,7 @@ public class SalesDeliveryService {
     @Transactional
     public Map<String, Object> issue(String id) {
         Map<String, Object> t = require(id);
+        orders.lock(str(t.get("orderId"))); // plan §8: sales order → delivery order → trip → order lines
         if (Boolean.TRUE.equals(t.get("approvalRequired")) && t.get("approvedAt") == null) {
             throw ApiException.badRequest("This delivery is waiting for approval");
         }
@@ -729,6 +798,7 @@ public class SalesDeliveryService {
     @Transactional
     public Map<String, Object> cancel(String id, Map<String, Object> in) {
         Map<String, Object> t = require(id);
+        orders.lock(str(t.get("orderId")));
         String reason = str(in.get("reason"));
         if (blank(reason)) {
             throw ApiException.badRequest("reason should not be empty");
@@ -755,6 +825,7 @@ public class SalesDeliveryService {
 
     private Map<String, Object> bringBack(String id, Map<String, Object> in, boolean failed) {
         Map<String, Object> t = require(id);
+        orders.lock(str(t.get("orderId")));
         String reason = str(in.get("reason"));
         if (blank(reason)) {
             throw ApiException.badRequest("reason should not be empty");
@@ -786,6 +857,8 @@ public class SalesDeliveryService {
     @SuppressWarnings("unchecked")
     public Map<String, Object> confirm(String id, Map<String, Object> in) {
         Map<String, Object> t = require(id);
+        // Phase A A3 lock order (plan §8): sales order → delivery order → trip → order lines.
+        orders.lock(str(t.get("orderId")));
         List<PodLineInput> lines = new ArrayList<>();
         List<Map<String, Object>> raw = in.get("lines") instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
         if (raw.isEmpty()) {
@@ -818,7 +891,7 @@ public class SalesDeliveryService {
                 throw ApiException.badRequest("reason must be one of: " + String.join(", ", REASONS.stream().sorted().toList()));
             }
             lines.add(new PodLineInput(str(l.get("loadLineId")), delivered, rejected.signum() > 0 ? rejected : null, blank(reason)
-                    ? null : reason, str(l.get("notes"))));
+                    ? null : reason, str(l.get("notes")), damaged.signum() > 0 ? damaged : null));
         }
         String receiver = str(in.get("receiverName"));
         if (blank(receiver)) {
@@ -832,9 +905,10 @@ public class SalesDeliveryService {
         dispatch.proofOfDelivery(id, new PodInput(receiver, str(in.get("receiverPhone")), receivedAt, null, null, lines,
                 str(in.get("signature")), null, str(in.get("notes"))));
         for (Map<String, Object> l : raw) {
-            db.update("UPDATE \"FleetLoadLine\" SET \"damagedQty\" = ?, \"rejectedQty\" = ? WHERE id = ? AND \"loadId\" = ? AND"
-                    + " \"organizationId\" = ?", l.get("damagedQty") == null ? BigDecimal.ZERO : dec(l.get("damagedQty")),
-                    l.get("rejectedQty") == null ? BigDecimal.ZERO : dec(l.get("rejectedQty")), str(l.get("loadLineId")), id, org());
+            // Fleet's POD recorded returned and damaged; rejectedQty is the Sales name of "returned (rejected at site)".
+            db.update("UPDATE \"FleetLoadLine\" SET \"rejectedQty\" = ? WHERE id = ? AND \"loadId\" = ? AND"
+                    + " \"organizationId\" = ?", l.get("rejectedQty") == null ? BigDecimal.ZERO : dec(l.get("rejectedQty")),
+                    str(l.get("loadLineId")), id, org());
         }
         db.update("UPDATE \"FleetLoad\" SET \"arrivedAt\" = COALESCE(?::timestamp(3), \"deliveredAt\") WHERE id = ? AND \"organizationId\" = ?",
                 arrivedAt, id, org());
@@ -847,6 +921,85 @@ public class SalesDeliveryService {
         return get(id);
     }
 
+    /**
+     * Phase A A3 (plan §2): authorised POD correction ({@code sales:delivery:pod_correct}). Body {@code {lines:
+     * [{loadLineId, deliveredQty}], reason, evidence: [dataUrl]}}: raises the delivered quantity (never above dispatched
+     * − returned − damaged), reconciles that much of the open shortage claims, records the line history. Not the POD
+     * recorder; evidence and a reason are required. Lock order: sales order first.
+     */
+    @Transactional
+    public Map<String, Object> correctPod(String id, Map<String, Object> in) {
+        Map<String, Object> t = require(id);
+        orders.lock(str(t.get("orderId")));
+        List<FleetDispatchService.PodCorrectionLine> lines = new ArrayList<>();
+        List<Map<String, Object>> raw = in.get("lines") instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
+        if (raw.isEmpty()) {
+            throw ApiException.badRequest("lines should not be empty");
+        }
+        for (Map<String, Object> l : raw) {
+            String lineId = str(l.get("loadLineId"));
+            if (blank(lineId)) {
+                throw ApiException.badRequest("lines.loadLineId should not be empty");
+            }
+            BigDecimal q = number("deliveredQty", l.get("deliveredQty"));
+            if (q.signum() < 0) {
+                throw ApiException.badRequest("Quantities must not be less than 0");
+            }
+            lines.add(new FleetDispatchService.PodCorrectionLine(lineId, q));
+        }
+        List<FleetDispatchService.Evidence> evidence = new ArrayList<>();
+        if (in.get("evidence") instanceof List<?> ev) {
+            for (Object o : ev) {
+                String url = o instanceof String str ? str : null;
+                if (blank(url) || !(url.startsWith("data:image/") || url.startsWith("data:application/pdf"))
+                        || !url.contains(";base64,")) {
+                    throw ApiException.badRequest("Correction evidence must be an image or a PDF");
+                }
+                String type = url.substring(5, url.indexOf(';'));
+                byte[] bytes;
+                try {
+                    bytes = Base64.getMimeDecoder().decode(url.substring(url.indexOf(',') + 1));
+                } catch (IllegalArgumentException e) {
+                    throw ApiException.badRequest("Correction evidence must be an image or a PDF");
+                }
+                if (bytes.length > 8 * 1024 * 1024) {
+                    throw ApiException.badRequest("A photo may be at most 8 MB");
+                }
+                evidence.add(new FleetDispatchService.Evidence("pod-correction-" + id + "."
+                        + type.substring(type.indexOf('/') + 1), type, bytes));
+            }
+        }
+        dispatch.correctPod(id, lines, str(in.get("reason")), evidence);
+        fulfilment.rebuild(str(t.get("orderId")));
+        return get(id);
+    }
+
+    /**
+     * Phase A A3 (plan §9): the quantity history of one delivery line — Fleet's line events (or a reconstruction before
+     * A3) with the line's facts and buckets now. A4 adds the invoice allocations.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> lineHistory(String id, String lineId) {
+        require(id);
+        Map<String, Object> line = db.row("SELECT l.id, l.\"dispatchedQty\", l.\"deliveredQty\", l.\"returnedQty\","
+                + " l.\"damagedQty\", l.\"billableQty\", pr.name AS \"productName\", u.code AS \"uomCode\" FROM"
+                + " \"FleetLoadLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"UnitOfMeasure\" u ON"
+                + " u.id = l.\"uomId\" WHERE l.id = ? AND l.\"loadId\" = ? AND l.\"organizationId\" = ?", lineId, id, org());
+        if (line == null) {
+            throw ApiException.notFound("Delivery line not found");
+        }
+        List<Map<String, Object>> events = new ArrayList<>(lineHistory.events(lineId));
+        events.addAll(invoiceEvents(lineId));
+        events.sort((a, b) -> String.valueOf(a.get("at")).compareTo(String.valueOf(b.get("at"))));
+        line.put("buckets", quantities.views(List.of(lineId)).get(lineId));
+        return Obj.of("deliveryId", id, "line", line, "events", events);
+    }
+
+    /** Invoice-side events of a delivery line (A4: the invoicing owner's ledger); none before A4. */
+    List<Map<String, Object>> invoiceEvents(String lineId) {
+        return List.of();
+    }
+
     /** Status and change history of one delivery (audit trail: who, when, what). */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> history(String id) {
@@ -855,6 +1008,28 @@ public class SalesDeliveryService {
                 + " COALESCE(NULLIF(trim(concat_ws(' ', u.\"firstName\", u.\"lastName\")), ''), u.email) AS \"actorName\""
                 + " FROM \"AuditLog\" a LEFT JOIN \"User\" u ON u.id = a.\"actorId\" WHERE a.\"organizationId\" = ? AND a.entity ="
                 + " 'FleetLoad' AND a.\"entityId\" = ? ORDER BY a.\"createdAt\", a.id", org(), id);
+    }
+
+    /** Per order line: Σ accepted, pending disputed, confirmed shortage, excess over its delivered trips (plan §3). */
+    private Map<String, BigDecimal[]> bucketsByOrderLine(String orderId) {
+        Map<String, String> lineOf = new HashMap<>();
+        for (Map<String, Object> r : db.rows("SELECT ll.id, dl.\"sourceLineId\" FROM \"FleetLoadLine\" ll JOIN \"FleetLoad\" t"
+                + " ON t.id = ll.\"loadId\" JOIN \"FleetDeliveryOrderLine\" dl ON dl.id = ll.\"deliveryOrderLineId\" JOIN"
+                + " \"FleetDeliveryOrder\" d ON d.id = dl.\"deliveryOrderId\" WHERE d.\"organizationId\" = ? AND"
+                + " d.\"sourceType\" = 'sales_order' AND d.\"sourceId\" = ? AND d.status <> 'cancelled' AND"
+                + " dl.\"sourceLineId\" IS NOT NULL AND t.status IN ('delivered', 'closed')", org(), orderId)) {
+            lineOf.put(str(r.get("id")), str(r.get("sourceLineId")));
+        }
+        Map<String, BigDecimal[]> out = new HashMap<>();
+        quantities.forLines(lineOf.keySet()).forEach((id, b) -> {
+            BigDecimal[] a = out.computeIfAbsent(lineOf.get(id), k -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO});
+            a[0] = a[0].add(b.accepted());
+            a[1] = a[1].add(b.pendingDisputed());
+            a[2] = a[2].add(b.confirmedShortage());
+            a[3] = a[3].add(b.excess());
+        });
+        return out;
     }
 
     /**
@@ -909,7 +1084,13 @@ public class SalesDeliveryService {
         boolean anyOnRoad = false;
         boolean anyScheduled = false;
         Map<String, Map<String, BigDecimal>> byUnit = new LinkedHashMap<>();
+        Map<String, BigDecimal[]> buckets = bucketsByOrderLine(orderId);
         for (Map<String, Object> l : lines) {
+            BigDecimal[] bk = buckets.getOrDefault(str(l.get("lineId")), new BigDecimal[] {BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO});
+            for (int i = 0; i < 4; i++) {
+                l.put(List.of("accepted", "pendingDisputed", "confirmedShortage", "excess").get(i), JsNumbers.js(bk[i]));
+            }
             BigDecimal ordered = dec(l.get("ordered"));
             BigDecimal scheduled = dec(l.get("scheduled"));
             BigDecimal onRoad = dec(l.get("dispatched"));
@@ -944,6 +1125,8 @@ public class SalesDeliveryService {
             u.merge("rejected", dec(l.get("rejected")), BigDecimal::add);
             u.merge("damaged", dec(l.get("damaged")), BigDecimal::add);
             u.merge("shortage", dec(l.get("shortage")), BigDecimal::add);
+            u.merge("pendingDisputed", bk[1], BigDecimal::add);
+            u.merge("confirmedShortage", bk[2], BigDecimal::add);
         }
         String stage = counted > 0 && allDelivered ? "delivered" : anyDelivered ? "partially_delivered" : anyOnRoad
                 ? "dispatched" : anyScheduled ? "scheduled" : "pending";

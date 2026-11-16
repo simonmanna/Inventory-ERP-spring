@@ -527,8 +527,8 @@ that go through the approval engine. Plan: Phase A §7 / §11.
   - Once any weight claim is confirmed or dismissed: 409 "Weight claim DSC-… is already confirmed/dismissed; the
     customer weight can no longer change it".
   - Weight claims never auto-approve, even when the discrepancy workflow is switched off.
-  - Deciding a claim uses the existing discrepancy flow (approve lowers the line's billable quantity; reject keeps
-    it). The accepted / pending / confirmed buckets and invoiceability are A3 / A4.
+  - Deciding a claim uses the discrepancy flow. Since A3 (below) the billable quantity is the accepted bucket:
+    confirming a weight claim keeps it out, dismissing returns it. Invoiceability is A4.
 - Delivery note (PDF and on-screen preview): "Customer weight N kg (ticket …) · quarry Q kg · variance V kg —
   outcome" under the receipt line.
 - Web: an optional "The customer weighed the truck" section in Confirm delivery, and a customer-weight panel on the
@@ -540,3 +540,77 @@ that go through the approval engine. Plan: Phase A §7 / §11.
 - Tests: `SalesCustomerWeightIT` (within tolerance on confirm; full-variance claim; update, withdraw and re-raise;
   decided → 409; heavier via the Fleet route; cap and unallocated; multi-product awaiting split, refusals and
   confirmed split; 403; before POD → 400; ticket, stock and delivered quantity unchanged) and `WeightAllocationTest`.
+
+### Quantity buckets, POD correction and line history (Phase A3, 2026-11-16, V497)
+
+Every dispatched quantity of a delivery line sits in exactly one bucket, so that we know what left the quarry, what
+the customer accepted and what is still argued about. Plan: Phase A §2, §3, §8, §9, §10. Fleet owns the facts and the
+calculation (`LoadLineQuantities`, pure; `LoadLineQuantityService`); Sales only reads them.
+
+- **Invariant** (per line, once the trip is delivered): dispatched D = accepted + returned R + damaged G + confirmed
+  shortage + pending dispute; excess X is reported beside it. With Δ = delivered at the POD:
+  - eligible E = max(0, min(Δ, D − R − G)); X = max(0, Δ − (D − R − G)); POD shortage S = max(0, D − R − G − Δ).
+  - Weight claims sit inside E (pending Wp, confirmed Wc; confirmed first, clamped at E).
+  - Shortage claims sit in S: confirmed (capped at S) → confirmed shortage; the rest of S stays **pending dispute**,
+    including a *dismissed* shortage claim. A dismissal says "we do not accept the shortfall", not "it arrived", so
+    only a POD correction moves it into accepted.
+  - accepted = E − Wp − Wc. `billableQty` is kept equal to accepted, written in the same transaction as every change.
+- **Claim model.** Claims raised before A3 keep `resolutionModel = 1` and their old meaning (a rejected shortage was
+  billed), so historic lines are not reclassified. New claims are model 2. Claim states for the API, via
+  `claimDecision`: pending, confirmed, dismissed, reconciled, withdrawn. A bare "rejected" is never shown.
+- **Damaged** is its own fact. The POD records it (`damagedQty` on the Fleet POD line; Sales `confirm` now passes it
+  through instead of folding it into the shortage) and raises a `damaged` claim. R + G may not exceed D: 400
+  "Returned and damaged quantities exceed what was dispatched on trip …".
+- **POD correction** `POST /sales/deliveries/{id}/pod-correction` (new permission `sales:delivery:pod_correct`,
+  granted by V497 to Administrator and to roles holding `fleet_dispatch:approve_discrepancy`; Idempotency-Key
+  honoured):
+  - Body `{lines: [{loadLineId, deliveredQty}], reason, evidence: [dataUrl image / PDF]}`. A reason and at least one
+    evidence file are required.
+  - The person who recorded the POD cannot correct it (403).
+  - It can only raise Δ (never above D − R − G), and only by as much as the line's open shortage claims. Those claims
+    are reconciled oldest first (`reconciledQty`; fully covered → status `reconciled`, approval request withdrawn).
+  - It updates the delivered quantity, the delivery-order line, the order fulfilment and the line history.
+- **Line history** `GET /sales/deliveries/{id}/lines/{lineId}/history` (`sales:delivery:read`): Fleet's immutable
+  `FleetLoadLineQuantityEvent` rows (dispatched, POD, returned, damaged, excess, POD corrected, customer weight, claim
+  opened / changed / confirmed / dismissed / reconciled / withdrawn), with who, when, reason and evidence. Lines from
+  before A3 get a reconstruction marked `reconstructed: true`. A4 adds invoice allocations.
+- **Reads.** `GET /sales/deliveries` and `/{id}` add `acceptedQty, pendingDisputedQty, confirmedShortageQty,
+  excessQty`. The detail also has these per line, plus `claims` (all kinds, with `claimDecision` and `openQty`).
+  `GET /sales/orders/{id}/delivery-summary` adds `accepted, pendingDisputed, confirmedShortage, excess` per line.
+- **Fleet routes:**
+  - `POST /fleet/delivery-discrepancies/{id}/reduce` lowers a pending weight claim, reason required; 0 withdraws it.
+  - `GET /fleet/reconciliation/findings` and `POST /fleet/reconciliation/run` (`fleet:report`).
+- **Operational reconciliation** (`FleetQuantityReconciliation`; nightly 03:40, ShedLock `fleet-quantity-reconcile`)
+  checks every delivered line for:
+  - the invariant, negative buckets and the weight ceiling;
+  - shortage, damaged and excess not covered by a claim;
+  - a missing stock issue or return receipt;
+  - history totals that differ from the line.
+
+  It repairs a drifted `billableQty` (a projection) and records each problem as an open `FleetReconciliationFinding`.
+  A run that no longer detects a finding resolves it. Tickets, POD rows, stock, journals and invoices are never
+  changed.
+- **Lock order** (plan §8): sales order → delivery order → trip → claims → order lines. Sales issue / confirm /
+  cancel / fail / return and the POD correction now take the sales-order row lock first.
+- **M-6 (Phase I2) closed here.** Dispatch issues the base quantity of a non-base-unit line cumulatively per
+  delivery-order line: round(issued before + this load) − round(issued before). Two loads of 10.37 t of 50-kg bags
+  issue 415 bags, not 2 × 207.
+- Late-dispute credits: confirming a shortage or weight claim on a Fleet-owned delivery order keeps the existing
+  draft credit note. Sales-order deliveries get theirs from the A4 invoicing owner.
+- Web: the proof-of-delivery tab shows a Quantities panel (buckets per line, claims with their decision, a history
+  dialog per line) and a "Correct proof of delivery" dialog (lines, reason, evidence files).
+- Migration `V497__delivery_quantity_buckets.sql`:
+  - claim kind `damaged` and status `reconciled`;
+  - claim columns `reconciledQty`, `resolutionModel` (existing rows 1, new rows 2; no UPDATE), `dismissReason`,
+    `evidenceFileIds`;
+  - tables `FleetLoadLineQuantityEvent` (immutable trigger) and `FleetReconciliationFinding`, with the V214
+    tenant-or-no-tenant RLS policy;
+  - the permission row.
+- Tests:
+  - `LoadLineQuantitiesTest`: the reviewer's example; weight claims refused above the ceiling (30 / 30 / 5 / 5);
+    partial reconciliation; dismissed shortage stays pending; legacy claims; 5 000 random cases for the invariant
+    and non-negativity.
+  - `SalesQuantityBucketsIT`: 30 = 25 + 2 + 1 + 1 + 1 through the API and the summary; reduce a weight claim; dismissed
+    → partial correction → full correction → reconciled, with 403 / SoD / evidence / ceiling refusals and the history
+    kinds; partial correction then confirm; reconciliation repair and resolve.
+

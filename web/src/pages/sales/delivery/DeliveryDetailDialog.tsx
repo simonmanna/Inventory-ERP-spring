@@ -23,6 +23,7 @@ import { Detail, METHOD_META, StageBadge, n, qty, scheduleLabel } from './delive
 import { PickedCell } from './HandoverDeliveryView';
 import { DeliveryWeighbridgeTab, WeighSummary } from './DeliveryWeighbridge';
 import { CustomerWeightDialog, CustomerWeightPanel, customerWeightNoteLine } from './CustomerWeight';
+import { QuantityBucketsPanel } from './DeliveryQuantities';
 
 type LineCol = 'product' | 'scheduled' | 'deadline' | 'planned' | 'picked' | 'dispatched' | 'delivered' | 'returned' | 'rejected'
   | 'damaged' | 'shortage' | 'batch';
@@ -276,6 +277,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
                       {d.pod.signatureUrl ? <img src={d.pod.signatureUrl} alt={tx('Signature')} className="h-28 w-full rounded border bg-white object-contain" />
                         : <p className="text-sm text-muted-foreground">{tx('No signature captured.')}</p>}
                     </div>
+                    <div className="md:col-span-2"><QuantityBucketsPanel d={d} /></div>
                     <div className="md:col-span-2">
                       <CustomerWeightPanel d={d} canRecord={canConfirm && (d.stage === 'delivered' || d.stage === 'partially_delivered')}
                         onRecord={() => setWeighing(true)} />
