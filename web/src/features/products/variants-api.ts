@@ -1,5 +1,5 @@
 /** Product attributes & variants (ADR-S058). */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 export type DisplayType = 'radio' | 'pills' | 'select' | 'color';
@@ -115,6 +115,23 @@ export function useProductVariantOptions(productId: string | undefined, enabled 
     staleTime: 30_000,
     queryFn: async () => (await api.get<VariantOption[]>('/product-variants', { params: { productId } })).data,
   });
+}
+
+/** The product's active variant options through the picker's cache (empty for a product without variants). */
+export function fetchVariantOptions(qc: QueryClient, productId: string): Promise<VariantOption[]> {
+  return qc.fetchQuery({
+    queryKey: [...KEY, 'options', productId],
+    staleTime: 30_000,
+    queryFn: async () => (await api.get<VariantOption[]>('/product-variants', { params: { productId } })).data,
+  });
+}
+
+/** A line's variant from the picker's loaded options (no request); undefined when not loaded or not offered. */
+export function cachedVariantOption(
+  qc: QueryClient, productId: string | null | undefined, variantId: string | null | undefined,
+): VariantOption | undefined {
+  if (!productId || !variantId) return undefined;
+  return qc.getQueryData<VariantOption[]>([...KEY, 'options', productId])?.find((o) => o.id === variantId);
 }
 
 function useInvalidate() {

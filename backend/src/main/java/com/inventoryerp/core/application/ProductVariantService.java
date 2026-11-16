@@ -664,6 +664,21 @@ public class ProductVariantService {
                 (BigDecimal) v.get("cost"));
     }
 
+    /**
+     * Phase I2 (D2): a variant named on a line that corrects or returns existing stock (debit note, credit note) must
+     * be one of the product's own; an archived variant is accepted, since the stock it moves already exists.
+     */
+    @Transactional(readOnly = true)
+    public void assertOwn(String productId, String variantId) {
+        if (blank(variantId)) {
+            return;
+        }
+        if (blank(productId) || jdbc.sql("SELECT count(*) FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ? AND"
+                + " \"organizationId\" = ?").params(variantId, productId, org()).query(Long.class).single() == 0) {
+            throw ApiException.badRequest("Variant not found");
+        }
+    }
+
     /** {@link #resolve} that keeps archived variants (for documents copied from older ones). */
     @Transactional(readOnly = true)
     public VariantRef find(String variantId) {

@@ -217,7 +217,65 @@ class PosStockPostingIT extends ApiTestSupport {
         assertThat(onHand(productId)).isEqualByComparingTo("95");
         Res retryDone = as("POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
         assertThat(retryDone.body().get("message").asString())
-                .isEqualTo("Only failed jobs can be retried (this one is done)");
+                .isEqualTo("Only failed or pending jobs can be retried (this one is done)");
+    }
+
+    @Test
+    @DisplayName("R3: a drain leaves a job another runner holds alone (no second runner, no re-open)")
+    void drainSkipsAJobHeldByAnotherRunner() {
+        String productId = stockProduct("SPJ-HELD-" + UUID.randomUUID().toString().substring(0, 6));
+        String jobId = job(productId, null, 5);
+        jdbc.sql("UPDATE \"StockPostingJob\" SET \"claimToken\" = 'other-runner', \"claimedAt\" = now() WHERE id = ?")
+                .param(jobId).update();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        assertThat(onHand(productId)).as("nothing issued by the second runner").isEqualByComparingTo("100");
+        Map<String, Object> row = jdbc.sql("SELECT status, \"claimToken\" FROM \"StockPostingJob\" WHERE id = ?")
+                .param(jobId).query().singleRow();
+        assertThat(row.get("status")).isEqualTo("processing");
+        assertThat(row.get("claimToken")).isEqualTo("other-runner");
+        Res retry = as("POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
+        assertThat(retry.status()).isEqualTo(400);
+        assertThat(retry.body().get("message").asString())
+                .isEqualTo("Only failed or pending jobs can be retried (this one is processing)");
+    }
+
+    @Test
+    @DisplayName("R3: a monitor retry racing a drain never re-opens or re-runs the job; stock is issued once")
+    void retryRacingADrainNeverReopens() {
+        for (int i = 0; i < 8; i++) {
+            String productId = stockProduct("SPJ-RACE-" + UUID.randomUUID().toString().substring(0, 6));
+            String jobId = job(productId, null, 5);
+            jdbc.sql("UPDATE \"StockPostingJob\" SET status = 'pending', \"claimToken\" = NULL, \"claimedAt\" = NULL"
+                    + " WHERE id = ?").param(jobId).update();
+            CompletableFuture<Void> drain = CompletableFuture.runAsync(() -> asOrgRun(() ->
+                    billing.processStockPostingJob(jobId)));
+            CompletableFuture<Res> retry = CompletableFuture.supplyAsync(() ->
+                    as("POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null));
+            CompletableFuture.allOf(drain, retry).join();
+            assertThat(retry.join().status()).as(retry.join().raw().body()).isIn(201, 400, 409);
+            // A retry that won the race leaves the job pending for the next drain: run it.
+            asOrgRun(() -> billing.processStockPostingJob(jobId));
+            assertThat(jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ?").param(jobId).query(String.class)
+                    .single()).isEqualTo("done");
+            assertThat(onHand(productId)).isEqualByComparingTo("95");
+        }
+    }
+
+    @Test
+    @DisplayName("ADR-S072: a pending job waiting for its next attempt can be retried now; posted lines stay posted once")
+    void retryPendingJob() {
+        String productId = stockProduct("SPJ-PENDING-" + UUID.randomUUID().toString().substring(0, 6));
+        String jobId = job(productId, null, 5);
+        jdbc.sql("UPDATE \"StockPostingJob\" SET status = 'pending', attempts = 3, \"claimToken\" = NULL, "
+                + "\"claimedAt\" = NULL, \"nextRetryAt\" = now() + interval '1 hour', \"lastError\" = 'earlier failure' "
+                + "WHERE id = ?").param(jobId).update();
+        JsonNode r = ok(201, "POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
+        assertThat(r.get("status").asString()).isEqualTo("pending");
+        assertThat(jdbc.sql("SELECT attempts FROM \"StockPostingJob\" WHERE id = ? AND \"nextRetryAt\" <= now()")
+                .param(jobId).query(Integer.class).single()).isZero();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+        assertThat(onHand(productId)).isEqualByComparingTo("95");
     }
 
     @Test
@@ -260,5 +318,62 @@ class PosStockPostingIT extends ApiTestSupport {
         assertThat(jdbc.sql("SELECT count(*) FROM \"InvoiceItemRecipeIngredient\" WHERE \"invoiceId\" = ? AND \"productId\" = ?")
                 .params(invoiceId, ingredient).query(Long.class).single()).isPositive();
         ok(200, "GET", "/pos/posting-monitor/jobs?status=done", null);
+    }
+
+    String unit(String code) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, ?, 'unit', 1, 1, 1, now())")
+                .params(id, demoOrg, code + "-" + UUID.randomUUID().toString().substring(0, 8), code).update();
+        return id;
+    }
+
+    /** 100 on hand, counted in {@code base}, also sold in {@code pack} holding {@code factor} base units. */
+    String packedProduct(String code, String base, String pack, int factor) {
+        String id = stockProduct(code + "-" + UUID.randomUUID().toString().substring(0, 6));
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ? WHERE id = ?").params(base, id).update();
+        ok(200, "PATCH", "/products/" + id, Map.of("units", List.of(Map.of("uomId", pack, "factor", factor,
+                "isPurchase", true, "isSales", true))));
+        return id;
+    }
+
+    @Test
+    @DisplayName("U-4: the posting snapshot freezes recipe and modifier unit factors; a later pack-size change does not"
+            + " alter what the sale issues")
+    void snapshotFreezesUnitFactors() {
+        String pcs = unit("PCS");
+        String box = unit("BOX");
+        String bun = packedProduct("U4-BUN", pcs, box, 24);
+        String sauce = packedProduct("U4-SAUCE", pcs, box, 10);
+        String menuItemId = ok(201, "POST", "/pos/menu/items", Map.of("name", "U4 Burger " + UUID.randomUUID(),
+                "basePrice", 5000, "ingredients", List.of(Map.of("productId", bun, "quantity", 1)))).get("id").asString();
+        jdbc.sql("UPDATE \"MenuProduct\" SET \"uomId\" = ? WHERE \"menuItemId\" = ?").params(box, menuItemId).update();
+        String groupId = ok(201, "POST", "/pos/modifiers/groups", Map.of("name", "U4 " + UUID.randomUUID(),
+                "maxSelect", 1)).get("id").asString();
+        String modifierId = ok(201, "POST", "/pos/modifiers/modifiers", Map.of("groupId", groupId, "name", "Sauce",
+                "priceDelta", 0)).get("id").asString();
+        jdbc.sql("UPDATE \"Modifier\" SET \"inventoryItemId\" = ?, \"consumptionQty\" = 1, \"consumptionUomId\" = ?"
+                + " WHERE id = ?").params(sauce, box, modifierId).update();
+
+        java.sql.Timestamp now = java.sql.Timestamp.from(java.time.Instant.now());
+        String orderId = insert("Order", Map.of("organizationId", demoOrg, "orderNumber", "ORD-U4-" + UUID.randomUUID(),
+                "status", "closed", "updatedAt", now));
+        String itemId = insert("OrderItem", Map.of("organizationId", demoOrg, "orderId", orderId, "menuItemId", menuItemId,
+                "description", "Burger", "quantity", 2, "lineNumber", 1, "updatedAt", now));
+        insert("OrderItemModifier", Map.of("organizationId", demoOrg, "orderItemId", itemId, "modifierId", modifierId,
+                "name", "Sauce", "priceDelta", 0, "createdAt", now));
+        asOrgRun(() -> billing.enqueueStockPosting(orderId, orderId, "INV-" + orderId, "at_invoice"));
+        String jobId = jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"orderId\" = ?").param(orderId)
+                .query(String.class).single();
+
+        // The pack sizes change between the sale and its posting.
+        jdbc.sql("UPDATE \"ProductUom\" SET factor = 12 WHERE \"productId\" = ?").param(bun).update();
+        jdbc.sql("UPDATE \"ProductUom\" SET factor = 5 WHERE \"productId\" = ?").param(sauce).update();
+        asOrgRun(() -> billing.processStockPostingJob(jobId));
+
+        assertThat(jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ?").param(jobId).query(String.class)
+                .single()).isEqualTo("done");
+        assertThat(onHand(bun)).as("2 burgers x 1 box of 24, as sold").isEqualByComparingTo("52");
+        assertThat(onHand(sauce)).as("2 sauces x 1 box of 10, as sold").isEqualByComparingTo("80");
     }
 }

@@ -2144,6 +2144,7 @@
   "Choose the transporter": "Chagua msafirishaji",
   "Choose the truck": "Chagua lori",
   "Choose the vehicle": "Chagua gari",
+  "Choose variant…": "Chagua aina…",
   "Choose weighted average or FIFO as an approved accounting policy. A method change takes effect on its date and re-costs stock without changing its total value.": "Chagua wastani uliopimwa au FIFO kama sera ya uhasibu iliyoidhinishwa. Mabadiliko ya mbinu huanza kutumika tarehe yake na kukokotoa upya gharama ya hisa bila kubadilisha thamani yake yote.",
   "Choose where sold stock is taken from": "Chagua bidhaa zilizouzwa zinatolewa wapi",
   "Choose which optional pages appear under Point of Sale in the sidebar. Hidden pages stay reachable by URL for users with permission.": "Chagua kurasa za hiari zinazoonekana chini ya Kituo cha Mauzo kwenye upau wa pembeni. Kurasa zilizofichwa bado zinafikika kwa URL kwa watumiaji wenye ruhusa.",
@@ -3913,6 +3914,7 @@
   "Discard this exception": "Tupa hitilafu hii",
   "Discard this operation": "Tupa operesheni hii",
   "Discard…": "Tupa…",
+  "Discarded": "Imetupwa",
   "Disconnect": "Tenganisha",
   "Discount": "Punguzo",
   "Discount (": "Punguzo (",
@@ -13496,5 +13498,7 @@
   "No delivery note yet.": "Bado hakuna hati ya usafirishaji.",
   "The delivery note is numbered once the document is saved.": "Hati ya usafirishaji hupewa namba hati ikihifadhiwa.",
   "Each delivery gets a numbered delivery note when it is dispatched.": "Kila usafirishaji hupata hati ya usafirishaji yenye namba unapotumwa.",
-  "Theme": "Mandhari"
+  "Theme": "Mandhari",
+  "No conversion for this unit — enter the price": "Hakuna ubadilishaji wa kipimo hiki — weka bei",
+  "Saved as a draft, but posting failed: {{error}}": "Imehifadhiwa kama rasimu, lakini kuandika kumeshindikana: {{error}}"
 }

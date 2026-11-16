@@ -60,7 +60,28 @@ public class DocumentBuilderService {
     public record LineInput(String productId, String menuItemId, String variantId, String variantName,
             String accountId, String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
             String discountType, BigDecimal discountAmount, String discountReason, String discountSource, String taxId,
-            String lineType, Boolean taxInclusive, String uomId, List<String> taxIds, Sizing sizing) {
+            String lineType, Boolean taxInclusive, String uomId, List<String> taxIds, Sizing sizing,
+            BigDecimal uomFactor) {
+
+        /**
+         * A line whose unit factor is resolved now (Phase I2, audit U-5: {@code uomFactor} non-null = the factor frozen
+         * on the source document this line is copied from, kept instead of re-resolving the unit live).
+         */
+        public LineInput(String productId, String menuItemId, String variantId, String variantName, String accountId,
+                String description, BigDecimal quantity, BigDecimal unitPrice, BigDecimal discountPercent,
+                String discountType, BigDecimal discountAmount, String discountReason, String discountSource,
+                String taxId, String lineType, Boolean taxInclusive, String uomId, List<String> taxIds, Sizing sizing) {
+            this(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice,
+                    discountPercent, discountType, discountAmount, discountReason, discountSource, taxId, lineType,
+                    taxInclusive, uomId, taxIds, sizing, null);
+        }
+
+        /** The same line with the unit and factor frozen on its source document (U-5). */
+        public LineInput withUnitSnapshot(String unit, BigDecimal factor) {
+            return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
+                    unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
+                    lineType, taxInclusive, unit, taxIds, sizing, unit == null ? null : factor);
+        }
 
         /**
          * A line without a tax list ({@code taxIds}, ADR-S071: its single {@code taxId} or the product's applies) and
@@ -79,28 +100,28 @@ public class DocumentBuilderService {
         public LineInput withDiscountPercent(BigDecimal percent) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity, unitPrice, percent,
                     discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive, uomId,
-                    taxIds, sizing);
+                    taxIds, sizing, uomFactor);
         }
 
         /** The same line sold by size (ADR-S066): the size decides the quantity. */
         public LineInput withSizing(Sizing size) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
                     unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
-                    lineType, taxInclusive, uomId, taxIds, size);
+                    lineType, taxInclusive, uomId, taxIds, size, uomFactor);
         }
 
         /** The same line with another tax list (ADR-S071). */
         public LineInput withTaxIds(List<String> ids) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity,
                     unitPrice, discountPercent, discountType, discountAmount, discountReason, discountSource, taxId,
-                    lineType, taxInclusive, uomId, ids, sizing);
+                    lineType, taxInclusive, uomId, ids, sizing, uomFactor);
         }
 
         /** The same line at another unit price / discount (price lists), keeping everything else. */
         public LineInput withPrice(BigDecimal price, BigDecimal percent) {
             return new LineInput(productId, menuItemId, variantId, variantName, accountId, description, quantity, price,
                     percent, discountType, discountAmount, discountReason, discountSource, taxId, lineType, taxInclusive,
-                    uomId, taxIds, sizing);
+                    uomId, taxIds, sizing, uomFactor);
         }
 
         /** Line in the role's default unit (ADR-S003: {@code uomId} picks another unit of the product). */
@@ -299,19 +320,16 @@ public class DocumentBuilderService {
     }
 
     /**
-     * Line unit for a document line (ADR-S003). An explicit {@code uomId} is validated strictly. The implicit default
-     * unit never blocks a document: if it cannot be resolved the line keeps no snapshot and stock posting falls back
-     * to the live conversion, exactly as before V5.
+     * Line unit for a document line (ADR-S003). Explicit and implicit (the product's default sales / purchase unit)
+     * units are both validated strictly. Post-V5 Phase I1b (owner decision, audit U-1/U-2): an implicit unit that cannot
+     * be converted to the stock unit used to leave the line without a snapshot, and stock and quantity reports then
+     * treated it as factor 1; it now refuses the line with the conversion error.
      */
     private LineUnit lineUnit(String productId, String uomId, UnitRole role) {
-        if (uomId != null && !uomId.isBlank()) {
-            return units.resolveLineUnit(productId, uomId, role);
-        }
-        try {
-            return units.resolveLineUnit(productId, null, role);
-        } catch (ApiException e) {
-            return new LineUnit(null, null);
-        }
+        String requested = uomId == null || uomId.isBlank() ? null : uomId;
+        // Owner decision 1 (ADR-S072): an offline sale keeps a unit that does not convert (factor null = posting held).
+        return com.inventoryerp.kernel.common.OfflineReplay.active() ? units.tryResolveLineUnit(productId, requested, role)
+                : units.resolveLineUnit(productId, requested, role);
     }
 
     /** Server-side line math: price, discount, tax engine, totals; {@code role} picks each line's default unit. */
@@ -364,16 +382,23 @@ public class DocumentBuilderService {
                     product.put("salesPrice", v.get("price"));
                 }
             }
-            LineUnit unit = meta || product == null ? new LineUnit(null, null) : lineUnit(l.productId(), l.uomId(), role);
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]].
+            Sizing size = meta || product == null || sizing == null ? null : sizing.resolve(l.productId(), l.sizing());
+            // U-10: that quantity is in m / m² / m³, so the line is in that unit, not in the product's sales pack.
+            LineUnit metric = size == null ? null : sizing.lineUnit(l.productId());
+            boolean frozen = l.uomFactor() != null && l.uomId() != null && !l.uomId().isBlank()
+                    && (metric == null || l.uomId().equals(metric.uomId()));
+            // U-5: a line copied from another document keeps the unit factor frozen there.
+            LineUnit unit = meta || product == null ? new LineUnit(null, null)
+                    : frozen ? new LineUnit(l.uomId(), l.uomFactor())
+                            : metric != null ? metric : lineUnit(l.productId(), l.uomId(), role);
             BigDecimal defaultPrice = product != null && product.get("salesPrice") != null
                     ? (BigDecimal) product.get("salesPrice") : null;
             if (!meta && l.unitPrice() == null && product != null && unit.factor() != null) {
-                defaultPrice = units.defaultUnitPrice(l.productId(), unit, role, defaultPrice);
+                defaultPrice = units.defaultUnitPrice(l.productId(), unit, role, defaultPrice, variantId != null);
             }
             BigDecimal unitPrice = meta ? ZERO : l.unitPrice() != null ? l.unitPrice()
                     : defaultPrice != null ? defaultPrice : ZERO;
-            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]].
-            Sizing size = meta || product == null || sizing == null ? null : sizing.resolve(l.productId(), l.sizing());
             BigDecimal quantity = meta ? ZERO : size != null ? size.quantity()
                     : l.quantity() != null ? l.quantity() : BigDecimal.ONE;
             BigDecimal gross = quantity.multiply(unitPrice);
@@ -544,6 +569,46 @@ public class DocumentBuilderService {
     /** Refuses a line whose product is switched off for sale (ADR-S060). */
     public void assertSaleable(List<LineInput> lines) {
         lines.forEach(l -> saleable.assertSaleable(l.productId()));
+    }
+
+    /**
+     * Phase I2 (owner decision D2, audit V-5/V-6/V-8): product variants on document lines entered by a user.
+     * <ul>
+     *   <li>A given variant must be one of the line's product's; unless {@code allowArchived} (a document correcting an
+     *       older one, e.g. a credit note) it must also be active.</li>
+     *   <li>With {@code requireVariant} (a document that receives stock, e.g. a vendor bill), a product with variants
+     *       must name one: new stock never lands on the parent product.</li>
+     * </ul>
+     * Lines without a variant on issuing documents stay allowed: legacy stock without a variant may be sold until it
+     * runs out, and the stock issue refuses the line when none is left (ADR-S058).
+     */
+    public void assertVariants(List<LineInput> lines, boolean requireVariant, boolean allowArchived) {
+        if (lines == null) {
+            return;
+        }
+        for (LineInput l : lines) {
+            boolean meta = l.lineType() != null && !"product".equals(l.lineType());
+            if (meta || l.menuItemId() != null || l.productId() == null || l.productId().isBlank()) {
+                continue;
+            }
+            Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT name, \"hasVariants\" FROM \"Product\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(l.productId(), org()));
+            if (product == null) {
+                continue; // the line math reports an unknown product
+            }
+            if (l.variantId() == null || l.variantId().isBlank()) {
+                if (requireVariant && Boolean.TRUE.equals(product.get("hasVariants"))) {
+                    throw ApiException.badRequest("Choose a variant for " + product.get("name"));
+                }
+                continue;
+            }
+            Boolean active = jdbc.sql("SELECT \"isActive\" AND \"deletedAt\" IS NULL FROM \"ProductVariant\" WHERE id = ?"
+                    + " AND \"productId\" = ? AND \"organizationId\" = ?").params(l.variantId(), l.productId(), org())
+                    .query(Boolean.class).optional().orElse(null);
+            if (active == null ? Boolean.TRUE.equals(product.get("hasVariants")) : !active && !allowArchived) {
+                throw ApiException.badRequest("Variant not found");
+            }
+        }
     }
 
     public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {

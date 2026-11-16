@@ -33,7 +33,7 @@ public class ReplenishmentController {
     /** {@code POST /rules}: one rule per product and location. */
     public record CreateRuleRequest(String productId, String locationId, BigDecimal minQty, BigDecimal maxQty,
             BigDecimal reorderQty, String supplierId, BigDecimal leadTimeDays, Boolean autoRequisition, String route,
-            String sourceLocationId) {}
+            String sourceLocationId, String variantId) {}
 
     /** {@code PATCH /rules/:id}: omitted = unchanged, explicit {@code null} clears (maxQty, reorderQty, supplierId). */
     public record UpdateRuleRequest(BigDecimal minQty, BigDecimal maxQty, BigDecimal reorderQty, String supplierId,

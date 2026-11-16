@@ -1,5 +1,6 @@
 package com.inventoryerp.core.application;
 
+import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
@@ -77,12 +78,18 @@ public class ProductSizingService {
         }
     }
 
+    /** Code of the unit a sized quantity is in, per mode (seeded {@code M} and {@code M3}; {@code M2} when defined). */
+    static final Map<String, String> METRIC_CODES = Map.of("length", "M", "area", "M2", "volume", "M3");
+    static final Map<String, String> METRIC_SYMBOLS = Map.of("length", "m", "area", "m²", "volume", "m³");
+
     private final JdbcClient jdbc;
     private final AuditService audit;
+    private final UomConversionService uoms;
 
-    public ProductSizingService(JdbcClient jdbc, AuditService audit) {
+    public ProductSizingService(JdbcClient jdbc, AuditService audit, UomConversionService uoms) {
         this.jdbc = jdbc;
         this.audit = audit;
+        this.uoms = uoms;
     }
 
     private static String org() {
@@ -138,6 +145,9 @@ public class ProductSizingService {
         BigDecimal length = positive(dto, before, "defaultLength");
         BigDecimal width = positive(dto, before, "defaultWidth");
         BigDecimal height = positive(dto, before, "defaultHeight");
+        if (mode != null) {
+            metricUnit(productId, mode); // U-10: the stock unit must hold m / m² / m³
+        }
         jdbc.sql("UPDATE \"Product\" SET \"sizingMode\" = ?, \"sizingUnit\" = ?, \"defaultLength\" = ?, \"defaultWidth\" = ?,"
                 + " \"defaultHeight\" = ?, \"updatedAt\" = date_trunc('milliseconds', clock_timestamp())::timestamp(3)"
                 + " WHERE id = ? AND \"organizationId\" = ?").params(mode, unit, length, width, height, productId, org())
@@ -205,6 +215,44 @@ public class ProductSizingService {
             throw ApiException.badRequest(p.get("name") + " is not sold by size");
         }
         return compute(mode, (String) p.get("sizingUnit"), in);
+    }
+
+    /**
+     * Phase I2 (audit U-10): the unit and factor of a line sold by size. Its quantity is always in m / m² / m³, so the
+     * line is in that unit ({@code M} / {@code M2} / {@code M3}) converted to the product's stock unit, never in the
+     * product's sales pack (which scaled the size a second time). Null when the product is not sold by size, or has no
+     * stock unit; the stock unit itself (factor 1) when the organization has no such metric unit (as before).
+     */
+    @Transactional(readOnly = true)
+    public LineUnit lineUnit(String productId) {
+        if (blank(productId)) {
+            return null;
+        }
+        String mode = jdbc.sql("SELECT \"sizingMode\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(productId, org()).query(String.class).optional().orElse(null);
+        return mode == null ? null : metricUnit(productId, mode);
+    }
+
+    private LineUnit metricUnit(String productId, String mode) {
+        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT p.name, p.\"uomId\", u.code FROM \"Product\" p LEFT JOIN"
+                + " \"UnitOfMeasure\" u ON u.id = p.\"uomId\" WHERE p.id = ? AND p.\"organizationId\" = ?").params(productId,
+                        org()));
+        if (p == null || p.get("uomId") == null) {
+            return null;
+        }
+        String metric = jdbc.sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND upper(code) = ? AND"
+                + " \"deletedAt\" IS NULL ORDER BY \"isActive\" DESC, \"createdAt\" LIMIT 1").params(org(),
+                        METRIC_CODES.get(mode)).query(String.class).optional().orElse(null);
+        if (metric == null) {
+            return new LineUnit((String) p.get("uomId"), BigDecimal.ONE);
+        }
+        BigDecimal factor = uoms.tryFactorToBase(productId, metric);
+        if (factor == null || factor.signum() <= 0) {
+            throw ApiException.badRequest(p.get("name") + " is counted in " + p.get("code") + ", which does not convert"
+                    + " to " + METRIC_SYMBOLS.get(mode) + ": a product sold by " + mode + " needs a " + mode
+                    + " stock unit");
+        }
+        return new LineUnit(metric, factor);
     }
 
     /** Pure size math (unit-tested): validated dimensions of {@code mode} and the quantity in m / m² / m³. */

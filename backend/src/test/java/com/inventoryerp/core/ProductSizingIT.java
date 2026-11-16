@@ -159,6 +159,57 @@ class ProductSizingIT extends ApiTestSupport {
         assertThat(p.get("lines").get(0).has("pieces")).isFalse();
     }
 
+    String unitByCode(String code) {
+        return jdbc.sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND upper(code) = ? AND"
+                + " \"deletedAt\" IS NULL ORDER BY \"createdAt\" LIMIT 1").params(demoOrg, code).query(String.class).single();
+    }
+
+    String packUnit() {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, 'Bundle', 'unit', 1, 1, 1, now())")
+                .params(id, demoOrg, "BDL-" + UUID.randomUUID().toString().substring(0, 8)).update();
+        return id;
+    }
+
+    @Test
+    @DisplayName("U-10: a sized line is in metres converted to the stock unit, never scaled again by the sales pack;"
+            + " a stock unit that cannot hold the size is refused")
+    void sizedLinesAreNotScaledTwice() {
+        String metre = unitByCode("M");
+        String bundle = packUnit();
+        String kerb = product("Granite kerb U10 " + sfx, 40, "ordered");
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ?, \"salesUomId\" = ? WHERE id = ?").params(metre, bundle, kerb)
+                .update();
+        ok(200, "PATCH", "/products/" + kerb, Map.of("units", List.of(Map.of("uomId", bundle, "factor", 6,
+                "isPurchase", true, "isSales", true))));
+        ok(200, "PUT", "/products/" + kerb + "/sizing", Map.of("sizingMode", "length"));
+
+        String c = customer();
+        String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", c, "lines", List.of(line("productId", kerb,
+                "pieces", 4, "length", 3, "unitPrice", 40)))).get("id").asString();
+        Map<String, Object> ol = jdbc.sql("SELECT quantity, \"uomId\", \"uomFactor\" FROM \"SalesOrderLine\" WHERE"
+                + " \"orderId\" = ?").param(so).query().singleRow();
+        assertThat((java.math.BigDecimal) ol.get("quantity")).isEqualByComparingTo("12");
+        assertThat(ol.get("uomId")).as("in metres, not bundles").isEqualTo(metre);
+        assertThat((java.math.BigDecimal) ol.get("uomFactor")).as("12 m = 12 m of stock").isEqualByComparingTo("1");
+
+        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", c, "issueDate", LocalDate.now().toString(),
+                "lines", List.of(line("productId", kerb, "pieces", 2, "length", 3, "uomId", bundle, "unitPrice", 40))))
+                .get("id").asString();
+        Map<String, Object> il = jdbc.sql("SELECT quantity, \"uomId\", \"uomFactor\" FROM \"DocumentLine\" WHERE"
+                + " \"documentId\" = ?").param(inv).query().singleRow();
+        assertThat((java.math.BigDecimal) il.get("quantity")).isEqualByComparingTo("6");
+        assertThat(il.get("uomId")).isEqualTo(metre);
+        assertThat((java.math.BigDecimal) il.get("uomFactor")).isEqualByComparingTo("1");
+
+        String piece = product("Granite tile U10 " + sfx, 40, "ordered");
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ? WHERE id = ?").params(unitByCode("UNIT"), piece).update();
+        Res refused = as("PUT", "/products/" + piece + "/sizing", Map.of("sizingMode", "length"));
+        assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).contains("does not convert to m");
+    }
+
     @Test
     @DisplayName("tenant isolation of the sizing routes")
     void isolation() {

@@ -28,6 +28,7 @@ import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -180,7 +181,10 @@ public class StockService {
                 : resolveCurrentCost(dto.productId, dto.variantId, dto.locationId);
         StockMove m = StockMove.of(dto.productId, dto.locationId, baseQty).variant(dto.variantId).unitCost(unitCost)
                 .reference(dto.reference).source(dto.sourceType, dto.sourceId).notes(dto.notes).moveType("return_in")
-                .serials(dto.serialNumbers);
+                .serials(dto.serialNumbers).sourceLine(dto.sourceLineId);
+        Trace t = trace(dto, product, baseQty, dto.quantity); // R-1: the unit it came back in
+        m.traceUomId = t.docUomId();
+        m.traceFactor = t.factor();
         Received res = receiveCore(m, null);
         BigDecimal totalValue = unitCost.multiply(baseQty);
         if (totalValue.signum() > 0) {
@@ -192,9 +196,9 @@ public class StockService {
         return res;
     }
 
-    /** Location running average when positive, else the last positive receipt cost, else the product cost. */
+    /** Location running average when positive, else the last positive receipt cost, else the (variant's) cost. */
     private BigDecimal resolveCurrentCost(String productId, String variantId, String locationId) {
-        Map<String, Object> product = lookups.product(productId);
+        Map<String, Object> product = withVariantCost(lookups.product(productId), variantId);
         Map<String, Object> item = lookups.stockItem(productId, variantId, locationId);
         if (item != null && dec(item, "runningAverageCost").signum() > 0) {
             return dec(item, "runningAverageCost");
@@ -233,7 +237,9 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
-        requireVariant(product, dto.variantId, dto.locationId);
+        requireVariant(product, dto.variantId, dto.locationId,
+                "return_in".equals(dto.moveType) ? VariantRule.EXISTING : VariantRule.INBOUND);
+        product = withVariantCost(product, dto.variantId);
         boolean batchTracking = bool(product, "batchTracking");
         String productName = str(product, "name");
         if (batchTracking && dto.batchNumber == null
@@ -354,7 +360,7 @@ public class StockService {
                 cost.totalValue(),
                 glCtx != null && glCtx.sourceType() != null ? glCtx.sourceType() : dto.sourceType,
                 glCtx != null && glCtx.sourceId() != null ? glCtx.sourceId() : dto.sourceId,
-                dto.notes, dto.responsibleById, dto.approvedById);
+                dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
 
         if (glCtx != null) {
             if ("stock_gain".equals(glCtx.kind())) {
@@ -402,24 +408,63 @@ public class StockService {
     }
 
     /**
-     * ADR-S058: a product with variants moves stock per variant. A move without a variant is refused unless the
-     * location still holds a quant without one (stock or documents from before the product got variants).
+     * Phase I2 (audit C-1, owner decision D3): wherever the engine falls back to "the product cost" (first issue of an
+     * empty quant, overflow past the layers, counts, return restocks, shortfalls), a variant uses its own cost
+     * ({@code COALESCE(variant.costPrice, product.costPrice)}, as {@code ProductVariantService.COST_SQL}). STANDARD
+     * stays per product by design (D3).
      */
-    private void requireVariant(Map<String, Object> product, String variantId, String locationId) {
+    private Map<String, Object> withVariantCost(Map<String, Object> product, String variantId) {
+        if (product == null || variantId == null || "STANDARD".equals(str(product, "costingMethod"))) {
+            return product;
+        }
+        BigDecimal cost = jdbc.sql("SELECT \"costPrice\" FROM \"ProductVariant\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"costPrice\" IS NOT NULL")
+                .params(variantId, TenantContext.organizationId()).query(BigDecimal.class).optional().orElse(null);
+        if (cost == null) {
+            return product;
+        }
+        Map<String, Object> copy = new java.util.LinkedHashMap<>(product);
+        copy.put("costPrice", cost);
+        return copy;
+    }
+
+    /** How strictly {@link #requireVariant} treats a move (Phase I2, owner decision D2). */
+    private enum VariantRule {
+        /** Adds new stock (receipt, positive count): an active variant of the product is required. */
+        INBOUND,
+        /** Moves or restores existing stock (issue, transfer, negative count, return restock): legacy rule. */
+        EXISTING
+    }
+
+    /**
+     * ADR-S058 + Phase I2 (owner decision D2): a product with variants moves stock per variant.
+     * <ul>
+     *   <li>New stock ({@link VariantRule#INBOUND}) must name an active variant of the product: a receipt or a
+     *       positive count never grows the legacy quant without a variant, and an inactive variant receives nothing.</li>
+     *   <li>Existing stock ({@link VariantRule#EXISTING}) may move without a variant only while the location still
+     *       holds a quant without one (stock from before the product got variants), until it runs out; an inactive
+     *       variant's remaining stock can still be issued, moved, counted down or restored by a return.</li>
+     * </ul>
+     */
+    private void requireVariant(Map<String, Object> product, String variantId, String locationId, VariantRule rule) {
         if (variantId != null) {
             // The variant must be one of this product's (any organisation's id would otherwise open a foreign quant).
-            boolean own = jdbc.sql("SELECT count(*) FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ?"
-                            + " AND \"organizationId\" = ?")
-                    .params(variantId, str(product, "id"), TenantContext.organizationId()).query(Long.class).single() > 0;
-            if (!own) {
+            Boolean active = jdbc.sql("SELECT \"isActive\" AND \"deletedAt\" IS NULL FROM \"ProductVariant\" WHERE id = ?"
+                            + " AND \"productId\" = ? AND \"organizationId\" = ?")
+                    .params(variantId, str(product, "id"), TenantContext.organizationId()).query(Boolean.class)
+                    .optional().orElse(null);
+            if (active == null) {
                 throw ApiException.notFound("Variant not found");
+            }
+            if (rule == VariantRule.INBOUND && !active) {
+                throw ApiException.badRequest("Variant is inactive: it cannot receive stock");
             }
             return;
         }
         if (!bool(product, "hasVariants")) {
             return;
         }
-        if (lookups.stockItem(str(product, "id"), null, locationId) == null) {
+        if (rule == VariantRule.INBOUND || lookups.stockItem(str(product, "id"), null, locationId) == null) {
             throw ApiException.badRequest("Choose a variant for " + str(product, "name"));
         }
     }
@@ -439,7 +484,8 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
-        requireVariant(product, dto.variantId, dto.locationId);
+        requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
+        product = withVariantCost(product, dto.variantId);
         String productName = str(product, "name");
         BigDecimal qty = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity, Money.ZERO)[0];
         if (qty.signum() <= 0) {
@@ -521,7 +567,8 @@ public class StockService {
         BigDecimal unitCost;
         boolean carriedCost = !serialTracking && !usesLayers && dto.carriedUnitCost != null
                 && "AVCO".equals(str(product, "costingMethod"));
-        IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId);
+        IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId,
+                trace(dto, product, qty, dto.quantity));
 
         if (serialTracking) {
             List<String> requested = dto.serialNumbers == null ? List.of() : dto.serialNumbers;
@@ -681,6 +728,11 @@ public class StockService {
         payload.put("quantity", JsNumbers.dec(dto.quantity));
         payload.put("unitCost", JsNumbers.dec(unitCost));
         payload.put("totalValue", JsNumbers.dec(totalValue));
+        // Phase I2 (audit R-1): additive keys; "quantity" stays in the caller's (document) unit as in Nest.
+        payload.put("baseQuantity", JsNumbers.dec(qty));
+        payload.put("variantId", variantId);
+        payload.put("uomId", ic.trace.docUomId());
+        payload.put("uomFactor", ic.trace.factor() == null ? null : JsNumbers.dec(ic.trace.factor()));
         events.publishOnCommit("stock.issued", payload);
         audit.recordInTx(AuditInput.of("StockItem", stockItemId, "issue", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
@@ -719,21 +771,24 @@ public class StockService {
         final String variantId;
         final String moveType;
         final String stockItemId;
+        final Trace trace;
 
-        IssueCtx(String org, String ledgerCode, StockMove dto, String variantId, String moveType, String stockItemId) {
+        IssueCtx(String org, String ledgerCode, StockMove dto, String variantId, String moveType, String stockItemId,
+                Trace trace) {
             this.org = org;
             this.ledgerCode = ledgerCode;
             this.dto = dto;
             this.variantId = variantId;
             this.moveType = moveType;
             this.stockItemId = stockItemId;
+            this.trace = trace;
         }
 
         void row(String batchId, String serialId, BigDecimal before, BigDecimal change, BigDecimal after,
                 BigDecimal unitCost, BigDecimal totalValue, String notes) {
             insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, batchId, serialId, moveType, before,
                     change, after, unitCost, totalValue, dto.sourceType, dto.sourceId, notes, dto.responsibleById,
-                    dto.approvedById);
+                    dto.approvedById, trace);
         }
     }
 
@@ -792,11 +847,15 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
-        requireVariant(product, dto.variantId, dto.locationId);
-        BigDecimal counted = dto.countedQuantity;
+        requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
+        product = withVariantCost(product, dto.variantId);
+        // Phase I1b (audit U-3): stock documents count in the base unit (ADR-S003); a caller that names a unit gets its
+        // count / delta converted instead of being read as base units.
+        BigDecimal counted = dto.countedQuantity == null ? null : toBaseQty(product, dto, dto.countedQuantity);
+        BigDecimal deltaIn = dto.deltaQuantity == null ? null : toBaseQty(product, dto, dto.deltaQuantity);
         String variantId = dto.variantId;
-        boolean deltaMode = dto.deltaQuantity != null;
-        if (deltaMode ? dto.deltaQuantity.signum() == 0
+        boolean deltaMode = deltaIn != null;
+        if (deltaMode ? deltaIn.signum() == 0
                 : counted.signum() == 0 && lookups.stockItem(dto.productId, variantId, dto.locationId) == null) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
         }
@@ -806,11 +865,15 @@ public class StockService {
         Map<String, Object> stockItem = quant.created() ? null : quant.row();
         BigDecimal currentQty = quant.quantity();
         if (deltaMode) {
-            counted = currentQty.add(dto.deltaQuantity);
+            counted = currentQty.add(deltaIn);
         }
         BigDecimal delta = counted.subtract(currentQty);
         if (delta.signum() == 0) {
             return new Adjusted(null, Money.ZERO, null, Money.ZERO, null);
+        }
+        if (delta.signum() > 0) {
+            // D2: a count that adds stock is a receipt — never onto the legacy no-variant quant or an inactive variant.
+            requireVariant(product, variantId, dto.locationId, VariantRule.INBOUND);
         }
         if (bool(product, "batchTracking") || bool(product, "serialTracking")
                 || "FIFO".equals(str(product, "costingMethod"))) {
@@ -826,9 +889,10 @@ public class StockService {
         String sourceId = dto.sourceId != null ? dto.sourceId : ledgerCode;
         insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, null, null, moveType, currentQty, delta,
                 counted, unitCost, unitCost.multiply(delta.abs()), sourceType, sourceId, dto.notes,
-                dto.responsibleById, dto.approvedById);
+                dto.responsibleById, dto.approvedById, deltaMode ? trace(dto, product, deltaIn, dto.deltaQuantity)
+                        : trace(dto, product, counted, dto.countedQuantity));
         stockPosting.postAdjustment(dto.productId, delta, unitCost, Instant.now(), sourceType, sourceId,
-                "Stock adjustment · " + str(product, "name"));
+                "Stock adjustment · " + str(product, "name"), dto.openingBalance);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -900,7 +964,8 @@ public class StockService {
         BigDecimal absQty = delta.abs();
         if (totalValue.signum() > 0) {
             stockPosting.postAdjustment(dto.productId, delta, Money.div(totalValue, absQty), Instant.now(), sourceType,
-                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name"));
+                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name"),
+                    dto.openingBalance);
         }
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
@@ -930,11 +995,14 @@ public class StockService {
         if (lookups.location(dto.toLocationId) == null) {
             throw ApiException.notFound("Destination location not found");
         }
-        requireVariant(product, dto.variantId, dto.fromLocationId);
-        BigDecimal qty = dto.quantity;
-        if (qty.signum() <= 0) {
+        requireVariant(product, dto.variantId, dto.fromLocationId, VariantRule.EXISTING);
+        product = withVariantCost(product, dto.variantId);
+        if (dto.quantity.signum() <= 0) {
             throw ApiException.badRequest("Quantity must be positive");
         }
+        // Phase I1b (audit U-3): a transfer that names a unit (e.g. a sales return moving 2 boxes to quarantine) moves
+        // its base quantity; stock documents keep sending base units (ADR-S003).
+        BigDecimal qty = toBaseQty(product, dto, dto.quantity);
         boolean serialTracking = bool(product, "serialTracking");
         if (serialTracking) {
             assertWholeSerialQuantity(str(product, "name"), qty);
@@ -1103,10 +1171,10 @@ public class StockService {
         BigDecimal newToQty = dec(toItem, "quantity");
         String outRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.fromLocationId, null, null,
                 "transfer_out", fromBefore, qty.negate(), newFromQty, carriedUnit, carriedValue, dto.sourceType,
-                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById);
+                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
         String inRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.toLocationId, null, null,
                 "transfer_in", newToQty.subtract(qty), qty, newToQty, carriedUnit, carriedValue, dto.sourceType,
-                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById);
+                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
         // LC-1 (ADR-S053): the units of the out row are the units of the in row — landed cost follows them.
         jdbc.sql("INSERT INTO \"InventoryTransferLineage\" (id, \"organizationId\", \"transferId\","
                         + " \"sourceLedgerId\", \"destinationLedgerId\", quantity) VALUES (?, ?, ?, ?, ?, ?)")
@@ -1115,7 +1183,7 @@ public class StockService {
             stockPosting.postTransfer(dto.productId, carriedValue, dto.fromLocationId, dto.toLocationId, Instant.now(),
                     dto.sourceType != null ? dto.sourceType : "stock_transfer",
                     dto.sourceId != null ? dto.sourceId : ledgerCode,
-                    "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(dto.quantity));
+                    "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(qty));
         }
         postCostCorrection(org, dto.productId, str(product, "name"), batchTracking ? layerCorrection
                         : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
@@ -1125,12 +1193,12 @@ public class StockService {
         payload.put("productId", dto.productId);
         payload.put("locationId", dto.toLocationId);
         payload.put("ledgerCode", ledgerCode);
-        payload.put("quantity", JsNumbers.dec(dto.quantity));
+        payload.put("quantity", JsNumbers.dec(qty));
         events.publishOnCommit("stock.transferred", payload);
         audit.recordInTx(AuditInput.of("StockItem", from.id(), "transfer", null,
                 Obj.of("productId", dto.productId, "fromLocationId", dto.fromLocationId, "toLocationId",
-                        dto.toLocationId, "quantity", JsNumbers.js(dto.quantity), "ledgerCode", ledgerCode)));
-        return new Transferred(ledgerCode, dto.quantity, dto.fromLocationId, dto.toLocationId, layers, carriedUnit);
+                        dto.toLocationId, "quantity", JsNumbers.js(qty), "ledgerCode", ledgerCode)));
+        return new Transferred(ledgerCode, qty, dto.fromLocationId, dto.toLocationId, layers, carriedUnit);
     }
 
     // ================================================================== helpers
@@ -1168,9 +1236,26 @@ public class StockService {
         return new BigDecimal[] {baseQty, factor.signum() > 0 ? Money.div(unitCost, factor) : unitCost};
     }
 
+    /**
+     * {@code quantity} of {@code dto}'s unit (snapshot factor first, else the live conversion) in base units, sign kept;
+     * unchanged when the move names no unit.
+     */
+    private BigDecimal toBaseQty(Map<String, Object> product, StockMove dto, BigDecimal quantity) {
+        if ((dto.uomId == null && dto.uomFactor == null) || quantity.signum() == 0) {
+            return quantity;
+        }
+        BigDecimal base = toBaseQtyCost(product, dto.uomId, dto.uomFactor, quantity.abs(), Money.ZERO)[0];
+        return quantity.signum() < 0 ? base.negate() : base;
+    }
+
+    /** The advisory-lock key of one quant (shared with {@link LayerCostWriter}). */
+    static String quantLockKey(String org, String productId, String variantKey, String locationId) {
+        return "avco:" + org + ":" + productId + ":" + variantKey + ":" + locationId;
+    }
+
     /** Transaction-scoped advisory lock serialising one quant's AVCO recompute (first half of the quant lock). */
     private void lockQuantForAvco(String org, String productId, String variantKey, String locationId) {
-        String key = "avco:" + org + ":" + productId + ":" + variantKey + ":" + locationId;
+        String key = quantLockKey(org, productId, variantKey, locationId);
         jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param(key).query().listOfRows();
     }
 
@@ -1322,18 +1407,45 @@ public class StockService {
     private String insertLedger(String org, String ledgerCode, String productId, String variantId, String locationId,
             String batchId, String serialId, String type, BigDecimal qtyBefore, BigDecimal change, BigDecimal after,
             BigDecimal unitCost, BigDecimal totalValue, String referenceType, String referenceId, String notes,
-            String responsibleById, String approvedById) {
+            String responsibleById, String approvedById, Trace trace) {
         String id = UUID.randomUUID().toString();
+        BigDecimal factor = trace == null ? null : trace.factor();
+        BigDecimal docQty = factor == null || factor.signum() == 0 ? null
+                : change.divide(factor, 6, RoundingMode.HALF_UP);
         jdbc.sql("INSERT INTO \"InventoryLedger\" (id, \"organizationId\", \"ledgerCode\", \"productId\", \"variantId\","
                         + " \"locationId\", \"batchId\", \"serialId\", type, \"qtyBefore\", \"quantityChange\","
                         + " \"balanceAfter\", \"unitCost\", \"totalValue\", \"referenceType\", \"referenceId\", notes,"
-                        + " \"performedBy\", \"responsibleById\", \"approvedById\", \"createdAt\") VALUES (?, ?, ?, ?, ?,"
-                        + " ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ")")
+                        + " \"performedBy\", \"responsibleById\", \"approvedById\", \"docUomId\", \"uomFactor\","
+                        + " \"docQuantity\", \"sourceLineId\", \"createdAt\") VALUES (?, ?, ?, ?, ?,"
+                        + " ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ")")
                 .params(id, org, ledgerCode, productId, variantId, locationId, batchId,
                         serialId, type, qtyBefore, change, after, unitCost, totalValue, referenceType, referenceId,
-                        notes, TenantContext.userId(), responsibleById, approvedById)
+                        notes, TenantContext.userId(), responsibleById, approvedById,
+                        trace == null ? null : trace.docUomId(), factor, docQty,
+                        trace == null ? null : trace.sourceLineId())
                 .update();
         return id;
+    }
+
+    /** Phase I2 (audit R-1): the document unit, factor and line a ledger row records. */
+    private record Trace(String docUomId, BigDecimal factor, String sourceLineId) {}
+
+    /**
+     * The trace of a move of {@code docQty} document units that became {@code baseQty} stock units: the caller's unit
+     * and frozen factor when given, the stock unit at factor 1 for a base-unit move, else the factor actually applied.
+     */
+    private static Trace trace(StockMove dto, Map<String, Object> product, BigDecimal baseQty, BigDecimal docQty) {
+        if (dto.traceFactor != null) {
+            return new Trace(dto.traceUomId, dto.traceFactor, dto.sourceLineId);
+        }
+        String base = product == null ? null : str(product, "uomId");
+        if ((dto.uomId == null || dto.uomId.equals(base)) && dto.uomFactor == null) {
+            return new Trace(base, BigDecimal.ONE, dto.sourceLineId);
+        }
+        BigDecimal factor = dto.uomFactor != null ? dto.uomFactor
+                : baseQty != null && docQty != null && docQty.signum() != 0
+                        ? baseQty.abs().divide(docQty.abs(), 10, RoundingMode.HALF_UP) : null;
+        return new Trace(dto.uomId != null ? dto.uomId : base, factor, dto.sourceLineId);
     }
 
     private static String joinNotes(String... parts) {

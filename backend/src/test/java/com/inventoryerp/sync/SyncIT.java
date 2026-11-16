@@ -3,6 +3,11 @@ package com.inventoryerp.sync;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockService;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
+import com.inventoryerp.pos.application.PosInvoiceService;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -18,6 +23,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
+import org.springframework.beans.factory.annotation.Autowired;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -28,6 +34,12 @@ import tools.jackson.databind.JsonNode;
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SyncIT extends ApiTestSupport {
+
+    @Autowired
+    StockService stock;
+
+    @Autowired
+    PosInvoiceService billing;
 
     String token;
     String deviceId;
@@ -334,6 +346,44 @@ class SyncIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Phase I2 V-4: a device count of a product with variants counts one variant; without a variant it is"
+            + " refused (dead letter), never a 409 retry loop")
+    void stockCountPerVariant() {
+        String location = pinPosWarehouse();
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String shirt = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"hasVariants\", \"updatedAt\") VALUES (?, ?, ?, ?,"
+                + " 'stockable', true, 'AVCO', 40, 100, true, now())").params(shirt, demoOrg, "SV-" + suffix,
+                        "Shirt " + suffix).update();
+        String red = UUID.randomUUID().toString();
+        String blue = UUID.randomUUID().toString();
+        for (String[] v : new String[][] {{red, "Red"}, {blue, "Blue"}}) {
+            jdbc.sql("INSERT INTO \"ProductVariant\" (id, \"organizationId\", \"productId\", name, \"combinationKey\","
+                    + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, now())").params(v[0], demoOrg, shirt, v[1], v[0]).update();
+        }
+        JsonNode count = push(List.of(op("stock.count", Map.of("locationId", location, "reason", "Shelf count",
+                "lines", List.of(Map.of("productId", shirt, "variantId", red, "countedQty", 6))))));
+        assertThat(count.get("results").get(0).get("status").asString()).as(count.toString()).isEqualTo("applied");
+        assertThat(jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ? AND"
+                + " \"variantKey\" = ? AND \"locationId\" = ?").params(shirt, red, location).query(BigDecimal.class)
+                .single()).isEqualByComparingTo("6");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"StockItem\" WHERE \"productId\" = ? AND \"variantKey\" = ?")
+                .params(shirt, blue).query(Long.class).single()).as("blue was not counted, so not zeroed").isZero();
+
+        JsonNode noVariant = push(List.of(op("stock.count", Map.of("locationId", location, "lines", List.of(Map.of(
+                "productId", shirt, "countedQty", 3))))));
+        assertThat(noVariant.get("results").get(0).get("status").asString()).as(noVariant.toString())
+                .isEqualTo("failed");
+        assertThat(noVariant.toString()).contains("Choose a variant for");
+        // Audit S-5: the refused count leaves no draft count behind (start, draft and submit are one transaction).
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryCountSession\" s WHERE s.\"organizationId\" = ? AND"
+                + " s.status = 'draft' AND s.\"deletedAt\" IS NULL AND EXISTS (SELECT 1 FROM \"InventoryCountLine\" l"
+                + " WHERE l.\"sessionId\" = s.id AND l.\"productId\" = ?)").params(demoOrg, shirt).query(Long.class)
+                .single()).as("no open count left by the refused op").isZero();
+    }
+
+    @Test
     @DisplayName("push validation answers class-validator messages after the device guard")
     void validation() {
         Res bad = device("POST", "/sync/push", Map.of("deviceId", deviceId, "ops", List.of(Map.of("opId", "x",
@@ -351,5 +401,66 @@ class SyncIT extends ApiTestSupport {
     @DisplayName("authorization matrix: 8 routes (pull / push are public, device-authenticated)")
     void authorization() {
         assertThat(assertAuthorizationMatrix("com.inventoryerp.sync")).isEqualTo(8);
+    }
+
+    @Test
+    @DisplayName("Decision 1: an offline sale whose sales unit does not convert is kept; its stock posting is held"
+            + " until the unit converts, then posts once")
+    void offlineSaleWithUnconvertibleUnitIsHeld() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String kg = jdbc.sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND code = 'KG'").param(demoOrg)
+                .query(String.class).single();
+        String bag = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, 'Sack', 'unit', 1, 1, 1, now())")
+                .params(bag, demoOrg, "SACK-" + suffix).update();
+        String flour = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"uomId\", \"salesUomId\", \"updatedAt\") VALUES"
+                + " (?, ?, ?, ?, 'stockable', true, 'AVCO', 2, 100, ?, ?, now())").params(flour, demoOrg, "FLR-" + suffix,
+                        "Flour " + suffix, kg, bag).update();
+        String warehouse = pinPosWarehouse();
+        TenantContext.run(TenantStore.organization(demoOrg), () -> stock.receive(StockMove.of(flour, warehouse,
+                BigDecimal.valueOf(100)).unitCost(BigDecimal.valueOf(2))));
+        String register = ok(201, "POST", "/cash-registers", Map.of("code", "HREG-" + suffix, "name", "Hold till "
+                + suffix)).get("id").asString();
+        try {
+            String session = "sess-" + UUID.randomUUID();
+            JsonNode res = push(List.of(
+                    op("cash_session.open", Map.of("clientId", session, "cashRegisterId", register, "openingFloat", 0)),
+                    op("sale.checkout", Map.of("clientId", "sale-" + UUID.randomUUID(), "cashSessionId", session,
+                            "lines", List.of(Map.of("productId", flour, "description", "Flour", "quantity", 2,
+                                    "unitPrice", 100)), "tenders", List.of(Map.of("method", "cash", "amount", 200))))));
+            JsonNode sale = res.get("results").get(1);
+            assertThat(sale.get("status").asString()).as("the offline sale is kept: " + sale).isEqualTo("applied");
+            String invoiceId = sale.get("mapping").get("invoiceId").asString();
+            Map<String, Object> item = jdbc.sql("SELECT \"uomId\", \"uomFactor\", quantity FROM \"InvoiceItem\" WHERE"
+                    + " \"invoiceId\" = ?").param(invoiceId).query().singleRow();
+            assertThat(item.get("uomId")).as("original unit kept").isEqualTo(bag);
+            assertThat(item.get("uomFactor")).as("no factor: posting held").isNull();
+
+            String jobId = jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                    .query(String.class).single();
+            TenantContext.run(TenantStore.organization(demoOrg), () -> billing.processStockPostingJob(jobId));
+            assertThat(jdbc.sql("SELECT status::text FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                    .query(String.class).single()).as("held, not done").isIn("pending", "failed");
+            assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryException\" WHERE \"invoiceId\" = ? AND status = 'open'")
+                    .param(invoiceId).query(Long.class).single()).as("visible to an operator").isEqualTo(1);
+            assertThat(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ?")
+                    .param(flour).query(BigDecimal.class).single()).as("nothing moved 1:1").isEqualByComparingTo("100");
+
+            // The unit is configured (a sack holds 25 kg): the retried posting issues 2 sacks = 50 kg, once.
+            ok(200, "PATCH", "/products/" + flour, Map.of("units", List.of(Map.of("uomId", bag, "factor", 25,
+                    "isPurchase", false, "isSales", true))));
+            ok(201, "POST", "/pos/posting-monitor/jobs/" + jobId + "/retry", null);
+            TenantContext.run(TenantStore.organization(demoOrg), () -> billing.processStockPostingJob(jobId));
+            TenantContext.run(TenantStore.organization(demoOrg), () -> billing.processStockPostingJob(jobId));
+            assertThat(jdbc.sql("SELECT status::text FROM \"StockPostingJob\" WHERE id = ?").param(jobId)
+                    .query(String.class).single()).isEqualTo("done");
+            assertThat(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ?")
+                    .param(flour).query(BigDecimal.class).single()).isEqualByComparingTo("50");
+        } finally {
+            forceCloseSessions(List.of(register));
+        }
     }
 }

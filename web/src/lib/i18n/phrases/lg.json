@@ -2144,6 +2144,7 @@
   "Choose the transporter": "Londa omutambuza",
   "Choose the truck": "Londa loole",
   "Choose the vehicle": "Londa ekidduka",
+  "Choose variant…": "Londa ekika…",
   "Choose weighted average or FIFO as an approved accounting policy. A method change takes effect on its date and re-costs stock without changing its total value.": "Londa weighted average oba FIFO ng'enkola y'okubala ekkiriziddwa. Enkyukakyuka y'enkola etandika ku lunaku lwayo era eddamu okubalirira sitoowa awatali kukyusa muwendo gwayo gwonna.",
   "Choose where sold stock is taken from": "Londa sitoowa etundiddwa gy'eggyibwa",
   "Choose which optional pages appear under Point of Sale in the sidebar. Hidden pages stay reachable by URL for users with permission.": "Londa empapula ez'okwesalirawo ezirabika wansi w'Ekifo ky'okutunda mu kibali. Empapula ezikwekeddwa zituukibwako ku URL abalina olukusa.",
@@ -3913,6 +3914,7 @@
   "Discard this exception": "Gyawo ekyenjawulo kino",
   "Discard this operation": "Gyawo ekikolwa kino",
   "Discard…": "Suula…",
+  "Discarded": "Kisuuliddwa",
   "Disconnect": "Ggyawo okugatta",
   "Discount": "Okukendeeza",
   "Discount (": "Okukendeeza (",
@@ -13496,5 +13498,7 @@
   "No delivery note yet.": "Tewannabaawo kiwandiiko kya kutuusa.",
   "The delivery note is numbered once the document is saved.": "Ekiwandiiko ky'okutuusa kifuna ennamba ng'ekiwandiiko kiterekeddwa.",
   "Each delivery gets a numbered delivery note when it is dispatched.": "Buli kutuusa kufuna ekiwandiiko ky'okutuusa ekirina ennamba nga kusindikiddwa.",
-  "Theme": "Endabika"
+  "Theme": "Endabika",
+  "No conversion for this unit — enter the price": "Ekipimo kino tekirina nkyusa — yingiza omuwendo",
+  "Saved as a draft, but posting failed: {{error}}": "Kiterekeddwa ng'ekiwandiiko, naye okuwandiika kugaanye: {{error}}"
 }

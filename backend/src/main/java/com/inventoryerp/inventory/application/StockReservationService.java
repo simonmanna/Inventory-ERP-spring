@@ -68,6 +68,21 @@ public class StockReservationService {
                         TenantContext.userId()));
     }
 
+    /**
+     * Release a source's active reservations on every cell other than ({@code productId}, {@code variantId},
+     * {@code locationId}): the source line moved to another product, variant or location, so its old cell must not
+     * stay reserved (review N2). Returns how many were released.
+     */
+    @Transactional
+    public int releaseOtherCells(String sourceType, String sourceId, String productId, String variantId,
+            String locationId) {
+        return jdbc.sql("UPDATE \"StockReservation\" SET status = 'released'::\"StockReservationStatus\", \"releasedAt\" = "
+                + NOW + ", \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ?"
+                + " AND status = 'active' AND NOT (\"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" IS NOT DISTINCT"
+                + " FROM ?)").params(TenantContext.organizationId(), sourceType, sourceId, productId,
+                        variantId == null ? "" : variantId, locationId).update();
+    }
+
     /** Release every active reservation of a source. */
     @Transactional
     public Map<String, Object> release(String sourceType, String sourceId) {

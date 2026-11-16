@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.core.application.UomConversionService.UnitRole;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.core.application.UomConversionService;
@@ -80,11 +81,14 @@ public class DebitNotesService {
     private final AccountDeterminationService determination;
     private final StockService stock;
     private final TransactionTemplate tx;
+    private final ProductVariantService variants;
 
     public DebitNotesService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, PostingService posting, AccountDeterminationService determination,
-            StockService stock, PlatformTransactionManager txm, UomConversionService units) {
+            StockService stock, PlatformTransactionManager txm, UomConversionService units,
+            ProductVariantService variants) {
         this.jdbc = jdbc;
+        this.variants = variants;
         this.units = units;
         this.sequence = sequence;
         this.events = events;
@@ -115,6 +119,10 @@ public class DebitNotesService {
             subtotal = subtotal.add(ln.quantity().multiply(ln.unitPrice()));
         }
         BigDecimal sub = subtotal;
+        // Phase I2 (D2, audit V-8): a returned variant must be the product's own (archived allowed: the stock exists).
+        for (LineInput ln : input.lines()) {
+            variants.assertOwn(ln.productId(), ln.variantId());
+        }
         // Returned quantities are in the line unit (default: the product's purchase unit), frozen with its factor.
         List<LineUnit> lineUnits = new ArrayList<>();
         for (LineInput ln : input.lines()) {

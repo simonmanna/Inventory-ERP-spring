@@ -37,3 +37,21 @@ The word *dimensions* already means analytic dimensions (ADR-S025, `DocumentLine
 - Fleet delivery orders, returns and credit notes created from documents carry the quantity, not the size.
 - Fix found on the way: quotation approval now authorizes variant lines at the variant price (a cheaper variant was
   counted as a discount on the product price).
+
+## Addendum (Phase I2, audit U-10, 2026-11-15)
+
+A sized line's quantity is in m / m² / m³, but the document builder used to apply the line's unit factor on top (the
+product's sales pack, or an explicit unit), so a kerb sold in bundles of 6 m moved 6× the stock. Now:
+
+- `ProductSizingService#lineUnit` gives every sized line the organization's metric unit of the mode (code `M`, `M2`
+  or `M3`) with its factor to the product's stock unit (1 when the stock unit is that unit; 1000 for `M3` over `L`).
+  The builder uses it instead of the requested or default sales unit. A copied sized line keeps its frozen factor only
+  when it is already in that metric unit (U-5).
+- `PUT /products/:id/sizing` refuses a sizing mode whose metric unit does not convert to the product's stock unit:
+  "`<name>` is counted in `<code>`, which does not convert to m: a product sold by length needs a length stock unit".
+- Unchanged: a product without a stock unit, or an organization without that metric unit (no `M2` is seeded), keeps
+  the old behaviour (the size is in the stock unit, factor 1).
+- Sales orders now pass the stored size to the builder (it was dropped there), quotations save the builder's unit for
+  sized lines.
+
+Test: `ProductSizingIT.sizedLinesAreNotScaledTwice`.

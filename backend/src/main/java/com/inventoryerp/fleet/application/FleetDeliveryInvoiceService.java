@@ -118,7 +118,7 @@ public class FleetDeliveryInvoiceService {
         boolean goods = o.get("goodsInvoiceId") == null;
         if (goods) {
             for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT ol.\"productId\", ol.description,"
-                    + " ol.\"uomId\", ol.\"unitPrice\", ol.\"discountPercent\", ol.\"taxId\", p.name, COALESCE(SUM(ll.\"billableQty\")"
+                    + " ol.\"uomId\", ol.\"uomFactor\", ol.\"variantId\", ol.\"unitPrice\", ol.\"discountPercent\", ol.\"taxId\", p.name, COALESCE(SUM(ll.\"billableQty\")"
                     + " FILTER (WHERE t.status IN ('delivered', 'closed', 'returned')), 0) AS qty FROM"
                     + " \"FleetDeliveryOrderLine\" ol JOIN \"Product\" p ON p.id = ol.\"productId\" LEFT JOIN"
                     + " \"FleetLoadLine\" ll ON ll.\"deliveryOrderLineId\" = ol.id LEFT JOIN \"FleetLoad\" t ON t.id ="
@@ -129,10 +129,14 @@ public class FleetDeliveryInvoiceService {
                     continue;
                 }
                 String desc = l.get("description") == null ? (String) l.get("name") : (String) l.get("description");
-                lines.add(LineInput.of((String) l.get("productId"), null, desc + " (delivery " + code + ")", qty,
+                // Phase I2 U-5: the invoice line keeps the delivery line's variant and the unit factor frozen on it.
+                lines.add(new LineInput((String) l.get("productId"), null, (String) l.get("variantId"), null, null,
+                        desc + " (delivery " + code + ")", qty,
                         l.get("unitPrice") == null ? null : SqlRows.dec(l, "unitPrice"),
-                        l.get("discountPercent") == null ? null : SqlRows.dec(l, "discountPercent"),
-                        (String) l.get("taxId"), null, (String) l.get("uomId")));
+                        l.get("discountPercent") == null ? null : SqlRows.dec(l, "discountPercent"), null, null, null,
+                        null, (String) l.get("taxId"), null, null, (String) l.get("uomId"))
+                        .withUnitSnapshot((String) l.get("uomId"), l.get("uomFactor") == null ? null
+                                : SqlRows.dec(l, "uomFactor")));
             }
         }
         DeliveryChargeCalculator.Charge charge = null;
@@ -159,7 +163,7 @@ public class FleetDeliveryInvoiceService {
         Instant delivered = db.jdbc().sql("SELECT MAX(\"deliveredAt\") FROM \"FleetLoad\" WHERE \"organizationId\" = ? AND"
                 + " \"deliveryOrderId\" = ?").params(FleetDb.org(), deliveryOrderId).query(java.sql.Timestamp.class)
                 .optional().map(java.sql.Timestamp::toInstant).orElse(null);
-        Map<String, Object> inv = invoices.create(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
+        Map<String, Object> inv = invoices.createCopied(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
                 null, null, null, null, null, delivered == null ? null : JsonConfig.toJsIso(delivered), address, null,
                 null, code, null, null, code, "Delivery order " + code + (o.get("sourceNumber") == null ? ""
                         : " (from " + o.get("sourceNumber") + ")"), lines));

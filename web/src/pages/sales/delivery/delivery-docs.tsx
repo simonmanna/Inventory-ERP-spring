@@ -50,11 +50,13 @@ export interface NoteLine { id: string; name: string; uom: string | null; ordere
  */
 export function DeliveryNotePreview({
   number, sourceLabel, sourceNumber, customer, address, contact, shippingDate, scheduledDate, deadline, receivedBy, lines,
-  onPrint, onDownload, hint,
+  onPrint, onDownload, hint, footnote,
 }: {
   number: string | null; sourceLabel: string; sourceNumber?: string | null; customer?: string | null; address?: string | null;
   contact?: string | null; shippingDate?: string | null; scheduledDate?: string | null; deadline?: string | null;
   receivedBy?: string | null; lines: NoteLine[]; onPrint?: () => void; onDownload?: () => void; hint?: string;
+  /** Extra line under the receipt (Phase A A2: the customer's weighing). */
+  footnote?: string | null;
 }) {
   const company = useAuthStore((s) => s.organization?.name);
   const anyReturned = lines.some((l) => n(l.returned) > 0);
@@ -106,6 +108,7 @@ export function DeliveryNotePreview({
         <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">
           {receivedBy ? `${tx('Received by')} ${receivedBy}` : `${tx('Received in good order by')}: ________________   ${tx('Signature')}: ____________`}
         </p>
+        {footnote && <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{footnote}</p>}
       </article>
     </div>
   );

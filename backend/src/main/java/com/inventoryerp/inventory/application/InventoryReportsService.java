@@ -327,16 +327,16 @@ public class InventoryReportsService {
                 spec = spec.param("loc", q.get("locationId"));
             }
             for (Map<String, Object> si : spec.query().listOfRows()) {
-                String pid = (String) si.get("productId");
-                BigDecimal qty = d(si.get("quantity"));
-                onHand.merge(pid, qty, BigDecimal::add);
-                if (qty.signum() <= 0) {
-                    continue;
-                }
-                BigDecimal[] a = costAgg.computeIfAbsent(pid, k -> new BigDecimal[] {Money.ZERO, Money.ZERO});
-                a[0] = a[0].add(qty);
-                a[1] = a[1].add(qty.multiply(d(si.get("runningAverageCost"))));
+                onHand.merge((String) si.get("productId"), d(si.get("quantity")), BigDecimal::add);
             }
+            // Phase I2 (audit C-2): unit cost from the value by costing method (FIFO lots, serials, STANDARD), not the
+            // running average that FIFO and STANDARD receipts never set.
+            accountingValuation.qtyAndValueByProduct(universe, notBlank(q.get("locationId")) ? q.get("locationId") : null)
+                    .forEach((pid, qv) -> {
+                        if (qv[0].signum() > 0) {
+                            costAgg.put(pid, qv);
+                        }
+                    });
         }
         Map<String, Agg> aggs = new HashMap<>();
         for (Map<String, Object> g : typed) {

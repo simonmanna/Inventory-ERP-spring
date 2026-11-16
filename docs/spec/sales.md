@@ -480,3 +480,63 @@ Sales stores no ticket data. Plan: Phase A (A1 → A4), owner-approved 2026-11-1
   the `SalesOrder` id into `salesOrderId`, but the check looked in the POS `"Order"` table. The check now accepts a
   `SalesOrder` or, as before, a POS `Order`.
 - Tests: `SalesWeighbridgeIT` and `FleetDeliveryNoteWeighLineTest`.
+
+### Customer weight evidence on the proof of delivery (Phase A2, 2026-11-16, V496)
+
+The customer's own weighing of a delivered truck is **reconciliation evidence only**. It never changes the quarry
+ticket, stock, the delivered quantity or any document. It can raise **weight claims** (discrepancy kind `weight`)
+that go through the approval engine. Plan: Phase A §7 / §11.
+
+- Routes (`sales:delivery:confirm`):
+  - `POST /sales/deliveries/{id}/customer-weight`, Idempotency-Key honoured. Body `{grossKg?, tareKg?, netKg?,
+    ticketRef?, weighedAt?, notes?, allocations?: [{loadLineId, quantity, kg?}]}`. Only after the proof of delivery
+    (400 before). Returns the delivery plus `customerWeightResult` (outcome, Q, C, V, allowed variance, proposed /
+    applied split per line).
+  - `POST /sales/deliveries/{id}/customer-weight/evidence` `{dataUrl}`: an image or PDF of the customer's ticket.
+  - `POST /sales/deliveries/{id}/confirm` accepts the same object as `customerWeight`. It is recorded after the
+    damaged / rejected quantities, so the ceiling already excludes them.
+  - Fleet mirror: `POST /fleet/trips/{id}/customer-weight` (`fleet_trip:deliver`, Idempotency-Key required) and
+    multipart `POST /fleet/trips/{id}/customer-weight-evidence`.
+- `GET /sales/deliveries/{id}` adds `customerWeight` (null before any evidence): the evidence, the frozen comparison,
+  `evidenceUrls` and `claims` (`code, loadLineId, quantity, claimKg, status, decidedAt, decisionNotes, withdrawnAt`).
+- Comparison, frozen on `FleetProofOfDelivery` when recorded:
+  - Q = the net of the ticket that fed the trip (`quarryWeightSource = ticket`), else the trip's manual gross − tare
+    (`manual`); no Q → `no_comparison`.
+  - C = customer gross − tare (gross must exceed tare; a net that disagrees is refused), or the net alone.
+  - V = Q − C. T (allowed variance) = max(Q × pct, kg) of the ticket's station, overridden by the product's own
+    weighbridge setting on a single-product truck. On the manual path there is no station: the product's setting on a
+    single-product truck, else 0.
+- **Tolerance policy:** the tolerance is an **investigation trigger, not a deduction allowance.**
+  - |V| ≤ T → `within_tolerance`: no claim.
+  - Customer heavier beyond T → `heavier`: flagged only; never an excess claim, never stock.
+  - Customer lighter beyond T → `disputed`: a pending claim for the **full** V (not V − T).
+- Split of a disputed V over the lines (`WeightAllocation`, pure):
+  - E (eligible) = max(0, min(accepted, dispatched − returned − damaged)); cap = E − the line's other pending or
+    confirmed weight claims.
+  - Shares are proportional to E × kg per unit, capped, with the overflow redistributed over the other lines. They are
+    floored to 0.001 of the line unit (load-line columns are NUMERIC(14,3); the plan said 0.000001) and the remainder
+    goes by largest remainder, ties by line number.
+  - What fits no cap, or sits on a unit without a weight conversion, is `unallocatedVarianceKg`.
+  - One weighable line → applied automatically. Several lines, or a line without a weight factor → `awaiting_split`
+    with a proposal and **no claim**, until the user sends `allocations`. Allocations are refused when a line exceeds
+    its cap, when the total kg exceeds V, or when a line without a weight factor has no `kg`.
+- Claims and resubmission:
+  - A new submission makes the pending claims match the applied split: it raises, updates (same claim, audited) or
+    withdraws. A withdrawn claim is closed as rejected with `withdrawnAt` set and its approval request cancelled; it
+    is not a decision and does not block later corrections.
+  - Once any weight claim is confirmed or dismissed: 409 "Weight claim DSC-… is already confirmed/dismissed; the
+    customer weight can no longer change it".
+  - Weight claims never auto-approve, even when the discrepancy workflow is switched off.
+  - Deciding a claim uses the existing discrepancy flow (approve lowers the line's billable quantity; reject keeps
+    it). The accepted / pending / confirmed buckets and invoiceability are A3 / A4.
+- Delivery note (PDF and on-screen preview): "Customer weight N kg (ticket …) · quarry Q kg · variance V kg —
+  outcome" under the receipt line.
+- Web: an optional "The customer weighed the truck" section in Confirm delivery, and a customer-weight panel on the
+  proof-of-delivery tab (comparison, outcome, claims, evidence). The panel's dialog records or corrects the weight
+  and confirms a split.
+- Migration `V496__pod_customer_weight.sql`: nullable POD columns plus CHECKs, discrepancy kind `weight`, `claimKg`,
+  `withdrawnAt`. V490–V495 are taken on other branches, so renumber at merge if needed. The entities caught up on 24
+  `FleetLoad` and 2 `FleetLoadLine` columns that were missing from the JPA model (G10).
+- Tests: `SalesCustomerWeightIT` (within tolerance on confirm; full-variance claim; update, withdraw and re-raise;
+  decided → 409; heavier via the Fleet route; cap and unallocated; multi-product awaiting split, refusals and
+  confirmed split; 403; before POD → 400; ticket, stock and delivered quantity unchanged) and `WeightAllocationTest`.

@@ -94,6 +94,51 @@ Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md
 2. **Stock-posting drain dates COGS at the sale.** Stock moves and COGS of a drained sale use the invoice `issueDate`
    (else the order's `createdAt`); a date in a closed / locked period posts today with a ledger note.
 
+Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-variant-and-posting-integrity.md)):
+
+3. **POS product variants (V-1, V-2).**
+   - A product line's `variantId` (a `ProductVariant`, ADR-S058) is issued and restocked as that variant. Nest
+     issued the parent product.
+   - Its price is the variant's fixed price, else the product price plus the attribute extras. Nest used the fixed
+     price only.
+4. **Per-line stock posting (S-1 / R-B).**
+   - Nest ran one transaction per job with a savepoint per line. A line failing inside `StockService.issue` rolled
+     back the whole sale.
+   - Each line, and each paid modifier or accompaniment, now commits on its own together with its key in
+     `postedLineKeys`.
+   - A failed line is an open `InventoryException`, and the job stays retryable.
+5. **Kitchen waste (V-3).**
+   - A plain product is wasted in the line's sales unit and with its variant.
+   - Each line runs in its own transaction.
+   - A failure is recorded as an `InventoryException` (kind `kitchen_waste`). Nest only logged it.
+6. **POS posting timing and refund (T-1).** Built in Phase I5 (ADR-S072 addendum): an order-timed job takes its
+   order's invoice when there is one, else posts against the order (`pos_order`); refunds restock from either.
+7. **Retry a pending posting job (owner request, 2026-11-15).**
+   - `POST /pos/posting-monitor/jobs/{id}/retry` also accepts a `pending` job: it runs on the next drain with a fresh
+     attempt budget. Lines already posted stay posted once (`postedLineKeys`).
+   - Nest accepted failed jobs only. The refusal message is now "Only failed or pending jobs can be retried (this one
+     is <status>)".
+   - The retry is a compare-and-set: a job that changed in between gets 409 "Stock posting job changed while retrying
+     (now <status>); refresh and try again" (review R3).
+8. **Availability check and reservations per variant, in base units (review R2).** The `strict` / `pre_invoice` check
+   and invoice reservations use the line's product-variant quant and base-unit quantities; the "need N" in "Low stock
+   for …" is in base units. Nest read the parent product and compared sale units with base units.
+9. **Every posting runner claims the job (review R3).** The shift-close and sync close drains claim a job before
+   running it, like the worker; a job held by another runner is skipped.
+10. **A retried line closes its exception (review R4).** The line's open `InventoryException` is resolved
+    automatically (note "Posted automatically when the stock posting job retried this line") when the retry posts it.
+11. **A counter checkout fires the kitchen after its invoice (review N7).** A checkout refused at invoicing leaves an
+    unfired order; cancelling it records no kitchen waste. ADR-S072 item 10.
+12. **Offline sale with an unconvertible unit is kept (owner decision 1).** A `sale.checkout` replayed from the
+    device keeps the line's unit with no frozen factor; the availability check and reservations skip it and its stock
+    line fails at posting (retry, then quarantine with an `InventoryException`) until the unit converts. Online POS
+    still refuses such a sale. ADR-S072 addendum (decision 1).
+13. **An online sale of a product with variants names the variant (review M-9).** 400 "Choose a variant for
+    <product name>" unless the till's location still holds no-variant stock. Offline replays, rental and repair lines
+    are not checked.
+14. **A refund restocks the variant the sale issued (review M-10).** A pre-ADR-S072 sale that issued no variant
+    restocks the no-variant stock.
+
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
 - **Rental POS mode** (owner-approved): `PATCH /pos/settings` accepts `posMode` = `rental` in addition to Nest's

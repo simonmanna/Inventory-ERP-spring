@@ -174,7 +174,10 @@ public class SalesBillingService {
                         dec(it.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
                         "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
                         str(l.get("uomId")), null, dec(it.get("quantity")).compareTo(dec(l.get("quantity"))) == 0
-                                ? ProductSizingService.Sizing.stored(l) : null));
+                                ? ProductSizingService.Sizing.stored(l) : null)
+                        // Phase I2 U-5: the invoice keeps the order line's frozen unit factor.
+                        .withUnitSnapshot(str(l.get("uomId")), l.get("uomFactor") == null ? null
+                                : dec(l.get("uomFactor"))));
             }
             doc = create(o, issue, lines, "Sales order " + number);
             String docId = str(doc.get("id"));
@@ -225,7 +228,7 @@ public class SalesBillingService {
                 + " WHERE c.code = ? AND c.code <> g.\"currencyCode\"", org(), o.get("currencyCode"));
         String currencyId = currency == null ? null : str(currency.get("id"));
         BigDecimal rate = currencyId == null ? null : dec(o.get("exchangeRate"));
-        return invoices.create(new InvoiceInput(str(o.get("partnerId")), issue, null, str(o.get("paymentTermId")), null,
+        return invoices.createCopied(new InvoiceInput(str(o.get("partnerId")), issue, null, str(o.get("paymentTermId")), null,
                 null, null, str(o.get("ownerId")), null, address, str(o.get("incoterm")), null, str(o.get("number")),
                 currencyId, rate, str(o.get("customerRef")), notes, lines));
     }

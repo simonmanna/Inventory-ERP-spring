@@ -460,7 +460,7 @@ public class SalesQuotationService {
             String taxId = l.containsKey("taxId") ? str(l.get("taxId")) : price == null ? null : price.taxId();
             Boolean incl = l.get("taxInclusive") instanceof Boolean b ? b : price != null && price.taxInclusive();
             inputs.add(new LineInput(blank(productId) ? null : productId, null, null, null, null, description, qty, unit,
-                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, null, null, size));
+                    disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, uomId, null, size));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
                     ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
                     "leadTimeDays", leadTime));
@@ -499,13 +499,18 @@ public class SalesQuotationService {
                 maxDisc = maxDisc.max(BigDecimal.ONE.subtract(net.divide(list, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
             priced.add(Obj.of("quotationId", id, "productId", pl.productId(),
-                    "variantId", m.get("variantId"), "uomId", m.get("uomId"), "description", pl.description(), "quantity",
+                    "variantId", m.get("variantId"), "uomId", m.get("uomId") != null && pl.sizing() == null ? m.get("uomId") : pl.uomId(),
+                    "description", pl.description(), "quantity",
                     pl.quantity(), "listPrice", list, "unitPrice",
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "leadTimeDays", m.get("leadTimeDays"), "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(),
                     "lineTotal", pl.total()));
             priced.getLast().putAll(ProductSizingService.Sizing.columns(pl.sizing()));
+            // Phase I1b (U-1): keep the resolved factor (the column defaulted to 1 for every line).
+            if (pl.uomFactor() != null) {
+                priced.getLast().put("uomFactor", pl.uomFactor());
+            }
             i++;
         }
         insertLayoutRows(id, layout, priced);
@@ -573,7 +578,7 @@ public class SalesQuotationService {
         BigDecimal maxDisc = dec(q.get("maxDiscountPercent"));
         BigDecimal limit = dec(s.get("quoteMaxDiscountPercent"));
         // Discounts granted by price rules are pre-approved: only the part beyond the resolved price counts.
-        BigDecimal extra = extraDiscount(str(q.get("id")), str(q.get("partnerId")), (LocalDate) q.get("issueDate"));
+        BigDecimal extra = extraDiscount(q);
         if (extra.compareTo(limit) > 0) {
             reasons.add("Discount " + extra.setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
                     + "% exceeds the " + limit.stripTrailingZeros().toPlainString() + "% limit");
@@ -599,19 +604,23 @@ public class SalesQuotationService {
         return reasons;
     }
 
-    private BigDecimal extraDiscount(String id, String partnerId, LocalDate on) {
+    private BigDecimal extraDiscount(Map<String, Object> q) {
+        String partnerId = str(q.get("partnerId"));
+        LocalDate on = (LocalDate) q.get("issueDate");
         BigDecimal max = BigDecimal.ZERO;
-        for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", quantity, \"unitPrice\","
+        for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", \"uomId\", quantity, \"unitPrice\","
                 + " \"discountPercent\", \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
-                + " \"displayType\" IS NULL", id)) {
+                + " \"displayType\" IS NULL", str(q.get("id")))) {
             BigDecimal net = dec(l.get("unitPrice")).multiply(BigDecimal.ONE.subtract(dec(l.get("discountPercent"))
                     .divide(HUNDRED, 10, RoundingMode.HALF_UP)));
-            // ADR-S058: a variant line is authorized at the variant's price, not the product's
+            // ADR-S058: a variant line is authorized at the variant's price, not the product's. Audit S-7: the line is
+            // re-priced as it was priced (its unit, the quotation's site, branch, currency and agreement), so a rule
+            // or agreement price is not mistaken for a discount, nor a unit's price for one.
             BigDecimal authorized = l.get("productId") == null ? dec(l.get("unitPrice"))
-                    : l.get("variantId") != null ? engine.resolve(new SalesPricingEngine.Context(partnerId,
-                            str(l.get("productId")), dec(l.get("quantity")), null, null, null, null, on, null,
-                            str(l.get("variantId")))).price().net()
-                    : price(partnerId, str(l.get("productId")), dec(l.get("quantity")), on).net();
+                    : engine.resolve(new SalesPricingEngine.Context(partnerId, str(l.get("productId")),
+                            dec(l.get("quantity")), str(l.get("uomId")), str(q.get("siteId")), str(q.get("branchId")),
+                            str(q.get("currencyCode")), on, str(q.get("agreementId")), str(l.get("variantId")))).price()
+                            .net();
             if (authorized.signum() > 0 && net.compareTo(authorized) < 0) {
                 max = max.max(BigDecimal.ONE.subtract(net.divide(authorized, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
@@ -795,6 +804,9 @@ public class SalesQuotationService {
             for (Map<String, Object> l : lines) {
                 Map<String, Object> ol = new LinkedHashMap<>();
                 ol.put("productId", l.get("productId"));
+                // Phase I2 review N6: the quoted variant and unit carry over (Orders converts the unit to the sales unit).
+                ol.put("variantId", l.get("variantId"));
+                ol.put("uomId", l.get("uomId"));
                 ol.put("description", l.get("description"));
                 ol.put("quantity", l.get("quantity"));
                 ol.put("unitPrice", l.get("unitPrice"));
@@ -987,21 +999,6 @@ public class SalesQuotationService {
             throw ApiException.notFound("Opportunity not found");
         }
         return port.visibleOpportunity(dealId);
-    }
-
-    private QuotationPricingPort.Price price(String partnerId, String productId, BigDecimal qty, LocalDate on) {
-        QuotationPricingPort port = pricing.getIfAvailable();
-        if (port != null) {
-            return port.price(partnerId, productId, qty, on);
-        }
-        Map<String, Object> p = db.row("SELECT name, \"salesPrice\", \"taxId\", \"taxInclusive\" FROM \"Product\""
-                + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL", productId, org());
-        if (p == null) {
-            throw ApiException.notFound("Product not found");
-        }
-        BigDecimal list = dec(p.get("salesPrice"));
-        return new QuotationPricingPort.Price(list, list, BigDecimal.ZERO, "list", null, str(p.get("taxId")),
-                Boolean.TRUE.equals(p.get("taxInclusive")), str(p.get("name")));
     }
 
     String orgCurrency() {

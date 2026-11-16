@@ -123,7 +123,9 @@ export function CashSalePage() {
     setCustomer({ customerPhone: s.customerPhone ?? '', customerAddress: s.customerAddress ?? '', remarks: s.remarks ?? '' });
     setSaleDate(String(s.saleDate).slice(0, 10));
     setSalespersonId(s.salespersonId ?? '');
-    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), uomId: l.uomId ?? null, unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId, size: sizeOf(l) })));
+    setLines((s.lines ?? []).map((l) => ({ productId: l.productId, variantId: l.variantId ?? null, description: l.description, quantity: Number(l.quantity), uomId: l.uomId ?? null, unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId, size: sizeOf(l),
+      // A price the server's engine set stays automatic, so an untouched line is not resent as a manual override.
+      priceAuto: !!l.priceSource && l.priceSource !== 'manual' })));
   }, [s]);
   const activeProfiles = useMemo(() => (profiles.data ?? []).filter((p) => p.isActive), [profiles.data]);
   const profile = activeProfiles.find((p) => p.branchId === (isNew ? branchId : s?.branchId));

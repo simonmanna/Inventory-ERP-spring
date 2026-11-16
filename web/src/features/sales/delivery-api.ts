@@ -45,6 +45,40 @@ export interface SalesDelivery {
   weighbridge?: { required: boolean; feedingTicketId: string | null };
   pod?: { receiverName: string; receiverPhone: string | null; receivedAt: string; notes: string | null; signatureUrl: string | null } | null;
   photos?: Array<{ id: string; fileId: string; caption: string | null; createdAt: string; url: string | null }>;
+  /** Phase A A2: the customer's weighing (evidence + the comparison frozen when it was recorded) and its claims. */
+  customerWeight?: CustomerWeight | null;
+}
+
+export type WeightOutcome = 'within_tolerance' | 'heavier' | 'disputed' | 'awaiting_split' | 'no_comparison';
+
+export interface CustomerWeight {
+  customerGrossKg: number | string | null; customerTareKg: number | string | null; customerNetKg: number | string | null;
+  customerTicketRef: string | null; customerWeighedAt: string | null; customerWeightNotes: string | null; customerWeightAt: string | null;
+  quarryNetKg: number | string | null; quarryWeightSource: 'ticket' | 'manual' | null; weightVarianceKg: number | string | null;
+  allowedVarianceKg: number | string | null; weightWithinTolerance: boolean | null; weightOutcome: WeightOutcome | null;
+  unallocatedVarianceKg: number | string | null; evidenceUrls: Array<string | null>;
+  claims: Array<{ id: string; code: string; loadLineId: string; quantity: number | string; claimKg: number | string | null;
+    status: 'pending' | 'approved' | 'rejected'; decidedAt: string | null; decisionNotes: string | null;
+    /** Set when a corrected customer weight withdrew the claim (not a decision). */
+    withdrawnAt: string | null }>;
+}
+
+/** One line of the proposed / applied split of a disputed variance (plan §7). */
+export interface WeightSplitLine {
+  loadLineId: string; productId: string; uomId: string | null; eligibleQty: string; capQty: string; kgPerUnit: string | null;
+  proposedQty: string; proposedKg: string; capped: boolean; needsManual: boolean; appliedQty: string | null; appliedKg: string | null;
+}
+
+export interface CustomerWeightResult {
+  outcome: WeightOutcome; customerNetKg: string; quarryNetKg: string | null; quarryWeightSource: string | null;
+  varianceKg: string | null; allowedVarianceKg: string | null; withinTolerance: boolean | null;
+  unallocatedVarianceKg: string | null; lines: WeightSplitLine[];
+}
+
+/** Body of {@code customerWeight} (Sales confirm and POST /sales/deliveries/:id/customer-weight). */
+export interface CustomerWeightBody {
+  grossKg?: number; tareKg?: number; netKg?: number; ticketRef?: string; weighedAt?: string; notes?: string;
+  allocations?: Array<{ loadLineId: string; quantity: number; kg?: number }>;
 }
 
 export interface SummaryLine {

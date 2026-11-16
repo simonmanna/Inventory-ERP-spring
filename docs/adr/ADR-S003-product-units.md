@@ -78,3 +78,56 @@ Status: built, **not compiled or run**.
 Limits: a truckload is one size per product, so a real load is still measured by the weighbridge; the snapshot on a line
 is what the document holds. Quotation lines (`crm`) have no unit yet.
 
+
+## Addendum (Phase I1b, 2026-11-15): no silent factor 1
+
+Source: `docs/audits/2026-11-15-sales-variant-uom-inventory-audit.md`, findings U-1, U-2, U-3 and A-5.
+
+1. **A line whose unit cannot be converted is refused.**
+   - A sales order, cash sale or quotation line in a named unit with no resolvable factor now gets the conversion's
+     own 400: "No conversion from <unit> to <unit> …" (different categories, no density bridge), or "Unit <code> is
+     not enabled for sales on product <name>". Before, it was saved with factor 1 and stock moved 1:1 in the wrong
+     unit. (Corrected by the 2026-11-15 review: the message "The unit of measure of <description> could not be
+     resolved" that this addendum first quoted is only reachable for a deleted product.)
+   - A line in the base unit, or one with no unit, still saves factor 1.
+   - Quotation lines now store the resolved unit and factor (they kept the DB default of 1).
+   - `DocumentBuilderService.lineUnit` (invoices, vendor bills, credit notes) no longer swallows that 400 and keeps no
+     snapshot.
+   - Old rows with a null factor keep the live conversion fallback. Only new writes are strict.
+2. **The bill↔receipt matcher converts.** A bill or receipt line with no saved factor uses the live factor (the line's
+   unit, else the product's purchase unit) instead of a ratio of 1. The matcher multiplies before it divides, so whole
+   units stay exact.
+3. **`StockService.adjust` and `transfer` convert a named unit to base units** (snapshot factor first, else the live
+   conversion), the same way `receive` and `issue` do.
+   - Stock documents (adjustments, transfers, direct stock) still send base units and name no unit, so they are
+     unchanged.
+   - A sales return moving 2 boxes of 12 to quarantine now moves 24, not 2.
+   - Return quarantine and damaged transfers record `sourceType = sales_return` (A-5).
+
+Tests: `ProductUnitsIT` (`unconvertibleDefaultUnitIsRefused`, `legacyReceiptLineMatchesInBaseUnits`,
+`transferAndAdjustInANamedUnit`).
+
+**Review fix R1 (2026-11-15).** I1b made quotation lines store the resolved unit, but the quotation built its line
+without the requested unit, so the product's default sales unit replaced the one the user picked (2 boxes of 24 were
+saved as 2 pieces, and the sales order made from it delivered 2 pieces). The quotation now passes the requested unit
+to the builder and stores it with its factor; a unit the product does not sell in is refused. Test:
+`ProductUnitsIT.quotationKeepsRequestedUnit`.
+
+## Addendum: owner decision D1 in the sales pricing engine (Phase I4, audit P-2, 2026-11-15)
+
+`Product.salesPrice` is the price per **default sales unit** (this ADR's original rule). The invoice builder and the web
+already priced that way; the sales pricing engine (`SalesPricingEngine.price`, used by quotations, sales orders, cash
+sales and every `quote()` caller) treated it as a base-unit price and multiplied it by the line unit's factor: a box of
+24 at 240 was quoted 5,760. The engine now uses the same rule (ADR-S058 "Variant pricing and precedence"):
+
+- a line in the default sales unit, or with no unit, is priced at `salesPrice` (a line without a unit is in the
+  default sales unit for every tier, as on documents);
+- another unit takes its `ProductUom.salePrice` when set (not for a variant line), else `salesPrice × factor(unit) /
+  factor(default sales unit)`.
+
+Pricelist, promotion, agreement and CRM tier values are unchanged (they state their own unit or the base unit). Saved
+document prices are not recomputed: historical invoice values do not change. Products whose sales unit is their base
+unit (the usual case) price exactly as before.
+
+Test: `VariantPricingIT.salesPriceIsPerSalesUnit` ("sales order line in BOX where salesUomId = BOX is priced at
+salesPrice").

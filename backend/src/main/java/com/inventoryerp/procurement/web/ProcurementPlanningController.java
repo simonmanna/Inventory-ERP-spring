@@ -47,7 +47,7 @@ public class ProcurementPlanningController {
             @Min(value = 0, message = "leadTimeDays must not be less than 0")
             @Max(value = 365, message = "leadTimeDays must not be greater than 365") Integer leadTimeDays,
             @Positive(message = "orderMultiple must be a positive number") BigDecimal orderMultiple,
-            String preferredSupplierId, Boolean autoRaise, Boolean isActive) {}
+            String preferredSupplierId, Boolean autoRaise, Boolean isActive, String variantId) {}
 
     public record RaiseRequest(List<String> ruleIds) {}
 
@@ -80,7 +80,7 @@ public class ProcurementPlanningController {
     public Map<String, Object> upsertRule(@Valid @RequestBody RuleRequest dto) {
         return replenishment.upsert(new RuleInput(dto.productId(), dto.locationId(), dto.branchId(), dto.method(),
                 dto.minQuantity(), dto.maxQuantity(), dto.safetyStock(), dto.leadTimeDays(), dto.orderMultiple(),
-                dto.preferredSupplierId(), dto.autoRaise(), dto.isActive()));
+                dto.preferredSupplierId(), dto.autoRaise(), dto.isActive(), dto.variantId()));
     }
 
     @DeleteMapping("/replenishment/rules/{id}")

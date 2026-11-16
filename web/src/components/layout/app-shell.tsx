@@ -408,6 +408,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/pos/kds', label: tx('Kitchen Display'), icon: ChefHat, permission: PERMISSIONS.pos.kds, posVisibility: 'showKitchenDisplay' },
       { to: '/pos/reports', label: tx('POS Reports'), icon: BarChart3, permission: PERMISSIONS.pos.reports, reportId: POS_REPORT_TAB_IDS, group: 'Reporting' },
       { to: '/pos/kds-reports', label: tx('Kitchen Reports'), icon: BarChart3, permission: PERMISSIONS.pos.reports, reportId: 'pos.kds', posVisibility: 'showKitchenReports', group: 'Reporting' },
+      { to: '/inventory/posting-monitor', label: tx('Posting monitor'), icon: ListChecks, permission: PERMISSIONS.pos.reports, group: 'Reporting' },
       // F13 — combo authoring hidden while combo selling is paused (the POS
       // checkout guard rejects combo lines). Route kept for when it is finished.
       { to: '/menu', label: tx('Menu'), icon: Coffee, permission: PERMISSIONS.menu.view, group: 'Configuration', posModes: ['cafe'] },

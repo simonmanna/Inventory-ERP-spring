@@ -486,6 +486,21 @@ public class ApprovalsService {
         return rows.isEmpty() ? null : withIncludes(rows.getFirst());
     }
 
+    /**
+     * Withdraw a still-pending request because the thing it asks about no longer needs a decision (Phase A A2: a
+     * weight claim superseded by corrected customer evidence). No-op when it is already resolved; audited.
+     */
+    @Transactional
+    public void withdraw(String requestId, String reason) {
+        int n = em.createNativeQuery("UPDATE \"ApprovalRequest\" SET status = 'cancelled', \"updatedAt\" = now()"
+                        + " WHERE id = ?1 AND \"organizationId\" = ?2 AND status = 'pending'")
+                .setParameter(1, requestId).setParameter(2, TenantContext.organizationId()).executeUpdate();
+        if (n > 0) {
+            audit.recordInTx(AuditInput.of("ApprovalRequest", requestId, "cancel", null,
+                    java.util.Map.of("status", "cancelled", "reason", reason)));
+        }
+    }
+
     /** Record a synchronously-authorized manager override as an already-approved request. */
     @Transactional
     public Map<String, Object> recordSynchronousOverride(String entityType, String entityId, String approverId,

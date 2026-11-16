@@ -45,6 +45,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -99,7 +101,14 @@ public class PurchaseOrdersService {
     public record UpdateInput(String description, String expectedDeliveryDate, String notes, String terms) {}
 
     /** A receipt line applied to a PO ({@link #applyReceiptToPO}). */
-    record ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description) {}
+    record ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description,
+            BigDecimal uomFactor) {
+
+        /** A receipt line in the PO line's own unit. */
+        ReceiptLine(String purchaseOrderLineId, String productId, BigDecimal quantity, String description) {
+            this(purchaseOrderLineId, productId, quantity, description, null);
+        }
+    }
 
     /** A receive line after PO-line resolution ({@code _resolvedLineId} / {@code _unitCost}). */
     private record Resolved(ReceiveLineInput line, String resolvedLineId, BigDecimal unitCost, LineUnit unit,
@@ -397,12 +406,12 @@ public class PurchaseOrdersService {
         if (po == null) {
             return null;
         }
-        po.put("lines", poLines(id));
+        po.put("lines", withVariants(poLines(id)));
         List<Map<String, Object>> receipts = SqlRows.list(GoodsReceiptNote.class, jdbc.sql("SELECT * FROM"
                 + " \"GoodsReceiptNote\" WHERE \"purchaseOrderId\" = ? AND \"organizationId\" = ?").params(id, org()));
         for (Map<String, Object> r : receipts) {
-            r.put("lines", SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM \"GoodsReceiptLine\" WHERE"
-                    + " \"goodsReceiptId\" = ?").param(r.get("id"))));
+            r.put("lines", withVariants(SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM"
+                    + " \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ?").param(r.get("id")))));
         }
         po.put("receipts", receipts);
         po.put("payments", SqlRows.list(PurchasePayment.class, jdbc.sql("SELECT * FROM \"PurchasePayment\" WHERE"
@@ -411,6 +420,30 @@ public class PurchaseOrdersService {
                 jdbc.sql("SELECT * FROM \"PurchaseRequest\" WHERE id = ? AND \"organizationId\" = ?")
                         .params(po.get("requestId"), org())));
         return po;
+    }
+
+    /**
+     * Adds {@code variant: {id, name, sku}} (null without a variant) to each line, so a screen can name the variant a
+     * line was ordered or received in (ADR-S058). Additive: the line's own fields are unchanged.
+     */
+    private List<Map<String, Object>> withVariants(List<Map<String, Object>> lines) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (Map<String, Object> l : lines) {
+            if (l.get("variantId") != null) {
+                ids.add((String) l.get("variantId"));
+            }
+        }
+        Map<String, Map<String, Object>> byId = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (Map<String, Object> v : SqlRows.list(jdbc.sql("SELECT id, name, sku FROM \"ProductVariant\" WHERE"
+                    + " id = ANY(?::text[]) AND \"organizationId\" = ?").params(ids.toArray(String[]::new), org()))) {
+                byId.put((String) v.get("id"), v);
+            }
+        }
+        for (Map<String, Object> l : lines) {
+            l.put("variant", l.get("variantId") == null ? null : byId.get(l.get("variantId")));
+        }
+        return lines;
     }
 
     private List<Map<String, Object>> poLines(Object purchaseOrderId) {
@@ -458,7 +491,7 @@ public class PurchaseOrdersService {
             if (lineId == null) {
                 continue;
             }
-            addByLine.merge(lineId, ln.quantity(), BigDecimal::add);
+            addByLine.merge(lineId, inPoUnits(ln, byId.get(lineId)), BigDecimal::add);
         }
         // Over-receipt beyond the tolerance (policy receiving.overReceiptTolerancePct, default 0 = hard block) is
         // refused — check every affected line first.
@@ -505,6 +538,20 @@ public class PurchaseOrdersService {
         }
         commitments.sync(purchaseOrderId);
         return newStatus;
+    }
+
+    /**
+     * Review M-4: a receipt line's quantity in the PO line's unit. A line received in another unit (a free GRN line
+     * matched by product, in the product's purchase unit) converts through both frozen factors; same unit or no factor
+     * = as received.
+     */
+    private static BigDecimal inPoUnits(ReceiptLine ln, Map<String, Object> poLine) {
+        BigDecimal poFactor = poLine == null || poLine.get("uomFactor") == null ? null : Money.dec(poLine.get("uomFactor"));
+        if (ln.uomFactor() == null || poFactor == null || poFactor.signum() <= 0
+                || ln.uomFactor().compareTo(poFactor) == 0) {
+            return ln.quantity();
+        }
+        return ln.quantity().multiply(ln.uomFactor()).divide(poFactor, 6, java.math.RoundingMode.HALF_UP);
     }
 
     /** Bind a receipt line to exactly one PO line (explicit id, else a product on a single PO line). */
@@ -710,7 +757,7 @@ public class PurchaseOrdersService {
             List<ReceiptLine> applied = new ArrayList<>();
             for (Resolved r : resolved) {
                 applied.add(new ReceiptLine(r.resolvedLineId(), r.line().productId(), r.line().quantity(),
-                        r.line().description()));
+                        r.line().description(), r.unit() == null ? null : r.unit().factor()));
             }
             String newStatus = applyReceiptToPO(id, applied);
             // 3. Post the GRN

@@ -1,5 +1,6 @@
 package com.inventoryerp.manufacturing.application;
 
+import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
@@ -100,13 +101,16 @@ public class ProductionService {
     private final TransactionTemplate newTx;
     private final EventBus events;
 
+    private final ProductVariantService variants;
+
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             ControlledActionService controlled, StockService stock, StockPostingService stockPosting,
             StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
-            PlatformTransactionManager txm, PlmGate plmGate, EventBus events) {
+            PlatformTransactionManager txm, PlmGate plmGate, EventBus events, ProductVariantService variants) {
         this.events = events;
+        this.variants = variants;
         this.plmGate = plmGate;
         this.standards = standards;
         this.quality = quality;
@@ -198,6 +202,12 @@ public class ProductionService {
             }
         }
 
+        // Phase I2 (D2, audit V-9): the output receives new stock and the materials are planned per variant, so each
+        // product with variants names an active variant of its own (also when the BOM was made before one was archived).
+        variants.resolve(outputProductId, outputVariantId);
+        for (MaterialPlan m : materials) {
+            variants.resolve(m.productId(), m.variantId());
+        }
         String locationId = dto.locationId() != null ? dto.locationId() : defLocationId;
         if (!has(locationId)) {
             throw ApiException.badRequest("No production location: pass locationId or set the BOM default.");
@@ -318,8 +328,13 @@ public class ProductionService {
         }
         for (Map<String, Object> m : materials(order)) {
             try {
-                newTx.executeWithoutResult(s -> reservations.reserve(new Reserve(str(m, "productId"),
-                        str(m, "variantId"), str(order, "locationId"), dec(m, "qtyPlanned"), SOURCE, id,
+                // Review M-3: reservations count base units (the stock they hold back); the material line is in its
+                // BOM unit.
+                // The conversion runs in the reservation's own transaction: a failure stays soft.
+                String productId = str(m, "productId");
+                newTx.executeWithoutResult(s -> reservations.reserve(new Reserve(productId,
+                        str(m, "variantId"), str(order, "locationId"), uom.toBase(dec(m, "qtyPlanned"),
+                                str(m, "uomId"), productId, productUnit(productId), true), SOURCE, id,
                         str(order, "orderCode"))));
             } catch (RuntimeException e) {
                 log.warn("reserve failed for {} / {}: {}", order.get("orderCode"), m.get("productId"), e.getMessage());
@@ -405,6 +420,9 @@ public class ProductionService {
             }
             db.update(ProductionMaterial.class, str(line, "id"), upd);
         }
+        // Review M-3: the materials are consumed now, so their reservations end here (not at completion, which kept
+        // holding back stock that had already left).
+        reservations.consume(SOURCE, id);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "in_progress");
         data.put("startedAt", date);
@@ -534,7 +552,10 @@ public class ProductionService {
                 mainLine == null ? null : str(mainLine, "id"), outputValue);
 
         BigDecimal expectedQty = mainLine != null ? dec(mainLine, "qtyExpected") : dec(order, "plannedQty");
-        BigDecimal yieldVariance = BomService.mul(expectedQty.subtract(dto.qtyProduced()), outputUnitCost);
+        // Review N3: expected and produced compared in base units (outputUnitCost is per base unit).
+        BigDecimal expectedBase = uom.toBase(expectedQty, mainLine != null && mainLine.get("uomId") != null
+                ? str(mainLine, "uomId") : str(order, "uomId"), str(outProduct, "id"), str(outProduct, "uomId"), true);
+        BigDecimal yieldVariance = BomService.mul(expectedBase.subtract(qtyProducedBase), outputUnitCost);
         BigDecimal totalCost = materialCost.add(overhead);
         boolean qc = Boolean.TRUE.equals(order.get("qcRequired"));
 
@@ -745,17 +766,44 @@ public class ProductionService {
         }
         String fgLocationId = held ? resolveQuarantineLocation()
                 : pre.get("outputLocationId") != null ? str(pre, "outputLocationId") : str(pre, "locationId");
+        // Review N3: producedQty is in the order's unit; the finished goods were received in base units.
+        Map<String, Object> mainOut = mainOutput(pre);
+        BigDecimal fgBase = producedBase(pre, mainOut);
         BigDecimal fgQty = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
                         + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
                 .params(MfgDb.org(), pre.get("outputProductId"),
                         pre.get("outputVariantId") != null ? pre.get("outputVariantId") : "", fgLocationId)
                 .query(BigDecimal.class).optional().orElse(null);
-        if (fgQty == null || fgQty.compareTo(dec(pre, "producedQty")) < 0) {
+        if (fgQty == null || fgQty.compareTo(fgBase) < 0) {
             throw ApiException.badRequest(
                     "Cannot reverse: finished goods are no longer fully in stock (sold or moved).");
         }
+        // Review N8: by-products received with the output go back out too, at the value they took out of WIP.
+        List<Map<String, Object>> byproducts = new ArrayList<>();
+        for (Map<String, Object> bp : db.children(ProductionOutput.class, "orderId", id, null)) {
+            if (!"byproduct".equals(bp.get("kind")) || bp.get("ledgerCode") == null) {
+                continue;
+            }
+            BigDecimal bpBase = ledgerQty(str(bp, "ledgerCode"), true);
+            if (bpBase == null) {
+                continue;
+            }
+            BigDecimal onHand = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                            + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
+                    .params(MfgDb.org(), bp.get("productId"), bp.get("variantId") != null ? bp.get("variantId") : "",
+                            fgLocationId)
+                    .query(BigDecimal.class).optional().orElse(null);
+            if (onHand == null || onHand.compareTo(bpBase) < 0) {
+                throw ApiException.badRequest(
+                        "Cannot reverse: by-products are no longer fully in stock (sold or moved).");
+            }
+            bp.put("qtyBase", bpBase);
+            byproducts.add(bp);
+        }
         Instant date = Instant.now();
-        BigDecimal fgValue = BomService.mul(dec(pre, "outputUnitCost"), dec(pre, "producedQty"));
+        // The value the receipt credited out of WIP (outputUnitCost × qty can drift by rounding when it is a quotient).
+        BigDecimal fgValue = mainOut != null && mainOut.get("totalCost") != null && dec(mainOut, "totalCost").signum() > 0
+                ? dec(mainOut, "totalCost") : BomService.mul(dec(pre, "outputUnitCost"), fgBase);
 
         lock(id);
         Map<String, Object> order = getOrNull(id, true, false);
@@ -764,10 +812,20 @@ public class ProductionService {
         }
         String code = str(order, "orderCode");
         // 1) Finished goods out, value back into WIP (Dr WIP / Cr Stock Valuation).
-        stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, dec(order, "producedQty"))
-                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code));
-        stockPosting.postProductionConsume(str(order, "outputProductId"), fgValue, date, "production_reversal", code,
-                "Production reversal · " + code);
+        // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
+        // gets the output's value back, the difference is a stock adjustment gain / loss.
+        BigDecimal fgIssued = stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, fgBase)
+                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)).totalValue();
+        stockPosting.postProductionReversal(str(order, "outputProductId"), fgIssued, fgValue, date,
+                "production_reversal", code, "Production reversal · " + code);
+        // 1b) By-products out, their value back into WIP (Dr WIP / Cr Stock Valuation).
+        for (Map<String, Object> bp : byproducts) {
+            BigDecimal bpIssued = stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
+                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)).totalValue();
+            BigDecimal bpValue = bp.get("totalCost") == null ? BigDecimal.ZERO : dec(bp, "totalCost");
+            stockPosting.postProductionReversal(str(bp, "productId"), bpIssued, bpValue, date, "production_reversal",
+                    code, "Production reversal (by-product) · " + code);
+        }
         // 2) Materials back to their source location, clearing WIP (Dr Stock Valuation / Cr WIP).
         returnMaterials(order, "production_reversal", date, "Production reversal · " + code);
         // 3) ADR-S008: standard-cost variances of the order are reversed with it.
@@ -881,12 +939,62 @@ public class ProductionService {
             if (qty.signum() <= 0) {
                 continue;
             }
-            stock.receive(StockMove.of(str(line, "productId"), str(order, "locationId"), qty)
-                    .variant(str(line, "variantId")).unitCost(dec(line, "unitCost")).moveType("receipt")
+            // Review N3: return what the consume move took out, in base units and at its cost (qtyConsumed is in
+            // the material line's unit). The consume's ledger rows are found by the line's ledgerCode.
+            BigDecimal base = ledgerQty(str(line, "ledgerCode"), false);
+            if (base == null) {
+                base = uom.toBase(qty, str(line, "uomId"), str(line, "productId"), productUnit(str(line, "productId")),
+                        true);
+            }
+            BigDecimal unitCost = base.signum() > 0 && line.get("totalCost") != null
+                    ? Money.div(dec(line, "totalCost"), base) : dec(line, "unitCost");
+            stock.receive(StockMove.of(str(line, "productId"), str(order, "locationId"), base)
+                    .variant(str(line, "variantId")).unitCost(unitCost).moveType("receipt")
                     .source(sourceType, code));
             stockPosting.postProductionOutput(str(line, "productId"), dec(line, "totalCost"), date, sourceType, code,
                     description);
         }
+    }
+
+    /**
+     * Base units of the main finished good an order received: the output line's {@code qtyProduced} (stored in base
+     * units), else its receipt ledger rows, else {@code producedQty} converted from the order's unit.
+     */
+    private BigDecimal producedBase(Map<String, Object> order, Map<String, Object> main) {
+        if (main != null) {
+            BigDecimal fromLedger = ledgerQty(str(main, "ledgerCode"), true);
+            if (fromLedger != null) {
+                return fromLedger;
+            }
+            if (main.get("qtyProduced") != null && dec(main, "qtyProduced").signum() > 0) {
+                return dec(main, "qtyProduced");
+            }
+        }
+        String productId = str(order, "outputProductId");
+        return uom.toBase(dec(order, "producedQty"), str(order, "uomId"), productId, productUnit(productId), true);
+    }
+
+    /** The order's main output line (kind {@code output}), or null for a legacy order without one. */
+    private Map<String, Object> mainOutput(Map<String, Object> order) {
+        List<Map<String, Object>> lines = order.get("outputs") != null ? outputs(order)
+                : db.children(ProductionOutput.class, "orderId", order.get("id"), null);
+        return lines.stream().filter(o -> "output".equals(o.get("kind"))).findFirst().orElse(null);
+    }
+
+    /** Σ |quantityChange| of one stock move's ledger rows (in or out); null when the code is unknown. */
+    private BigDecimal ledgerQty(String ledgerCode, boolean incoming) {
+        if (ledgerCode == null) {
+            return null;
+        }
+        BigDecimal q = db.jdbc().sql("SELECT sum(abs(\"quantityChange\")) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                + " AND \"ledgerCode\" = ? AND \"quantityChange\" " + (incoming ? "> 0" : "< 0")).params(MfgDb.org(), ledgerCode)
+                .query(BigDecimal.class).optional().orElse(null);
+        return q == null || q.signum() == 0 ? null : q;
+    }
+
+    private String productUnit(String productId) {
+        return db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(productId, MfgDb.org()).query(String.class).optional().orElse(null);
     }
 
     /**

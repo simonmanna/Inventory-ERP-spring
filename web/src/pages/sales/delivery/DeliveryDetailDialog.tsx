@@ -22,6 +22,7 @@ import { DeliveryNotePreview, ReturnsList, orderReturnView } from './delivery-do
 import { Detail, METHOD_META, StageBadge, n, qty, scheduleLabel } from './delivery-ui';
 import { PickedCell } from './HandoverDeliveryView';
 import { DeliveryWeighbridgeTab, WeighSummary } from './DeliveryWeighbridge';
+import { CustomerWeightDialog, CustomerWeightPanel, customerWeightNoteLine } from './CustomerWeight';
 
 type LineCol = 'product' | 'scheduled' | 'deadline' | 'planned' | 'picked' | 'dispatched' | 'delivered' | 'returned' | 'rejected'
   | 'damaged' | 'shortage' | 'batch';
@@ -94,6 +95,8 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
   const history = useDeliveryHistory(id, tab === 'history');
   const defs = useDeliveryActionDefs();
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.deliveryWrite));
+  const canConfirm = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.deliveryConfirm));
+  const [weighing, setWeighing] = useState(false);
   const addPhoto = useDeliveryAction(async (f: File) => api.post(`/sales/deliveries/${id}/photos`, { dataUrl: await readDataUrl(f), caption: f.name }),
     tx('Photo added'));
 
@@ -212,6 +215,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
                   contact={[d.siteContactName, d.siteContactPhone].filter(Boolean).join(' · ') || null}
                   shippingDate={d.dispatchedAt} scheduledDate={d.plannedDate} deadline={summary.data?.deadline}
                   receivedBy={d.pod?.receiverName ?? null}
+                  footnote={customerWeightNoteLine(d.customerWeight)}
                   lines={(d.lines ?? []).map((l) => ({ id: l.id, name: l.productName ?? '', uom: l.uomCode, ordered: n(l.plannedQty),
                     delivered: n(l.deliveredQty ?? (d.pod ? 0 : l.dispatchedQty)), returned: n(l.returnedQty) + n(l.rejectedQty) }))}
                   onPrint={d.deliveryNoteNumber ? () => void openDeliveryNote(d, 'print') : undefined}
@@ -272,6 +276,10 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
                       {d.pod.signatureUrl ? <img src={d.pod.signatureUrl} alt={tx('Signature')} className="h-28 w-full rounded border bg-white object-contain" />
                         : <p className="text-sm text-muted-foreground">{tx('No signature captured.')}</p>}
                     </div>
+                    <div className="md:col-span-2">
+                      <CustomerWeightPanel d={d} canRecord={canConfirm && (d.stage === 'delivered' || d.stage === 'partially_delivered')}
+                        onRecord={() => setWeighing(true)} />
+                    </div>
                   </div>
                 ) : (
                   <Empty icon={PackageCheck} text={d.stage === 'dispatched' || d.stage === 'in_transit'
@@ -325,6 +333,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
             </Tabs>
           </>
         )}
+        {weighing && d && <CustomerWeightDialog delivery={d} onClose={() => setWeighing(false)} />}
       </DialogContent>
     </Dialog>
   );

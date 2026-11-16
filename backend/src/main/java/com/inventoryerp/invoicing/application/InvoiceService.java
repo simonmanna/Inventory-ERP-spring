@@ -346,6 +346,21 @@ public class InvoiceService {
     /** Create a draft invoice. */
     @Transactional
     public Map<String, Object> create(InvoiceInput dto) {
+        builder.assertVariants(dto.lines(), false, false);
+        return createDraft(dto);
+    }
+
+    /**
+     * Draft invoice whose lines are copied from an earlier document (e.g. a dispatched delivery order): a variant
+     * archived since then is kept, as on the source document (Phase I2, D2).
+     */
+    @Transactional
+    public Map<String, Object> createCopied(InvoiceInput dto) {
+        builder.assertVariants(dto.lines(), false, true);
+        return createDraft(dto);
+    }
+
+    private Map<String, Object> createDraft(InvoiceInput dto) {
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
         String branchId = scopes.documentBranch(null);
@@ -449,7 +464,7 @@ public class InvoiceService {
             boolean product = l.lineType() == null || "product".equals(l.lineType());
             ListPrice p = !product || l.productId() == null || l.unitPrice() != null ? null
                     : priceLists.resolve(new PriceQuery(dto.partnerId(), l.productId(), l.quantity(), l.uomId(), branchId,
-                            null, on));
+                            null, on, l.variantId()));
             out.add(p == null ? l : l.withPrice(p.unitPrice(),
                     l.discountPercent() != null ? l.discountPercent() : p.discountPercent()));
         }
@@ -510,6 +525,7 @@ public class InvoiceService {
         }
         if (dto.lines() != null) {
             builder.assertSaleable(dto.lines());
+            builder.assertVariants(dto.lines(), false, false);
         }
         scopes.assertBranch((String) doc.get("branchId"));
         if (!"draft".equals(String.valueOf(doc.get("status")))) {

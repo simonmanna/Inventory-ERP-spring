@@ -96,7 +96,23 @@ public class FleetDeliveryDiscrepancy {
     @Column(name = "updatedAt", nullable = false)
     private Instant updatedAt;
 
+    // Phase A A2 (V496): truck-level kg of a weight claim.
+
+    @Column(name = "claimKg", precision = 14, scale = 3)
+    private BigDecimal claimKg;
+
+    /** Set when a corrected customer weight withdrew this (pending) weight claim; it is then not a decision. */
+    @Column(name = "withdrawnAt")
+    private Instant withdrawnAt;
+
     public String getId() {
         return id;
+    }
+    public BigDecimal getClaimKg() {
+        return claimKg;
+    }
+
+    public Instant getWithdrawnAt() {
+        return withdrawnAt;
     }
 }

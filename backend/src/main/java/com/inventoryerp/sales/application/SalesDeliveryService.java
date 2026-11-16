@@ -17,6 +17,7 @@ import com.inventoryerp.fleet.application.DispatchCommands.ReturnInput;
 import com.inventoryerp.fleet.application.DispatchCommands.TripPatch;
 import com.inventoryerp.fleet.application.FleetDeliveryNoteService;
 import com.inventoryerp.fleet.application.FleetDeliveryOrderService;
+import com.inventoryerp.fleet.application.DispatchCommands;
 import com.inventoryerp.fleet.application.FleetDispatchService;
 import com.inventoryerp.fleet.application.FleetWeighbridgeRuleService;
 import com.inventoryerp.fleet.application.WeighbridgeTicketService;
@@ -217,6 +218,7 @@ public class SalesDeliveryService {
             pod.put("signatureUrl", url(str(pod.remove("signatureFileId"))));
         }
         t.put("pod", pod);
+        t.put("customerWeight", customerWeightView(id));
         List<Map<String, Object>> photos = db.rows("SELECT id, \"fileId\", caption, \"createdAt\" FROM \"SalesDeliveryPhoto\""
                 + " WHERE \"loadId\" = ? AND \"organizationId\" = ? ORDER BY \"createdAt\"", id, org());
         photos.forEach(p -> p.put("url", url(str(p.get("fileId")))));
@@ -227,6 +229,120 @@ public class SalesDeliveryService {
                 tickets.stream().filter(w -> Boolean.TRUE.equals(w.get("feedsTrip"))).map(w -> w.get("id")).findFirst()
                         .orElse(null)));
         return t;
+    }
+
+    /**
+     * Phase A A2: the customer's weighing (evidence, frozen comparison, evidence file links) and the weight claims it
+     * raised; null before any evidence.
+     */
+    private Map<String, Object> customerWeightView(String id) {
+        Map<String, Object> w = db.row("SELECT \"customerGrossKg\", \"customerTareKg\", \"customerNetKg\","
+                + " \"customerTicketRef\", \"customerWeighedAt\", \"customerWeightNotes\", \"customerWeightAt\","
+                + " \"customerWeightFileIds\", \"quarryNetKg\", \"quarryWeightSource\", \"weightVarianceKg\","
+                + " \"allowedVarianceKg\", \"weightWithinTolerance\", \"weightOutcome\", \"unallocatedVarianceKg\""
+                + " FROM \"FleetProofOfDelivery\" WHERE \"loadId\" = ? AND \"organizationId\" = ?", id, org());
+        if (w == null) {
+            return null;
+        }
+        List<String> urls = new ArrayList<>();
+        Object ids = w.remove("customerWeightFileIds");
+        if (ids instanceof java.sql.Array a) {
+            try {
+                for (Object f : (Object[]) a.getArray()) {
+                    urls.add(url(str(f)));
+                }
+            } catch (java.sql.SQLException e) {
+                throw new IllegalStateException(e);
+            }
+        } else if (ids instanceof Object[] arr) {
+            for (Object f : arr) {
+                urls.add(url(str(f)));
+            }
+        } else if (ids instanceof List<?> list) {
+            list.forEach(f -> urls.add(url(str(f))));
+        }
+        w.put("evidenceUrls", urls);
+        w.put("claims", db.rows("SELECT x.id, x.code, x.\"loadLineId\", x.\"differenceQty\" AS quantity, x.\"claimKg\","
+                + " x.status, x.\"decidedAt\", x.\"decisionNotes\", x.\"withdrawnAt\" FROM \"FleetDeliveryDiscrepancy\" x WHERE"
+                + " x.\"loadId\" = ? AND x.\"organizationId\" = ? AND x.kind = 'weight' ORDER BY x.\"createdAt\"", id, org()));
+        return w.get("customerNetKg") == null && urls.isEmpty() ? null : w;
+    }
+
+    /**
+     * Phase A A2: record or correct the customer's weighing of a delivered delivery (plan §7). Same body as the
+     * {@code customerWeight} object of {@link #confirm}. Returns the delivery with {@code customerWeightResult}.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Map<String, Object> customerWeight(String id, Map<String, Object> in) {
+        require(id);
+        Map<String, Object> result = (Map<String, Object>) dispatch.recordCustomerWeight(id, customerWeightInput(in))
+                .get("customerWeight");
+        Map<String, Object> out = get(id);
+        out.put("customerWeightResult", result);
+        return out;
+    }
+
+    /** Phase A A2: a photo or PDF of the customer's weighbridge ticket ({@code dataUrl}). */
+    @org.springframework.transaction.annotation.Transactional
+    public Map<String, Object> customerWeightEvidence(String id, Map<String, Object> in) {
+        require(id);
+        String url = str(in.get("dataUrl"));
+        if (blank(url) || !(url.startsWith("data:image/") || url.startsWith("data:application/pdf"))
+                || !url.contains(";base64,")) {
+            throw ApiException.badRequest("Customer weight evidence must be an image or a PDF");
+        }
+        String contentType = url.substring(5, url.indexOf(';'));
+        byte[] bytes;
+        try {
+            bytes = Base64.getMimeDecoder().decode(url.substring(url.indexOf(',') + 1));
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("Customer weight evidence must be an image or a PDF");
+        }
+        if (bytes.length > 8 * 1024 * 1024) {
+            throw ApiException.badRequest("A photo may be at most 8 MB");
+        }
+        String ext = contentType.substring(contentType.indexOf('/') + 1);
+        dispatch.customerWeightPhoto(id, "customer-weight-" + id + "." + ext, contentType, bytes);
+        return get(id);
+    }
+
+    private static DispatchCommands.CustomerWeightInput customerWeightInput(Map<String, Object> in) {
+        if (in == null) {
+            throw ApiException.badRequest("customerWeight must be an object");
+        }
+        List<DispatchCommands.WeightShareInput> shares = null;
+        if (in.get("allocations") instanceof List<?> raw) {
+            shares = new ArrayList<>();
+            for (Object o : raw) {
+                if (!(o instanceof Map<?, ?> m)) {
+                    throw ApiException.badRequest("allocations must be a list of objects");
+                }
+                String line = str(m.get("loadLineId"));
+                if (blank(line)) {
+                    throw ApiException.badRequest("allocations.loadLineId should not be empty");
+                }
+                BigDecimal qty = number("allocations.quantity", m.get("quantity"));
+                BigDecimal kg = m.get("kg") == null ? null : number("allocations.kg", m.get("kg"));
+                if (qty.signum() < 0 || (kg != null && kg.signum() < 0)) {
+                    throw ApiException.badRequest("Quantities must not be less than 0");
+                }
+                shares.add(new DispatchCommands.WeightShareInput(line, qty, kg));
+            }
+        }
+        BigDecimal gross = in.get("grossKg") == null ? null : number("grossKg", in.get("grossKg"));
+        BigDecimal tare = in.get("tareKg") == null ? null : number("tareKg", in.get("tareKg"));
+        BigDecimal net = in.get("netKg") == null ? null : number("netKg", in.get("netKg"));
+        for (BigDecimal v : java.util.Arrays.asList(gross, tare, net)) {
+            if (v != null && v.signum() < 0) {
+                throw ApiException.badRequest("Weights must not be less than 0");
+            }
+        }
+        String ref = str(in.get("ticketRef"));
+        if (ref != null && ref.length() > 80) {
+            throw ApiException.badRequest("ticketRef must be shorter than or equal to 80 characters");
+        }
+        return new DispatchCommands.CustomerWeightInput(gross, tare, net, ref, timestamp("weighedAt",
+                in.get("weighedAt")), str(in.get("notes")), shares);
     }
 
     private String url(String fileId) {
@@ -722,6 +838,11 @@ public class SalesDeliveryService {
         }
         db.update("UPDATE \"FleetLoad\" SET \"arrivedAt\" = COALESCE(?::timestamp(3), \"deliveredAt\") WHERE id = ? AND \"organizationId\" = ?",
                 arrivedAt, id, org());
+        if (in.get("customerWeight") != null) {
+            // Phase A A2: after damaged / rejected are on the lines, so the ceiling excludes them.
+            dispatch.recordCustomerWeight(id, customerWeightInput(in.get("customerWeight") instanceof Map<?, ?> m
+                    ? (Map<String, Object>) m : null));
+        }
         fulfilment.rebuild(str(t.get("orderId")));
         return get(id);
     }

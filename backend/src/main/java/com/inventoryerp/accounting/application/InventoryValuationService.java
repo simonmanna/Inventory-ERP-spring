@@ -169,25 +169,42 @@ public class InventoryValuationService {
      */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> currentValueByQuant(String locationId) {
+        return currentValueByQuant(locationId, null);
+    }
+
+    /**
+     * {@link #currentValueByQuant(String)} for some products only ({@code productIds} null = all). Phase I2 (audit C-2):
+     * the item list, item detail and movement report value stock with this, by costing method, instead of
+     * {@code qty × runningAverageCost} (which FIFO and STANDARD receipts never set).
+     */
+    public List<Map<String, Object>> currentValueByQuant(String locationId, java.util.Collection<String> productIds) {
+        if (productIds != null && productIds.isEmpty()) {
+            return List.of();
+        }
         String org = TenantContext.organizationId();
-        String quantLoc = locationId == null ? "" : " AND s.\"locationId\" = :loc";
-        String lotLoc = locationId == null ? "" : " AND b.\"locationId\" = :loc";
-        String serLoc = locationId == null ? "" : " AND sr.\"locationId\" = :loc";
-        String adjLoc = locationId == null ? "" : " AND a.\"locationId\" = :loc";
+        String pf = productIds == null ? "" : " AND %s.\"productId\" IN (:pids)";
+        String quantLoc = (locationId == null ? "" : " AND s.\"locationId\" = :loc") + pf.formatted("s");
+        String lotLoc = (locationId == null ? "" : " AND b.\"locationId\" = :loc") + pf.formatted("b");
+        String serLoc = (locationId == null ? "" : " AND sr.\"locationId\" = :loc") + pf.formatted("sr");
+        String adjLoc = (locationId == null ? "" : " AND a.\"locationId\" = :loc") + pf.formatted("a");
         var spec = jdbc.sql("WITH quant AS ("
                 + " SELECT s.\"productId\", s.\"variantKey\", s.\"locationId\", s.\"quantity\" AS qty,"
-                + " CASE WHEN s.\"runningAverageCost\" > 0 THEN s.\"runningAverageCost\" ELSE COALESCE(p.\"costPrice\", 0) END AS avg_cost,"
+                // Phase I2 (audit C-1): with no average yet, a variant falls back to its own cost (STANDARD: product).
+                + " CASE WHEN s.\"runningAverageCost\" > 0 THEN s.\"runningAverageCost\""
+                + " ELSE COALESCE(pv.\"costPrice\", p.\"costPrice\", 0) END AS avg_cost,"
                 + " COALESCE(p.\"costPrice\", 0) AS std_cost, p.\"costingMethod\"::text AS method, p.\"batchTracking\" AS lots,"
                 + " p.\"serialTracking\" AS serials"
                 + " FROM \"StockItem\" s JOIN \"Product\" p ON p.id = s.\"productId\" AND p.\"organizationId\" = s.\"organizationId\""
+                + " LEFT JOIN \"ProductVariant\" pv ON pv.id = s.\"variantId\""
                 + " WHERE s.\"organizationId\" = :org" + quantLoc + "),"
                 + " lot AS (SELECT b.\"productId\", COALESCE(b.\"variantId\", '') AS \"variantKey\", b.\"locationId\","
                 + " SUM(b.\"quantity\") AS qty, SUM(b.\"quantity\" * COALESCE(b.\"unitCost\", 0)) AS value"
                 + " FROM \"InventoryBatch\" b WHERE b.\"organizationId\" = :org AND b.\"isActive\" = true AND b.\"quantity\" > 0"
                 + lotLoc + " GROUP BY 1, 2, 3),"
                 + " ser AS (SELECT sr.\"productId\", COALESCE(sr.\"variantId\", '') AS \"variantKey\", sr.\"locationId\","
-                + " COUNT(*)::numeric AS qty, SUM(COALESCE(sr.\"unitCost\", p.\"costPrice\", 0)) AS value"
+                + " COUNT(*)::numeric AS qty, SUM(COALESCE(sr.\"unitCost\", pv.\"costPrice\", p.\"costPrice\", 0)) AS value"
                 + " FROM \"InventorySerial\" sr JOIN \"Product\" p ON p.id = sr.\"productId\""
+                + " LEFT JOIN \"ProductVariant\" pv ON pv.id = sr.\"variantId\""
                 + " WHERE sr.\"organizationId\" = :org AND sr.status = 'in_stock'" + serLoc + " GROUP BY 1, 2, 3)"
                 + " SELECT q.\"productId\" AS product_id, q.\"variantKey\" AS variant_key, q.\"locationId\" AS location_id,"
                 + " q.qty AS qty, CASE"
@@ -206,7 +223,22 @@ public class InventoryValuationService {
         if (locationId != null) {
             spec = spec.param("loc", locationId);
         }
+        if (productIds != null) {
+            spec = spec.param("pids", List.copyOf(productIds));
+        }
         return SqlRows.list(spec);
+    }
+
+    /** {qty, value} per product of {@link #currentValueByQuant(String, java.util.Collection)}, summed over its quants. */
+    public Map<String, BigDecimal[]> qtyAndValueByProduct(java.util.Collection<String> productIds, String locationId) {
+        Map<String, BigDecimal[]> sums = new LinkedHashMap<>();
+        for (Map<String, Object> r : currentValueByQuant(locationId, productIds)) {
+            BigDecimal[] s = sums.computeIfAbsent((String) r.get("product_id"),
+                    k -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
+            s[0] = s[0].add(SqlRows.dec(r, "qty"));
+            s[1] = s[1].add(SqlRows.dec(r, "value"));
+        }
+        return sums;
     }
 
     /** Current remaining value per product, by costing method ({@link #currentValueByQuant} summed per product). */

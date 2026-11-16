@@ -107,6 +107,8 @@ export interface InvoiceLineInput {
   discountPercent?: number;
   /** Product unit for this line; the server defaults to the product's sales (bills: purchase) unit. */
   uomId?: string;
+  /** ADR-S058: the product variant of the line. */
+  variantId?: string;
   /** ADR-S071: several taxes (groups, reverse charge on bills); omitted = the product's tax. */
   taxIds?: string[];
 }

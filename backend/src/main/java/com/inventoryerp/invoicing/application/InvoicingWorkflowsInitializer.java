@@ -56,6 +56,13 @@ public class InvoicingWorkflowsInitializer {
         this.withholdingCertificates = withholdingCertificates;
     }
 
+    private DocumentFxRates fxRates;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setFxRates(DocumentFxRates fxRates) {
+        this.fxRates = fxRates;
+    }
+
     public InvoicingWorkflowsInitializer(WorkflowRegistry registry, JdbcClient jdbc, PostingService posting,
             StockService stock, DocumentBuilderService builder, AccountDeterminationService determination,
             JournalService journals, BillReceiptMatcherService matcher) {
@@ -121,7 +128,27 @@ public class InvoicingWorkflowsInitializer {
                             && !"cancelled".equals(String.valueOf(status));
                 }, this::postInvoice, null),
                 new Transition("posted", "cancelled", "cancel", "invoice:cancel",
-                        ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelDocument, null)));
+                        ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelInvoice, null)));
+    }
+
+    /**
+     * Review N1: an invoice a posted credit note already corrected is not cancelled as a whole — the cancel would
+     * return all the issued stock and reverse all the revenue a second time (the credit note's restock and journal
+     * stay). Remaining corrections go through credit notes. Runs under the workflow's row lock; a credit note posting
+     * locks the invoice first too, so the two never interleave.
+     */
+    private void cancelInvoice(Context ctx) {
+        String id = (String) ctx.entity().get("id");
+        List<String> credits = jdbc.sql("SELECT d.\"documentNumber\" FROM \"Document\" d WHERE d.\"organizationId\" = ?"
+                + " AND d.\"documentType\" = 'credit_note' AND d.status::text IN ('posted', 'paid') AND (d.\"reversedDocumentId\" = ?"
+                + " OR EXISTS (SELECT 1 FROM \"CreditAllocation\" a WHERE a.\"creditDocumentId\" = d.id AND a.\"documentId\" = ?))"
+                + " ORDER BY d.\"documentNumber\"").params(ctx.organizationId(), id, id).query(String.class).list();
+        if (!credits.isEmpty()) {
+            throw ApiException.badRequest("Invoice " + ctx.entity().get("documentNumber") + " has posted credit notes ("
+                    + String.join(", ", credits) + "); it cannot be cancelled. Issue a credit note for the remaining"
+                    + " amount instead.");
+        }
+        cancelDocument(ctx);
     }
 
     private void postInvoice(Context ctx) {
@@ -131,7 +158,8 @@ public class InvoicingWorkflowsInitializer {
         // A delivery (fleet 1.3) issues the goods of this invoice load by load: no automatic issue here.
         boolean stockByDelivery = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE id = ? AND"
                 + " data->>'stockIssuedBy' IS NOT NULL").param(id).query(Long.class).single() > 0;
-        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : lines) {
+        // Audit S-2: issue in the engine's lock order (the posting groups below keep the document order).
+        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : StockMove.inLockOrder(lines)) {
             String productId = (String) line.get("productId");
             Map<String, Object> product = productId == null ? null : product(productId);
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {
@@ -144,7 +172,7 @@ public class InvoicingWorkflowsInitializer {
                 }
                 StockMove m = StockMove.of(productId, location, d(line.get("quantity")))
                         .variant((String) line.get("variantId")).uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
-                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id)
+                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id).sourceLine((String) line.get("id"))
                         .notes("Auto-issue for invoice " + doc.get("documentNumber"));
                 stock.issue(m);
             }
@@ -202,15 +230,16 @@ public class InvoicingWorkflowsInitializer {
      * invoice's to return (credit note + return). Runs once: an existing compensation for the invoice is never repeated.
      */
     private void returnIssuedStock(String invoiceId, String number, Instant issueDate) {
+        String org = com.inventoryerp.kernel.tenancy.TenantContext.organizationId();
         long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_invoice_cancel'"
-                + " AND \"referenceId\" = ?").param(invoiceId).query(Long.class).single();
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ?").params(invoiceId, org).query(Long.class).single();
         if (done > 0) {
             return;
         }
         for (Map<String, Object> issue : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
                 + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" ="
-                + " 'sales_invoice' AND \"referenceId\" = ? AND \"quantityChange\" < 0 ORDER BY \"createdAt\", id")
-                .param(invoiceId))) {
+                + " 'sales_invoice' AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0"
+                + " ORDER BY \"productId\", \"variantId\" NULLS FIRST, \"createdAt\", id").params(invoiceId, org))) {
             stock.receiveReturn(StockMove.of((String) issue.get("productId"), (String) issue.get("locationId"),
                     d(issue.get("quantityChange")).negate()).variant((String) issue.get("variantId"))
                     .unitCost(d(issue.get("unitCost"))).source("sales_invoice_cancel", invoiceId)
@@ -304,8 +333,8 @@ public class InvoicingWorkflowsInitializer {
                 postableTotal = postableTotal.add(d(line.get("total")));
                 continue;
             }
-            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"), qty,
-                    line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
+            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"),
+                    (String) line.get("variantId"), qty, line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
             matchByLine.put((String) line.get("id"), match);
             if (match.accruedQuantity().signum() > 0) {
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
@@ -421,7 +450,11 @@ public class InvoicingWorkflowsInitializer {
                     null, req));
             entryId = (String) entry.get("id");
         }
-        for (Map<String, Object> line : lines) {
+        // Review M-5: a foreign-currency bill receives at the functional value (the rate its journal was posted at),
+        // like a foreign-currency goods receipt (P0-5); a base-currency bill's rate is 1.
+        BigDecimal billRate = entryId == null || fxRates == null ? null : fxRates.entryRate(entryId);
+        BigDecimal functionalRate = billRate == null || billRate.signum() <= 0 ? BigDecimal.ONE : billRate;
+        for (Map<String, Object> line : StockMove.inLockOrder(lines)) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
             if (product == null || !Boolean.TRUE.equals(product.get("trackInventory"))) {
                 continue;
@@ -442,6 +475,9 @@ public class InvoicingWorkflowsInitializer {
             }
             BigDecimal unitCost = qty.signum() > 0 ? new BigDecimal(JsNumbers.toJsString(
                     Money.div(d(line.get("subtotal")), qty).doubleValue())) : Money.ZERO;
+            if (functionalRate.compareTo(BigDecimal.ONE) != 0) {
+                unitCost = unitCost.multiply(functionalRate).setScale(6, java.math.RoundingMode.HALF_UP);
+            }
             StockMove m = StockMove.of((String) line.get("productId"), location, toReceive).unitCost(unitCost)
                     .variant((String) line.get("variantId"))
                     .uom(line.get("uomFactor") == null ? (String) product.get("purchaseUomId") : (String) line.get("uomId"),

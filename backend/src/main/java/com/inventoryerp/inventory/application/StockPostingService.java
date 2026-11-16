@@ -400,6 +400,16 @@ public class StockPostingService {
     /** Count/adjustment variance: gain → ADJUSTMENT_GAIN, loss → ADJUSTMENT_LOSS. */
     public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
             String sourceId, String description) {
+        postAdjustment(productId, delta, unitCost, date, sourceType, sourceId, description, false);
+    }
+
+    /**
+     * As {@link #postAdjustment(String, BigDecimal, BigDecimal, Instant, String, String, String)}; {@code opening}
+     * (owner decision D5): an opening count's variance is opening stock, so its other side is the opening-balance
+     * equity account (the one the GL opening balance balances against), never the stock adjustment income / expense.
+     */
+    public void postAdjustment(String productId, BigDecimal delta, BigDecimal unitCost, Instant date, String sourceType,
+            String sourceId, String description, boolean opening) {
         if (delta.signum() == 0) {
             return;
         }
@@ -417,6 +427,14 @@ public class StockPostingService {
                             Line.credit(determination.mapped("stock_adjustment_income"), v, "Stock variance gain"))
                     : List.of(Line.debit(determination.mapped("stock_adjustment_expense"), v, "Stock variance loss"),
                             Line.credit(sv, v, "Stock variance loss"));
+        }
+        if (opening) {
+            // The inventory side keeps its account; the gain (credit) / loss (debit) side moves to opening equity.
+            String equity = determination.mapped("retained_earnings");
+            lines = lines.stream().map(l -> (gain ? l.credit() != null : l.debit() != null)
+                    ? new Line(equity, l.debit(), l.credit(), l.partnerId(), "Opening stock", l.branchId(),
+                            l.costCenterId(), l.dimensions())
+                    : l).toList();
         }
         post("ADJ", date, description != null ? description : "Stock adjustment", sourceType, sourceId, null, lines);
     }
@@ -478,6 +496,46 @@ public class StockPostingService {
         }
         post("INV", date, description != null ? description : "Production consume · " + name, sourceType, sourceId,
                 null, lines);
+    }
+
+    /**
+     * Production reversal (audit S-4): the stock leaves at the value the engine issued it at ({@code issuedValue}, Cr
+     * Stock Valuation, so the GL follows the stock ledger) while WIP takes back what the output credited out of it
+     * ({@code wipValue}); a difference (the item's cost moved since the output) is a stock adjustment gain / loss.
+     */
+    public void postProductionReversal(String productId, BigDecimal issuedValue, BigDecimal wipValue, Instant date,
+            String sourceType, String sourceId, String description) {
+        BigDecimal issued = issuedValue.signum() > 0 ? issuedValue : BigDecimal.ZERO;
+        BigDecimal wipBack = wipValue.signum() > 0 ? wipValue : BigDecimal.ZERO;
+        if (issued.signum() == 0 && wipBack.signum() == 0) {
+            return;
+        }
+        String name = productName(productId);
+        String label = description != null ? description : "Production reversal · " + name;
+        String sv = determination.mapped("stock_valuation");
+        String wip = wipOr(sv);
+        List<Line> lines = new ArrayList<>();
+        List<Line> consume = issued.signum() > 0 ? resolveLines("PRODUCTION_CONSUME", productId, issued) : null;
+        if (consume != null) {
+            lines.addAll(consume);
+        } else if (issued.signum() > 0) {
+            String v = JsNumbers.dec(issued);
+            lines.add(Line.debit(wip, v, "Production consume · " + name));
+            lines.add(Line.credit(sv, v, "Production consume · " + name));
+        }
+        BigDecimal diff = wipBack.subtract(issued);
+        if (diff.signum() != 0) {
+            String v = JsNumbers.dec(diff.abs());
+            String text = "Production reversal cost difference · " + name;
+            if (diff.signum() > 0) {
+                lines.add(Line.debit(wip, v, text));
+                lines.add(Line.credit(determination.mapped("stock_adjustment_income"), v, text));
+            } else {
+                lines.add(Line.debit(determination.mapped("stock_adjustment_expense"), v, text));
+                lines.add(Line.credit(wip, v, text));
+            }
+        }
+        post("INV", date, label, sourceType, sourceId, null, lines);
     }
 
     /** Production output: Dr Stock Valuation / Cr WIP. */

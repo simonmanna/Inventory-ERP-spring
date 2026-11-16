@@ -494,7 +494,7 @@ export function App() {
             <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />
             <Route path="/settings/devices" element={<DevicesPage />} />
             <Route path="/settings/devices/rejected" element={<DeadLettersPage />} />
-            <Route path="/inventory/posting-monitor" element={<PostingMonitorPage />} />
+            <Route path="/inventory/posting-monitor" element={<RequirePermission permission={PERMISSIONS.pos.reports}><PostingMonitorPage /></RequirePermission>} />
             <Route path="/fixed-assets" element={<AssetDashboardPage />} />
             <Route path="/fixed-assets/categories" element={<AssetCategoriesPage />} />
             <Route path="/fixed-assets/register" element={<AssetsPage />} />

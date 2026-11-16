@@ -49,7 +49,8 @@ public class ProcurementReplenishmentSubscriber {
             lines.add(new Line(l.path("alertId").asString(""), l.path("productId").asString(""),
                     l.path("description").asString(""), new BigDecimal(l.path("quantity").asString("0")),
                     uom.isEmpty() ? null : uom, supplier.isEmpty() ? null : supplier, l.path("neededBy").asString(""),
-                    location.isEmpty() ? null : location));
+                    location.isEmpty() ? null : location, l.path("variantId").asString("").isEmpty() ? null
+                            : l.path("variantId").asString("")));
         }
         if (lines.isEmpty()) {
             return;

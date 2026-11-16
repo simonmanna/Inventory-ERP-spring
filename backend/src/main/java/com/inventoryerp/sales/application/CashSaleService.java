@@ -615,6 +615,10 @@ public class CashSaleService {
                 ins.put("description", pl.description());
                 ins.put("quantity", pl.quantity());
                 ins.put("uomId", pl.uomId());
+                // Phase I1b (U-1): a product line always carries its resolved factor; only lines without a product have none.
+                if (pl.productId() != null && pl.uomFactor() == null) {
+                    throw ApiException.badRequest("The unit of measure of " + pl.description() + " could not be resolved");
+                }
                 ins.put("uomFactor", pl.uomFactor() == null ? BigDecimal.ONE : pl.uomFactor());
                 ins.put("listPrice", m.get("listPrice"));
                 ins.put("unitPrice", pl.unitPrice());
@@ -845,13 +849,13 @@ public class CashSaleService {
         String number = str(s.get("number"));
         LocalDate saleDate = s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now();
         Instant postDate = saleDate.equals(LocalDate.now()) ? Instant.now() : saleDate.atStartOfDay().toInstant(ZoneOffset.UTC);
-        // P1 — stock leaves the showroom at handover
-        for (Map<String, Object> l : lines) {
+        // P1 — stock leaves the showroom at handover (S-2: in the engine's lock order)
+        for (Map<String, Object> l : StockMove.inLockOrder(lines)) {
             if (!Boolean.TRUE.equals(l.get("trackInventory"))) {
                 continue;
             }
             StockMove.Issued issued = stock.issue(StockMove.of(str(l.get("productId")), str(s.get("locationId")),
-                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id)
+                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id).sourceLine(str(l.get("id")))
                     .reference(number).date(postDate).notes("Cash sale " + number));
             BigDecimal unitCost = issued.quantity().signum() == 0 ? BigDecimal.ZERO
                     : issued.totalValue().divide(dec(l.get("quantity")), 6, RoundingMode.HALF_UP);
@@ -1161,7 +1165,7 @@ public class CashSaleService {
                     str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
                     dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
                     Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
-                    ProductSizingService.Sizing.stored(l)));
+                    ProductSizingService.Sizing.stored(l), l.get("uomFactor") == null ? null : dec(l.get("uomFactor"))));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,

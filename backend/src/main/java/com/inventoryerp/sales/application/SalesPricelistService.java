@@ -48,8 +48,9 @@ public class SalesPricelistService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> p = require(id);
-        p.put("items", db.rows("SELECT i.*, pr.name AS \"productName\", pa.name AS \"partnerName\" FROM \"PricelistItem\" i"
-                + " LEFT JOIN \"Product\" pr ON pr.id = i.\"productId\" LEFT JOIN \"Partner\" pa ON pa.id = i.\"partnerId\""
+        p.put("items", db.rows("SELECT i.*, pr.name AS \"productName\", pv.name AS \"variantName\", pa.name AS"
+                + " \"partnerName\" FROM \"PricelistItem\" i LEFT JOIN \"Product\" pr ON pr.id = i.\"productId\""
+                + " LEFT JOIN \"ProductVariant\" pv ON pv.id = i.\"variantId\" LEFT JOIN \"Partner\" pa ON pa.id = i.\"partnerId\""
                 + " WHERE i.\"pricelistId\" = ? AND i.\"organizationId\" = ? ORDER BY i.priority DESC, i.\"createdAt\"", id,
                 org()));
         p.put("customers", db.rows("SELECT id, name FROM \"Partner\" WHERE \"pricelistId\" = ? AND \"organizationId\" = ?"
@@ -191,6 +192,11 @@ public class SalesPricelistService {
         }
         if (!"product".equals(scope)) {
             d.put("productId", null);
+            d.put("variantId", null);
+        } else if (in.containsKey("variantId") || in.containsKey("productId")) {
+            // P-1: a product rule may name one variant of its product (it then prices that variant only).
+            Object variant = in.containsKey("variantId") ? in.get("variantId") : cur.get("variantId");
+            d.put("variantId", db.variantOf(variant, d.getOrDefault("productId", cur.get("productId"))));
         }
         if (!"category".equals(scope)) {
             d.put("productCategoryId", null);

@@ -2,6 +2,7 @@ package com.inventoryerp.fleet.web.dispatch;
 
 import com.inventoryerp.fleet.application.DispatchCommands.AssignInput;
 import com.inventoryerp.fleet.application.DispatchCommands.CloseTripInput;
+import com.inventoryerp.fleet.application.DispatchCommands.CustomerWeightInput;
 import com.inventoryerp.fleet.application.DispatchCommands.LoadedQuantityInput;
 import com.inventoryerp.fleet.application.DispatchCommands.MeterInput;
 import com.inventoryerp.fleet.application.DispatchCommands.PodInput;
@@ -145,6 +146,26 @@ public class FleetTripController {
     @RequirePermissions(Permissions.FLEET_TRIP__DELIVER)
     public Map<String, Object> proofOfDelivery(@PathVariable String id, @Valid @RequestBody PodInput dto) {
         return trips.proofOfDelivery(id, dto);
+    }
+
+    /** Phase A A2: the customer's weighing of a delivered trip (Sales mirror: /sales/deliveries/{id}/customer-weight). */
+    @PostMapping("/trips/{id}/customer-weight")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.FLEET_TRIP__DELIVER)
+    public Map<String, Object> customerWeight(@PathVariable String id, @Valid @RequestBody CustomerWeightInput dto) {
+        return trips.recordCustomerWeight(id, dto);
+    }
+
+    /** Multipart {@code file}: photo or PDF of the customer's weighbridge ticket. */
+    @PostMapping("/trips/{id}/customer-weight-evidence")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.FLEET_TRIP__DELIVER)
+    public Map<String, Object> customerWeightEvidence(@PathVariable String id,
+            @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
+        if (file == null) {
+            throw ApiException.badRequest("Missing file");
+        }
+        return trips.customerWeightPhoto(id, file.getOriginalFilename(), file.getContentType(), file.getBytes());
     }
 
     /** Multipart {@code file}: photo of the delivered goods or the signed paper note. */

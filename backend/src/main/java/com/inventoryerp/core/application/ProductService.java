@@ -273,17 +273,20 @@ public class ProductService extends BaseCrudService<Product> {
     }
 
     /**
-     * Resolve a scanned barcode: the product's own barcode (qty 1) first, then an active packaging barcode
-     * (qty = pack size). {@code null} when not found.
+     * Resolve a scanned barcode in the caller's organisation: the product's own barcode (qty 1) first, then an active
+     * variant's barcode (qty 1, plus {@code variantId} and {@code variant} with its effective price — ADR-S058, Phase
+     * I1c), then an active packaging barcode (qty = pack size). {@code null} when not found.
      */
     @Transactional(readOnly = true)
     public Map<String, Object> resolveBarcode(String code) {
         if (code == null || code.isEmpty()) {
             return null;
         }
-        Product product = em.createQuery("select p from Product p where p.barcode = :code and p.isActive = true",
-                        Product.class)
-                .setParameter("code", code).setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        String org = TenantContext.organizationId();
+        Product product = em.createQuery("select p from Product p where p.organizationId = :org and p.barcode = :code"
+                        + " and p.isActive = true", Product.class)
+                .setParameter("org", org).setParameter("code", code).setMaxResults(1).getResultList().stream()
+                .findFirst().orElse(null);
         if (product != null) {
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("productId", product.getId());
@@ -292,10 +295,34 @@ public class ProductService extends BaseCrudService<Product> {
             out.put("packaging", null);
             return out;
         }
-        ProductPackaging pack = em.createQuery(
-                        "select p from ProductPackaging p where p.barcode = :code and p.isActive = true",
-                        ProductPackaging.class)
-                .setParameter("code", code).setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        // ADR-S058 / Phase I1c: a variant's own barcode resolves to its product plus the variant (effective price).
+        @SuppressWarnings("unchecked")
+        List<Object[]> variant = em.createNativeQuery("SELECT v.id, v.name, v.\"productId\", "
+                        + ProductVariantService.PRICE_SQL + " FROM \"ProductVariant\" v JOIN \"Product\" p"
+                        + " ON p.id = v.\"productId\" WHERE v.\"organizationId\" = ? AND v.barcode = ? AND v.\"isActive\" = true"
+                        + " AND v.\"deletedAt\" IS NULL AND p.\"isActive\" = true AND p.\"deletedAt\" IS NULL LIMIT 1")
+                .setParameter(1, org).setParameter(2, code).getResultList();
+        if (!variant.isEmpty()) {
+            Object[] v = variant.getFirst();
+            Product parent = em.find(Product.class, (String) v[2]);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("productId", parent.getId());
+            out.put("product", withUom(parent));
+            out.put("quantity", 1);
+            out.put("packaging", null);
+            out.put("variantId", v[0]);
+            Map<String, Object> vm = new LinkedHashMap<>();
+            vm.put("id", v[0]);
+            vm.put("name", v[1]);
+            vm.put("displayName", parent.getName() + " (" + v[1] + ")");
+            vm.put("salesPrice", v[3] == null ? null : jsNumber((java.math.BigDecimal) v[3]));
+            out.put("variant", vm);
+            return out;
+        }
+        ProductPackaging pack = em.createQuery("select p from ProductPackaging p where p.organizationId = :org"
+                        + " and p.barcode = :code and p.isActive = true", ProductPackaging.class)
+                .setParameter("org", org).setParameter("code", code).setMaxResults(1).getResultList().stream()
+                .findFirst().orElse(null);
         if (pack != null) {
             Number qty = jsNumber(pack.getQuantity());
             Map<String, Object> packaging = new LinkedHashMap<>();

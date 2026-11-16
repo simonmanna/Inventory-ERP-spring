@@ -119,6 +119,10 @@ public class LedgerDetailService {
             Map<String, Object> found = switch (referenceType) {
                 case "pos_invoice", "pos_invoice_extra", "pos_invoice_writeoff", "menu_recipe", "pos_refund", "pos",
                         "sales_invoice", "invoice", "document" -> resolveSale(base, referenceId);
+                // T-1 (ADR-S072): a POS posting made before its order was invoiced references the order.
+                case "pos_order" -> doc(base, "pos_order", "SELECT id, \"orderNumber\" AS code, status::text AS status,"
+                        + " \"createdAt\" AS date, \"partnerId\" FROM \"Order\" WHERE (id = ? OR \"orderNumber\" = ?) AND"
+                        + " \"organizationId\" = ?", referenceId, "Order ", true);
                 case "credit_note" -> doc(base, "credit_note", "SELECT id, \"documentNumber\" AS code, status::text AS status,"
                         + " \"issueDate\" AS date, \"partnerId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?",
                         referenceId, "Credit Note ", false);

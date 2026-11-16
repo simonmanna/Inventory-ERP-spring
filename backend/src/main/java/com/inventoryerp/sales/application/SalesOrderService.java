@@ -326,6 +326,14 @@ public class SalesOrderService {
         }
         writeLines(id, str(q.get("partnerId")), null, LocalDate.now(), lines, str(header.get("locationId")),
                 PriceScope.of(header));
+        // Review U-5: the order keeps each quote line's saved factor (same unit), not today's re-resolved one.
+        for (Map<String, Object> l : quoteLines) {
+            if (!Boolean.TRUE.equals(l.get("isOptional")) && l.get("uomFactor") != null) {
+                String lineId = db.rows("SELECT id FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"quotationLineId\" = ?",
+                        id, l.get("id")).stream().map(r -> str(r.get("id"))).findFirst().orElse(null);
+                keepSavedFactor(lineId, l.get("uomId"), l.get("uomFactor"));
+            }
+        }
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"), "quotationId",
                 q.get("id"))));
         return get(id);
@@ -625,7 +633,8 @@ public class SalesOrderService {
             inputs.add(new LineInput(str(m.get("productId")), null, null, null, null, str(m.get("description")),
                     dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get("discountPercent")), null, null, null,
                     "manual", str(m.get("taxId")), null, Boolean.TRUE.equals(m.get("taxInclusive")),
-                    str(m.get("uomId"))));
+                    str(m.get("uomId"))).withUnitSnapshot(str(m.get("uomId")), frozenFactor(m))
+                    .withSizing(ProductSizingService.Sizing.stored(m))); // U-10: the builder gives a sized line its unit
         }
         Totals totals = builder.prepareLines(inputs);
         int i = 0;
@@ -640,6 +649,10 @@ public class SalesOrderService {
             ins.put("description", pl.description());
             ins.put("quantity", pl.quantity());
             ins.put("uomId", pl.uomId());
+            // Phase I1b (U-1): a product line always carries its resolved factor; only lines without a product have none.
+            if (pl.productId() != null && pl.uomFactor() == null) {
+                throw ApiException.badRequest("The unit of measure of " + pl.description() + " could not be resolved");
+            }
             ins.put("uomFactor", pl.uomFactor() == null ? BigDecimal.ONE : pl.uomFactor());
             ins.put("listPrice", m.get("listPrice"));
             ins.put("unitPrice", pl.unitPrice());
@@ -664,7 +677,48 @@ public class SalesOrderService {
         return ids;
     }
 
-    private BigDecimal costOf(String productId, String variantId) {
+    /**
+     * Phase I2 (audit U-5): the unit factor a copied line keeps — the one saved on the line it splits
+     * ({@code savedUomFactor}) or on the quotation line it comes from, when it is still in that unit. Null = resolve
+     * the unit now (a new line, or the unit changed).
+     */
+    private BigDecimal frozenFactor(Map<String, Object> m) {
+        String uomId = str(m.get("uomId"));
+        if (blank(uomId)) {
+            return null;
+        }
+        if (m.get("savedUomFactor") != null) {
+            return dec(m.get("savedUomFactor"));
+        }
+        String quotationLineId = str(m.get("quotationLineId"));
+        if (blank(quotationLineId)) {
+            return null;
+        }
+        Map<String, Object> q = db.row("SELECT \"uomId\", \"uomFactor\" FROM \"SalesQuotationLine\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", quotationLineId, TenantContext.organizationId());
+        return q != null && uomId.equals(str(q.get("uomId"))) && q.get("uomFactor") != null ? dec(q.get("uomFactor"))
+                : null;
+    }
+
+    /** Validated variant id of a line for {@code productId} (ADR-S058; a product with variants needs one). */
+    String variantFor(String productId, String variantId) {
+        ProductVariantService.VariantRef v = variants.resolve(productId, variantId);
+        return v == null ? null : v.id();
+    }
+
+    /**
+     * Review U-5: a line copied from another document keeps that document's saved unit factor (the line's unit is
+     * unchanged), instead of the factor re-resolved from today's product setup.
+     */
+    void keepSavedFactor(String lineId, Object uomId, Object uomFactor) {
+        if (lineId == null || uomFactor == null || dec(uomFactor).signum() <= 0) {
+            return;
+        }
+        db.update("UPDATE \"SalesOrderLine\" SET \"uomFactor\" = ? WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"uomId\" IS NOT DISTINCT FROM ?", dec(uomFactor), lineId, org(), uomId);
+    }
+
+    BigDecimal costOf(String productId, String variantId) {
         if (variantId != null) {
             ProductVariantService.VariantRef v = variants.find(variantId);
             if (v != null && v.costPrice() != null) {
