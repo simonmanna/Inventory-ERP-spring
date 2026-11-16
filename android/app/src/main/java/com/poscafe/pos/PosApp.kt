@@ -23,6 +23,7 @@ class PosApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         CrashLog.install(this)
+        com.poscafe.pos.ui.components.Money.configure(config.currencyCode, config.currencyDecimals)
         SyncWorker.schedule(this)
         com.poscafe.pos.data.backup.BackupWorker.apply(this, config.autoBackup)
         connectivity.start()

@@ -21,14 +21,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.poscafe.pos.data.DeviceConfig
 import com.poscafe.pos.data.local.entity.StaffEntity
 import com.poscafe.pos.data.repo.AuthRepository
+import com.poscafe.pos.ui.components.avatarHue
 import com.poscafe.pos.ui.components.pressScale
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
@@ -36,7 +39,12 @@ import javax.inject.Inject
 
 /** Offline cashier login: pick your name, punch your PIN. No network needed. */
 @HiltViewModel
-class PinLoginViewModel @Inject constructor(private val auth: AuthRepository) : ViewModel() {
+class PinLoginViewModel @Inject constructor(
+    private val auth: AuthRepository,
+    config: DeviceConfig,
+) : ViewModel() {
+    val businessName: String = config.businessName
+
     var staff by mutableStateOf<List<StaffEntity>>(emptyList()); private set
     var selected by mutableStateOf<StaffEntity?>(null)
     var pin by mutableStateOf("")
@@ -91,6 +99,15 @@ fun PinLoginScreen(onLoggedIn: () -> Unit, vm: PinLoginViewModel = hiltViewModel
 @Composable
 private fun StaffPicker(vm: PinLoginViewModel, modifier: Modifier = Modifier) {
     Column(modifier) {
+        Text(
+            vm.businessName.uppercase(),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(6.dp))
         Text("Who's on the till?", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(4.dp))
         Text(
@@ -110,6 +127,7 @@ private fun StaffPicker(vm: PinLoginViewModel, modifier: Modifier = Modifier) {
                 val initials = listOfNotNull(user.firstName.firstOrNull(), user.lastName?.firstOrNull())
                     .joinToString("").uppercase()
                 val interaction = remember { MutableInteractionSource() }
+                val hue = remember(name) { avatarHue(name) }
                 Surface(
                     onClick = { vm.selected = user; vm.pin = "" },
                     interactionSource = interaction,
@@ -131,7 +149,7 @@ private fun StaffPicker(vm: PinLoginViewModel, modifier: Modifier = Modifier) {
                             Modifier
                                 .size(48.dp)
                                 .background(
-                                    if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    if (isSel) MaterialTheme.colorScheme.primary else hue.copy(alpha = 0.16f),
                                     CircleShape,
                                 ),
                             contentAlignment = Alignment.Center,
@@ -139,7 +157,7 @@ private fun StaffPicker(vm: PinLoginViewModel, modifier: Modifier = Modifier) {
                             Text(
                                 initials.ifBlank { "?" },
                                 style = MaterialTheme.typography.titleSmall,
-                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (isSel) MaterialTheme.colorScheme.onPrimary else hue,
                             )
                         }
                         Text(

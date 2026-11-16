@@ -491,7 +491,7 @@ private fun RecordMovementDialog(
                 if (type == "purchase") {
                     OutlinedTextField(
                         value = cost, onValueChange = { cost = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text("Unit cost (UGX, optional)") }, singleLine = true,
+                        label = { Text("Unit cost (${com.poscafe.pos.ui.components.Money.code}, optional)") }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
                     )

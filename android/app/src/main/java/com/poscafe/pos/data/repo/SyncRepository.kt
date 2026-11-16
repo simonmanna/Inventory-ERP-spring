@@ -226,6 +226,12 @@ class SyncRepository @Inject constructor(
         // The scale the server rounds tax to, so the till prices a sale to the server's total.
         res.currency?.let { config.taxScale = it.decimalPlaces ?: -1 }
         CartEngine.taxScale = config.taxScale
+        // ...and the currency amounts are shown in.
+        res.currency?.let {
+            config.currencyCode = it.code
+            config.currencyDecimals = it.decimalPlaces ?: 2
+            com.poscafe.pos.ui.components.Money.configure(config.currencyCode, config.currencyDecimals)
+        }
         // The installation's licence, as the server sees it right now. A pull from an older server
         // carries none, in which case the last known answer stands rather than being reset.
         res.license?.let { licence ->
