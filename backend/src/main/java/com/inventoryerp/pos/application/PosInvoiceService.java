@@ -159,7 +159,11 @@ public class PosInvoiceService {
             tx.executeWithoutResult(st -> assertCreditAllowed(partnerId, total));
             return;
         }
-        List<Map<String, Object>> tenders = normalizeTenders(input, total, false);
+        // Phase I6 (owner decision 1): only an offline replay whose device collected less than the catalog total pays
+        // part of the invoice (PosService.reconcileOfflineTenders); online checkout still needs the full amount.
+        boolean offlineShortfall = com.inventoryerp.kernel.common.OfflineReplay.active()
+                && Boolean.TRUE.equals(input.get("allowPartial"));
+        List<Map<String, Object>> tenders = normalizeTenders(input, total, offlineShortfall);
         Object handedRaw = input.get("amountTendered");
         boolean anyCash = tenders.stream().anyMatch(t -> "cash".equals(t.get("method")));
         if (handedRaw != null) {

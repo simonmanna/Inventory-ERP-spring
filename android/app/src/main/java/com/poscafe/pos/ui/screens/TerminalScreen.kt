@@ -228,6 +228,8 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
         }
     }
 
+    TerminalIntegrityDialogs(vm)
+
     if (!isRetail) {
         vm.itemConfig?.let { config ->
             ItemConfigSheet(

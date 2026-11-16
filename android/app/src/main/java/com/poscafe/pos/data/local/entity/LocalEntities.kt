@@ -80,6 +80,13 @@ data class InventoryMovementEntity(
     val purchaseId: String? = null,
     val actorUserId: String?,
     val occurredAt: Long,
+    /** Product variant moved (server `ProductVariant`); null = the product itself. */
+    val variantId: String? = null,
+    /**
+     * The queued server op this movement mirrors (stock.in/out/count, kitchen.void).
+     * When the server finally rejects that op, these rows are removed again.
+     */
+    val opId: String? = null,
 )
 
 /**

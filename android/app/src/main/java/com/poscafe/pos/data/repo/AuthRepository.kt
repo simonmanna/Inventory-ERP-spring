@@ -138,6 +138,20 @@ class AuthRepository @Inject constructor(
      */
     suspend fun verifyOverridePin(pin: String): Result<Override> = verifyPinFor(pin, "pos:override")
 
+    /**
+     * Verify an approver for a server override kind: like the server's
+     * `assertCanOverride`, the approver needs `pos:override` AND the kind's own
+     * right ([permission], e.g. `pos:void` for a kitchen void).
+     */
+    suspend fun verifyApproval(pin: String, permission: String): Result<Override> {
+        val res = verifyPinFor(pin, permission)
+        val who = res.getOrNull() ?: return res
+        val perms = staffDao.all().firstOrNull { it.id == who.userId }?.permissions
+            ?.split(',')?.map { it.trim() }.orEmpty()
+        return if ("pos:override" in perms) res
+        else Result.failure(IllegalArgumentException("Approver does not hold pos:override permission"))
+    }
+
     /** Does the signed-in cashier hold [permission] (as last synced)? */
     fun currentHas(permission: String): Boolean = current?.permissions?.contains(permission) == true
 

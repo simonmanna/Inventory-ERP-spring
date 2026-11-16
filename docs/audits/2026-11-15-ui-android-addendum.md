@@ -77,9 +77,13 @@ The Android app was outside the "no client change" scope. Fixes need their own p
   - invoice, credit-note and goods-receipt errors surfaced, with no duplicate on retry.
 - **Waiting for their backend phase** (variant target on pricing rules, variant in price-list lookups, manual delivery
   order variant): I3.
-- **I6 (Android):**
-  - variant picker;
-  - `expectedTotal` sent and tax aligned with the server;
-  - refund dispositions and partial refunds;
-  - kitchen voids sent to the server;
-  - variant counts.
+- **I6 (Android):** built 2026-11-16 (branch `worktree-agent-a59494dcfb7aaed0f`, not merged) — see
+  `android/README.md` "Cash & inventory sync" / "Pricing parity" and `docs/spec/sync.md` Deviations.
+  - variant picker — done (pull `productVariants`, picker, variant barcode/SKU scan);
+  - `expectedTotal` sent and tax aligned with the server — done (tax row inclusivity, menu-item tax, currency
+    scale); a remaining price difference no longer fails the op: the sale is kept at the server price (Decision 1);
+  - refund dispositions and partial refunds — done (`lineNumber`, one disposition per op);
+  - kitchen voids sent to the server — done (`kitchen.void`, manager PIN);
+  - variant counts — done; stock in/out carry `variantId`. Local movements of a discarded op are removed.
+  - Open: `uomId` is sent but the server POS ignores it (sells in the product's sales unit); stale `stock.count`
+    replays are still applied as absolute counts (owner decision).

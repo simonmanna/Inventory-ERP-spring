@@ -35,7 +35,7 @@ class MigrationTest {
             PosDatabase.MIGRATION_2_3, PosDatabase.MIGRATION_3_4, PosDatabase.MIGRATION_4_5,
             PosDatabase.MIGRATION_5_6, PosDatabase.MIGRATION_6_7, PosDatabase.MIGRATION_7_8,
             PosDatabase.MIGRATION_8_9, PosDatabase.MIGRATION_9_10, PosDatabase.MIGRATION_10_11,
-            PosDatabase.MIGRATION_11_12, PosDatabase.MIGRATION_12_13,
+            PosDatabase.MIGRATION_11_12, PosDatabase.MIGRATION_12_13, PosDatabase.MIGRATION_13_14,
         )
         // Unsynced sales survive the upgrade.
         db.query("SELECT COUNT(*) FROM op_queue WHERE status = 'queued'").use { c ->
@@ -46,6 +46,6 @@ class MigrationTest {
 
     private companion object {
         const val DB = "migration-test.db"
-        const val LATEST = 13
+        const val LATEST = 14
     }
 }

@@ -138,6 +138,15 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
     are not checked.
 14. **A refund restocks the variant the sale issued (review M-10).** A pre-ADR-S072 sale that issued no variant
     restocks the no-variant stock.
+15. **Offline sale priced differently by the device is kept (owner decision 1, Phase I6).** On a `sale.checkout`
+    replay (`OfflineReplay`), a non-credit sale whose `expectedTotal` or tender sum differs from the server total is
+    applied at the server's catalog price instead of failing on every retry: the stale `expectedTotal` is dropped; an
+    overpay is trimmed off the cash legs (then other legs, last first) and `amountTendered` kept for change; a shortfall
+    is settled partially (`allowPartial`, replay only) and the invoice is created with `paymentMode = credit`, so the
+    residual stays on account and does not block the shift close. Order and invoice notes get "Offline price
+    difference: device charged X, catalog price Y", an `AuditLog` row (`Invoice update`, `kind:
+    offline_price_variance`) records the variance, and the push result carries `priceVariance`. Online checkout still
+    refuses with "The price changed. Refresh the quote before payment." Test `SyncDeviceIntegrityIT`.
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 

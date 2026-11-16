@@ -303,12 +303,12 @@ interface SupplierDao {
 @Dao
 interface InventoryDao {
     data class StockLevel(val menuItemId: String, val onHand: Double)
-    data class ProductStockLevel(val productId: String, val onHand: Double)
+    data class ProductStockLevel(val productId: String, val variantId: String?, val onHand: Double)
 
     @Query("SELECT menuItemId, SUM(qtyDelta) AS onHand FROM inventory_movements WHERE productId IS NULL GROUP BY menuItemId")
     fun stockLevels(): Flow<List<StockLevel>>
 
-    @Query("SELECT productId, SUM(qtyDelta) AS onHand FROM inventory_movements WHERE productId IS NOT NULL GROUP BY productId")
+    @Query("SELECT productId, variantId, SUM(qtyDelta) AS onHand FROM inventory_movements WHERE productId IS NOT NULL GROUP BY productId, variantId")
     fun productStockLevels(): Flow<List<ProductStockLevel>>
 
     @Query("SELECT * FROM inventory_movements ORDER BY occurredAt DESC LIMIT :limit")
@@ -325,6 +325,10 @@ interface InventoryDao {
 
     @Insert suspend fun insert(row: InventoryMovementEntity)
     @Insert suspend fun insertAll(rows: List<InventoryMovementEntity>)
+
+    /** Undo the device mirror of a server op the server finally rejected (or a manager discarded). */
+    @Query("DELETE FROM inventory_movements WHERE opId = :opId")
+    suspend fun deleteForOp(opId: String): Int
 }
 
 @Dao
@@ -393,6 +397,25 @@ interface ProductPackagingDao {
     @Upsert suspend fun upsertAll(rows: List<ProductPackagingEntity>)
     @Query("DELETE FROM product_packagings WHERE id = :id") suspend fun delete(id: String)
     @Query("DELETE FROM product_packagings") suspend fun deleteAll()
+}
+
+@Dao
+interface ProductVariantDao {
+    @Query("SELECT * FROM product_variants WHERE isActive = 1 AND productId = :productId ORDER BY name")
+    suspend fun forProduct(productId: String): List<ProductVariantEntity>
+
+    @Query("SELECT * FROM product_variants WHERE isActive = 1 ORDER BY name")
+    fun allActive(): Flow<List<ProductVariantEntity>>
+
+    /** A variant's own barcode or SKU (scanned at the till). */
+    @Query("SELECT * FROM product_variants WHERE isActive = 1 AND (barcode = :code OR sku = :code) LIMIT 1")
+    suspend fun byCode(code: String): ProductVariantEntity?
+
+    @Query("SELECT * FROM product_variants WHERE id = :id")
+    suspend fun byId(id: String): ProductVariantEntity?
+
+    @Upsert suspend fun upsertAll(rows: List<ProductVariantEntity>)
+    @Query("DELETE FROM product_variants WHERE id = :id") suspend fun delete(id: String)
 }
 
 @Dao
