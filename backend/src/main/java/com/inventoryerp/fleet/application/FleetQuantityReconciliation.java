@@ -36,10 +36,12 @@ public class FleetQuantityReconciliation {
 
     private final FleetDb db;
     private final LoadLineQuantityService quantities;
+    private final DeliveryInvoicing invoicing;
 
-    public FleetQuantityReconciliation(FleetDb db, LoadLineQuantityService quantities) {
+    public FleetQuantityReconciliation(FleetDb db, LoadLineQuantityService quantities, DeliveryInvoicing invoicing) {
         this.db = db;
         this.quantities = quantities;
+        this.invoicing = invoicing;
     }
 
     /** One finding of a run. */
@@ -86,9 +88,49 @@ public class FleetQuantityReconciliation {
                 }
             }
         }
-        int open = persist(runId, found);
+        int open = persist(runId, SCOPE, found);
+        List<Finding> financial = financial();
+        int openFinancial = persist(runId, FINANCIAL, financial);
         return Obj.of("runId", runId, "scope", SCOPE, "linesChecked", lines.size(), "findings", found.size(),
-                "openFindings", open, "repaired", repaired);
+                "openFindings", open, "repaired", repaired, "financialFindings", financial.size(),
+                "openFinancialFindings", openFinancial);
+    }
+
+    static final String FINANCIAL = "financial";
+
+    /**
+     * Phase A A4 (plan §10) financial checks of the Fleet goods ledger: on a Fleet-owned delivery-order line the live
+     * allocations never exceed what was accepted; no Fleet goods allocation exists on a sales-order delivery order.
+     */
+    private List<Finding> financial() {
+        List<Finding> out = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("""
+                SELECT ol.id AS "deliveryOrderLineId", o.id AS "deliveryOrderId", o.code AS "tripCode", o."sourceType", o."sourceId",
+                       COALESCE(sum(a.quantity), 0) AS allocated,
+                       COALESCE((SELECT sum(ll."billableQty") FROM "FleetLoadLine" ll JOIN "FleetLoad" t ON t.id = ll."loadId"
+                                  WHERE ll."deliveryOrderLineId" = ol.id
+                                    AND t.status IN ('delivered', 'closed', 'returned')), 0) AS accepted
+                  FROM "FleetDeliveryInvoiceLine" a
+                  JOIN "Document" x ON x.id = a."documentId" AND x.status::text NOT IN ('cancelled', 'rejected')
+                  JOIN "FleetDeliveryOrderLine" ol ON ol.id = a."deliveryOrderLineId"
+                  JOIN "FleetDeliveryOrder" o ON o.id = ol."deliveryOrderId"
+                 WHERE a."organizationId" = ?
+                 GROUP BY ol.id, o.id""").params(FleetDb.org()))) {
+            Map<String, Object> l = Obj.of("id", null, "loadId", null, "tripCode", r.get("tripCode"), "deliveryOrderId",
+                    r.get("deliveryOrderId"), "deliveryOrderLineId", r.get("deliveryOrderLineId"));
+            BigDecimal allocated = SqlRows.dec(r, "allocated");
+            BigDecimal accepted = SqlRows.dec(r, "accepted");
+            if (invoicing.salesOwned((String) r.get("sourceType"), (String) r.get("sourceId"))) {
+                out.add(new Finding("fleet_goods_on_sales_order", FINANCIAL + "|fleet_goods_on_sales_order|"
+                        + r.get("deliveryOrderLineId"), l, BigDecimal.ZERO, allocated,
+                        "Fleet goods allocation on a sales-order delivery order (Sales owns its goods)"));
+            } else if (allocated.compareTo(accepted) > 0) {
+                out.add(new Finding("over_invoiced", FINANCIAL + "|over_invoiced|" + r.get("deliveryOrderLineId"), l,
+                        accepted, allocated, "Over-invoiced " + JsNumbers.dec(allocated.subtract(accepted))
+                                + " on delivery order " + r.get("tripCode")));
+            }
+        }
+        return out;
     }
 
     private void check(Map<String, Object> l, Buckets b, List<Map<String, Object>> claims,
@@ -182,7 +224,7 @@ public class FleetQuantityReconciliation {
     }
 
     /** Insert new findings, refresh the ones still open, resolve the ones this run no longer sees. */
-    private int persist(String runId, List<Finding> found) {
+    private int persist(String runId, String scope, List<Finding> found) {
         Set<String> seen = new HashSet<>();
         for (Finding f : found) {
             if (!seen.add(f.fingerprint())) {
@@ -197,7 +239,7 @@ public class FleetQuantityReconciliation {
                         + " fingerprint, \"deliveryCode\", \"loadId\", \"loadLineId\", \"deliveryOrderId\","
                         + " \"deliveryOrderLineId\", expected, actual, message, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
                         + " ?, ?, ?, ?, ?, ?, ?::jsonb)").params(UUID.randomUUID().toString(), FleetDb.org(), runId,
-                                SCOPE, f.rule(), f.fingerprint(), l.get("tripCode"), l.get("loadId"), l.get("id"),
+                                scope, f.rule(), f.fingerprint(), l.get("tripCode"), l.get("loadId"), l.get("id"),
                                 l.get("deliveryOrderId"), l.get("deliveryOrderLineId"), f.expected(), f.actual(),
                                 f.message(), JSON.writeValueAsString(Obj.of("productId", l.get("productId"))))
                         .update();
@@ -205,7 +247,7 @@ public class FleetQuantityReconciliation {
         }
         db.jdbc().sql("UPDATE \"FleetReconciliationFinding\" SET status = 'resolved', \"resolvedAt\" = " + FleetDb.NOW
                 + ", resolution = 'Not detected by run ' || ? WHERE \"organizationId\" = ? AND scope = ? AND status ="
-                + " 'open' AND \"runId\" <> ?").params(runId, FleetDb.org(), SCOPE, runId).update();
+                + " 'open' AND \"runId\" <> ?").params(runId, FleetDb.org(), scope, runId).update();
         return seen.size();
     }
 

@@ -118,7 +118,7 @@ stock events only after commit, cost policy / standard activation hourly on the 
 
 **Sales delivery & fulfilment management** (Spring-native, [spec](spec/sales.md#delivery--fulfilment-management-2026-11-13-v484-owner-request)): many deliveries per order with own method / schedule / transport / outcome, order delivery summary, edit / re-plan / cancel / fail / return / reschedule, history, `sales_delivery` documents; 5 new routes, V484, `SalesDeliveryManagementIT`. Done 2026-11-13; full build not run. Delivery columns (date scheduled, deadline, picked, invoiced, returned…), delivery note PDF for invoices / cash sales and a Returns tab on all three: 2 new routes, V485, `SalesHandoverIT`, `CashSaleIT`.
 
-**Phase A1 — weighbridge tickets on Sales deliveries** ([spec](spec/sales.md#weighbridge-tickets-on-sales-deliveries-phase-a1-2026-11-14-no-migration)): Sales delivery detail, list and delivery note show the Fleet ticket read-only (verification, weighings, void / reissue chain), plus a PDF view copy that is not counted as a print. 1 new route, no migration. Includes a fix: tickets can now be registered from a Sales delivery. `SalesWeighbridgeIT`, `FleetDeliveryNoteWeighLineTest`. 2026-11-14; full build not run. A2 done (below); A3–A4 pending.
+**Phase A1 — weighbridge tickets on Sales deliveries** ([spec](spec/sales.md#weighbridge-tickets-on-sales-deliveries-phase-a1-2026-11-14-no-migration)): Sales delivery detail, list and delivery note show the Fleet ticket read-only (verification, weighings, void / reissue chain), plus a PDF view copy that is not counted as a print. 1 new route, no migration. Includes a fix: tickets can now be registered from a Sales delivery. `SalesWeighbridgeIT`, `FleetDeliveryNoteWeighLineTest`. 2026-11-14; full build not run. A2–A4 done (below).
 
 **Phase A2 — customer weight evidence on the proof of delivery** ([spec](spec/sales.md#customer-weight-evidence-on-the-proof-of-delivery-phase-a2-2026-11-16-v496)): the customer's weighing is compared with the quarry weight under the station tolerance. The tolerance triggers an investigation; it is not a deduction. Lighter beyond tolerance raises a full-variance weight claim through the approval engine, with the split confirmed for multi-product trucks. Heavier is flagged only. The ticket, stock and documents are unchanged. 4 new routes (2 Sales, 2 Fleet) and `confirm` accepts `customerWeight`. V496 (renumber at merge). `SalesCustomerWeightIT`, `WeightAllocationTest`. 2026-11-16; full build not run.
 
@@ -133,7 +133,22 @@ stock events only after commit, cost policy / standard activation hourly on the 
 - M-6 cumulative base rounding at dispatch.
 - 5 new routes (2 Sales, 3 Fleet), new permission `sales:delivery:pod_correct`, V497.
 - Tests: `LoadLineQuantitiesTest`, `SalesQuantityBucketsIT`.
-- 2026-11-16; full build not run. A4 pending.
+- 2026-11-16; full build not run.
+
+**Phase A4 — invoiceability, invoice ownership, legacy Fleet invoices** ([spec](spec/sales.md#invoiceability-invoice-ownership-and-legacy-fleet-invoices-phase-a4-2026-11-16-v500)):
+- One goods-invoicing owner per delivery-order source: Sales for Sales-module orders, Fleet otherwise.
+- Fleet invoices through the immutable `FleetDeliveryInvoiceLine` ledger.
+- Invoiceable = billable − live allocations: accepted / weighed bill the accepted, undisputed quantity (weighed only after the POD); the `ordered` basis and policy keep ordered-quantity billing.
+- An `InvoicePostGuard` SPI rechecks at post time.
+- Late-dispute draft credit notes.
+- Historical Fleet goods invoices on Sales orders block the order until a review is approved through the approval engine.
+- Financial reconciliation on both sides.
+- 8 new Sales routes (incl. `/legacy-invoice-reviews/{id}/reject`), V500.
+- Tests: `SalesInvoiceabilityIT`, `InvoiceLedgerWritersTest`.
+- Owner review 2026-11-16 returned two corrections, both made: ordered-quantity billing preserved for the `ordered`
+  basis / policy; the legacy review approved through the kernel approval engine. No deviations remain.
+- Financial sign-off by the owner 2026-11-16; merged into main.
+- 2026-11-16; full build not run.
 
 **Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner.
 

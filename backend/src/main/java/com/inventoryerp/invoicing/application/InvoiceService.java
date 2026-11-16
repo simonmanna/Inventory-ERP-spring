@@ -83,6 +83,14 @@ public class InvoiceService {
     private final PriceListService priceLists;
     private final TransactionTemplate newTx;
 
+    /** Resolved at posting time, so the guards (which depend on modules that use this service) form no bean cycle. */
+    private org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPostGuards(org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards) {
+        this.postGuards = postGuards;
+    }
+
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
             ApprovalsService approvals, PaymentTermService terms, JournalService journals, CreditControlService credit,
             BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm,
@@ -572,6 +580,14 @@ public class InvoiceService {
             throw ApiException.notFound("Invoice not found");
         }
         doc.put("lines", builder.lines(id, false));
+        boolean delivered = Boolean.TRUE.equals(jdbc.sql("SELECT data->>'stockIssuedBy' IS NOT NULL FROM \"Document\""
+                + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional()
+                .orElse(false));
+        if (delivered && "draft".equals(String.valueOf(doc.get("status")))) {
+            if (postGuards != null) {
+                postGuards.orderedStream().forEach(g -> g.beforePost(id));
+            }
+        }
         workflow.transition("invoice", id, "post", null, doc);
         snapshots.record("invoice", id);
         publish("invoice.posted", doc);
