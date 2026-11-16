@@ -888,6 +888,9 @@ cd backend && ./gradlew clean compileJava compileTestJava spotlessCheck
 node tools/contracts2java/generate.mjs && git diff --exit-code -- backend  # generated files are current
 pnpm install --frozen-lockfile && pnpm shared:build
 pnpm web:typecheck && pnpm --filter @erp/web lint && pnpm web:i18n && pnpm web:build
+# web:i18n (2026-11-16): untranslated phrases are warnings; stale keys, unknown {{placeholders}}, invalid phrase/locale
+# files and missing keyed-locale keys fail. Completeness report: node web/scripts/i18n-phrases.cjs --report <file>.md
+# (current snapshot: docs/i18n/translation-completeness.md + .csv).
 cd license-server && ./gradlew build
 ```
 
