@@ -154,7 +154,9 @@ class PosHardeningIT extends ApiTestSupport {
         try {
             String first = money(cashier, "POST", "/cash-sessions/open", Map.of("cashRegisterId", reg, "openingFloat", 10000,
                     "openingSourceAccountId", accountId("1200"), "notes", "Morning float")).get("id").asString();
-            money(cashier, "POST", "/cash-sessions/close", Map.of("sessionId", first, "closingCounted", 10000));
+            // Other suites add tracked tender methods to DEMO: mark them not counted (a manager approves).
+            money(cashier, "POST", "/cash-sessions/close", withUncountedTenders(Map.of("sessionId", first,
+                    "closingCounted", 10000)));
 
             Map<String, Object> open = new LinkedHashMap<>(Map.of("cashRegisterId", reg, "openingFloat", 4000,
                     "autoAdjust", true));

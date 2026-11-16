@@ -353,6 +353,9 @@ class PosVariantIntegrityIT extends ApiTestSupport {
     // ------------------------------------------------------------------ T-1: other posting timings
 
     String awaitJob(String orderId) {
+        // at_payment / at_fulfillment_complete jobs are queued by an outbox subscriber: on a full run the poller can be
+        // behind hundreds of other suites' events, so ship the outbox first instead of waiting for it.
+        drainOutboxFully();
         for (int i = 0; i < 50; i++) {
             List<String> ids = jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"orderId\" = ?").param(orderId)
                     .query(String.class).list();
