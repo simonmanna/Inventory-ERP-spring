@@ -158,7 +158,7 @@ export function useOpeningBalances() {
 export function usePostOpeningBalances() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: OpeningBalancePayload) => (await idempotentPost('/opening-balances', body)).data,
+    mutationFn: (body: OpeningBalancePayload) => idempotentPost('/opening-balances', body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['opening-balances'] });
       qc.invalidateQueries({ queryKey: ['trial-balance'] });
@@ -330,7 +330,5 @@ export function useBranchOptions() {
   });
 }
 
-/** Local calendar date as YYYY-MM-DD (no UTC shift). */
-export function localDay(d: Date = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+/** Moved to `@/lib/dates`; re-exported for existing imports. */
+export { localDay } from '@/lib/dates';

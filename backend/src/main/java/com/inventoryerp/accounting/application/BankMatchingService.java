@@ -291,6 +291,7 @@ public class BankMatchingService {
     }
 
     private String applyOne(String org, String bankAccountId, Map<String, Object> rule, String lineId) {
+        BankReconciliationService.lockBankAccount(jdbc, org, bankAccountId);
         Map<String, Object> line = SqlRows.one(jdbc.sql("SELECT * FROM \"BankStatementLine\" WHERE id = ? AND"
                 + " \"organizationId\" = ? AND status = 'unmatched' FOR UPDATE").params(lineId, org));
         if (line == null) {
@@ -431,6 +432,7 @@ public class BankMatchingService {
     @Transactional
     public Map<String, Object> allocateLine(String lineId, List<Allocation> allocations) {
         String org = TenantContext.organizationId();
+        lockLineAccount(org, lineId);
         Map<String, Object> line = requireLine(org, lineId, true);
         BigDecimal remaining = lineOpen(org, line);
         String groupId = UUID.randomUUID().toString();
@@ -471,6 +473,9 @@ public class BankMatchingService {
     @Transactional
     public Map<String, Object> allocatePayment(String paymentId, List<String> lineIds) {
         String org = TenantContext.organizationId();
+        jdbc.sql("SELECT \"accountId\" FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?").params(paymentId, org)
+                .query(String.class).optional()
+                .ifPresent(account -> BankReconciliationService.lockBankAccount(jdbc, org, account));
         Map<String, Object> payment = SqlRows.one(jdbc.sql("SELECT id, \"paymentNumber\", amount, direction::text AS"
                 + " direction, status::text AS status, \"accountId\" FROM \"Payment\" WHERE id = ? AND"
                 + " \"organizationId\" = ? FOR UPDATE").params(paymentId, org));
@@ -553,6 +558,13 @@ public class BankMatchingService {
         out.put("groupId", groupId);
         out.put("allocated", plain(lineAllocated(org, lineId)));
         return out;
+    }
+
+    /** Takes the bank account's reconciliation lock (review R-7) for the statement line, before the line is read. */
+    private void lockLineAccount(String org, String lineId) {
+        jdbc.sql("SELECT \"bankAccountId\" FROM \"BankStatementLine\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(lineId, org).query(String.class).optional()
+                .ifPresent(account -> BankReconciliationService.lockBankAccount(jdbc, org, account));
     }
 
     private Map<String, Object> requireLine(String org, String lineId, boolean forChange) {

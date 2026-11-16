@@ -40,7 +40,12 @@ interface SearchableSelectProps {
   onOpenChange?: (open: boolean) => void;
   /** When set and a value is picked, adds a first row that clears the selection. */
   clearLabel?: string;
+  /** Long labels wrap onto more lines instead of being cut off (e.g. product names). */
+  wrap?: boolean;
 }
+
+/** Wide dropdown panel for product pickers in document lines, so long product names show in full. */
+export const PRODUCT_PICKER_PANEL = 'w-[min(36rem,calc(100vw-2rem))]';
 
 /**
  * Select with a type-ahead search box in the dropdown — for lists (products,
@@ -62,6 +67,7 @@ export function SearchableSelect({
   loading,
   onOpenChange,
   clearLabel,
+  wrap,
 }: SearchableSelectProps) {
   const [open, setOpenState] = React.useState(false);
   const setOpen = (v: boolean) => { setOpenState(v); onOpenChange?.(v); };
@@ -132,7 +138,8 @@ export function SearchableSelect({
             className,
           )}
         >
-          <span className={cn('truncate text-left', !selected && 'text-muted-foreground')}>
+          <span className={cn('truncate text-left', !selected && 'text-muted-foreground')}
+            title={selected ? `${selected.code ? `${selected.code} — ` : ''}${selected.label}` : undefined}>
             {selected
               ? `${selected.code ? `${selected.code} — ` : ''}${selected.label}`
               : placeholder}
@@ -193,7 +200,8 @@ export function SearchableSelect({
             >
               <Check className={cn('h-4 w-4 shrink-0', option.value === value ? 'opacity-100' : 'opacity-0')} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate">
+                <span className={cn('block', wrap ? 'whitespace-normal break-words' : 'truncate')}
+                  title={`${option.code ? `${option.code} — ` : ''}${option.label}`}>
                   {option.code && <span className="font-mono text-xs text-muted-foreground">{option.code} — </span>}
                   {option.label}
                 </span>

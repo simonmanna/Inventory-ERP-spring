@@ -44,9 +44,11 @@ public class ReplenishmentService {
     private static final String RULE_SELECT = """
             SELECT r.*, p.code AS "productCode", p.name AS "productName", p."uomId", l.code AS "locationCode",
                    l.name AS "locationName", COALESCE(r."supplierId", p."supplierId") AS "effectiveSupplierId",
-                   s.name AS "supplierName", sl.code AS "sourceLocationCode", sl.name AS "sourceLocationName"
+                   s.name AS "supplierName", sl.code AS "sourceLocationCode", sl.name AS "sourceLocationName",
+                   pv.name AS "variantName"
             FROM "InventoryReplenishmentRule" r
             JOIN "Product" p ON p.id = r."productId"
+            LEFT JOIN "ProductVariant" pv ON pv.id = r."variantId"
             JOIN "InventoryLocation" l ON l.id = r."locationId"
             LEFT JOIN "InventoryLocation" sl ON sl.id = r."sourceLocationId"
             LEFT JOIN "Partner" s ON s.id = COALESCE(r."supplierId", p."supplierId")
@@ -55,10 +57,11 @@ public class ReplenishmentService {
             SELECT a.*, p.code AS "productCode", p.name AS "productName", p."uomId", l.code AS "locationCode",
                    l.name AS "locationName", r."leadTimeDays", COALESCE(r."supplierId", p."supplierId") AS "supplierId",
                    s.name AS "supplierName", r."sourceLocationId", sl.name AS "sourceLocationName",
-                   r.route AS "ruleRoute"
+                   r.route AS "ruleRoute", pv.name AS "variantName"
             FROM "InventoryReplenishmentAlert" a
             JOIN "InventoryReplenishmentRule" r ON r.id = a."ruleId"
             JOIN "Product" p ON p.id = a."productId"
+            LEFT JOIN "ProductVariant" pv ON pv.id = a."variantId"
             JOIN "InventoryLocation" l ON l.id = a."locationId"
             LEFT JOIN "InventoryLocation" sl ON sl.id = r."sourceLocationId"
             LEFT JOIN "Partner" s ON s.id = COALESCE(r."supplierId", p."supplierId")
@@ -82,10 +85,10 @@ public class ReplenishmentService {
         this.stockDocs = stockDocs;
     }
 
-    private BigDecimal incoming(String productId, String locationId, boolean onlyRule) {
+    private BigDecimal incoming(String productId, String variantId, String locationId, boolean onlyRule) {
         BigDecimal total = BigDecimal.ZERO;
         for (IncomingSupplyProvider p : incomingSupply) {
-            total = total.add(p.incoming(productId, locationId, onlyRule));
+            total = total.add(p.incoming(productId, variantId, locationId, onlyRule));
         }
         return total;
     }
@@ -162,10 +165,11 @@ public class ReplenishmentService {
         }
         assertExists("Product", productId, "Product not found");
         assertExists("InventoryLocation", locationId, "Location not found");
+        String variantId = ruleVariant(productId, str(dto.get("variantId")));
         Levels levels = levels(dto, null);
         Long taken = jdbc.sql("SELECT count(*) FROM \"InventoryReplenishmentRule\" WHERE \"organizationId\" = ? AND"
-                + " \"productId\" = ? AND \"locationId\" = ? AND \"deletedAt\" IS NULL").params(org(), productId,
-                locationId)
+                + " \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND"
+                + " \"deletedAt\" IS NULL").params(org(), productId, variantId, locationId)
                 .query(Long.class).single();
         if (taken > 0) {
             throw ApiException.badRequest("This product already has a rule at this location");
@@ -178,10 +182,11 @@ public class ReplenishmentService {
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"InventoryReplenishmentRule\" (id, \"organizationId\", \"productId\", \"locationId\","
                 + " \"minQty\", \"maxQty\", \"reorderQty\", \"supplierId\", \"leadTimeDays\", \"autoRequisition\","
-                + " \"createdBy\", route, \"sourceLocationId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                + " \"createdBy\", route, \"sourceLocationId\", \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                + " ?, ?)")
                 .params(id, org(), productId, locationId, levels.min(), levels.max(), levels.reorder(), supplierId,
                         leadTime(dto.get("leadTimeDays"), 0), Boolean.TRUE.equals(dto.get("autoRequisition")),
-                        TenantContext.userId(), route.route(), route.sourceLocationId()).update();
+                        TenantContext.userId(), route.route(), route.sourceLocationId(), variantId).update();
         audit.recordInTx(AuditInput.of("InventoryReplenishmentRule", id, "create", null, Obj.of("productId", productId,
                 "locationId", locationId, "minQty", levels.min().toPlainString(), "route", route.route())));
         return rule(id);
@@ -225,6 +230,30 @@ public class ReplenishmentService {
                 .update();
         audit.recordInTx(AuditInput.of("InventoryReplenishmentRule", id, "update", null, Obj.of("deleted", true)));
         return Obj.of("ok", true);
+    }
+
+    /**
+     * Phase I2 (audit V-10, D2): a rule for a product with variants watches one active variant of its own (stock is
+     * held and bought per variant); a product without variants takes no variant.
+     */
+    private String ruleVariant(String productId, String variantId) {
+        boolean hasVariants = Boolean.TRUE.equals(jdbc.sql("SELECT \"hasVariants\" FROM \"Product\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(productId, org()).query(Boolean.class).optional().orElse(false));
+        if (variantId == null) {
+            if (hasVariants) {
+                String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(productId, org()).query(String.class).single();
+                throw ApiException.badRequest("Choose a variant for " + name);
+            }
+            return null;
+        }
+        Long ok = jdbc.sql("SELECT count(*) FROM \"ProductVariant\" WHERE id = ? AND \"productId\" = ? AND"
+                + " \"organizationId\" = ? AND \"isActive\" AND \"deletedAt\" IS NULL").params(variantId, productId, org())
+                .query(Long.class).single();
+        if (ok == 0) {
+            throw ApiException.badRequest("Variant not found");
+        }
+        return variantId;
     }
 
     private record Levels(BigDecimal min, BigDecimal max, BigDecimal reorder) {}
@@ -354,20 +383,25 @@ public class ReplenishmentService {
                 + " r.\"isActive\" AND r.\"deletedAt\" IS NULL ORDER BY r.id").param(org()));
         Map<Object, Long> rulesPerProduct = new java.util.HashMap<>();
         for (Map<String, Object> rule : rules) {
-            rulesPerProduct.merge(rule.get("productId"), 1L, Long::sum);
+            rulesPerProduct.merge(rule.get("productId") + "::" + rule.get("variantId"), 1L, Long::sum);
         }
         for (Map<String, Object> rule : rules) {
             String ruleId = (String) rule.get("id");
+            // Phase I2 (audit V-10): a variant rule compares that variant's quant, reservations and supply; a rule
+            // without a variant keeps the product total.
+            String variantId = (String) rule.get("variantId");
             BigDecimal onHand = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE"
-                    + " \"organizationId\" = ?"
-                    + " AND \"productId\" = ? AND \"locationId\" = ?").params(org(), rule.get("productId"),
-                    rule.get("locationId")).query(BigDecimal.class).single();
+                    + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ?"
+                    + " AND (?::text IS NULL OR \"variantId\" = ?::text)").params(org(), rule.get("productId"),
+                    rule.get("locationId"), variantId, variantId).query(BigDecimal.class).single();
             BigDecimal reserved = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockReservation\" WHERE"
-                    + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND status = 'active'")
-                    .params(org(), rule.get("productId"), rule.get("locationId")).query(BigDecimal.class).single();
+                    + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND status = 'active'"
+                    + " AND (?::text IS NULL OR \"variantKey\" = ?::text)")
+                    .params(org(), rule.get("productId"), rule.get("locationId"), variantId, variantId)
+                    .query(BigDecimal.class).single();
             BigDecimal available = onHand.subtract(reserved);
-            BigDecimal incoming = incoming((String) rule.get("productId"), (String) rule.get("locationId"),
-                    rulesPerProduct.get(rule.get("productId")) == 1L);
+            BigDecimal incoming = incoming((String) rule.get("productId"), variantId, (String) rule.get("locationId"),
+                    rulesPerProduct.get(rule.get("productId") + "::" + variantId) == 1L);
             BigDecimal min = SqlRows.dec(rule, "minQty");
             BigDecimal suggested = ReplenishmentCalculator.suggest(available.add(incoming), min,
                     rule.get("maxQty") == null ? null : SqlRows.dec(rule, "maxQty"),
@@ -405,9 +439,10 @@ public class ReplenishmentService {
             String id = UUID.randomUUID().toString();
             int inserted = jdbc.sql("INSERT INTO \"InventoryReplenishmentAlert\" (id, \"organizationId\", \"ruleId\","
                     + " \"productId\", \"locationId\", \"onHand\", reserved, available, incoming, \"minQty\","
-                    + " \"suggestedQty\", route) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
+                    + " \"suggestedQty\", route, \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    + " ON CONFLICT DO NOTHING")
                     .params(id, org(), ruleId, rule.get("productId"), rule.get("locationId"), onHand, reserved,
-                            available, incoming, min, suggested, rule.get("route")).update();
+                            available, incoming, min, suggested, rule.get("route"), variantId).update();
             if (inserted > 0) {
                 raised++;
                 if (Boolean.TRUE.equals(rule.get("autoRequisition"))) {
@@ -479,7 +514,9 @@ public class ReplenishmentService {
             line.put("route", route);
             line.put("locationId", a.get("locationId"));
             line.put("productId", a.get("productId"));
-            line.put("description", a.get("productCode") + " " + a.get("productName") + " for "
+            line.put("variantId", a.get("variantId"));
+            line.put("description", a.get("productCode") + " " + a.get("productName")
+                    + (a.get("variantName") == null ? "" : " (" + a.get("variantName") + ")") + " for "
                     + a.get("locationName"));
             line.put("quantity", SqlRows.dec(a, "suggestedQty").toPlainString());
             line.put("uomId", a.get("uomId"));
@@ -504,7 +541,8 @@ public class ReplenishmentService {
     private void raiseTransfer(List<Map<String, Object>> alerts) {
         List<StockDocService.DocLine> items = new ArrayList<>();
         for (Map<String, Object> a : alerts) {
-            items.add(new StockDocService.DocLine((String) a.get("productId"), null, null, null, null, null, null,
+            items.add(new StockDocService.DocLine((String) a.get("productId"), (String) a.get("variantId"), null, null,
+                    null, null, null,
                     null, SqlRows.dec(a, "suggestedQty")));
         }
         Map<String, Object> first = alerts.getFirst();

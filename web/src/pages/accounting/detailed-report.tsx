@@ -23,6 +23,7 @@ import {
   type DetailedReportAccount,
 } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
+import { localDayOf } from '@/lib/dates';
 
 const ANY = '__any__';
 
@@ -143,7 +144,7 @@ export function DetailedAccountingReportPage() {
         rows.push([
           'LINE',
           account.code,
-          new Date(line.date).toISOString().slice(0, 10),
+          localDayOf(line.date),
           line.entryNumber,
           line.journalCode ?? '',
           line.partnerName ?? '',

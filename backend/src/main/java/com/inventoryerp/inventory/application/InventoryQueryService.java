@@ -1,5 +1,6 @@
 package com.inventoryerp.inventory.application;
 
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 
@@ -43,9 +44,12 @@ public class InventoryQueryService {
 
     private final JdbcClient jdbc;
     private final UomConversionService uomConversion;
+    private final InventoryValuationService valuation;
     private final LocationScope scope;
 
-    public InventoryQueryService(JdbcClient jdbc, UomConversionService uomConversion, LocationScope scope) {
+    public InventoryQueryService(JdbcClient jdbc, UomConversionService uomConversion, LocationScope scope,
+            InventoryValuationService valuation) {
+        this.valuation = valuation;
         this.jdbc = jdbc;
         this.uomConversion = uomConversion;
         this.scope = scope;
@@ -98,19 +102,28 @@ public class InventoryQueryService {
         List<Map<String, Object>> rows = jdbc.sql("SELECT si.*" + from + " ORDER BY p.name ASC LIMIT " + size
                 + " OFFSET " + (page - 1) * size).params(params).query().listOfRows();
         long total = jdbc.sql("SELECT count(*)" + from).params(params).query(Long.class).single();
+        List<Map<String, Object>> items = rows.stream().map(raw -> SqlRows.as(StockItem.class, raw)).toList();
+        // One query each for the page's products, their units and locations (was three per row).
+        Map<String, Map<String, Object>> products = byId(SqlRows.list(jdbc.sql("SELECT id, code, name, sku,"
+                + " \"minQuantity\", \"batchTracking\", \"uomId\" FROM \"Product\" WHERE id IN (:ids)"
+                + " AND \"organizationId\" = :org")
+                .param("ids", idsOf(items, "productId")).param("org", org())), items.isEmpty());
+        Map<String, Map<String, Object>> uoms = byId(SqlRows.list(com.inventoryerp.core.domain.UnitOfMeasure.class,
+                jdbc.sql("SELECT * FROM \"UnitOfMeasure\" WHERE id IN (:ids)")
+                        .param("ids", idsOf(products.values(), "uomId"))), products.isEmpty());
+        Map<String, Map<String, Object>> locations = locationRefs(idsOf(items, "locationId"));
         List<Map<String, Object>> data = new ArrayList<>();
-        for (Map<String, Object> raw : rows) {
-            Map<String, Object> r = SqlRows.as(StockItem.class, raw);
-            Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT id, code, name, sku, \"minQuantity\", \"batchTracking\","
-                    + " \"uomId\" FROM \"Product\" WHERE id = ?").param(r.get("productId")));
+        for (Map<String, Object> r : items) {
+            Map<String, Object> found = products.get(str(r, "productId"));
+            Map<String, Object> p = found == null ? null : new LinkedHashMap<>(found);
             if (p != null) {
                 Object uomId = p.remove("uomId");
-                p.put("uom", uomId == null ? null : SqlRows.one(com.inventoryerp.core.domain.UnitOfMeasure.class,
-                        jdbc.sql("SELECT * FROM \"UnitOfMeasure\" WHERE id = ?").param(uomId)));
+                Map<String, Object> uom = uomId == null ? null : uoms.get(uomId.toString());
+                p.put("uom", uom == null ? null : new LinkedHashMap<>(uom));
             }
             r.put("product", p);
-            r.put("location", SqlRows.one(jdbc.sql("SELECT id, code, name FROM \"InventoryLocation\" WHERE id = ?")
-                    .param(r.get("locationId"))));
+            Map<String, Object> location = locations.get(str(r, "locationId"));
+            r.put("location", location == null ? null : new LinkedHashMap<>(location));
             data.add(r);
         }
         return PageResult.of(data, page, size, total);
@@ -187,19 +200,21 @@ public class InventoryQueryService {
     private Map<String, Object> mapProduct(Map<String, Object> p, String locationId, Map<String, Double> reserved) {
         List<Map<String, Object>> items = SqlRows.list(jdbc.sql("SELECT si.quantity, si.\"runningAverageCost\","
                 + " si.\"locationId\", l.id AS lid, l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l"
-                + " ON l.id = si.\"locationId\" WHERE si.\"productId\" = ?").param(p.get("id")));
+                + " ON l.id = si.\"locationId\" WHERE si.\"productId\" = ? AND si.\"organizationId\" = ?").params(
+                        p.get("id"), org()));
         List<Map<String, Object>> breakdown = new ArrayList<>();
         double totalQty = 0;
-        double totalCost = 0;
         for (Map<String, Object> si : items) {
             double qty = dec(si, "quantity").doubleValue();
             breakdown.add(Obj.of("locationId", si.get("lid"), "code", si.get("code"), "name", si.get("name"),
                     "quantity", JsNumbers.js(qty)));
             if (locationId == null || locationId.equals(si.get("locationId"))) {
                 totalQty += qty;
-                totalCost += qty * dec(si, "runningAverageCost").doubleValue();
             }
         }
+        // Phase I2 (audit C-2): value by the product's costing method (lots, serials, standard), not qty × average.
+        BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(str(p, "id")), locationId).get(str(p, "id"));
+        double totalCost = qv == null ? 0 : qv[1].doubleValue();
         double avg = totalQty > 0 ? totalCost / totalQty : 0;
         BigDecimal min = (BigDecimal) p.get("minQuantity");
         double minQty = min != null ? min.doubleValue() : 0;
@@ -243,10 +258,11 @@ public class InventoryQueryService {
         List<Map<String, Object>> items = SqlRows.list(StockItem.class, jdbc.sql("SELECT * FROM \"StockItem\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ?" + locFilter).params(params));
         BigDecimal onHand = Money.ZERO;
-        BigDecimal value = Money.ZERO;
+        // Phase I2 (audit C-2): value by costing method.
+        BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(productId), loc).get(productId);
+        BigDecimal value = qv == null ? Money.ZERO : qv[1];
         for (Map<String, Object> i : items) {
             onHand = onHand.add(dec(i, "quantity"));
-            value = value.add(dec(i, "quantity").multiply(dec(i, "runningAverageCost")));
             i.put("location", SqlRows.one(jdbc.sql("SELECT id, code, name, type::text AS type FROM \"InventoryLocation\""
                     + " WHERE id = ?").param(i.get("locationId"))));
         }
@@ -298,6 +314,32 @@ public class InventoryQueryService {
 
     private Map<String, Object> locationRef(Object id) {
         return SqlRows.one(jdbc.sql("SELECT id, code, name FROM \"InventoryLocation\" WHERE id = ?").param(id));
+    }
+
+    /** {@code {id, code, name}} of each location, by id (one query). */
+    private Map<String, Map<String, Object>> locationRefs(List<String> ids) {
+        return byId(SqlRows.list(jdbc.sql("SELECT id, code, name FROM \"InventoryLocation\" WHERE id IN (:ids)"
+                + " AND \"organizationId\" = :org").param("ids", ids).param("org", org())), ids.isEmpty());
+    }
+
+    /** Distinct non-null values of {@code key}; a never-matching placeholder when there are none. */
+    private static List<String> idsOf(java.util.Collection<Map<String, Object>> rows, String key) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (Map<String, Object> r : rows) {
+            if (r.get(key) != null) {
+                ids.add(r.get(key).toString());
+            }
+        }
+        return ids.isEmpty() ? List.of("") : List.copyOf(ids);
+    }
+
+    /** Rows keyed by {@code id} ({@code skip}: nothing to look up, no rows). */
+    private static Map<String, Map<String, Object>> byId(List<Map<String, Object>> rows, boolean skip) {
+        Map<String, Map<String, Object>> out = new HashMap<>();
+        if (!skip) {
+            rows.forEach(r -> out.put(r.get("id").toString(), r));
+        }
+        return out;
     }
 
     /** {@code {totalItems, lowStockCount, totalLocations, totalProducts}}. */
@@ -413,15 +455,22 @@ public class InventoryQueryService {
                 + " WHERE \"organizationId\" = ? AND \"isActive\" = true AND quantity > 0 AND \"expiryDate\" IS NOT NULL"
                 + " AND \"expiryDate\" <= ?" + loc + " ORDER BY \"expiryDate\" ASC").params(params));
         long now = System.currentTimeMillis();
+        // One query for the products (+ unit) and one for the locations of every batch (was two per batch).
+        Map<String, Map<String, Object>> products = byId(SqlRows.list(jdbc.sql("SELECT p.id, p.code, p.name,"
+                + " u.code AS uom FROM \"Product\" p LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\""
+                + " WHERE p.id IN (:ids) AND p.\"organizationId\" = :org").param("ids", idsOf(batches, "productId"))
+                .param("org", org())), batches.isEmpty());
+        Map<String, Map<String, Object>> locations = locationRefs(idsOf(batches, "locationId"));
         for (Map<String, Object> b : batches) {
-            Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT p.id, p.code, p.name, u.code AS uom FROM \"Product\" p"
-                    + " LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\" WHERE p.id = ?").param(b.get("productId")));
+            Map<String, Object> found = products.get(str(b, "productId"));
+            Map<String, Object> p = found == null ? null : new LinkedHashMap<>(found);
             if (p != null) {
                 Object uom = p.remove("uom");
                 p.put("uom", uom == null ? null : Obj.of("code", uom));
             }
             b.put("product", p);
-            b.put("location", locationRef(b.get("locationId")));
+            Map<String, Object> location = locations.get(str(b, "locationId"));
+            b.put("location", location == null ? null : new LinkedHashMap<>(location));
             Instant exp = (Instant) b.get("expiryDate");
             b.put("daysToExpiry", exp == null ? null : (long) Math.ceil((exp.toEpochMilli() - now) / 86_400_000.0));
             b.put("expired", exp != null && exp.toEpochMilli() < now);
@@ -434,46 +483,99 @@ public class InventoryQueryService {
         return reorderSuggestions(scope.resolve(locationId));
     }
 
+    /**
+     * Par lines. Phase I2 (audit V-10): a product with variants gets one line per active variant, each compared with
+     * the product's par on its own stock (variants are held and bought separately; a surplus of one never hides the
+     * shortage of another). Audit U-9: a product whose purchase unit cannot be converted no longer fails the whole
+     * report — its line keeps the shortfall in the stock unit and says why in {@code unitError}.
+     */
     private List<Map<String, Object>> reorderSuggestions(String locationId) {
         List<Map<String, Object>> products = SqlRows.list(jdbc.sql("SELECT id, code, name, \"minQuantity\", \"reorderQty\","
-                + " \"uomConversion\", \"uomId\", \"purchaseUomId\", \"supplierId\" FROM \"Product\" WHERE"
+                + " \"uomConversion\", \"uomId\", \"purchaseUomId\", \"supplierId\", \"hasVariants\" FROM \"Product\" WHERE"
                 + " \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"trackInventory\" = true"
                 + " AND (\"minQuantity\" > 0 OR \"reorderQty\" > 0)").param(org()));
+        // On-hand per product and variant in one grouped query (was one per product).
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String loc = "";
+        if (notBlank(locationId)) {
+            loc = " AND \"locationId\" = ?";
+            params.add(locationId);
+        }
+        Map<String, BigDecimal> onHandBy = new HashMap<>();
+        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", \"variantKey\", COALESCE(SUM(quantity), 0) AS q"
+                + " FROM \"StockItem\" WHERE \"organizationId\" = ?" + loc + " GROUP BY \"productId\", \"variantKey\"")
+                .params(params).query().listOfRows()) {
+            BigDecimal q = Money.dec(g.get("q"));
+            onHandBy.merge((String) g.get("productId"), q, BigDecimal::add);
+            onHandBy.merge(g.get("productId") + "::" + g.get("variantKey"), q, BigDecimal::add);
+        }
+        List<Object> parents = products.stream().filter(p -> Boolean.TRUE.equals(p.get("hasVariants")))
+                .map(p -> p.get("id")).toList();
+        Map<Object, List<Map<String, Object>>> variantsBy = new HashMap<>();
+        if (!parents.isEmpty()) {
+            for (Map<String, Object> v : SqlRows.list(jdbc.sql("SELECT id, \"productId\", name FROM \"ProductVariant\""
+                    + " WHERE \"productId\" IN (:ids) AND \"organizationId\" = :org AND \"isActive\" AND \"deletedAt\" IS NULL"
+                    + " ORDER BY name").param("ids", parents).param("org", org()))) {
+                variantsBy.computeIfAbsent(v.get("productId"), k -> new ArrayList<>()).add(v);
+            }
+        }
         List<Map<String, Object>> out = new ArrayList<>();
+        List<Map<String, Object>> belowPar = new ArrayList<>();
         for (Map<String, Object> p : products) {
-            List<Object> params = new ArrayList<>(List.of(p.get("id")));
-            String loc = "";
-            if (notBlank(locationId)) {
-                loc = " AND \"locationId\" = ?";
-                params.add(locationId);
-            }
-            BigDecimal onHand = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ?" + loc)
-                    .params(params).query(BigDecimal.class).single();
-            BigDecimal par = p.get("minQuantity") == null ? Money.ZERO : dec(p, "minQuantity");
-            BigDecimal shortfall = par.subtract(onHand);
-            BigDecimal suggest = Money.ZERO;
-            BigDecimal reorder = (BigDecimal) p.get("reorderQty");
-            if (reorder != null && reorder.signum() > 0) {
-                suggest = reorder;
-            } else if (shortfall.signum() > 0) {
-                String purchaseUom = str(p, "purchaseUomId");
-                if (purchaseUom != null && !purchaseUom.equals(str(p, "uomId"))) {
-                    suggest = uomConversion.fromBase(shortfall, purchaseUom, str(p, "id"), str(p, "uomId"), true)
-                            .setScale(2, RoundingMode.CEILING);
-                } else {
-                    BigDecimal conv = p.get("uomConversion") != null && dec(p, "uomConversion").signum() > 0
-                            ? dec(p, "uomConversion") : BigDecimal.ONE;
-                    suggest = Money.div(shortfall, conv).setScale(2, RoundingMode.CEILING);
+            List<Map<String, Object>> cells = Boolean.TRUE.equals(p.get("hasVariants"))
+                    ? variantsBy.getOrDefault(p.get("id"), List.of()) : java.util.Collections.singletonList(null);
+            for (Map<String, Object> variant : cells) {
+                BigDecimal onHand = variant == null ? onHandBy.getOrDefault(str(p, "id"), Money.ZERO)
+                        : onHandBy.getOrDefault(p.get("id") + "::" + variant.get("id"), Money.ZERO);
+                BigDecimal par = p.get("minQuantity") == null ? Money.ZERO : dec(p, "minQuantity");
+                if (onHand.compareTo(par) > 0) {
+                    continue;
                 }
+                BigDecimal shortfall = par.subtract(onHand);
+                BigDecimal suggest = Money.ZERO;
+                String unitError = null;
+                BigDecimal reorder = (BigDecimal) p.get("reorderQty");
+                if (reorder != null && reorder.signum() > 0) {
+                    suggest = reorder;
+                } else if (shortfall.signum() > 0) {
+                    String purchaseUom = str(p, "purchaseUomId");
+                    if (purchaseUom != null && !purchaseUom.equals(str(p, "uomId"))) {
+                        BigDecimal converted = uomConversion.tryFromBase(shortfall, purchaseUom, str(p, "id"),
+                                str(p, "uomId"), true);
+                        if (converted != null) {
+                            suggest = converted.setScale(2, RoundingMode.CEILING);
+                        } else {
+                            suggest = shortfall.setScale(2, RoundingMode.CEILING);
+                            unitError = "The purchase unit cannot be converted to the stock unit — quantity shown in the"
+                                    + " stock unit";
+                        }
+                    } else {
+                        BigDecimal conv = p.get("uomConversion") != null && dec(p, "uomConversion").signum() > 0
+                                ? dec(p, "uomConversion") : BigDecimal.ONE;
+                        suggest = Money.div(shortfall, conv).setScale(2, RoundingMode.CEILING);
+                    }
+                }
+                belowPar.add(p);
+                Map<String, Object> line = Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"),
+                        "onHand", JsNumbers.js(onHand), "par", JsNumbers.js(par), "belowPar", true, "suggestedOrderQty",
+                        JsNumbers.js(suggest), "supplier", null);
+                if (variant != null) {
+                    line.put("variantId", variant.get("id"));
+                    line.put("variantName", variant.get("name"));
+                }
+                if (unitError != null) {
+                    line.put("unitError", unitError);
+                }
+                out.add(line);
             }
-            if (onHand.compareTo(par) > 0) {
-                continue;
-            }
-            Object supplierId = p.get("supplierId");
-            out.add(Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"), "onHand",
-                    JsNumbers.js(onHand), "par", JsNumbers.js(par), "belowPar", true, "suggestedOrderQty",
-                    JsNumbers.js(suggest), "supplier", supplierId == null ? null
-                            : SqlRows.one(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id = ?").param(supplierId))));
+        }
+        Map<String, Map<String, Object>> suppliers = byId(SqlRows.list(jdbc.sql("SELECT id, name FROM \"Partner\""
+                + " WHERE id IN (:ids) AND \"organizationId\" = :org").param("ids", idsOf(belowPar, "supplierId"))
+                .param("org", org())), belowPar.isEmpty());
+        for (int i = 0; i < out.size(); i++) {
+            Object supplierId = belowPar.get(i).get("supplierId");
+            Map<String, Object> supplier = supplierId == null ? null : suppliers.get(supplierId.toString());
+            out.get(i).put("supplier", supplier == null ? null : new LinkedHashMap<>(supplier));
         }
         return out;
     }
@@ -512,20 +614,20 @@ public class InventoryQueryService {
             }
         }
         Map<String, Map<String, Object>> byProduct = new LinkedHashMap<>();
-        Map<String, double[]> nets = new HashMap<>();
+        Map<String, BigDecimal[]> nets = new HashMap<>();
         for (Map<String, Object> g : grouped) {
             String pid = (String) g.get("productId");
             Map<String, Object> row = byProduct.computeIfAbsent(pid, k -> Obj.of("product",
                     names.containsKey(k) ? names.get(k) : Obj.of("id", k), "byType", new LinkedHashMap<String, Object>(),
                     "netQty", 0, "netValue", 0));
-            double qty = g.get("q") == null ? 0 : ((BigDecimal) g.get("q")).doubleValue();
-            double val = g.get("v") == null ? 0 : ((BigDecimal) g.get("v")).doubleValue();
+            BigDecimal qty = Money.dec(g.get("q"));
+            BigDecimal val = Money.dec(g.get("v"));
             @SuppressWarnings("unchecked")
             Map<String, Object> byType = (Map<String, Object>) row.get("byType");
             byType.put((String) g.get("type"), Obj.of("qty", JsNumbers.js(qty), "value", JsNumbers.js(val)));
-            double[] n = nets.computeIfAbsent(pid, k -> new double[2]);
-            n[0] += qty;
-            n[1] += val;
+            BigDecimal[] n = nets.computeIfAbsent(pid, k -> new BigDecimal[] {Money.ZERO, Money.ZERO});
+            n[0] = n[0].add(qty);
+            n[1] = n[1].add(val);
             row.put("netQty", JsNumbers.js(n[0]));
             row.put("netValue", JsNumbers.js(n[1]));
         }

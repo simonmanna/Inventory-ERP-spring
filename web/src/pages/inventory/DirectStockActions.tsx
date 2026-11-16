@@ -12,10 +12,12 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/idempotency';
 import { formatMoney } from '@/lib/format';
 import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Location { id: string; code: string; name: string; type: string }
 
@@ -80,9 +82,13 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   const [inResponsibleId, setInResponsibleId] = useState('');
   const [inApprovedId, setInApprovedId] = useState('');
   const [inApproverPin, setInApproverPin] = useState('');
-  const [inLines, setInLines] = useState<{ productId: string; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string }[]>([
+  const [inLines, setInLines] = useState<{ productId: string; variantId?: string | null; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string }[]>([
     { productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' },
   ]);
+
+  // Direct stock moves stock without a document: the server requires an Idempotency-Key (one per action).
+  const inKey = useIdempotencyKey();
+  const outKey = useIdempotencyKey();
 
   const directIn = useMutation({
     mutationFn: async () => {
@@ -90,6 +96,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         .filter((l) => l.productId && l.quantity > 0)
         .map((l) => ({
           productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
           quantity: l.quantity,
           ...(l.unitCost ? { unitCost: Number(l.unitCost) } : {}),
           ...(l.batchNumber ? { batchNumber: l.batchNumber } : {}),
@@ -102,10 +109,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         ...(inApprovedId && inApprovedId !== myId && inApproverPin ? { approverPin: inApproverPin } : {}),
         items,
         notes: inNotes || undefined,
-      });
+      }, inKey.config());
       return res.data;
     },
     onSuccess: (data: any) => {
+      inKey.settle();
       notify.success(tx('Stock in {{code}} completed', { code: data.code }));
       setInOpen(false);
       setInLocId('');
@@ -116,7 +124,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setInLines([{ productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' }]);
       invalidateAll();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Stock in failed')),
+    onError: (e: any) => { inKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Stock in failed')); },
   });
 
   // — Direct Stock Out state
@@ -126,7 +134,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   const [outResponsibleId, setOutResponsibleId] = useState('');
   const [outApprovedId, setOutApprovedId] = useState('');
   const [outApproverPin, setOutApproverPin] = useState('');
-  const [outLines, setOutLines] = useState<{ productId: string; name: string; quantity: number; distStrategy: string; batchNumber: string }[]>([
+  const [outLines, setOutLines] = useState<{ productId: string; variantId?: string | null; name: string; quantity: number; distStrategy: string; batchNumber: string }[]>([
     { productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' },
   ]);
 
@@ -136,6 +144,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         .filter((l) => l.productId && l.quantity > 0)
         .map((l) => ({
           productId: l.productId,
+          ...(l.variantId ? { variantId: l.variantId } : {}),
           quantity: l.quantity,
           distStrategy: l.distStrategy,
           ...(l.batchNumber ? { batchNumber: l.batchNumber } : {}),
@@ -147,10 +156,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
         ...(outApprovedId && outApprovedId !== myId && outApproverPin ? { approverPin: outApproverPin } : {}),
         items,
         notes: outNotes || undefined,
-      });
+      }, outKey.config());
       return res.data;
     },
     onSuccess: (data: any) => {
+      outKey.settle();
       notify.success(tx('Stock out {{code}} completed', { code: data.code }));
       setOutOpen(false);
       setOutLocId('');
@@ -161,14 +171,14 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setOutLines([{ productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' }]);
       invalidateAll();
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Stock out failed')),
+    onError: (e: any) => { outKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Stock out failed')); },
   });
 
   const pickInProduct = (idx: number, productId: string) => {
     const p = products.data?.data?.find((x) => x.id === productId);
     if (!p) return;
     const next = [...inLines];
-    next[idx] = { ...next[idx], productId, name: p.name };
+    next[idx] = { ...next[idx], productId, variantId: null, name: p.name };
     setInLines(next);
   };
 
@@ -176,7 +186,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
     const p = products.data?.data?.find((x) => x.id === productId);
     if (!p) return;
     const next = [...outLines];
-    next[idx] = { ...next[idx], productId, name: p.name };
+    next[idx] = { ...next[idx], productId, variantId: null, name: p.name };
     setOutLines(next);
   };
 
@@ -302,6 +312,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         placeholder={tx('Select product…')}
                         searchPlaceholder={tx('Search products…')}
                         emptyText={tx('No products match')}
+                      />
+                      <VariantSelect
+                        productId={line.productId || null}
+                        value={line.variantId}
+                        onChange={(v) => setInLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
                       />
                     </td>
                     <td className="px-2 py-2">
@@ -458,6 +473,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         placeholder={tx('Select product…')}
                         searchPlaceholder={tx('Search products…')}
                         emptyText={tx('No products match')}
+                      />
+                      <VariantSelect
+                        productId={line.productId || null}
+                        value={line.variantId}
+                        onChange={(v) => setOutLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
                       />
                     </td>
                     <td className="px-2 py-2">

@@ -29,7 +29,9 @@ class AllocationExceptionRegisterTest {
             Map.entry("com.inventoryerp.hr.application.HrPayrollCostAllocator", "permanently independent (payslip"
                     + " cents)"),
             Map.entry("com.inventoryerp.manufacturing.application.JointCostAllocator", "keep policy layer — review"
-                    + " CM-5"));
+                    + " CM-5"),
+            Map.entry("com.inventoryerp.fleet.application.WeightAllocation", "permanently independent (capped"
+                    + " quantity split, Phase A A2)"));
 
     @Test
     @DisplayName("every top-level allocator in an application package is registered")

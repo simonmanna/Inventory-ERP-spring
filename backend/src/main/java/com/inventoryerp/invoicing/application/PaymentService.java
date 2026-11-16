@@ -67,7 +67,18 @@ public class PaymentService {
     public record PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
             String accountId, String reference, String branchId, List<AllocationInput> allocations,
             String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId,
-            String currencyCode, BigDecimal exchangeRate) {
+            String currencyCode, BigDecimal exchangeRate, String withholdingTaxId,
+            String withholdingCertificateNumber) {
+
+        /** A payment without a withholding tax reference (ADR-S071). */
+        public PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
+                String accountId, String reference, String branchId, List<AllocationInput> allocations,
+                String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId,
+                String currencyCode, BigDecimal exchangeRate) {
+            this(partnerId, paymentDate, amount, paymentMethod, accountId, reference, branchId, allocations,
+                    cashSessionId, allowOverpayment, withholdingAmount, refundOfId, currencyCode, exchangeRate, null,
+                    null);
+        }
 
         /** A payment in the organisation's base currency (the original contract). */
         public PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
@@ -79,8 +90,13 @@ public class PaymentService {
     }
 
     /** Foreign-currency settlement of a payment (PC-0, ADR-S054): rate used and per-document carrying rates. */
+    /**
+     * {@code counterCurrency} is the currency the relieved open items were posted in (the documents' own
+     * {@code currencyId}), so the AR / AP line carries it and FX revaluation sees the item settled (review 2026-11-15,
+     * G-1).
+     */
     private record FxSettlement(CurrencyService.Resolution rate, Map<String, BigDecimal> carrying,
-            BigDecimal counterBase, BigDecimal cashBase, BigDecimal fx) {}
+            BigDecimal counterBase, BigDecimal cashBase, BigDecimal fx, String counterCurrency, BigDecimal amount) {}
 
     /** Payment method of a customer-deposit application (only through {@link #createDepositApplication}). */
     public static final String DEPOSIT_METHOD = "customer_deposit";
@@ -120,6 +136,27 @@ public class PaymentService {
 
     private static String org() {
         return TenantContext.organizationId();
+    }
+
+    private WithholdingCertificateService withholdingCertificates;
+    private com.inventoryerp.accounting.application.AccountResolverService accountResolver;
+
+    /** ADR-S071 collaborators (setter-injected so existing constructions stay valid). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setWithholding(WithholdingCertificateService withholdingCertificates,
+            com.inventoryerp.accounting.application.AccountResolverService accountResolver) {
+        this.withholdingCertificates = withholdingCertificates;
+        this.accountResolver = accountResolver;
+    }
+
+    /** The {@code withholding_receivable} account (created on first use, ADR-S071). */
+    private String withholdingReceivableAccount() {
+        return accountResolver.ensureByCode(WithholdingCertificateService.RECEIVABLE_CODE, "Withholding Tax Receivable",
+                "current_asset", WithholdingCertificateService.RECEIVABLE_KEY);
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     private static BigDecimal r6(BigDecimal v) {
@@ -261,9 +298,16 @@ public class PaymentService {
         String counterType = counterOverride != null ? counterOverride : "inbound".equals(direction) ? "receivable"
                 : "payable";
         BigDecimal withholding = r6(Money.dec(dto.withholdingAmount()));
+        // ADR-S071: a customer may withhold tax from our receipt (withholding receivable, certificate received).
+        boolean customerWithholding = "inbound".equals(direction) && "receivable".equals(counterType)
+                && dto.refundOfId() == null && !DEPOSIT_METHOD.equals(method);
         if (withholding.signum() > 0) {
-            if (!"outbound".equals(direction) || !"payable".equals(counterType)) {
+            if (!customerWithholding && (!"outbound".equals(direction) || !"payable".equals(counterType))) {
                 throw ApiException.badRequest("Withholding tax applies to supplier payments only");
+            }
+            if (customerWithholding && allocations.stream().anyMatch(a -> a.invoiceId() != null
+                    && !a.invoiceId().isEmpty())) {
+                throw ApiException.badRequest("Withholding tax cannot be recorded on a POS invoice collection");
             }
             if ("store_credit".equals(method)) {
                 throw ApiException.badRequest("Withholding tax cannot be deducted from a store-credit payment");
@@ -273,6 +317,24 @@ public class PaymentService {
             }
         }
         BigDecimal netCash = amount.subtract(withholding);
+        if (withholding.signum() > 0 && !customerWithholding) {
+            // ADR-S071: a bill that withheld at posting is paid net; withholding again would deduct the tax twice.
+            List<String> docIds = allocations.stream().map(AllocationInput::documentId)
+                    .filter(x -> x != null && !x.isEmpty()).toList();
+            String withheld = docIds.isEmpty() ? null : jdbc.sql("SELECT \"documentNumber\" FROM \"Document\" WHERE"
+                    + " \"organizationId\" = ? AND id = ANY(?::text[]) AND \"withholdingAmount\" > 0 LIMIT 1")
+                    .params(org, docIds.toArray(String[]::new)).query(String.class).optional().orElse(null);
+            if (withheld != null) {
+                throw ApiException.badRequest("Bill " + withheld + " already withheld tax when it was posted; pay it"
+                        + " without withholding");
+            }
+        }
+        String withholdingTaxId = withholding.signum() > 0 ? blankToNull(dto.withholdingTaxId()) : null;
+        if (withholdingTaxId != null && jdbc.sql("SELECT count(*) FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND type::text = 'withholding' AND \"deletedAt\" IS NULL").params(withholdingTaxId, org)
+                .query(Long.class).single() == 0) {
+            throw ApiException.badRequest("withholdingTaxId must be a withholding tax of this organization");
+        }
         String baseCode = fxRates.base();
         String payCurrency = dto.currencyCode() == null || dto.currencyCode().isBlank() ? baseCode
                 : dto.currencyCode().trim().toUpperCase();
@@ -370,6 +432,12 @@ public class PaymentService {
         List<Line> lines = new ArrayList<>();
         if (fxs != null) {
             lines.addAll(fxLines(fxs, direction, counterAccount, cashAccount, dto.partnerId(), payCurrency));
+        } else if ("inbound".equals(direction) && withholding.signum() > 0) {
+            // ADR-S071: Dr cash (net) + Dr withholding receivable / Cr AR (gross).
+            lines.add(new Line(cashAccount, JsNumbers.dec(netCash), null, null, null, null, null, null));
+            lines.add(new Line(withholdingReceivableAccount(), JsNumbers.dec(withholding), null, dto.partnerId(),
+                    "Withholding tax suffered", null, null, null));
+            lines.add(new Line(counterAccount, null, JsNumbers.dec(amount), dto.partnerId(), null, null, null, null));
         } else if ("inbound".equals(direction)) {
             // a deposit application debits the customer's deposit liability: keep the partner on that line
             lines.add(new Line(cashAccount, JsNumbers.dec(amount), null, DEPOSIT_METHOD.equals(method) ? dto.partnerId()
@@ -389,6 +457,18 @@ public class PaymentService {
                 lines));
         jdbc.sql("UPDATE \"Payment\" SET \"journalEntryId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(entry.get("id"), paymentId).update();
+        if (withholding.signum() > 0 && withholdingCertificates != null) {
+            Instant payDate = EntityPatch.toInstant(dto.paymentDate());
+            BigDecimal rate = withholdingTaxId == null ? null : jdbc.sql("SELECT rate FROM \"Tax\" WHERE id = ?")
+                    .param(withholdingTaxId).query(BigDecimal.class).single();
+            BigDecimal base = rate == null || rate.signum() == 0 ? amount
+                    : withholding.multiply(BigDecimal.valueOf(100)).divide(rate, 6, RoundingMode.HALF_UP);
+            withholdingCertificates.issue(new WithholdingCertificateService.NewCertificate(customerWithholding
+                    ? "received" : "issued", dto.partnerId(), null, paymentId, withholdingTaxId, payDate, base, rate,
+                    withholding, null, (String) entry.get("id"), blankToNull(dto.withholdingCertificateNumber()),
+                    (customerWithholding ? "Receipt " : "Payment ") + paymentNumber),
+                    payDate.atOffset(ZoneOffset.UTC).getYear());
+        }
 
         BigDecimal allocated = Money.ZERO;
         for (AllocationInput alloc : allocations) {
@@ -502,6 +582,7 @@ public class PaymentService {
         Map<String, BigDecimal> carrying = new HashMap<>();
         BigDecimal relieved = Money.ZERO;
         BigDecimal allocatedSum = Money.ZERO;
+        String counterCurrency = null;
         for (AllocationInput a : allocations) {
             BigDecimal alloc = r6(Money.dec(a.amount()));
             if (alloc.signum() <= 0) {
@@ -519,6 +600,9 @@ public class PaymentService {
                         + fxRates.currencyOf(doc) + "; settle it with a " + fxRates.currencyOf(doc) + " payment");
             }
             BigDecimal docRate = fxRates.documentRate(doc);
+            if (counterCurrency == null && doc.get("currencyId") != null) {
+                counterCurrency = doc.get("currencyId").toString();
+            }
             carrying.put((String) doc.get("id"), docRate);
             relieved = relieved.add(alloc.multiply(docRate));
             allocatedSum = allocatedSum.add(alloc);
@@ -527,7 +611,8 @@ public class PaymentService {
         BigDecimal counterBase = r6(relieved.add(advance));
         BigDecimal cashBase = r6(amount.multiply(rate.rate()));
         BigDecimal fx = "inbound".equals(direction) ? cashBase.subtract(counterBase) : counterBase.subtract(cashBase);
-        return new FxSettlement(rate, carrying, counterBase, cashBase, fx);
+        return new FxSettlement(rate, carrying, counterBase, cashBase, fx,
+                counterCurrency != null ? counterCurrency : payCurrency, r6(amount));
     }
 
     /** Realised FX of one allocation in base currency (positive = gain). */
@@ -542,13 +627,15 @@ public class PaymentService {
             String partnerId, String payCurrency) {
         List<Line> lines = new ArrayList<>();
         String label = "Realised FX · " + payCurrency + " @ " + JsNumbers.dec(fxs.rate().rate());
+        // the AR / AP line relieves the open items in their own currency (the payment amount), at their carrying base
+        String foreign = JsNumbers.dec(fxs.amount());
         if ("inbound".equals(direction)) {
             lines.add(new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null, null));
             lines.add(new Line(counterAccount, null, JsNumbers.dec(fxs.counterBase()), partnerId, null, null, null,
-                    null));
+                    null).inCurrency(fxs.counterCurrency(), foreign));
         } else {
             lines.add(new Line(counterAccount, JsNumbers.dec(fxs.counterBase()), null, partnerId, null, null, null,
-                    null));
+                    null).inCurrency(fxs.counterCurrency(), foreign));
             lines.add(new Line(cashAccount, null, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null));
         }
         BigDecimal fx = fxs.fx();
@@ -626,7 +713,8 @@ public class PaymentService {
         String status = newResidual.signum() <= 0 ? "paid" : String.valueOf(row.get("status"));
         jdbc.sql("UPDATE \"" + table + "\" SET \"amountPaid\" = ?, \"amountResidual\" = ?, \"paymentStatus\" ="
                         + " ?::\"PaymentStatus\", status = ?::\"" + statusType + "\", \"updatedAt\" = " + NOW + " WHERE id = ?")
-                .params(newPaid, newResidual, residualStatus(Money.dec(row.get("totalAmount")), newResidual), status,
+                .params(newPaid, newResidual, residualStatus(Money.dec(row.get("totalAmount"))
+                        .subtract(Money.dec(row.get("withholdingAmount"))), newResidual), status,
                         row.get("id"))
                 .update();
     }

@@ -8,15 +8,18 @@ import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { idempotentPatch } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
+import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
 import { defaultUnitId, type UnitAwareProduct } from '@/features/products/units';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Warehouse { id: string; code: string; name: string; type: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string }
 interface POLine {
   id: string; productId: string | null; description: string; quantity: number; receivedQuantity: number;
-  unitPrice: number; unitOfMeasureId?: string | null;
+  unitPrice: number; unitOfMeasureId?: string | null; variantId?: string | null;
+  variant?: { id: string; name: string; sku?: string | null } | null;
 }
 interface PO { id: string; orderNumber: string; lines: POLine[] }
 
@@ -30,6 +33,10 @@ interface Line {
   expiryDate?: string;
   /** Unit of quantity/cost (ADR-S003). PO-backed lines always use the PO line's unit. */
   uomId?: string;
+  /** ADR-S058: product variant (required for a product with variants). PO-backed lines keep the PO line's. */
+  variantId?: string | null;
+  /** Name of a PO-backed line's variant (from the PO), shown read-only. */
+  variantName?: string;
 }
 
 export function GoodsReceiptCreatePage() {
@@ -67,6 +74,8 @@ export function GoodsReceiptCreatePage() {
           productId: ln.productId ?? undefined,
           description: ln.description,
           uomId: ln.unitOfMeasureId ?? undefined,
+          variantId: ln.variantId ?? undefined,
+          variantName: ln.variant?.name ?? undefined,
           quantity: Math.max(0, Number(ln.quantity) - Number(ln.receivedQuantity)),
           unitCost: Number(ln.unitPrice) || 0,
         })).filter((l) => l.quantity > 0),
@@ -75,24 +84,38 @@ export function GoodsReceiptCreatePage() {
   }, [po.data]);
 
   const create = useMutation({
-    mutationFn: async () => (await api.post('/procurement/goods-receipts', {
-      purchaseOrderId: poId || undefined,
-      warehouseId,
-      notes,
-      lines: lines.filter((l) => l.description && l.quantity > 0).map((l) => ({
-        ...l,
-        batchNumber: l.batchNumber || undefined,
-        expiryDate: l.expiryDate || undefined,
-      })),
-    })).data,
-    onSuccess: async (data: any) => {
-      // Immediately post it (commits the stock-in).
-      await idempotentPatch(`/procurement/goods-receipts/${data.id}/post`);
-      notify.success(tx('GRN {{receiptNumber}} posted', { receiptNumber: data.receiptNumber }));
+    mutationFn: async () => {
+      const data = (await api.post<{ id: string; receiptNumber: string }>('/procurement/goods-receipts', {
+        purchaseOrderId: poId || undefined,
+        warehouseId,
+        notes,
+        lines: lines.filter((l) => l.description && l.quantity > 0).map((l) => ({
+          ...l,
+          variantId: l.variantId || undefined,
+          batchNumber: l.batchNumber || undefined,
+          expiryDate: l.expiryDate || undefined,
+        })),
+      })).data;
+      // Immediately post it (commits the stock-in). The draft already exists, so a failed post is reported with it.
+      try {
+        await idempotentPatch(`/procurement/goods-receipts/${data.id}/post`);
+        return { data, postError: null };
+      } catch (e) {
+        return { data, postError: apiErrorMessage(e, tx('Posting failed')) };
+      }
+    },
+    onSuccess: ({ data, postError }) => {
       qc.invalidateQueries({ queryKey: ['goods-receipts'] });
+      if (postError) {
+        // Go to the saved draft (post it from there) instead of leaving this form submittable for a duplicate.
+        notify.error(tx('Saved as a draft, but posting failed: {{error}}', { error: postError }));
+        navigate(`/procurement/goods-receipts/${data.id}`);
+        return;
+      }
+      notify.success(tx('GRN {{receiptNumber}} posted', { receiptNumber: data.receiptNumber }));
       navigate('/procurement/goods-receipts');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+    onError: (e) => notify.error(apiErrorMessage(e, tx('Could not create the goods receipt'))),
   });
 
   return (
@@ -159,18 +182,33 @@ export function GoodsReceiptCreatePage() {
                     next[idx] = {
                       ...next[idx],
                       productId: e.target.value,
+                      variantId: null,
                       description: product?.name ?? next[idx].description,
                       uomId: defaultUnitId(product, 'purchase'),
                     };
                     setLines(next);
                   }}
-                  defaultValue={ln.productId ?? ''}
+                  value={ln.productId ?? ''}
                 >
                   <option value="">{tx('Pick product…')}</option>
                   {products.data?.map((p) => (
                     <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
                   ))}
                 </select>
+                {ln.purchaseOrderLineId && ln.variantName && (
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{ln.variantName}</span>
+                )}
+                {!ln.purchaseOrderLineId && (
+                  <VariantSelect
+                    productId={ln.productId}
+                    value={ln.variantId}
+                    onChange={(variantId, opt) => {
+                      const next = [...lines];
+                      next[idx] = { ...next[idx], variantId, ...(opt ? { description: opt.displayName } : {}) };
+                      setLines(next);
+                    }}
+                  />
+                )}
               </div>
               <div className="md:col-span-2">
                 <Input

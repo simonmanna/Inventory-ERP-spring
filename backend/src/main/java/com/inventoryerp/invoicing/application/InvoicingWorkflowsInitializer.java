@@ -49,6 +49,19 @@ public class InvoicingWorkflowsInitializer {
     private final AccountDeterminationService determination;
     private final JournalService journals;
     private final BillReceiptMatcherService matcher;
+    private WithholdingCertificateService withholdingCertificates;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setWithholdingCertificates(WithholdingCertificateService withholdingCertificates) {
+        this.withholdingCertificates = withholdingCertificates;
+    }
+
+    private DocumentFxRates fxRates;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setFxRates(DocumentFxRates fxRates) {
+        this.fxRates = fxRates;
+    }
 
     public InvoicingWorkflowsInitializer(WorkflowRegistry registry, JdbcClient jdbc, PostingService posting,
             StockService stock, DocumentBuilderService builder, AccountDeterminationService determination,
@@ -115,7 +128,27 @@ public class InvoicingWorkflowsInitializer {
                             && !"cancelled".equals(String.valueOf(status));
                 }, this::postInvoice, null),
                 new Transition("posted", "cancelled", "cancel", "invoice:cancel",
-                        ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelDocument, null)));
+                        ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelInvoice, null)));
+    }
+
+    /**
+     * Review N1: an invoice a posted credit note already corrected is not cancelled as a whole — the cancel would
+     * return all the issued stock and reverse all the revenue a second time (the credit note's restock and journal
+     * stay). Remaining corrections go through credit notes. Runs under the workflow's row lock; a credit note posting
+     * locks the invoice first too, so the two never interleave.
+     */
+    private void cancelInvoice(Context ctx) {
+        String id = (String) ctx.entity().get("id");
+        List<String> credits = jdbc.sql("SELECT d.\"documentNumber\" FROM \"Document\" d WHERE d.\"organizationId\" = ?"
+                + " AND d.\"documentType\" = 'credit_note' AND d.status::text IN ('posted', 'paid') AND (d.\"reversedDocumentId\" = ?"
+                + " OR EXISTS (SELECT 1 FROM \"CreditAllocation\" a WHERE a.\"creditDocumentId\" = d.id AND a.\"documentId\" = ?))"
+                + " ORDER BY d.\"documentNumber\"").params(ctx.organizationId(), id, id).query(String.class).list();
+        if (!credits.isEmpty()) {
+            throw ApiException.badRequest("Invoice " + ctx.entity().get("documentNumber") + " has posted credit notes ("
+                    + String.join(", ", credits) + "); it cannot be cancelled. Issue a credit note for the remaining"
+                    + " amount instead.");
+        }
+        cancelDocument(ctx);
     }
 
     private void postInvoice(Context ctx) {
@@ -125,7 +158,8 @@ public class InvoicingWorkflowsInitializer {
         // A delivery (fleet 1.3) issues the goods of this invoice load by load: no automatic issue here.
         boolean stockByDelivery = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE id = ? AND"
                 + " data->>'stockIssuedBy' IS NOT NULL").param(id).query(Long.class).single() > 0;
-        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : lines) {
+        // Audit S-2: issue in the engine's lock order (the posting groups below keep the document order).
+        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : StockMove.inLockOrder(lines)) {
             String productId = (String) line.get("productId");
             Map<String, Object> product = productId == null ? null : product(productId);
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {
@@ -138,7 +172,7 @@ public class InvoicingWorkflowsInitializer {
                 }
                 StockMove m = StockMove.of(productId, location, d(line.get("quantity")))
                         .variant((String) line.get("variantId")).uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
-                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id)
+                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id).sourceLine((String) line.get("id"))
                         .notes("Auto-issue for invoice " + doc.get("documentNumber"));
                 stock.issue(m);
             }
@@ -196,15 +230,16 @@ public class InvoicingWorkflowsInitializer {
      * invoice's to return (credit note + return). Runs once: an existing compensation for the invoice is never repeated.
      */
     private void returnIssuedStock(String invoiceId, String number, Instant issueDate) {
+        String org = com.inventoryerp.kernel.tenancy.TenantContext.organizationId();
         long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_invoice_cancel'"
-                + " AND \"referenceId\" = ?").param(invoiceId).query(Long.class).single();
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ?").params(invoiceId, org).query(Long.class).single();
         if (done > 0) {
             return;
         }
         for (Map<String, Object> issue : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
                 + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" ="
-                + " 'sales_invoice' AND \"referenceId\" = ? AND \"quantityChange\" < 0 ORDER BY \"createdAt\", id")
-                .param(invoiceId))) {
+                + " 'sales_invoice' AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0"
+                + " ORDER BY \"productId\", \"variantId\" NULLS FIRST, \"createdAt\", id").params(invoiceId, org))) {
             stock.receiveReturn(StockMove.of((String) issue.get("productId"), (String) issue.get("locationId"),
                     d(issue.get("quantityChange")).negate()).variant((String) issue.get("variantId"))
                     .unitCost(d(issue.get("unitCost"))).source("sales_invoice_cancel", invoiceId)
@@ -239,6 +274,48 @@ public class InvoicingWorkflowsInitializer {
 
     // ------------------------------------------------------------------ vendor bill
 
+    /**
+     * Vendor-bill cancel (review 2026-11-15, P-1; purchase-side twin of B7): the stock the bill auto-received (no
+     * receipt to match) goes back out as a return to supplier (Dr GRNI / Cr stock at its issue cost); a difference
+     * from the receipt cost (another layer or average picked) clears GRNI against price variance, so GRNI and stock
+     * both return to their pre-bill state. Runs once per bill.
+     */
+    private void returnBillReceivedStock(String billId, String number, Instant issueDate) {
+        String org = com.inventoryerp.kernel.tenancy.TenantContext.organizationId();
+        long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'vendor_bill_cancel'"
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ?").params(billId, org).query(Long.class).single();
+        if (done > 0) {
+            return;
+        }
+        Instant date = posting.reversalDate(issueDate);
+        BigDecimal received = Money.ZERO;
+        BigDecimal returned = Money.ZERO;
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
+                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'vendor_bill'"
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" > 0 ORDER BY \"createdAt\", id")
+                .params(billId, org))) {
+            BigDecimal qty = d(r.get("quantityChange"));
+            received = received.add(qty.multiply(d(r.get("unitCost"))));
+            StockMove.Issued out = stock.issue(StockMove.of((String) r.get("productId"), (String) r.get("locationId"),
+                    qty).variant((String) r.get("variantId")).moveType("return_to_supplier")
+                    .source("vendor_bill_cancel", billId).reference(number).date(date)
+                    .notes("Return of auto-received stock on cancellation of bill " + number));
+            returned = returned.add(out.totalValue() == null ? Money.ZERO : out.totalValue());
+        }
+        BigDecimal diff = received.subtract(returned).setScale(6, java.math.RoundingMode.HALF_UP);
+        if (diff.abs().compareTo(new BigDecimal("0.005")) >= 0) {
+            String grni = determination.mapped("grni_accrued");
+            String ppv = priceVarianceAccount();
+            BigDecimal abs = diff.abs();
+            posting.post(PostingRequest.of("PURCH", date, "Bill " + number + " cancelled · stock return cost difference",
+                    "vendor_bill_cancel", billId, "vendor_bill_cancel:variance:" + billId, diff.signum() > 0
+                            ? List.of(Line.debit(grni, JsNumbers.dec(abs), "GRNI cleared"),
+                                    Line.credit(ppv, JsNumbers.dec(abs), "Return at a lower cost than received"))
+                            : List.of(Line.debit(ppv, JsNumbers.dec(abs), "Return at a higher cost than received"),
+                                    Line.credit(grni, JsNumbers.dec(abs), "GRNI cleared"))));
+        }
+    }
+
     private String priceVarianceAccount() {
         try {
             return determination.mapped("purchase_price_variance");
@@ -258,9 +335,38 @@ public class InvoicingWorkflowsInitializer {
                                         "Void of " + doc.get("documentNumber"));
                             }
                             matcher.releaseForBill(ctx.organizationId(), (String) doc.get("id"));
+                            returnBillReceivedStock((String) doc.get("id"), (String) doc.get("documentNumber"),
+                                    instant(doc.get("issueDate")));
+                            jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"postingKey\" = ?"
+                                    + " AND status = 'posted'").params(ctx.organizationId(), "vendor_bill:fx_voucher:"
+                                    + doc.get("id")).query(String.class).optional().ifPresent(fxId -> posting.reverse(fxId,
+                                    null, "Void of " + doc.get("documentNumber")));
+                            jdbc.sql("UPDATE \"WithholdingCertificate\" SET status = 'cancelled', \"cancelledAt\" = "
+                                    + NOW + " WHERE \"documentId\" = ? AND \"organizationId\" = ? AND status = 'issued'")
+                                    .params(doc.get("id"), ctx.organizationId()).update();
                             jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = 0, \"paymentStatus\" = 'not_paid',"
                                     + " \"updatedAt\" = " + NOW + " WHERE id = ?").param(doc.get("id")).update();
                         }, null)));
+    }
+
+    /**
+     * The accrued receipt value of a bill line in the BILL's currency. A PO receipt is priced in the PO currency (the
+     * bill's); a receipt without a PO is priced in functional currency, so for a foreign bill it is converted at the
+     * bill's rate before it meets the bill price (review 2026-11-15, P-3: it was subtracted as if in bill currency).
+     */
+    private static BigDecimal accruedInBillCurrency(BillLineMatch match, BigDecimal billRate) {
+        if (billRate.compareTo(BigDecimal.ONE) == 0) {
+            return match.accruedReceiptValue();
+        }
+        BigDecimal value = Money.ZERO;
+        for (BillReceiptMatcherService.Consumption c : match.consumptions()) {
+            if (c.vouchered()) {
+                continue;
+            }
+            BigDecimal v = c.quantity().multiply(c.receiptUnitCost());
+            value = value.add(c.purchaseOrderLineId() == null ? v.divide(billRate, 6, java.math.RoundingMode.HALF_UP) : v);
+        }
+        return value;
     }
 
     /** Bill-vs-receipt differences below half a cent are rounding, not variance. */
@@ -281,6 +387,8 @@ public class InvoicingWorkflowsInitializer {
             }
         }
         Map<String, BillLineMatch> matchByLine = new HashMap<>();
+        BigDecimal documentRate = full.get("exchangeRate") == null || d(full.get("exchangeRate")).signum() <= 0
+                ? BigDecimal.ONE : d(full.get("exchangeRate"));
         List<Map<String, Object>> postable = new ArrayList<>();
         BigDecimal postableTotal = Money.ZERO;
         BigDecimal priceVariance = Money.ZERO;
@@ -295,13 +403,13 @@ public class InvoicingWorkflowsInitializer {
                 postableTotal = postableTotal.add(d(line.get("total")));
                 continue;
             }
-            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"), qty,
-                    line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
+            BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"),
+                    (String) line.get("variantId"), qty, line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
             matchByLine.put((String) line.get("id"), match);
             if (match.accruedQuantity().signum() > 0) {
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
                 priceVariance = priceVariance.add(billUnit.multiply(match.accruedQuantity()))
-                        .subtract(match.accruedReceiptValue());
+                        .subtract(accruedInBillCurrency(match, documentRate));
             }
             if (match.voucheredQuantity().signum() > 0) {
                 voucheredBillTotal = voucheredBillTotal.add(d(line.get("total"))
@@ -335,12 +443,26 @@ public class InvoicingWorkflowsInitializer {
             part.put("subtotal", d(line.get("subtotal")).multiply(factor));
             part.put("taxAmount", d(line.get("taxAmount")).multiply(factor));
             part.put("total", d(line.get("total")).multiply(factor));
+            if (line.get("taxes") instanceof List<?> taxes) {
+                // ADR-S071: the breakdown scales with the postable share (withholding / reverse charge post whole).
+                List<Map<String, Object>> scaled = new ArrayList<>();
+                for (Object o : taxes) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> t = new LinkedHashMap<>((Map<String, Object>) o);
+                    t.put("amount", d(t.get("amount")).multiply(factor));
+                    scaled.add(t);
+                }
+                part.put("taxes", scaled);
+            }
             postable.add(part);
             postableTotal = postableTotal.add(d(line.get("total")).multiply(factor));
         }
         String entryId = null;
         postableTotal = postableTotal.add(voucheredVariance);
-        if (postableTotal.signum() > 0) {
+        // ADR-S071: withholding (deducted from the payable) and reverse-charge VAT apply to the whole bill.
+        DocumentBuilderService.SpecialTaxes special = builder.specialTaxes(lines);
+        BigDecimal withholding = special.withholding();
+        if (postableTotal.signum() > 0 || special.any()) {
             String grni = determination.mapped("grni_accrued");
             Grouped g = builder.groupForPosting(partnerId, postable, "purchase", grni);
             List<MutableLine> post = new ArrayList<>();
@@ -368,8 +490,29 @@ public class InvoicingWorkflowsInitializer {
                 post.add(new MutableLine(priceVarianceAccount(), voucheredVariance, null, null,
                         "Purchase price variance (billed above receipt)"));
             }
-            post.add(new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
-                    "Bill " + full.get("documentNumber")));
+            BigDecimal counterCredit = postableTotal.subtract(withholding);
+            if (!special.any()) {
+                post.add(new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
+                        "Bill " + full.get("documentNumber")));
+            } else {
+                if (counterCredit.signum() > 0) {
+                    post.add(new MutableLine(g.counterAccount(), null, counterCredit, partnerId,
+                            "Bill " + full.get("documentNumber")));
+                } else if (counterCredit.signum() < 0) {
+                    post.add(new MutableLine(g.counterAccount(), counterCredit.negate(), null, partnerId,
+                            "Bill " + full.get("documentNumber") + " · withholding on vouchered receipts"));
+                }
+                if (withholding.signum() > 0) {
+                    post.add(new MutableLine(determination.mapped("withholding_payable"), null, withholding, partnerId,
+                            "Withholding tax · bill " + full.get("documentNumber")));
+                }
+                special.reverseChargeByTax().forEach((taxId, amt) -> {
+                    post.add(new MutableLine(determination.mapped("tax_receivable"), amt, null, null,
+                            "Reverse-charge input VAT"));
+                    post.add(new MutableLine(determination.mapped("tax_payable"), null, amt, null,
+                            "Reverse-charge output VAT"));
+                });
+            }
             List<Line> req = post.stream().map(MutableLine::toLine).toList();
             Map<String, Object> entry = posting.post(new PostingRequest("PURCH", instant(full.get("issueDate")),
                     "Bill " + full.get("documentNumber"), (String) full.get("currencyId"),
@@ -377,7 +520,11 @@ public class InvoicingWorkflowsInitializer {
                     null, req));
             entryId = (String) entry.get("id");
         }
-        for (Map<String, Object> line : lines) {
+        // Review M-5: a foreign-currency bill receives at the functional value (the rate its journal was posted at),
+        // like a foreign-currency goods receipt (P0-5); a base-currency bill's rate is 1.
+        BigDecimal billRate = entryId == null || fxRates == null ? null : fxRates.entryRate(entryId);
+        BigDecimal functionalRate = billRate == null || billRate.signum() <= 0 ? BigDecimal.ONE : billRate;
+        for (Map<String, Object> line : StockMove.inLockOrder(lines)) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
             if (product == null || !Boolean.TRUE.equals(product.get("trackInventory"))) {
                 continue;
@@ -398,6 +545,9 @@ public class InvoicingWorkflowsInitializer {
             }
             BigDecimal unitCost = qty.signum() > 0 ? new BigDecimal(JsNumbers.toJsString(
                     Money.div(d(line.get("subtotal")), qty).doubleValue())) : Money.ZERO;
+            if (functionalRate.compareTo(BigDecimal.ONE) != 0) {
+                unitCost = unitCost.multiply(functionalRate).setScale(6, java.math.RoundingMode.HALF_UP);
+            }
             StockMove m = StockMove.of((String) line.get("productId"), location, toReceive).unitCost(unitCost)
                     .variant((String) line.get("variantId"))
                     .uom(line.get("uomFactor") == null ? (String) product.get("purchaseUomId") : (String) line.get("uomId"),
@@ -408,10 +558,78 @@ public class InvoicingWorkflowsInitializer {
         // ACC-4 (B15): the bill is the open AP item for its whole amount. Vouchered quantities were raised on AP by the
         // receipt voucher, so the bill posts no second AP for them, but the supplier is paid against this bill — its
         // residual carries the vouchered share at bill price (the billed-above-receipt variance is part of that share).
-        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).add(voucheredBillTotal);
+        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).add(voucheredBillTotal).subtract(withholding);
+        if (withholding.signum() > 0) {
+            issueWithholdingCertificates(full, special, entryId);
+        }
         jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" = 'not_paid',"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(entryId, openPayable, id).update();
+        remeasureVoucheredPayable(full, matchByLine.values(), documentRate, partnerId);
+    }
+
+    /**
+     * Review 2026-11-15 (P-4). A foreign bill's vouchered share was raised on AP by the receipt voucher at the PO rate;
+     * the bill is the open item and is paid off at the bill's rate. Re-measure that share to the bill rate now (Dr/Cr AP
+     * in base, with no transaction amount, against FX gain / loss) so a fully paid bill leaves no AP residue. Only when
+     * the PO is in the bill's currency; reversed with the bill on cancel ({@code vendor_bill:fx_voucher:<id>}).
+     */
+    private void remeasureVoucheredPayable(Map<String, Object> bill, java.util.Collection<BillLineMatch> matches,
+            BigDecimal billRate, String partnerId) {
+        String currency = (String) bill.get("currencyId");
+        if (billRate.compareTo(BigDecimal.ONE) == 0 || currency == null) {
+            return;
+        }
+        BigDecimal adjust = Money.ZERO;
+        for (BillLineMatch m : matches) {
+            for (BillReceiptMatcherService.Consumption c : m.consumptions()) {
+                if (!c.vouchered()) {
+                    continue;
+                }
+                Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT po.\"exchangeRate\" AS rate, po.\"currencyCode\" AS code,"
+                        + " coalesce(pl.\"taxRate\", 0) AS \"taxRate\" FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g"
+                        + " ON g.id = l.\"goodsReceiptId\" JOIN \"PurchaseOrder\" po ON po.id = g.\"purchaseOrderId\""
+                        + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE l.id = ?")
+                        .param(c.goodsReceiptLineId()));
+                if (po == null || po.get("code") == null || !currency.equalsIgnoreCase(po.get("code").toString())
+                        || po.get("rate") == null || d(po.get("rate")).signum() <= 0) {
+                    continue;
+                }
+                BigDecimal gross = c.quantity().multiply(c.receiptUnitCost()).multiply(BigDecimal.ONE.add(
+                        Money.div(d(po.get("taxRate")), BigDecimal.valueOf(100))));
+                adjust = adjust.add(gross.multiply(billRate.subtract(d(po.get("rate")))));
+            }
+        }
+        adjust = adjust.setScale(6, java.math.RoundingMode.HALF_UP);
+        if (adjust.abs().compareTo(VARIANCE_EPSILON) < 0) {
+            return;
+        }
+        String id = (String) bill.get("id");
+        String ap = determination.payableAccount(jdbc.sql("SELECT \"payableAccountId\" FROM \"Partner\" WHERE id = ?")
+                .param(partnerId).query(String.class).optional().orElse(null));
+        String amount = JsNumbers.dec(adjust.abs());
+        String label = "Bill " + bill.get("documentNumber") + " · vouchered payable at the bill rate";
+        posting.post(PostingRequest.of("PURCH", instant(bill.get("issueDate")), label, "vendor_bill", id,
+                "vendor_bill:fx_voucher:" + id, adjust.signum() > 0
+                        ? List.of(Line.debit(determination.mapped("fx_loss"), amount, label),
+                                new Line(ap, null, amount, partnerId, label, null, null, null).inCurrency(currency, "0"))
+                        : List.of(new Line(ap, amount, null, partnerId, label, null, null, null).inCurrency(currency, "0"),
+                                Line.credit(determination.mapped("fx_gain"), amount, label))));
+    }
+
+    /** ADR-S071: one issued withholding certificate per withholding tax of the posted bill. */
+    private void issueWithholdingCertificates(Map<String, Object> bill, DocumentBuilderService.SpecialTaxes special,
+            String entryId) {
+        Instant date = instant(bill.get("issueDate"));
+        int year = date.atOffset(java.time.ZoneOffset.UTC).getYear();
+        special.withholdingByTax().forEach((taxId, v) -> {
+            if (v[2].signum() == 0) {
+                return;
+            }
+            withholdingCertificates.issue(new WithholdingCertificateService.NewCertificate("issued",
+                    (String) bill.get("partnerId"), (String) bill.get("id"), null, taxId, date, v[0], v[1], v[2],
+                    (String) bill.get("currencyId"), entryId, null, "Bill " + bill.get("documentNumber")), year);
+        });
     }
 
     private static final class MutableLine {
@@ -566,6 +784,9 @@ public class InvoicingWorkflowsInitializer {
         }
         jdbc.sql("UPDATE \"Payment\" SET \"allocatedAmount\" = 0, \"unallocatedAmount\" = 0, \"updatedAt\" = " + NOW
                 + " WHERE id = ?").param(payment.get("id")).update();
+        jdbc.sql("UPDATE \"WithholdingCertificate\" SET status = 'cancelled', \"cancelledAt\" = " + NOW
+                + " WHERE \"paymentId\" = ? AND \"organizationId\" = ? AND status = 'issued'")
+                .params(payment.get("id"), org).update();
         Map<String, Object> outcome = new LinkedHashMap<>();
         outcome.put("id", payment.get("id"));
         outcome.put("voided", true);
@@ -576,8 +797,9 @@ public class InvoicingWorkflowsInitializer {
     private void restore(String table, String statusType, Map<String, Object> row, BigDecimal amount) {
         BigDecimal newPaid = d(row.get("amountPaid")).subtract(amount);
         BigDecimal newResidual = d(row.get("amountResidual")).add(amount);
+        BigDecimal payable = d(row.get("totalAmount")).subtract(d(row.get("withholdingAmount")));
         String paymentStatus = newResidual.signum() <= 0 ? "paid"
-                : newResidual.compareTo(d(row.get("totalAmount"))) < 0 ? "partial" : "not_paid";
+                : newResidual.compareTo(payable) < 0 ? "partial" : "not_paid";
         String status = "paid".equals(String.valueOf(row.get("status"))) && newResidual.signum() > 0 ? "posted"
                 : String.valueOf(row.get("status"));
         jdbc.sql("UPDATE \"" + table + "\" SET \"amountPaid\" = ?, \"amountResidual\" = ?, \"paymentStatus\" ="

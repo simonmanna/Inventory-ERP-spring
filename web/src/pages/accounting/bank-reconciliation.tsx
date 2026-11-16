@@ -1,6 +1,6 @@
 import { useState, type ChangeEvent } from 'react';
 import { AllocateLineDialog, BankRulesPanel } from './bank-rules-panel';
-import { Landmark, Upload, Wand2 } from 'lucide-react';
+import { Landmark, Lock, Upload, Wand2 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -33,15 +33,19 @@ import {
   useBankReconciliationSummary,
   useExcludeLine,
   useImportStatement,
+  useLockStatement,
   useMatchLine,
   usePaymentCandidates,
   useReconciliationRuns,
+  useReconciliationStatement,
   useStatementLines,
   useUnmatchLine,
   type StatementLineRow,
 } from '@/features/accounting/bank-reconciliation';
 import { date, dateTime, money } from '@/lib/format';
 import { apiMessage, notify } from '@/lib/notify';
+import { localDay } from '@/lib/dates';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 
@@ -60,6 +64,106 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
         <CardTitle className="text-xl">{value}</CardTitle>
       </CardHeader>
       <CardContent className="text-xs text-muted-foreground">{hint ?? ' '}</CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Statement sign-off: the bank's closing balance on a date, proved against the
+ * ledger (outstanding book items, unrecorded statement lines), then locked. Lock
+ * is offered only when the server reports a zero difference.
+ */
+function StatementSignOff({ bankAccountId, canUpdate }: { bankAccountId: string; canUpdate: boolean }) {
+  const [asOf, setAsOf] = useState(localDay());
+  const [closing, setClosing] = useState('');
+  const [notes, setNotes] = useState('');
+  const debouncedClosing = useDebouncedValue(closing, 400);
+  const statement = useReconciliationStatement({ bankAccountId, asOf, closingBalance: debouncedClosing });
+  // Lock only what is on screen: the proof must be for the closing balance as typed.
+  const proofCurrent = debouncedClosing === closing && !statement.isFetching;
+  const lock = useLockStatement();
+  const s = statement.data;
+
+  const submitLock = async () => {
+    if (!s?.reconciled || !proofCurrent) return;
+    if (!confirm(tx('Lock this reconciliation through {{date}}? Statement lines on or before it are frozen.', { date: asOf }))) return;
+    try {
+      await lock.mutateAsync({ bankAccountId, asOf, closingBalance: Number(closing), notes: notes || undefined });
+      notify.success(tx('Reconciliation locked through {{date}}', { date: asOf }));
+      setNotes('');
+    } catch (error) {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      // 403 / 5xx are already toasted by the HTTP client.
+      if (status !== 403 && !(status && status >= 500)) {
+        notify.error(apiMessage(error, tx('Could not lock the reconciliation')));
+      }
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{tx('Statement sign-off')}</CardTitle>
+        <CardDescription>
+          {tx('Enter the closing balance from the bank statement. It must equal the ledger once outstanding items are accounted for.')}
+          {s?.lockedThrough && <> {tx('Locked through {{date}}.', { date: date(s.lockedThrough) })}</>}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <Label>{tx('Statement date')}</Label>
+            <Input type="date" className="h-9" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>{tx('Closing balance')}</Label>
+            <Input type="number" step="any" className="h-9 w-40" value={closing} onChange={(e) => setClosing(e.target.value)} />
+          </div>
+          {canUpdate && (
+            <div className="min-w-[220px] flex-1 space-y-1">
+              <Label>{tx('Note')}</Label>
+              <Input className="h-9" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+          )}
+          {canUpdate && (
+            <Button onClick={() => void submitLock()} disabled={!s?.reconciled || !proofCurrent || lock.isPending}>
+              <Lock className="mr-2 h-4 w-4" />{lock.isPending ? tx('Locking…') : tx('Lock')}
+            </Button>
+          )}
+        </div>
+        {statement.isError && (
+          <p className="text-sm text-destructive">{apiMessage(statement.error, tx('Could not compute the statement'))}</p>
+        )}
+        {s && (
+          <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex justify-between rounded border px-3 py-2">
+              <span className="text-muted-foreground">{tx('Statement closing balance')}</span>
+              <span className="font-medium">{money(s.closingBalance)}</span>
+            </div>
+            <div className="flex justify-between rounded border px-3 py-2">
+              <span className="text-muted-foreground">{tx('+ Outstanding book items')}</span>
+              <span className="font-medium">{money(s.outstandingBook)}</span>
+            </div>
+            <div className="flex justify-between rounded border px-3 py-2">
+              <span className="text-muted-foreground">{tx('Ledger balance')}</span>
+              <span className="font-medium">{money(s.ledgerBalance)}</span>
+            </div>
+            <div className="flex justify-between rounded border px-3 py-2">
+              <span className="text-muted-foreground">{tx('+ Unrecorded statement lines')}</span>
+              <span className="font-medium">{money(s.unrecordedStatement)}</span>
+            </div>
+            <div className={`flex justify-between rounded border px-3 py-2 ${s.reconciled ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'}`}>
+              <span className="font-medium">{tx('Difference')}</span>
+              <span className="font-semibold">{money(s.difference)}</span>
+            </div>
+            <div className="flex items-center rounded border px-3 py-2">
+              <Badge variant={s.reconciled ? 'default' : 'secondary'}>
+                {s.reconciled ? tx('Reconciled') : tx('Not reconciled')}
+              </Badge>
+            </div>
+          </div>
+        )}
+      </CardContent>
     </Card>
   );
 }
@@ -294,6 +398,8 @@ export function BankReconciliationPage() {
               hint={tx('{{count}} payment(s), in / out', { count: summary.data?.outstandingPayments ?? 0 })}
             />
           </div>
+
+          <StatementSignOff bankAccountId={accountId} canUpdate={canUpdate} />
 
           {lines.isError && <p className="text-sm text-destructive">{tx('Could not load the statement lines.')}</p>}
 

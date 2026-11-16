@@ -3,7 +3,7 @@
 - Status: accepted (built 2026-11-10, branch `phase/acc-gl`)
 - Builds on: ACC-3 (posting integrity, `postingKey`), ACC-5 (fixed-asset GL lifecycle) and ACC-6 (bank
   reconciliation, locked statements, D-B5 direction-aware matching).
-- Migrations: `V489__recurring_entries_deferrals.sql`, `V490__bank_match_rules.sql`, `V491__asset_impairment.sql`
+- Migrations: `V501__recurring_entries_deferrals.sql`, `V502__bank_match_rules.sql`, `V503__asset_impairment.sql`
 - Extension: no NestJS counterpart. Existing routes and their responses are unchanged, except that the bank-line list
   gains two fields (`matchedRuleId` and `journalEntryId`) and lines can now have the new status `partial`.
 - Spec: [accounting.md § ADR-S073](../spec/accounting.md#adr-s073-gl-automation),

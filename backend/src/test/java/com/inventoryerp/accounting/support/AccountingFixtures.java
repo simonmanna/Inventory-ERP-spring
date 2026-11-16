@@ -246,8 +246,8 @@ public abstract class AccountingFixtures extends ApiTestSupport {
         for (Map<String, Object> r : jdbc.sql("SELECT a.code, sum(l.\"baseDebit\" - l.\"baseCredit\") AS net FROM"
                         + " \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" JOIN \"Account\" a ON"
                         + " a.id = l.\"accountId\" WHERE l.\"organizationId\" = ? AND e.status IN ('posted', 'reversed')"
-                        + " AND e.\"postingDate\" <= ?::timestamp" + closing + " GROUP BY a.code ORDER BY a.code")
-                .params(org, asOf + " 23:59:59").query().listOfRows()) {
+                        + " AND e.\"postingDate\" < (?::date + 1)" + closing + " GROUP BY a.code ORDER BY a.code")
+                .params(org, asOf).query().listOfRows()) {
             out.put((String) r.get("code"), (BigDecimal) r.get("net"));
         }
         return out;

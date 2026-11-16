@@ -208,6 +208,9 @@ export interface PricelistItem {
   scope: 'product' | 'category' | 'all';
   productId: string | null;
   productName?: string | null;
+  /** P-1: a product rule may price one variant only (null = every variant). */
+  variantId?: string | null;
+  variantName?: string | null;
   productCategoryId: string | null;
   partnerId: string | null;
   partnerName?: string | null;
@@ -287,7 +290,7 @@ export const pricingApi = {
   saveFloor: async ({ id, ...body }: MarginFloor) =>
     (id ? await api.put<MarginFloor>(`/sales/margin-floors/${id}`, body) : await api.post<MarginFloor>('/sales/margin-floors', body)).data,
   deleteFloor: async (id: string) => (await api.delete(`/sales/margin-floors/${id}`)).data,
-  resolve: async (body: { partnerId?: string; branchId?: string; siteId?: string; date?: string; lines: Array<{ productId: string; quantity: number; uomId?: string }> }) =>
+  resolve: async (body: { partnerId?: string; branchId?: string; siteId?: string; date?: string; lines: Array<{ productId: string; variantId?: string; quantity: number; uomId?: string }> }) =>
     (await api.post<{ lines: ResolvedPrice[] }>('/sales/pricing/resolve', body)).data,
 };
 

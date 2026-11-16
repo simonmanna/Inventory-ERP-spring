@@ -57,12 +57,41 @@ their Nest-parity behaviour.
    all three through the permission sync. Every route checks the caller's branch scope on the location (`LocationScope`)
    and every table carries `organizationId` with the tenant RLS policy.
 
+## Amendment — production hardening (2026-11-10, `phase/inv-hardening`, owner-approved)
+
+- **Manual pick orders issue stock.** Shipping a `manual` pick order (no source document) issues the picked quantities
+  through `StockService.issue` (per product / variant / lot, lot pinned, `requireAvailable`, move type `issue` →
+  `STOCK_OUT` GL; ledger and journal reference `WarehousePickOrder` / order code) in the shipping transaction.
+  Orders with a source document (`sales_order`, `delivery_order`, `stock_out`, `transfer`) still leave the issue to it.
+  Decision 6 holds for those only.
+- **No empty shipments.** When every pick task of an order ends with nothing picked (cancelled / done with 0), the
+  order returns to `draft` (release again or cancel); `ship` refuses an order with nothing picked (`Nothing was picked
+  on this pick order; release it again or cancel it`).
+- **Bin corrections.** `POST /warehouse/bins/:id/adjust` (`warehouse:manage`; `productId`, `variantId?`, `batchId?`,
+  exactly one of `newQty` / `delta`, `reason`) changes bin quantities only (no ledger, no GL), audited as
+  `WarehouseBinStock` / `adjust`. An increase must come from unbinned stock (on-hand − binned − staged − open putaway);
+  a decrease cannot take quantity held by open pick / move tasks.
+- **Reconciliation.** The overview adds `excessBinnedQty` per product and `mismatches`. `POST
+  /warehouse/locations/:id/reconcile` (`warehouse:manage`, optional `productId`) takes binned + staged − on-hand out of
+  the bins: storage, then receiving, then other bins, by pick sequence and code, earliest lot expiry first, quantity
+  not held by open tasks before held quantity. Audited as `reconcile`.
+- **Release capped by the ledger.** Release allocates at most location on-hand − staged − open pick tasks (400 `Not
+  enough stock on hand to pick …`), besides the bin availability check.
+- **`enabled` is enforced.** With settings stored and `enabled = false`, every operate / manage route except the
+  settings themselves answers 400 `Warehouse management is switched off for this location; turn it on in the warehouse
+  settings first`; reads keep working. A location that never saved settings behaves as before.
+- **Locking.** `addStock` locks the bin row (`FOR NO KEY UPDATE`) before the capacity / single-product checks; task
+  completion and cancellation lock the pick order before the task, the same order as order cancel / ship.
+
+Still open: automatic bin decrement on ledger issues (POS, stock-outs, transfers, production, counts) — drift is now
+visible and fixable with reconcile / adjust; release allocation is capped per product, not per lot.
+
 ## Consequences
 
 - WMS is optional per location; a location without bins behaves exactly as before.
 - Bin balances can drift from the ledger when stock is issued without a pick order (e.g. a POS sale from a warehouse
-  location); the overview shows it (`mismatch`) and a move / count fixes it. Automatic bin decrement on ledger issues
-  is not part of this ADR.
+  location); the overview shows it (`mismatch`, `excessBinnedQty`) and reconcile / bin adjust fix it (amendment above).
+  Automatic bin decrement on ledger issues is not part of this ADR.
 - Not in this ADR: receipt-driven putaway (an event from goods receipts), two-step receiving through a `receiving` bin
   with automatic follow-up tasks, lot-level unbinned quantities (putaway of unbinned stock carries no batch),
   carrier integrations, labels for packages and a scheduled ABC job. The mobile scanner app is roadmap 2.2 (PR-14).

@@ -10,6 +10,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
 import com.inventoryerp.invoicing.domain.Invoice;
+import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
@@ -1009,15 +1010,19 @@ public class PosOrdersService {
                 accompanimentNames = new ArrayList<>(r.names());
             }
             if (PosSql.truthy(variantId) && productId != null && menuItemId == null) {
-                Map<String, Object> variant = SqlRows.one(jdbc.sql("SELECT name, \"salesPrice\" FROM \"ProductVariant\""
-                        + " WHERE id = ? AND \"productId\" = ? AND \"organizationId\" = ? AND \"isActive\" = true"
-                        + " AND \"deletedAt\" IS NULL LIMIT 1").params(variantId, productId, orgId));
+                // Post-parity (ADR-S072): the variant's effective price — its fixed price, else the product price
+                // plus its attribute extras — as Sales and invoices price it (ProductVariantService.PRICE_SQL).
+                Map<String, Object> variant = SqlRows.one(jdbc.sql("SELECT v.name, v.\"salesPrice\" AS fixed,"
+                        + " p.\"salesPrice\" AS base, " + ProductVariantService.PRICE_SQL + " AS price"
+                        + " FROM \"ProductVariant\" v JOIN \"Product\" p ON p.id = v.\"productId\""
+                        + " WHERE v.id = ? AND v.\"productId\" = ? AND v.\"organizationId\" = ? AND v.\"isActive\" = true"
+                        + " AND v.\"deletedAt\" IS NULL LIMIT 1").params(variantId, productId, orgId));
                 if (variant == null) {
                     throw ApiException.badRequest("Variant does not belong to this product");
                 }
                 variantName = (String) variant.get("name");
-                if (variant.get("salesPrice") != null) {
-                    variantPrice = num(variant.get("salesPrice"));
+                if (variant.get("fixed") != null || variant.get("base") != null) {
+                    variantPrice = num(variant.get("price"));
                     hasVariant = true;
                 }
             }

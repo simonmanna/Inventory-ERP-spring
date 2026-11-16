@@ -79,6 +79,20 @@ public class DmsResourceRegistry {
                 new TableResource(jdbc, "sales_order", "Sales order", Permissions.SALES__ORDER_READ,
                         Permissions.SALES__ORDER_WRITE, "sales", "SELECT number FROM \"SalesOrder\" WHERE id = ? AND"
                         + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", "/sales/orders/"),
+                new TableResource(jdbc, "sales_delivery", "Sales delivery", Permissions.SALES__DELIVERY_READ,
+                        Permissions.SALES__DELIVERY_WRITE, "sales", "SELECT code FROM \"FleetLoad\" WHERE id = ? AND"
+                        + " \"organizationId\" = ?", "/sales/deliveries/"),
+                // Delivery documents (signed delivery notes, proof of delivery, waybills) of a document's delivery
+                // details, kept apart from the record's own attachments.
+                new TableResource(jdbc, "sales_order_delivery", "Sales order delivery", Permissions.SALES__ORDER_READ,
+                        Permissions.SALES__DELIVERY_WRITE, "sales", "SELECT number FROM \"SalesOrder\" WHERE id = ?"
+                        + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL", "/sales/orders/"),
+                new TableResource(jdbc, "invoice_delivery", "Invoice delivery", Permissions.INVOICE__READ,
+                        Permissions.INVOICE__UPDATE, "sales", "SELECT coalesce(\"documentNumber\", reference, id) FROM"
+                        + " \"Document\" WHERE id = ? AND \"organizationId\" = ?", "/invoices/"),
+                new TableResource(jdbc, "cash_sale_delivery", "Cash sale delivery", Permissions.SALES__CASH_SALE_READ,
+                        Permissions.SALES__CASH_SALE_CREATE, "sales", "SELECT number FROM \"SalesSubmission\" WHERE"
+                        + " id = ? AND \"organizationId\" = ?", "/sales/cash-sales/"),
                 new TableResource(jdbc, "purchase_order", "Purchase order",
                         Permissions.PROCUREMENT__PURCHASE_ORDER__READ, Permissions.PROCUREMENT__PURCHASE_ORDER__UPDATE,
                         "purchase", "SELECT \"orderNumber\" FROM \"PurchaseOrder\" WHERE id = ? AND"

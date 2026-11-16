@@ -2,9 +2,13 @@ package com.inventoryerp.sales.web;
 
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.sales.application.SalesDeliveryNotePdf;
 import com.inventoryerp.sales.application.SalesHandoverService;
 import java.util.HashMap;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,5 +55,15 @@ public class SalesHandoverController {
     public Map<String, Object> updateInvoice(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> b) {
         return svc.update(SalesHandoverService.INVOICE, id, body(b));
+    }
+
+    /** Printable delivery note (PDF) of the invoice handover. */
+    @GetMapping("/sales/invoices/{id}/handover/note")
+    @RequirePermissions(Permissions.INVOICE__READ)
+    public ResponseEntity<byte[]> invoiceNote(@PathVariable String id) {
+        SalesDeliveryNotePdf.Pdf pdf = svc.note(SalesHandoverService.INVOICE, id);
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + pdf.filename() + "\"")
+                .body(pdf.content());
     }
 }

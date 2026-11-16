@@ -1,6 +1,5 @@
 package com.inventoryerp.accounting.application;
 
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.health.JobMetrics;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.time.LocalDate;
@@ -58,7 +57,7 @@ public class GlAutomationJob {
         for (String orgId : orgs) {
             try {
                 Map<String, Object> result = TenantContext.run(TenantContext.TenantStore.organization(orgId),
-                        () -> body.apply(LocalDate.now(BusinessZone.get())));
+                        () -> body.apply(LocalDate.now(AccountingDay.zone(jdbc))));
                 log.debug("{} org {}: {}", job, orgId, result);
             } catch (RuntimeException err) {
                 log.error("{} failed for org {}: {}", job, orgId, err.toString());

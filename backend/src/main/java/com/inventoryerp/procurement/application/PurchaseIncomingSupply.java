@@ -21,7 +21,7 @@ public class PurchaseIncomingSupply implements IncomingSupplyProvider {
     }
 
     @Override
-    public BigDecimal incoming(String productId, String locationId, boolean onlyRule) {
+    public BigDecimal incoming(String productId, String variantId, String locationId, boolean onlyRule) {
         String org = TenantContext.organizationId();
         BigDecimal ordered = jdbc.sql("""
                         SELECT COALESCE(SUM(GREATEST(0, l.quantity - l."receivedQuantity" - l."cancelledQuantity")
@@ -30,9 +30,10 @@ public class PurchaseIncomingSupply implements IncomingSupplyProvider {
                         JOIN "PurchaseOrder" o ON o.id = l."purchaseOrderId"
                         LEFT JOIN "PurchaseRequestLine" rl ON rl.id = l."requestLineId"
                         WHERE l."organizationId" = ? AND l."productId" = ? AND o."deletedAt" IS NULL
+                          AND (?::text IS NULL OR l."variantId" = ?::text)
                           AND o.status::text IN ('draft', 'active', 'partially_received')
                           AND (rl."deliveryLocationId" = ? OR (? AND rl."deliveryLocationId" IS NULL))""")
-                .params(org, productId, locationId, onlyRule)
+                .params(org, productId, variantId, variantId, locationId, onlyRule)
                 .query(BigDecimal.class)
                 .single();
         BigDecimal requested = jdbc.sql("""
@@ -40,9 +41,10 @@ public class PurchaseIncomingSupply implements IncomingSupplyProvider {
                         FROM "PurchaseRequestLine" l
                         JOIN "PurchaseRequest" q ON q.id = l."purchaseRequestId"
                         WHERE l."organizationId" = ? AND l."productId" = ? AND q."deletedAt" IS NULL
+                          AND (?::text IS NULL OR l."variantId" = ?::text)
                           AND q.status::text IN ('draft', 'submitted', 'approved')
                           AND (l."deliveryLocationId" = ? OR (? AND l."deliveryLocationId" IS NULL))""")
-                .params(org, productId, locationId, onlyRule)
+                .params(org, productId, variantId, variantId, locationId, onlyRule)
                 .query(BigDecimal.class)
                 .single();
         return ordered.add(requested);

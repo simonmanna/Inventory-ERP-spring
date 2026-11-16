@@ -1,5 +1,5 @@
 import { apiErrorMessage } from '@/lib/api-error';
-import { useAccounts } from '@/features/accounting/api';
+import { isPostingAccount, useAccounts } from '@/features/accounting/api';
 import { ShiftOpenDialog as OpenShiftDialog } from '../ShiftOpenDialog';
 import { ShiftCloseDialog as CloseShiftDialog } from '../ShiftCloseDialog';
 import { useAuthStore } from '@/stores/auth.store';
@@ -373,7 +373,7 @@ const CashInOutButton: React.FC<{
               <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={isIn ? tx('e.g. Added change money') : tx('e.g. Purchased milk')} />
             </div>
 
-            <label className="block text-sm">{tx('Expense / safe / counterpart account')}<select className="block border rounded p-2 w-full" value={counterpartAccountId} onChange={(e) => setCounterpartAccountId(e.target.value)}><option value="">{tx('Choose account')}</option>{(accountPage?.data ?? []).filter((a) => a.isActive && !a.isGroup).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select></label>
+            <label className="block text-sm">{tx('Expense / safe / counterpart account')}<select className="block border rounded p-2 w-full" value={counterpartAccountId} onChange={(e) => setCounterpartAccountId(e.target.value)}><option value="">{tx('Choose account')}</option>{(accountPage?.data ?? []).filter((a) => isPostingAccount(a)).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select></label>
             {!isIn && <><Input aria-label={tx('Approving manager email')} placeholder={tx('Manager email')} value={approverEmail} onChange={(e) => setApproverEmail(e.target.value)} /><Input aria-label={tx('Approving manager PIN')} type="password" placeholder={tx('Manager PIN')} value={managerPin} onChange={(e) => setManagerPin(e.target.value)} /></>}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={close}>{tx('Cancel')}</Button>

@@ -17,8 +17,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { date, money } from '@/lib/format';
-import { useAccounts, useGeneralLedger } from '@/features/accounting/api';
+import { date, fromMinorUnits, toMinorUnits } from '@/lib/format';
+import {
+  useAccounts, useAccountingMoney, useBaseCurrencyDecimals, useGeneralLedger,
+} from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
 
 const PAGE_SIZE = 50;
@@ -30,23 +32,24 @@ export function GeneralLedgerPage() {
   const [filterAccountId, setFilterAccountId] = useState('');
   const [page, setPage] = useState(1);
 
-  const { data, isLoading } = useGeneralLedger({ from: from || undefined, to: to || undefined, page, pageSize: PAGE_SIZE });
+  // Account filter and paging are applied server-side, so totals and page counts cover every line.
+  const { data, isLoading } = useGeneralLedger({
+    from: from || undefined,
+    to: to || undefined,
+    page,
+    pageSize: PAGE_SIZE,
+    accountId: filterAccountId || undefined,
+  });
   const { data: accountsData } = useAccounts();
   const accounts = accountsData?.data ?? [];
+  const money = useAccountingMoney();
+  const decimals = useBaseCurrencyDecimals();
 
-  const filterAccountCode = filterAccountId
-    ? accounts.find((a) => a.id === filterAccountId)?.code ?? ''
-    : '';
-
-  // Client-side account filter (backend doesn't have it yet)
-  const rows = data?.data ?? [];
-  const filteredRows = filterAccountCode
-    ? rows.filter((r) => r.accountCode === filterAccountCode)
-    : rows;
+  const filteredRows = data?.data ?? [];
   const meta = data?.meta;
 
-  const totalDebit = filteredRows.reduce((s, r) => s + Number(r.debit || 0), 0);
-  const totalCredit = filteredRows.reduce((s, r) => s + Number(r.credit || 0), 0);
+  const totalDebit = fromMinorUnits(filteredRows.reduce((s, r) => s + toMinorUnits(r.debit, decimals), 0), decimals);
+  const totalCredit = fromMinorUnits(filteredRows.reduce((s, r) => s + toMinorUnits(r.credit, decimals), 0), decimals);
 
   return (
     <div className="space-y-4">
@@ -143,7 +146,7 @@ export function GeneralLedgerPage() {
               ) : (
                 filteredRows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-muted/20 cursor-pointer"
-                    onClick={() => navigate(`/journal-entries/${r.entryNumber}`)}>
+                    onClick={() => navigate(`/journal-entries/${r.journalEntryId}`)}>
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                       {date(r.date)}
                     </TableCell>

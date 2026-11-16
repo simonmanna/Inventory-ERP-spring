@@ -1,5 +1,6 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.shared.costing.AllocationCalculator;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
@@ -267,8 +268,8 @@ public class AbsorptionSettlementService {
         }
         String costCenter = (String) cap.get("costCenterId");
         String pool = determination.mapped("overhead_absorbed");
-        Timestamp start = Timestamp.from(from.atStartOfDay(ZoneOffset.UTC).toInstant());
-        Timestamp end = Timestamp.from(to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant());
+        Timestamp start = AccountingDay.startTs(from, AccountingDay.zone(jdbc));
+        Timestamp end = AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc));
 
         // Timing: draft journals on the cost centre.
         long drafts = jdbc.sql("SELECT count(DISTINCT e.id) FROM \"JournalLine\" jl JOIN \"JournalEntry\" e ON e.id ="

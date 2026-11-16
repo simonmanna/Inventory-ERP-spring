@@ -77,7 +77,15 @@ public final class DispatchCommands {
             String taxId,
             @Size(max = 500) String description,
             @Size(max = 80) String batchNumber,
-            @Size(max = 1000) String notes) {}
+            @Size(max = 1000) String notes,
+            String variantId) {
+
+        /** Phase I2 (audit V-6): the variant is optional on the wire; older clients send none. */
+        public DeliveryLineInput(String productId, BigDecimal quantity, String uomId, BigDecimal unitPrice, String taxId,
+                String description, String batchNumber, String notes) {
+            this(productId, quantity, uomId, unitPrice, taxId, description, batchNumber, notes, null);
+        }
+    }
 
     public record DeliveryOrderInput(
             @NotBlank String partnerId,
@@ -192,7 +200,16 @@ public final class DispatchCommands {
             @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal returnedQty,
             @OneOf({"spillage", "weighing_variance", "damaged", "customer_rejected", "wrong_product", "theft",
                 "site_closed", "other"}) String reason,
-            @Size(max = 1000) String notes) {}
+            @Size(max = 1000) String notes,
+            // Phase A A3: damaged at the site (a physical fact of its own, with a "damaged" claim).
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal damagedQty) {
+
+        /** Without a damaged quantity (callers before Phase A A3). */
+        public PodLineInput(String loadLineId, BigDecimal deliveredQty, BigDecimal returnedQty, String reason,
+                String notes) {
+            this(loadLineId, deliveredQty, returnedQty, reason, notes, null);
+        }
+    }
 
     /** Proof of delivery; {@code signature} is a {@code data:image/png;base64,…} URL from the signature pad. */
     public record PodInput(
@@ -204,7 +221,38 @@ public final class DispatchCommands {
             @NotEmpty @Valid List<PodLineInput> lines,
             @Size(max = 1_500_000) String signature,
             @DecimalMin("0") @DecimalMax("9999999999999.9") @Digits(integer = 13, fraction = 1) BigDecimal endOdometer,
-            @Size(max = 2000) String notes) {}
+            @Size(max = 2000) String notes,
+            @Valid CustomerWeightInput customerWeight) {
+
+        /** Without customer weight evidence (callers before Phase A A2). */
+        public PodInput(String receiverName, String receiverPhone, Instant receivedAt, BigDecimal latitude,
+                BigDecimal longitude, List<PodLineInput> lines, String signature, BigDecimal endOdometer,
+                String notes) {
+            this(receiverName, receiverPhone, receivedAt, latitude, longitude, lines, signature, endOdometer, notes,
+                    null);
+        }
+    }
+
+    /**
+     * Phase A A2: the customer's weighing of the truck (plan §7). Give {@code netKg}, or {@code grossKg} and
+     * {@code tareKg}. {@code allocations} is the user-confirmed split of a disputed variance over the lines (needed
+     * for a multi-product truck or a line without a weight factor); omitted, a single weighable line is split
+     * automatically and anything else is only proposed.
+     */
+    public record CustomerWeightInput(
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal grossKg,
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal tareKg,
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal netKg,
+            @Size(max = 80) String ticketRef,
+            Instant weighedAt,
+            @Size(max = 2000) String notes,
+            @Size(max = 200) List<@Valid WeightShareInput> allocations) {}
+
+    /** One line's share of a disputed variance: quantity in the line's unit; {@code kg} only for a line without a factor. */
+    public record WeightShareInput(
+            @NotBlank String loadLineId,
+            @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal quantity,
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal kg) {}
 
     public record CloseTripInput(
             @DecimalMin("0") @DecimalMax("9999999999999.9") @Digits(integer = 13, fraction = 1) BigDecimal endOdometer,
@@ -221,6 +269,11 @@ public final class DispatchCommands {
     // ------------------------------------------------------------------ discrepancies
 
     public record DecisionInput(@Size(max = 1000) String notes) {}
+
+    /** Phase A A3: reduce a pending weight claim to {@code quantity} (0 withdraws it); reason required. */
+    public record ReduceClaimInput(
+            @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal quantity,
+            @NotBlank @Size(max = 1000) String reason) {}
 
     public record DiscrepancyQuery(String status, String kind, String deliveryOrderId, String partnerId,
             Integer page, Integer pageSize) {}

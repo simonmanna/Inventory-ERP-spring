@@ -1,5 +1,6 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.shared.costing.AllocationCalculator;
 
 import com.inventoryerp.accounting.application.PostingRequest;
@@ -449,8 +450,8 @@ public class CostCycleService {
         if (segs.isEmpty()) {
             throw ApiException.badRequest("The allocation cycle has no segments");
         }
-        Timestamp start = Timestamp.valueOf(from.atStartOfDay());
-        Timestamp end = Timestamp.valueOf(to.plusDays(1).atStartOfDay());
+        Timestamp start = AccountingDay.startTs(from, AccountingDay.zone(jdbc));
+        Timestamp end = AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc));
         Map<Integer, Map<String, BigDecimal>> bases = new LinkedHashMap<>();
         for (Map<String, Object> s : segs) {
             bases.put(((Number) s.get("seq")).intValue(), driver(s, from, to, start, end));

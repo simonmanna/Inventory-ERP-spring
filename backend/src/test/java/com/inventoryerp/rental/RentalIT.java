@@ -1037,4 +1037,29 @@ class RentalIT extends ApiTestSupport {
     void authorizationMatrix() {
         assertThat(assertAuthorizationMatrix("com.inventoryerp.rental")).isEqualTo(47);
     }
+
+    @Test
+    @DisplayName("S-6: swapping the unit of a line of 2 moves the line's quantity back and out again (was 1 back, 2 out)")
+    void swapMovesTheLineQuantity() {
+        String renter = partner();
+        String p = product("Scaffold tower", false);
+        List<String> u = units(p, 2);
+        stockIn(p, 10);
+        ok(201, "POST", "/rental/rates", Map.of("productId", p, "period", "day", "minUnits", 1, "price", 50));
+        Instant start = Instant.now().minus(Duration.ofHours(1));
+        Instant due = Instant.now().plus(Duration.ofDays(2));
+        JsonNode ag = ok(201, "POST", "/rental/agreements", Map.of("partnerId", renter, "startAt", iso(start), "dueAt",
+                iso(due), "lines", List.of(Map.of("productId", p, "unitId", u.get(0), "quantity", 2, "rateUnits", 1))));
+        String id = ag.get("id").asString();
+        String line = ag.get("lines").get(0).get("id").asString();
+        ok(201, "POST", "/rental/agreements/" + id + "/confirm", null);
+        Res out = money("POST", "/rental/agreements/" + id + "/checkout", Map.of("depositMethod", "card", "overrideById",
+                adminId), UUID.randomUUID().toString());
+        assertThat(out.status()).as(out.raw().body()).isEqualTo(200);
+        assertThat(onHand(p, "out")).isEqualByComparingTo("2");
+        paid("/rental/swaps", Map.of("agreementId", id, "lineId", line, "toUnitId", u.get(1), "reason", "faulty"));
+        assertThat(onHand(p, "out")).as("still 2 out").isEqualByComparingTo("2");
+        assertThat(onHand(p, "cleaning")).as("the 2 swapped back").isEqualByComparingTo("2");
+        assertThat(onHand(p, "stock")).isEqualByComparingTo("6");
+    }
 }

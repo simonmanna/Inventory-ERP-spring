@@ -38,16 +38,22 @@ public class SalesHandoverService {
 
     static final List<String> FIELDS = List.of("method", "status", "locationId", "address", "contactName",
             "contactPhone", "scheduledDate", "driver", "vehicle", "receivedBy", "notes", "landmark", "loadingSite",
-            "deliveryScope", "offloadingEquipment");
+            "deliveryScope", "offloadingEquipment", "gpsCoordinates", "offloadingSite", "destinationLocationId",
+            "courierName", "deadline");
+    /** Date-only fields: stored as DATE, sent as {@code yyyy-MM-dd}. */
+    private static final Set<String> DATES = Set.of("scheduledDate", "deadline");
+    static final List<String> METHODS = List.of("pickup", "delivery", "transfer", "courier");
     private static final List<String> STATUSES = List.of("pending", "scheduled", "dispatched", "delivered", "failed");
     private static final Set<String> RECEIPT_FIELDS = Set.of("receivedBy", "notes");
 
     private final SalesDb db;
     private final AuditService audit;
+    private final SalesLetterhead letterhead;
 
-    public SalesHandoverService(SalesDb db, AuditService audit) {
+    public SalesHandoverService(SalesDb db, AuditService audit, SalesLetterhead letterhead) {
         this.db = db;
         this.audit = audit;
+        this.letterhead = letterhead;
     }
 
     /** The source document header the handover hangs off (org-scoped), with its stage. */
@@ -68,7 +74,8 @@ public class SalesHandoverService {
         }
         if (INVOICE.equals(type)) {
             Map<String, Object> d = db.row("SELECT d.id, d.status::text AS status, d.\"deliveryAddress\","
-                    + " d.\"deliveryDate\", d.\"branchId\", p.name AS \"partnerName\", p.phone AS \"partnerPhone\" FROM"
+                    + " d.\"deliveryDate\", d.\"branchId\", d.\"documentNumber\" AS number, p.name AS \"partnerName\","
+                    + " p.phone AS \"partnerPhone\" FROM"
                     + " \"Document\" d LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\" WHERE d.id = ? AND"
                     + " d.\"organizationId\" = ?" + (lock ? " FOR UPDATE OF d" : ""), id, org());
             if (d == null) {
@@ -92,7 +99,7 @@ public class SalesHandoverService {
         Map<String, Object> v = new LinkedHashMap<>();
         if (h != null) {
             for (String k : FIELDS) {
-                v.put(k, h.get(k) == null ? null : "scheduledDate".equals(k) ? h.get(k).toString().substring(0, 10)
+                v.put(k, h.get(k) == null ? null : DATES.contains(k) ? h.get(k).toString().substring(0, 10)
                         : str(h.get(k)));
             }
             return v;
@@ -110,9 +117,11 @@ public class SalesHandoverService {
         Object date = order ? r.get("requestedDate") : r.get("deliveryDate");
         v.put("scheduledDate", date == null ? null : date.toString().substring(0, 10));
         for (String k : List.of("driver", "vehicle", "receivedBy", "notes", "landmark", "loadingSite", "deliveryScope",
-                "offloadingEquipment")) {
+                "offloadingEquipment", "gpsCoordinates", "offloadingSite", "destinationLocationId", "courierName")) {
             v.put(k, null);
         }
+        Object deadline = order ? r.get("commitmentDate") : null;
+        v.put("deadline", deadline == null ? null : deadline.toString().substring(0, 10));
         return v;
     }
 
@@ -133,31 +142,58 @@ public class SalesHandoverService {
         Map<String, Object> l = loc == null ? null : db.row("SELECT name, code FROM \"InventoryLocation\" WHERE id = ?"
                 + " AND \"organizationId\" = ?", loc, org());
         out.put("locationName", l == null ? null : str(l.get("name")));
+        String dest = str(out.get("destinationLocationId"));
+        Map<String, Object> dl = dest == null ? null : db.row("SELECT name FROM \"InventoryLocation\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", dest, org());
+        out.put("destinationLocationName", dl == null ? null : str(dl.get("name")));
         out.put("deliveredAt", h == null ? null : h.get("deliveredAt"));
         Map<String, Object> by = h == null || h.get("deliveredById") == null ? null : db.row("SELECT"
                 + " COALESCE(NULLIF(trim(concat_ws(' ', \"firstName\", \"lastName\")), ''), email) AS name FROM \"User\""
                 + " WHERE id = ?", h.get("deliveredById"));
         out.put("deliveredByName", by == null ? null : str(by.get("name")));
         out.put("saved", h != null);
-        boolean done = "delivered".equals(out.get("status"));
+        String status = str(out.get("status"));
+        boolean done = "delivered".equals(status);
+        boolean picked = done || "dispatched".equals(status);
         List<Map<String, Object>> lines = new ArrayList<>();
+        List<Map<String, Object>> returns = new ArrayList<>();
         if (SALES_ORDER.equals(s.type())) {
-            for (Map<String, Object> r : db.rows("SELECT l.id, l.description, l.quantity, l.\"qtyCancelled\","
-                    + " l.\"qtyDelivered\", pr.name AS \"productName\", u.code AS \"uomCode\" FROM \"SalesOrderLine\" l"
+            for (Map<String, Object> r : db.rows("SELECT l.id, l.\"productId\", l.description, l.quantity,"
+                    + " l.\"qtyCancelled\", l.\"qtyDelivered\", GREATEST(l.\"qtyLoaded\", l.\"qtyDispatched\") AS picked,"
+                    + " l.\"qtyInvoiced\" - l.\"qtyCredited\" AS invoiced, l.\"qtyReturned\" AS returned,"
+                    + " pr.name AS \"productName\", u.code AS \"uomCode\" FROM \"SalesOrderLine\" l"
                     + " LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id ="
                     + " l.\"uomId\" WHERE l.\"orderId\" = ? ORDER BY l.\"sortOrder\"", s.id())) {
                 BigDecimal ordered = dec(r.get("quantity")).subtract(dec(r.get("qtyCancelled")));
-                lines.add(line(r, ordered, dec(r.get("qtyDelivered")), done));
+                Map<String, Object> ln = line(r, ordered, dec(r.get("qtyDelivered")), done);
+                ln.put("pickedQty", dec(r.get("picked")));
+                ln.put("invoicedQty", dec(r.get("invoiced")));
+                ln.put("returnedQty", dec(r.get("returned")));
+                lines.add(ln);
             }
+            out.put("deliveryNoteNumber", null);
         } else {
-            for (Map<String, Object> r : db.rows("SELECT l.id, l.description, l.quantity, pr.name AS \"productName\""
-                    + " FROM \"DocumentLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" WHERE"
+            for (Map<String, Object> r : db.rows("SELECT l.id, l.\"productId\", l.description, l.quantity,"
+                    + " pr.name AS \"productName\", u.code AS \"uomCode\" FROM \"DocumentLine\" l LEFT JOIN \"Product\" pr"
+                    + " ON pr.id = l.\"productId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE"
                     + " l.\"documentId\" = ? AND l.\"organizationId\" = ? AND l.\"lineType\" = 'product' ORDER BY"
                     + " l.\"lineNumber\"", s.id(), org())) {
-                lines.add(line(r, dec(r.get("quantity")), null, done));
+                BigDecimal ordered = dec(r.get("quantity"));
+                Map<String, Object> ln = line(r, ordered, null, done);
+                ln.put("pickedQty", picked ? ordered : BigDecimal.ZERO);
+                ln.put("invoicedQty", ordered);
+                lines.add(ln);
             }
+            returns = SalesDeliveryReturns.creditNotes(db, s.id());
+            SalesDeliveryReturns.allocate(lines, returns, "quantity");
+            out.put("deliveryNoteNumber", noteNumber(s));
+        }
+        out.put("sourceNumber", s.row().get("number"));
+        for (Map<String, Object> ln : lines) {
+            ln.remove("productId");
         }
         out.put("lines", lines);
+        out.put("returns", returns);
         return out;
     }
 
@@ -165,6 +201,7 @@ public class SalesHandoverService {
             boolean done) {
         Map<String, Object> l = new LinkedHashMap<>();
         l.put("id", r.get("id"));
+        l.put("productId", r.get("productId"));
         l.put("productName", r.get("productName"));
         l.put("description", r.get("description"));
         l.put("uomCode", r.get("uomCode"));
@@ -173,6 +210,46 @@ public class SalesHandoverService {
         l.put("handedOverQty", done ? ordered : BigDecimal.ZERO);
         return l;
     }
+
+    /** Delivery note number of an invoice handover: {@code DN/<invoice number>}. */
+    private static String noteNumber(Source s) {
+        return "DN/" + Objects.requireNonNullElse(str(s.row().get("number")), s.id());
+    }
+
+    /**
+     * Printable delivery note of an invoice handover (sales orders print one per delivery trip instead). Available as
+     * soon as the invoice exists, so it can travel with the goods; the receipt shows once the handover is delivered.
+     */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public SalesDeliveryNotePdf.Pdf note(String type, String id) {
+        if (!INVOICE.equals(type)) {
+            throw ApiException.badRequest("Sales order deliveries print their delivery note per delivery");
+        }
+        Source s = source(type, id, false);
+        Map<String, Object> v = view(s, stored(s));
+        boolean done = "delivered".equals(v.get("status"));
+        List<SalesDeliveryNotePdf.Line> lines = new ArrayList<>();
+        for (Map<String, Object> l : (List<Map<String, Object>>) v.get("lines")) {
+            lines.add(new SalesDeliveryNotePdf.Line(Objects.requireNonNullElse(str(l.get("productName")),
+                    str(l.get("description"))), str(l.get("uomCode")), dec(l.get("quantity")), dec(l.get("handedOverQty")),
+                    dec(l.get("returnedQty"))));
+        }
+        String method = str(v.get("method"));
+        String contact = String.join(" · ", java.util.stream.Stream.of(str(v.get("contactName")),
+                str(v.get("contactPhone"))).filter(x -> !blank(x)).toList());
+        Object shipped = done ? v.get("deliveredAt") : null;
+        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(letterhead.current(), str(v.get("deliveryNoteNumber")),
+                "Invoice", str(s.row().get("number")), str(s.row().get("partnerName")),
+                "pickup".equals(method) ? null : str(v.get("address")), blank(contact) ? null : contact,
+                METHOD_LABELS.get(method), shipped == null ? null : shipped.toString().substring(0, 10),
+                str(v.get("scheduledDate")), str(v.get("deadline")), str(v.get("driver")), str(v.get("vehicle")),
+                done ? str(v.get("receivedBy")) : null, shipped == null ? null : shipped.toString().substring(0, 10),
+                str(v.get("notes")), lines));
+    }
+
+    static final Map<String, String> METHOD_LABELS = Map.of("pickup", "Customer collect", "delivery",
+            "Delivery to site", "transfer", "Transfer to warehouse", "courier", "Courier / logistics");
 
     /**
      * Update the handover. Editable unless the source is cancelled; dispatch and delivery need the source confirmed
@@ -200,8 +277,8 @@ public class SalesHandoverService {
         }
         String method = str(next.get("method"));
         String status = str(next.get("status"));
-        if (!List.of("pickup", "delivery").contains(method)) {
-            throw ApiException.badRequest("method must be one of: pickup, delivery");
+        if (!METHODS.contains(method)) {
+            throw ApiException.badRequest("method must be one of: " + String.join(", ", METHODS));
         }
         if (!STATUSES.contains(status)) {
             throw ApiException.badRequest("status must be one of: " + String.join(", ", STATUSES));
@@ -212,19 +289,15 @@ public class SalesHandoverService {
         if (next.get("offloadingEquipment") != null && !List.of("yes", "no").contains(next.get("offloadingEquipment"))) {
             throw ApiException.badRequest("offloadingEquipment must be one of: yes, no");
         }
-        LocalDate scheduled = null;
-        if (next.get("scheduledDate") != null) {
-            String d = str(next.get("scheduledDate"));
-            try {
-                scheduled = LocalDate.parse(d.substring(0, Math.min(10, d.length())));
-            } catch (RuntimeException e) {
-                throw ApiException.badRequest("scheduledDate must be a valid ISO 8601 date string");
-            }
-            next.put("scheduledDate", scheduled.toString());
-        }
+        LocalDate scheduled = date(next, "scheduledDate");
+        LocalDate deadline = date(next, "deadline");
         if (next.get("locationId") != null && db.count("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ? AND"
                 + " \"organizationId\" = ?", List.of(next.get("locationId"), org())) == 0) {
             throw ApiException.badRequest("Stock location not found");
+        }
+        if (next.get("destinationLocationId") != null && db.count("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", List.of(next.get("destinationLocationId"), org())) == 0) {
+            throw ApiException.badRequest("Destination warehouse not found");
         }
         if ("delivered".equals(before.get("status"))) {
             for (String k : FIELDS) {
@@ -250,7 +323,7 @@ public class SalesHandoverService {
         Map<String, Object> data = new LinkedHashMap<>();
         Map<String, Object> changed = new LinkedHashMap<>();
         for (String k : FIELDS) {
-            Object v = "scheduledDate".equals(k) ? scheduled : next.get(k);
+            Object v = "scheduledDate".equals(k) ? scheduled : "deadline".equals(k) ? deadline : next.get(k);
             data.put(k, v);
             if (!Objects.equals(before.get(k), next.get(k))) {
                 changed.put(k, next.get(k));
@@ -279,5 +352,20 @@ public class SalesHandoverService {
                     Map.of("handover", changed)));
         }
         return view(s, stored(s));
+    }
+
+    /** Parse the date field {@code k} of {@code next} (normalising it to {@code yyyy-MM-dd}); null when empty. */
+    private static LocalDate date(Map<String, Object> next, String k) {
+        if (next.get(k) == null) {
+            return null;
+        }
+        String d = str(next.get(k));
+        try {
+            LocalDate v = LocalDate.parse(d.substring(0, Math.min(10, d.length())));
+            next.put(k, v.toString());
+            return v;
+        } catch (RuntimeException e) {
+            throw ApiException.badRequest(k + " must be a valid ISO 8601 date string");
+        }
     }
 }

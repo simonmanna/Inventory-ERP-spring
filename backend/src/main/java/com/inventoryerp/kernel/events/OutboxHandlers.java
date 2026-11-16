@@ -16,17 +16,28 @@ public class OutboxHandlers {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxHandlers.class);
 
-    private final Map<String, List<Consumer<JsonNode>>> handlers = new ConcurrentHashMap<>();
+    private final Map<String, List<Consumer<OutboxDelivery>>> handlers = new ConcurrentHashMap<>();
 
     public void subscribe(String eventName, Consumer<JsonNode> handler) {
+        subscribeDelivery(eventName, d -> handler.accept(d.payload()));
+    }
+
+    /** Subscribe with the row id and actor as well as the payload. */
+    public void subscribeDelivery(String eventName, Consumer<OutboxDelivery> handler) {
         handlers.computeIfAbsent(eventName, k -> new CopyOnWriteArrayList<>()).add(handler);
     }
 
-    /** Run every handler for the row; a failing handler fails the dispatch (row retried). */
+    /** Dispatch a payload with no outbox row behind it (no id, no actor). */
     public void dispatch(String eventName, JsonNode payload) {
-        for (Consumer<JsonNode> h : handlers.getOrDefault(eventName, List.of())) {
+        dispatch(new OutboxDelivery(null, eventName, null, payload));
+    }
+
+    /** Run every handler for the row; a failing handler fails the dispatch (row retried). */
+    public void dispatch(OutboxDelivery delivery) {
+        String eventName = delivery.eventName();
+        for (Consumer<OutboxDelivery> h : handlers.getOrDefault(eventName, List.of())) {
             try {
-                h.accept(payload);
+                h.accept(delivery);
             } catch (RuntimeException err) {
                 log.error("Handler for {} failed: {}", eventName, err.toString());
                 throw err;

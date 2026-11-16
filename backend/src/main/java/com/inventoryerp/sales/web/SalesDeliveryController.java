@@ -1,6 +1,7 @@
 package com.inventoryerp.sales.web;
 
 import com.inventoryerp.fleet.application.FleetDeliveryNoteService;
+import com.inventoryerp.fleet.application.WeighbridgeTicketService;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -13,6 +14,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -56,6 +58,18 @@ public class SalesDeliveryController {
         return deliveries.get(id);
     }
 
+    @GetMapping("/deliveries/{id}/history")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public List<Map<String, Object>> history(@PathVariable String id) {
+        return deliveries.history(id);
+    }
+
+    @GetMapping("/orders/{id}/delivery-summary")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public Map<String, Object> summary(@PathVariable String id) {
+        return deliveries.summary(id);
+    }
+
     @GetMapping("/deliveries/{id}/note")
     @RequirePermissions(Permissions.SALES__DELIVERY_READ)
     public ResponseEntity<byte[]> note(@PathVariable String id) {
@@ -64,11 +78,53 @@ public class SalesDeliveryController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + pdf.filename() + "\"").body(pdf.content());
     }
 
+    /** A weighbridge ticket of this delivery as a PDF view copy (not counted as a print). */
+    @GetMapping("/deliveries/{id}/weigh-tickets/{ticketId}/pdf")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public ResponseEntity<byte[]> weighTicketPdf(@PathVariable String id, @PathVariable String ticketId) {
+        WeighbridgeTicketService.PrintedTicket pdf = deliveries.weighTicketPdf(id, ticketId);
+        return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + pdf.filename() + "\"")
+                .body(pdf.content());
+    }
+
     @PostMapping("/orders/{id}/deliveries")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
     public Map<String, Object> create(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deliveries.create(id, SalesController.body(b));
+    }
+
+    @PatchMapping("/deliveries/{id}")
+    @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
+    public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.update(id, SalesController.body(b));
+    }
+
+    @PostMapping("/deliveries/{id}/depart")
+    @RequirePermissions(Permissions.SALES__DELIVERY_DISPATCH)
+    public Map<String, Object> depart(@PathVariable String id) {
+        return deliveries.depart(id);
+    }
+
+    @PostMapping("/deliveries/{id}/cancel")
+    @RequirePermissions(Permissions.SALES__DELIVERY_CANCEL)
+    public Map<String, Object> cancel(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.cancel(id, SalesController.body(b));
+    }
+
+    @PostMapping("/deliveries/{id}/fail")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> fail(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.fail(id, SalesController.body(b));
+    }
+
+    @PostMapping("/deliveries/{id}/return")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> returnLoad(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.returnLoad(id, SalesController.body(b));
     }
 
     @PostMapping("/deliveries/{id}/approve")
@@ -79,16 +135,46 @@ public class SalesDeliveryController {
 
     @PostMapping("/deliveries/{id}/issue")
     @Idempotent
-    @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
+    @RequirePermissions(Permissions.SALES__DELIVERY_DISPATCH)
     public Map<String, Object> issue(@PathVariable String id) {
         return deliveries.issue(id);
     }
 
+    /** Phase A A3: authorised correction of a recorded proof of delivery (evidence, reason, not the recorder). */
+    @PostMapping("/deliveries/{id}/pod-correction")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_POD_CORRECT)
+    public Map<String, Object> podCorrection(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.correctPod(id, SalesController.body(b));
+    }
+
+    /** Phase A A3: quantity history of one delivery line (facts, claims, decisions, corrections, invoices). */
+    @GetMapping("/deliveries/{id}/lines/{lineId}/history")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public Map<String, Object> lineHistory(@PathVariable String id, @PathVariable String lineId) {
+        return deliveries.lineHistory(id, lineId);
+    }
+
     @PostMapping("/deliveries/{id}/confirm")
     @Idempotent
-    @RequirePermissions(Permissions.SALES__DELIVERY_WRITE)
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
     public Map<String, Object> confirm(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deliveries.confirm(id, SalesController.body(b));
+    }
+
+    /** Phase A A2: the customer's weighing of a delivered delivery (evidence, comparison, weight claims). */
+    @PostMapping("/deliveries/{id}/customer-weight")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> customerWeight(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.customerWeight(id, SalesController.body(b));
+    }
+
+    /** Phase A A2: a photo or PDF of the customer's weighbridge ticket ({@code dataUrl}). */
+    @PostMapping("/deliveries/{id}/customer-weight/evidence")
+    @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
+    public Map<String, Object> customerWeightEvidence(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.customerWeightEvidence(id, SalesController.body(b));
     }
 
     @PostMapping("/deliveries/{id}/photos")

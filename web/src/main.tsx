@@ -10,6 +10,7 @@ import { SidebarThemeProvider } from '@/lib/sidebar-theme';
 import { Toaster } from '@/components/ui/toaster';
 import { queryClient, persistOptions } from '@/lib/query-client';
 import { installServiceWorkerUpdater } from '@/lib/sw-update';
+import { installChunkReload } from '@/lib/chunk-reload';
 import '@/lib/i18n/i18n';
 import './index.css';
 
@@ -17,6 +18,9 @@ import './index.css';
 // updates periodically + on focus, and reload once when a new build takes
 // control (see lib/sw-update.ts for why a till must not run stale code).
 installServiceWorkerUpdater();
+// A tab opened before a deploy asks for page chunks that no longer exist;
+// reload once onto the new build instead of showing a blank page.
+installChunkReload();
 
 // P3: rehydrate the cached catalog from IndexedDB before the first render, so
 // a terminal that reloads while the LAN server is down still shows the menu

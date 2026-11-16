@@ -59,6 +59,10 @@
     "update": "tax:update",
     "delete": "tax:delete"
   },
+  "withholding": {
+    "read": "withholding:read",
+    "update": "withholding:update"
+  },
   "currency": {
     "create": "currency:create",
     "read": "currency:read",
@@ -273,6 +277,10 @@
   "alerts": {
     "read": "alerts:read",
     "manage": "alerts:manage"
+  },
+  "notificationRouting": {
+    "read": "notification_routing:read",
+    "manage": "notification_routing:manage"
   },
   "bi": {
     "export": "bi:export"
@@ -672,6 +680,10 @@
     "deliveryRead": "sales:delivery:read",
     "deliveryWrite": "sales:delivery:write",
     "deliveryApprove": "sales:delivery:approve",
+    "deliveryDispatch": "sales:delivery:dispatch",
+    "deliveryConfirm": "sales:delivery:confirm",
+    "deliveryPodCorrect": "sales:delivery:pod_correct",
+    "deliveryCancel": "sales:delivery:cancel",
     "customerRead": "sales:customer:read",
     "customerManage": "sales:customer:manage",
     "customerMerge": "sales:customer:merge",

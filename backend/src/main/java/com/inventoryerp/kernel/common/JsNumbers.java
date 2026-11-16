@@ -55,6 +55,14 @@ public final class JsNumbers {
         return v == null ? null : js(v.doubleValue());
     }
 
+    /**
+     * A decimal rounded to {@code dp} places (HALF_UP) as a JS number for JSON output — the BigDecimal counterpart of
+     * {@code js(round(v, dp))}; {@code null} stays {@code null}.
+     */
+    public static Number js(java.math.BigDecimal v, int dp) {
+        return v == null ? null : js(v.setScale(dp, java.math.RoundingMode.HALF_UP).doubleValue());
+    }
+
     /** JS {@code Math.round(v * 10^dp) / 10^dp}. */
     public static double round(double v, int dp) {
         double f = Math.pow(10, dp);

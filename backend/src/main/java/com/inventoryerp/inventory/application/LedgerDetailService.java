@@ -4,6 +4,7 @@ import static com.inventoryerp.inventory.application.InventoryLookups.str;
 
 import com.inventoryerp.inventory.domain.InventoryLedger;
 import com.inventoryerp.kernel.common.JsNumbers;
+import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -69,17 +70,17 @@ public class LedgerDetailService {
         } else {
             lines = List.of(entry);
         }
-        double in = 0;
-        double out = 0;
-        double total = 0;
+        BigDecimal in = BigDecimal.ZERO;
+        BigDecimal out = BigDecimal.ZERO;
+        BigDecimal total = BigDecimal.ZERO;
         for (Map<String, Object> l : lines) {
-            double change = ((BigDecimal) l.get("quantityChange")).doubleValue();
-            if (change >= 0) {
-                in += change;
+            BigDecimal change = Money.dec(l.get("quantityChange"));
+            if (change.signum() >= 0) {
+                in = in.add(change);
             } else {
-                out += Math.abs(change);
+                out = out.add(change.abs());
             }
-            total += ((BigDecimal) l.get("totalValue")).doubleValue();
+            total = total.add(Money.dec(l.get("totalValue")));
         }
         return Obj.of("entry", entry, "lines", lines, "totals", Obj.of("lines", lines.size(), "quantityIn",
                 JsNumbers.js(in), "quantityOut", JsNumbers.js(out), "totalValue", JsNumbers.js(total)), "source",
@@ -118,6 +119,10 @@ public class LedgerDetailService {
             Map<String, Object> found = switch (referenceType) {
                 case "pos_invoice", "pos_invoice_extra", "pos_invoice_writeoff", "menu_recipe", "pos_refund", "pos",
                         "sales_invoice", "invoice", "document" -> resolveSale(base, referenceId);
+                // T-1 (ADR-S072): a POS posting made before its order was invoiced references the order.
+                case "pos_order" -> doc(base, "pos_order", "SELECT id, \"orderNumber\" AS code, status::text AS status,"
+                        + " \"createdAt\" AS date, \"partnerId\" FROM \"Order\" WHERE (id = ? OR \"orderNumber\" = ?) AND"
+                        + " \"organizationId\" = ?", referenceId, "Order ", true);
                 case "credit_note" -> doc(base, "credit_note", "SELECT id, \"documentNumber\" AS code, status::text AS status,"
                         + " \"issueDate\" AS date, \"partnerId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?",
                         referenceId, "Credit Note ", false);

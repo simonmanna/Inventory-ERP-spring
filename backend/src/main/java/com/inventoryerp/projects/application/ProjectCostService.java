@@ -6,6 +6,7 @@ import static com.inventoryerp.projects.application.ProjectService.element;
 import static com.inventoryerp.projects.application.ProjectService.org;
 
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -297,6 +298,12 @@ public class ProjectCostService {
         String q = blank(search) == null ? null : search.trim();
         String f = day(from);
         String t = day(to);
+        // Org-local day bounds (ADR-S070), as UTC wall-clock text for the CAST.
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        String fromBound = f == null ? null
+                : AccountingDay.startTs(LocalDate.parse(f), zone).toLocalDateTime().toString();
+        String toBound = t == null ? null
+                : AccountingDay.endExclusiveTs(LocalDate.parse(t), zone).toLocalDateTime().toString();
         return jdbc.sql("SELECT * FROM (SELECT jl.id, jl.\"journalEntryId\", e.\"entryNumber\", e.\"postingDate\","
                         + " a.id AS \"accountId\", a.code AS \"accountCode\", a.name AS \"accountName\","
                         + " coalesce(jl.description, e.description) AS description, pa.name AS \"partnerName\","
@@ -309,14 +316,14 @@ public class ProjectCostService {
                         + " WHERE jl.\"organizationId\" = :org AND e.status::text = 'posted' AND e.\"reversalOfId\" IS NULL"
                         + " AND cat.key IN ('operating_expense', 'cost_of_goods_sold', 'other_expense')"
                         + " AND coalesce(e.\"sourceType\", '') NOT LIKE 'project\\_%' AND jl.\"baseDebit\" > jl.\"baseCredit\""
-                        + " AND (CAST(:from AS date) IS NULL OR e.\"postingDate\" >= CAST(:from AS date))"
-                        + " AND (CAST(:to AS date) IS NULL OR e.\"postingDate\" < CAST(:to AS date) + 1)"
+                        + " AND (CAST(:from AS timestamp) IS NULL OR e.\"postingDate\" >= CAST(:from AS timestamp))"
+                        + " AND (CAST(:to AS timestamp) IS NULL OR e.\"postingDate\" < CAST(:to AS timestamp))"
                         + " AND (CAST(:q AS text) IS NULL OR e.\"entryNumber\" ILIKE '%' || :q || '%' OR jl.description"
                         + " ILIKE '%' || :q || '%' OR e.description ILIKE '%' || :q || '%' OR a.code ILIKE :q || '%' OR"
                         + " a.name ILIKE '%' || :q || '%' OR pa.name ILIKE '%' || :q || '%')) x"
                         + " WHERE x.amount - x.reclassed > 0"
                         + " ORDER BY x.\"postingDate\" DESC, x.\"entryNumber\" DESC, x.\"lineNumber\" LIMIT :max")
-                .param("org", org()).param("from", f).param("to", t).param("q", q).param("max", max)
+                .param("org", org()).param("from", fromBound).param("to", toBound).param("q", q).param("max", max)
                 .query((rs, i) -> {
                     BigDecimal amount = rs.getBigDecimal("amount").setScale(2, RoundingMode.HALF_UP);
                     BigDecimal reclassed = rs.getBigDecimal("reclassed").setScale(2, RoundingMode.HALF_UP);

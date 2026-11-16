@@ -15,8 +15,12 @@ import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { Field } from '@/pages/crm/crm-ui';
 import { useAuthStore } from '@/stores/auth.store';
+import type { SalesDelivery } from '@/features/sales/delivery-api';
+import { kg } from '@/pages/fleet/weighbridge/weighbridge-format';
+import { DeliveryWeighbridgeTab, VerificationPill, WeighSummary } from './delivery/DeliveryWeighbridge';
 
-interface Delivery { id: string; code: string; status: string; vehiclePlate: string | null; driverName: string | null; plannedDate: string | null; dispatchedAt: string | null; deliveredAt: string | null; deliveryNoteNumber: string | null; approvalRequired: boolean; approvedAt: string | null; manualGross: number | null; manualTare: number | null; cancelReason: string | null; returnReason: string | null; orderId: string; orderNumber: string | null; partnerName: string | null; dispatchedQty: number; deliveredQty: number; damagedQty: number; rejectedQty: number;
+type DeliveryWeigh = Pick<SalesDelivery, 'weighTicketNumber' | 'weighNetKg' | 'weighVerification' | 'weighbridgeTickets' | 'weighbridge'>;
+interface Delivery extends DeliveryWeigh { id: string; code: string; status: string; vehiclePlate: string | null; driverName: string | null; plannedDate: string | null; dispatchedAt: string | null; deliveredAt: string | null; deliveryNoteNumber: string | null; approvalRequired: boolean; approvedAt: string | null; manualGross: number | null; manualTare: number | null; cancelReason: string | null; returnReason: string | null; orderId: string; orderNumber: string | null; partnerName: string | null; dispatchedQty: number; deliveredQty: number; damagedQty: number; rejectedQty: number;
   lines?: Array<{ id: string; productName: string; uomCode: string | null; plannedQty: number; loadedQty: number | null; dispatchedQty: number | null; deliveredQty: number | null; damagedQty: number; rejectedQty: number }>;
   pod?: { receiverName: string; receiverPhone: string | null; receivedAt: string; notes: string | null } | null;
   photos?: Array<{ id: string; fileId: string; caption: string | null }> }
@@ -30,12 +34,12 @@ function DeliveryTable({ rows }: { rows: Delivery[] }) {
   const navigate = useNavigate();
   return (
     <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
-      <table className="w-full min-w-[820px] text-sm">
-        <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr><th className={th}>{tx('Delivery')}</th><th className={th}>{tx('Order')}</th><th className={th}>{tx('Customer')}</th><th className={th}>{tx('Vehicle')}</th><th className={th}>{tx('Status')}</th><th className={`${th} text-right`}>{tx('Sent')}</th><th className={`${th} text-right`}>{tx('Delivered')}</th><th className={`${th} text-right`}>{tx('Damaged')}</th><th className={`${th} text-right`}>{tx('Rejected')}</th></tr></thead>
+      <table className="w-full min-w-[960px] text-sm">
+        <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr><th className={th}>{tx('Delivery')}</th><th className={th}>{tx('Order')}</th><th className={th}>{tx('Customer')}</th><th className={th}>{tx('Vehicle')}</th><th className={th}>{tx('Weighbridge ticket')}</th><th className={th}>{tx('Status')}</th><th className={`${th} text-right`}>{tx('Sent')}</th><th className={`${th} text-right`}>{tx('Delivered')}</th><th className={`${th} text-right`}>{tx('Damaged')}</th><th className={`${th} text-right`}>{tx('Rejected')}</th></tr></thead>
         <tbody>
           {rows.map((d) => (
             <tr key={d.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/sales/deliveries/${d.id}`)}>
-              <td className={`${th} font-medium`}>{d.code}</td><td className={th}>{d.orderNumber}</td><td className={th}>{d.partnerName}</td><td className={th}>{d.vehiclePlate ?? '—'}</td><td className={th}>{tx(d.status)}</td>
+              <td className={`${th} font-medium`}>{d.code}</td><td className={th}>{d.orderNumber}</td><td className={th}>{d.partnerName}</td><td className={th}>{d.vehiclePlate ?? '—'}</td><td className={th}>{d.weighTicketNumber ? <span className="inline-flex flex-wrap items-center gap-1.5"><span>{d.weighTicketNumber}</span><span className="tabular-nums text-muted-foreground">{kg(d.weighNetKg)}</span><VerificationPill value={d.weighVerification} /></span> : '—'}</td><td className={th}>{tx(d.status)}</td>
               <td className={`${th} text-right tabular-nums`}>{n(d.dispatchedQty)}</td><td className={`${th} text-right tabular-nums`}>{n(d.deliveredQty)}</td><td className={`${th} text-right tabular-nums`}>{n(d.damagedQty)}</td><td className={`${th} text-right tabular-nums`}>{n(d.rejectedQty)}</td>
             </tr>
           ))}
@@ -134,6 +138,8 @@ export function DeliveryPage() {
         <table className="w-full text-sm"><thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr><th className={th}>{tx('Product')}</th>{['Planned', 'Sent', 'Delivered', 'Damaged', 'Rejected'].map((h) => <th key={h} className={`${th} text-right`}>{tx(h)}</th>)}</tr></thead>
           <tbody>{(d.lines ?? []).map((l) => <tr key={l.id} className="border-t"><td className={th}>{l.productName} {l.uomCode && <span className="text-muted-foreground">({l.uomCode})</span>}</td>{[l.plannedQty, l.dispatchedQty, l.deliveredQty, l.damagedQty, l.rejectedQty].map((v, i) => <td key={i} className={`${th} text-right tabular-nums`}>{n(v)}</td>)}</tr>)}</tbody></table>
       </div>
+      <WeighSummary d={d} />
+      {(d.weighbridgeTickets?.length ?? 0) > 0 && <DeliveryWeighbridgeTab d={d} />}
       {d.pod && <p className="text-sm">{tx('Received by')} <strong>{d.pod.receiverName}</strong> {d.pod.receiverPhone} · {date(d.pod.receivedAt)}</p>}
       {(d.photos?.length ?? 0) > 0 && <p className="text-sm text-muted-foreground">{d.photos!.length} {tx('photos attached')}</p>}
       <Dialog open={podOpen} onOpenChange={setPodOpen}>

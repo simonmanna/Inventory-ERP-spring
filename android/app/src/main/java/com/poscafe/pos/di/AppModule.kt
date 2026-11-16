@@ -51,6 +51,7 @@ object AppModule {
     @Provides fun refundDao(db: PosDatabase): RefundDao = db.refundDao()
     @Provides fun tabDao(db: PosDatabase): TabDao = db.tabDao()
     @Provides fun productPackagingDao(db: PosDatabase): ProductPackagingDao = db.productPackagingDao()
+    @Provides fun productVariantDao(db: PosDatabase): ProductVariantDao = db.productVariantDao()
     @Provides fun reservationDao(db: PosDatabase): ReservationDao = db.reservationDao()
     @Provides fun conversationDao(db: PosDatabase): ConversationDao = db.conversationDao()
     @Provides fun messageDao(db: PosDatabase): MessageDao = db.messageDao()

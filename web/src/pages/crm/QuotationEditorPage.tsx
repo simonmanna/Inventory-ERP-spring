@@ -1,11 +1,14 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { RecordChatter } from '@/features/communication/record-chatter';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, resolveAssetUrl } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
-import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
+import { defaultUnitId, unitPrice as priceForUnit, withVariantPrices } from '@/features/products/units';
+import { cachedVariantOption } from '@/features/products/variants-api';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
+import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,15 +25,16 @@ import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
   crmApi, useCrmLookups, useCrmMutation, useOpportunity, useProductOptions, useQuotation, useTaxOptions,
-  type QuoteLine, type Quotation,
+  type Quotation,
 } from '@/features/crm/suite-api';
 import { Field, QuoteStatusPill } from './crm-ui';
 import { PartnerPicker } from './crm-dialogs';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
-import { QuoteLinesTable } from './QuoteLinesTable';
-import { isLayout, lineAmounts } from './quote-lines';
+import { QuoteLinesTable, type QuoteLine } from './QuoteLinesTable';
+import { EMPTY_SIZE, sizeLabel, sizeOf, sizePayload } from '@/features/products/sizing';
+import { isLayout, lineAmounts, useQuoteImageColumn } from './quote-lines';
 
-const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
+const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
 const layoutLine = (displayType: 'line_section' | 'line_note'): QuoteLine => ({ displayType, productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
 
 /** Create / edit / process a quotation (ADR-S010). Editable while draft or rejected. */
@@ -48,6 +52,8 @@ export function QuotationEditorPage() {
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite) || s.hasPermission(PERMISSIONS.sales.quotationWrite));
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert) || s.hasPermission(PERMISSIONS.sales.quotationConvert));
   const canPrice = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.pricingRead));
+  const canCreateCustomer = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
+  const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
   const base = useLocation().pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
   const [internalNotes, setInternalNotes] = useState('');
@@ -74,13 +80,18 @@ export function QuotationEditorPage() {
   const [backorder, setBackorder] = useState(false);
   const [shortages, setShortages] = useState<string[] | null>(null);
   const [tab, setTab] = useState('lines');
+  const imageColumn = useQuoteImageColumn();
+  /** The organization shows product images on quotations; each user still shows or hides the column. */
+  const imagesOn = Boolean(lk?.settings.quoteLineImages ?? q?.lineImages);
+  /** Print and PDF carry images exactly when this user sees the Image column. */
+  const printImages = imagesOn && imageColumn.show;
 
   useEffect(() => {
     if (q) {
       setPartnerId(q.partnerId); setPartnerName(q.partnerName); setIssueDate(q.issueDate?.slice(0, 10) ?? '');
       setValidUntil(q.validUntil?.slice(0, 10) ?? ''); setOwnerId(q.ownerId ?? ''); setNotes(q.notes ?? ''); setTerms(q.terms ?? '');
       setInternalNotes(q.internalNotes ?? ''); setHeader({ branchId: q.branchId ?? '', paymentTermId: q.paymentTermId ?? '', deliveryAddress: q.deliveryAddress ?? '', commitmentDate: q.commitmentDate?.slice(0, 10) ?? '' });
-      setLines(q.lines?.length ? q.lines.map((l) => ({ ...l, displayType: l.displayType ?? null })) : []); setDirty(false); setTaxMode(null);
+      setLines(q.lines?.length ? q.lines.map((l) => ({ ...l, displayType: l.displayType ?? null, size: sizeOf(l as Parameters<typeof sizeOf>[0]) })) : []); setDirty(false); setTaxMode(null);
     }
   }, [q]);
   useEffect(() => {
@@ -124,16 +135,19 @@ export function QuotationEditorPage() {
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p, priceSource: p.priceSource ?? (!keepSource && ('unitPrice' in p || 'discountPercent' in p) ? 'manual' : l.priceSource) } : l)));
     setDirty(true);
   };
+  const qc = useQueryClient();
   const productById = (pid: string | null) => (pid ? products.data?.find((x) => x.id === pid) : undefined);
   const setProduct = (i: number, pid: string | null) => {
     const prod = productById(pid);
-    const next = lines.map((x, j) => (j === i ? { ...x, productId: pid, variantId: null, uomId: defaultUnitId(prod, 'sales') ?? null, priceSource: undefined,
+    const next = lines.map((x, j) => (j === i ? { ...x, productId: pid, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(prod, 'sales') ?? null, priceSource: undefined,
       description: canPrice ? '' : prod?.name ?? '', unitPrice: prod ? Number(prod.salesPrice ?? 0) : x.unitPrice, taxId: prod?.taxId ?? x.taxId,
       ...(taxMode ? { taxInclusive: taxMode === 'incl' } : {}) } : x));
     setLines(next); setDirty(true); void priceLines(i, next);
   };
   const setUnit = (i: number, uomId: string) => {
-    const price = priceForUnit(productById(lines[i].productId), uomId, 'sales');
+    // D1: the variant's effective price (when one is set) replaces the product's, then the unit rule.
+    const variant = cachedVariantOption(qc, lines[i].productId, lines[i].variantId);
+    const price = priceForUnit(withVariantPrices(productById(lines[i].productId), variant), uomId, 'sales');
     // The server reprices the line in its new unit on save.
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, uomId, priceSource: undefined, ...(price !== null ? { unitPrice: Number(price.toFixed(6)) } : {}) } : l)));
     setDirty(true);
@@ -172,10 +186,18 @@ export function QuotationEditorPage() {
     const targets = current.map((l, i) => ({ l, i })).filter(({ l, i }) => !isLayout(l) && l.productId && (idx === undefined || i === idx));
     if (!targets.length) return;
     try {
-      const res = await crmApi.resolvePrices({ partnerId: partnerId || undefined, lines: targets.map(({ l }) => ({ productId: l.productId!, quantity: Number(l.quantity || 1) })) });
+      const res = await crmApi.resolvePrices({ partnerId: partnerId || undefined, lines: targets.map(({ l }) => ({
+        productId: l.productId!, quantity: Number(l.quantity || 1), variantId: l.variantId || undefined, uomId: l.uomId || undefined,
+      })) });
       setLines((ls) => ls.map((l, i) => {
         const k = targets.findIndex((t) => t.i === i);
         if (k < 0) return l;
+        // Review M-11: an answer for a line that changed while it was being priced (other product, variant, unit or
+        // quantity, a price typed since, or a row moved or removed) is stale; the newer request's answer applies.
+        const asked = targets[k].l;
+        if (l.productId !== asked.productId || (l.variantId ?? null) !== (asked.variantId ?? null)
+          || (l.uomId ?? null) !== (asked.uomId ?? null) || Number(l.quantity || 1) !== Number(asked.quantity || 1)
+          || (l.priceSource === 'manual' && asked.priceSource !== 'manual')) return l;
         const r = res.lines[k];
         return { ...l, listPrice: r.listPrice, unitPrice: r.unitPrice, discountPercent: r.discountPercent, priceSource: r.source, taxId: l.taxId ?? r.taxId,
           taxInclusive: taxMode ? taxMode === 'incl' : r.taxInclusive, description: l.description || r.description };
@@ -194,6 +216,8 @@ export function QuotationEditorPage() {
         ? { displayType: l.displayType, description: l.description.trim() }
         : {
           productId: l.productId || undefined, variantId: l.variantId || undefined, uomId: l.uomId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
+          // ADR-S066: the typed size (only offered for products sold by size) decides the quantity server-side
+          ...(l.productId ? sizePayload(l.size ?? EMPTY_SIZE, 'volume') : {}),
           unitPrice: l.priceSource === 'manual' || !l.productId ? Number(l.unitPrice) : undefined,
           discountPercent: l.priceSource === 'manual' || !l.productId ? Number(l.discountPercent) : undefined,
           taxId: l.taxId || null,
@@ -234,8 +258,8 @@ export function QuotationEditorPage() {
   const menu: MenuItem[] = [];
   if (q) {
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`/sales/quotations/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
-    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf`, `${q.number}.pdf`) });
-    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name) });
+    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
+    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name, printImages) });
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
     if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
     if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
@@ -311,14 +335,29 @@ export function QuotationEditorPage() {
         <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
           <div>
             <InlineField label={tx('Customer')}>
-              {editable ? <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} /> : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
+              {editable ? (
+                <div className="flex items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} />
+                  </div>
+                  {canCreateCustomer && (
+                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              ) : <p className="py-2 text-sm font-medium">{q?.partnerName}</p>}
             </InlineField>
+            <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
+              // Use the new customer at once.
+              setPartnerId(c.id); setPartnerName(c.name); setDirty(true);
+            }} />
             <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} placeholder={tx('Same as customer')} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
+            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
           </div>
           <div>
             <InlineField label={tx('Expiration')}><Input type="date" disabled={!editable} value={validUntil} title={tx('After this date the quotation expires')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></InlineField>
-            <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Delivery date')}><Input type="date" disabled={!editable} value={header.commitmentDate} title={tx('The delivery date promised to the customer; it becomes the order commitment date')} onChange={(e) => { const commitmentDate = e.target.value; setHeader((h) => ({ ...h, commitmentDate })); setDirty(true); }} /></InlineField>
           </div>
         </div>
@@ -348,7 +387,7 @@ export function QuotationEditorPage() {
               products={products.data ?? []} taxes={taxes.data ?? []} uoms={uoms.data ?? []} canPrice={canPrice}
               onPatch={patchLine} onProduct={setProduct} onUnit={setUnit} onReprice={(i) => void priceLines(i)}
               onRemove={(i) => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}
-              onMove={moveRow} onAdd={addRow} onCatalogAdd={catalogAdd} />
+              onMove={moveRow} onAdd={addRow} onCatalogAdd={catalogAdd} imageColumn={imagesOn ? imageColumn : undefined} />
             <div className="grid gap-6 pt-2 md:grid-cols-[minmax(0,1fr)_340px]">
               <Textarea disabled={!editable} rows={4} value={terms} placeholder={tx('Terms and conditions…')} aria-label={tx('Terms and conditions')}
                 className="resize-y border-transparent bg-transparent px-0 shadow-none focus-visible:border-input focus-visible:px-3 disabled:cursor-default disabled:opacity-100"
@@ -411,6 +450,8 @@ export function QuotationEditorPage() {
           </TabsContent>
         </Tabs>
       </section>
+
+      {q && <RecordChatter contextType="SalesQuotation" contextId={q.id} />}
 
       <Dialog open={dialog === 'reject' || dialog === 'decline'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
@@ -489,23 +530,29 @@ async function downloadBlob(path: string, name: string) {
   } catch (err) { toast.error(apiErrorMessage(err, tx('Could not download'))); }
 }
 
-/** Printable quotation in a new window. */
-function printQuote(q: Quotation, owner?: string) {
+/** Printable quotation in a new window; with {@code images}, a product picture column first. */
+function printQuote(q: Quotation, owner?: string, images = false) {
   const w = window.open('', '_blank', 'width=900,height=1000');
   if (!w) return;
   const m = (v: number) => money(v, q.currencyCode);
-  const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="5">${esc(l.description)}</td></tr>`
-    : l.displayType === 'line_note' ? `<tr><td colspan="5" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
-    : `<tr><td>${esc(l.description)}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
+  const cols = images ? 6 : 5;
+  const picture = (src?: string | null) => {
+    const url = src ? resolveAssetUrl(src) : undefined;
+    return images ? `<td class="img">${url ? `<img src="${esc(new URL(url, window.location.href).href)}" alt="">` : ''}</td>` : '';
+  };
+  const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="${cols}">${esc(l.description)}</td></tr>`
+    : l.displayType === 'line_note' ? `<tr><td colspan="${cols}" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
+    : `<tr>${picture(l.productImage)}<td>${esc(l.description)}${sizeLabel(l as Parameters<typeof sizeLabel>[0]) ? `<br><small>${esc(sizeLabel(l as Parameters<typeof sizeLabel>[0]))}</small>` : ''}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(q.number)}</title><style>
     body{font-family:system-ui,sans-serif;color:#111;margin:40px}h1{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:24px}
     th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}.r{text-align:right}.tot td{border:0}.muted{color:#666;font-size:13px}
-    .grid{display:flex;justify-content:space-between;margin-top:16px}.sec td{font-weight:600;background:#f3f4f6}</style></head><body>
+    .grid{display:flex;justify-content:space-between;margin-top:16px}.sec td{font-weight:600;background:#f3f4f6}
+    td.img{width:64px;padding:4px 8px}td.img img{display:block;max-width:56px;max-height:56px;object-fit:contain}</style></head><body>
     <h1>${esc(tx('Quotation'))} ${esc(q.number)}</h1><div class="muted">${esc(tx('Date'))}: ${esc(date(q.issueDate))} · ${esc(tx('Valid until'))}: ${esc(q.validUntil ? date(q.validUntil) : '—')}</div>
     <div class="grid"><div><strong>${esc(q.partnerName)}</strong></div><div class="muted">${esc(tx('Salesperson'))}: ${esc(owner ?? q.ownerName ?? '')}</div></div>
-    <table><thead><tr><th>${esc(tx('Description'))}</th><th class="r">${esc(tx('Qty'))}</th><th class="r">${esc(tx('Unit price'))}</th><th class="r">${esc(tx('Disc.'))}</th><th class="r">${esc(tx('Amount'))}</th></tr></thead>
-    <tbody>${rows}</tbody><tbody class="tot"><tr><td colspan="4" class="r">${esc(tx('Untaxed amount'))}</td><td class="r">${m(q.subtotal)}</td></tr>
-    <tr><td colspan="4" class="r">${esc(tx('Taxes'))}</td><td class="r">${m(q.taxAmount)}</td></tr><tr><td colspan="4" class="r"><strong>${esc(tx('Total'))}</strong></td><td class="r"><strong>${m(q.total)}</strong></td></tr></tbody></table>
+    <table><thead><tr>${images ? `<th>${esc(tx('Image'))}</th>` : ''}<th>${esc(tx('Description'))}</th><th class="r">${esc(tx('Qty'))}</th><th class="r">${esc(tx('Unit price'))}</th><th class="r">${esc(tx('Disc.'))}</th><th class="r">${esc(tx('Amount'))}</th></tr></thead>
+    <tbody>${rows}</tbody><tbody class="tot"><tr><td colspan="${cols - 1}" class="r">${esc(tx('Untaxed amount'))}</td><td class="r">${m(q.subtotal)}</td></tr>
+    <tr><td colspan="${cols - 1}" class="r">${esc(tx('Taxes'))}</td><td class="r">${m(q.taxAmount)}</td></tr><tr><td colspan="${cols - 1}" class="r"><strong>${esc(tx('Total'))}</strong></td><td class="r"><strong>${m(q.total)}</strong></td></tr></tbody></table>
     ${q.notes ? `<p class="muted">${esc(q.notes)}</p>` : ''}${q.terms ? `<h4>${esc(tx('Terms & conditions'))}</h4><p class="muted" style="white-space:pre-wrap">${esc(q.terms)}</p>` : ''}
     <script>window.onload=()=>window.print()</script></body></html>`);
   w.document.close();

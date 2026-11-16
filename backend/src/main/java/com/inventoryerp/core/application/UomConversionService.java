@@ -262,6 +262,49 @@ public class UomConversionService {
     }
 
     /**
+     * {@link #fromBase}, or null when the units cannot be converted. Not transactional on purpose: the failure is caught
+     * here, inside the caller's transaction, so a report can flag one product without its whole transaction being
+     * marked rollback-only (Phase I2, audit U-9).
+     */
+    public BigDecimal tryFromBase(Object qty, String toUomId, String productId, String productUomId, boolean round) {
+        try {
+            return fromBase(qty, toUomId, productId, productUomId, round);
+        } catch (com.inventoryerp.shared.web.ApiException e) {
+            return null;
+        }
+    }
+
+    /**
+     * {@link #resolveLineUnit}, or the line's unit without a factor when it does not convert (owner decision 1: an
+     * offline sale is kept and its posting held). Not transactional on purpose (see {@link #tryFromBase}).
+     */
+    public LineUnit tryResolveLineUnit(String productId, String requestedUomId, UnitRole role) {
+        try {
+            return resolveLineUnit(productId, requestedUomId, role);
+        } catch (com.inventoryerp.shared.web.ApiException e) {
+            String requested = requestedUomId == null || requestedUomId.isBlank() ? null : requestedUomId;
+            Product product = productId == null || productId.isEmpty() ? null : product(productId);
+            if (requested != null || product == null) {
+                return new LineUnit(requested, null);
+            }
+            String roleUnit = role == UnitRole.PURCHASE ? product.getPurchaseUomId() : product.getSalesUomId();
+            return new LineUnit(roleUnit != null ? roleUnit : product.getUomId(), null);
+        }
+    }
+
+    /**
+     * {@link #factorToBase(String, String)}, or null when the unit does not convert. Not transactional on purpose (see
+     * {@link #tryFromBase}): a POS checkout freezes factors (Phase I2, audit U-4) without risking its transaction.
+     */
+    public BigDecimal tryFactorToBase(String productId, String uomId) {
+        try {
+            return factorToBase(productId, uomId);
+        } catch (com.inventoryerp.shared.web.ApiException e) {
+            return null;
+        }
+    }
+
+    /**
      * Base units of {@code productId} per 1 {@code uomId}, unrounded: 1 for the base unit (or no unit), the
      * product's own {@code ProductUom} factor when declared, else the category factor / density bridge.
      */
@@ -333,6 +376,16 @@ public class UomConversionService {
      */
     @Transactional(readOnly = true)
     public BigDecimal defaultUnitPrice(String productId, LineUnit unit, UnitRole role, BigDecimal defaultUnitPrice) {
+        return defaultUnitPrice(productId, unit, role, defaultUnitPrice, false);
+    }
+
+    /**
+     * As {@link #defaultUnitPrice(String, LineUnit, UnitRole, BigDecimal)}; {@code variantPrice} (audit P-3, D1): the
+     * default price is a product variant's, which beats the product's own per-unit price — it is scaled to the unit.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal defaultUnitPrice(String productId, LineUnit unit, UnitRole role, BigDecimal defaultUnitPrice,
+            boolean variantPrice) {
         Product product = productId == null || productId.isEmpty() ? null : product(productId);
         if (product == null || unit == null || unit.uomId() == null || unit.factor() == null) {
             return defaultUnitPrice;
@@ -342,7 +395,8 @@ public class UomConversionService {
         if (unit.uomId().equals(defaultUom)) {
             return defaultUnitPrice;
         }
-        ProductUom own = unit.uomId().equals(product.getUomId()) ? null : productUnit(product.getId(), unit.uomId());
+        ProductUom own = variantPrice || unit.uomId().equals(product.getUomId()) ? null
+                : productUnit(product.getId(), unit.uomId());
         BigDecimal ownPrice = own == null ? null : role == UnitRole.PURCHASE ? own.getPurchasePrice() : own.getSalePrice();
         if (ownPrice != null) {
             return ownPrice;

@@ -102,7 +102,7 @@ class ReplenishmentMrpIT extends MfgTestSupport {
         // Order up to 20 from 4 available.
         assertThat(new BigDecimal(transfer.get("items").get(0).get("qtyRequested").asString()))
                 .isEqualByComparingTo("16");
-        assertThat(supply(() -> transferSupply.incoming(p, store, false))).isEqualByComparingTo("16");
+        assertThat(supply(() -> transferSupply.incoming(p, null, store, false))).isEqualByComparingTo("16");
         // Nothing went to procurement.
         assertThat(jdbc.sql("SELECT count(*) FROM \"PurchaseRequestLine\" WHERE \"demandRef\" = ?").param(alertId)
                 .query(Long.class).single()).isZero();
@@ -110,7 +110,7 @@ class ReplenishmentMrpIT extends MfgTestSupport {
         Res approved = call("POST", "/inventory/transfers/" + transferId + "/approve", null, Map.of("Authorization",
                 "Bearer " + adminToken, "Idempotency-Key", UUID.randomUUID().toString()));
         assertThat(approved.status()).as(approved.raw().body()).isIn(200, 201);
-        assertThat(supply(() -> transferSupply.incoming(p, store, false))).isEqualByComparingTo("0");
+        assertThat(supply(() -> transferSupply.incoming(p, null, store, false))).isEqualByComparingTo("0");
         ok(201, "POST", R + "/scan", null);
         assertThat(ok(200, "GET", R + "/alerts?status=live&locationId=" + store, null).get("data")).isEmpty();
         assertThat(onHand(p, store)).isEqualByComparingTo("20");
@@ -138,7 +138,7 @@ class ReplenishmentMrpIT extends MfgTestSupport {
         assertThat(new BigDecimal(request.get("lines").get(0).get("quantity").asString())).isEqualByComparingTo("20");
         assertThat(jdbc.sql("SELECT \"deliveryLocationId\" FROM \"ProductionRequestLine\" WHERE \"requestId\" = ?")
                 .param(requestId).query(String.class).single()).isEqualTo(shop);
-        assertThat(supply(() -> productionSupply.incoming(bread, shop, false))).isEqualByComparingTo("20");
+        assertThat(supply(() -> productionSupply.incoming(bread, null, shop, false))).isEqualByComparingTo("20");
         // Procurement left the manufacture line alone; a redelivered event raises nothing more.
         assertThat(jdbc.sql("SELECT count(*) FROM \"PurchaseRequestLine\" WHERE \"demandRef\" = ?").param(alertId)
                 .query(Long.class).single()).isZero();
@@ -148,7 +148,7 @@ class ReplenishmentMrpIT extends MfgTestSupport {
         // An open order into the location counts too.
         ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "runs", 5, "locationId", bakery,
                 "outputLocationId", shop));
-        assertThat(supply(() -> productionSupply.incoming(bread, shop, false))).isEqualByComparingTo("25");
+        assertThat(supply(() -> productionSupply.incoming(bread, null, shop, false))).isEqualByComparingTo("25");
     }
 
     @Test

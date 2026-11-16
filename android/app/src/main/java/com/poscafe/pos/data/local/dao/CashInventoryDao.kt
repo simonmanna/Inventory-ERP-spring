@@ -84,6 +84,10 @@ interface CashInventoryDao {
     @Query("SELECT * FROM stock_levels WHERE locationId = :locationId AND variantId IS NULL")
     suspend fun stockAtNow(locationId: String): List<StockLevelEntity>
 
+    /** Phase I6: every quant at the location, product-level and per variant. */
+    @Query("SELECT * FROM stock_levels WHERE locationId = :locationId")
+    suspend fun allStockAtNow(locationId: String): List<StockLevelEntity>
+
     @Query("SELECT * FROM stock_levels WHERE locationId = :locationId AND productId = :productId AND variantId IS NULL LIMIT 1")
     suspend fun stockOf(locationId: String, productId: String): StockLevelEntity?
 }

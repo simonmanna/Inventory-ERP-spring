@@ -1,13 +1,17 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox, RefreshCw, ListChecks } from 'lucide-react';
+import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox, RefreshCw, ListChecks, UserPlus, ExternalLink } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/stores/auth.store';
+import { PERMISSIONS } from '@erp/shared';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 
@@ -15,6 +19,7 @@ interface InventoryException {
   id: string;
   invoiceNumber: string | null;
   invoiceId: string | null;
+  locationId: string | null;
   productId: string | null;
   menuItemId: string | null;
   description: string | null;
@@ -22,10 +27,64 @@ interface InventoryException {
   kind: string;
   reason: string;
   status: string;
+  assignedToId: string | null;
   resolutionNote: string | null;
   resolvedAt: string | null;
   createdAt: string;
-  payload: Record<string, unknown> | null;
+  /** jsonb — an object, or its JSON text. kitchen_waste carries orderId / orderItemId / sourceId. */
+  payload: Record<string, unknown> | string | null;
+}
+
+type JobFilter = 'all' | 'pending' | 'processing' | 'failed' | 'done';
+type ExceptionFilter = 'open' | 'resolved' | 'discarded' | 'all';
+
+/** Exception kinds the posting paths record (PosInvoiceService, KitchenWaste); unknown kinds still list. */
+const KIND_LABELS: Record<string, () => string> = {
+  product: () => tx('Product'),
+  menu_recipe: () => tx('Recipe'),
+  line_extras: () => tx('Add-ons'),
+  whole_invoice: () => tx('Invoice'),
+  kitchen_waste: () => tx('Waste'),
+};
+const kindLabel = (kind: string) => KIND_LABELS[kind]?.() ?? kind;
+
+function payloadOf(ex: InventoryException): Record<string, unknown> | null {
+  if (!ex.payload) return null;
+  if (typeof ex.payload !== 'string') return ex.payload;
+  try {
+    return JSON.parse(ex.payload) as Record<string, unknown>;
+  } catch {
+    return { raw: ex.payload };
+  }
+}
+
+/** Org users for the assignee picker / label; tolerates the paginated and the flat /users shape. */
+function useAssignableUsers(enabled: boolean) {
+  return useQuery({
+    queryKey: ['posting-monitor', 'users'] as const,
+    enabled,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await api.get('/users', { params: { page: 1, pageSize: 200 } });
+      const rows: Array<Record<string, unknown>> = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+      return rows.map((u) => ({
+        id: String(u.id),
+        name: [u.firstName, u.lastName].filter(Boolean).join(' ') || String(u.email ?? u.id),
+      }));
+    },
+  });
+}
+
+function useLocationNames() {
+  return useQuery({
+    queryKey: ['posting-monitor', 'locations'] as const,
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      const res = await api.get<{ data: { id: string; code: string; name: string }[] }>('/inventory/locations');
+      return new Map((res.data?.data ?? []).map((l) => [l.id, l.name || l.code]));
+    },
+  });
 }
 
 interface StockPostingJob {
@@ -53,16 +112,25 @@ interface Counts {
  * Surfaces the durable inventory-posting queue and the exception work-queue that
  * replaced the old silent `stock_reconcile_needed` audit marker. A sale is never
  * blocked by stock, but every deduction that could not post is now visible and
- * actionable: retry a failed job (safe — it deducted nothing), or resolve an
+ * actionable: retry a failed job (safe — it deducted nothing) or bring a pending one forward, or resolve an
  * exception once the drift has been corrected with a manual stock adjustment.
  */
 export function PostingMonitorPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'exceptions' | 'jobs'>('exceptions');
-  const [exStatus, setExStatus] = useState<'open' | 'all'>('open');
-  const [jobStatus, setJobStatus] = useState<'failed' | 'all'>('failed');
+  const [exStatus, setExStatus] = useState<ExceptionFilter>('open');
+  const [exKind, setExKind] = useState<string>('all');
+  const [jobStatus, setJobStatus] = useState<JobFilter>('failed');
   const [resolving, setResolving] = useState<{ ex: InventoryException; action: 'resolved' | 'discarded' } | null>(null);
   const [note, setNote] = useState('');
+  const [assigning, setAssigning] = useState<InventoryException | null>(null);
+  const [assignee, setAssignee] = useState('');
+  // Retry / assign / resolve are pos:override on the server; viewing is pos:reports (route guard).
+  const canOverride = useAuthStore((s) => s.permissions.includes(PERMISSIONS.pos.override));
+  const canOpenReceipt = useAuthStore((s) => s.permissions.includes(PERMISSIONS.pos.read));
+  const usersQ = useAssignableUsers(canOverride);
+  const locationsQ = useLocationNames();
+  const userName = (id: string | null) => (id ? usersQ.data?.find((u) => u.id === id)?.name ?? id : null);
 
   const countsQ = useQuery({
     queryKey: ['posting-monitor', 'counts'] as const,
@@ -103,6 +171,20 @@ export function PostingMonitorPage() {
     onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
+  const assign = useMutation({
+    mutationFn: async () => {
+      if (!assigning || !assignee) return null;
+      return (await api.post(`/pos/posting-monitor/exceptions/${assigning.id}/assign`, { assignedToId: assignee })).data;
+    },
+    onSuccess: () => {
+      notify.success(tx('Saved'));
+      setAssigning(null);
+      setAssignee('');
+      qc.invalidateQueries({ queryKey: ['posting-monitor'] });
+    },
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Assign failed')),
+  });
+
   const retry = useMutation({
     mutationFn: async (id: string) => (await api.post(`/pos/posting-monitor/jobs/${id}/retry`, {})).data,
     onSuccess: () => {
@@ -115,6 +197,27 @@ export function PostingMonitorPage() {
   const counts = countsQ.data;
   const openEx = counts?.exceptions.open ?? 0;
   const failedJobs = counts?.jobs.failed ?? 0;
+
+  const exRows = useMemo(() => exQ.data ?? [], [exQ.data]);
+  const kindOptions = useMemo(
+    () => [...new Set([...Object.keys(KIND_LABELS), ...exRows.map((e) => e.kind)])],
+    [exRows],
+  );
+  const shownEx = exKind === 'all' ? exRows : exRows.filter((e) => e.kind === exKind);
+
+  const jobFilters: Array<{ value: JobFilter; label: string }> = [
+    { value: 'all', label: tx('All') },
+    { value: 'pending', label: tx('Pending') },
+    { value: 'processing', label: tx('In progress') },
+    { value: 'failed', label: tx('Failed') },
+    { value: 'done', label: tx('Done') },
+  ];
+  const exFilters: Array<{ value: ExceptionFilter; label: string }> = [
+    { value: 'open', label: tx('Open') },
+    { value: 'resolved', label: tx('Resolved') },
+    { value: 'discarded', label: tx('Discarded') },
+    { value: 'all', label: tx('All') },
+  ];
 
   return (
     <div className="space-y-6 p-6">
@@ -139,43 +242,79 @@ export function PostingMonitorPage() {
 
       {tab === 'exceptions' ? (
         <>
-          <div className="flex gap-2">
-            <Button variant={exStatus === 'open' ? 'default' : 'outline'} size="sm" onClick={() => setExStatus('open')}>{tx('Open')}</Button>
-            <Button variant={exStatus === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setExStatus('all')}>{tx('All')}</Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {exFilters.map((f) => (
+              <Button key={f.value} variant={exStatus === f.value ? 'default' : 'outline'} size="sm" onClick={() => setExStatus(f.value)}>
+                {f.label}
+              </Button>
+            ))}
+            <Label htmlFor="ex-kind" className="ml-2 text-sm text-muted-foreground">{tx('Kind')}</Label>
+            <select
+              id="ex-kind"
+              className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+              value={exKind}
+              onChange={(e) => setExKind(e.target.value)}
+            >
+              <option value="all">{tx('All kinds')}</option>
+              {kindOptions.map((k) => (
+                <option key={k} value={k}>{kindLabel(k)}</option>
+              ))}
+            </select>
           </div>
           {exQ.isLoading ? (
             <Skeleton className="h-32 w-full" />
-          ) : (exQ.data ?? []).length === 0 ? (
+          ) : shownEx.length === 0 ? (
             <EmptyState label={tx('No inventory exceptions')} hint={tx('Every sale\'s stock deducted cleanly.')} />
           ) : (
             <div className="space-y-3">
-              {(exQ.data ?? []).map((ex) => (
+              {shownEx.map((ex) => {
+                const payload = payloadOf(ex);
+                const location = ex.locationId ? locationsQ.data?.get(ex.locationId) ?? ex.locationId : null;
+                return (
                 <Card key={ex.id} className={ex.status === 'open' ? 'border-rose-400/40' : undefined}>
                   <CardHeader className="pb-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <CardTitle className="flex items-center gap-2 text-base">
                         {ex.status === 'open' && <AlertTriangle className="h-4 w-4 text-rose-500" />}
-                        <code className="font-mono text-sm">{ex.kind}</code>
+                        <code className="font-mono text-sm" title={ex.kind}>{kindLabel(ex.kind)}</code>
                         <span className="font-medium">{ex.description ?? ex.productId ?? ex.menuItemId ?? 'line'}</span>
                         <span className="text-muted-foreground">× {Number(ex.quantity)}</span>
                       </CardTitle>
-                      <span className="text-xs text-muted-foreground">
-                        {ex.invoiceNumber ?? tx('no invoice')} · {new Date(ex.createdAt).toLocaleString()}
-                      </span>
+                      <span className="text-xs text-muted-foreground">{new Date(ex.createdAt).toLocaleString()}</span>
                     </div>
                     <CardDescription className="text-rose-400">{ex.reason}</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {ex.payload && (
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                      <Field label={tx('Product')} value={ex.description ?? ex.productId ?? ex.menuItemId ?? '—'} />
+                      <Field label={tx('Location')} value={location ?? '—'} />
+                      <Field label={tx('Quantity')} value={String(Number(ex.quantity))} />
+                      <div>
+                        <dt className="text-muted-foreground">{tx('Invoice')}</dt>
+                        <dd className="font-medium">
+                          {ex.invoiceId && canOpenReceipt ? (
+                            <Link to={`/pos/receipts/${ex.invoiceId}`} className="inline-flex items-center gap-1 text-primary hover:underline">
+                              {ex.invoiceNumber ?? tx('View receipt')} <ExternalLink className="h-3 w-3" />
+                            </Link>
+                          ) : (ex.invoiceNumber ?? tx('no invoice'))}
+                        </dd>
+                      </div>
+                      {ex.assignedToId && <Field label={tx('Assigned to')} value={userName(ex.assignedToId) ?? ''} />}
+                    </dl>
+                    {payload && (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-muted-foreground">{tx('Details')}</summary>
                         <pre className="mt-2 max-h-48 overflow-auto rounded-md border bg-muted/40 p-2">
-                          {JSON.stringify(ex.payload, null, 2)}
+                          {JSON.stringify(payload, null, 2)}
                         </pre>
                       </details>
                     )}
                     {ex.status === 'open' ? (
+                      canOverride && (
                       <div className="flex justify-end gap-2">
+                        <Button size="sm" variant="outline" onClick={() => { setAssigning(ex); setAssignee(ex.assignedToId ?? ''); }}>
+                          <UserPlus className="h-3.5 w-3.5" /> {tx('Assign')}
+                        </Button>
                         <Button size="sm" variant="outline" onClick={() => { setResolving({ ex, action: 'resolved' }); setNote(''); }}>
                           <CheckCircle2 className="h-3.5 w-3.5" /> {tx('Mark corrected')}
                         </Button>
@@ -183,6 +322,7 @@ export function PostingMonitorPage() {
                           <Trash2 className="h-3.5 w-3.5" /> {tx('Discard')}
                         </Button>
                       </div>
+                      )
                     ) : (
                       <p className="text-xs text-muted-foreground">
                         <span className="font-medium capitalize">{ex.status}</span>
@@ -192,15 +332,19 @@ export function PostingMonitorPage() {
                     )}
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
       ) : (
         <>
-          <div className="flex gap-2">
-            <Button variant={jobStatus === 'failed' ? 'default' : 'outline'} size="sm" onClick={() => setJobStatus('failed')}>{tx('Failed')}</Button>
-            <Button variant={jobStatus === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setJobStatus('all')}>{tx('All')}</Button>
+          <div className="flex flex-wrap gap-2">
+            {jobFilters.map((f) => (
+              <Button key={f.value} variant={jobStatus === f.value ? 'default' : 'outline'} size="sm" onClick={() => setJobStatus(f.value)}>
+                {f.label}
+              </Button>
+            ))}
           </div>
           {jobsQ.isLoading ? (
             <Skeleton className="h-32 w-full" />
@@ -214,14 +358,19 @@ export function PostingMonitorPage() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <CardTitle className="flex items-center gap-2 text-base">
                         <StatusDot status={job.status} />
-                        <code className="font-mono text-sm">{job.invoiceNumber}</code>
+                        {canOpenReceipt && job.invoiceId ? (
+                          <Link to={`/pos/receipts/${job.invoiceId}`} className="font-mono text-sm text-primary hover:underline">{job.invoiceNumber}</Link>
+                        ) : (
+                          <code className="font-mono text-sm">{job.invoiceNumber}</code>
+                        )}
                         <span className="text-xs text-muted-foreground">{tx('attempt')} {job.attempts}/{job.maxAttempts}</span>
                       </CardTitle>
                       <span className="text-xs text-muted-foreground">{new Date(job.createdAt).toLocaleString()}</span>
                     </div>
                     {job.lastError && <CardDescription className="text-amber-500">{job.lastError}</CardDescription>}
                   </CardHeader>
-                  {job.status === 'failed' && (
+                  {/* ADR-S072: a failed job restarts; a pending job waiting for its next attempt runs on the next drain. */}
+                  {(job.status === 'failed' || job.status === 'pending') && canOverride && (
                     <CardContent className="flex justify-end">
                       <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate(job.id)}>
                         {retry.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {tx('Retry')}
@@ -234,6 +383,31 @@ export function PostingMonitorPage() {
           )}
         </>
       )}
+
+      <Dialog open={!!assigning} onOpenChange={(open) => !open && setAssigning(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tx('Assign To')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {assigning ? `${kindLabel(assigning.kind)} · ${assigning.description ?? assigning.productId ?? ''}` : ''}
+          </p>
+          <SearchableSelect
+            value={assignee}
+            onValueChange={setAssignee}
+            options={(usersQ.data ?? []).map((u) => ({ value: u.id, label: u.name }))}
+            placeholder={tx('Select user')}
+            loading={usersQ.isLoading}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setAssigning(null)}>{tx('Cancel')}</Button>
+            <Button disabled={!assignee || assign.isPending} onClick={() => assign.mutate()}>
+              {assign.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {tx('Assign')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!resolving} onOpenChange={(open) => !open && setResolving(null)}>
         <DialogContent>
@@ -267,6 +441,15 @@ export function PostingMonitorPage() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-medium break-all">{value}</dd>
     </div>
   );
 }

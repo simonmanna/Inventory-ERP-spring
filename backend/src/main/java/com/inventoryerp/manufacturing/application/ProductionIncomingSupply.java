@@ -21,15 +21,16 @@ public class ProductionIncomingSupply implements IncomingSupplyProvider {
     }
 
     @Override
-    public BigDecimal incoming(String productId, String locationId, boolean onlyRule) {
+    public BigDecimal incoming(String productId, String variantId, String locationId, boolean onlyRule) {
         String org = TenantContext.organizationId();
         BigDecimal orders = jdbc.sql("""
                         SELECT COALESCE(SUM(GREATEST(0, "plannedQty" - "producedQty")), 0)
                         FROM "ProductionOrder"
                         WHERE "organizationId" = ? AND "outputProductId" = ?
+                          AND (?::text IS NULL OR "outputVariantId" = ?::text)
                           AND COALESCE("outputLocationId", "locationId") = ?
                           AND status::text IN ('draft', 'confirmed', 'in_progress')""")
-                .params(org, productId, locationId)
+                .params(org, productId, variantId, variantId, locationId)
                 .query(BigDecimal.class)
                 .single();
         BigDecimal requested = jdbc.sql("""
@@ -37,9 +38,10 @@ public class ProductionIncomingSupply implements IncomingSupplyProvider {
                         FROM "ProductionRequestLine" l
                         JOIN "ProductionRequest" r ON r.id = l."requestId"
                         WHERE l."organizationId" = ? AND l."productId" = ? AND l."deliveryLocationId" = ?
+                          AND (?::text IS NULL OR l."variantId" = ?::text)
                           AND r."deletedAt" IS NULL AND l."plannedLineId" IS NULL
                           AND r.status::text IN ('draft', 'submitted', 'approved')""")
-                .params(org, productId, locationId)
+                .params(org, productId, locationId, variantId, variantId)
                 .query(BigDecimal.class)
                 .single();
         return orders.add(requested);

@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { RecordChatter } from '@/features/communication/record-chatter';
 import { ArrowLeft, BookOpen, ChevronDown, FileDown, Mail, Wallet, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -325,7 +326,8 @@ export function InvoiceDetailPage() {
 
           {!isPosInvoice && (
             <TabsContent value="delivery" className="mt-0 p-5">
-              <HandoverTab path={`/sales/invoices/${inv.id}/handover`} canEdit={has(PERMISSIONS.invoice.update)} sourceLabel={tx('invoice')} readyHint={tx('Post the invoice first')} />
+              <HandoverTab path={`/sales/invoices/${inv.id}/handover`} canEdit={has(PERMISSIONS.invoice.update)} sourceLabel={tx('invoice')} readyHint={tx('Post the invoice first')}
+                currency={currency} customerName={inv.partner?.name} />
             </TabsContent>
           )}
 
@@ -526,6 +528,8 @@ export function InvoiceDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <RecordChatter contextType="Invoice" contextId={inv.id} />
     </div>
   );
 }

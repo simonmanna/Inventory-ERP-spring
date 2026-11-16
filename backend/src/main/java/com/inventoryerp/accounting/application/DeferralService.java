@@ -8,7 +8,6 @@ import com.inventoryerp.accounting.application.GlAutomationCommands.DeferralInpu
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -103,7 +102,7 @@ public class DeferralService {
     @Transactional(readOnly = true)
     public Map<String, Object> report(String asOf) {
         String org = TenantContext.organizationId();
-        LocalDate day = asOf == null || asOf.isEmpty() ? LocalDate.now(BusinessZone.get())
+        LocalDate day = asOf == null || asOf.isEmpty() ? LocalDate.now(AccountingDay.zone(jdbc))
                 : RecurringJournalService.day(asOf);
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT s.id, s.name, s.kind, s.status,"
                 + " s.\"sourceAccountId\", a.code AS \"sourceAccountCode\", a.name AS \"sourceAccountName\","
@@ -150,8 +149,7 @@ public class DeferralService {
             BigDecimal net = jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
                     + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
                     + " l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" < ?")
-                    .params(org, acc.get("accountId"), FiscalPeriodControl.ts(day.plusDays(1)
-                            .atStartOfDay(ZoneOffset.UTC).toInstant()))
+                    .params(org, acc.get("accountId"), AccountingDay.endExclusiveTs(day, AccountingDay.zone(jdbc)))
                     .query(BigDecimal.class).single();
             BigDecimal gl = "revenue".equals(acc.get("kind")) ? net.negate() : net;
             BigDecimal remaining = (BigDecimal) acc.get("scheduleRemaining");
@@ -268,7 +266,7 @@ public class DeferralService {
         if (!"active".equals(s.get("status"))) {
             throw ApiException.badRequest("Only an active deferral schedule can be released");
         }
-        LocalDate day = asOf == null || asOf.isEmpty() ? LocalDate.now(BusinessZone.get())
+        LocalDate day = asOf == null || asOf.isEmpty() ? LocalDate.now(AccountingDay.zone(jdbc))
                 : RecurringJournalService.day(asOf);
         int released = 0;
         for (String releaseId : due(id, day)) {

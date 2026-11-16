@@ -529,6 +529,8 @@ public class CrmPipelineService {
         }
         db.patch("Deal", id, Obj.of("ownerId", owner, "teamId", teamOf(owner)), true);
         audit.record(AuditInput.of("Deal", id, "update", null, Obj.of("ownerId", owner)));
+        // Notification routing (ADR-S065): the new owner learns about it.
+        events.publish("crm.deal.assigned", Obj.of("organizationId", org(), "dealId", id, "ownerId", owner));
         return get(id);
     }
 

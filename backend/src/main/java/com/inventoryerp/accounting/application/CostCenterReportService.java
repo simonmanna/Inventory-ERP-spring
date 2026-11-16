@@ -45,8 +45,9 @@ public class CostCenterReportService {
                 + " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
                 + " JOIN \"Account\" a ON a.id = l.\"accountId\" LEFT JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
                 + " WHERE l.\"organizationId\" = ? AND e.status IN ('posted', 'reversed') AND e.\"postingDate\" >= ?"
-                + " AND e.\"postingDate\" < ? GROUP BY 1, 2, 3, 4, 5")
-                .params(TenantContext.organizationId(), from, to.plusDays(1)))) {
+                + " AND e.\"postingDate\" < ?" + LedgerQueries.CLOSING_FILTER + " GROUP BY 1, 2, 3, 4, 5")
+                .params(TenantContext.organizationId(), AccountingDay.startTs(from, AccountingDay.zone(jdbc)),
+                        AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc))))) {
             String section = (String) r.get("section");
             if (!PNL.contains(String.valueOf(section))) {
                 continue;

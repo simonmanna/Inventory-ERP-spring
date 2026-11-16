@@ -83,6 +83,14 @@ public class InvoiceService {
     private final PriceListService priceLists;
     private final TransactionTemplate newTx;
 
+    /** Resolved at posting time, so the guards (which depend on modules that use this service) form no bean cycle. */
+    private org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPostGuards(org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards) {
+        this.postGuards = postGuards;
+    }
+
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
             ApprovalsService approvals, PaymentTermService terms, JournalService journals, CreditControlService credit,
             BranchScopeService scopes, PriceListService priceLists, PlatformTransactionManager txm,
@@ -346,6 +354,21 @@ public class InvoiceService {
     /** Create a draft invoice. */
     @Transactional
     public Map<String, Object> create(InvoiceInput dto) {
+        builder.assertVariants(dto.lines(), false, false);
+        return createDraft(dto);
+    }
+
+    /**
+     * Draft invoice whose lines are copied from an earlier document (e.g. a dispatched delivery order): a variant
+     * archived since then is kept, as on the source document (Phase I2, D2).
+     */
+    @Transactional
+    public Map<String, Object> createCopied(InvoiceInput dto) {
+        builder.assertVariants(dto.lines(), false, true);
+        return createDraft(dto);
+    }
+
+    private Map<String, Object> createDraft(InvoiceInput dto) {
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
         String branchId = scopes.documentBranch(null);
@@ -449,12 +472,9 @@ public class InvoiceService {
             boolean product = l.lineType() == null || "product".equals(l.lineType());
             ListPrice p = !product || l.productId() == null || l.unitPrice() != null ? null
                     : priceLists.resolve(new PriceQuery(dto.partnerId(), l.productId(), l.quantity(), l.uomId(), branchId,
-                            null, on));
-            out.add(p == null ? l : new LineInput(l.productId(), l.menuItemId(), l.variantId(), l.variantName(),
-                    l.accountId(), l.description(), l.quantity(), p.unitPrice(),
-                    l.discountPercent() != null ? l.discountPercent() : p.discountPercent(), l.discountType(),
-                    l.discountAmount(), l.discountReason(), l.discountSource(), l.taxId(), l.lineType(),
-                    l.taxInclusive(), l.uomId()));
+                            null, on, l.variantId()));
+            out.add(p == null ? l : l.withPrice(p.unitPrice(),
+                    l.discountPercent() != null ? l.discountPercent() : p.discountPercent()));
         }
         return out;
     }
@@ -513,6 +533,7 @@ public class InvoiceService {
         }
         if (dto.lines() != null) {
             builder.assertSaleable(dto.lines());
+            builder.assertVariants(dto.lines(), false, false);
         }
         scopes.assertBranch((String) doc.get("branchId"));
         if (!"draft".equals(String.valueOf(doc.get("status")))) {
@@ -559,6 +580,14 @@ public class InvoiceService {
             throw ApiException.notFound("Invoice not found");
         }
         doc.put("lines", builder.lines(id, false));
+        boolean delivered = Boolean.TRUE.equals(jdbc.sql("SELECT data->>'stockIssuedBy' IS NOT NULL FROM \"Document\""
+                + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional()
+                .orElse(false));
+        if (delivered && "draft".equals(String.valueOf(doc.get("status")))) {
+            if (postGuards != null) {
+                postGuards.orderedStream().forEach(g -> g.beforePost(id));
+            }
+        }
         workflow.transition("invoice", id, "post", null, doc);
         snapshots.record("invoice", id);
         publish("invoice.posted", doc);

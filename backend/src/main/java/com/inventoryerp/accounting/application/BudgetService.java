@@ -320,7 +320,9 @@ public class BudgetService {
         StringBuilder sql = new StringBuilder("SELECT l.\"accountId\", to_char(e.\"postingDate\" AT TIME ZONE 'UTC' AT"
                 + " TIME ZONE ?, 'YYYY-MM') AS period, sum(l.\"baseDebit\") AS d, sum(l.\"baseCredit\") AS c FROM"
                 + " \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
-                + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" < ?");
+                + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" < ?"
+                // a closed month's P&L is not zero spend (review 2026-11-15, R-2)
+                + LedgerQueries.CLOSING_FILTER);
         List<Object> params = new ArrayList<>(List.of(zone.getId(), org(), FiscalPeriodControl.ts(start),
                 FiscalPeriodControl.ts(endExcl)));
         if (b.get("branchId") != null) {

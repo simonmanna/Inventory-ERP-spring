@@ -115,6 +115,8 @@ data class TaxEntity(
     /** Percent, e.g. 18.0 for VAT 18%. */
     val rate: Double,
     val isActive: Boolean,
+    /** Server `Tax.isInclusive`: the price already contains this tax (the server decides by the tax row). */
+    val isInclusive: Boolean = false,
 )
 
 @Entity(tableName = "pos_tables")
@@ -183,6 +185,27 @@ data class ProductEntity(
     val isActive: Boolean,
     val isService: Boolean,
     val updatedAt: Long,
+    /** The unit the server sells this product in at the POS (`salesUomId`); `salesPrice` is per this unit. */
+    val salesUomId: String? = null,
+    /** Server `hasVariants`: a sale names one of its [ProductVariantEntity] rows. */
+    val hasVariants: Boolean = false,
+)
+
+/**
+ * A sellable variant of a product (server `ProductVariant`, ADR-S058), from the
+ * productVariants pull scope. [price] is the server's effective price (the
+ * variant's own price, else the product price plus its attribute extras), per
+ * the product's sales unit. Stock lives per variant on the server.
+ */
+@Entity(tableName = "product_variants", indices = [Index("productId"), Index("barcode"), Index("sku")])
+data class ProductVariantEntity(
+    @PrimaryKey val id: String,
+    val productId: String,
+    val name: String,
+    val sku: String?,
+    val barcode: String?,
+    val price: Double,
+    val isActive: Boolean,
 )
 
 /** Retail product category synced from server productCategories scope. */

@@ -57,6 +57,8 @@ public class SalesReportingService {
             + " vehicles, drivers and routes."},
         {"invoices", "Invoices & Billing", "Invoice register, paid / unpaid / overdue, aging, credit and cash sales,"
             + " tax and billing."},
+        {"branch-cash", "Branch Cash Sales", "Takings per branch and day, payment modes, the cash sale register,"
+            + " products and salespeople per branch, head-office processing and exceptions."},
         {"collections", "Collections & Payments", "Receipts, payment methods, balances, receivables, deposits,"
             + " allocations and refunds."},
         {"discounts", "Discounts & Returns", "Discounts by customer, product and salesperson, approvals, returns and"

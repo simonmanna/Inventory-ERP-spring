@@ -15,7 +15,7 @@ import tools.jackson.databind.JsonNode;
 /**
  * Fixed assets on Testcontainers Postgres (ENABLE_ASSETS on in the test profile): categories, the register,
  * depreciation runs with GL posting, the lifecycle sub-records, dashboards, validation, tenant isolation and the
- * 401/403 matrix (54 routes).
+ * 401/403 matrix (57 routes).
  */
 class FixedAssetIT extends ApiTestSupport {
 
@@ -226,10 +226,10 @@ class FixedAssetIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("tenant isolation and 401/403 matrix (54 routes)")
+    @DisplayName("tenant isolation and 401/403 matrix (57 routes)")
     void isolationAndAuth() {
         String id = asset(Map.of()).get("id").asString();
         assertThat(call("GET", "/fixed-assets/" + id, null, otherToken).status()).isIn(403, 404);
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fixedasset")).isEqualTo(54);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.fixedasset")).isEqualTo(57);
     }
 }

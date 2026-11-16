@@ -11,6 +11,7 @@ import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PosPaymentMethodService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
+import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
@@ -42,6 +43,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -105,6 +107,20 @@ public class CashSaleService {
     private final PosPaymentMethodService paymentModes;
     private final AccountDeterminationService determination;
     private final ProductVariantService variants;
+    private ProductSizingService sizing;
+    private SalesLetterhead letterhead;
+
+    /** Sell by size (ADR-S066). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSizing(ProductSizingService sizing) {
+        this.sizing = sizing;
+    }
+
+    /** Logo and address printed on the delivery note. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLetterhead(SalesLetterhead letterhead) {
+        this.letterhead = letterhead;
+    }
 
     public CashSaleService(SalesDb db, BranchSalesProfileService profiles, BranchScopeService scopes,
             SalesLinePricing pricing, DocumentBuilderService builder, StockService stock,
@@ -183,16 +199,28 @@ public class CashSaleService {
         // Handover delivers every line at confirm; a void puts the goods back. Invoiced once HO generates the invoice.
         boolean delivered = "confirmed".equals(str(s.get("executionStatus")));
         boolean invoiced = s.get("currentInvoiceId") != null;
+        boolean voidedAfterIssue = "voided".equals(str(s.get("executionStatus"))) && s.get("confirmedAt") != null;
         List<Map<String, Object>> lines = lines(id);
         for (Map<String, Object> l : lines) {
             Object qty = l.get("quantity");
             l.put("deliveredQty", delivered ? qty : 0);
             l.put("invoicedQty", invoiced ? qty : 0);
         }
+        List<Map<String, Object>> returns = deliveryReturns(s, lines);
+        if (voidedAfterIssue) {
+            lines.forEach(l -> l.put("returnedQty", l.get("quantity")));
+        } else {
+            SalesDeliveryReturns.allocate(lines, returns, "quantity");
+        }
         s.put("lines", lines);
+        s.put("returns", returns);
+        s.put("deliveryNoteNumber", "DN/" + s.get("number"));
         s.put("payments", db.rows("SELECT y.*, a.code AS \"accountCode\", a.name AS \"accountName\","
                 + " COALESCE(NULLIF(trim(concat_ws(' ', c.\"firstName\", c.\"lastName\")), ''), c.email) AS \"collectedByName\","
-                + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\""
+                + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\","
+                + " (SELECT COALESCE(json_agg(json_build_object('id', d.id, 'name', d.name, 'contentType', d.\"contentType\")"
+                + " ORDER BY d.name), '[]'::json) FROM \"DmsDocument\" d WHERE d.\"organizationId\" = y.\"organizationId\""
+                + " AND d.id = ANY(y.\"attachmentIds\")) AS attachments"
                 + " FROM \"SalesSubmissionPayment\" y LEFT JOIN \"Account\" a ON a.id = y.\"accountId\" LEFT JOIN \"User\" c"
                 + " ON c.id = y.\"collectedById\" LEFT JOIN \"User\" v ON v.id = y.\"verifiedById\" WHERE y.\"submissionId\" = ?"
                 + " ORDER BY y.\"createdAt\"", id));
@@ -208,8 +236,82 @@ public class CashSaleService {
         return s;
     }
 
+    /**
+     * Returns against the sale, for its delivery tab: a void after confirm (every issued line came back to stock), and
+     * the credit notes raised against any of its head-office invoices.
+     */
+    private List<Map<String, Object>> deliveryReturns(Map<String, Object> s, List<Map<String, Object>> lines) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if ("voided".equals(str(s.get("executionStatus"))) && s.get("confirmedAt") != null) {
+            Map<String, Object> v = new LinkedHashMap<>();
+            v.put("kind", "void");
+            v.put("id", s.get("id"));
+            v.put("number", s.get("number"));
+            v.put("date", s.get("voidedAt"));
+            v.put("status", "returned");
+            v.put("total", s.get("grandTotal"));
+            v.put("reason", s.get("voidReason"));
+            v.put("counted", true);
+            List<Map<String, Object>> vl = new ArrayList<>();
+            for (Map<String, Object> l : lines) {
+                vl.add(Obj.of("productId", l.get("productId"), "productName", l.get("productName") == null
+                        ? l.get("description") : l.get("productName"), "quantity", l.get("quantity"), "uomCode",
+                        l.get("uomCode")));
+            }
+            v.put("lines", vl);
+            out.add(v);
+        }
+        for (Map<String, Object> i : db.rows("SELECT DISTINCT \"invoiceId\" FROM \"SalesSubmissionInvoice\" WHERE"
+                + " \"submissionId\" = ? AND \"invoiceId\" IS NOT NULL", s.get("id"))) {
+            out.addAll(SalesDeliveryReturns.creditNotes(db, str(i.get("invoiceId"))));
+        }
+        return out;
+    }
+
+    /** Printable delivery note (PDF) of the sale: what leaves the showroom and, once handed over, who received it. */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public SalesDeliveryNotePdf.Pdf deliveryNote(String id) {
+        Map<String, Object> s = get(id);
+        boolean done = "delivered".equals(str(s.get("deliveryStatus")));
+        List<SalesDeliveryNotePdf.Line> lines = new ArrayList<>();
+        for (Map<String, Object> l : (List<Map<String, Object>>) s.get("lines")) {
+            lines.add(new SalesDeliveryNotePdf.Line(l.get("productName") == null ? str(l.get("description"))
+                    : str(l.get("productName")), str(l.get("uomCode")), dec(l.get("quantity")),
+                    done ? dec(l.get("quantity")) : BigDecimal.ZERO, dec(l.get("returnedQty"))));
+        }
+        String method = Objects.requireNonNullElse(str(s.get("deliveryMethod")), "pickup");
+        String contact = String.join(" · ", java.util.stream.Stream.of(
+                first(s, "deliveryContactName", "customerName"), first(s, "deliveryContactPhone", "customerPhone"))
+                .filter(x -> !blank(x)).toList());
+        String customer = first(s, "customerName", "partnerName");
+        String shipped = done && s.get("deliveredAt") != null ? dateOnly(s.get("deliveredAt")) : null;
+        String address = first(s, "deliveryAddress", "customerAddress");
+        return SalesDeliveryNotePdf.render(new SalesDeliveryNotePdf.Note(letterhead.current(), "DN/" + s.get("number"),
+                "Cash sale", str(s.get("number")), customer, "pickup".equals(method) ? null : address,
+                blank(contact) ? null : contact, SalesHandoverService.METHOD_LABELS.get(method), shipped,
+                dateOnly(s.get("deliveryScheduledDate")), dateOnly(s.get("deliveryDeadline")), str(s.get("deliveryDriver")),
+                str(s.get("deliveryVehicle")), done ? str(s.get("deliveryReceivedBy")) : null, shipped,
+                str(s.get("deliveryNotes")), lines));
+    }
+
+    /** The first non-blank of {@code keys} on {@code s}, or null. */
+    private static String first(Map<String, Object> s, String... keys) {
+        for (String k : keys) {
+            if (!blank(str(s.get(k)))) {
+                return str(s.get(k));
+            }
+        }
+        return null;
+    }
+
+    private static String dateOnly(Object v) {
+        return v == null ? null : v.toString().substring(0, Math.min(10, v.toString().length()));
+    }
+
     private List<Map<String, Object>> lines(String id) {
         return db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", pr.\"trackInventory\","
+                + " pr.\"sizingMode\", pr.\"sizingUnit\","
                 + " (SELECT v.name FROM \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
                 + " t.name AS \"taxName\", t.rate AS \"taxRate\", u.code AS \"uomCode\" FROM \"SalesSubmissionLine\" l LEFT"
                 + " JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" LEFT JOIN"
@@ -461,7 +563,7 @@ public class CashSaleService {
         List<Map<String, Object>> meta = new ArrayList<>();
         for (Map<String, Object> l : lines) {
             unknownFields(l, Set.of("productId", "variantId", "description", "quantity", "uomId", "unitPrice",
-                    "discountPercent", "taxId", "taxInclusive"));
+                    "discountPercent", "taxId", "taxInclusive", "pieces", "length", "width", "height"));
             String productId = str(l.get("productId"));
             if (blank(productId)) {
                 throw ApiException.badRequest("productId should not be empty");
@@ -471,7 +573,9 @@ public class CashSaleService {
             if (product == null) {
                 throw ApiException.notFound("Product not found");
             }
-            BigDecimal qty = dec(l.get("quantity"));
+            // ADR-S066: a line sold by size gets its quantity from pieces × length [× width [× height]]
+            ProductSizingService.Sizing size = sizing.fromLine(productId, l);
+            BigDecimal qty = size != null ? size.quantity() : dec(l.get("quantity"));
             if (qty.signum() <= 0) {
                 throw ApiException.badRequest("quantity must be greater than 0");
             }
@@ -493,7 +597,7 @@ public class CashSaleService {
             String description = !blank(str(l.get("description"))) ? str(l.get("description"))
                     : price.description() != null ? price.description() : str(product.get("name"));
             inputs.add(new LineInput(productId, null, null, null, null, description, qty, unit, disc, null, null, null,
-                    "manual", taxId, null, incl, uomId));
+                    "manual", taxId, null, incl, uomId, null, size));
             meta.add(Obj.of("listPrice", price.listPrice(), "priceSource", same ? price.source() : "manual", "cost",
                     variant != null && variant.costPrice() != null ? variant.costPrice() : product.get("costPrice"),
                     "variantId", variant == null ? null : variant.id()));
@@ -511,6 +615,10 @@ public class CashSaleService {
                 ins.put("description", pl.description());
                 ins.put("quantity", pl.quantity());
                 ins.put("uomId", pl.uomId());
+                // Phase I1b (U-1): a product line always carries its resolved factor; only lines without a product have none.
+                if (pl.productId() != null && pl.uomFactor() == null) {
+                    throw ApiException.badRequest("The unit of measure of " + pl.description() + " could not be resolved");
+                }
                 ins.put("uomFactor", pl.uomFactor() == null ? BigDecimal.ONE : pl.uomFactor());
                 ins.put("listPrice", m.get("listPrice"));
                 ins.put("unitPrice", pl.unitPrice());
@@ -522,6 +630,7 @@ public class CashSaleService {
                 ins.put("lineTax", pl.taxAmount());
                 ins.put("lineTotal", pl.total());
                 ins.put("costSnapshot", m.get("cost") == null ? null : dec(m.get("cost")));
+                ins.putAll(ProductSizingService.Sizing.columns(pl.sizing()));
                 db.insert("SalesSubmissionLine", ins);
                 i++;
             }
@@ -546,11 +655,14 @@ public class CashSaleService {
     /**
      * Capture a payment line on a draft. With {@code paymentModeId} the organization's payment mode decides the
      * method, provider and receiving account; otherwise the tender account comes from the branch profile. A
-     * client-sent account is never trusted.
+     * client-sent account is never trusted. The line carries its evidence (payment date, payer, payer phone / account,
+     * notes, attached DMS documents) and is verified at capture by the collector, unless the branch requires
+     * segregation of duties: then it stays pending until someone else verifies it.
      */
     @Transactional
     public Map<String, Object> addPayment(String id, Map<String, Object> in) {
-        unknownFields(in, Set.of("method", "provider", "amount", "reference", "accountId", "paymentModeId"));
+        unknownFields(in, Set.of("method", "provider", "amount", "reference", "accountId", "paymentModeId",
+                "paymentDate", "payerName", "payerAccount", "notes", "attachmentIds"));
         Map<String, Object> s = lock(id);
         requireDraft(s);
         String method;
@@ -599,12 +711,31 @@ public class CashSaleService {
         if (!"cash".equals(method) && reference == null) {
             throw ApiException.badRequest("reference should not be empty for " + method.replace('_', ' ') + " payments");
         }
+        List<String> attachmentIds = SalesDb.strings(in.get("attachmentIds")).stream().filter(a -> !blank(a))
+                .distinct().toList();
+        if (!attachmentIds.isEmpty() && db.rows("SELECT id FROM \"DmsDocument\" WHERE \"organizationId\" = ? AND"
+                + " id = ANY(?)", org(), attachmentIds).size() != attachmentIds.size()) {
+            throw ApiException.badRequest("Attachment not found");
+        }
+        Map<String, Object> row = Obj.of("submissionId", id, "method", method, "provider", provider, "amount", amount,
+                "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId", modeId,
+                "paymentModeLabel", modeLabel, "paymentDate", SalesDb.date(str(in.get("paymentDate"))), "payerName", trimmed(in.get("payerName")),
+                "payerAccount", trimmed(in.get("payerAccount")), "notes", trimmed(in.get("notes")), "attachmentIds",
+                attachmentIds);
+        // the collector's capture is the verification, unless the branch requires segregation of duties
+        boolean autoVerify = !segregated(s);
+        if (autoVerify) {
+            row.putAll(Obj.of("verificationStatus", "verified", "verifiedById", user(), "verifiedAt", Instant.now(),
+                    "verificationSource", "collector"));
+        }
         try {
-            db.insert("SalesSubmissionPayment", Obj.of("submissionId", id, "method", method, "provider", provider, "amount",
-                    amount, "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId",
-                    modeId, "paymentModeLabel", modeLabel));
+            db.insert("SalesSubmissionPayment", row);
         } catch (DuplicateKeyException e) {
             throw ApiException.conflict("Payment reference " + reference + " is already recorded");
+        }
+        if (autoVerify) {
+            event(id, "payment_verified", null, null, null, null, method + " " + JsNumbers.js(amount)
+                    + (reference == null ? "" : " ref " + reference));
         }
         return get(id);
     }
@@ -718,13 +849,13 @@ public class CashSaleService {
         String number = str(s.get("number"));
         LocalDate saleDate = s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now();
         Instant postDate = saleDate.equals(LocalDate.now()) ? Instant.now() : saleDate.atStartOfDay().toInstant(ZoneOffset.UTC);
-        // P1 — stock leaves the showroom at handover
-        for (Map<String, Object> l : lines) {
+        // P1 — stock leaves the showroom at handover (S-2: in the engine's lock order)
+        for (Map<String, Object> l : StockMove.inLockOrder(lines)) {
             if (!Boolean.TRUE.equals(l.get("trackInventory"))) {
                 continue;
             }
             StockMove.Issued issued = stock.issue(StockMove.of(str(l.get("productId")), str(s.get("locationId")),
-                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id)
+                    dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id).sourceLine(str(l.get("id")))
                     .reference(number).date(postDate).notes("Cash sale " + number));
             BigDecimal unitCost = issued.quantity().signum() == 0 ? BigDecimal.ZERO
                     : issued.totalValue().divide(dec(l.get("quantity")), 6, RoundingMode.HALF_UP);
@@ -797,7 +928,9 @@ public class CashSaleService {
     static final List<String> DELIVERY_FIELDS = List.of("deliveryMethod", "deliveryStatus", "deliveryAddress",
             "deliveryContactName", "deliveryContactPhone", "deliveryScheduledDate", "deliveryDriver", "deliveryVehicle",
             "deliveryReceivedBy", "deliveryNotes", "deliveryLandmark", "deliveryLoadingSite", "deliveryScope",
-            "deliveryOffloadingEquipment");
+            "deliveryOffloadingEquipment", "deliveryDeadline");
+    /** Date-only delivery fields: stored as DATE, compared and sent as {@code yyyy-MM-dd}. */
+    private static final Set<String> DELIVERY_DATES = Set.of("deliveryScheduledDate", "deliveryDeadline");
     private static final List<String> DELIVERY_STATUSES = List.of("pending", "scheduled", "dispatched", "delivered",
             "failed");
 
@@ -817,7 +950,7 @@ public class CashSaleService {
         Map<String, Object> next = new LinkedHashMap<>();
         for (String k : DELIVERY_FIELDS) {
             Object current = s.get(k);
-            next.put(k, current == null ? null : "deliveryScheduledDate".equals(k) ? current.toString() : str(current));
+            next.put(k, current == null ? null : DELIVERY_DATES.contains(k) ? current.toString() : str(current));
         }
         for (String k : in.keySet()) {
             next.put(k, blank(str(in.get(k))) ? null : str(in.get(k)).trim());
@@ -837,21 +970,24 @@ public class CashSaleService {
                 && !List.of("yes", "no").contains(next.get("deliveryOffloadingEquipment"))) {
             throw ApiException.badRequest("deliveryOffloadingEquipment must be one of: yes, no");
         }
-        LocalDate scheduled = null;
-        if (next.get("deliveryScheduledDate") != null) {
-            try {
-                scheduled = LocalDate.parse(str(next.get("deliveryScheduledDate")).substring(0,
-                        Math.min(10, str(next.get("deliveryScheduledDate")).length())));
-            } catch (RuntimeException e) {
-                throw ApiException.badRequest("deliveryScheduledDate must be a valid ISO 8601 date string");
+        Map<String, LocalDate> dates = new HashMap<>();
+        for (String k : DELIVERY_DATES) {
+            if (next.get(k) != null) {
+                String d = str(next.get(k));
+                try {
+                    dates.put(k, LocalDate.parse(d.substring(0, Math.min(10, d.length()))));
+                } catch (RuntimeException e) {
+                    throw ApiException.badRequest(k + " must be a valid ISO 8601 date string");
+                }
+                next.put(k, dates.get(k).toString());
             }
-            next.put("deliveryScheduledDate", scheduled.toString());
         }
+        LocalDate scheduled = dates.get("deliveryScheduledDate");
         String before = str(s.get("deliveryStatus"));
         if ("delivered".equals(before)) {
             for (String k : DELIVERY_FIELDS) {
                 if (!Set.of("deliveryReceivedBy", "deliveryNotes").contains(k)
-                        && !Objects.equals(next.get(k), k.equals("deliveryScheduledDate") && s.get(k) != null
+                        && !Objects.equals(next.get(k), DELIVERY_DATES.contains(k) && s.get(k) != null
                                 ? s.get(k).toString() : str(s.get(k)))) {
                     throw ApiException.badRequest("Delivery is already completed; only the receiver and notes can change");
                 }
@@ -868,9 +1004,9 @@ public class CashSaleService {
         }
         Map<String, Object> patch = new LinkedHashMap<>();
         for (String k : DELIVERY_FIELDS) {
-            Object old = s.get(k) == null ? null : "deliveryScheduledDate".equals(k) ? s.get(k).toString() : str(s.get(k));
+            Object old = s.get(k) == null ? null : DELIVERY_DATES.contains(k) ? s.get(k).toString() : str(s.get(k));
             if (!Objects.equals(old, next.get(k))) {
-                patch.put(k, "deliveryScheduledDate".equals(k) && scheduled != null ? scheduled : next.get(k));
+                patch.put(k, dates.containsKey(k) ? dates.get(k) : next.get(k));
                 if (!"deliveryStatus".equals(k)) {
                     db.update("INSERT INTO \"SalesSubmissionEvent\" (id, \"organizationId\", \"submissionId\", action,"
                             + " field, \"oldValue\", \"newValue\", \"userId\") VALUES (?, ?, ?, 'delivery_update', ?, ?, ?, ?)",
@@ -1028,7 +1164,8 @@ public class CashSaleService {
             lines.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), str(l.get("variantName")), null,
                     str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
                     dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
-                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId"))));
+                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
+                    ProductSizingService.Sizing.stored(l), l.get("uomFactor") == null ? null : dec(l.get("uomFactor"))));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,
@@ -1232,6 +1369,10 @@ public class CashSaleService {
         p.put("lines", EntityJson.toJson(db.rows("SELECT description, quantity, \"unitPrice\", \"lineTax\", \"lineTotal\""
                 + " FROM \"SalesSubmissionLine\" WHERE \"submissionId\" = ? ORDER BY \"sortOrder\"", id)));
         return p;
+    }
+
+    private static String trimmed(Object v) {
+        return blank(str(v)) ? null : str(v).trim();
     }
 
     private boolean segregated(Map<String, Object> s) {

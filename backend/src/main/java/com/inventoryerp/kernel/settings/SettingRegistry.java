@@ -109,6 +109,16 @@ public final class SettingRegistry {
                 "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
                         + " report (default); enforce = a costing posting without a branch is refused.",
                 "warn", List.of("off", "warn", "enforce"), false, ORG_ONLY);
+        // ---- Inventory ↔ GL tie-out monitor (phase/inv-hardening) ----
+        def("inventory.glTieOut.enabled", "inventory", "bool", "Daily Inventory–GL Tie-out Check",
+                "Every day the stock valuation is compared with the inventory control account(s) (as the inventory GL"
+                        + " tie-out report does); a variance above the tolerance raises an inventory exception in the"
+                        + " Posting Monitor and an in-app alert.",
+                true, null, false, ORG_ONLY);
+        def("inventory.glTieOut.tolerance", "inventory", "number", "Inventory–GL Tie-out Tolerance",
+                "Largest absolute difference (base currency) between stock valuation and the inventory GL balance that"
+                        + " the daily check accepts.",
+                1, null, false, ORG_ONLY);
         def("inventory.defaultBatchTracking", "inventory", "bool", "Default Batch Tracking (new products)", null,
                 false, null, false, ORG_ONLY);
         def("inventory.defaultExpiryTracking", "inventory", "bool", "Default Expiry Tracking (new products)", null,

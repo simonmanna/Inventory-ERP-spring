@@ -123,6 +123,7 @@ class GlAutomationIT extends AccountingFixtures {
         LocalDate[] months = lastAndThisMonth();
         monthlyPeriods(b, months);
         LocalDate lastMonthDay = months[0].plusDays(9);
+        periodActivity(b, lastMonthDay);
         closePeriod(b, lastMonthDay.toString());
         String id = okAs(b, 201, "POST", "/recurring-entries", template(b, "monthly", lastMonthDay, "post", 30))
                 .get("id").asString();
@@ -173,7 +174,7 @@ class GlAutomationIT extends AccountingFixtures {
                 JeLine.cr(revenueCode, 1200)));
         String lineId = jdbc.sql("SELECT id FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND credit > 0")
                 .param(entry).query(String.class).single();
-        JsonNode s = okAs(b, 201, "POST", "/deferrals/from-journal-line", Map.of("journalLineId", lineId,
+        JsonNode s = okAs(b, 200, "POST", "/deferrals/from-journal-line", Map.of("journalLineId", lineId,
                 "startDate", m0.toString(), "months", 12));
         String id = s.get("id").asString();
         assertThat(s.get("kind").asString()).isEqualTo("revenue");
@@ -210,6 +211,7 @@ class GlAutomationIT extends AccountingFixtures {
         LocalDate[] months = lastAndThisMonth();
         monthlyPeriods(b, months);
         String expense = account(b.org(), accountCodeOfCategory(b.org(), "operating_expense"));
+        periodActivity(b, months[0].plusDays(3));
         closePeriod(b, months[0].plusDays(3).toString());
         JsonNode s = okAs(b, 201, "POST", "/deferrals", Map.of("name", "Insurance", "kind", "expense",
                 "targetAccountId", expense, "totalAmount", 600, "startDate", months[0].toString(), "months", 2,
@@ -369,7 +371,7 @@ class GlAutomationIT extends AccountingFixtures {
         }
         Res notBelow = as("POST", "/fixed-assets/" + id + "/impairments", Map.of("recoverableAmount", 1000));
         assertThat(notBelow.status()).isEqualTo(400);
-        JsonNode imp = ok(201, "POST", "/fixed-assets/" + id + "/impairments", Map.of("recoverableAmount", 600,
+        JsonNode imp = ok(200, "POST", "/fixed-assets/" + id + "/impairments", Map.of("recoverableAmount", 600,
                 "reason", "Market drop"));
         assertThat(imp.get("amount").asString()).isEqualTo("400");
         assertThat(imp.get("remainingLifeMonths").asInt()).isEqualTo(10);
@@ -381,7 +383,7 @@ class GlAutomationIT extends AccountingFixtures {
                 + " period = '2026-03'").param(id).query(BigDecimal.class).single();
         assertThat(march).as("600 over the remaining 10 months").isEqualByComparingTo("60");
 
-        JsonNode rev = ok(201, "POST", "/fixed-assets/" + id + "/impairments/reversal", Map.of("recoverableAmount",
+        JsonNode rev = ok(200, "POST", "/fixed-assets/" + id + "/impairments/reversal", Map.of("recoverableAmount",
                 1000));
         // Without impairment the carrying amount would be 1200 − 3 × 100 = 900; carrying 540 → reversal capped at 360.
         assertThat(rev.get("amount").asString()).isEqualTo("360");
@@ -443,5 +445,11 @@ class GlAutomationIT extends AccountingFixtures {
         String asset = ok(201, "POST", "/fixed-assets", Map.of("name", "Iso asset", "purchaseCost", 100,
                 "salvageValue", 0, "usefulLife", 12, "purchaseDate", LocalDate.now().toString())).get("id").asString();
         assertThat(call("GET", "/fixed-assets/" + asset + "/impairments", null, otherToken).status()).isIn(403, 404);
+    }
+
+    /** One expense posting in the period, so period close has something to close (an empty period is refused). */
+    private void periodActivity(Books b, LocalDate day) {
+        postJe(b, day.toString(), List.of(JeLine.dr(accountCodeOfCategory(b.org(), "operating_expense"), 10),
+                JeLine.cr(mappedCode(b.org(), "default_bank"), 10)));
     }
 }

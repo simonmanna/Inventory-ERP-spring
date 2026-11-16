@@ -90,7 +90,8 @@ export function ReturnDetailPage() {
         {r.status === 'requested' && canApprove && <Button onClick={() => act.mutate({ action: 'approve' })}>{tx('Approve')}</Button>}
         {['requested', 'approved'].includes(r.status) && canApprove && <Button variant="outline" onClick={() => { const reason = prompt(tx('Reason')); if (reason) act.mutate({ action: 'reject', body: { reason } }); }}>{tx('Reject')}</Button>}
         {r.status === 'approved' && r.physicalReturn && canWrite && <Button onClick={() => act.mutate({ action: 'receive' })}>{tx('Receive goods')}</Button>}
-        {r.status === 'received' && canWrite && <Button onClick={() => act.mutate({ action: 'inspect', body: { lines: Object.entries(disp).map(([lineId, d]) => ({ lineId, ...d })) } })}>{tx('Record inspection')}</Button>}
+        {/* Every line is sent with the disposition its select shows ("Restock" until changed, the server's own default). */}
+        {r.status === 'received' && canWrite && <Button onClick={() => act.mutate({ action: 'inspect', body: { lines: (r.lines ?? []).map((l) => ({ lineId: l.id, ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock' })) } })}>{tx('Record inspection')}</Button>}
         {closable && canApprove && <>
           <select className="h-9 rounded-md border bg-background px-2 text-sm" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
             <option value="credit_note">{tx('Credit note')}</option><option value="refund">{tx('Credit note + refund')}</option>

@@ -2,10 +2,14 @@ import { api } from '@/lib/api';
 
 /** Editable handover (delivery & fulfilment) fields, shared by the live tab and the new-document draft. */
 export type HandoverForm = {
-  method: 'pickup' | 'delivery'; locationId: string; address: string; contactName: string; contactPhone: string;
+  method: 'pickup' | 'delivery' | 'transfer' | 'courier'; locationId: string; address: string; contactName: string; contactPhone: string;
   scheduledDate: string; driver: string; vehicle: string; receivedBy: string; notes: string;
   /** Site details of a delivery: GPS pin / landmark, loading site, full or partial delivery, offloading equipment. */
   landmark: string; loadingSite: string; deliveryScope: '' | 'full' | 'partial'; offloadingEquipment: '' | 'yes' | 'no';
+  /** Sales orders only: GPS pin, offloading point, destination warehouse (transfer) and courier company. */
+  gpsCoordinates?: string; offloadingSite?: string; destinationLocationId?: string; courierName?: string;
+  /** Date the goods must reach the customer by (yyyy-MM-dd). */
+  deadline?: string;
 };
 
 /** Delivery-only fields: dropped when the customer collects. */

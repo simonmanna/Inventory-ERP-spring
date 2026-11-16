@@ -13,9 +13,30 @@ public final class PostingMath {
     private PostingMath() {}
 
     /** Normalized line with functional-currency (base) amounts at 6 dp. */
+    /**
+     * A validated line in the entry's currency and in base. {@code currencyId} / {@code foreignAmount} are the line's own
+     * transaction currency and amount when it overrides the entry's ({@link PostingRequest.Line#inCurrency});
+     * {@link #BASE_ONLY} as {@code currencyId} stores the line in base with no currency (the rounding line).
+     */
     public record NormalizedLine(String accountId, String partnerId, String description, String branchId,
             String costCenterId, Map<String, Object> dimensions, BigDecimal debit, BigDecimal credit,
-            BigDecimal baseDebit, BigDecimal baseCredit) {}
+            BigDecimal baseDebit, BigDecimal baseCredit, String currencyId, BigDecimal foreignAmount) {
+
+        public NormalizedLine(String accountId, String partnerId, String description, String branchId,
+                String costCenterId, Map<String, Object> dimensions, BigDecimal debit, BigDecimal credit,
+                BigDecimal baseDebit, BigDecimal baseCredit) {
+            this(accountId, partnerId, description, branchId, costCenterId, dimensions, debit, credit, baseDebit,
+                    baseCredit, null, null);
+        }
+
+        /** Whether the line states its own currency (or base-only) instead of the entry's. */
+        public boolean overridesCurrency() {
+            return currencyId != null;
+        }
+    }
+
+    /** {@link NormalizedLine#currencyId()} marker: stored in base currency, no transaction currency. */
+    public static final String BASE_ONLY = "";
 
     public record Totals(BigDecimal debit, BigDecimal credit) {}
 
@@ -30,10 +51,26 @@ public final class PostingMath {
         for (PostingRequest.Line l : lines) {
             BigDecimal debit = r6(Money.dec(l.debit() == null ? 0 : l.debit()));
             BigDecimal credit = r6(Money.dec(l.credit() == null ? 0 : l.credit()));
+            BigDecimal foreign = l.currencyId() == null || l.currencyId().isBlank() || l.foreignAmount() == null ? null
+                    : r6(Money.dec(l.foreignAmount()).abs());
             out.add(new NormalizedLine(l.accountId(), l.partnerId(), l.description(), l.branchId(), l.costCenterId(),
-                    l.dimensions(), debit, credit, r6(debit.multiply(exchangeRate)), r6(credit.multiply(exchangeRate))));
+                    l.dimensions(), debit, credit, r6(debit.multiply(exchangeRate)), r6(credit.multiply(exchangeRate)),
+                    foreign == null ? null : l.currencyId(), foreign));
         }
         return out;
+    }
+
+    /** Totals in the entry's transaction currency (lines with their own currency left out). */
+    public static Totals transactionTotals(List<NormalizedLine> lines) {
+        BigDecimal d = BigDecimal.ZERO;
+        BigDecimal c = BigDecimal.ZERO;
+        for (NormalizedLine l : lines) {
+            if (!l.overridesCurrency()) {
+                d = d.add(l.debit());
+                c = c.add(l.credit());
+            }
+        }
+        return new Totals(d, c);
     }
 
     public static Totals totals(List<NormalizedLine> lines) {

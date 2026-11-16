@@ -24,12 +24,15 @@ import {
 } from '@/features/inventory/transfers-api';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
+import { VariantSelect } from '@/features/products/variant-select';
 
 interface Location { id: string; code: string; name: string; type?: string }
 interface Product { id: string; code: string; name: string }
 
 interface TransferLine {
   productId: string;
+  /** ADR-S058: variant of a product with variants. */
+  variantId?: string | null;
   productName: string;
   quantity: number;
   distStrategy: string;
@@ -131,7 +134,7 @@ export function StockTransfersPage() {
     const p = products.data?.find((x) => x.id === productId);
     if (!p) return;
     const next = [...lines];
-    next[idx] = { ...next[idx], productId, productName: p.name };
+    next[idx] = { ...next[idx], productId, variantId: null, productName: p.name };
     setLines(next);
   };
 
@@ -140,6 +143,7 @@ export function StockTransfersPage() {
       .filter((l) => l.productId && l.quantity > 0)
       .map((l) => ({
         productId: l.productId,
+        ...(l.variantId ? { variantId: l.variantId } : {}),
         qtyRequested: l.quantity,
         distStrategy: l.distStrategy,
       }));
@@ -360,6 +364,11 @@ export function StockTransfersPage() {
                               <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
                             ))}
                           </select>
+                          <VariantSelect
+                            productId={ln.productId || null}
+                            value={ln.variantId}
+                            onChange={(v) => setLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
+                          />
                         </td>
                         <td className="px-2 py-1">
                           <Input

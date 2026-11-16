@@ -20,9 +20,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { notify } from '@/lib/notify';
 import {
   useCreateJournal, useDeleteJournal, useJournal, useJournals, useUpdateJournal,
+  isPostingAccount,
   useAccounts,
 } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
@@ -45,7 +45,7 @@ export function JournalEditPage() {
   const deleteJournal = useDeleteJournal();
   const { data: accountsData } = useAccounts();
   const accounts = accountsData?.data ?? [];
-  const activeAccounts = accounts.filter((a) => a.isActive !== false);
+  const activeAccounts = accounts.filter(isPostingAccount);
 
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
@@ -83,25 +83,28 @@ export function JournalEditPage() {
     if (!validate()) return;
     setSaving(true);
     try {
-      const payload = {
-        code: code.trim(),
-        name: name.trim(),
-        journalType,
-        defaultDebitAccountId: defaultDebitAccountId || undefined,
-        defaultCreditAccountId: defaultCreditAccountId || undefined,
-        sequencePrefix: sequencePrefix.trim() || undefined,
-        isActive,
-      };
+      const base = { code: code.trim(), name: name.trim(), journalType, isActive };
+      // Success and failure are toasted once by the mutation hooks.
       if (isNew) {
-        await createJournal.mutateAsync(payload);
-        notify.success(tx('Journal created'));
+        await createJournal.mutateAsync({
+          ...base,
+          defaultDebitAccountId: defaultDebitAccountId || undefined,
+          defaultCreditAccountId: defaultCreditAccountId || undefined,
+          sequencePrefix: sequencePrefix.trim() || undefined,
+        });
       } else {
-        await updateJournal.mutateAsync({ id: id!, ...payload });
-        notify.success(tx('Journal updated'));
+        // An explicit null clears the column (an omitted key would leave the old value in place).
+        await updateJournal.mutateAsync({
+          id: id!,
+          ...base,
+          defaultDebitAccountId: defaultDebitAccountId || null,
+          defaultCreditAccountId: defaultCreditAccountId || null,
+          sequencePrefix: sequencePrefix.trim() || null,
+        });
       }
       navigate('/journals');
-    } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? tx('Save failed'));
+    } catch {
+      /* toasted by useCreateJournal / useUpdateJournal */
     } finally {
       setSaving(false);
     }
@@ -111,10 +114,9 @@ export function JournalEditPage() {
     if (!id) return;
     try {
       await deleteJournal.mutateAsync(id);
-      notify.success(tx('Journal deleted'));
       navigate('/journals');
-    } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? tx('Delete failed'));
+    } catch {
+      /* toasted by useDeleteJournal */
     } finally {
       setDeleteConfirm(false);
     }

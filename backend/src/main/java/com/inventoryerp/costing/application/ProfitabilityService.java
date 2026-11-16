@@ -1,5 +1,6 @@
 package com.inventoryerp.costing.application;
 
+import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -87,8 +88,8 @@ public class ProfitabilityService {
         jdbc.sql("UPDATE \"ProfitabilityRun\" SET status = 'superseded' WHERE \"organizationId\" = ? AND \"periodFrom\" ="
                 + " ? AND \"periodTo\" = ? AND status = 'current'").params(org(), Date.valueOf(from), Date.valueOf(to))
                 .update();
-        Timestamp start = Timestamp.from(from.atStartOfDay(ZoneOffset.UTC).toInstant());
-        Timestamp end = Timestamp.from(to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant());
+        Timestamp start = AccountingDay.startTs(from, AccountingDay.zone(jdbc));
+        Timestamp end = AccountingDay.endExclusiveTs(to, AccountingDay.zone(jdbc));
         String id = UUID.randomUUID().toString();
         BigDecimal gl = jdbc.sql(PL + "SELECT coalesce(sum(net), 0) FROM cls").params(org(), start, end)
                 .query(BigDecimal.class).single();

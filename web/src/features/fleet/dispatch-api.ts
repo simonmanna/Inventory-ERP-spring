@@ -349,7 +349,26 @@ export interface LinkedWeighTicket {
   tripFeedMessage: string | null;
   tripFedAt: string | null;
   createdAt: string;
+  trailerPlate?: string | null;
+  driverName?: string | null;
+  firstWeightKg?: string | null;
+  firstWeighedAt?: string | null;
+  firstSource?: string | null;
+  firstOperator?: string | null;
+  secondWeightKg?: string | null;
+  secondWeighedAt?: string | null;
+  secondSource?: string | null;
+  secondOperator?: string | null;
+  /** Latest tolerance exception of the ticket, if any. */
+  exceptionStatus?: 'pending' | 'approved' | 'rejected' | null;
+  reissuedFromId?: string | null;
+  /** This ticket is the one whose net weight gave the trip its loaded quantity. */
+  feedsTrip?: boolean;
+  verification?: WeighVerification;
 }
+
+/** Derived verification of a weighbridge ticket (Phase A1). */
+export type WeighVerification = 'verified' | 'approved_exception' | 'pending_exception' | 'in_progress' | 'cancelled' | 'voided';
 
 /** Weighbridge state of a trip: required for dispatch (and why), live ticket, fed by a completed ticket. */
 export interface TripWeighbridge {

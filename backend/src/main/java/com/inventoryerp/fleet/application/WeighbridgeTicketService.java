@@ -298,6 +298,42 @@ public class WeighbridgeTicketService {
                 tripId).stream().map(WeighbridgeTicketService::completed).toList();
     }
 
+    /**
+     * Every ticket (any status) of the given trips, oldest first, in the shared read model of
+     * {@link FleetWeighbridgeRuleService#linkedTickets}: both weighings with time, source and operator, gross / tare /
+     * net, manual and stored-tare flags, tolerance and exception status, void and reissue chain, feed status,
+     * {@code feedsTrip} and the derived {@code verification}. Read-only; used by the Sales delivery screens, which
+     * do not need {@code weighbridge:*} permissions and keep working with the fleet module switched off.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> ticketsForTrips(java.util.Collection<String> tripIds) {
+        return FleetWeighbridgeRuleService.linkedTickets(db, "tripId", tripIds);
+    }
+
+    /**
+     * The ticket PDF as a view copy: same layout as {@link #print(String)} but stamped "COPY (view)", the print
+     * counter is not touched and the view is audited as a {@code reprint} with {@code copy: "view"}. {@code tripId}, when given, must be the
+     * ticket's trip (404 otherwise), so a caller can only open tickets of the delivery it is allowed to read.
+     */
+    @Transactional
+    public PrintedTicket renderCopy(String id, String tripId) {
+        Map<String, Object> t = get(id);
+        if (tripId != null && !tripId.equals(t.get("tripId"))) {
+            throw ApiException.notFound("Weighbridge ticket not found");
+        }
+        if (!Set.of("completed", "void").contains(t.get("status"))) {
+            throw ApiException.badRequest("Only completed tickets can be printed (ticket " + t.get("ticketNumber")
+                    + " is " + String.valueOf(t.get("status")).replace('_', ' ') + ")");
+        }
+        // Audited as a reprint marked copy=view; the printCount (originals + counted copies) stays untouched.
+        audit.recordInTx(AuditInput.of(AUDIT, id, "reprint", null, Obj.of("copy", "view", "printCount",
+                t.get("printCount"))));
+        String company = db.jdbc().sql("SELECT name FROM \"Organization\" WHERE id = ?").param(FleetDb.org())
+                .query(String.class).optional().orElse("");
+        return new PrintedTicket(t.get("ticketNumber") + "-copy.pdf", WeighbridgeTicketPdf.render(t, company,
+                "COPY (view) — not an original print"));
+    }
+
     /** Completed tickets of a fleet 1.3 delivery order, oldest first. */
     @Transactional(readOnly = true)
     public List<CompletedTicket> completedTicketsForDeliveryOrder(String deliveryOrderId) {
@@ -509,7 +545,9 @@ public class WeighbridgeTicketService {
                 || str(h.get("tripId")) != null)) {
             throw ApiException.badRequest("Only sale deliveries reference a sales order or delivery order");
         }
-        if (salesOrderId != null && !db.exists("Order", salesOrderId, false)) {
+        // A Sales order (pre-filled from a sales_order trip) or, as before the Sales module, a POS order.
+        if (salesOrderId != null && !db.exists("SalesOrder", salesOrderId, false)
+                && !db.exists("Order", salesOrderId, false)) {
             throw ApiException.badRequest("Sales order not found");
         }
         if ("purchase_receipt".equals(subject)) {

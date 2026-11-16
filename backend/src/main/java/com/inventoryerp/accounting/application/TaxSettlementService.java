@@ -51,10 +51,11 @@ public class TaxSettlementService {
         if (from == null || to == null || to.isBefore(from)) {
             throw ApiException.badRequest("from and to are required and to must not be before from");
         }
-        String payable = determination.mapped("tax_payable");
+        // Output tax posts to each tax's own account when set, else tax_payable; input tax always to tax_receivable
+        // (AccountDeterminationService.taxAccount). Measuring only tax_payable missed the taxes' own accounts (R-3).
         String receivable = determination.mapped("tax_receivable");
-        BigDecimal output = movement(payable, from, to).negate();
-        BigDecimal input = movement(receivable, from, to);
+        BigDecimal output = movement(outputAccounts(receivable), from, to).negate();
+        BigDecimal input = movement(List.of(receivable), from, to);
         Instant last = lastSettled();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("from", JsonConfig.toJsIso(from));
@@ -76,16 +77,27 @@ public class TaxSettlementService {
             throw ApiException.badRequest("VAT is already settled through " + FiscalPeriodControl.day(last)
                     + "; the next period starts after it");
         }
+        if (last != null) {
+            // no gaps: a skipped range would be locked (the lock covers everything up to the latest periodTo) but never
+            // settled
+            java.time.LocalDate next = last.atOffset(ZoneOffset.UTC).toLocalDate().plusDays(1);
+            if (!from.atOffset(ZoneOffset.UTC).toLocalDate().equals(next)) {
+                throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(last)
+                        + "; the next period must start on " + next);
+            }
+        }
         Map<String, Object> p = preview(from, to);
         BigDecimal input = new BigDecimal((String) p.get("inputTax"));
         BigDecimal output = new BigDecimal((String) p.get("outputTax"));
         String entryId = null;
         if (input.signum() > 0) {
-            Map<String, Object> entry = posting.post(PostingRequest.of("GEN", to, "VAT settlement "
+            String payable = determination.mapped("tax_payable");
+            Map<String, Object> entry = posting.post(PostingRequest.of("GEN",
+                    AccountingDay.fromWallClock(to, AccountingDay.zone(jdbc)), "VAT settlement "
                     + FiscalPeriodControl.day(from) + " – " + FiscalPeriodControl.day(to), "tax_settlement",
                     FiscalPeriodControl.day(to), "tax_settlement:" + FiscalPeriodControl.day(from) + ":"
                     + FiscalPeriodControl.day(to), List.of(
-                            PostingRequest.Line.debit(determination.mapped("tax_payable"), input, "Input VAT offset"),
+                            PostingRequest.Line.debit(payable, input, "Input VAT offset"),
                             PostingRequest.Line.credit(determination.mapped("tax_receivable"), input,
                                     "Input VAT offset"))));
             entryId = (String) entry.get("id");
@@ -111,13 +123,35 @@ public class TaxSettlementService {
                 + " \"periodTo\" DESC").param(org()));
     }
 
-    /** Net base (debit − credit) on {@code accountId} posted in the range, settlement entries excluded. */
-    private BigDecimal movement(String accountId, Instant from, Instant to) {
+    /** {@code tax_payable} and every tax's own account, never the input-tax account. */
+    private List<String> outputAccounts(String receivable) {
+        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+        ids.add(determination.mapped("tax_payable"));
+        ids.addAll(jdbc.sql("SELECT DISTINCT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ? AND \"accountId\" IS"
+                + " NOT NULL").param(org()).query(String.class).list());
+        ids.remove(receivable);
+        return List.copyOf(ids);
+    }
+
+    /**
+     * Net base (debit − credit) on {@code accountIds} posted in the range. Settlement entries and payments of tax to the
+     * authority (treasury "Tax payment") are excluded: paying January's VAT in February is not February's tax (R-3).
+     * {@code from} and {@code to} are org-local wall-clock day bounds (ADR-S070).
+     */
+    private BigDecimal movement(List<String> accountIds, Instant from, Instant to) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
         return jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
-                        + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
-                        + " l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ?"
-                        + " AND e.\"postingDate\" <= ? AND coalesce(e.\"sourceType\", '') <> 'tax_settlement'")
-                .params(org(), accountId, FiscalPeriodControl.ts(from), FiscalPeriodControl.ts(to))
+                        + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = :org AND"
+                        + " l.\"accountId\" IN (:accounts) AND e.status::text IN ('posted', 'reversed')"
+                        + " AND e.\"postingDate\" >= :from AND e.\"postingDate\" <= :to"
+                        + " AND coalesce(e.\"sourceType\", '') <> 'tax_settlement'"
+                        + " AND coalesce(e.dimensions ->> 'treasuryOperation', '') <> 'tax_payment'"
+                        // and the reversal of such a payment
+                        + " AND NOT EXISTS (SELECT 1 FROM \"JournalEntry\" o WHERE o.id = e.\"reversalOfId\""
+                        + " AND coalesce(o.dimensions ->> 'treasuryOperation', '') = 'tax_payment')")
+                .param("org", org()).param("accounts", accountIds)
+                .param("from", FiscalPeriodControl.ts(AccountingDay.fromWallClock(from, zone)))
+                .param("to", FiscalPeriodControl.ts(AccountingDay.fromWallClock(to, zone)))
                 .query(BigDecimal.class).single();
     }
 

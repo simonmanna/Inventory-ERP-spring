@@ -226,8 +226,18 @@ public class CrushingSurveyService {
         }
         StockMove m = StockMove.of(str(v, "productId"), loc, delta.abs()).source(sourceType, str(v, "id"))
                 .notes(notes).people(TenantContext.userId(), TenantContext.userId());
-        m.countedQuantity = counted;
-        return stock.adjust(m);
+        // Audit A-2: post the variance as a delta on the on-hand read under the quant lock, not an absolute count
+        // read before it (a movement between the read and the write would be lost). The check above fails fast; the
+        // one below is authoritative.
+        m.deltaQuantity = delta;
+        Adjusted a = stock.adjust(m);
+        if (a.newQuantity() != null && a.newQuantity().signum() < 0) {
+            BigDecimal before = a.previousQuantity() == null ? current : a.previousQuantity();
+            throw ApiException.badRequest("Stockpile " + k.get("code") + " now holds "
+                    + before.stripTrailingZeros().toPlainString() + " t; applying "
+                    + delta.stripTrailingZeros().toPlainString() + " t would take it below zero");
+        }
+        return a;
     }
 
     private Map<String, Object> data(SurveyInput in) {

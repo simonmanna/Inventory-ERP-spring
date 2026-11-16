@@ -96,7 +96,54 @@ public class FleetDeliveryDiscrepancy {
     @Column(name = "updatedAt", nullable = false)
     private Instant updatedAt;
 
+    // Phase A A2 (V496): truck-level kg of a weight claim.
+
+    @Column(name = "claimKg", precision = 14, scale = 3)
+    private BigDecimal claimKg;
+
+    /** Set when a corrected customer weight withdrew this (pending) weight claim; it is then not a decision. */
+    @Column(name = "withdrawnAt")
+    private Instant withdrawnAt;
+
+    // Phase A A3 (V497): claim model 2.
+
+    @Column(name = "reconciledQty", nullable = false, precision = 14, scale = 3)
+    private BigDecimal reconciledQty;
+
+    @Column(name = "resolutionModel", nullable = false)
+    private Short resolutionModel;
+
+    @Column(name = "dismissReason")
+    private String dismissReason;
+
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.ARRAY)
+    @Column(name = "evidenceFileIds", nullable = false)
+    private java.util.List<String> evidenceFileIds;
+
     public String getId() {
         return id;
+    }
+    public BigDecimal getClaimKg() {
+        return claimKg;
+    }
+
+    public Instant getWithdrawnAt() {
+        return withdrawnAt;
+    }
+
+    public BigDecimal getReconciledQty() {
+        return reconciledQty;
+    }
+
+    public Short getResolutionModel() {
+        return resolutionModel;
+    }
+
+    public String getDismissReason() {
+        return dismissReason;
+    }
+
+    public java.util.List<String> getEvidenceFileIds() {
+        return evidenceFileIds;
     }
 }

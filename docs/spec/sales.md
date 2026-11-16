@@ -326,3 +326,421 @@ Odoo-style quotation form (`/sales/quotations/new`, `/sales/quotations/:id`; ref
   row per tax) and *Other Info* (salesperson, branch, currency, dates, customer credit, notes). The
   **Tax Excl. / Tax Incl.** toggle sets whether the unit prices on an editable quotation include tax (sent as
   `taxInclusive` on every line) and switches the Amount column; on a locked quotation it only switches the display.
+
+## Product images on quotations (2026-11-12, V483)
+
+Some customers want product pictures on their quotations, others do not, so the feature is a setting.
+
+- **Setting.** `SalesSettings.quoteLineImages` (boolean, default `false`), edited in Sales settings → Quotations and in
+  CRM settings → Quotation approval (`PUT /sales/settings` or `PUT /crm/config/settings`; also returned in
+  `GET /crm/config/lookups` → `settings`).
+- **Detail.** `GET /sales/quotations/{id}` returns `lineImages` (the setting) and, per line, `productImage`: a fresh
+  signed URL of the product's image, or `null` (setting off, no product, no image).
+- **Web.** While the setting is on, the lines table offers an optional **Image** column (thumbnail, opens full size).
+  Each user shows or hides it; the choice is remembered per browser apart from the other optional columns, so it
+  starts shown when the setting is turned on.
+- **Print and PDF.** *Print* and *Download PDF* add an Image column exactly when the user sees it
+  (`GET /sales/quotations/{id}/pdf?images=true|false`). Without `images` (e.g. the emailed PDF) the PDF follows the
+  setting. While the setting is off no image prints, whatever `images` says. A picture that is missing, too large
+  (> 5 MB) or in a format the PDF library cannot read (e.g. WebP) leaves its cell blank.
+- Tests: `SalesQuoteProformaIT.productImages`, `SalesDocumentPdfTest`.
+
+## Delivery & fulfilment management (2026-11-13, V484, owner request)
+
+Post-parity enhancement (not in the Nest reference). One sales order → many deliveries; a delivery is the existing
+manual-carrier `FleetLoad` (SG-9), so stock, costing, billing and discrepancies keep their single path. The order's
+Delivery & fulfilment tab (`web/src/pages/sales/delivery/`) manages everything inline.
+
+| Route | Permission |
+|---|---|
+| `GET /sales/orders/:id/delivery-summary` | `sales:delivery:read` |
+| `POST /sales/orders/:id/deliveries` (extended) | `sales:delivery:write` |
+| `PATCH /sales/deliveries/:id` | `sales:delivery:write` |
+| `GET /sales/deliveries/:id/history` | `sales:delivery:read` |
+| `POST /sales/deliveries/:id/issue` (was `write`) · `/depart` | `sales:delivery:dispatch` |
+| `POST /sales/deliveries/:id/confirm` (was `write`) · `/fail` · `/return` | `sales:delivery:confirm` |
+| `POST /sales/deliveries/:id/cancel` | `sales:delivery:cancel` |
+
+V484 grants the three new permissions to every role holding `sales:delivery:write` (no access lost).
+
+- **Per delivery** (FleetLoad columns): `deliveryMethod` (`customer_collect|site_delivery|warehouse_transfer|courier`),
+  `scheduledTime` (HH:mm), dispatch warehouse (`locationId`), `destinationLocationId` (required for a transfer),
+  `deliveryAddress`, site contact, driver + phone, vehicle + type, `transportCompany` (required for courier),
+  `trackingNumber`, `route`, `offloadingEquipment`, `expectedArrivalAt`, `arrivedAt`, `transportCost`, `tripExpenses`,
+  `attemptFailed`, `rescheduledFromId`. A plate is optional for customer collect and courier only.
+- **Stage** (derived): planned/loading/weighed → `scheduled`; `dispatched`; `in_transit`; delivered/closed →
+  `delivered`, or `partially_delivered` when any line delivered less than dispatched; returned → `failed`
+  (`attemptFailed`) or `returned`; `cancelled`.
+- **Order stage** (summary, independent of each delivery): `delivered` when every line's delivered ≥ ordered (ordered =
+  quantity − closed short), else `partially_delivered` if anything delivered, else `dispatched` if anything on the
+  road, else `scheduled` if anything planned, else `pending`. `SalesOrder.deliveryStatus` is unchanged.
+- **Quantities per line, one bucket each**: scheduled (planned on open trips), dispatched (on the road), delivered
+  (accepted at POD), rejected, damaged, shortage (= dispatched − accepted − rejected − damaged), returned (whole-load
+  returns / failed attempts). Outstanding = ordered − delivered. To schedule = ordered − scheduled − dispatched −
+  delivered − damaged − shortage (rejected and returned goods can go again). Percent delivered is weighted by line
+  value (falls back to the line average with no prices).
+- **Rules**: over-planning is refused under the delivery-order lock (no override); concurrent first deliveries on one
+  order are serialised by a transaction advisory lock; quantities change only while `planned` (`FleetDispatchService
+  .replan`); after dispatch only tracking, contact and costs change, after delivery only costs. Stock is issued once
+  at dispatch; confirmation only returns rejected goods; fail / return bring the whole load back at issue cost. POD
+  quantities cannot exceed what was dispatched.
+- **Documents**: per-delivery note PDF (existing), POD photos and signature, and DMS attachments on record type
+  `sales_delivery`. History = `AuditLog` rows of the `FleetLoad`.
+- **Order plan** (`SalesHandover`): methods `transfer` and `courier` added; new fields `gpsCoordinates`,
+  `offloadingSite`, `destinationLocationId`, `courierName`. The sales order tab no longer offers the manual handover
+  status buttons (Mark dispatched / delivered without stock movement); the status comes from the deliveries. The
+  invoice handover tab is unchanged.
+- Tests: `SalesDeliveryManagementIT` (multi-product partials, edit / re-plan / cancel / history, fail and reschedule,
+  shortage / damage / rejection, whole-load return, methods, concurrency, permissions).
+
+Invoices and branch cash sales (new and saved) use the same delivery tab layout (`HandoverDeliveryView`): status
+stepper with actions, overview tiles, the delivery plan panel, transport & schedule, receipt & notes and line
+fulfilment. They keep their single-handover model (`/sales/invoices/:id/handover`, `/sales/cash-sales/:id/delivery`):
+no trips and no stock movement from the tab. Cash sales offer customer collect / delivery only (their column CHECK);
+invoices offer all four methods. Invoice handover lines now return `uomCode`.
+
+### Delivery columns, delivery note and returns (2026-11-13, V485, owner request)
+
+Post-parity enhancement on the delivery tabs of sales orders, invoices and branch cash sales.
+
+| Route | Permission |
+|---|---|
+| `GET /sales/invoices/:id/handover/note` (PDF) | `invoice:read` |
+| `GET /sales/cash-sales/:id/delivery-note` (PDF) | `sales:cash_sale:read` |
+
+- **Deadline** (V485): `SalesHandover.deadline` and `SalesSubmission.deliveryDeadline` (DATE), the date the goods must
+  reach the customer by (the scheduled date is when they are planned to leave). Editable like the other plan fields
+  (`deadline` / `deliveryDeadline` on the existing PATCH routes, `<field> must be a valid ISO 8601 date string`); locked
+  once delivered. A sales order without one falls back to its commitment date, then its requested date
+  (`delivery-summary.deadline`).
+- **Line columns** (optional, chosen per user with the sliders button; remembered in browser storage):
+  date scheduled, deadline (red when past with quantity outstanding), demand, picked (tick when the whole line is
+  picked), issued / dispatched, delivered, invoiced, returned, outstanding, progress. Sources: sales order —
+  `delivery-summary.lines[].picked` (loaded, else dispatched, on loading → closed trips), `invoiced` (`qtyInvoiced −
+  qtyCredited`), `customerReturned` (`qtyReturned`, received RMAs) + `returned` (whole-load returns),
+  `scheduledDate` (earliest planned date of a trip not yet dispatched); invoice handover lines — `pickedQty` (full once
+  dispatched / delivered), `invoicedQty` (= quantity), `returnedQty`; cash sale lines — `returnedQty`. The deliveries
+  table gains optional Delivery note, Deadline, Returned / rejected and Delivered-on columns.
+- **Returns**: sales order — `delivery-summary.returns` (its `SalesReturn`s with lines); invoice — `handover.returns`,
+  the credit notes whose `reversedDocumentId` is the invoice; cash sale — `returns`, a void after confirm (all lines
+  back) plus credit notes against any of its head-office invoices. Only posted / paid credit notes count towards a
+  line's returned quantity (spread by product in line order, capped at the line quantity); drafts are listed with
+  `counted: false`.
+- **Delivery note**: invoice and cash sale notes are numbered `DN/<document number>` (derived, no sequence) and print
+  from `SalesDeliveryNotePdf` (company, delivery address, source document, shipping / scheduled / deadline dates,
+  ordered / delivered / returned per product, receipt or signature lines). Sales order deliveries keep the trip note
+  (numbered at dispatch); the delivery dialog and the order tab show an on-screen preview and list the notes.
+- Tests: `SalesHandoverIT.invoiceColumnsReturnsAndNote`, `SalesHandoverIT.orderDeadlineDefault`,
+  `CashSaleIT.deliveryAndFulfilment`, `CashSaleIT.voidSale`.
+
+### Delivery documents (2026-11-14, owner request)
+
+- The delivery details of branch cash sales, sales orders and invoices gain a **Delivery documents** section: the
+  printable delivery note(s) — preview, print, PDF (orders list one note per dispatched delivery) — and an upload area
+  for delivery documents (signed delivery note, proof of delivery, waybill, photos).
+- Uploads use their own DMS record types (built-ins, "sales" workspace), kept apart from the record's other files:
+  `cash_sale_delivery` (SalesSubmission; read `sales:cash_sale:read`, write `sales:cash_sale:create`),
+  `invoice_delivery` (Document; `invoice:read` / `invoice:update`), `sales_order_delivery` (SalesOrder;
+  `sales:order:read` / `sales:delivery:write`). Per-trip files stay on `sales_delivery`.
+- `SalesDeliveryNotePdf` prints a letterhead (`SalesLetterhead`): the company logo (Developer settings) and the
+  receipt-header business name, address lines, phone and TIN, falling back to the organization name.
+- Tests: `SalesHandoverIT.deliveryDocumentRecordTypes`, `CashSaleIT.deliveryAndFulfilment`.
+
+### Weighbridge tickets on Sales deliveries (Phase A1, 2026-11-14, no migration)
+
+Read-only visibility of the Fleet weighbridge. Fleet stays the only place that weighs, voids and reissues tickets;
+Sales stores no ticket data. Plan: Phase A (A1 → A4), owner-approved 2026-11-14.
+
+- `GET /sales/deliveries/{id}` adds:
+  - `weighbridgeTickets`: every ticket of the truck, oldest first, including the void / reissue chain. Each ticket has
+    the number, status, plate, trailer, driver, both weighings (kg, time, source, operator), gross / tare / net,
+    `isManual`, `usedStoredTare`, tolerance and variance, the latest exception status, `voidReason`, `replacedById`,
+    `reissuedFromId`, the trip-feed status, `feedsTrip`, and a derived `verification`.
+  - `weighbridge {required, feedingTicketId}`.
+- `verification` is derived; there is no column. Values: `verified` (completed within tolerance),
+  `approved_exception` (completed after an approved tolerance exception), `pending_exception`, `in_progress`,
+  `cancelled`, `voided`.
+- `GET /sales/deliveries` (and the detail) add `weighTicketId`, `weighTicketNumber`, `weighNetKg`,
+  `weighTicketStatus`, `weighWithinTolerance` and `weighVerification`, all taken from the ticket that fed the truck.
+- New route `GET /sales/deliveries/{id}/weigh-tickets/{ticketId}/pdf` (`sales:delivery:read`):
+  - returns the ticket PDF stamped "COPY (view)";
+  - does not count as a print (`printCount` unchanged), and is audited as `reprint` with `copy: "view"`;
+  - returns 404 for a ticket of another delivery, 400 unless the ticket is completed or void.
+
+  No `weighbridge:*` permission is needed. The Fleet print route still needs `weighbridge:weigh`.
+- The delivery note shows "Weighbridge ticket: WBT-… / Gross · Tare · Net kg" (flagged when manual) instead of the
+  raw source id.
+- Web:
+  - a Weighbridge tab and a summary line in the delivery dialog;
+  - a ticket column and section on `/sales/deliveries`;
+  - the link to the weighing screen shows only with `weighbridge:read`.
+- No behaviour change: weighing, dispatch, stock issue and billing are unchanged. The weighed basis still bills at
+  dispatch; A4 moves invoiceability to after POD (D1).
+- Fix included: registering a ticket from a Sales delivery failed with "Sales order not found". The trip pre-fill put
+  the `SalesOrder` id into `salesOrderId`, but the check looked in the POS `"Order"` table. The check now accepts a
+  `SalesOrder` or, as before, a POS `Order`.
+- Tests: `SalesWeighbridgeIT` and `FleetDeliveryNoteWeighLineTest`.
+
+### Customer weight evidence on the proof of delivery (Phase A2, 2026-11-16, V496)
+
+The customer's own weighing of a delivered truck is **reconciliation evidence only**. It never changes the quarry
+ticket, stock, the delivered quantity or any document. It can raise **weight claims** (discrepancy kind `weight`)
+that go through the approval engine. Plan: Phase A §7 / §11.
+
+- Routes (`sales:delivery:confirm`):
+  - `POST /sales/deliveries/{id}/customer-weight`, Idempotency-Key honoured. Body `{grossKg?, tareKg?, netKg?,
+    ticketRef?, weighedAt?, notes?, allocations?: [{loadLineId, quantity, kg?}]}`. Only after the proof of delivery
+    (400 before). Returns the delivery plus `customerWeightResult` (outcome, Q, C, V, allowed variance, proposed /
+    applied split per line).
+  - `POST /sales/deliveries/{id}/customer-weight/evidence` `{dataUrl}`: an image or PDF of the customer's ticket.
+  - `POST /sales/deliveries/{id}/confirm` accepts the same object as `customerWeight`. It is recorded after the
+    damaged / rejected quantities, so the ceiling already excludes them.
+  - Fleet mirror: `POST /fleet/trips/{id}/customer-weight` (`fleet_trip:deliver`, Idempotency-Key required) and
+    multipart `POST /fleet/trips/{id}/customer-weight-evidence`.
+- `GET /sales/deliveries/{id}` adds `customerWeight` (null before any evidence): the evidence, the frozen comparison,
+  `evidenceUrls` and `claims` (`code, loadLineId, quantity, claimKg, status, decidedAt, decisionNotes, withdrawnAt`).
+- Comparison, frozen on `FleetProofOfDelivery` when recorded:
+  - Q = the net of the ticket that fed the trip (`quarryWeightSource = ticket`), else the trip's manual gross − tare
+    (`manual`); no Q → `no_comparison`.
+  - C = customer gross − tare (gross must exceed tare; a net that disagrees is refused), or the net alone.
+  - V = Q − C. T (allowed variance) = max(Q × pct, kg) of the ticket's station, overridden by the product's own
+    weighbridge setting on a single-product truck. On the manual path there is no station: the product's setting on a
+    single-product truck, else 0.
+- **Tolerance policy:** the tolerance is an **investigation trigger, not a deduction allowance.**
+  - |V| ≤ T → `within_tolerance`: no claim.
+  - Customer heavier beyond T → `heavier`: flagged only; never an excess claim, never stock.
+  - Customer lighter beyond T → `disputed`: a pending claim for the **full** V (not V − T).
+- Split of a disputed V over the lines (`WeightAllocation`, pure):
+  - E (eligible) = max(0, min(accepted, dispatched − returned − damaged)); cap = E − the line's other pending or
+    confirmed weight claims.
+  - Shares are proportional to E × kg per unit, capped, with the overflow redistributed over the other lines. They are
+    floored to 0.001 of the line unit (load-line columns are NUMERIC(14,3); the plan said 0.000001) and the remainder
+    goes by largest remainder, ties by line number.
+  - What fits no cap, or sits on a unit without a weight conversion, is `unallocatedVarianceKg`.
+  - One weighable line → applied automatically. Several lines, or a line without a weight factor → `awaiting_split`
+    with a proposal and **no claim**, until the user sends `allocations`. Allocations are refused when a line exceeds
+    its cap, when the total kg exceeds V, or when a line without a weight factor has no `kg`.
+- Claims and resubmission:
+  - A new submission makes the pending claims match the applied split: it raises, updates (same claim, audited) or
+    withdraws. A withdrawn claim is closed as rejected with `withdrawnAt` set and its approval request cancelled; it
+    is not a decision and does not block later corrections.
+  - Once any weight claim is confirmed or dismissed: 409 "Weight claim DSC-… is already confirmed/dismissed; the
+    customer weight can no longer change it".
+  - Weight claims never auto-approve, even when the discrepancy workflow is switched off.
+  - Deciding a claim uses the discrepancy flow. Since A3 (below) the billable quantity is the accepted bucket:
+    confirming a weight claim keeps it out, dismissing returns it. Invoiceability is A4.
+- Delivery note (PDF and on-screen preview): "Customer weight N kg (ticket …) · quarry Q kg · variance V kg —
+  outcome" under the receipt line.
+- Web: an optional "The customer weighed the truck" section in Confirm delivery, and a customer-weight panel on the
+  proof-of-delivery tab (comparison, outcome, claims, evidence). The panel's dialog records or corrects the weight
+  and confirms a split.
+- Migration `V496__pod_customer_weight.sql`: nullable POD columns plus CHECKs, discrepancy kind `weight`, `claimKg`,
+  `withdrawnAt`. V490–V495 are taken on other branches, so renumber at merge if needed. The entities caught up on 24
+  `FleetLoad` and 2 `FleetLoadLine` columns that were missing from the JPA model (G10).
+- Tests: `SalesCustomerWeightIT` (within tolerance on confirm; full-variance claim; update, withdraw and re-raise;
+  decided → 409; heavier via the Fleet route; cap and unallocated; multi-product awaiting split, refusals and
+  confirmed split; 403; before POD → 400; ticket, stock and delivered quantity unchanged) and `WeightAllocationTest`.
+
+### Quantity buckets, POD correction and line history (Phase A3, 2026-11-16, V497)
+
+Every dispatched quantity of a delivery line sits in exactly one bucket, so that we know what left the quarry, what
+the customer accepted and what is still argued about. Plan: Phase A §2, §3, §8, §9, §10. Fleet owns the facts and the
+calculation (`LoadLineQuantities`, pure; `LoadLineQuantityService`); Sales only reads them.
+
+- **Invariant** (per line, once the trip is delivered): dispatched D = accepted + returned R + damaged G + confirmed
+  shortage + pending dispute; excess X is reported beside it. With Δ = delivered at the POD:
+  - eligible E = max(0, min(Δ, D − R − G)); X = max(0, Δ − (D − R − G)); POD shortage S = max(0, D − R − G − Δ).
+  - Weight claims sit inside E (pending Wp, confirmed Wc; confirmed first, clamped at E).
+  - Shortage claims sit in S: confirmed (capped at S) → confirmed shortage; the rest of S stays **pending dispute**,
+    including a *dismissed* shortage claim. A dismissal says "we do not accept the shortfall", not "it arrived", so
+    only a POD correction moves it into accepted.
+  - accepted = E − Wp − Wc. `billableQty` is kept equal to accepted, written in the same transaction as every change.
+- **Claim model.** Claims raised before A3 keep `resolutionModel = 1` and their old meaning (a rejected shortage was
+  billed), so historic lines are not reclassified. New claims are model 2. Claim states for the API, via
+  `claimDecision`: pending, confirmed, dismissed, reconciled, withdrawn. A bare "rejected" is never shown.
+- **Damaged** is its own fact. The POD records it (`damagedQty` on the Fleet POD line; Sales `confirm` now passes it
+  through instead of folding it into the shortage) and raises a `damaged` claim. R + G may not exceed D: 400
+  "Returned and damaged quantities exceed what was dispatched on trip …".
+- **POD correction** `POST /sales/deliveries/{id}/pod-correction` (new permission `sales:delivery:pod_correct`,
+  granted by V497 to Administrator and to roles holding `fleet_dispatch:approve_discrepancy`; Idempotency-Key
+  honoured):
+  - Body `{lines: [{loadLineId, deliveredQty}], reason, evidence: [dataUrl image / PDF]}`. A reason and at least one
+    evidence file are required.
+  - The person who recorded the POD cannot correct it (403).
+  - It can only raise Δ (never above D − R − G), and only by as much as the line's open shortage claims. Those claims
+    are reconciled oldest first (`reconciledQty`; fully covered → status `reconciled`, approval request withdrawn).
+  - It updates the delivered quantity, the delivery-order line, the order fulfilment and the line history.
+- **Line history** `GET /sales/deliveries/{id}/lines/{lineId}/history` (`sales:delivery:read`): Fleet's immutable
+  `FleetLoadLineQuantityEvent` rows (dispatched, POD, returned, damaged, excess, POD corrected, customer weight, claim
+  opened / changed / confirmed / dismissed / reconciled / withdrawn), with who, when, reason and evidence. Lines from
+  before A3 get a reconstruction marked `reconstructed: true`. A4 adds invoice allocations.
+- **Reads.** `GET /sales/deliveries` and `/{id}` add `acceptedQty, pendingDisputedQty, confirmedShortageQty,
+  excessQty`. The detail also has these per line, plus `claims` (all kinds, with `claimDecision` and `openQty`).
+  `GET /sales/orders/{id}/delivery-summary` adds `accepted, pendingDisputed, confirmedShortage, excess` per line.
+- **Fleet routes:**
+  - `POST /fleet/delivery-discrepancies/{id}/reduce` lowers a pending weight claim, reason required; 0 withdraws it.
+  - `GET /fleet/reconciliation/findings` and `POST /fleet/reconciliation/run` (`fleet:report`).
+- **Operational reconciliation** (`FleetQuantityReconciliation`; nightly 03:40, ShedLock `fleet-quantity-reconcile`)
+  checks every delivered line for:
+  - the invariant, negative buckets and the weight ceiling;
+  - shortage, damaged and excess not covered by a claim;
+  - a missing stock issue or return receipt;
+  - history totals that differ from the line.
+
+  It repairs a drifted `billableQty` (a projection) and records each problem as an open `FleetReconciliationFinding`.
+  A run that no longer detects a finding resolves it. Tickets, POD rows, stock, journals and invoices are never
+  changed.
+- **Lock order** (plan §8): sales order → delivery order → trip → claims → order lines. Sales issue / confirm /
+  cancel / fail / return and the POD correction now take the sales-order row lock first.
+- **M-6 (Phase I2) closed here.** Dispatch issues the base quantity of a non-base-unit line cumulatively per
+  delivery-order line: round(issued before + this load) − round(issued before). Two loads of 10.37 t of 50-kg bags
+  issue 415 bags, not 2 × 207.
+- Late-dispute credits: confirming a shortage or weight claim on a Fleet-owned delivery order keeps the existing
+  draft credit note. Sales-order deliveries get theirs from the A4 invoicing owner.
+- Web: the proof-of-delivery tab shows a Quantities panel (buckets per line, claims with their decision, a history
+  dialog per line) and a "Correct proof of delivery" dialog (lines, reason, evidence files).
+- Migration `V497__delivery_quantity_buckets.sql`:
+  - claim kind `damaged` and status `reconciled`;
+  - claim columns `reconciledQty`, `resolutionModel` (existing rows 1, new rows 2; no UPDATE), `dismissReason`,
+    `evidenceFileIds`;
+  - tables `FleetLoadLineQuantityEvent` (immutable trigger) and `FleetReconciliationFinding`, with the V214
+    tenant-or-no-tenant RLS policy;
+  - the permission row.
+- Tests:
+  - `LoadLineQuantitiesTest`: the reviewer's example; weight claims refused above the ceiling (30 / 30 / 5 / 5);
+    partial reconciliation; dismissed shortage stays pending; legacy claims; 5 000 random cases for the invariant
+    and non-negativity.
+  - `SalesQuantityBucketsIT`: 30 = 25 + 2 + 1 + 1 + 1 through the API and the summary; reduce a weight claim; dismissed
+    → partial correction → full correction → reconciled, with 403 / SoD / evidence / ceiling refusals and the history
+    kinds; partial correction then confirm; reconciliation repair and resolve.
+
+### Invoiceability, invoice ownership and legacy Fleet invoices (Phase A4, 2026-11-16, V500)
+
+Plan: Phase A §5, §6, §10, §13 and decisions A-1, A-2, A-7. No GL posting rule and no accounting policy changes. A4 is
+built on its branch and **waits for the owner's financial review** (below) before it merges.
+
+*Owner review 2026-11-16 — returned for two corrections, both made:* (1) ordered-quantity billing is preserved for the
+`ordered` billing basis and the `ordered` invoice policy; (2) the legacy Fleet invoice review is approved through the
+kernel approval engine, not a direct check. A4 now has **no deviations**.
+
+**Financial / architectural review (the plan required one before code)**
+
+- *Double invoicing.* Before A4, the goods of a Sales-module order could be invoiced twice: by Sales
+  (`SalesInvoiceLink`) and by the order's Fleet delivery order (`FleetDeliveryInvoiceService`, when `goodsInvoiceId`
+  was still null, e.g. Fleet invoiced first). Fix: one owner per delivery-order source.
+  - A Sales-module order → Sales invoices the goods; its delivery order invoices transport charges only.
+  - Any other source → Fleet invoices the goods, through the new immutable ledger `FleetDeliveryInvoiceLine`.
+  - **Clarification of the plan:** source type `sales_order` also covers back-office orders of the orders module
+    (`/orders`). Those keep the Nest behaviour (Fleet invoices their goods, now through the ledger).
+    `DeliveryInvoicing.salesOwned` tells the two apart through `DeliverySourcePort`.
+- *Invoiceable quantity.* Invoiceable = billable − live allocations on both paths. Billable by billing basis:
+
+  | Billing basis / invoice policy | Billable (Sales) | Change in A4 |
+  |---|---|---|
+  | `accepted` basis | A3 accepted bucket: dispatched − returned − damaged − confirmed shortage, **pending disputes excluded** | none |
+  | `weighed` basis | the same accepted, undisputed quantity — only after the POD (A-2: the ticket proves what left the quarry) | was ticket net at dispatch |
+  | `ordered` basis | dispatched, capped at ordered − cancelled (ordered-quantity billing, owner decision 2026-11-16) | none |
+  | `ordered` invoice policy | ordered − cancelled, before delivery (commercial choice) | none |
+
+  - A draft reserves quantity; a cancelled or rejected document releases it; credit notes never restore it.
+  - Fleet-owned delivery orders invoice accepted − live ledger allocations (Fleet's accepted excludes pending disputes).
+- *Guards.*
+  - Service layer: `fleet/application/DeliveryInvoicing` is the only allocator. `allocateFleetGoods` locks the delivery
+    order and rechecks the quantity; `assertSalesGoods` locks the Sales order's delivery orders (lock order: sales
+    order → delivery orders) and refuses when Fleet holds goods on them.
+  - Post time: an `InvoicePostGuard` SPI in invoicing, implemented by Fleet and Sales, runs for drafts issued by a
+    delivery. A draft that now bills more than is invoiceable gets 409 "… can be invoiced; cancel this draft and
+    invoice the order again".
+  - `InvoiceLedgerWritersTest` (ArchUnit plus a source scan) limits who may call the allocator and who may insert into
+    `FleetDeliveryInvoiceLine` / `SalesInvoiceLink`.
+- *Creation paths audited* (plan §5 table):
+  - Sales regular and batch invoicing: guarded; batch skips blocked orders.
+  - Down payments: no goods.
+  - `FleetDeliveryInvoiceService`: guarded.
+  - Cash sales, opening balances, contracts: not delivery-sourced; unchanged.
+  - Manual `/invoices`: cannot link to a sales order.
+  - `SalesCollectionsService`: write-offs and interest only; no goods.
+- *Late customer evidence* (§13): a shortage or weight claim confirmed after invoicing produces a **draft** credit note
+  for min(confirmed, gross invoiced − credited − invoiceable). An `ordered`-policy line invoices its ordered quantity, so
+  a delivery claim never auto-credits it (returns and credit notes stay the route there).
+  - Sales owner: against the latest posted invoice of the line, linked as `credit_note`. The line carries no product,
+    so posting never moves stock, and the product category's income account is used, as on the existing Fleet path.
+  - Fleet owner: the existing Fleet credit-note path, capped by the ledger.
+  - A replayed event credits nothing more, because the live credit link already counts.
+
+**Legacy Fleet goods invoices on Sales orders (§6, A-7)**
+
+- *Detection is inline.* A live goods invoice on an order's delivery order is a historical Fleet invoice when it has
+  no `origin = sales` link to the order and no reconciled review. Such an order gets 409 "Sales order {n} has
+  historical Fleet invoices awaiting reconciliation" on regular invoicing. `GET /sales/orders/{id}/billing` shows
+  `blocked` and `legacyFleetInvoices`.
+- *Routes* (all `sales:billing:override`):
+  - `GET /sales/legacy-invoice-reviews`: the exception queue, and also the pre-flight report.
+  - `GET /sales/orders/{id}/legacy-invoices`: proposed matches (Fleet invoice line → order line, by product through
+    the delivery-order lines).
+  - `POST /sales/orders/{id}/legacy-invoices/{documentId}/review`: `{matches: [{documentLineId, orderLineId,
+    quantity}], notes}`. Each invoice line is matched once. A match above the order line's ordered quantity is refused
+    with "record an exception instead". The review becomes `submitted` and raises a **kernel approval-engine request**
+    (entity type `sales_legacy_invoice_review`; the default workflow "Legacy Fleet invoice review", step "Sales manager"
+    with `sales:billing:override` and distinct approvers, is created when the organisation has none). Re-submitting
+    withdraws the pending request and raises a new one. A switched-off workflow refuses the submission with 409 "The
+    approval workflow for legacy Fleet invoice reviews is switched off; …" — nothing is approved without a request.
+  - `POST /sales/legacy-invoice-reviews/{id}/approve` and `/reject` (Idempotency-Key honoured) decide that request
+    through the engine: permission, approval limits, distinct approvers and the self-approval refusal are the engine's
+    (the reviewer, as requester, gets 400 "You cannot approve a request you created"). An approved request writes one
+    `legacy_fleet` regular link per order line, carrying `legacyReviewId`, in the same transaction, recomputes the
+    invoiced quantities and unblocks the order; a rejected one returns the review to `open`. A decision taken in the
+    generic approvals inbox (`POST /approvals/{id}/decide`) is applied by `SalesLegacyInvoiceApprovalSubscriber`
+    (`approval.decided`, idempotent).
+  - `POST /sales/legacy-invoice-reviews/{id}/exception` `{notes}` withdraws a pending request, keeps the order blocked
+    and logs a warning; `/reopen` reopens it once the cause is resolved.
+- *Pre-flight query* (run read-only before deploying A4):
+
+  ```sql
+  SELECT o.number, f.code, d."documentNumber", d.status, dl.description, dl.quantity
+    FROM "FleetDeliveryOrder" f JOIN "SalesOrder" o ON o.id = f."sourceId"
+    JOIN "Document" d ON d.id = f."goodsInvoiceId" JOIN "DocumentLine" dl ON dl."documentId" = d.id
+   WHERE f."sourceType" = 'sales_order' AND d.status::text NOT IN ('cancelled', 'rejected')
+     AND NOT EXISTS (SELECT 1 FROM "SalesInvoiceLink" k WHERE k."orderId" = o.id AND k."documentId" = d.id)
+   ORDER BY o.number, f.code, dl."lineNumber";
+  ```
+
+**Financial reconciliation (§10).** Neither run changes invoices, journals or stock.
+
+- Sales (`POST /sales/billing/reconcile`, `sales:billing:override`, and nightly with the fulfilment run) records a
+  `SalesReconciliation` row with kind `financial`. It checks:
+  - over-invoiced lines: gross invoiced − credited above billable;
+  - credit above gross invoiced;
+  - duplicate regular links;
+  - unreconciled legacy invoices.
+- Fleet (`POST /fleet/reconciliation/run`) adds scope `financial` findings:
+  - `over_invoiced`: ledger allocations above accepted;
+  - `fleet_goods_on_sales_order`.
+
+**Migration `V500__delivery_invoiceability.sql`:**
+
+- `FleetDeliveryInvoiceLine`: immutable, with unique keys on the document line and on (document, delivery-order line).
+- `SalesLegacyInvoiceReview` (status open | submitted | reconciled | exception, `approvalRequestId`).
+- `SalesInvoiceLink` gains `documentLineId`, `origin` and `legacyReviewId`.
+- The partial unique index (documentId, orderLineId) WHERE kind = 'regular' is created only when no duplicates exist.
+  Otherwise a warning is raised and reconciliation reports them.
+- `SalesReconciliation.kind`.
+
+**Web:** the order's billing panel shows the block and hides "Create invoice" while blocked.
+
+**Tests:**
+
+- `SalesInvoiceabilityIT` (9):
+  - accepted only, with Fleet charges only on a Sales delivery order;
+  - weighed basis invoiceable only after the POD;
+  - ordered basis keeps ordered-quantity billing (dispatched, before and after a disputed POD);
+  - the post guard refuses until the claim is dismissed;
+  - late credit after posting, with the over-invoiced finding;
+  - legacy block → review → engine request → requester refused (400) → rejected → re-submitted → approved →
+    unblocked;
+  - legacy review approved from the generic approvals inbox (subscriber);
+  - a switched-off workflow refuses the submission;
+  - an exception withdraws the request and stays blocked; the routes need the permission.
+- `InvoiceLedgerWritersTest`.
+- `SalesWeighbridgeIT` now expects billable 0 before the POD.
+

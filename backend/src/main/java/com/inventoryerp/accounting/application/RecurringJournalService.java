@@ -6,7 +6,6 @@ import com.inventoryerp.accounting.application.GlAutomationCommands.TemplateInpu
 import com.inventoryerp.accounting.application.GlAutomationCommands.TemplateLine;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -209,7 +208,7 @@ public class RecurringJournalService {
         if (!"paused".equals(t.get("status"))) {
             throw ApiException.badRequest("Only a paused recurring entry can be resumed");
         }
-        LocalDate today = LocalDate.now(BusinessZone.get());
+        LocalDate today = LocalDate.now(AccountingDay.zone(jdbc));
         LocalDate next = (LocalDate) t.get("nextRunDate");
         if (next != null && next.isBefore(today)) {
             next = GlSchedules.nextAfter((LocalDate) t.get("startDate"), (String) t.get("frequency"),
@@ -237,7 +236,7 @@ public class RecurringJournalService {
     @Transactional
     public Map<String, Object> runNow(String id, String date) {
         require(id, false);
-        LocalDate when = date == null || date.isEmpty() ? LocalDate.now(BusinessZone.get()) : day(date);
+        LocalDate when = date == null || date.isEmpty() ? LocalDate.now(AccountingDay.zone(jdbc)) : day(date);
         return generate(id, when, "manual");
     }
 

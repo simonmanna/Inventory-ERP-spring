@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import {
   useAccount, useAccountCategories, useAccounts, useCreateAccount, useUpdateAccount,
-  type Account, type AccountCategory,
+  CONTROL_ACCOUNT_TYPES, type Account, type AccountCategory, type ControlAccountType,
 } from '@/features/accounting/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
@@ -61,6 +61,15 @@ const OVERRIDE_OPTIONS = [
 
 type OverrideValue = 'inherit' | 'yes' | 'no';
 
+const CONTROL_ACCOUNT_LABELS: Record<ControlAccountType, string> = {
+  ar: tx('Accounts receivable'),
+  ap: tx('Accounts payable'),
+  inventory: tx('Inventory'),
+  fixed_assets: tx('Fixed assets'),
+  payroll: tx('Payroll'),
+  tax: tx('Tax'),
+};
+
 const toOverride = (v: boolean | null | undefined): OverrideValue =>
   v === null || v === undefined ? 'inherit' : v ? 'yes' : 'no';
 const fromOverride = (v: OverrideValue): boolean | null =>
@@ -73,12 +82,16 @@ function humanize(value: string | null | undefined): string {
 
 // ── Schema ──────────────────────────────────────────────────────────────────
 
+/**
+ * `isGroup` is a form-only flag: the API stores `isPostable = !isGroup`. A group
+ * account is a structural node and must not have a category; a postable one must.
+ */
 const accountSchema = z.object({
   code: z.string().min(1, tx('Required')),
   name: z.string().min(1, tx('Required')),
-  categoryId: z.string().min(1, tx('Required')),
+  categoryId: z.string(),
   isGroup: z.boolean(),
-  isControlAccount: z.boolean(),
+  controlAccountType: z.string(),
   parentAccountId: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   cashFlowCategory: z.string().optional().nullable(),
@@ -87,6 +100,10 @@ const accountSchema = z.object({
   allowReconciliation: z.enum(['inherit', 'yes', 'no']),
   allowManualPosting: z.enum(['inherit', 'yes', 'no']),
   allowBudgeting: z.enum(['inherit', 'yes', 'no']),
+}).superRefine((v, ctx) => {
+  if (!v.isGroup && !v.categoryId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['categoryId'], message: tx('Required') });
+  }
 });
 
 type AccountFormValues = z.infer<typeof accountSchema>;
@@ -157,6 +174,27 @@ function CategorySelect({
   );
 }
 
+/** Control account type picker (`controlAccountType`); NONE = not a control account. */
+function ControlTypeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label>{tx('Control account')}</Label>
+      <Select value={value || NONE} onValueChange={onChange}>
+        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NONE}>{tx('Not a control account')}</SelectItem>
+          {CONTROL_ACCOUNT_TYPES.map((t) => (
+            <SelectItem key={t} value={t}>{CONTROL_ACCOUNT_LABELS[t]}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        {tx('Backed by a subledger (e.g. AR / AP / stock). Manual journals and opening balances may refuse it.')}
+      </p>
+    </div>
+  );
+}
+
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export function AccountDetailPage() {
@@ -176,7 +214,7 @@ export function AccountDetailPage() {
   const form = useForm<AccountFormValues>({
     resolver: zodResolver(accountSchema),
     defaultValues: {
-      code: '', name: '', categoryId: '', isGroup: false, isControlAccount: false,
+      code: '', name: '', categoryId: '', isGroup: false, controlAccountType: NONE,
       parentAccountId: null, description: null,
       cashFlowCategory: null, bankName: null, accountNumber: null,
       allowReconciliation: 'inherit', allowManualPosting: 'inherit', allowBudgeting: 'inherit',
@@ -185,6 +223,7 @@ export function AccountDetailPage() {
 
   const { reset, register, watch, setValue, formState: { errors } } = form;
   const watchCategoryId = watch('categoryId') || '';
+  const watchIsGroup = watch('isGroup');
 
   const categoryList = categories.data ?? [];
   const selectedCategory = categoryList.find((c) => c.id === watchCategoryId);
@@ -196,8 +235,8 @@ export function AccountDetailPage() {
         code: account.data.code,
         name: account.data.name,
         categoryId: account.data.categoryId ?? '',
-        isGroup: account.data.isGroup,
-        isControlAccount: account.data.isControlAccount ?? false,
+        isGroup: account.data.isPostable === false,
+        controlAccountType: account.data.controlAccountType ?? NONE,
         parentAccountId: account.data.parentAccountId ?? null,
         description: account.data.description ?? null,
         cashFlowCategory: account.data.cashFlowCategory ?? null,
@@ -212,15 +251,10 @@ export function AccountDetailPage() {
 
   const allAccountList = (allAccounts.data?.data ?? []) as Account[];
   /**
-   * A parent must be a group account of the same classification — the same rule
-   * the API enforces, mirrored here so the picker cannot offer an invalid choice.
+   * Only group (non-postable) accounts can have children — the same rule the API
+   * enforces, mirrored here so the picker cannot offer an invalid choice.
    */
-  const parentOptions = allAccountList.filter(
-    (p) =>
-      p.id !== id &&
-      p.isGroup &&
-      (!selectedCategory || p.category?.classification === selectedCategory.classification),
-  );
+  const parentOptions = allAccountList.filter((p) => p.id !== id && p.isPostable === false);
 
   const isPending = createAccount.isPending || updateAccount.isPending;
 
@@ -230,14 +264,19 @@ export function AccountDetailPage() {
       allowManualPosting: fromOverride(values.allowManualPosting),
       allowBudgeting: fromOverride(values.allowBudgeting),
     };
+    const controlAccountType =
+      values.isGroup || values.controlAccountType === NONE
+        ? null
+        : (values.controlAccountType as ControlAccountType);
     try {
       if (isNew) {
         await createAccount.mutateAsync({
           code: values.code,
           name: values.name,
-          categoryId: values.categoryId,
-          isGroup: values.isGroup,
-          isControlAccount: values.isControlAccount,
+          // A group account is created without a category (the API requires one only for postable accounts).
+          ...(values.isGroup ? {} : { categoryId: values.categoryId }),
+          isPostable: !values.isGroup,
+          ...(controlAccountType ? { controlAccountType } : {}),
           parentAccountId: values.parentAccountId || undefined,
           description: values.description || undefined,
           cashFlowCategory: values.cashFlowCategory || undefined,
@@ -248,9 +287,10 @@ export function AccountDetailPage() {
         await updateAccount.mutateAsync({
           id,
           name: values.name,
-          categoryId: values.categoryId,
-          isGroup: values.isGroup,
-          isControlAccount: values.isControlAccount,
+          // A group account must not carry a category; explicit null clears it.
+          categoryId: values.isGroup ? null : values.categoryId,
+          isPostable: !values.isGroup,
+          controlAccountType,
           parentAccountId: values.parentAccountId || null,
           description: values.description || null,
           cashFlowCategory: values.cashFlowCategory || undefined,
@@ -306,10 +346,10 @@ export function AccountDetailPage() {
                     <Badge variant={a.isActive ? 'default' : 'secondary'} className="text-xs">
                       {a.isActive ? tx('Active') : tx('Inactive')}
                     </Badge>
-                    {a.isGroup && (
+                    {a.isPostable === false && (
                       <Badge variant="outline" className="text-xs">{tx('Group')}</Badge>
                     )}
-                    {a.isControlAccount && (
+                    {a.controlAccountType && (
                       <Badge variant="outline" className="text-xs border-sky-300 text-sky-700">{tx('Control')}</Badge>
                     )}
                     {a.deprecatedAt && (
@@ -356,17 +396,25 @@ export function AccountDetailPage() {
                     {errors.code && <p className="text-sm text-destructive">{errors.code.message as string}</p>}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="categoryId">{tx('Category *')}</Label>
-                    <CategorySelect
-                      id="categoryId"
-                      categories={categoryList}
-                      value={watchCategoryId}
-                      onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
-                    />
+                    <Label htmlFor="categoryId">{watchIsGroup ? tx('Category') : tx('Category *')}</Label>
+                    {watchIsGroup ? (
+                      <p className="text-sm text-muted-foreground pt-2">{tx('None — group account')}</p>
+                    ) : (
+                      <CategorySelect
+                        id="categoryId"
+                        categories={categoryList}
+                        value={watchCategoryId}
+                        onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
+                      />
+                    )}
                     {errors.categoryId && <p className="text-sm text-destructive">{errors.categoryId.message as string}</p>}
                   </div>
                 </div>
-                {selectedCategory && (
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="h-4 w-4 rounded border-input" {...register('isGroup')} />
+                  <span>{tx('Group account (cannot post journal lines directly)')}</span>
+                </label>
+                {!watchIsGroup && selectedCategory && (
                   <div className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground space-y-1">
                     <p>
                       <span className="font-medium text-foreground">{humanize(selectedCategory.normalBalance)}{tx('-normal')}</span>
@@ -399,14 +447,16 @@ export function AccountDetailPage() {
                     {tx('Hierarchy is for reporting and navigation only. A parent must be a group account with the same classification.')}
                   </p>
                 </div>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" className="h-4 w-4 rounded border-input" {...register('isGroup')} />
-                  <span>{tx('Group account (cannot post journal lines directly)')}</span>
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" className="h-4 w-4 rounded border-input" {...register('isControlAccount')} />
-                  <span>{tx('Control account (backed by a subledger, e.g. AR / AP / stock)')}</span>
-                </label>
+                {watchIsGroup ? (
+                  <p className="text-xs text-muted-foreground">
+                    {tx('A group account is a heading in the chart: it has no category or control type and takes sub-accounts.')}
+                  </p>
+                ) : (
+                  <ControlTypeSelect
+                    value={watch('controlAccountType')}
+                    onChange={(v) => setValue('controlAccountType', v)}
+                  />
+                )}
               </CardContent>
             </Card>
 
@@ -457,15 +507,22 @@ export function AccountDetailPage() {
                       <InfoRow label={tx('Code')} value={<span className="font-mono">{a.code}</span>} />
                       <InfoRow label={tx('Name')} value={<Input className="h-8 text-sm" {...register('name')} />} />
                       <InfoRow label={tx('Category')} value={
-                        <CategorySelect
-                          categories={categoryList}
-                          value={watchCategoryId}
-                          onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
-                        />
+                        watchIsGroup ? (
+                          <span className="text-muted-foreground">{tx('None — group account')}</span>
+                        ) : (
+                          <>
+                            <CategorySelect
+                              categories={categoryList}
+                              value={watchCategoryId}
+                              onChange={(v) => setValue('categoryId', v, { shouldValidate: true })}
+                            />
+                            {errors.categoryId && <p className="text-sm text-destructive">{errors.categoryId.message as string}</p>}
+                          </>
+                        )
                       } />
                       <InfoRow label={tx('Parent')} value={a.parent ? `${a.parent.code} — ${a.parent.name}` : '—'} />
                       <InfoRow label={tx('Children')} value={a.children?.length ? `${a.children.length} sub-account(s)` : '—'} />
-                      <InfoRow label={tx('Group')} value={a.isGroup ? 'Yes — summary account' : 'No — postable account'} />
+                      <InfoRow label={tx('Group')} value={a.isPostable === false ? 'Yes — summary account' : 'No — postable account'} />
                       <InfoRow label={tx('Status')} value={
                         <Badge variant={a.isActive ? 'default' : 'secondary'} className="text-xs">
                           {a.isActive ? tx('Active') : tx('Inactive')}
@@ -493,7 +550,7 @@ export function AccountDetailPage() {
                       <InfoRow label={tx('Report Section')} value={humanize(a.category?.reportSection)} />
                       <InfoRow label={tx('Contra Account')} value={a.category?.isContra ? 'Yes' : 'No'} />
                       <InfoRow label={tx('Cash Equivalent')} value={a.category?.isCashEquivalent ? 'Yes' : 'No'} />
-                      <InfoRow label={tx('Control Account')} value={a.isControlAccount ? 'Yes' : 'No'} />
+                      <InfoRow label={tx('Control Account')} value={a.controlAccountType ? CONTROL_ACCOUNT_LABELS[a.controlAccountType] ?? a.controlAccountType : 'No'} />
                       <InfoRow label={tx('Default Account')} value={a.isDefault ? 'Yes' : 'No'} />
                       <InfoRow label={tx('System Account')} value={a.isSystem ? 'Yes' : 'No'} />
                     </dl>
@@ -545,10 +602,16 @@ export function AccountDetailPage() {
                     <input type="checkbox" className="h-4 w-4 rounded border-input" {...register('isGroup')} />
                     <span>{tx('Group account (cannot post journal lines directly)')}</span>
                   </label>
-                  <label className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="checkbox" className="h-4 w-4 rounded border-input" {...register('isControlAccount')} />
-                    <span>{tx('Control account (backed by a subledger)')}</span>
-                  </label>
+                  {watchIsGroup ? (
+                    <p className="text-xs text-muted-foreground">
+                      {tx('A group account has no category or control type; they are cleared on save.')}
+                    </p>
+                  ) : (
+                    <ControlTypeSelect
+                      value={watch('controlAccountType')}
+                      onChange={(v) => setValue('controlAccountType', v)}
+                    />
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

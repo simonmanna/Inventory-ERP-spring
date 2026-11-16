@@ -95,17 +95,19 @@ public class SeedRunner implements ApplicationRunner {
     private final List<SeedContributor> contributors;
     private final boolean constructionDemo;
     private final List<ConstructionDemoPart> constructionParts;
+    private final List<DemoOrganization> demoOrganizations;
 
     public SeedRunner(JdbcClient jdbc, PasswordService passwords, PlatformTransactionManager txm,
             @Value("${SEED_ADMIN_PASSWORD:}") String adminPassword, List<SeedContributor> contributors,
             @Value("${SEED_CONSTRUCTION_DEMO:false}") boolean constructionDemo,
-            List<ConstructionDemoPart> constructionParts) {
+            List<ConstructionDemoPart> constructionParts, List<DemoOrganization> demoOrganizations) {
         this.jdbc = jdbc;
         this.contributors = contributors == null ? List.of()
                 : contributors.stream().sorted(java.util.Comparator.comparingInt(SeedContributor::order)).toList();
         this.constructionDemo = constructionDemo;
         this.constructionParts = constructionParts == null ? List.of() : constructionParts.stream()
                 .sorted(java.util.Comparator.comparingInt(ConstructionDemoPart::constructionOrder)).toList();
+        this.demoOrganizations = demoOrganizations == null ? List.of() : List.copyOf(demoOrganizations);
         this.passwords = passwords;
         this.tx = new TransactionTemplate(txm);
         this.adminPassword = adminPassword == null || adminPassword.isEmpty() ? "Admin@123" : adminPassword;
@@ -116,16 +118,48 @@ public class SeedRunner implements ApplicationRunner {
         long orgs = jdbc.sql("SELECT count(*) FROM \"Organization\"").query(Long.class).single();
         if (orgs > 0) {
             log.warn("Seed skipped: the Organization table is not empty ({} row(s)).", orgs);
-            return;
+        } else {
+            tx.executeWithoutResult(s -> seed());
+            log.info("Seed complete. Login -> organization: \"DEMO\", email: \"admin@demo.test\", password: \"{}\"",
+                    adminPassword.equals("Admin@123") ? "Admin@123" : "<SEED_ADMIN_PASSWORD>");
+            if (constructionDemo) {
+                seedConstructionOrganization();
+                log.info("Construction demo complete. Login -> organization: \"{}\", email:"
+                        + " \"admin@construction.test\"", CONSTRUCTION_ORG_CODE);
+            }
         }
-        tx.executeWithoutResult(s -> seed());
-        log.info("Seed complete. Login -> organization: \"DEMO\", email: \"admin@demo.test\", password: \"{}\"",
-                adminPassword.equals("Admin@123") ? "Admin@123" : "<SEED_ADMIN_PASSWORD>");
-        if (constructionDemo) {
-            seedConstructionOrganization();
-            log.info("Construction demo complete. Login -> organization: \"{}\", email: \"admin@construction.test\"",
-                    CONSTRUCTION_ORG_CODE);
+        for (DemoOrganization demo : demoOrganizations) {
+            if (demo.enabled()) {
+                seedDemoOrganization(demo);
+            }
         }
+    }
+
+    /**
+     * A {@link DemoOrganization}: its organization with the construction demo's base in one transaction, then
+     * {@link DemoOrganization#seed} in its tenant. Skipped when the code exists, so it can be switched on for a
+     * database in use. Returns the organization id.
+     */
+    String seedDemoOrganization(DemoOrganization demo) {
+        String existing = jdbc.sql("SELECT id FROM \"Organization\" WHERE code = ?").param(demo.code())
+                .query(String.class).optional().orElse(null);
+        if (existing != null) {
+            log.warn("Demo organization {} skipped: it exists.", demo.code());
+            return existing;
+        }
+        String orgId = uuid();
+        String adminId = tx.execute(s -> {
+            currency("USD", "$", "US Dollar", 2);
+            currency("UGX", "USh", "Ugandan Shilling", 0);
+            return base(orgId, demo.code(), demo.name(), demo.emailDomain());
+        });
+        TenantContext.run(TenantStore.user(orgId, adminId), () -> {
+            TenantContext.setPermissions(List.copyOf(Permissions.ALL));
+            demo.seed(orgId);
+        });
+        log.info("Demo organization complete. Login -> organization: \"{}\", email: \"admin@{}\"", demo.code(),
+                demo.emailDomain());
+        return orgId;
     }
 
     /**
@@ -142,7 +176,8 @@ public class SeedRunner implements ApplicationRunner {
             return existing;
         }
         String orgId = uuid();
-        String adminId = tx.execute(s -> constructionBase(orgId));
+        String adminId = tx.execute(s -> base(orgId, CONSTRUCTION_ORG_CODE, "Construction Materials Demo",
+                "construction.test"));
         TenantStore store = TenantStore.user(orgId, adminId);
         for (ConstructionDemoPart part : constructionParts) {
             TenantContext.run(store, () -> {
@@ -153,17 +188,20 @@ public class SeedRunner implements ApplicationRunner {
         return orgId;
     }
 
-    private String constructionBase(String orgId) {
+    /** A construction-style organization: roles, users {@code @<domain>}, taxes, periods, branches, base data. */
+    private String base(String orgId, String code, String name, String domain) {
         jdbc.sql("""
                         INSERT INTO "Organization" (id, code, name, "currencyCode", timezone, "updatedAt")
-                        VALUES (?, ?, 'Construction Materials Demo', 'UGX', 'Africa/Kampala', now())""")
-                .params(orgId, CONSTRUCTION_ORG_CODE)
+                        VALUES (?, ?, ?, 'UGX', 'Africa/Kampala', now())""")
+                .params(orgId, code, name)
                 .update();
         jdbc.sql("SELECT set_config('app.org_id', ?, true)").param(orgId).query(String.class).single();
         String adminRoleId = role(orgId, "Administrator", "Full platform access", Permissions.ALL);
-        String adminId = user(orgId, "admin@construction.test", passwords.hash(adminPassword), "Admin", "Construction",
+        String adminId = user(orgId, "admin@" + domain, passwords.hash(adminPassword), "Admin", "Construction",
                 null, null);
         link(adminRoleId, adminId);
+        // A try-everything account with every permission and the shared demo password, for people testing the demo.
+        link(adminRoleId, user(orgId, "demo@" + domain, passwords.hash("Demo@123"), "Demo", "User", null, null));
         jdbc.sql("""
                         INSERT INTO "Tax" (id, "organizationId", name, code, type, rate, "updatedAt")
                         VALUES (?, ?, 'No Tax', 'NOTAX', 'vat', 0, now()), (?, ?, 'VAT 18%', 'VAT18', 'vat', 18, now())""")
@@ -190,8 +228,8 @@ public class SeedRunner implements ApplicationRunner {
         branches.put("KLA", branch(orgId, "KLA", "Kampala depot"));
         for (ConstructionDemoRoles.Staff s : ConstructionDemoRoles.STAFF) {
             String roleId = role(orgId, s.roleName(), s.description(), s.permissions());
-            String id = user(orgId, s.email(), passwords.hash("Demo@123"), s.firstName(), s.lastName(), null,
-                    branches.get(s.branchCode()));
+            String id = user(orgId, s.email().replace("@construction.test", "@" + domain), passwords.hash("Demo@123"),
+                    s.firstName(), s.lastName(), null, branches.get(s.branchCode()));
             link(roleId, id);
         }
         for (SeedContributor c : contributors) {
