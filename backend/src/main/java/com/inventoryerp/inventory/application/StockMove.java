@@ -97,6 +97,18 @@ public final class StockMove {
     String traceUomId;
     BigDecimal traceFactor;
 
+    /**
+     * Phase A A3 / I2 M-6: the exact base-unit quantity of an issue whose document quantity is in another unit, when
+     * the caller rounds cumulatively (per delivery-order line, not per load). Null = convert {@code quantity}.
+     */
+    public BigDecimal baseQuantity;
+
+    /** See {@link #baseQuantity}. */
+    public StockMove baseQuantity(BigDecimal v) {
+        this.baseQuantity = v;
+        return this;
+    }
+
     public static StockMove of(String productId, String locationId, BigDecimal quantity) {
         StockMove m = new StockMove();
         m.productId = productId;

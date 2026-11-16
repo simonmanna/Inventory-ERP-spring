@@ -140,6 +140,21 @@ public class SalesDeliveryController {
         return deliveries.issue(id);
     }
 
+    /** Phase A A3: authorised correction of a recorded proof of delivery (evidence, reason, not the recorder). */
+    @PostMapping("/deliveries/{id}/pod-correction")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DELIVERY_POD_CORRECT)
+    public Map<String, Object> podCorrection(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deliveries.correctPod(id, SalesController.body(b));
+    }
+
+    /** Phase A A3: quantity history of one delivery line (facts, claims, decisions, corrections, invoices). */
+    @GetMapping("/deliveries/{id}/lines/{lineId}/history")
+    @RequirePermissions(Permissions.SALES__DELIVERY_READ)
+    public Map<String, Object> lineHistory(@PathVariable String id, @PathVariable String lineId) {
+        return deliveries.lineHistory(id, lineId);
+    }
+
     @PostMapping("/deliveries/{id}/confirm")
     @Idempotent
     @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)

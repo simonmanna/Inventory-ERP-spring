@@ -775,6 +775,8 @@ export const PERMISSIONS = {
     deliveryDispatch: 'sales:delivery:dispatch',
     /// Record proof of delivery, a failed attempt or a returned load.
     deliveryConfirm: 'sales:delivery:confirm',
+    /// Correct a recorded proof of delivery, with evidence (Phase A A3; not the POD recorder).
+    deliveryPodCorrect: 'sales:delivery:pod_correct',
     /// Cancel a delivery that has not left.
     deliveryCancel: 'sales:delivery:cancel',
     /// Customer profile, duplicates, export (SG-5).

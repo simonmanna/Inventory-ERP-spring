@@ -19,6 +19,39 @@ export interface DeliveryLine {
   id: string; deliveryOrderLineId: string; orderLineId: string | null; productId: string; productName: string | null;
   uomCode: string | null; plannedQty: number; loadedQty: number | null; dispatchedQty: number | null; deliveredQty: number | null;
   returnedQty: number | null; damagedQty: number; rejectedQty: number; shortageQty: number; batchNumber: string | null;
+  /** Phase A A3 buckets (plan §3): dispatched = accepted + returned + damaged + confirmed shortage + pending dispute. */
+  acceptedQty?: number; pendingDisputedQty?: number; confirmedShortageQty?: number; excessQty?: number;
+  weightPendingQty?: number; weightConfirmedQty?: number;
+}
+
+/** Decision of a delivery claim; never shown as a bare "rejected". */
+export type ClaimDecision = 'pending' | 'confirmed' | 'dismissed' | 'reconciled' | 'withdrawn';
+
+export interface DeliveryClaim {
+  id: string; code: string; loadLineId: string; kind: 'shortage' | 'excess' | 'returned' | 'weight' | 'damaged';
+  reason: string | null; status: string; quantity: number | string; reconciledQty: number | string; openQty: number | string;
+  claimKg: number | string | null; resolutionModel: number; withdrawnAt: string | null; decidedAt: string | null;
+  decisionNotes: string | null; dismissReason: string | null; createdAt: string; claimDecision: ClaimDecision;
+}
+
+export interface LineHistoryEvent {
+  id: string | null; kind: string; bucket: string | null; previousQty: number | string | null; newQty: number | string | null;
+  deltaQty: number | string | null; reason: string | null; userName: string | null; at: string;
+  evidenceFileIds: string[]; refType: string | null; refId: string | null; reconstructed: boolean;
+}
+
+export interface LineHistory {
+  deliveryId: string;
+  line: { id: string; productName: string | null; uomCode: string | null; dispatchedQty: number | null; deliveredQty: number | null;
+    buckets: Record<string, unknown> | null };
+  events: LineHistoryEvent[];
+}
+
+export function useLineHistory(deliveryId: string, lineId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'line-history', deliveryId, lineId], enabled: !!lineId,
+    queryFn: async () => (await api.get<LineHistory>(`/sales/deliveries/${deliveryId}/lines/${lineId}/history`)).data,
+  });
 }
 
 export interface SalesDelivery {
@@ -47,6 +80,9 @@ export interface SalesDelivery {
   photos?: Array<{ id: string; fileId: string; caption: string | null; createdAt: string; url: string | null }>;
   /** Phase A A2: the customer's weighing (evidence + the comparison frozen when it was recorded) and its claims. */
   customerWeight?: CustomerWeight | null;
+  /** Phase A A3: bucket totals of the delivery and (detail) its claims with their decision. */
+  acceptedQty?: number; pendingDisputedQty?: number; confirmedShortageQty?: number; excessQty?: number;
+  claims?: DeliveryClaim[];
 }
 
 export type WeightOutcome = 'within_tolerance' | 'heavier' | 'disputed' | 'awaiting_split' | 'no_comparison';

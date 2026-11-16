@@ -105,6 +105,21 @@ public class FleetDeliveryDiscrepancy {
     @Column(name = "withdrawnAt")
     private Instant withdrawnAt;
 
+    // Phase A A3 (V497): claim model 2.
+
+    @Column(name = "reconciledQty", nullable = false, precision = 14, scale = 3)
+    private BigDecimal reconciledQty;
+
+    @Column(name = "resolutionModel", nullable = false)
+    private Short resolutionModel;
+
+    @Column(name = "dismissReason")
+    private String dismissReason;
+
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.ARRAY)
+    @Column(name = "evidenceFileIds", nullable = false)
+    private java.util.List<String> evidenceFileIds;
+
     public String getId() {
         return id;
     }
@@ -114,5 +129,21 @@ public class FleetDeliveryDiscrepancy {
 
     public Instant getWithdrawnAt() {
         return withdrawnAt;
+    }
+
+    public BigDecimal getReconciledQty() {
+        return reconciledQty;
+    }
+
+    public Short getResolutionModel() {
+        return resolutionModel;
+    }
+
+    public String getDismissReason() {
+        return dismissReason;
+    }
+
+    public java.util.List<String> getEvidenceFileIds() {
+        return evidenceFileIds;
     }
 }

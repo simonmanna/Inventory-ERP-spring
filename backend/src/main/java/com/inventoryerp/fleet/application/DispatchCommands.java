@@ -200,7 +200,16 @@ public final class DispatchCommands {
             @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal returnedQty,
             @OneOf({"spillage", "weighing_variance", "damaged", "customer_rejected", "wrong_product", "theft",
                 "site_closed", "other"}) String reason,
-            @Size(max = 1000) String notes) {}
+            @Size(max = 1000) String notes,
+            // Phase A A3: damaged at the site (a physical fact of its own, with a "damaged" claim).
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal damagedQty) {
+
+        /** Without a damaged quantity (callers before Phase A A3). */
+        public PodLineInput(String loadLineId, BigDecimal deliveredQty, BigDecimal returnedQty, String reason,
+                String notes) {
+            this(loadLineId, deliveredQty, returnedQty, reason, notes, null);
+        }
+    }
 
     /** Proof of delivery; {@code signature} is a {@code data:image/png;base64,…} URL from the signature pad. */
     public record PodInput(
@@ -260,6 +269,11 @@ public final class DispatchCommands {
     // ------------------------------------------------------------------ discrepancies
 
     public record DecisionInput(@Size(max = 1000) String notes) {}
+
+    /** Phase A A3: reduce a pending weight claim to {@code quantity} (0 withdraws it); reason required. */
+    public record ReduceClaimInput(
+            @NotNull @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal quantity,
+            @NotBlank @Size(max = 1000) String reason) {}
 
     public record DiscrepancyQuery(String status, String kind, String deliveryOrderId, String partnerId,
             Integer page, Integer pageSize) {}

@@ -3,6 +3,8 @@ package com.inventoryerp.fleet.web.dispatch;
 import com.inventoryerp.fleet.application.DispatchCommands.DecisionInput;
 import com.inventoryerp.fleet.application.DispatchCommands.DiscrepancyQuery;
 import com.inventoryerp.fleet.application.FleetDiscrepancyService;
+import com.inventoryerp.fleet.application.FleetQuantityReconciliation;
+import com.inventoryerp.fleet.application.DispatchCommands.ReduceClaimInput;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
@@ -38,16 +40,45 @@ import org.springframework.web.bind.annotation.RestController;
 public class FleetDiscrepancyController {
 
     private final FleetDiscrepancyService discrepancies;
+    private final FleetQuantityReconciliation reconciliation;
 
-    public FleetDiscrepancyController(FleetDiscrepancyService discrepancies) {
+    public FleetDiscrepancyController(FleetDiscrepancyService discrepancies,
+            FleetQuantityReconciliation reconciliation) {
         this.discrepancies = discrepancies;
+        this.reconciliation = reconciliation;
+    }
+
+    /** Phase A A3: reduce a pending weight claim (reason required); 0 withdraws it. */
+    @PostMapping("/delivery-discrepancies/{id}/reduce")
+    @RequirePermissions(Permissions.FLEET_DISPATCH__APPROVE_DISCREPANCY)
+    public Map<String, Object> reduce(@PathVariable String id, @Valid @RequestBody ReduceClaimInput dto) {
+        return discrepancies.reduceClaim(id, dto.quantity(), dto.reason());
+    }
+
+    /** Phase A A3 (plan §10): reconciliation findings (operational / financial). */
+    @GetMapping("/reconciliation/findings")
+    @RequirePermissions(Permissions.FLEET__REPORT)
+    public PageResult<Map<String, Object>> findings(
+            @RequestParam(required = false) @OneOf({"operational", "financial"}) String scope,
+            @RequestParam(required = false) @OneOf({"open", "resolved"}) String status,
+            @RequestParam(required = false) @Min(1) Integer page,
+            @RequestParam(required = false) @Min(1) @Max(200) Integer pageSize) {
+        return reconciliation.findings(scope, status, page, pageSize);
+    }
+
+    /** Phase A A3: run the operational reconciliation now (the nightly job runs it at 03:40). */
+    @PostMapping("/reconciliation/run")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.FLEET__REPORT)
+    public Map<String, Object> runReconciliation() {
+        return reconciliation.run();
     }
 
     @GetMapping("/delivery-discrepancies")
     @RequirePermissions(Permissions.FLEET_DISPATCH__READ)
     public PageResult<Map<String, Object>> list(
-            @RequestParam(required = false) @OneOf({"pending", "approved", "rejected"}) String status,
-            @RequestParam(required = false) @OneOf({"shortage", "excess", "returned"}) String kind,
+            @RequestParam(required = false) @OneOf({"pending", "approved", "rejected", "reconciled"}) String status,
+            @RequestParam(required = false) @OneOf({"shortage", "excess", "returned", "weight", "damaged"}) String kind,
             @RequestParam(required = false) String deliveryOrderId,
             @RequestParam(required = false) String partnerId,
             @RequestParam(required = false) @Min(1) Integer page,
