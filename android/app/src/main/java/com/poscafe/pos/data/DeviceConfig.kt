@@ -223,6 +223,15 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
         get() = prefs.getInt("catalogUnitsVersion", 0)
         set(v) = prefs.edit().putInt("catalogUnitsVersion", v).apply()
 
+    /**
+     * Decimal places the server rounds line tax to (the organisation currency's
+     * `decimalPlaces`, sent with every pull). 2 until a server has told us; -1 =
+     * the server has no currency and rounds to 6 places.
+     */
+    var taxScale: Int
+        get() = prefs.getInt("taxScale", 2)
+        set(v) = prefs.edit().putInt("taxScale", v).apply()
+
     /** Queued legacy menuItem.upsert payloads already rescaled (one-shot). */
     var legacyMenuQueueRescaled: Boolean
         get() = prefs.getBoolean("legacyMenuQueueRescaled", false)

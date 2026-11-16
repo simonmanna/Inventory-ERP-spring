@@ -43,7 +43,12 @@ data class PullResponse(
      * must keep working against one that does not.
      */
     val license: LicenseView? = null,
+    /** Phase I6: organisation currency; its decimal places are the server's tax rounding scale. */
+    val currency: CurrencyView? = null,
 )
+
+@Serializable
+data class CurrencyView(val code: String, val decimalPlaces: Int? = null)
 
 /**
  * What a till is told about the licence. Deliberately small: it needs to know whether it may take a

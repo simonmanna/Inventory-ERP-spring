@@ -86,13 +86,21 @@ class StockRepository @Inject constructor(
      * Product on-hand as the till should show it: the server's figure at this
      * location plus device movements made since the last pull (not yet in it).
      */
-    suspend fun productOnHand(): Map<String, Double> {
+    suspend fun productOnHand(): Map<String, Double> =
+        variantOnHand().entries.groupBy({ it.key.first }, { it.value }).mapValues { (_, qs) -> qs.sum() }
+
+    /**
+     * Phase I6: on-hand per (productId, variantId) — a product with variants
+     * keeps one quant per variant on the server; null = the product itself.
+     */
+    suspend fun variantOnHand(): Map<Pair<String, String?>, Double> {
         val loc = location() ?: return emptyMap()
         val lastPull = syncStateDao.get()?.lastPullAt ?: 0L
-        val server = refs.stockAtNow(loc.id).associate { it.productId to it.quantity }
+        val server = refs.allStockAtNow(loc.id).groupBy({ it.productId to it.variantId }, { it.quantity })
+            .mapValues { (_, qs) -> qs.sum() }
         val local = inventoryDao.since(lastPull)
             .filter { it.productId != null }
-            .groupBy { it.productId!! }
+            .groupBy { it.productId!! to it.variantId }
             .mapValues { (_, ms) -> ms.sumOf { it.qtyDelta } }
         return (server.keys + local.keys).associateWith { (server[it] ?: 0.0) + (local[it] ?: 0.0) }
     }
@@ -111,6 +119,7 @@ class StockRepository @Inject constructor(
         supplierId: String?,
         reason: String?,
         approval: Approval?,
+        variantId: String? = null,
     ) {
         require(qty > 0) { "Enter a quantity" }
         val actor = auth.current?.userId ?: error("Sign in to record stock")
@@ -142,6 +151,8 @@ class StockRepository @Inject constructor(
                 actorUserId = actor,
                 occurredAt = now,
                 productId = productId,
+                variantId = if (productId != null) variantId else null,
+                opId = if (synced) id else null,
             ),
         )
         if (!synced) return
@@ -159,6 +170,7 @@ class StockRepository @Inject constructor(
             putJsonArray("items") {
                 addJsonObject {
                     put("productId", productId)
+                    variantId?.let { put("variantId", it) }
                     put("quantity", kotlin.math.abs(signed))
                     if (signed > 0) unitCost?.let { put("unitCost", it) }
                     put("notes", reason.trim())
@@ -194,7 +206,14 @@ class StockRepository @Inject constructor(
         })
     }
 
-    data class CountLine(val menuItemId: String?, val productId: String?, val onHand: Double, val counted: Double)
+    /** [variantId]: the counted variant of a product with variants (the server counts per variant). */
+    data class CountLine(
+        val menuItemId: String?,
+        val productId: String?,
+        val onHand: Double,
+        val counted: Double,
+        val variantId: String? = null,
+    )
 
     /**
      * Post a physical count: device-local reconciling adjustments for every
@@ -206,6 +225,9 @@ class StockRepository @Inject constructor(
         val actor = auth.current?.userId ?: error("Sign in to post a count")
         val now = System.currentTimeMillis()
         val changed = lines.filter { it.counted != it.onHand }
+        val products = lines.filter { it.productId != null }
+        val countOpId = UUID.randomUUID().toString()
+        val syncedCount = syncsStock && products.isNotEmpty()
         inventoryDao.insertAll(
             changed.map { e ->
                 InventoryMovementEntity(
@@ -220,13 +242,14 @@ class StockRepository @Inject constructor(
                     saleLocalId = null,
                     actorUserId = actor,
                     occurredAt = now,
+                    variantId = if (e.productId != null) e.variantId else null,
+                    opId = if (syncedCount && e.productId != null) countOpId else null,
                 )
             },
         )
-        val products = lines.filter { it.productId != null }
-        if (syncsStock && products.isNotEmpty()) {
+        if (syncedCount) {
             val loc = location() ?: error("Sync first — this device has no stock location")
-            enqueue(UUID.randomUUID().toString(), "stock.count", actor, now, buildJsonObject {
+            enqueue(countOpId, "stock.count", actor, now, buildJsonObject {
                 put("locationId", loc.id)
                 put("reason", reason.ifBlank { "Physical count" })
                 put("notes", "Device count")
@@ -234,6 +257,7 @@ class StockRepository @Inject constructor(
                     products.forEach { l ->
                         addJsonObject {
                             put("productId", l.productId)
+                            l.variantId?.let { put("variantId", it) }
                             put("countedQty", l.counted)
                         }
                     }
