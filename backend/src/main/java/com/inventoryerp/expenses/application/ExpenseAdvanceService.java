@@ -4,6 +4,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.accounting.application.ForeignCash;
 import com.inventoryerp.accounting.application.TreasuryGuards;
 import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -225,6 +226,7 @@ public class ExpenseAdvanceService {
                 List.of((String) a.get("employeeId")));
         BigDecimal amount = Money.dec(a.get("amount"));
         String cash = cashAccount(in.accountId());
+        ForeignCash.assertFunctional(jdbc, org(), cash, "An expense advance");
         TreasuryGuards.assertSufficientFunds(jdbc, org(), cash, amount, accountName(cash));
         pettyCash.assertCanSpend(cash, amount);
         String value = JsNumbers.dec(amount);

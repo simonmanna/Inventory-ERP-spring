@@ -189,6 +189,7 @@ public class OrganizationsService {
             jdbc.sql("UPDATE \"Organization\" SET timezone = ?, \"updatedAt\" = now() WHERE id = ?").params(timezone, orgId).update();
         }
         if (hasCurrency) {
+            com.inventoryerp.kernel.settings.FunctionalCurrencyLock.assertChangeable(jdbc, orgId, currencyCode);
             jdbc.sql("UPDATE \"Organization\" SET \"currencyCode\" = ?, \"updatedAt\" = now() WHERE id = ?")
                     .params(currencyCode, orgId).update();
         }

@@ -1,12 +1,14 @@
 # Foreign-currency treasury — architecture and migration plan (R-8)
 
-- **Status:** proposed, 2026-11-16. Awaiting owner / external review before any code. R-8 stays open until the
-  implementation, migration and regression review are independently verified.
+- **Status:** approved by the owner 2026-11-16 (all five §10 recommendations accepted) and **built** 2026-11-16, all
+  five phases, on `phase/fx-treasury` — see [ADR-S076](../adr/ADR-S076-foreign-currency-treasury.md) for what was
+  built and where it narrows this plan. R-8 stays open until the implementation, migration and regression review are
+  independently verified.
 - **Origin:** accounting review 2026-11-15, finding R-8 (`docs/audits/2026-11-15-accounting-review.md`). Owner brief
   "R-8 – Foreign-Currency Treasury: Design and Implementation Decision" (policy requirements 1–9, phases 1–5).
 - **Branch:** `phase/fx-treasury` (from `main` @ `d014ecfe`). One branch / PR per phase, review stop after each.
-- **New ADR:** ADR-S075 "Foreign-currency treasury" (number to confirm at merge; S073 / S074 are taken on in-flight
-  branches). Extends ADR-S054; touches ADR-S070 only by reference.
+- **New ADR:** ADR-S076 "Foreign-currency treasury" (S073–S075 were taken by the GL automation, compliance and
+  contractor branches). Extends ADR-S054; touches ADR-S070 only by reference.
 
 ---
 
@@ -144,7 +146,8 @@
 
 ### 5.1 Migrations (no change to historical rows)
 
-Numbers from **V509** (V498 = A4, V500–V508 reserved by in-flight accounting branches; confirm at merge).
+Built as **V510** (M-1, M-3) and **V511** (M-2); V500 is A4 and V501–V509 belong to the GL automation, compliance and
+contractor branches.
 
 | # | Change |
 |---|---|

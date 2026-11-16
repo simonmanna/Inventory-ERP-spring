@@ -102,8 +102,8 @@ public class RevaluationService {
             jdbc.sql("INSERT INTO \"FxRevaluation\" (id, \"organizationId\", \"fiscalPeriodId\", \"asOf\", \"accountId\","
                             + " \"currencyCode\", \"bookBalance\", \"revaluedBalance\", \"fxGain\", rate)"
                             + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                            + " ON CONFLICT (\"organizationId\", \"fiscalPeriodId\", \"accountId\") DO UPDATE SET"
-                            + " \"asOf\" = EXCLUDED.\"asOf\", \"currencyCode\" = EXCLUDED.\"currencyCode\","
+                            + " ON CONFLICT (\"organizationId\", \"fiscalPeriodId\", \"accountId\", \"currencyCode\") DO"
+                            + " UPDATE SET \"asOf\" = EXCLUDED.\"asOf\","
                             + " \"bookBalance\" = EXCLUDED.\"bookBalance\", \"revaluedBalance\" = EXCLUDED.\"revaluedBalance\","
                             + " \"fxGain\" = EXCLUDED.\"fxGain\", rate = EXCLUDED.rate")
                     .params(UUID.randomUUID().toString(), organizationId, periodId, FiscalPeriodControl.ts(asOf),
@@ -165,7 +165,7 @@ public class RevaluationService {
                         + " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
                         + " JOIN \"Account\" a ON a.id = l.\"accountId\" JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
                         + " WHERE l.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed')"
-                        + " AND e.\"postingDate\" <= ? AND c.\"allowReconciliation\" = true AND l.\"currencyId\" IS NOT"
+                        + " AND e.\"postingDate\" <= ? AND (c.\"allowReconciliation\" OR c.\"isCashEquivalent\") AND l.\"currencyId\" IS NOT"
                         + " NULL AND l.\"currencyId\" <> ? GROUP BY l.\"accountId\", a.code, l.\"currencyId\""
                         + " ORDER BY a.code, l.\"currencyId\"")
                 .params(organizationId, FiscalPeriodControl.ts(asOf), baseCode))) {

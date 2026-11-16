@@ -71,6 +71,19 @@ public class BankReconciliationService {
         String organizationId = TenantContext.organizationId();
         int imported = 0;
         int skipped = 0;
+        // R-8 (ADR-S076): a foreign-currency account reconciles in its own currency, so its statement must be in it
+        ForeignCash.Denomination fx = ForeignCash.of(jdbc, organizationId, bankAccountId);
+        if (fx != null) {
+            for (StatementLine l : lines) {
+                String c = l.currencyCode() != null ? l.currencyCode() : currencyCode != null ? currencyCode
+                        : fx.currency();
+                if (!c.equalsIgnoreCase(fx.currency())) {
+                    throw ApiException.badRequest("Statement lines in " + c + " cannot be imported into account "
+                            + fx.code() + ", which is held in " + fx.currency());
+                }
+            }
+            currencyCode = currencyCode == null ? fx.currency() : currencyCode;
+        }
         for (StatementLine l : lines) {
             assertUnlocked(organizationId, bankAccountId, OrgDates.parse(l.postedAt()));
             if (l.externalRef() != null && !l.externalRef().isEmpty()) {
@@ -234,10 +247,8 @@ public class BankReconciliationService {
     @Transactional(readOnly = true)
     public Map<String, Object> summary(String bankAccountId) {
         String org = TenantContext.organizationId();
-        BigDecimal book = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
-                + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
-                + " AND l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed')").params(org, bankAccountId)
-                .query(BigDecimal.class).single();
+        ForeignCash.Denomination fx = ForeignCash.of(jdbc, org, bankAccountId);
+        BigDecimal book = ledgerBalance(org, bankAccountId, fx, null);
         Map<String, Object> lines = SqlRows.one(jdbc.sql("SELECT COALESCE(SUM(amount), 0) AS total,"
                 + " COALESCE(SUM(amount) FILTER (WHERE status = 'matched'), 0) AS matched,"
                 + " COALESCE(SUM(amount) FILTER (WHERE status = 'unmatched'), 0) AS unmatched,"
@@ -256,13 +267,42 @@ public class BankReconciliationService {
                 + " WHERE b.\"organizationId\" = p.\"organizationId\" AND b.\"matchedPaymentId\" = p.id)) o"
                 + " WHERE o.open > 0")
                 .params(org, bankAccountId));
-        return body("bookBalance", JsNumbers.dec(book), "statementTotal", JsNumbers.dec(SqlRows.dec(lines, "total")),
+        return currencyFields(org, fx, body("bookBalance", JsNumbers.dec(book), "statementTotal", JsNumbers.dec(SqlRows.dec(lines, "total")),
                 "matchedTotal", JsNumbers.dec(SqlRows.dec(lines, "matched")), "unmatchedTotal",
                 JsNumbers.dec(SqlRows.dec(lines, "unmatched")), "unmatchedCount", lines.get("unmatchedCount"),
                 "excludedTotal", JsNumbers.dec(SqlRows.dec(lines, "excluded")), "excludedCount",
                 lines.get("excludedCount"), "outstandingInbound", JsNumbers.dec(SqlRows.dec(open, "inbound")),
                 "outstandingOutbound", JsNumbers.dec(SqlRows.dec(open, "outbound")), "outstandingPayments",
-                open.get("payments"));
+                open.get("payments")));
+    }
+
+    /**
+     * Ledger side of a reconciliation (R-8, ADR-S076): a designated foreign-currency account in its own currency (the
+     * currency its statements, payments and transfers are in); every other account in the functional currency.
+     */
+    private BigDecimal ledgerBalance(String org, String accountId, ForeignCash.Denomination fx, java.sql.Timestamp upTo) {
+        boolean own = fx != null && fx.designated();
+        List<Object> params = new ArrayList<>(List.of(org, accountId));
+        String sql = "SELECT coalesce(sum(" + (own ? "l.debit - l.credit" : "l.\"baseDebit\" - l.\"baseCredit\"")
+                + "), 0) FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE"
+                + " l.\"organizationId\" = ? AND l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed')";
+        if (own) {
+            sql += " AND upper(l.\"currencyId\") = ?";
+            params.add(fx.currency());
+        }
+        if (upTo != null) {
+            sql += " AND e.\"postingDate\" <= ?";
+            params.add(upTo);
+        }
+        return jdbc.sql(sql).params(params).query(BigDecimal.class).single();
+    }
+
+    /** The currency the reconciliation amounts are in, and whether a foreign account still awaits designation. */
+    private Map<String, Object> currencyFields(String org, ForeignCash.Denomination fx, Map<String, Object> out) {
+        Map<String, Object> m = new LinkedHashMap<>(out);
+        m.put("currencyCode", fx == null ? ForeignCash.functional(jdbc, org) : fx.currency());
+        m.put("currencyState", fx == null ? "functional" : fx.designated() ? "designated" : "undesignated");
+        return m;
     }
 
     /** Unmatched posted payments of the line's direction and size on its account, closest date first. */
@@ -413,11 +453,9 @@ public class BankReconciliationService {
             throw ApiException.badRequest("bankAccountId is required");
         }
         String org = TenantContext.organizationId();
-        BigDecimal ledger = jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l"
-                        + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND"
-                        + " l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ?")
-                .params(org, bankAccountId, FiscalPeriodControl.ts(AccountingDay.fromWallClock(asOf, AccountingDay.zone(jdbc))))
-                .query(BigDecimal.class).single();
+        ForeignCash.Denomination fx = ForeignCash.of(jdbc, org, bankAccountId);
+        BigDecimal ledger = ledgerBalance(org, bankAccountId, fx,
+                FiscalPeriodControl.ts(AccountingDay.fromWallClock(asOf, AccountingDay.zone(jdbc))));
         BigDecimal outstanding = jdbc.sql("SELECT coalesce(sum(CASE WHEN p.direction::text = 'outbound' THEN -1"
                         + " ELSE 1 END * (p.amount - " + BankMatchingService.allocatedSql("p") + ")), 0) FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ?"
                         + " AND p.status = 'posted' AND p.\"paymentDate\" <= ? AND NOT EXISTS (SELECT 1 FROM"
@@ -434,11 +472,11 @@ public class BankReconciliationService {
         BigDecimal closing = closingBalance == null ? BigDecimal.ZERO : closingBalance;
         BigDecimal difference = closing.add(outstanding).subtract(ledger.add(unrecorded));
         Instant locked = lockedThrough(org, bankAccountId);
-        return body("bankAccountId", bankAccountId, "asOf", JsonConfig.toJsIso(asOf), "closingBalance", plain(closing),
-                "ledgerBalance", plain(ledger), "outstandingBook", plain(outstanding), "unrecordedStatement",
-                plain(unrecorded), "difference", plain(difference), "reconciled", difference.abs()
-                        .compareTo(new BigDecimal("0.01")) <= 0,
-                "lockedThrough", locked == null ? null : JsonConfig.toJsIso(locked));
+        return currencyFields(org, fx, body("bankAccountId", bankAccountId, "asOf", JsonConfig.toJsIso(asOf),
+                "closingBalance", plain(closing), "ledgerBalance", plain(ledger), "outstandingBook", plain(outstanding),
+                "unrecordedStatement", plain(unrecorded), "difference", plain(difference), "reconciled",
+                difference.abs().compareTo(new BigDecimal("0.01")) <= 0,
+                "lockedThrough", locked == null ? null : JsonConfig.toJsIso(locked)));
     }
 
     /** Lock a reconciled statement: refused unless the difference is zero and the date is after any earlier lock. */

@@ -49,7 +49,9 @@ public class TreasuryController {
             @NotNull(message = "must be a positive number") @Positive(message = "must be a positive number") BigDecimal amount,
             @NotNull(message = "must be a valid ISO 8601 date string")
             @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String date,
-            String reference) {}
+            String reference,
+            @Positive(message = "must be a positive number") BigDecimal receivedAmount,
+            @Positive(message = "must be a positive number") BigDecimal exchangeRate) {}
 
     private final BankAccountService bankAccounts;
     private final TreasuryService treasury;
@@ -89,6 +91,7 @@ public class TreasuryController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.TREASURY__TRANSFER)
     public Map<String, Object> transfer(@Valid @RequestBody TransferRequest dto) {
-        return treasury.transfer(dto.fromAccountId(), dto.toAccountId(), dto.amount(), dto.date(), dto.reference());
+        return treasury.transfer(dto.fromAccountId(), dto.toAccountId(), dto.amount(), dto.date(), dto.reference(),
+                dto.receivedAmount(), dto.exchangeRate());
     }
 }

@@ -4,6 +4,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.accounting.application.ForeignCash;
 import com.inventoryerp.accounting.application.TreasuryGuards;
 import com.inventoryerp.expenses.domain.Expense;
 import com.inventoryerp.expenses.domain.ExpensePayment;
@@ -1139,6 +1140,7 @@ public class ExpensesService {
         }
         TreasuryGuards.assertNotDrawerAccount(jdbc, org, (String) credit.get("id"), "An expense payment");
         pettyCash.assertCanSpend((String) credit.get("id"), amount);
+        ForeignCash.assertFunctional(jdbc, org, (String) credit.get("id"), "An expense payment");
         TreasuryGuards.assertSufficientFunds(jdbc, org, (String) credit.get("id"), amount, (String) credit.get("name"));
         String paymentId = UUID.randomUUID().toString();
         String title = (String) expense.get("title");

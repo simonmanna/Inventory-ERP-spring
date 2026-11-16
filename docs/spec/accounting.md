@@ -70,6 +70,23 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
+Foreign-currency treasury (R-8, [ADR-S076](../adr/ADR-S076-foreign-currency-treasury.md), owner-approved 2026-11-16):
+
+- **Functional-currency lock.** `PATCH /organizations/me/settings` (`currencyCode`) and `PUT` company settings
+  (`baseCurrencyCode`) refuse a change once entries are posted: "The functional currency cannot change once entries
+  are posted". Nest allowed it at any time.
+- **Account-currency lock.** `PATCH /accounts/:id` and `PATCH /accounts/cash-flow/:id` refuse a `currencyId` change
+  once the account has postings.
+- **Foreign cash accounts in the engine.** A line on a designated foreign cash, bank or mobile-money account must be in
+  its currency ("Account X is held in USD; post it in USD"). Deposits, withdrawals and transfers on such accounts take
+  amounts in that currency and post realised FX.
+- **Restrictions.** Expenses, expense advances, petty-cash replenishment and shift banking refuse foreign accounts.
+  Statement import into a foreign account refuses lines in another currency. Reconciliation of a foreign account runs
+  in its currency.
+- **Additions.** New routes `/fx-treasury/accounts|designations|summary`; additive request fields `exchangeRate`
+  (deposit / withdrawal) and `receivedAmount` / `exchangeRate` (transfer).
+- **Revaluation.** It covers cash-equivalent accounts too, and records one row per (period, account, currency).
+
 Post-parity hardening (owner-approved 2026-11-10): opening shortage approval (`adjustmentReason` /
 `approvedById` / `approverEmail` / `managerPin` on `POST /cash-sessions/open`), auto-adjusted close keeps the variance
 review, `cash.varianceApprovalThreshold` setting, approver-PIN lockout through `CredentialGuard`, ambiguous-shift

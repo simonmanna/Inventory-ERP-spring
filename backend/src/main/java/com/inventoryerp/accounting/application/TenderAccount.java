@@ -34,6 +34,16 @@ public final class TenderAccount {
 
     public static Resolved resolve(JdbcClient jdbc, AccountDeterminationService determination, String organizationId,
             String method, String accountId, String cashSessionId) {
+        return resolve(jdbc, determination, organizationId, method, accountId, cashSessionId, null);
+    }
+
+    /**
+     * As {@link #resolve(JdbcClient, AccountDeterminationService, String, String, String, String)}; a payment in
+     * {@code foreignCurrency} (R-8, ADR-S076) may also use a designated bank, cash or mobile-money account held in that
+     * same currency, outside a register shift. POS tenders and functional-currency payments keep the old rule.
+     */
+    public static Resolved resolve(JdbcClient jdbc, AccountDeterminationService determination, String organizationId,
+            String method, String accountId, String cashSessionId, String foreignCurrency) {
         if (method == null || !List.of("cash", "bank", "cheque", "card", "mobile_money", "store_credit").contains(method)) {
             throw ApiException.badRequest("Unsupported payment method");
         }
@@ -82,8 +92,16 @@ public final class TenderAccount {
             String orgCurrency = ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
                     .param(organizationId).query(String.class).optional().orElse(null), "org.currencyCode", organizationId);
             if (orgCurrency != null && !account.currencyId().equals(orgCurrency)) {
-                throw ApiException.badRequest("POS tenders must use the organization currency; convert foreign currency"
-                        + " through treasury first");
+                if (foreignCurrency == null || sessionId != null || "store_credit".equals(method)
+                        || "card".equals(method)) {
+                    throw ApiException.badRequest("POS tenders must use the organization currency; convert foreign"
+                            + " currency through treasury first");
+                }
+                if (!account.currencyId().equalsIgnoreCase(foreignCurrency)) {
+                    throw ApiException.badRequest("Account " + account.name() + " is held in " + account.currencyId()
+                            + "; a payment through it must be in " + account.currencyId());
+                }
+                ForeignCash.requireDesignated(ForeignCash.of(jdbc, organizationId, account.id()));
             }
         }
         if ("store_credit".equals(method)) {

@@ -120,6 +120,10 @@ public class AccountService extends BaseCrudService<Account> {
         if (existing == null) {
             throw ApiException.notFound("Account " + id + " not found");
         }
+        if (data.containsKey("currencyId")) {
+            ForeignCash.assertCurrencyChangeable(jdbc, TenantContext.organizationId(), id,
+                    emptyToNull(data.get("currencyId")));
+        }
         Map<String, Object> derived = validate(data, existing);
         EntityPatch.apply(existing, data);
         EntityPatch.apply(existing, derived);

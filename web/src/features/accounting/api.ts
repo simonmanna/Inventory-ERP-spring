@@ -1395,6 +1395,10 @@ export interface CashAccount {
   /** Native currency label; `balance` is always in `baseCurrency`. */
   currencyCode?: string | null;
   baseCurrency?: string | null;
+  /** ADR-S076: balance in the account's own currency (foreign accounts only). */
+  foreignBalance?: string | null;
+  /** `functional`, `designated` (foreign, in FX treasury) or `undesignated` (legacy foreign balances). */
+  currencyState?: 'functional' | 'designated' | 'undesignated';
   cashRegister: { id: string; name: string; code: string } | null;
   registers?: { id: string; name: string; code: string; isActive: boolean }[];
   posMethods?: { id: string; code: string; label: string; kind: string; isActive: boolean }[];
@@ -1607,6 +1611,8 @@ export interface CashFlowOperationInput {
   amount: number;
   description: string;
   date?: string;
+  /** Foreign-currency account only (ADR-S076): functional units per 1 unit of the account currency. */
+  exchangeRate?: number;
 }
 
 export interface TreasuryOperationType {
@@ -1656,8 +1662,16 @@ export function useCashFlowWithdraw() {
 export function useTreasuryTransfer() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { fromAccountId: string; toAccountId: string; amount: number; date: string; reference?: string }) =>
-      idempotentPost('/treasury/transfer', input),
+    mutationFn: (input: {
+      fromAccountId: string;
+      toAccountId: string;
+      amount: number;
+      date: string;
+      reference?: string;
+      /** Cross-currency transfer (ADR-S076): amount received in the destination currency. */
+      receivedAmount?: number;
+      exchangeRate?: number;
+    }) => idempotentPost('/treasury/transfer', input),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cash-accounts'] });
       qc.invalidateQueries({ queryKey: ['cash-account-transactions'] });
@@ -2195,5 +2209,57 @@ export function useAnalyticSummary(params: { dimension?: string; from?: string; 
     queryKey: ['analytic-dimensions', 'summary', params],
     queryFn: async () => (await api.get<AnalyticSummary>('/analytic-dimensions/reports/summary', { params })).data,
     enabled: !!params.dimension,
+  });
+}
+
+// ---------------------------------------------------------------- foreign-currency treasury (R-8, ADR-S076)
+
+export interface FxTreasuryAccount {
+  accountId: string;
+  code: string;
+  name: string;
+  currencyCode: string;
+  functionalCurrency: string;
+  state: 'designated' | 'undesignated';
+  designatedAt: string | null;
+  foreignBalance: string;
+  carryingValue: string;
+  carryingRate: string | null;
+  unknownCurrencyBalance: string;
+}
+
+export interface FxSummary {
+  functionalCurrency: string;
+  realised: string;
+  unrealised: string;
+  total: string;
+  byOrigin: { kind: 'realised' | 'unrealised'; origin: string; gain: string }[];
+}
+
+export function useFxTreasuryAccounts() {
+  return useQuery({
+    queryKey: ['fx-treasury-accounts'],
+    queryFn: async () => (await api.get<FxTreasuryAccount[]>('/fx-treasury/accounts')).data,
+  });
+}
+
+export function useFxSummary(from: string, to: string) {
+  return useQuery({
+    queryKey: ['fx-treasury-summary', from, to],
+    queryFn: async () => (await api.get<FxSummary>('/fx-treasury/summary', { params: { from, to } })).data,
+    enabled: !!from && !!to,
+  });
+}
+
+export function useDesignateFxAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { accountId: string; foreignBalance: number; date?: string; note?: string }) =>
+      idempotentPost('/fx-treasury/designations', input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fx-treasury-accounts'] });
+      qc.invalidateQueries({ queryKey: ['cash-accounts'] });
+      qc.invalidateQueries({ queryKey: ['cash-account-transactions'] });
+    },
   });
 }

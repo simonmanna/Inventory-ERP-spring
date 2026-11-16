@@ -52,7 +52,10 @@ public class DocumentFxRates {
         if (journalEntryId == null) {
             return null;
         }
-        BigDecimal snap = jdbc.sql("SELECT rate FROM \"JournalEntryFxRate\" WHERE \"journalEntryId\" = ?")
+        // the entry's own pair: an entry may also snapshot its foreign legs' rates (R-8, ADR-S076)
+        BigDecimal snap = jdbc.sql("SELECT r.rate FROM \"JournalEntryFxRate\" r JOIN \"JournalEntry\" e ON e.id ="
+                        + " r.\"journalEntryId\" WHERE r.\"journalEntryId\" = ? ORDER BY (upper(r.\"fromCode\") ="
+                        + " upper(coalesce(e.\"currencyId\", ''))) DESC, r.\"createdAt\" LIMIT 1")
                 .param(journalEntryId).query(BigDecimal.class).optional().orElse(null);
         if (snap != null) {
             return snap;

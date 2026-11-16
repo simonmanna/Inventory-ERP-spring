@@ -5,6 +5,7 @@ import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.accounting.application.ForeignCash;
 import com.inventoryerp.accounting.application.TreasuryGuards;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -230,6 +231,7 @@ public class PettyCashService {
         if (amount.signum() <= 0) {
             throw ApiException.badRequest("The fund is at or above its float: nothing to replenish");
         }
+        ForeignCash.assertFunctional(jdbc, org(), in.sourceAccountId(), "A petty-cash replenishment");
         TreasuryGuards.assertSufficientFunds(jdbc, org(), in.sourceAccountId(), amount,
                 jdbc.sql("SELECT name FROM \"Account\" WHERE id = ?").param(in.sourceAccountId()).query(String.class)
                         .single());

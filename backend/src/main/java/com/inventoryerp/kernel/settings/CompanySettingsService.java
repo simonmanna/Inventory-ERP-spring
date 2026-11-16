@@ -104,6 +104,7 @@ public class CompanySettingsService {
             settings.set("inventory.defaultCostingMethod", dto.get("costingMethod"), null, null);
         }
         if (dto.get("baseCurrencyCode") != null) {
+            FunctionalCurrencyLock.assertChangeable(jdbc, orgId, dto.get("baseCurrencyCode"));
             jdbc.sql("UPDATE \"Organization\" SET \"currencyCode\" = ?, \"updatedAt\" = now() WHERE id = ?")
                     .params(dto.get("baseCurrencyCode"), orgId)
                     .update();

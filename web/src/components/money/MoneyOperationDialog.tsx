@@ -67,11 +67,13 @@ export function MoneyOperationDialog({
   const [date, setDate] = useState(today);
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
+  const [rate, setRate] = useState('');
+  const [received, setReceived] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setStep(mode === 'transfer' ? 'details' : 'purpose');
-    setOperation(''); setCounterpartId(''); setAmount(''); setDate(today); setReference(''); setNote('');
+    setOperation(''); setCounterpartId(''); setAmount(''); setDate(today); setReference(''); setNote(''); setRate(''); setReceived('');
     setAccountId(defaultAccountId ?? '');
     setToAccountId('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -89,37 +91,59 @@ export function MoneyOperationDialog({
   const op = ops.find((o) => o.key === operation);
   const counterpart = op?.accounts.find((a) => a.id === counterpartId);
   const n = Number(amount);
+  // ADR-S076: a foreign-currency account moves money in its own currency; its balance is shown in that currency.
+  const foreign = (a?: CashAccount) => !!a && !!a.currencyState && a.currencyState !== 'functional';
+  const ccyOf = (a?: CashAccount) => (foreign(a) ? a!.currencyCode ?? currency : currency);
+  const available = (a: CashAccount) => (foreign(a) ? a.foreignBalance ?? '0' : a.balance);
+  const sourceCcy = ccyOf(source);
+  const destCcy = ccyOf(destination);
+  const crossCurrency = mode === 'transfer' && !!source && !!destination && sourceCcy !== destCcy;
+  const undesignated = [source, mode === 'transfer' ? destination : undefined].find((a) => a?.currencyState === 'undesignated');
+  const r = Number(rate);
+  const got = Number(received);
   const needsFunds = mode === 'out' || mode === 'transfer';
-  const insufficient = needsFunds && source && n > Number(source.balance);
+  const insufficient = needsFunds && source && n > Number(available(source));
   const pending = deposit.isPending || withdraw.isPending || transfer.isPending;
-  const fmt = (v: string | number) => formatAmount(v, currency);
+  const fmt = (v: string | number, ccy: string | null | undefined = currency) => formatAmount(v, ccy ?? currency);
+  const fmtAcct = (a: CashAccount) => fmt(available(a), ccyOf(a));
 
-  const detailsValid = n > 0 && !!accountId && !!date && !insufficient && (
-    mode === 'transfer' ? !!toAccountId && toAccountId !== accountId : !!operation && !!counterpartId && !!note.trim()
+  const detailsValid = n > 0 && !!accountId && !!date && !insufficient && !undesignated && (!rate || r > 0) && (
+    mode === 'transfer'
+      ? !!toAccountId && toAccountId !== accountId && (!crossCurrency || got > 0)
+      : !!operation && !!counterpartId && !!note.trim()
   );
 
   const summary = (() => {
     if (!source) return '';
     if (mode === 'transfer') {
       return destination
-        ? `Transfer ${fmt(n)} from ${source.name} to ${destination.name}. ${source.name} goes down, ${destination.name} goes up. Total money is unchanged.`
+        ? crossCurrency
+          ? `Send ${fmt(n, sourceCcy)} from ${source.name} and receive ${fmt(got, destCcy)} in ${destination.name}. Any difference from the books' value is recorded as an exchange gain or loss.`
+          : `Transfer ${fmt(n, sourceCcy)} from ${source.name} to ${destination.name}. ${source.name} goes down, ${destination.name} goes up. Total money is unchanged.`
         : '';
     }
     const label = op?.label ?? 'Operation';
     return mode === 'in'
-      ? `Record ${fmt(n)} coming into ${source.name} as “${label}” (booked against ${counterpart?.name ?? 'the selected account'}). Total money goes up.`
-      : `Record ${fmt(n)} leaving ${source.name} as “${label}” (booked against ${counterpart?.name ?? 'the selected account'}). Total money goes down.`;
+      ? `Record ${fmt(n, sourceCcy)} coming into ${source.name} as “${label}” (booked against ${counterpart?.name ?? 'the selected account'}). Total money goes up.`
+      : `Record ${fmt(n, sourceCcy)} leaving ${source.name} as “${label}” (booked against ${counterpart?.name ?? 'the selected account'}). Total money goes down.`;
   })();
 
   const submit = async () => {
     if (pending) return;
     try {
       if (mode === 'transfer') {
-        await transfer.mutateAsync({ fromAccountId: accountId, toAccountId, amount: n, date, reference: reference.trim() || undefined });
+        await transfer.mutateAsync({
+          fromAccountId: accountId, toAccountId, amount: n, date, reference: reference.trim() || undefined,
+          receivedAmount: crossCurrency ? got : undefined,
+          exchangeRate: crossCurrency && foreign(destination) && rate ? r : undefined,
+        });
         toast.success(tx('Transfer recorded'));
       } else {
         const description = [note.trim(), reference.trim() ? `ref ${reference.trim()}` : ''].filter(Boolean).join(' · ');
-        const input = { accountId, counterpartAccountId: counterpartId, operationType: operation, amount: n, description, date };
+        const input = {
+          accountId, counterpartAccountId: counterpartId, operationType: operation, amount: n, description, date,
+          exchangeRate: foreign(source) && rate ? r : undefined,
+        };
         if (mode === 'in') await deposit.mutateAsync(input); else await withdraw.mutateAsync(input);
         toast.success(mode === 'in' ? tx('Money in recorded') : tx('Money out recorded'));
       }
@@ -205,7 +229,7 @@ export function MoneyOperationDialog({
               <Label htmlFor="money-op-account">{mode === 'in' ? tx('Receive into') : mode === 'out' ? tx('Pay from') : tx('From')}</Label>
               <select id="money-op-account" required className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
                 <option value="">{tx('Choose account')}</option>
-                {eligible.map((a) => <option key={a.id} value={a.id}>{a.name} — {fmt(a.balance)}</option>)}
+                {eligible.map((a) => <option key={a.id} value={a.id}>{a.name} — {fmtAcct(a)}</option>)}
               </select>
             </div>
 
@@ -214,7 +238,7 @@ export function MoneyOperationDialog({
                 <Label htmlFor="money-op-to">{tx('To')}</Label>
                 <select id="money-op-to" required className="min-h-[44px] w-full rounded-md border bg-background px-3 text-sm" value={toAccountId} onChange={(e) => setToAccountId(e.target.value)}>
                   <option value="">{tx('Choose account')}</option>
-                  {eligible.filter((a) => a.id !== accountId).map((a) => <option key={a.id} value={a.id}>{a.name} — {fmt(a.balance)}</option>)}
+                  {eligible.filter((a) => a.id !== accountId).map((a) => <option key={a.id} value={a.id}>{a.name} — {fmtAcct(a)}</option>)}
                 </select>
               </div>
             ) : op ? (
@@ -230,11 +254,11 @@ export function MoneyOperationDialog({
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="money-op-amount">{tx('Amount')}{currency ? ` (${currency})` : ''}</Label>
+                <Label htmlFor="money-op-amount">{crossCurrency ? tx('Amount sent') : tx('Amount')}{sourceCcy ? ` (${sourceCcy})` : ''}</Label>
                 <Input id="money-op-amount" type="number" inputMode="decimal" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
                 {source && needsFunds ? (
                   <p className={insufficient ? 'text-xs font-medium text-destructive' : 'text-xs text-muted-foreground'}>
-                    {insufficient ? tx('More than is available: ') : tx('Available: ')}{fmt(source.balance)}
+                    {insufficient ? tx('More than is available: ') : tx('Available: ')}{fmtAcct(source)}
                   </p>
                 ) : null}
               </div>
@@ -243,6 +267,32 @@ export function MoneyOperationDialog({
                 <Input id="money-op-date" type="date" required value={date} max={today} onChange={(e) => setDate(e.target.value)} />
               </div>
             </div>
+
+            {undesignated ? (
+              <p className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                {undesignated.name}{tx(' holds balances of unknown currency. Designate its ')}{undesignated.currencyCode}{tx(' balance under Accounting → Foreign-currency accounts first.')}
+              </p>
+            ) : null}
+
+            {crossCurrency || (mode !== 'transfer' && foreign(source)) ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {crossCurrency ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="money-op-received">{tx('Amount received')} ({destCcy})</Label>
+                    <Input id="money-op-received" type="number" inputMode="decimal" step="0.01" min="0.01" required value={received} onChange={(e) => setReceived(e.target.value)} />
+                  </div>
+                ) : null}
+                {mode !== 'transfer' || foreign(destination) ? (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="money-op-rate">
+                      {tx('Exchange rate')} <span className="font-normal text-muted-foreground">{tx('(optional)')}</span>
+                    </Label>
+                    <Input id="money-op-rate" type="number" inputMode="decimal" step="any" min="0" value={rate} onChange={(e) => setRate(e.target.value)} placeholder={`1 ${mode === 'transfer' ? destCcy : sourceCcy} = ? ${currency ?? ''}`} />
+                    <p className="text-xs text-muted-foreground">{tx('Leave blank to use the rate table.')}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="space-y-1.5">
               <Label htmlFor="money-op-ref">{tx('Reference')} <span className="font-normal text-muted-foreground">{tx('(optional)')}</span></Label>

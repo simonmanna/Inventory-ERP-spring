@@ -6,7 +6,9 @@ import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.CashSessionService;
 import com.inventoryerp.accounting.application.CurrencyService;
+import com.inventoryerp.accounting.application.ForeignCash;
 import com.inventoryerp.accounting.application.PostingRequest;
+import com.inventoryerp.accounting.application.TreasuryGuards;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.accounting.application.TenderAccount;
@@ -364,7 +366,8 @@ public class PaymentService {
             }
             resolved = new TenderAccount.Resolved(dto.accountId(), "GEN", null);
         } else {
-            resolved = TenderAccount.resolve(jdbc, determination, org, method, dto.accountId(), dto.cashSessionId());
+            resolved = TenderAccount.resolve(jdbc, determination, org, method, dto.accountId(), dto.cashSessionId(),
+                    foreign ? payCurrency : null);
         }
         String cashAccount = resolved.accountId();
         String sessionOwner = resolved.cashSessionId() == null ? null : jdbc.sql("SELECT \"userId\" FROM \"CashSession\""
@@ -410,6 +413,16 @@ public class PaymentService {
         }
         FxSettlement fxs = foreign ? fxSettlement(dto, direction, payCurrency, baseCode, amount, allocations, org)
                 : null;
+        // R-8 (ADR-S076): through a foreign account held in the payment currency the cash line carries that currency;
+        // money paid out is relieved at the account's carrying value and the cash-side difference joins the FX.
+        boolean foreignCash = fxs != null && ForeignCash.of(jdbc, org, cashAccount) != null;
+        if (foreignCash && "outbound".equals(direction)) {
+            TreasuryGuards.lockAccounts(jdbc, org, List.of(cashAccount));
+            BigDecimal relieved = ForeignCash.relieve(ForeignCash.balance(jdbc, org, cashAccount, payCurrency),
+                    r6(amount), fxs.rate().rate());
+            fxs = new FxSettlement(fxs.rate(), fxs.carrying(), fxs.counterBase(), relieved,
+                    fxs.counterBase().subtract(relieved), fxs.counterCurrency(), fxs.amount());
+        }
         String journalCode = resolved.journalCode();
         int year = EntityPatch.toInstant(dto.paymentDate()).atOffset(ZoneOffset.UTC).getYear();
         String paymentNumber = "inbound".equals(direction) ? sequence.next("payment:" + year, "PAY-" + year + "-", 6)
@@ -431,7 +444,7 @@ public class PaymentService {
         }
         List<Line> lines = new ArrayList<>();
         if (fxs != null) {
-            lines.addAll(fxLines(fxs, direction, counterAccount, cashAccount, dto.partnerId(), payCurrency));
+            lines.addAll(fxLines(fxs, direction, counterAccount, cashAccount, dto.partnerId(), payCurrency, foreignCash));
         } else if ("inbound".equals(direction) && withholding.signum() > 0) {
             // ADR-S071: Dr cash (net) + Dr withholding receivable / Cr AR (gross).
             lines.add(new Line(cashAccount, JsNumbers.dec(netCash), null, null, null, null, null, null));
@@ -624,19 +637,21 @@ public class PaymentService {
 
     /** Base-currency lines of a foreign-currency payment, realised FX on the designated FX accounts only. */
     private List<Line> fxLines(FxSettlement fxs, String direction, String counterAccount, String cashAccount,
-            String partnerId, String payCurrency) {
+            String partnerId, String payCurrency, boolean foreignCash) {
         List<Line> lines = new ArrayList<>();
         String label = "Realised FX · " + payCurrency + " @ " + JsNumbers.dec(fxs.rate().rate());
         // the AR / AP line relieves the open items in their own currency (the payment amount), at their carrying base
         String foreign = JsNumbers.dec(fxs.amount());
         if ("inbound".equals(direction)) {
-            lines.add(new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null, null));
+            Line cash = new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null, null);
+            lines.add(foreignCash ? cash.inCurrency(payCurrency, foreign) : cash);
             lines.add(new Line(counterAccount, null, JsNumbers.dec(fxs.counterBase()), partnerId, null, null, null,
                     null).inCurrency(fxs.counterCurrency(), foreign));
         } else {
             lines.add(new Line(counterAccount, JsNumbers.dec(fxs.counterBase()), null, partnerId, null, null, null,
                     null).inCurrency(fxs.counterCurrency(), foreign));
-            lines.add(new Line(cashAccount, null, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null));
+            Line cash = new Line(cashAccount, null, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null);
+            lines.add(foreignCash ? cash.inCurrency(payCurrency, foreign) : cash);
         }
         BigDecimal fx = fxs.fx();
         if (fx.signum() > 0) {

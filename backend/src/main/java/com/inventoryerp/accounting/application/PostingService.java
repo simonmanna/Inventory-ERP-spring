@@ -79,6 +79,16 @@ public class PostingService {
     /** Post a balanced entry; returns the entry with {@code lines}. */
     @Transactional
     public Map<String, Object> post(PostingRequest request) {
+        return post(request, List.of());
+    }
+
+    /**
+     * As {@link #post(PostingRequest)}, also snapshotting the rate of each foreign leg whose line states its own currency
+     * (R-8, ADR-S076: a treasury operation on a foreign account, a cross-currency transfer). One snapshot row per
+     * currency pair; the entry's own rate first.
+     */
+    @Transactional
+    public Map<String, Object> post(PostingRequest request, List<CurrencyService.Resolution> legRates) {
         if (request.lines() == null || request.lines().size() < 2) {
             throw ApiException.badRequest("A journal entry requires at least two lines");
         }
@@ -111,6 +121,7 @@ public class PostingService {
         assertAccounts(lines, true);
         assertTaxPeriodOpen(organizationId, date, lines, request.sourceType());
         applyRounding(lines, request.currencyId());
+        assertDenominations(organizationId, lines, request);
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
         lines = ruled;
@@ -146,6 +157,13 @@ public class PostingService {
         em.refresh(entry);
         String entryId = entry.getId();
         snapshotRate(organizationId, entryId, fx);
+        Set<String> pairs = new LinkedHashSet<>();
+        pairs.add(fx.fromCode() + ">" + fx.toCode());
+        for (CurrencyService.Resolution leg : legRates == null ? List.<CurrencyService.Resolution>of() : legRates) {
+            if (leg != null && !leg.fromCode().equals(leg.toCode()) && pairs.add(leg.fromCode() + ">" + leg.toCode())) {
+                snapshotRate(organizationId, entryId, leg);
+            }
+        }
         AfterCommit.run(() -> {
             Map<String, Object> payload = new HashMap<>();
             payload.put("organizationId", organizationId);
@@ -329,6 +347,7 @@ public class PostingService {
         assertAccounts(lines, false);
         assertTaxPeriodOpen(organizationId, date, lines, request.sourceType());
         applyRounding(lines, request.currencyId());
+        assertDenominations(organizationId, lines, request);
         List<NormalizedLine> ruled = costCenters.apply(lines, request.costCenterId(), request.branchId(), date);
         boolean centersResolved = ruled != lines;
         lines = ruled;
@@ -468,6 +487,19 @@ public class PostingService {
                     Money.dec(request.exchangeRate() == null ? 1 : request.exchangeRate()), "base", date);
         }
         return currency.resolve(request.currencyId(), baseCode, request.exchangeRate(), date);
+    }
+
+    /** Lines on a designated foreign cash account must be in its currency (R-8, {@link ForeignCash}). */
+    private void assertDenominations(String organizationId, List<NormalizedLine> lines, PostingRequest request) {
+        String entryCurrency = request.currencyId() == null || request.currencyId().isBlank()
+                || request.currencyId().equalsIgnoreCase(baseCurrency()) ? null : request.currencyId();
+        List<String[]> perLine = new ArrayList<>();
+        for (NormalizedLine l : lines) {
+            String c = PostingMath.BASE_ONLY.equals(l.currencyId()) ? null
+                    : l.overridesCurrency() ? l.currencyId() : entryCurrency;
+            perLine.add(new String[] {l.accountId(), c});
+        }
+        ForeignCash.assertDenominated(jdbc, organizationId, perLine, request.sourceType());
     }
 
     /** Snapshot of the rate a foreign-currency entry was posted at: pair, rate, date and source. */

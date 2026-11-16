@@ -62,7 +62,8 @@ public class CashFlowController {
             @NotNull(message = "must be a number conforming to the specified constraints")
             @DecimalMin(value = "0.01", message = "must not be less than 0.01") BigDecimal amount,
             @NotNull(message = "must be a string") @NotBlank(message = "should not be empty") String description,
-            @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String date) {}
+            @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String date,
+            @DecimalMin(value = "0", inclusive = false, message = "must be a positive number") BigDecimal exchangeRate) {}
 
     private final CashFlowService cashFlow;
     private final CashMovementReportService movementReport;
@@ -242,7 +243,7 @@ public class CashFlowController {
     @RequirePermissions(Permissions.TREASURY__TRANSFER)
     public Map<String, Object> deposit(@Valid @RequestBody CashFlowRequest dto) {
         return cashFlow.deposit(new CashFlowService.OperationInput(dto.accountId(), dto.counterpartAccountId(),
-                dto.operationType(), dto.amount(), dto.description(), dto.date()));
+                dto.operationType(), dto.amount(), dto.description(), dto.date(), dto.exchangeRate()));
     }
 
     @PostMapping("/withdraw")
@@ -250,6 +251,6 @@ public class CashFlowController {
     @RequirePermissions(Permissions.TREASURY__TRANSFER)
     public Map<String, Object> withdraw(@Valid @RequestBody CashFlowRequest dto) {
         return cashFlow.withdraw(new CashFlowService.OperationInput(dto.accountId(), dto.counterpartAccountId(),
-                dto.operationType(), dto.amount(), dto.description(), dto.date()));
+                dto.operationType(), dto.amount(), dto.description(), dto.date(), dto.exchangeRate()));
     }
 }

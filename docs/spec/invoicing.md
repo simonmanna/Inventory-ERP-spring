@@ -58,6 +58,15 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Foreign-currency payments through a foreign account** (R-8, ADR-S076, owner-approved 2026-11-16). A payment in
+  currency C may use a designated bank, cash or mobile-money account held in C, outside a register shift:
+  - the cash line carries C;
+  - an outflow is relieved at the account's carrying value;
+  - the realised FX nets the document side and the cash side.
+
+  A payment in another currency, or in functional currency, through such an account is refused. PO pay still refuses
+  foreign accounts.
+
 Pending owner approval:
 
 1. **Line units (ADR-S003, V5).** Invoice, vendor-bill and credit-note lines accept `uomId` and snapshot

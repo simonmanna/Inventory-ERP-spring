@@ -54,18 +54,29 @@ public class CashFlowService {
 
     /** Deposit / withdrawal body. */
     public record OperationInput(String accountId, String counterpartAccountId, String operationType, BigDecimal amount,
-            String description, String date) {}
+            String description, String date, BigDecimal exchangeRate) {
+
+        public OperationInput(String accountId, String counterpartAccountId, String operationType, BigDecimal amount,
+                String description, String date) {
+            this(accountId, counterpartAccountId, operationType, amount, description, date, null);
+        }
+    }
 
     private final JdbcClient jdbc;
     private final PostingService posting;
     private final AccountResolverService accounts;
     private final AuditService audit;
+    private final CurrencyService currency;
+    private final AccountDeterminationService determination;
 
-    public CashFlowService(JdbcClient jdbc, PostingService posting, AccountResolverService accounts, AuditService audit) {
+    public CashFlowService(JdbcClient jdbc, PostingService posting, AccountResolverService accounts, AuditService audit,
+            CurrencyService currency, AccountDeterminationService determination) {
         this.jdbc = jdbc;
         this.posting = posting;
         this.accounts = accounts;
         this.audit = audit;
+        this.currency = currency;
+        this.determination = determination;
     }
 
     private static Map<String, Object> body(Object... kv) {
@@ -124,14 +135,20 @@ public class CashFlowService {
             boolean isDrawer = !registers.isEmpty() || openDrawerIds.contains(id);
             BigDecimal[] t = todayMap.get(id);
             BigDecimal bal = balance.get(id);
-            out.add(body("id", id, "code", a.get("code"), "name", a.get("name"), "accountType", a.get("cat_key"),
+            ForeignCash.Denomination fx = ForeignCash.of(jdbc, orgId, id);
+            Map<String, Object> row = body("id", id, "code", a.get("code"), "name", a.get("name"), "accountType", a.get("cat_key"),
                     "currencyId", a.get("currencyId"), "currencyCode", a.get("currencyId") != null ? a.get("currencyId") : baseCurrency,
                     "baseCurrency", baseCurrency, "bankName", a.get("bankName"), "accountNumber", a.get("accountNumber"),
                     "isDefault", a.get("isDefault"), "balance", bal == null ? "0" : plain(bal),
                     "cashRegister", registers.isEmpty() ? null : registers.getFirst(), "registers", registers,
                     "posMethods", methodsOf.getOrDefault(id, List.of()), "restrictions", isDrawer ? List.of("drawer") : List.of(),
                     "lastActivityAt", lastActivity.get(id), "todayIn", fixed2(t == null ? BigDecimal.ZERO : t[0]),
-                    "todayOut", fixed2(t == null ? BigDecimal.ZERO : t[1])));
+                    "todayOut", fixed2(t == null ? BigDecimal.ZERO : t[1]));
+            // R-8 (ADR-S076): a foreign account's balance in its own currency; "balance" stays functional
+            row.put("foreignBalance", fx == null ? null : plain(ForeignCash.balance(jdbc, orgId, id, fx.currency())
+                    .foreign()));
+            row.put("currencyState", fx == null ? "functional" : fx.designated() ? "designated" : "undesignated");
+            out.add(row);
         }
         return out;
     }
@@ -186,6 +203,9 @@ public class CashFlowService {
                 + " AND \"deletedAt\" IS NULL").params(id, orgId));
         if (account == null) {
             throw ApiException.notFound("Account not found");
+        }
+        if (dto.get("currencyId") != null) {
+            ForeignCash.assertCurrencyChangeable(jdbc, orgId, id, String.valueOf(dto.get("currencyId")));
         }
         if (Boolean.TRUE.equals(dto.get("isDefault"))) {
             jdbc.sql("SELECT id FROM \"AccountCategory\" WHERE id = ? FOR UPDATE").param(account.get("categoryId")).query(String.class).list();
@@ -289,6 +309,10 @@ public class CashFlowService {
             throw ApiException.badRequest(op.label() + " must use a " + String.join(" or ", op.classifications()) + " account; "
                     + counterpart.code() + " is " + (classification == null ? "undefined" : classification));
         }
+        ForeignCash.Denomination foreign = ForeignCash.of(jdbc, orgId, account.id());
+        if (foreign != null) {
+            return postForeign(direction, dto, op, account, counterpart, foreign, amount, postingDate, orgId);
+        }
         if ("withdrawal".equals(direction)) {
             TreasuryGuards.assertSufficientFunds(jdbc, orgId, account.id(), amount, account.name());
         }
@@ -305,6 +329,58 @@ public class CashFlowService {
         audit.recordInTx(AuditInput.of("TreasuryOperation", id, "create", null, body("direction", direction,
                 "operationType", op.key(), "accountId", account.id(), "counterpartAccountId", counterpart.id(),
                 "amount", amt, "journalEntryId", entry.get("id"), "description", description)));
+        BusinessOutcome.record(jdbc, entry, true);
+        return entry;
+    }
+
+    /**
+     * Deposit into / withdrawal from a foreign-currency account (R-8, ADR-S076). {@code amount} is in the account's
+     * currency. The counterpart takes the functional value at the transaction rate (stated {@code exchangeRate}, else
+     * the rate table). A deposit adds that value to the account; a withdrawal relieves the account at its carrying
+     * value and the difference is realised FX. The funds check is in the account's currency.
+     */
+    private Map<String, Object> postForeign(String direction, OperationInput dto, Operation op,
+            TreasuryGuards.AccountRow account, TreasuryGuards.AccountRow counterpart, ForeignCash.Denomination foreign,
+            BigDecimal amount, Instant postingDate, String orgId) {
+        ForeignCash.requireDesignated(foreign);
+        String ccy = foreign.currency();
+        ForeignCash.assertDecimals(jdbc, ccy, amount);
+        String functional = ForeignCash.functional(jdbc, orgId);
+        CurrencyService.Resolution rate = currency.resolve(ccy, functional, dto.exchangeRate(), postingDate);
+        BigDecimal valued = amount.multiply(rate.rate()).setScale(6, RoundingMode.HALF_UP);
+        boolean deposit = "deposit".equals(direction);
+        BigDecimal cashBase = valued;
+        if (!deposit) {
+            ForeignCash.Balance bal = ForeignCash.balance(jdbc, orgId, account.id(), ccy);
+            ForeignCash.assertFunds(bal, amount, account.name(), ccy);
+            cashBase = ForeignCash.relieve(bal, amount, rate.rate());
+        }
+        BigDecimal fx = deposit ? BigDecimal.ZERO : valued.subtract(cashBase);
+        String id = TreasuryGuards.operationId();
+        String description = op.label() + ": " + dto.description().trim();
+        String fxLabel = "Realised FX · " + ccy + " @ " + plain(rate.rate());
+        List<PostingRequest.Line> lines = new ArrayList<>();
+        if (deposit) {
+            lines.add(PostingRequest.Line.debit(account.id(), plain(cashBase), null).inCurrency(ccy, plain(amount)));
+            lines.add(PostingRequest.Line.credit(counterpart.id(), plain(valued), null));
+        } else {
+            lines.add(PostingRequest.Line.debit(counterpart.id(), plain(valued), null));
+            lines.add(PostingRequest.Line.credit(account.id(), plain(cashBase), null).inCurrency(ccy, plain(amount)));
+            if (fx.signum() > 0) {
+                lines.add(PostingRequest.Line.credit(determination.mapped("fx_gain"), plain(fx), fxLabel));
+            } else if (fx.signum() < 0) {
+                lines.add(PostingRequest.Line.debit(determination.mapped("fx_loss"), plain(fx.negate()), fxLabel));
+            }
+        }
+        String journal = "cash".equals(account.categoryKey()) || "petty_cash".equals(account.categoryKey()) ? "CASH" : "BANK";
+        Map<String, Object> entry = posting.post(new PostingRequest(journal, postingDate, description, null, null,
+                deposit ? "cash_flow_deposit" : "cash_flow_withdrawal", id, null, "cash-flow:" + direction + ":" + id,
+                null, null, Map.of("treasuryOperation", op.key()), lines), List.of(rate));
+        Map<String, Object> values = body("direction", direction, "operationType", op.key(), "accountId", account.id(),
+                "counterpartAccountId", counterpart.id(), "amount", plain(amount), "currencyCode", ccy, "exchangeRate",
+                plain(rate.rate()), "rateSource", rate.source(), "functionalAmount", plain(valued), "fxAmount",
+                plain(fx), "journalEntryId", entry.get("id"), "description", description);
+        audit.recordInTx(AuditInput.of("TreasuryOperation", id, "create", null, values));
         BusinessOutcome.record(jdbc, entry, true);
         return entry;
     }
@@ -352,15 +428,19 @@ public class CashFlowService {
                     "categoryLabel", MoneyActivityTaxonomy.CATEGORY_LABEL.getOrDefault(category, "Other"),
                     "debit", plain(SqlRows.dec(l, "debit")), "credit", plain(SqlRows.dec(l, "credit")),
                     "baseDebit", plain(SqlRows.dec(l, "baseDebit")), "baseCredit", plain(SqlRows.dec(l, "baseCredit")),
-                    "runningBalance", plain(running)));
+                    "runningBalance", plain(running), "currencyId", l.get("currencyId")));
         }
+        ForeignCash.Denomination fx = ForeignCash.of(jdbc, orgId, accountId);
+        ForeignCash.Balance fxBal = fx == null ? null : ForeignCash.balance(jdbc, orgId, accountId, fx.currency());
         return body("data", rows, "total", total, "page", page, "pageSize", pageSize,
                 "totalPages", (long) Math.ceil(total / (double) pageSize),
                 "account", body("id", account.get("id"), "code", account.get("code"), "name", account.get("name"),
                         "accountType", account.get("cat_key"), "bankName", account.get("bankName"),
                         "accountNumber", account.get("accountNumber"), "currencyId", account.get("currencyId"),
                         "currentBalance", plain(currentBalance), "cashRegister", registers.isEmpty() ? null : registers.getFirst(),
-                        "registers", registers));
+                        "registers", registers, "foreignBalance", fxBal == null ? null : plain(fxBal.foreign()),
+                        "carryingValue", fxBal == null ? null : plain(fxBal.base()), "currencyState", fx == null
+                                ? "functional" : fx.designated() ? "designated" : "undesignated"));
     }
 
     private Map<String, String[]> paymentsOf(String orgId, List<String> ids) {

@@ -56,6 +56,13 @@ public class BankMatchingService {
     private final AccountDeterminationService determination;
     private final AuditService audit;
     private final TransactionTemplate isolated;
+    private CurrencyService currency;
+
+    /** R-8 (ADR-S076): rate resolution for rule postings on a foreign-currency bank account. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCurrency(CurrencyService currency) {
+        this.currency = currency;
+    }
 
     public BankMatchingService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
             AuditService audit, PlatformTransactionManager txm) {
@@ -357,6 +364,11 @@ public class BankMatchingService {
         }
         String counter = (String) rule.get("counterAccountId");
         String partner = (String) rule.get("partnerId");
+        ForeignCash.Denomination fx = ForeignCash.of(jdbc, org, bankAccountId);
+        if (fx != null) {
+            return postForeignRuleEntry(org, bankAccountId, rule, line, fx, outflow, gross, net, tax, taxAccount,
+                    counter, partner);
+        }
         String text = rule.get("entryDescription") != null ? (String) rule.get("entryDescription")
                 : (String) line.get("description");
         List<Line> lines = new ArrayList<>();
@@ -381,6 +393,56 @@ public class BankMatchingService {
         Map<String, Object> entry = posting.post(new PostingRequest(journal, (Instant) line.get("postedAt"),
                 "Bank rule " + rule.get("name") + ": " + line.get("description"), null, null, "bank_statement_line",
                 (String) line.get("id"), null, "bank_rule:" + line.get("id"), null, null, null, lines));
+        return (String) entry.get("id");
+    }
+
+    /**
+     * A rule posting on a foreign-currency bank account (R-8, ADR-S076): the statement amount is in the account's
+     * currency; the counter and tax lines take the functional value at the line date's rate; money out is relieved at
+     * the account's carrying value and the difference is realised FX.
+     */
+    private String postForeignRuleEntry(String org, String bankAccountId, Map<String, Object> rule,
+            Map<String, Object> line, ForeignCash.Denomination fx, boolean outflow, BigDecimal gross, BigDecimal net,
+            BigDecimal tax, String taxAccount, String counter, String partner) {
+        ForeignCash.requireDesignated(fx);
+        Instant at = (Instant) line.get("postedAt");
+        CurrencyService.Resolution rate = currency.resolve(fx.currency(), ForeignCash.functional(jdbc, org), null, at);
+        BigDecimal netBase = net.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
+        BigDecimal taxBase = tax.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
+        BigDecimal valued = netBase.add(taxBase);
+        BigDecimal bankBase = valued;
+        if (outflow) {
+            TreasuryGuards.lockAccounts(jdbc, org, List.of(bankAccountId));
+            bankBase = ForeignCash.relieve(ForeignCash.balance(jdbc, org, bankAccountId, fx.currency()), gross,
+                    rate.rate());
+        }
+        BigDecimal gain = outflow ? valued.subtract(bankBase) : BigDecimal.ZERO;
+        String text = rule.get("entryDescription") != null ? (String) rule.get("entryDescription")
+                : (String) line.get("description");
+        List<Line> lines = new ArrayList<>();
+        Line bank = new Line(bankAccountId, outflow ? null : plain(bankBase), outflow ? plain(bankBase) : null, partner,
+                text, null, null, null).inCurrency(fx.currency(), plain(gross));
+        lines.add(bank);
+        lines.add(new Line(counter, outflow ? plain(netBase) : null, outflow ? null : plain(netBase), partner, text,
+                null, null, null));
+        if (taxBase.signum() > 0) {
+            lines.add(new Line(taxAccount, outflow ? plain(taxBase) : null, outflow ? null : plain(taxBase), partner,
+                    "Tax on " + text, null, null, null));
+        }
+        String fxLabel = "Realised FX · " + fx.currency() + " @ " + plain(rate.rate());
+        if (gain.signum() > 0) {
+            lines.add(Line.credit(determination.mapped("fx_gain"), plain(gain), fxLabel));
+        } else if (gain.signum() < 0) {
+            lines.add(Line.debit(determination.mapped("fx_loss"), plain(gain.negate()), fxLabel));
+        }
+        String journal = (String) rule.get("journalCode");
+        if (jdbc.sql("SELECT count(*) FROM \"Journal\" WHERE \"organizationId\" = ? AND code = ?").params(org, journal)
+                .query(Long.class).single() == 0) {
+            journal = "GEN";
+        }
+        Map<String, Object> entry = posting.post(new PostingRequest(journal, at, "Bank rule " + rule.get("name") + ": "
+                        + line.get("description"), null, null, "bank_statement_line", (String) line.get("id"), null,
+                "bank_rule:" + line.get("id"), null, null, null, lines), List.of(rate));
         return (String) entry.get("id");
     }
 

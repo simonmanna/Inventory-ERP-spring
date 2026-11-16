@@ -968,6 +968,7 @@ public class CashSessionService {
             if (!"bank".equals(destination.categoryKey())) {
                 throw ApiException.badRequest("Select a bank account for the deposit");
             }
+            ForeignCash.assertFunctional(jdbc, organizationId, destination.id(), "Banking a shift");
             String reason = "Bank deposit: " + dto.bankName() + (dto.reference() != null && !dto.reference().isEmpty()
                     ? " ref:" + dto.reference() : "") + (dto.notes() != null && !dto.notes().isEmpty() ? " - " + dto.notes() : "");
             if ("open".equals(status)) {
