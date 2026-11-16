@@ -6,23 +6,26 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
+  toastMutationError,
   useBalanceSheetDetailed,
+  useBaseCurrencyDecimals,
   useRebuildSnapshots,
 } from '@/features/accounting/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { localDay } from '@/lib/dates';
 import { tx } from '@/lib/i18n/tx';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDay();
 
-function fmtMoney(value?: string): string {
+function fmtMoney(value?: string, decimals = 2): string {
   if (!value && value !== '0') return '-';
   const n = Number(value);
   if (Number.isNaN(n)) return '-';
   const abs = Math.abs(n);
   const formatted = abs.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   });
   return n < 0 ? `(${formatted})` : formatted;
 }
@@ -51,6 +54,8 @@ interface SectionPanelProps {
   total?: string;
   totalLabel?: string;
   isGrandTotal?: boolean;
+  /** Base-currency minor units. */
+  decimals?: number;
 }
 
 function SectionPanel({
@@ -64,7 +69,9 @@ function SectionPanel({
   total,
   totalLabel,
   isGrandTotal = false,
+  decimals = 2,
 }: SectionPanelProps) {
+  const fmt = (v?: string) => fmtMoney(v, decimals);
   const colorMap: Record<IconColor, { bg: string; text: string; border: string }> = {
     green: { bg: 'bg-emerald-50', text: 'text-emerald-600', border: 'border-emerald-500' },
     red: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-500' },
@@ -97,7 +104,7 @@ function SectionPanel({
               >
                 <span className="text-slate-700">{row.name}</span>
                 <span className="font-mono text-slate-700">
-                  {fmtMoney(row.balance)}
+                  {fmt(row.balance)}
                 </span>
               </div>
             ))}
@@ -105,7 +112,7 @@ function SectionPanel({
             {subtotal && (
               <div className="flex justify-between pt-3 mt-2 border-t-2 border-slate-200 font-semibold text-sm">
                 <span>{subtotalLabel || tx('Subtotal')}</span>
-                <span className="font-mono">{fmtMoney(subtotal)}</span>
+                <span className="font-mono">{fmt(subtotal)}</span>
               </div>
             )}
           </div>
@@ -114,14 +121,14 @@ function SectionPanel({
         {total && !isGrandTotal && (
           <div className="flex justify-between pt-3 mt-3 border-t-2 border-slate-300 font-bold text-sm">
             <span>{totalLabel || tx('Total')}</span>
-            <span className="font-mono">{fmtMoney(total)}</span>
+            <span className="font-mono">{fmt(total)}</span>
           </div>
         )}
 
         {isGrandTotal && total && (
           <div className="flex justify-between pt-3 mt-3 border-t-2 border-slate-800 bg-slate-50 px-3 py-3 -mx-4 -mb-4 rounded-b-xl">
             <span className="font-bold">{totalLabel || tx('Total')}</span>
-            <span className="font-mono font-bold text-base">{fmtMoney(total)}</span>
+            <span className="font-mono font-bold text-base">{fmt(total)}</span>
           </div>
         )}
       </CardContent>
@@ -133,10 +140,15 @@ export function BalanceSheetPage() {
   const [asOf, setAsOf] = useState(today);
   const { data, isLoading, isError, refetch } = useBalanceSheetDetailed(asOf);
   const rebuildMutation = useRebuildSnapshots();
+  const decimals = useBaseCurrencyDecimals();
 
   async function handleRebuild() {
-    await rebuildMutation.mutateAsync();
-    toast.success(tx('Snapshots rebuilt'));
+    try {
+      await rebuildMutation.mutateAsync();
+      toast.success(tx('Snapshots rebuilt'));
+    } catch (e) {
+      toastMutationError(tx('Could not rebuild snapshots'), e);
+    }
   }
 
   const sectionMap = new Map((data?.sections ?? []).map((s) => [s.key, s]));
@@ -145,6 +157,13 @@ export function BalanceSheetPage() {
   const currentLiabilities = sectionMap.get('current_liabilities');
   const longTermLiabilities = sectionMap.get('long_term_liabilities');
   const equity = sectionMap.get('equity');
+  // Unclosed P&L belongs to equity; without this row equity + liabilities would not add up to the total.
+  const equityRows = [
+    ...(equity?.rows ?? []),
+    ...(data?.currentYearEarnings !== undefined
+      ? [{ name: tx('Current year earnings'), balance: data.currentYearEarnings }]
+      : []),
+  ];
 
   return (
     <div className="space-y-6">
@@ -225,6 +244,7 @@ export function BalanceSheetPage() {
             icon={Scale}
             iconColor="green"
             loading={isLoading}
+            decimals={decimals}
             rows={currentAssets?.rows ?? []}
             subtotal={currentAssets?.subtotal}
             subtotalLabel={tx('Total current assets')}
@@ -235,6 +255,7 @@ export function BalanceSheetPage() {
             icon={Scale}
             iconColor="green"
             loading={isLoading}
+            decimals={decimals}
             rows={nonCurrentAssets?.rows ?? []}
             total={data?.totals.assets}
             totalLabel={tx('Total assets')}
@@ -249,6 +270,7 @@ export function BalanceSheetPage() {
             icon={Scale}
             iconColor="red"
             loading={isLoading}
+            decimals={decimals}
             rows={currentLiabilities?.rows ?? []}
             subtotal={currentLiabilities?.subtotal}
             subtotalLabel={tx('Total current liabilities')}
@@ -259,6 +281,7 @@ export function BalanceSheetPage() {
             icon={Scale}
             iconColor="red"
             loading={isLoading}
+            decimals={decimals}
             rows={longTermLiabilities?.rows ?? []}
             total={data?.totals.liabilities}
             totalLabel={tx('Total liabilities')}
@@ -275,7 +298,8 @@ export function BalanceSheetPage() {
             icon={Scale}
             iconColor="blue"
             loading={isLoading}
-            rows={equity?.rows ?? []}
+            decimals={decimals}
+            rows={equityRows}
             total={data?.totals.liabilitiesAndEquity}
             totalLabel={tx('Total liabilities & stockholders\' equity')}
             isGrandTotal

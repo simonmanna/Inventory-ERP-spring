@@ -89,7 +89,7 @@ public class FinancialReportsService {
     public Map<String, Object> trialBalance(String from, String to, String view) {
         boolean preClosing = "pre_closing".equals(view);
         boolean ranged = from != null && !from.isEmpty();
-        Instant asOf = to != null && !to.isEmpty() ? LedgerQueries.date(to, zone()) : Instant.now();
+        Instant asOf = to != null && !to.isEmpty() ? LedgerQueries.dateEnd(to, zone()) : Instant.now();
         Instant snap = preClosing || ranged ? null : findSnapshot("ReportTrialBalanceSnapshot", true, asOf);
         if (snap != null) {
             BigDecimal td = BigDecimal.ZERO;
@@ -108,7 +108,7 @@ public class FinancialReportsService {
             return body("rows", rows, "totals", body("debit", plain(td), "credit", plain(tc)),
                     "balanced", td.subtract(tc).abs().compareTo(TB_EPSILON) <= 0, "source", "snapshot", "asOf", snap);
         }
-        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.date(to, zone()), null,
+        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.dateEnd(to, zone()), null,
                 preClosing);
         Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
         BigDecimal td = BigDecimal.ZERO;
@@ -139,7 +139,7 @@ public class FinancialReportsService {
         StringBuilder sql = new StringBuilder();
         ZoneId zone = zone();
         Instant f = LedgerQueries.date(from, zone);
-        Instant t = LedgerQueries.date(to, zone);
+        Instant t = LedgerQueries.dateEnd(to, zone);
         if (f != null) {
             sql.append(" AND e.\"postingDate\" >= :from");
             params.put("from", FiscalPeriodControl.ts(f));
@@ -167,37 +167,60 @@ public class FinancialReportsService {
         params.put("org", org());
         params.put("acct", accountId);
         String range = rangeSql(params, from, to);
-        BigDecimal running = BigDecimal.ZERO;
+        // the running balance starts from everything before `from` (review 2026-11-15, R-12)
+        BigDecimal opening = BigDecimal.ZERO;
+        Instant start = LedgerQueries.date(from, zone());
+        if (start != null) {
+            opening = jdbc.sql("SELECT coalesce(sum(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
+                    + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND l.\"accountId\" = ?"
+                    + " AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" < ?")
+                    .params(org(), accountId, FiscalPeriodControl.ts(start)).query(BigDecimal.class).single();
+        }
+        BigDecimal running = opening;
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map<String, Object> l : SqlRows.list(spec("SELECT l.id, e.\"postingDate\", e.\"entryNumber\", l.description,"
+        for (Map<String, Object> l : SqlRows.list(spec("SELECT l.id, l.\"journalEntryId\", e.\"postingDate\", e.\"entryNumber\", l.description,"
                 + " l.\"baseDebit\", l.\"baseCredit\" FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
                 + " WHERE l.\"organizationId\" = :org AND l.\"accountId\" = :acct AND e.status::text IN ('posted', 'reversed')" + range
                 + " ORDER BY e.\"postingDate\" ASC, l.\"lineNumber\" ASC", params))) {
             running = running.add(SqlRows.dec(l, "baseDebit")).subtract(SqlRows.dec(l, "baseCredit"));
-            rows.add(body("id", l.get("id"), "date", l.get("postingDate"), "entryNumber", l.get("entryNumber"),
-                    "description", l.get("description"), "debit", plain(SqlRows.dec(l, "baseDebit")),
-                    "credit", plain(SqlRows.dec(l, "baseCredit")), "balance", plain(running)));
+            rows.add(body("id", l.get("id"), "journalEntryId", l.get("journalEntryId"), "date", l.get("postingDate"),
+                    "entryNumber", l.get("entryNumber"), "description", l.get("description"),
+                    "debit", plain(SqlRows.dec(l, "baseDebit")), "credit", plain(SqlRows.dec(l, "baseCredit")),
+                    "balance", plain(running)));
         }
-        return body("account", account, "lines", rows, "closingBalance", plain(running));
+        AccountMeta meta = account == null ? null : accounts.meta(java.util.Set.of(accountId)).get(accountId);
+        return body("account", account, "normalBalance", meta == null ? "debit" : meta.normalBalance(),
+                "openingBalance", plain(opening), "lines", rows, "closingBalance", plain(running));
     }
 
     @Transactional(readOnly = true)
     public Map<String, Object> generalLedger(String from, String to, int page, int pageSize) {
+        return generalLedger(from, to, page, pageSize, null);
+    }
+
+    /** General ledger lines, optionally of one account (filtered in SQL, so totals and paging cover every line). */
+    @Transactional(readOnly = true)
+    public Map<String, Object> generalLedger(String from, String to, int page, int pageSize, String accountId) {
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("org", org());
+        String account = "";
+        if (accountId != null && !accountId.isBlank()) {
+            account = " AND l.\"accountId\" = :acct";
+            params.put("acct", accountId);
+        }
         String base = " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
                 + " JOIN \"Account\" a ON a.id = l.\"accountId\" WHERE l.\"organizationId\" = :org"
-                + " AND e.status::text IN ('posted', 'reversed')" + rangeSql(params, from, to);
+                + " AND e.status::text IN ('posted', 'reversed')" + account + rangeSql(params, from, to);
         long total = spec("SELECT count(*)" + base, params).query(Long.class).single();
         Map<String, Object> pageParams = new LinkedHashMap<>(params);
         pageParams.put("lim", pageSize);
         pageParams.put("off", (page - 1) * pageSize);
         List<Map<String, Object>> data = new ArrayList<>();
-        for (Map<String, Object> l : SqlRows.list(spec("SELECT l.id, e.\"postingDate\", e.\"entryNumber\", a.code, a.name, l.description,"
+        for (Map<String, Object> l : SqlRows.list(spec("SELECT l.id, l.\"journalEntryId\", e.\"postingDate\", e.\"entryNumber\", a.code, a.name, l.description,"
                 + " l.\"baseDebit\", l.\"baseCredit\"" + base + " ORDER BY e.\"postingDate\" ASC, l.\"lineNumber\" ASC"
                 + " LIMIT :lim OFFSET :off", pageParams))) {
-            data.add(body("id", l.get("id"), "date", l.get("postingDate"), "entryNumber", l.get("entryNumber"),
-                    "accountCode", l.get("code"), "accountName", l.get("name"), "description", l.get("description"),
+            data.add(body("id", l.get("id"), "journalEntryId", l.get("journalEntryId"), "date", l.get("postingDate"),
+                    "entryNumber", l.get("entryNumber"), "accountCode", l.get("code"), "accountName", l.get("name"), "description", l.get("description"),
                     "debit", plain(SqlRows.dec(l, "baseDebit")), "credit", plain(SqlRows.dec(l, "baseCredit"))));
         }
         return body("data", data, "meta", body("page", page, "pageSize", pageSize, "total", total,
@@ -210,7 +233,7 @@ public class FinancialReportsService {
     public Map<String, Object> pnl(String from, String to) {
         // ACC-1 (B1, B10): always from the ledger. The cumulative snapshot cannot answer a date range and carries no
         // other income / expense; closing entries are left out so a closed period still reports its result.
-        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.date(to, zone()), null,
+        Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.dateEnd(to, zone()), null,
                 true);
         Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
@@ -285,7 +308,7 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheet(String asOf) {
-        Instant requested = LedgerQueries.date(asOf, zone());
+        Instant requested = LedgerQueries.dateEnd(asOf, zone());
         if (requested == null) {
             throw new IllegalArgumentException("Invalid Date: " + asOf);
         }
@@ -308,7 +331,7 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheetDetailed(String asOf) {
-        Instant requested = LedgerQueries.date(asOf, zone());
+        Instant requested = LedgerQueries.dateEnd(asOf, zone());
         if (requested == null) {
             throw new IllegalArgumentException("Invalid Date: " + asOf);
         }

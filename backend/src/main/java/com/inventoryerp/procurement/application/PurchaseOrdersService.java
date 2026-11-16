@@ -795,7 +795,7 @@ public class PurchaseOrdersService {
             // 4b. Voucher the receipt: Dr GRNI + Dr Input Tax / Cr AP (GRNI nets to zero).
             stockPosting.postReceiptVoucher((String) po.get("partnerId"), receiptNet, receiptTax, date, "goods_receipt",
                     grnId, "Goods received " + receiptNumber + " · PO " + po.get("orderNumber"),
-                    "receipt_voucher:goods_receipt:" + grnId);
+                    "receipt_voucher:goods_receipt:" + grnId, (String) po.get("currencyCode"), rate);
             // 7. Cash purchase: settle only what this receipt vouchered.
             if ("cash".equals(po.get("paymentType"))) {
                 settleCashReceipt(id, receiptNet.add(receiptTax), grnId, receiptNumber, date);
@@ -944,7 +944,7 @@ public class PurchaseOrdersService {
                     paidAt != null ? paidAt : nowMs(), "purchase_order", id,
                     "Payment PO " + po.get("orderNumber") + (dto.reference() != null && !dto.reference().isEmpty()
                             ? " · " + dto.reference() : ""),
-                    "purchase_payment:" + payment.get("id"));
+                    "purchase_payment:" + payment.get("id"), (String) po.get("currencyCode"), payAmount);
             if ("cash".equals(method)) {
                 cashSession.recordExternalPayOut((String) session.get("id"), functionalAmount,
                         "Payment PO " + po.get("orderNumber"), (String) paymentJournal.get("id"));

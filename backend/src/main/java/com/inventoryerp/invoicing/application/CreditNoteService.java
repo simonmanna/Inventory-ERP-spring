@@ -140,18 +140,35 @@ public class CreditNoteService {
         return d;
     }
 
+    /** A document currency as an upper-case code, the organisation's currency when none is set. */
+    private String currencyCode(Object currencyId) {
+        if (currencyId != null && !currencyId.toString().isBlank()) {
+            return currencyId.toString().trim().toUpperCase(java.util.Locale.ROOT);
+        }
+        return jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org()).query(String.class)
+                .optional().orElse("").toUpperCase(java.util.Locale.ROOT);
+    }
+
     /** Create a draft credit note. */
     @Transactional
     public Map<String, Object> create(CreditNoteInput dto) {
         builder.assertVariants(dto.lines(), false, true);
         assertVariantResolvable(dto.reversedDocumentId(), dto.lines());
         List<LineInput> lines = withInvoiceUnits(dto.reversedDocumentId(), dto.lines());
-        // A credit note against an invoice is in that invoice's currency and rate unless it says otherwise.
-        Map<String, Object> reversed = dto.reversedDocumentId() == null || dto.currencyId() != null ? null
+        // A credit note against an invoice is in that invoice's currency and rate; another currency would settle the
+        // invoice by the raw number (review 2026-11-15, P-7), so it is refused.
+        Map<String, Object> reversed = dto.reversedDocumentId() == null ? null
                 : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ? AND"
                         + " \"organizationId\" = ?").params(dto.reversedDocumentId(), org()));
-        String currencyId = reversed == null ? dto.currencyId() : (String) reversed.get("currencyId");
-        BigDecimal rate = reversed == null ? null : Money.dec(reversed.get("exchangeRate"));
+        if (reversed != null && dto.currencyId() != null
+                && !currencyCode(dto.currencyId()).equals(currencyCode(reversed.get("currencyId")))) {
+            throw ApiException.badRequest("A credit note must be in the credited invoice's currency ("
+                    + currencyCode(reversed.get("currencyId")) + ")");
+        }
+        // an explicit (same) currency takes the table rate, as before; otherwise the invoice's currency and rate
+        boolean inherit = reversed != null && dto.currencyId() == null;
+        String currencyId = inherit ? (String) reversed.get("currencyId") : dto.currencyId();
+        BigDecimal rate = inherit ? Money.dec(reversed.get("exchangeRate")) : null;
         return builder.createDocument("credit_note", new HeaderInput(dto.partnerId(), dto.issueDate(), null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, currencyId, rate,
                 dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), lines);
@@ -237,6 +254,9 @@ public class CreditNoteService {
         }
         if (!String.valueOf(cn.get("partnerId")).equals(String.valueOf(inv.get("partnerId")))) {
             throw ApiException.badRequest("Credit note and invoice belong to different customers");
+        }
+        if (!currencyCode(cn.get("currencyId")).equals(currencyCode(inv.get("currencyId")))) {
+            throw ApiException.badRequest("Credit note and invoice are in different currencies");
         }
         BigDecimal open = Money.dec(cn.get("amountResidual"));
         if (amount.compareTo(open) > 0) {

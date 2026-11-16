@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useInventoryGlTieOut } from '@/features/accounting/api';
 import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { localDay } from '@/lib/dates';
 
 const SOURCE_LABELS: Record<string, string> = {
   goods_receipt: tx('Goods receipts'),
@@ -39,7 +40,7 @@ const SOURCE_LABELS: Record<string, string> = {
 const label = (s: string) => SOURCE_LABELS[s] ?? s.replace(/_/g, ' ');
 
 export function InventoryGlTieOutPage() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDay();
   const [asOf, setAsOf] = useState(today);
   const { data, isLoading, isError, error, refetch, isRefetching } = useInventoryGlTieOut(asOf === today ? undefined : asOf);
 

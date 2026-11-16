@@ -245,8 +245,77 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
 - **Not built:**
   - remitting withholding to the authority as a dedicated flow (today it is a journal or a supplier payment);
   - recording the partner-default position name on the document;
-  - an invoice cancelled after settlement still reverses on its original date when that accounting period is open (the
-    tax lock then refuses it, so the user cancels after re-dating via a credit note).
+  - ~~an invoice cancelled after settlement still reverses on its original date when that accounting period is open~~ —
+    fixed by the 2026-11-15 review (G-2): a reversal whose original date is inside a settled VAT period is dated today.
+
+## Accounting review deviations (2026-11-15, owner-approved: "fix the above")
+
+Findings and evidence: `docs/audits/2026-11-15-accounting-review.md`. IDs below (R-, G-, P-, U-) are that review's.
+Where Nest behaves the same, the change is a deliberate deviation from the reference.
+
+**Reports**
+
+- **R-1 (Nest has the same bug).** A bare `YYYY-MM-DD` `to` / `asOf` is the **last** instant of that org-local day
+  (`LedgerQueries.dateEnd`), so `postingDate <= to` keeps the whole end day. It applies to trial balance, P&L, balance
+  sheet (summary and detailed), account and general ledger, detailed, consolidated and branch reports, POS-GL
+  reconciliation, TB CSV export, tax report, statements and intercompany consolidation. Before, the end day was dropped
+  and Cash Flow (end-inclusive) disagreed with P&L over the same range.
+- **R-2.** Budget vs actual, the budget-control commitment check, consolidated / branch P&L, the dashboard net
+  income, cost-centre and analytic reports exclude closing entries (`LedgerQueries.CLOSING_FILTER`).
+- **R-4 (Nest same).** A snapshot is stale when any balance-affecting line up to `asOf` was posted after it was taken
+  (`coalesce(postedAt, createdAt)`), not only when dated after it.
+- **R-5 (Nest same).** The TB CSV export sums only lines whose entry passes the status / date filter.
+- **R-6.** The bank-reconciliation summary's book balance counts `posted` and `reversed` entries.
+- **R-7.** Auto-match and manual match take the per-account advisory lock; an auto-match update requires the line to be
+  still `unmatched`.
+- **R-9.** Ageing summaries, exposure and sub-ledger tie-outs add open items in base currency (`residual × document
+  rate`; unapplied payments at the payment rate). Detail rows keep the document currency and amount.
+- **R-10.** The tax report converts procurement debit notes at their rate.
+- **R-12 (Nest same).** `GET /reports/accounting/account-ledger/:id` adds `openingBalance` (everything before `from`)
+  and `normalBalance`; the running balance starts from the opening balance. Ledger rows (account and general) add
+  `journalEntryId`. `GET /reports/accounting/general-ledger` accepts `accountId` and `pageSize` (1–500, default 100).
+- **R-3.** VAT settlement measures output VAT on `tax_payable` **and every tax's own account**, input VAT on
+  `tax_receivable`, and excludes treasury "Tax payment" entries (and their reversals). A settlement must start the day
+  after the last settled period (no gaps). The settlement range ends at 23:59:59.999.
+
+**Ledger**
+
+- **G-1.** A foreign-currency payment's AR / AP line carries the documents' currency and the payment amount
+  (`PostingRequest.Line.inCurrency`); its base stays the carrying value. FX revaluation therefore sees settled items as
+  settled. A receipt voucher of a foreign PO carries the PO currency on its AP line (P0-5), and a foreign bill re-measures
+  its vouchered share to the bill rate (`vendor_bill:fx_voucher:<id>`, Dr/Cr AP vs FX gain / loss; reversed on cancel).
+  A foreign PO's payment (`/purchase-orders/:id/pay`) tags its AP line with the PO currency and the amount paid in it,
+  so it settles that currency balance.
+- **G-2.** The VAT tax-period lock also applies to staging and approving drafts and to reversals. A reversal with no
+  stated date whose original date is inside a settled VAT period is dated today. A settlement entry's reversal is exempt.
+- **G-3.** A period inside a closed fiscal year cannot be reopened ("reopen the fiscal year first").
+- **G-4.** Fiscal-year `netIncome` excludes closing entries and their reopen reversals.
+- **G-5 (Nest same).** Period reopen flips the period to open first, then reverses the closing entry, so the reversal
+  keeps the closing entry's date inside the period: the period can be closed again and no closing amounts land in the
+  current period.
+- **G-6.** A foreign-currency entry must balance in its own currency too (tolerance 0.01). The rounding line is stored
+  in base with no currency. V499 adds `NOT VALID` CHECK constraints: non-negative amounts, never debit and credit on one
+  line.
+- **G-7 / G-8.** Reverse and draft approval lock the entry row; approval re-checks the draft's accounts.
+- **G-9.** Opening balances refuse accounts that do not allow manual posting (inventory, tax and other control
+  accounts), as manual journals do.
+- `POST /fx-revaluations` is `@Idempotent` (answers 200, not 201).
+- `GET /journal-entries` accepts `journalId`, `status`, `from`, `to` (inclusive org-local dates) and filters by
+  organization explicitly; `GET /journal-entries/:id` too.
+
+**Postings**
+
+- **P-1 (Nest same).** Cancelling a vendor bill returns the stock it auto-received (`return_to_supplier`, Dr GRNI / Cr
+  stock at issue cost; a cost difference clears GRNI against price variance).
+- **P-3.** A foreign bill matched to a receipt without a PO converts that receipt's (functional) value at the bill rate
+  before computing the price variance.
+- **P-5 (Nest same).** A return-to-vendor debit note posts Dr AP gross / Cr stock, Cr input VAT, variance to purchase
+  price variance (stock adjustment expense when unmapped), stores its tax and total, and lowers the referenced bill's
+  open amount. Not done: debiting GRNI for unvouchered receipts.
+- **P-6.** POS invoices and refunds split a group tax over its children's accounts (`PosInvoiceService.taxSplit`).
+- **P-7.** A credit note must be in the credited invoice's currency; allocation refuses different currencies.
+- **P-8.** Asset capitalisation credits asset clearing (`suspense`, tagged with the vendor) instead of AP; the supplier's
+  bill clears it.
 
 ## Extensions beyond Nest (ADR-S005)
 

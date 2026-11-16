@@ -72,7 +72,7 @@ class Acc0FxIT extends AccountingFixtures {
         run(b, d1);
         assertThat(revaluedOn(b, asset, d1)).as("unrealised gain after first run (10,000 × 1.12 − 10,800)")
                 .isEqualByComparingTo("400");
-        okAs(b, 201, "POST", "/fx-revaluations", Map.of("asOf", d1.toString()));
+        okAs(b, 200, "POST", "/fx-revaluations", Map.of("asOf", d1.toString()));
         assertThat(revaluedOn(b, asset, d1)).as("same-date rerun must post nothing more").isEqualByComparingTo("400");
         assertThat(revaluedOn(b, asset, d1.plusDays(1))).as("reversed on the next day").isEqualByComparingTo("0");
 

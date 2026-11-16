@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -7,17 +7,22 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { money } from '@/lib/format';
-import { useAccounts, useJournals, useCreateJournalEntry } from '@/features/accounting/api';
+import { fromMinorUnits, money, toMinorUnits } from '@/lib/format';
+import { localDay } from '@/lib/dates';
+import { apiMessage } from '@/lib/notify';
+import {
+  allowsManualPosting, isPostingAccount, useAccounts, useBaseCurrencyDecimals, useCreateJournalEntry, useJournals,
+} from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
 
 const selectClass =
   'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
+/** Amounts are kept as the typed decimal text and summed as integer minor units. */
 interface LineForm {
   accountId: string;
-  debit?: number;
-  credit?: number;
+  debit: string;
+  credit: string;
   description?: string;
 }
 interface FormValues {
@@ -27,71 +32,97 @@ interface FormValues {
   lines: LineForm[];
 }
 
-const num = (v: unknown): number => (Number.isFinite(v) ? Number(v) : 0);
+const emptyLine = (): LineForm => ({ accountId: '', debit: '', credit: '' });
 
 export function JournalEntryCreatePage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const journals = useJournals();
   const accounts = useAccounts();
   const createEntry = useCreateJournalEntry();
+  const decimals = useBaseCurrencyDecimals();
   const [error, setError] = useState<string | null>(null);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const { register, control, handleSubmit, watch } = useForm<FormValues>({
+  const { register, control, handleSubmit, watch, setValue } = useForm<FormValues>({
     defaultValues: {
-      journalCode: '',
-      date: today,
+      // Linked from a journal's "New entry" button.
+      journalCode: searchParams.get('journalCode') ?? '',
+      date: localDay(),
       description: '',
-      lines: [{ accountId: '' }, { accountId: '' }],
+      lines: [emptyLine(), emptyLine()],
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'lines' });
   const lines = watch('lines');
   const journalCode = watch('journalCode');
 
-  const postable = (accounts.data?.data ?? []).filter((a) => !a.isGroup && a.isActive);
+  const journalList = journals.data?.data ?? [];
+  // A journalCode from the URL that is not in the loaded list still gets an option so it stays selected.
+  const unknownJournal = !!journalCode && !!journals.data && !journalList.some((j) => j.code === journalCode);
 
-  const totalDebit = (lines ?? []).reduce((s, l) => s + num(l.debit), 0);
-  const totalCredit = (lines ?? []).reduce((s, l) => s + num(l.credit), 0);
+  // The server refuses group, inactive, deprecated and no-manual-posting (control) accounts here.
+  const postable = (accounts.data?.data ?? []).filter((a) => isPostingAccount(a) && allowsManualPosting(a));
+
+  const minor = (v: string | undefined) => toMinorUnits(v, decimals);
+  const fmt = (m: number) => money(fromMinorUnits(m, decimals), undefined, decimals);
+  const totalDebit = (lines ?? []).reduce((s, l) => s + minor(l.debit), 0);
+  const totalCredit = (lines ?? []).reduce((s, l) => s + minor(l.credit), 0);
   const diff = totalDebit - totalCredit;
-  const balanced = totalDebit > 0 && Math.abs(diff) < 0.005;
-  const validLines = (lines ?? []).filter((l) => l.accountId && (num(l.debit) > 0 || num(l.credit) > 0));
-  const canSubmit = Boolean(journalCode) && balanced && validLines.length >= 2 && !createEntry.isPending;
+  const balanced = totalDebit > 0 && diff === 0;
+  const isAmountLine = (l: LineForm) => !!l.accountId && (minor(l.debit) > 0 || minor(l.credit) > 0);
+  const validLines = (lines ?? []).filter(isAmountLine);
+  const badLine = (lines ?? []).some(
+    (l) => minor(l.debit) < 0 || minor(l.credit) < 0 || (minor(l.debit) > 0 && minor(l.credit) > 0),
+  );
+  const canSubmit = Boolean(journalCode) && balanced && !badLine && validLines.length >= 2 && !createEntry.isPending;
 
   const onSubmit = handleSubmit(async (values) => {
+    if (!canSubmit) return;
     setError(null);
     try {
       const entry = await createEntry.mutateAsync({
         journalCode: values.journalCode,
         date: values.date,
         description: values.description || undefined,
-        lines: values.lines
-          .filter((l) => l.accountId && (num(l.debit) > 0 || num(l.credit) > 0))
-          .map((l) => ({
-            accountId: l.accountId,
-            debit: num(l.debit) > 0 ? num(l.debit) : undefined,
-            credit: num(l.credit) > 0 ? num(l.credit) : undefined,
-            description: l.description || undefined,
-          })),
+        lines: values.lines.filter(isAmountLine).map((l) => ({
+          accountId: l.accountId,
+          debit: minor(l.debit) > 0 ? Number(fromMinorUnits(minor(l.debit), decimals)) : undefined,
+          credit: minor(l.credit) > 0 ? Number(fromMinorUnits(minor(l.credit), decimals)) : undefined,
+          description: l.description || undefined,
+        })),
       });
+      // The entry is a DRAFT; it is posted (by a different user) from its detail page.
       navigate(`/journal-entries/${entry.id}`);
     } catch (e) {
-      const message =
-        (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message;
-      setError(Array.isArray(message) ? message.join(', ') : (message ?? tx('Failed to post entry')));
+      setError(apiMessage(e, tx('Failed to save the draft')));
     }
   });
+
+  /** A line carries a debit OR a credit: typing into one side clears the other. */
+  const amountField = (index: number, side: 'debit' | 'credit') => {
+    const other = side === 'debit' ? 'credit' : 'debit';
+    return register(`lines.${index}.${side}`, {
+      onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.value !== '') setValue(`lines.${index}.${other}`, '');
+      },
+    });
+  };
 
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{tx('New Journal Entry')}</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">{tx('New Journal Entry')}</h1>
+          <p className="text-sm text-muted-foreground">
+            {tx('Saved as a draft. Another user with posting rights posts it from the entry page.')}
+          </p>
+        </div>
         <div className="flex items-center gap-3">
           <Badge variant={balanced ? 'default' : 'secondary'}>
-            {balanced ? tx('Balanced') : tx('Diff {{v1}}', { v1: money(diff) })}
+            {balanced ? tx('Balanced') : tx('Diff {{v1}}', { v1: fmt(diff) })}
           </Badge>
           <Button type="submit" disabled={!canSubmit}>
-            {createEntry.isPending ? tx('Posting...') : tx('Post entry')}
+            {createEntry.isPending ? tx('Saving...') : tx('Save draft')}
           </Button>
         </div>
       </div>
@@ -107,7 +138,8 @@ export function JournalEntryCreatePage() {
             <Label>{tx('Journal')}</Label>
             <select className={selectClass} {...register('journalCode', { required: true })}>
               <option value="">{tx('Select journal')}</option>
-              {(journals.data?.data ?? []).map((j) => (
+              {unknownJournal && <option value={journalCode}>{journalCode}</option>}
+              {journalList.map((j) => (
                 <option key={j.id} value={j.code}>
                   {j.code} — {j.name}
                 </option>
@@ -128,7 +160,7 @@ export function JournalEntryCreatePage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">{tx('Lines')}</CardTitle>
-          <Button type="button" variant="outline" size="sm" onClick={() => append({ accountId: '' })}>
+          <Button type="button" variant="outline" size="sm" onClick={() => append(emptyLine())}>
             <Plus className="h-4 w-4" /> {tx('Add line')}
           </Button>
         </CardHeader>
@@ -152,11 +184,11 @@ export function JournalEntryCreatePage() {
               </div>
               <div className="col-span-1">
                 <Label className="text-xs">{tx('Debit')}</Label>
-                <Input type="number" step="any" {...register(`lines.${index}.debit`, { valueAsNumber: true })} />
+                <Input type="number" min={0} step="any" inputMode="decimal" {...amountField(index, 'debit')} />
               </div>
               <div className="col-span-2">
                 <Label className="text-xs">{tx('Credit')}</Label>
-                <Input type="number" step="any" {...register(`lines.${index}.credit`, { valueAsNumber: true })} />
+                <Input type="number" min={0} step="any" inputMode="decimal" {...amountField(index, 'credit')} />
               </div>
               <div className="col-span-1">
                 <Button
@@ -172,14 +204,18 @@ export function JournalEntryCreatePage() {
             </div>
           ))}
 
+          {badLine && (
+            <p className="text-sm text-destructive">{tx('Each line needs a positive debit or a positive credit, not both.')}</p>
+          )}
+
           <div className="flex justify-end gap-8 border-t pt-3 text-sm">
             <div className="flex gap-2">
               <span className="text-muted-foreground">{tx('Total debit')}</span>
-              <span className="w-24 text-right font-medium">{money(totalDebit)}</span>
+              <span className="w-24 text-right font-medium">{fmt(totalDebit)}</span>
             </div>
             <div className="flex gap-2">
               <span className="text-muted-foreground">{tx('Total credit')}</span>
-              <span className="w-24 text-right font-medium">{money(totalCredit)}</span>
+              <span className="w-24 text-right font-medium">{fmt(totalCredit)}</span>
             </div>
           </div>
         </CardContent>

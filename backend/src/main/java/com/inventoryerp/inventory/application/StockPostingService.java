@@ -182,6 +182,18 @@ public class StockPostingService {
     /** Voucher a goods receipt against the supplier: Dr GRNI + Dr Input Tax / Cr AP. */
     public void postReceiptVoucher(String partnerId, BigDecimal netTotal, BigDecimal taxTotal, Instant date,
             String sourceType, String sourceId, String description, String postingKey) {
+        postReceiptVoucher(partnerId, netTotal, taxTotal, date, sourceType, sourceId, description, postingKey, null,
+                BigDecimal.ONE);
+    }
+
+    /**
+     * As above for a foreign-currency PO: the amounts are functional; the AP line also carries the PO currency and its
+     * amount (functional ÷ {@code rate}), so the payable is a foreign open item to FX revaluation and settlement
+     * (spec P0-5; review 2026-11-15, P-4).
+     */
+    public void postReceiptVoucher(String partnerId, BigDecimal netTotal, BigDecimal taxTotal, Instant date,
+            String sourceType, String sourceId, String description, String postingKey, String currencyCode,
+            BigDecimal rate) {
         BigDecimal net = Money.dec(netTotal);
         BigDecimal tax = Money.dec(taxTotal);
         BigDecimal gross = net.add(tax);
@@ -198,7 +210,11 @@ public class StockPostingService {
             lines.add(Line.debit(determination.mapped("tax_receivable"), JsNumbers.dec(tax), "Input tax"));
         }
         String label = description != null ? description : "Goods received";
-        lines.add(new Line(apAccount, null, JsNumbers.dec(gross), partnerId, label, null, null, null));
+        Line ap = new Line(apAccount, null, JsNumbers.dec(gross), partnerId, label, null, null, null);
+        if (currencyCode != null && rate != null && rate.signum() > 0 && rate.compareTo(BigDecimal.ONE) != 0) {
+            ap = ap.inCurrency(currencyCode, JsNumbers.dec(gross.divide(rate, 6, java.math.RoundingMode.HALF_UP)));
+        }
+        lines.add(ap);
         posting.post(PostingRequest.of("PURCH", date, label, sourceType, sourceId,
                 postingKey != null ? postingKey : "receipt_voucher:" + sourceType + ":" + sourceId, lines));
     }
@@ -206,6 +222,17 @@ public class StockPostingService {
     /** Settle a purchase against cash/bank: Dr AP / Cr Cash|Bank. */
     public Map<String, Object> postPurchasePayment(String cashSessionId, String partnerId, BigDecimal amount,
             String method, Instant date, String sourceType, String sourceId, String description, String postingKey) {
+        return postPurchasePayment(cashSessionId, partnerId, amount, method, date, sourceType, sourceId, description,
+                postingKey, null, null);
+    }
+
+    /**
+     * As above; a foreign PO's payment tags its AP line with the PO currency and the amount paid in it, so it settles
+     * the currency balance the receipt voucher raised and FX revaluation sees it as paid (review 2026-11-15, G-1 / P-4).
+     */
+    public Map<String, Object> postPurchasePayment(String cashSessionId, String partnerId, BigDecimal amount,
+            String method, Instant date, String sourceType, String sourceId, String description, String postingKey,
+            String currencyCode, BigDecimal foreignAmount) {
         if (amount.signum() <= 0) {
             return null;
         }
@@ -214,9 +241,12 @@ public class StockPostingService {
                 cashSessionId).accountId();
         String label = description != null ? description : "Purchase payment";
         String v = JsNumbers.dec(amount);
+        Line ap = new Line(apAccount, v, null, partnerId, label, null, null, null);
+        if (currencyCode != null && foreignAmount != null && foreignAmount.compareTo(amount) != 0) {
+            ap = ap.inCurrency(currencyCode, JsNumbers.dec(foreignAmount));
+        }
         return posting.post(PostingRequest.of("cash".equals(method) ? "CASH" : "BANK", date, label, sourceType,
-                sourceId, postingKey, List.of(new Line(apAccount, v, null, partnerId, label, null, null, null),
-                        Line.credit(funds, v, label))));
+                sourceId, postingKey, List.of(ap, Line.credit(funds, v, label))));
     }
 
     /** Negative-stock cost correction (AVCO): amount &gt; 0 → Dr COGS / Cr Stock Valuation, else the reverse. */

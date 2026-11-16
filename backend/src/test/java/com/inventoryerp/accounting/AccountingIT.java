@@ -188,10 +188,13 @@ class AccountingIT extends ApiTestSupport {
                 .query(String.class).single()).isEqualTo("reversed");
         assertThat(jdbc.sql("SELECT \"postingKey\" FROM \"JournalEntry\" WHERE id = ?").param(closing)
                 .query(String.class).single()).startsWith("period_close:" + periodId + ":rev:");
-        // Nest: the reversal posts today, so the reversed closing entry still nets the period to zero.
-        Res empty = as("POST", "/fiscal-periods/" + periodId + "/close", null);
-        assertThat(empty.body().get("message").asString())
-                .isEqualTo("Nothing to close for 'FY" + year + "': no posted revenue or expense in this period");
+        // Review 2026-11-15 (G-5): the reopen reversal keeps the closing entry's date inside the period (Nest dated it
+        // today, so the period netted to zero and could not be closed again); closing again closes the same result.
+        assertThat(jdbc.sql("SELECT r.\"postingDate\" = c.\"postingDate\" FROM \"JournalEntry\" c JOIN \"JournalEntry\" r"
+                + " ON r.\"reversalOfId\" = c.id WHERE c.id = ?").param(closing).query(Boolean.class).single()).isTrue();
+        JsonNode again = ok(200, "POST", "/fiscal-periods/" + periodId + "/close", null);
+        assertThat(again.get("netIncome").asString()).isEqualTo("300");
+        assertThat(ok(200, "POST", "/fiscal-periods/" + periodId + "/reopen", null).get("reopened").asBoolean()).isTrue();
         Map<String, Object> late = Map.of("journalCode", "GEN", "date", date, "description", "Late sale",
                 "lines", List.of(Map.of("accountId", accountId("1100"), "debit", 100),
                         Map.of("accountId", accountId("4100"), "credit", 100)));
@@ -199,7 +202,7 @@ class AccountingIT extends ApiTestSupport {
         assertThat(call("POST", "/journal-entries/" + lateDraft + "/post", null, checkerToken).status()).isEqualTo(200);
         JsonNode reclosed = ok(200, "POST", "/fiscal-periods/" + periodId + "/close", null);
         assertThat(reclosed.get("journalEntryId").asString()).isNotEqualTo(closing);
-        assertThat(reclosed.get("netIncome").asString()).isEqualTo("100");
+        assertThat(reclosed.get("netIncome").asString()).isEqualTo("400");
         assertThat(jdbc.sql("SELECT \"postingKey\" FROM \"JournalEntry\" WHERE id = ?")
                 .param(reclosed.get("journalEntryId").asString()).query(String.class).single())
                 .isEqualTo("period_close:" + periodId);

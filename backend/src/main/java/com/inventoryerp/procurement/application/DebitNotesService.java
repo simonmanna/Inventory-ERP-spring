@@ -360,6 +360,29 @@ public class DebitNotesService {
                 .params(amount, documentId, org(), outbound ? "sales_invoice" : "vendor_bill").update();
     }
 
+    /** A returned-goods note settles that much of the referenced bill's open amount (never below zero). */
+    private void lowerReferencedBill(String documentId, BigDecimal amount) {
+        if (documentId == null || amount.signum() <= 0) {
+            return;
+        }
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = GREATEST(\"amountResidual\" - ?, 0),"
+                        + " status = CASE WHEN \"amountResidual\" - ? <= 0.005 THEN 'paid'::\"DocumentStatus\" ELSE status END,"
+                        + " \"paymentStatus\" = CASE WHEN \"amountResidual\" - ? <= 0.005 THEN 'paid'::\"PaymentStatus\""
+                        + " ELSE 'partial'::\"PaymentStatus\" END, \"updatedAt\" = " + NOW
+                        + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text = 'vendor_bill'"
+                        + " AND status::text = 'posted'")
+                .params(amount, amount, amount, documentId, org()).update();
+    }
+
+    /** Purchase price variance, the stock adjustment expense account when no PPV account is mapped. */
+    private String returnVarianceAccount() {
+        try {
+            return determination.mapped("purchase_price_variance");
+        } catch (RuntimeException e) {
+            return determination.mapped("stock_adjustment_expense");
+        }
+    }
+
     private Map<String, Object> markPosted(String id, String orgId) {
         Map<String, Object> row = SqlRows.one(DebitNote.class, jdbc.sql("UPDATE \"DebitNote\" SET status = 'posted',"
                         + " \"postedAt\" = " + NOW + ", \"postedById\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
@@ -373,8 +396,11 @@ public class DebitNotesService {
     }
 
     /**
-     * Return-to-vendor: ship stock back at cost (quantity-only issue) and post Dr AP / Cr Stock Valuation, with the
-     * supplier-credit vs cost variance to stock adjustment income / expense. One transaction.
+     * Return-to-vendor: ship stock back at cost (quantity-only issue) and post Dr AP (gross) / Cr Stock Valuation and
+     * Cr input VAT, with the supplier-credit vs cost variance to purchase price variance. The referenced bill's open
+     * amount drops by the note's gross so the supplier is not paid for returned goods. One transaction. (Review
+     * 2026-11-15, P-5: Nest posted the net price only, kept the VAT, left the bill's residual and used the stock
+     * adjustment accounts.)
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> postSupplierReturn(Map<String, Object> note) {
@@ -387,8 +413,14 @@ public class DebitNotesService {
             String stockValAccount = determination.mapped("stock_valuation");
             List<Line> postingLines = new ArrayList<>();
             BigDecimal totalAp = Money.ZERO;
+            Map<String, BigDecimal> taxByAccount = new java.util.LinkedHashMap<>();
+            BigDecimal noteTax = Money.ZERO;
+            String variance = returnVarianceAccount();
             for (Map<String, Object> ln : (List<Map<String, Object>>) note.get("lines")) {
                 BigDecimal price = Money.dec(ln.get("subtotal"));
+                BigDecimal tax = lineTax(ln, false, taxByAccount);
+                noteTax = noteTax.add(tax);
+                totalAp = totalAp.add(tax);
                 BigDecimal qty = Money.dec(ln.get("quantity"));
                 Map<String, Object> product = ln.get("productId") == null ? null : SqlRows.one(jdbc.sql("SELECT"
                         + " \"trackInventory\", \"productType\"::text AS \"productType\" FROM \"Product\" WHERE id = ?"
@@ -410,25 +442,29 @@ public class DebitNotesService {
                         postingLines.add(Line.credit(stockValAccount, JsNumbers.dec(cost), null));
                     }
                     // Return variance: supplier credit (price) vs the stock cost removed.
-                    BigDecimal variance = price.subtract(cost);
-                    if (variance.signum() > 0) {
-                        postingLines.add(Line.credit(determination.mapped("stock_adjustment_income"),
-                                JsNumbers.dec(variance), null));
-                    } else if (variance.signum() < 0) {
-                        postingLines.add(Line.debit(determination.mapped("stock_adjustment_expense"),
-                                JsNumbers.dec(variance.negate()), null));
+                    BigDecimal diff = price.subtract(cost);
+                    if (diff.signum() > 0) {
+                        postingLines.add(Line.credit(variance, JsNumbers.dec(diff), "Return price variance"));
+                    } else if (diff.signum() < 0) {
+                        postingLines.add(Line.debit(variance, JsNumbers.dec(diff.negate()), "Return price variance"));
                     }
                 } else if (price.signum() > 0) {
                     // Non-stock line on an RTV (e.g. a credited service/fee): reduce expense.
                     postingLines.add(Line.credit(determination.mapped("default_expense"), JsNumbers.dec(price), null));
                 }
             }
+            taxByAccount.forEach((acc, amt) -> postingLines.add(Line.credit(acc, JsNumbers.dec(amt), "Input tax reversal")));
             if (totalAp.signum() > 0) {
                 postingLines.addFirst(new Line(apAccount, JsNumbers.dec(totalAp), null, (String) note.get("partnerId"),
                         null, null, null, null));
             }
             posting.post(PostingRequest.of("PURCH", (Instant) note.get("issueDate"), "Return to vendor "
                     + note.get("noteNumber"), "debit_note", id, "debit_note_rtv:" + id, postingLines));
+            jdbc.sql("UPDATE \"DebitNote\" SET \"taxAmount\" = ?, \"totalAmount\" = ? WHERE id = ?")
+                    .params(noteTax, totalAp, id).update();
+            claimed.put("taxAmount", noteTax);
+            claimed.put("totalAmount", totalAp);
+            lowerReferencedBill((String) note.get("documentId"), totalAp);
             return claimed;
         });
         audit.record(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted", "kind",

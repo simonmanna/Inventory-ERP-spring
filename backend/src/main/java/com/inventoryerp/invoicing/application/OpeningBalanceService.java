@@ -133,6 +133,13 @@ public class OpeningBalanceService {
                     throw ApiException.badRequest("Account " + a.code() + " holds inventory value. Enter opening stock"
                             + " with an approved opening count so the stock ledger and the GL agree.");
                 }
+                if (!a.allowManualPosting()) {
+                    // tax and other control accounts are fed by their sub-ledger; a GL-only opening balance would never
+                    // tie out (review 2026-11-15, G-9). Inventory accounts get the more specific message above.
+                    throw ApiException.badRequest("Account " + a.code() + " does not allow manual posting ("
+                            + (a.categoryName() == null ? "control account" : a.categoryName())
+                            + "). Enter its opening balance through its own module.");
+                }
                 BigDecimal d = l.debit() == null ? BigDecimal.ZERO : l.debit();
                 BigDecimal c = l.credit() == null ? BigDecimal.ZERO : l.credit();
                 if (d.signum() < 0 || c.signum() < 0 || (d.signum() > 0) == (c.signum() > 0)) {

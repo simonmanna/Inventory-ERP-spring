@@ -71,12 +71,14 @@ public class ReportExportService {
     @Transactional(readOnly = true)
     public Export trialBalanceCsv(String asOf) {
         String org = TenantContext.organizationId();
-        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.date(asOf, AccountingDay.zone(jdbc)) : Instant.now();
-        // Verbatim Nest SQL: the entry filter sits in the LEFT JOIN condition.
+        Instant date = asOf != null && !asOf.isEmpty() ? LedgerQueries.dateEnd(asOf, AccountingDay.zone(jdbc)) : Instant.now();
+        // Nest put the entry filter only in the LEFT JOIN condition but summed every line, so drafts and lines after
+        // asOf were counted; sum only lines whose entry passed the filter (review 2026-11-15, R-5).
         List<List<Object>> rows = SqlRows.list(jdbc.sql("SELECT a.code, a.name, ac.key AS \"categoryKey\", ac.name AS \"categoryName\","
-                        + " ac.\"classification\"::text AS classification, COALESCE(SUM(jl.\"baseDebit\"), 0)::text AS debit,"
-                        + " COALESCE(SUM(jl.\"baseCredit\"), 0)::text AS credit,"
-                        + " COALESCE(SUM(jl.\"baseDebit\" - jl.\"baseCredit\"), 0)::text AS balance"
+                        + " ac.\"classification\"::text AS classification, COALESCE(SUM(jl.\"baseDebit\") FILTER (WHERE je.id IS NOT NULL), 0)::text AS debit,"
+                        + " COALESCE(SUM(jl.\"baseCredit\") FILTER (WHERE je.id IS NOT NULL), 0)::text AS credit,"
+                        + " COALESCE(SUM(jl.\"baseDebit\" - jl.\"baseCredit\") FILTER (WHERE je.id IS NOT NULL), 0)::text"
+                        + " AS balance"
                         + " FROM \"Account\" a LEFT JOIN \"AccountCategory\" ac ON ac.id = a.\"categoryId\""
                         + " LEFT JOIN \"JournalLine\" jl ON jl.\"accountId\" = a.id"
                         + " LEFT JOIN \"JournalEntry\" je ON je.id = jl.\"journalEntryId\" AND je.status IN ('posted', 'reversed')"

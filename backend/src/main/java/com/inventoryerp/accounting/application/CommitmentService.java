@@ -230,6 +230,7 @@ public class CommitmentService {
                         + " COALESCE(SUM(l.\"baseCredit\"), 0) AS c FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON"
                         + " e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND l.\"accountId\" = ? AND"
                         + " e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND e.\"postingDate\" < ?"
+                        + LedgerQueries.CLOSING_FILTER
                         + " AND (?::text IS NULL OR l.\"branchId\" = ?) AND (?::text IS NULL OR l.\"costCenterId\" = ?)")
                 .params(orgId, accountId, FiscalPeriodControl.ts(start), FiscalPeriodControl.ts(endExcl),
                         b.get("branchId"), b.get("branchId"), b.get("costCenterId"), b.get("costCenterId")));

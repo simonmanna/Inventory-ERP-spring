@@ -21,10 +21,14 @@ import org.springframework.stereotype.Component;
 @Component("reportingOpenItems")
 public class OpenItems {
 
-    /** One open item; {@code residual} is positive for amounts owed (a credit note is negative). */
+    /**
+     * One open item; {@code residual} is positive for amounts owed (a credit note is negative), in the document's
+     * currency; {@code baseResidual} is the same at the document's rate, in base currency (what the control account
+     * carries), so totals across currencies add up (review 2026-11-15, R-9).
+     */
     public record Item(String id, String kind, String number, String partnerId, String partnerName,
             LocalDate issueDate, LocalDate dueDate, BigDecimal total, BigDecimal residual, String currency,
-            String branchId, String route) {}
+            String branchId, String route, BigDecimal baseResidual) {}
 
     private final JdbcClient jdbc;
 
@@ -61,6 +65,7 @@ public class OpenItems {
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT d.id, d.\"documentType\"::text AS kind,"
                 + " d.\"documentNumber\" AS number, d.\"partnerId\", pt.name AS \"partnerName\", d.\"issueDate\","
                 + " d.\"dueDate\", d.\"totalAmount\" AS total, " + residual + " AS residual, c.code AS currency,"
+                + " coalesce(d.\"exchangeRate\", 1) AS rate,"
                 + " d.\"branchId\" FROM \"Document\" d LEFT JOIN \"Partner\" pt ON pt.id = d.\"partnerId\" LEFT JOIN"
                 + " \"Currency\" c ON c.id = d.\"currencyId\" WHERE d.\"organizationId\" = ? AND d.\"documentType\"::text"
                 + " IN " + types + " AND d.status::text IN ('posted', 'paid') AND d.\"issueDate\" < ?" + partners
@@ -86,7 +91,7 @@ public class OpenItems {
             for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT i.id, 'pos_invoice' AS kind, i.\"invoiceNumber\""
                     + " AS number, i.\"partnerId\", pt.name AS \"partnerName\", i.\"issueDate\", i.\"dueDate\","
                     + " i.\"totalAmount\" AS total, " + (current ? "i.\"amountResidual\"" : INV_RESIDUAL_AT)
-                    + " AS residual, c.code AS currency, i.\"branchId\" FROM \"Invoice\" i LEFT JOIN \"Partner\" pt ON"
+                    + " AS residual, c.code AS currency, coalesce(i.\"exchangeRate\", 1) AS rate, i.\"branchId\" FROM \"Invoice\" i LEFT JOIN \"Partner\" pt ON"
                     + " pt.id = i.\"partnerId\" LEFT JOIN \"Currency\" c ON c.id = i.\"currencyId\" WHERE"
                     + " i.\"organizationId\" = ? AND i.status::text IN ('posted', 'paid') AND i.\"issueDate\" < ?" + ip
                     + ib).params(q))) {
@@ -139,7 +144,8 @@ public class OpenItems {
                 r.get("partnerName") == null ? "(no partner)" : (String) r.get("partnerName"), issue == null ? null
                         : LocalDate.parse(issue), due == null ? (issue == null ? null : LocalDate.parse(issue))
                         : LocalDate.parse(due), SqlRows.dec(r, "total"), residual, (String) r.get("currency"),
-                (String) r.get("branchId"), route);
+                (String) r.get("branchId"), route, r.get("rate") == null ? residual
+                        : residual.multiply(SqlRows.dec(r, "rate")).setScale(2, java.math.RoundingMode.HALF_UP));
     }
 
     static String route(String kind, String id) {
@@ -167,7 +173,7 @@ public class OpenItems {
             + " WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
             + " COALESCE(po.\"totalPaid\", 0)) > 0.005";
 
-    /** partnerId → payments not yet allocated at the date ({@code inbound} for customers). */
+    /** partnerId → payments not yet allocated at the date ({@code inbound} for customers), in base currency. */
     public Map<String, BigDecimal> unapplied(ReportContext ctx, String direction, LocalDate asOf) {
         Timestamp end = SqlRows.ts(ctx.endExclusive(asOf));
         Map<String, BigDecimal> out = new java.util.LinkedHashMap<>();
@@ -181,9 +187,9 @@ public class OpenItems {
             partners += " AND p.\"branchId\" = ANY(?::text[])";
             p.add(ctx.request().branchIds().toArray(String[]::new));
         }
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT p.\"partnerId\", sum(p.amount - coalesce((SELECT"
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT p.\"partnerId\", sum((p.amount - coalesce((SELECT"
                 + " sum(pa.amount) FROM \"PaymentAllocation\" pa WHERE pa.\"paymentId\" = p.id AND pa.\"createdAt\" < ?),"
-                + " 0)) AS open FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.direction::text = ? AND"
+                + " 0)) * coalesce(p.\"exchangeRate\", 1)) AS open FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.direction::text = ? AND"
                 + " p.\"paymentDate\" < ? AND p.status::text <> 'cancelled' AND (p.\"voidedAt\" IS NULL OR p.\"voidedAt\""
                 + " >= ?) AND p.\"refundOfId\" IS NULL" + partners + " GROUP BY p.\"partnerId\"").params(p))) {
             BigDecimal v = SqlRows.dec(r, "open");

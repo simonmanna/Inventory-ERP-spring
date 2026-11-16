@@ -67,8 +67,9 @@ public class JournalEntryController {
     @GetMapping
     @RequirePermissions(Permissions.JOURNAL_ENTRY__READ)
     public PageResult<Map<String, Object>> list(@RequestParam Map<String, String> query) {
-        var q = QueryParams.page(query);
-        return entries.list(q.page(), q.pageSize(), q.search());
+        var q = QueryParams.page(query, "journalId", "status", "from", "to");
+        return entries.list(q.page(), q.pageSize(), q.search(), query.get("journalId"), query.get("status"),
+                query.get("from"), query.get("to"));
     }
 
     @GetMapping("/{id}")

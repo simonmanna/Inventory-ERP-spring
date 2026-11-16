@@ -377,7 +377,7 @@ public class GoodsReceiptsService {
             if (po != null) {
                 stockPosting.postReceiptVoucher((String) po.get("partnerId"), receiptNet, receiptTax, date,
                         "goods_receipt", id, "Goods received " + grn.get("receiptNumber") + " · PO " + po.get("orderNumber"),
-                        null);
+                        null, (String) po.get("currencyCode"), rate);
                 if ("cash".equals(po.get("paymentType"))) {
                     purchaseOrders.settleCashReceipt((String) po.get("id"), receiptNet.add(receiptTax), id,
                             (String) grn.get("receiptNumber"), date);

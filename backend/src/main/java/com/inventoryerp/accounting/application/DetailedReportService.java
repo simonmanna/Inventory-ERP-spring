@@ -60,7 +60,7 @@ public class DetailedReportService {
     @Transactional(readOnly = true)
     public Map<String, Object> detailed(Query query) {
         Instant from = LedgerQueries.date(query.from(), AccountingDay.zone(jdbc));
-        Instant to = LedgerQueries.date(query.to(), AccountingDay.zone(jdbc));
+        Instant to = LedgerQueries.dateEnd(query.to(), AccountingDay.zone(jdbc));
         double requested = query.maxLines() == null || query.maxLines().isNaN() || query.maxLines() == 0
                 ? DEFAULT_MAX_LINES : query.maxLines();
         int maxLines = (int) Math.min(Math.max(requested, 1), MAX_LINES);

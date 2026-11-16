@@ -80,14 +80,14 @@ class ProcurementIntegrityIT extends ApiTestSupport {
 
     /** Net (debit − credit) on an account for the entries of one source document. */
     BigDecimal net(String accountId, String sourceType, String sourceId) {
-        return jdbc.sql("SELECT COALESCE(SUM(l.debit - l.credit), 0) FROM \"JournalLine\" l JOIN \"JournalEntry\" e"
+        return jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN \"JournalEntry\" e"
                 + " ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND l.\"accountId\" = ?"
                 + " AND e.\"sourceType\" = ? AND e.\"sourceId\" = ?").params(demoOrg, accountId, sourceType, sourceId)
                 .query(BigDecimal.class).single();
     }
 
     BigDecimal balance(String accountId) {
-        return jdbc.sql("SELECT COALESCE(SUM(debit - credit), 0) FROM \"JournalLine\" WHERE \"organizationId\" = ?"
+        return jdbc.sql("SELECT COALESCE(SUM(\"baseDebit\" - \"baseCredit\"), 0) FROM \"JournalLine\" WHERE \"organizationId\" = ?"
                 + " AND \"accountId\" = ?").params(demoOrg, accountId).query(BigDecimal.class).single();
     }
 

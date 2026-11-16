@@ -9,8 +9,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAccountLedger, useAccounts } from '@/features/accounting/api';
-import { date, money } from '@/lib/format';
+import { useAccountLedger, useAccountingMoney } from '@/features/accounting/api';
+import { apiMessage } from '@/lib/notify';
+import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
 export function AccountLedgerPage() {
@@ -20,14 +21,32 @@ export function AccountLedgerPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
-  const { data: accountsData } = useAccounts();
-  const { data, isLoading } = useAccountLedger(id, { from: from || undefined, to: to || undefined });
+  const { data, isLoading, isError, error } = useAccountLedger(id, { from: from || undefined, to: to || undefined });
+  const money = useAccountingMoney();
 
-  const account = id && accountsData?.data?.find((a) => a.id === id);
+  const account = data?.account;
   const title = account ? `${account.code} — ${account.name}` : tx('Account Ledger');
   const isActiveFilter = from || to;
 
   const rows = data?.lines ?? [];
+  const creditNormal = data?.normalBalance === 'credit';
+  const hasOpening = data?.openingBalance !== undefined && data?.openingBalance !== null && !!from;
+
+  /**
+   * Balances arrive as debit-minus-credit. Show the amount with its side (Dr / Cr),
+   * the way the trial balance splits debit and credit; only a balance on the side
+   * opposite the account's normal balance is highlighted.
+   */
+  const balanceCell = (raw: string | null | undefined) => {
+    const n = Number(raw ?? 0);
+    const side = n > 0 ? 'Dr' : n < 0 ? 'Cr' : '';
+    const abnormal = creditNormal ? n > 0 : n < 0;
+    return (
+      <span className={abnormal ? 'text-red-500' : ''}>
+        {money(Math.abs(n))}{side ? ` ${tx(side)}` : ''}
+      </span>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -43,7 +62,7 @@ export function AccountLedgerPage() {
           <h1 className="text-3xl font-bold tracking-tight text-gray-900">{title}</h1>
           <p className="text-sm text-gray-500">
             {tx('Every journal line affecting this account, with running balance.')}{' '}
-            {data && <span className="font-medium">{tx('Closing Balance:')} {money(data.closingBalance)}</span>}
+            {data && <span className="font-medium">{tx('Closing Balance:')} {balanceCell(data.closingBalance)}</span>}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => navigate('/accounts')} className="gap-1.5">
@@ -94,16 +113,30 @@ export function AccountLedgerPage() {
                     ))}
                   </TableRow>
                 ))
-              ) : rows.length === 0 ? (
+              ) : isError ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-12 text-destructive">
+                    {tx('Could not load the ledger: {{v1}}', { v1: apiMessage(error, (error as Error)?.message ?? '') })}
+                  </TableCell>
+                </TableRow>
+              ) : rows.length === 0 && !hasOpening ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
                     {tx('No transactions found for this account.')}
                   </TableCell>
                 </TableRow>
               ) : (
-                rows.map((r) => (
+                <>
+                {hasOpening && (
+                  <TableRow className="bg-muted/10">
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{from}</TableCell>
+                    <TableCell colSpan={4} className="text-xs font-semibold">{tx('Opening balance')}</TableCell>
+                    <TableCell className="text-right text-xs font-bold pr-5">{balanceCell(data?.openingBalance)}</TableCell>
+                  </TableRow>
+                )}
+                {rows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-muted/20 cursor-pointer"
-                    onClick={() => navigate(`/journal-entries/${r.id}`)}>
+                    onClick={() => navigate(`/journal-entries/${r.journalEntryId}`)}>
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{date(r.date)}</TableCell>
                     <TableCell>
                       <span className="font-medium text-primary hover:underline text-xs">{r.entryNumber}</span>
@@ -115,11 +148,12 @@ export function AccountLedgerPage() {
                     <TableCell className="text-right text-xs font-semibold">
                       {Number(r.credit) ? money(r.credit) : ''}
                     </TableCell>
-                    <TableCell className={`text-right text-xs font-bold pr-5 ${Number(r.balance) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                      {money(r.balance)}
+                    <TableCell className="text-right text-xs font-bold pr-5">
+                      {balanceCell(r.balance)}
                     </TableCell>
                   </TableRow>
-                ))
+                ))}
+                </>
               )}
             </TableBody>
           </Table>
