@@ -106,6 +106,9 @@ debit-note lines). Responses add `variantId` and `variantName`.
 - Goods-receipt create and requisition pages have no variant picker yet (API accepts `variantId`; a PO line's
   variant is carried to its receipt automatically).
 - POS menu variants (`MenuItemVariant`) are unrelated and unchanged.
+- Variant price rules (P-1, V488), web (2026-11-16): the pricelist rule dialog, promotions and agreement lines take an
+  optional variant (`RuleVariantSelect`; "All variants" = the rule covers every variant, as before). The rule lists
+  show "product · variant".
 
 ### Variant details and sell by size (ADR-S066, 2026-11-11)
 

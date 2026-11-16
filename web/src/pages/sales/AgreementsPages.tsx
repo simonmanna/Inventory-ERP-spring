@@ -18,10 +18,11 @@ import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { ProductPicker } from '@/pages/fleet/dispatch/dispatch-ui';
 import { useCrmLookups } from '@/features/crm/suite-api';
+import { RuleVariantSelect } from '@/features/products/variant-select';
 
 // ---- Types (ADR-S011 S9) ----
 
-interface AgreementLine { id?: string; productId: string; productName?: string; contractQty: number; unitPrice: number; discountPercent?: number; minReleaseQty?: number; releasedQty?: number; balanceQty?: number; releasedPercent?: number }
+interface AgreementLine { id?: string; productId: string; productName?: string; variantId?: string | null; variantName?: string | null; contractQty: number; unitPrice: number; discountPercent?: number; minReleaseQty?: number; releasedQty?: number; balanceQty?: number; releasedPercent?: number }
 interface Agreement {
   id: string; number: string; name: string; kind: string; status: string; partnerId: string; partnerName: string;
   startDate: string; endDate: string; allowOverRelease: boolean; notes: string | null; releases: number | Array<{ id: string; number: string; status: string; total: number }>;
@@ -115,7 +116,8 @@ function Agreements() {
             <div className="space-y-2">
               {form.lines.map((l, i) => (
                 <div key={i} className="grid grid-cols-[1fr_7rem_7rem_6rem_auto] items-end gap-2">
-                  <Field label={tx('Product')}><ProductPicker value={l.productId} label={l.productName} onPick={(p) => { const lines = [...form.lines]; lines[i] = { ...l, productId: p?.id ?? '', productName: p?.name }; setForm({ ...form, lines }); }} /></Field>
+                  <Field label={tx('Product')}><ProductPicker value={l.productId} label={l.productName} onPick={(p) => { const lines = [...form.lines]; lines[i] = { ...l, productId: p?.id ?? '', productName: p?.name, variantId: null, variantName: null }; setForm({ ...form, lines }); }} />
+                    <RuleVariantSelect productId={l.productId || null} value={l.variantId} label={l.variantName} className="mt-1" onChange={(variantId, v) => { const lines = [...form.lines]; lines[i] = { ...l, variantId, variantName: v?.name ?? null }; setForm({ ...form, lines }); }} /></Field>
                   <Field label={tx('Contract qty')}><Input type="number" value={l.contractQty} onChange={(e) => { const lines = [...form.lines]; lines[i] = { ...l, contractQty: Number(e.target.value) }; setForm({ ...form, lines }); }} /></Field>
                   <Field label={tx('Agreed price')}><Input type="number" value={l.unitPrice} onChange={(e) => { const lines = [...form.lines]; lines[i] = { ...l, unitPrice: Number(e.target.value) }; setForm({ ...form, lines }); }} /></Field>
                   <Field label={tx('Min release')}><Input type="number" value={l.minReleaseQty ?? 0} onChange={(e) => { const lines = [...form.lines]; lines[i] = { ...l, minReleaseQty: Number(e.target.value) }; setForm({ ...form, lines }); }} /></Field>
@@ -147,7 +149,7 @@ function AgreementDialog({ id, canManage, onClose }: { id: string; canManage: bo
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase text-muted-foreground"><tr><th className="py-1">{tx('Product')}</th><th className="text-right">{tx('Contract')}</th><th className="text-right">{tx('Released')}</th><th className="text-right">{tx('Balance')}</th><th className="text-right">{tx('Price')}</th></tr></thead>
               <tbody>{(a.lines ?? []).map((l) => (
-                <tr key={l.id} className="border-t"><td className="py-1">{l.productName}</td><td className="text-right tabular-nums">{l.contractQty}</td>
+                <tr key={l.id} className="border-t"><td className="py-1">{l.productName}{l.variantName ? ` · ${l.variantName}` : ''}</td><td className="text-right tabular-nums">{l.contractQty}</td>
                   <td className="text-right tabular-nums">{l.releasedQty} <span className="text-xs text-muted-foreground">({l.releasedPercent}%)</span></td>
                   <td className={cn('text-right tabular-nums', Number(l.balanceQty) < 0 && 'text-rose-600')}>{l.balanceQty}</td><td className="text-right tabular-nums">{money(l.unitPrice)}</td></tr>
               ))}</tbody>
