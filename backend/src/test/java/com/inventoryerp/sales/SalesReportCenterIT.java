@@ -132,7 +132,7 @@ class SalesReportCenterIT extends ApiTestSupport {
     @DisplayName("every catalog report runs (unfiltered and filtered) and returns the common shape")
     void everyReportRuns() {
         JsonNode cat = ok(200, "GET", "/sales/report-center/catalog", null);
-        assertThat(cat.get("categories").size()).isEqualTo(12);
+        assertThat(cat.get("categories").size()).isEqualTo(13);
         assertThat(cat.get("count").asInt()).isGreaterThanOrEqualTo(140);
         List<String> failures = new ArrayList<>();
         for (JsonNode c : cat.get("categories")) {
