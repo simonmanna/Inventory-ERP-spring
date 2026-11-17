@@ -75,7 +75,7 @@ and bank rules refuse it until it is designated; every other behaviour stays as 
 - The user states the foreign balance.
 - One `fx_designation` entry moves the account's unknown-currency book value onto a line in its currency. It is
   functional-neutral.
-- The account records `currencyDesignatedAt` and `currencyDesignationEntryId`, and an audit row is written.
+- The account records `currencyDesignatedAt` and `currencyDesignationEntryId`, and an audit row is written (`Account` / `update`, `newValues.change = "fx_designation"`).
 - A balance of the opposite sign is refused, and a second designation is refused.
 - Any gap to the current rate is recognised by the next revaluation.
 

@@ -32,6 +32,7 @@ class ConstructionControlsIT extends ApiTestSupport {
     ProjectBondService bondService;
 
     String sfx = UUID.randomUUID().toString().substring(0, 6);
+    int projects;
     LocalDate today = LocalDate.now(ZoneOffset.UTC);
     String customer;
 
@@ -89,9 +90,10 @@ class ConstructionControlsIT extends ApiTestSupport {
 
     /** An active project with one costable WBS element; returns {projectId, wbsId}. */
     String[] project(boolean capital) {
-        String pid = ok(201, "POST", "/projects", capital ? Map.of("code", "CAP-" + sfx + UUID.randomUUID().toString()
-                .substring(0, 3), "name", "Own depot " + sfx) : Map.of("code", "BND-" + sfx + UUID.randomUUID()
-                .toString().substring(0, 3), "name", "Road " + sfx, "customerId", customer, "contractValue", 500000))
+        // a counter, not random characters: codes are unique per organisation (409 on a clash)
+        int n = ++projects;
+        String pid = ok(201, "POST", "/projects", capital ? Map.of("code", "CAP-" + sfx + "-" + n, "name",
+                "Own depot " + sfx) : Map.of("code", "BND-" + sfx + "-" + n, "name", "Road " + sfx, "customerId", customer, "contractValue", 500000))
                 .get("id").asString();
         String w = ok(201, "POST", "/projects/" + pid + "/wbs", Map.of("code", "1", "name", "Works")).get("id")
                 .asString();

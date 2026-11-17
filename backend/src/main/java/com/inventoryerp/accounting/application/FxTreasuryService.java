@@ -136,13 +136,16 @@ public class FxTreasuryService {
                         + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?")
                 .params(Timestamp.from(Instant.now()), entryId, d.accountId(), org).update();
         Map<String, Object> values = new LinkedHashMap<>();
+        values.put("change", "fx_designation");
         values.put("currencyCode", d.currency());
         values.put("foreignBalance", plain(stated));
         values.put("carryingValue", plain(tagged.base().add(unknown)));
         values.put("journalEntryId", entryId);
         values.put("note", in.note());
-        audit.recordInTx(AuditInput.of("Account", d.accountId(), "fx_designation", null, values));
+        // AuditAction is a closed DB enum: the designation is an account update marked by "change"
+        audit.recordInTx(AuditInput.of("Account", d.accountId(), "update", null, values));
         Map<String, Object> result = new LinkedHashMap<>(values);
+        result.remove("change");
         result.put("accountId", d.accountId());
         result.put("code", d.code());
         result.put("state", "designated");

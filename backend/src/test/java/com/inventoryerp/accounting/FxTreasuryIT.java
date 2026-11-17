@@ -231,8 +231,10 @@ class FxTreasuryIT extends AccountingFixtures {
         Res wrongSign = moneyAs(s.b(), "POST", "/fx-treasury/designations", Map.of("accountId", acct,
                 "foreignBalance", -5));
         assertThat(wrongSign.status()).isEqualTo(400);
-        JsonNode d = moneyAs(s.b(), "POST", "/fx-treasury/designations", Map.of("accountId", acct, "foreignBalance",
-                130, "note", "Bank letter 31 Oct")).body();
+        Res designated = moneyAs(s.b(), "POST", "/fx-treasury/designations", Map.of("accountId", acct,
+                "foreignBalance", 130, "note", "Bank letter 31 Oct"));
+        assertThat(designated.status()).as(designated.raw().body()).isIn(200, 201);
+        JsonNode d = designated.body();
         assertThat(d.get("state").asString()).isEqualTo("designated");
         assertThat(base(s.b().org(), acct)).as("functional value unchanged").isEqualByComparingTo("500000");
         assertThat(fx(s.b().org(), acct, s.ccy())).satisfiesExactly(f -> assertThat(f).isEqualByComparingTo("130"),
@@ -241,7 +243,8 @@ class FxTreasuryIT extends AccountingFixtures {
         assertThat(row.get("unknownCurrencyBalance").asString()).isEqualTo("0");
         assertThat(moneyAs(s.b(), "POST", "/fx-treasury/designations", Map.of("accountId", acct, "foreignBalance",
                 130)).raw().body()).contains("already designated");
-        assertThat(jdbc.sql("SELECT count(*) FROM \"AuditLog\" WHERE \"entityId\" = ? AND action = 'fx_designation'")
+        assertThat(jdbc.sql("SELECT count(*) FROM \"AuditLog\" WHERE \"entityId\" = ? AND action = 'update' AND"
+                + " \"newValues\"->>'change' = 'fx_designation'")
                 .param(acct).query(Long.class).single()).isEqualTo(1);
 
         // the engine refuses an untagged (functional-only) line on a designated foreign account

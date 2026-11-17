@@ -159,6 +159,7 @@ class FxPaymentsIT extends ApiTestSupport {
         String bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "currencyId",
                 cur, "lines", List.of(Map.of("description", "FXP service", "quantity", 1, "unitPrice", 100))))
                 .get("id").asString();
+        ok(200, "POST", "/vendor-bills/" + bill + "/post", null);
         BigDecimal[] b0 = bank();
         BigDecimal fx0 = fxGain();
         Res p = pay("/supplier-payments", supplier, bill, cur, 3800, 100);
