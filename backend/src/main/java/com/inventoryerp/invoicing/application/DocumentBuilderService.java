@@ -10,6 +10,7 @@ import com.inventoryerp.core.application.ProductSizingService.Sizing;
 import static com.inventoryerp.kernel.common.Money.ZERO;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.ControlAccountGuards;
 import com.inventoryerp.documents.application.DmsTypeResolver;
 import com.inventoryerp.documents.domain.Document;
 import com.inventoryerp.documents.domain.DocumentLine;
@@ -668,6 +669,7 @@ public class DocumentBuilderService {
 
     /** Insert prepared lines ({@code withExtras}: menuItemId / lineType / taxInclusive like {@code create}). */
     public void insertLines(String documentId, List<PreparedLine> prepared, boolean withExtras) {
+        assertLineAccounts(prepared);
         for (PreparedLine p : prepared) {
             String variant = productVariant(p);
             String lineId = UUID.randomUUID().toString();
@@ -686,6 +688,23 @@ public class DocumentBuilderService {
                     .update();
             insertTaxes(documentId, lineId, p);
         }
+    }
+
+    /**
+     * Control-account policy (V518, owner decision "close now"): a line's own GL account (chosen by the user, or set
+     * by the module raising the document) is never a designated AR / AP control account. The document reaches AR / AP
+     * only through its own receivable / payable line ({@link #groupForPosting}), backed by the open item. Checked on
+     * every draft create / edit of invoices, credit notes, vendor bills and proformas, and again at posting.
+     */
+    private void assertLineAccounts(List<PreparedLine> prepared) {
+        ControlAccountGuards.ControlAccount hit = ControlAccountGuards.firstControl(jdbc, org(),
+                prepared.stream().map(PreparedLine::accountId).toList());
+        if (hit == null) {
+            return;
+        }
+        int line = prepared.stream().filter(p -> hit.id().equals(p.accountId())).mapToInt(PreparedLine::lineNumber)
+                .findFirst().orElse(0);
+        throw ApiException.badRequest(ControlAccountGuards.refusal("Document line " + line, hit));
     }
 
     /** ADR-S071: the stated tax list and the per-tax breakdown of a multi-tax line (nothing for single-tax lines). */
@@ -806,6 +825,15 @@ public class DocumentBuilderService {
                     taxes.merge(taxAcc, taxAmount, BigDecimal::add);
                 }
             }
+        }
+        // Control-account policy (V518, "close now"): the income / expense side of a document posts in system context,
+        // so a designated AR / AP account there (a free line account, a product category's income / expense account or
+        // a mis-set mapping) would bypass the sub-ledger. Refused at posting too, for drafts saved before the policy.
+        ControlAccountGuards.ControlAccount control = ControlAccountGuards.firstControl(jdbc, org(), items.keySet());
+        if (control != null) {
+            throw ApiException.badRequest(ControlAccountGuards.refusal((sales ? "Income" : "Expense") + " account of a"
+                    + " document line (the line's own account, its product category's or the "
+                    + (sales ? "sales_revenue" : "default_expense") + " mapping)", control));
         }
         return new Grouped(counter, items, taxes, new ArrayList<>(split.values()));
     }

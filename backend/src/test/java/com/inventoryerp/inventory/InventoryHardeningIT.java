@@ -231,7 +231,7 @@ class InventoryHardeningIT extends ApiTestSupport {
     // ------------------------------------------------------------------ defect 8
 
     @Test
-    @DisplayName("the API role cannot switch the evidence guard off; the schema owner still can")
+    @DisplayName("the API role cannot switch the evidence guard off; a superuser (the test Flyway owner) still can")
     void ledgerGuardBypass() throws Exception {
         String p = product("AVCO", null);
         receive(p, 2, 3, Instant.now());

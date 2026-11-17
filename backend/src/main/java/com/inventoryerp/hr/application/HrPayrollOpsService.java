@@ -85,10 +85,27 @@ public class HrPayrollOpsService {
         HrRows.oneOf("kind", kind, List.of("earning", "deduction"));
         String sourceId = UUID.randomUUID().toString();
         LocalDate date = on;
+        // R12: a deduction is credited to the liability / receivable it settles (never to salary expense), so a
+        // manual one names that account when it is queued; without it the run could never be approved.
+        String creditAccountId = "deduction".equals(kind) ? deductionAccount(str(dto.get("creditAccountId"))) : null;
         return hr.inTx(() -> "earning".equals(kind)
                 ? inputs.addEarning(employeeId, name, amount, date, !Boolean.FALSE.equals(dto.get("isTaxable")), null,
                         "manual", sourceId)
-                : inputs.addDeduction(employeeId, name, amount, date, null, "manual", sourceId));
+                : inputs.addDeduction(employeeId, name, amount, date, creditAccountId, "manual", sourceId));
+    }
+
+    /** The account a manual deduction credits: required, an active postable account of this organization. */
+    private String deductionAccount(String accountId) {
+        if (accountId == null || accountId.isBlank()) {
+            throw ApiException.badRequest("creditAccountId is required for a deduction: the liability or receivable"
+                    + " account the recovered amount settles (deductions are never credited to salary expense)");
+        }
+        AccountResolverService.AccountMeta meta = accounts.meta(List.of(accountId)).get(accountId);
+        if (meta == null) {
+            throw ApiException.badRequest("creditAccountId is not an account of this organization");
+        }
+        AccountResolverService.assertPostable(meta, true);
+        return accountId;
     }
 
     public Map<String, Object> cancelInput(String id, Map<String, Object> dto) {
@@ -332,7 +349,9 @@ public class HrPayrollOpsService {
                 + " i.\"deletedAt\" IS NULL AND i.\"netPay\" > 0 ORDER BY e.\"employeeCode\"", runId, org());
         String number = String.valueOf(run.get("runNumber"));
         Map<String, Object> s = setup.effectiveSettings();
-        int scale = ((Number) s.get("roundingScale")).intValue();
+        // The stored net pay of each item (already at the pay scale) is written as is: never re-rounded, so the file
+        // totals the payslips and the net-pay payable credit exactly.
+        int scale = setup.payScale();
         StringBuilder out = new StringBuilder();
         switch (format == null ? "CSV" : format.toUpperCase()) {
             case "CSV" -> {
@@ -393,21 +412,22 @@ public class HrPayrollOpsService {
         StringBuilder out = new StringBuilder();
         BigDecimal total = BigDecimal.ZERO;
         for (Map<String, Object> i : items) {
-            BigDecimal net = dec(i.get("netPay")).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal variable = dec(i.get("overtimePay")).add(variableEarnings((String) i.get("id")))
-                    .min(net).setScale(2, RoundingMode.HALF_UP);
+            // Stored net pay and stored (rounded) earning lines: fixed + variable = net exactly, nothing re-rounded.
+            BigDecimal net = dec(i.get("netPay"));
+            BigDecimal variable = dec(i.get("overtimePay")).add(variableEarnings((String) i.get("id"))).min(net);
             BigDecimal fixed = net.subtract(variable);
             total = total.add(net);
             out.append(String.join(",", "EDR", String.valueOf(i.get("wpsPersonId")), String.valueOf(i.get("routingCode")),
                     String.valueOf(i.get("iban")), start.format(d), end.format(d),
-                    String.valueOf(java.time.temporal.ChronoUnit.DAYS.between(start, end) + 1), fixed.toPlainString(),
-                    variable.toPlainString(), dec(i.get("absenceDays")).setScale(0, RoundingMode.HALF_UP).toPlainString()))
+                    String.valueOf(java.time.temporal.ChronoUnit.DAYS.between(start, end) + 1),
+                    HrPayMoney.plain(fixed, 2), HrPayMoney.plain(variable, 2),
+                    dec(i.get("absenceDays")).setScale(0, RoundingMode.HALF_UP).toPlainString()))
                     .append('\n');
         }
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         out.append(String.join(",", "SCR", employer, bank, now.format(d), now.format(DateTimeFormatter.ofPattern("HHmm")),
                 end.format(DateTimeFormatter.ofPattern("MMyyyy")), String.valueOf(items.size()),
-                total.setScale(2, RoundingMode.HALF_UP).toPlainString(), "AED", String.valueOf(run.get("runNumber"))))
+                HrPayMoney.plain(total, 2), "AED", String.valueOf(run.get("runNumber"))))
                 .append('\n');
         String name = employer + now.format(DateTimeFormatter.ofPattern("yyMMddHHmmss")) + ".SIF";
         return new FileOut(name, "text/plain", out.toString().getBytes(StandardCharsets.US_ASCII));
@@ -432,8 +452,9 @@ public class HrPayrollOpsService {
         return s.contains(",") || s.contains("\"") ? "\"" + s.replace("\"", "\"\"") + "\"" : s;
     }
 
+    /** A stored amount for a bank file: at the pay scale, never re-rounded ({@link HrPayMoney#plain}). */
     private static String amount(Object v, int scale) {
-        return dec(v).setScale(scale, RoundingMode.HALF_UP).toPlainString();
+        return HrPayMoney.plain(dec(v), scale);
     }
 
     // ------------------------------------------------------------------ payslips (HP-7)
@@ -455,7 +476,8 @@ public class HrPayrollOpsService {
 
     private byte[] render(Map<String, Object> slip) {
         Map<String, Object> s = setup.effectiveSettings();
-        int scale = ((Number) s.get("roundingScale")).intValue();
+        // The payslip shows the item's stored lines and totals (rounded once at calculation), formatted, not re-rounded.
+        int scale = setup.payScale();
         Map<String, Object> org = rows.queryOne("SELECT name, \"currencyCode\" FROM \"Organization\" WHERE id = ?", org());
         String itemId = (String) slip.get("id");
         List<HrPayslipPdf.Row> earnings = new ArrayList<>();
@@ -591,7 +613,7 @@ public class HrPayrollOpsService {
                 new HrPayslipPdf.Row("Social security (employee)", dec(s.get("social"))),
                 new HrPayslipPdf.Row("Total deductions", dec(s.get("deductions"))),
                 new HrPayslipPdf.Row("Net pay", dec(s.get("net")))));
-        int scale = ((Number) setup.effectiveSettings().get("roundingScale")).intValue();
+        int scale = setup.payScale();
         return new FileOut("earnings-" + s.get("employeeCode") + "-" + year + ".pdf", "application/pdf",
                 HrPayslipPdf.certificate((String) org.get("name"), "Annual earnings and tax certificate " + year, header,
                         totals, String.valueOf(org.get("currencyCode")), scale));

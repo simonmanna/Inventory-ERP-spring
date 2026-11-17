@@ -90,6 +90,15 @@ public class CustomerDepositController {
         return deposits.voidDeposit(id, s(b, "reason"));
     }
 
+    /** Reverse one application of the deposit (its payment voided, the invoice re-opened, the credit back on it). */
+    @PostMapping("/customer-deposits/{id}/applications/{paymentId}/reverse")
+    @Idempotent
+    @RequirePermissions(Permissions.PAYMENT__VOID)
+    public Map<String, Object> reverseApplication(@PathVariable String id, @PathVariable String paymentId,
+            @RequestBody(required = false) Map<String, Object> b) {
+        return deposits.reverseApplication(id, paymentId, s(b, "reason"));
+    }
+
     @GetMapping("/payments/mobile-money/providers")
     @RequirePermissions(Permissions.PAYMENT__READ)
     public List<Map<String, Object>> providers() {

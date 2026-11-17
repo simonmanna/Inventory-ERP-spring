@@ -1,18 +1,23 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useFieldArray, useForm } from 'react-hook-form';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, ShieldAlert, Trash2 } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
 import { fromMinorUnits, money, toMinorUnits } from '@/lib/format';
 import { localDay } from '@/lib/dates';
 import { apiMessage } from '@/lib/notify';
 import {
-  allowsManualPosting, isPostingAccount, useAccounts, useBaseCurrencyDecimals, useCreateJournalEntry, useJournals,
+  allowsManualPosting, isPostingAccount, isReceivablePayableControl, useAccounts, useBaseCurrencyDecimals,
+  useCreateJournalEntry, useJournals,
 } from '@/features/accounting/api';
+import { useAuthStore } from '@/stores/auth.store';
+import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { tx } from '@/lib/i18n/tx';
 
 const selectClass =
@@ -24,15 +29,20 @@ interface LineForm {
   debit: string;
   credit: string;
   description?: string;
+  /** Required on an AR / AP control-account line of a control-account adjustment. */
+  partnerId?: string;
+  partnerName?: string;
 }
 interface FormValues {
   journalCode: string;
   date: string;
   description?: string;
   lines: LineForm[];
+  controlAdjustment: boolean;
+  controlAdjustmentReason: string;
 }
 
-const emptyLine = (): LineForm => ({ accountId: '', debit: '', credit: '' });
+const emptyLine = (): LineForm => ({ accountId: '', debit: '', credit: '', partnerId: '', partnerName: '' });
 
 export function JournalEntryCreatePage() {
   const navigate = useNavigate();
@@ -41,6 +51,9 @@ export function JournalEntryCreatePage() {
   const accounts = useAccounts();
   const createEntry = useCreateJournalEntry();
   const decimals = useBaseCurrencyDecimals();
+  const has = useAuthStore((s) => s.hasPermission);
+  // The adjustment option is offered only to holders of journal_entry:control_adjust (the server checks it too).
+  const canAdjust = has(PERMISSIONS.journalEntry.controlAdjust);
   const [error, setError] = useState<string | null>(null);
 
   const { register, control, handleSubmit, watch, setValue } = useForm<FormValues>({
@@ -50,18 +63,28 @@ export function JournalEntryCreatePage() {
       date: localDay(),
       description: '',
       lines: [emptyLine(), emptyLine()],
+      controlAdjustment: false,
+      controlAdjustmentReason: '',
     },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'lines' });
   const lines = watch('lines');
   const journalCode = watch('journalCode');
+  const adjustment = canAdjust && watch('controlAdjustment');
+  const reason = watch('controlAdjustmentReason') ?? '';
 
   const journalList = journals.data?.data ?? [];
   // A journalCode from the URL that is not in the loaded list still gets an option so it stays selected.
   const unknownJournal = !!journalCode && !!journals.data && !journalList.some((j) => j.code === journalCode);
 
-  // The server refuses group, inactive, deprecated and no-manual-posting (control) accounts here.
-  const postable = (accounts.data?.data ?? []).filter((a) => isPostingAccount(a) && allowsManualPosting(a));
+  // The server refuses group, inactive, deprecated and no-manual-posting accounts here, and designated AR / AP control
+  // accounts unless the entry is a control-account adjustment.
+  const accountList = accounts.data?.data ?? [];
+  const controlIds = new Set(accountList.filter(isReceivablePayableControl).map((a) => a.id));
+  const postable = accountList.filter((a) => isPostingAccount(a) && (isReceivablePayableControl(a)
+    ? adjustment
+    : allowsManualPosting(a)));
+  const isControlLine = (l: LineForm) => !!l.accountId && controlIds.has(l.accountId);
 
   const minor = (v: string | undefined) => toMinorUnits(v, decimals);
   const fmt = (m: number) => money(fromMinorUnits(m, decimals), undefined, decimals);
@@ -74,7 +97,25 @@ export function JournalEntryCreatePage() {
   const badLine = (lines ?? []).some(
     (l) => minor(l.debit) < 0 || minor(l.credit) < 0 || (minor(l.debit) > 0 && minor(l.credit) > 0),
   );
-  const canSubmit = Boolean(journalCode) && balanced && !badLine && validLines.length >= 2 && !createEntry.isPending;
+  const controlLines = validLines.filter(isControlLine);
+  const missingPartner = adjustment && controlLines.some((l) => !l.partnerId);
+  const adjustmentReady = !adjustment || (reason.trim().length > 0 && controlLines.length > 0 && !missingPartner);
+  const canSubmit = Boolean(journalCode) && balanced && !badLine && validLines.length >= 2 && adjustmentReady
+    && !createEntry.isPending;
+
+  /** Turning the adjustment off clears the AR / AP lines: a plain manual entry cannot post to them. */
+  const toggleAdjustment = (on: boolean) => {
+    setValue('controlAdjustment', on);
+    if (!on) {
+      (lines ?? []).forEach((l, i) => {
+        if (isControlLine(l)) {
+          setValue(`lines.${i}.accountId`, '');
+          setValue(`lines.${i}.partnerId`, '');
+          setValue(`lines.${i}.partnerName`, '');
+        }
+      });
+    }
+  };
 
   const onSubmit = handleSubmit(async (values) => {
     if (!canSubmit) return;
@@ -89,7 +130,11 @@ export function JournalEntryCreatePage() {
           debit: minor(l.debit) > 0 ? Number(fromMinorUnits(minor(l.debit), decimals)) : undefined,
           credit: minor(l.credit) > 0 ? Number(fromMinorUnits(minor(l.credit), decimals)) : undefined,
           description: l.description || undefined,
+          partnerId: adjustment && isControlLine(l) && l.partnerId ? l.partnerId : undefined,
         })),
+        ...(adjustment
+          ? { controlAdjustment: true, controlAdjustmentReason: values.controlAdjustmentReason.trim() }
+          : {}),
       });
       // The entry is a DRAFT; it is posted (by a different user) from its detail page.
       navigate(`/journal-entries/${entry.id}`);
@@ -128,6 +173,46 @@ export function JournalEntryCreatePage() {
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}
+
+      {canAdjust && (
+        <Card className={adjustment ? 'border-amber-300' : undefined}>
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShieldAlert className="h-4 w-4 text-amber-600" /> {tx('Control-account adjustment')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={adjustment}
+                onChange={(e) => toggleAdjustment(e.target.checked)}
+              />
+              <span>
+                {tx('Post to a receivable / payable control account. Exceptional: every control-account line needs a partner, the reason is audited, and a second user holding the control-adjustment permission must post it.')}
+              </span>
+            </label>
+            {adjustment && (
+              <div className="space-y-2">
+                <Label htmlFor="controlAdjustmentReason">{tx('Reason (required)')}</Label>
+                <Textarea id="controlAdjustmentReason" rows={2} maxLength={2000} {...register('controlAdjustmentReason')} />
+                {reason.trim().length === 0 && (
+                  <p className="text-xs text-destructive">{tx('Enter the reason for this adjustment.')}</p>
+                )}
+                {controlLines.length === 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {tx('Add at least one line on a receivable / payable control account.')}
+                  </p>
+                )}
+                {missingPartner && (
+                  <p className="text-xs text-destructive">{tx('Choose the partner of every control-account line.')}</p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -201,6 +286,20 @@ export function JournalEntryCreatePage() {
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
+              {adjustment && lines?.[index] && isControlLine(lines[index]) && (
+                <div className="col-span-12 sm:col-span-5">
+                  <Label className="text-xs">{tx('Partner (customer / supplier)')}</Label>
+                  <PartnerPicker
+                    value={lines[index].partnerId ?? ''}
+                    label={lines[index].partnerName || null}
+                    placeholder={tx('Select a partner…')}
+                    onPick={(id, name) => {
+                      setValue(`lines.${index}.partnerId`, id);
+                      setValue(`lines.${index}.partnerName`, name);
+                    }}
+                  />
+                </div>
+              )}
             </div>
           ))}
 

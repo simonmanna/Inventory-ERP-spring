@@ -21,7 +21,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
-import java.util.Currency;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -182,15 +181,9 @@ public class HrPayrollSetupService {
         return d;
     }
 
+    /** Default {@code roundingScale}: the functional currency's decimal places (the settings range is 0 to 4). */
     private int currencyScale() {
-        String code = hr.jdbc().sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org())
-                .query(String.class).optional().orElse(null);
-        try {
-            int digits = code == null ? 2 : Currency.getInstance(code).getDefaultFractionDigits();
-            return digits < 0 ? 2 : Math.min(digits, 4);
-        } catch (IllegalArgumentException e) {
-            return 2;
-        }
+        return Math.min(HrPayMoney.currencyScale(hr.jdbc(), org()), 4);
     }
 
     static String weekendDays(Object raw) {
@@ -472,6 +465,22 @@ public class HrPayrollSetupService {
     Map<String, Object> effectiveSettings() {
         Map<String, Object> row = settingsRow();
         return row == null ? defaults() : row;
+    }
+
+    /**
+     * The pay scale (owner decision, currency-aware payroll rounding): the decimals every payroll line is rounded to,
+     * {@code HALF_UP}, when a run's items are stored ({@link HrPayMoney}). It is the functional currency's
+     * {@code Currency.decimalPlaces}, or the saved {@code roundingScale} when that is coarser (whole-unit payroll in a
+     * 2-decimal currency); never finer than the currency, so a UGX organisation pays whole shillings even if it saved
+     * {@code roundingScale = 2}. Both engines, payslips, bank files and final settlements use it.
+     */
+    int payScale() {
+        int currency = HrPayMoney.currencyScale(hr.jdbc(), org());
+        Map<String, Object> row = settingsRow();
+        if (row == null || !(row.get("roundingScale") instanceof Number saved)) {
+            return currency;
+        }
+        return Math.max(0, Math.min(currency, saved.intValue()));
     }
 
     /** The saved settings row, or {@code null}: no row means the Nest behaviour. */

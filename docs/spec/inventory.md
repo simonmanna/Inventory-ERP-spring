@@ -186,7 +186,8 @@ has the same gaps:
 25. **Ledger hygiene (V470).** Dropped the duplicate `InventoryLedger_pool_idx` and the prefix index
     `InventoryLedger_organizationId_idx`. `evidence_purge_enabled()` (the `app.evidence_purge` bypass of every
     evidence guard: stock ledger, cash movements, posted journals, …) now also requires the session user to be a member
-    of the schema owner, so the API role (`DB_USER` ≠ `FLYWAY_USER`) cannot switch the guards off.
+    of the schema owner, so the API role (`DB_USER` ≠ `FLYWAY_USER`) cannot switch the guards off. Superseded by V513:
+    only a superuser or a member of the NOLOGIN role `erp_evidence_purger` may (docs/DATABASE.md section 6).
 26. **Stock events only for committed moves.** `stock.received|issued|adjusted|transferred` are published with
     `EventBus.publishOnCommit`: dropped when the transaction rolls back or the `Savepoints` block they were raised in
     rolls back (a failed POS drain line). Other events keep the Nest fire-and-forget semantics (published on commit and

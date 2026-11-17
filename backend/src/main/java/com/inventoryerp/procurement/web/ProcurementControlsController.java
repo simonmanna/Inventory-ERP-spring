@@ -10,6 +10,7 @@ import com.inventoryerp.procurement.application.PoChangeService.ChangeInput;
 import com.inventoryerp.procurement.application.PoChangeService.LineChange;
 import com.inventoryerp.procurement.application.SupplierClaimService;
 import com.inventoryerp.procurement.application.SupplierClaimService.CreateInput;
+import com.inventoryerp.procurement.application.SupplierClaimService.QuantityLineInput;
 import com.inventoryerp.shared.validation.OneOf;
 import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
@@ -21,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -58,6 +60,16 @@ public class ProcurementControlsController {
             String response) {}
 
     public record ResponseRequest(String response) {}
+
+    /** Settle body (optional): the classification; omitted = derived from the claim (see SupplierClaimService). */
+    public record SettleRequest(@OneOf({"price_variance", "expense_correction", "vat_adjustment", "stock_adjustment"})
+            String classification) {}
+
+    /** A received quantity of one goods-receipt line the claim covers (stock adjustment). */
+    public record QuantityLineRequest(
+            @NotBlank(message = "goodsReceiptLineId is required") String goodsReceiptLineId, String productId,
+            @NotNull(message = "quantity is required") @Positive(message = "quantity must be a positive number")
+            BigDecimal quantity, @OneOf({"issue", "written_off"}) String stockAction, String notes) {}
 
     private final PurchaseCommitments commitments;
     private final PoChangeService changes;
@@ -187,7 +199,39 @@ public class ProcurementControlsController {
     @PostMapping("/claims/{id}/settle")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.SUPPLIER_CLAIM__MANAGE)
-    public Map<String, Object> settleClaim(@PathVariable String id) {
-        return claims.settle(id);
+    public Map<String, Object> settleClaim(@PathVariable String id, @Valid @RequestBody(required = false)
+            SettleRequest dto) {
+        return claims.settle(id, dto == null ? null : dto.classification());
+    }
+
+    /** Receipt lines a quantity line may reference, with the quantity still unclaimed. */
+    @GetMapping("/claims/{id}/receipt-lines")
+    @RequirePermissions(Permissions.SUPPLIER_CLAIM__READ)
+    public List<Map<String, Object>> claimReceiptLines(@PathVariable String id) {
+        return claims.receiptLines(id);
+    }
+
+    @PostMapping("/claims/{id}/quantity-lines")
+    @RequirePermissions(Permissions.SUPPLIER_CLAIM__MANAGE)
+    public Map<String, Object> addClaimQuantityLine(@PathVariable String id,
+            @Valid @RequestBody QuantityLineRequest dto) {
+        return claims.addQuantityLine(id, new QuantityLineInput(dto.goodsReceiptLineId(), dto.productId(),
+                dto.quantity(), dto.stockAction(), dto.notes()));
+    }
+
+    @DeleteMapping("/claims/{id}/quantity-lines/{lineId}")
+    @RequirePermissions(Permissions.SUPPLIER_CLAIM__MANAGE)
+    public Map<String, Object> removeClaimQuantityLine(@PathVariable String id, @PathVariable String lineId) {
+        return claims.removeQuantityLine(id, lineId);
+    }
+
+    /**
+     * Second-user check of a quantity line: receiving / quality staff ({@code inspection:manage}) confirm it; the
+     * service refuses the user who raised the claim or recorded the line.
+     */
+    @PostMapping("/claims/{id}/quantity-lines/{lineId}/verify")
+    @RequirePermissions(Permissions.INSPECTION__MANAGE)
+    public Map<String, Object> verifyClaimQuantityLine(@PathVariable String id, @PathVariable String lineId) {
+        return claims.verifyQuantityLine(id, lineId);
     }
 }

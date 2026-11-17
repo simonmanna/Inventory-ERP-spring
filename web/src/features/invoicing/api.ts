@@ -49,6 +49,28 @@ export interface Invoice {
   notes: string | null;
   journalEntryId: string | null;
   reversedDocumentId?: string | null;
+  cancelledAt?: string | null;
+  cancelledBy?: string | null;
+  /** Present once the document was reversed by its document-level workflow (cancel / void / reverse). */
+  reversal?: DocumentReversal | null;
+}
+
+/**
+ * The record of a document-level reversal (V520 `DocumentReversal`): who reversed the document, when and why, the
+ * journal entries it reversed and posted, and the allocations it released.
+ */
+export interface DocumentReversal {
+  id: string;
+  documentType: 'sales_invoice' | 'vendor_bill' | 'credit_note' | 'debit_note' | 'payment';
+  documentId: string;
+  documentNumber: string | null;
+  partnerId: string | null;
+  reason: string;
+  originalEntryIds: string[];
+  reversalEntryIds: string[];
+  unwound: Array<Record<string, unknown>>;
+  reversedBy: string | null;
+  reversedAt: string;
 }
 
 export interface InvoiceLine {
@@ -95,6 +117,8 @@ export interface InvoiceAllocation {
 export interface InvoiceDetail extends Invoice {
   lines: InvoiceLine[];
   allocations?: InvoiceAllocation[];
+  /** Supplier bills only: the total written off (part of `amountPaid`); absent when nothing was written off. */
+  writtenOff?: string;
 }
 
 export interface InvoiceLineInput {
@@ -221,11 +245,13 @@ export function useInvoiceJournalPreview() {
   });
 }
 
+/** Cancel (reverse) a posted invoice; the reason is mandatory (document reversals, owner decision 2026-11-17). */
 export function useCancelInvoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post<Invoice>(`/invoices/${id}/cancel`)).data,
-    onSuccess: (_d, id) => {
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) =>
+      (await api.post<Invoice>(`/invoices/${id}/cancel`, { reason })).data,
+    onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoice', id] });
     },
@@ -337,6 +363,24 @@ export function usePostCreditNote() {
     },
     onSuccess: (_d, arg) => {
       const id = typeof arg === 'string' ? arg : arg.id;
+      qc.invalidateQueries({ queryKey: ['credit-notes'] });
+      qc.invalidateQueries({ queryKey: ['credit-note', id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoice'] });
+    },
+  });
+}
+
+/**
+ * Reverse a posted credit note (document reversals, owner decision 2026-11-17): GL mirrored, its allocations given
+ * back to the invoices, restocked goods issued back out. Needs `credit_note:reverse` and a reason.
+ */
+export function useReverseCreditNote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      idempotentPost<InvoiceDetail>(`/credit-notes/${id}/reverse`, { reason }),
+    onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['credit-notes'] });
       qc.invalidateQueries({ queryKey: ['credit-note', id] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
@@ -477,11 +521,37 @@ export function usePostExpense() {
   });
 }
 
+/** Void (reverse) a posted supplier bill; the reason is mandatory (document reversals, owner decision 2026-11-17). */
 export function useVoidExpense() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => idempotentPost<Invoice>(`/vendor-bills/${id}/cancel`),
-    onSuccess: (_d, id) => {
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      idempotentPost<Invoice>(`/vendor-bills/${id}/cancel`, { reason }),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['expense', id] });
+      qc.invalidateQueries({ queryKey: ['ap-aging'] });
+    },
+  });
+}
+
+/** Supplier write-off body: `amount` omitted = the whole open balance, `accountId` omitted = purchase discounts. */
+export interface BillWriteOffInput {
+  amount?: number;
+  accountId?: string;
+  reason: string;
+}
+
+/**
+ * Write off (part of) a posted bill's open balance through the supplier sub-ledger: Dr AP (supplier) / Cr a
+ * non-control income or expense account (control-account policy, 2026-11-17).
+ */
+export function useWriteOffBill() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: BillWriteOffInput }) =>
+      idempotentPost<InvoiceDetail>(`/vendor-bills/${id}/write-off`, body),
+    onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['expenses'] });
       qc.invalidateQueries({ queryKey: ['expense', id] });
       qc.invalidateQueries({ queryKey: ['ap-aging'] });

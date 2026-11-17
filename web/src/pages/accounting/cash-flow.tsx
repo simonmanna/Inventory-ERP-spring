@@ -150,6 +150,14 @@ export function CashFlowPage() {
                       {Number(data.netCashFlow) >= 0 ? '+' : ''}{money(data.netCashFlow)}
                     </td>
                   </tr>
+                  {Number(data.effectOfExchangeRateChanges ?? 0) !== 0 && (
+                    <tr>
+                      <td className="py-3 px-5 font-semibold">{tx('Effect of exchange rate changes')}</td>
+                      <td className={`py-3 px-5 text-right text-lg ${Number(data.effectOfExchangeRateChanges) >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                        {Number(data.effectOfExchangeRateChanges) >= 0 ? '+' : ''}{money(data.effectOfExchangeRateChanges!)}
+                      </td>
+                    </tr>
+                  )}
                   <tr className="border-b-0">
                     <td className="py-3 px-5 font-semibold">{tx('Closing Cash Balance')}</td>
                     <td className="py-3 px-5 text-right font-bold text-xl">{money(data.closingCash)}</td>

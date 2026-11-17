@@ -15,7 +15,7 @@ import tools.jackson.databind.JsonNode;
 /**
  * Fixed assets on Testcontainers Postgres (ENABLE_ASSETS on in the test profile): categories, the register,
  * depreciation runs with GL posting, the lifecycle sub-records, dashboards, validation, tenant isolation and the
- * 401/403 matrix (57 routes).
+ * 401/403 matrix (59 routes).
  */
 class FixedAssetIT extends ApiTestSupport {
 
@@ -150,6 +150,104 @@ class FixedAssetIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("[R14] units of production needs total units and the month's usage; no straight-line fallback")
+    void unitsOfProduction() {
+        String cat = category("units_of_production").get("id").asString();
+        String id = asset(Map.of("purchaseCost", 1100, "salvageValue", 100, "usefulLife", 12, "categoryId", cat))
+                .get("id").asString();
+        String base = "/fixed-assets/" + id + "/depreciation";
+        // No total units: skipped (straight line would have charged 1000 / 12).
+        assertThat(ok(201, "POST", base + "/run", Map.of("period", "2026-01", "assetId", id))).isEmpty();
+        assertThat(as("PATCH", "/fixed-assets/" + id, Map.of("totalUnits", 0)).status()).isEqualTo(400);
+        assertThat(ok(200, "PATCH", "/fixed-assets/" + id, Map.of("totalUnits", 10000)).get("totalUnits").asString())
+                .isEqualTo("10000");
+        // Total known but no usage for the month: still skipped.
+        assertThat(ok(201, "POST", base + "/run", Map.of("period", "2026-01", "assetId", id))).isEmpty();
+        assertThat(ok(200, "GET", "/fixed-assets/" + id, null).get("currentValue").asString()).isEqualTo("1100");
+
+        assertThat(ok(201, "POST", base + "/usage", Map.of("period", "2026-01", "units", 1200)).get("units")
+                .asString()).isEqualTo("1200");
+        JsonNode corrected = ok(201, "POST", base + "/usage", Map.of("period", "2026-01", "units", 1500,
+                "notes", "meter reading"));
+        assertThat(corrected.get("units").asString()).isEqualTo("1500");
+        JsonNode run = ok(201, "POST", base + "/run", Map.of("period", "2026-01", "assetId", id));
+        assertThat(run).hasSize(1);
+        // (1100 − 100) × 1500 / 10000 = 150
+        assertThat(run.get(0).get("depreciationAmount").asString()).isEqualTo("150");
+        assertThat(run.get(0).get("method").asString()).isEqualTo("units_of_production");
+        Res late = as("POST", base + "/usage", Map.of("period", "2026-01", "units", 10));
+        assertThat(late.status()).isEqualTo(400);
+        assertThat(late.body().get("message").asString())
+                .isEqualTo("Depreciation for 2026-01 is already recorded; its usage can no longer change");
+
+        // More units than remain: the charge stops at the residual value.
+        ok(201, "POST", base + "/usage", Map.of("period", "2026-02", "units", 20000));
+        JsonNode capped = ok(201, "POST", base + "/run", Map.of("period", "2026-02", "assetId", id));
+        assertThat(capped.get(0).get("depreciationAmount").asString()).isEqualTo("850");
+        assertThat(capped.get(0).get("bookValue").asString()).isEqualTo("100");
+        assertThat(ok(200, "GET", base + "/usage", null)).hasSize(2);
+        assertThat(as("POST", base + "/usage", Map.of("period", "2026-3", "units", 1)).status()).isEqualTo(400);
+        assertThat(as("POST", base + "/usage", Map.of("period", "2026-03", "units", -1)).status()).isEqualTo(400);
+        assertThat(as("POST", "/fixed-assets/" + UUID.randomUUID() + "/depreciation/usage", Map.of("period",
+                "2026-03", "units", 1)).status()).isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("[R14] declining balance uses the category factor (default 2); double declining stays 2x")
+    void decliningFactor() {
+        assertThat(category("declining_balance").get("decliningFactor").asString()).isEqualTo("2");
+        String cat = ok(201, "POST", "/asset-categories", Map.of("name", "DB15 " + suffix(), "depreciationMethod",
+                "declining_balance", "decliningFactor", 1.5)).get("id").asString();
+        assertThat(as("POST", "/asset-categories", Map.of("name", "Bad " + suffix(), "decliningFactor", 0)).status())
+                .isEqualTo(400);
+        assertThat(as("PATCH", "/asset-categories/" + cat, "{\"decliningFactor\":null}").status()).isEqualTo(400);
+        String id = asset(Map.of("purchaseCost", 1200, "salvageValue", 0, "usefulLife", 60, "categoryId", cat))
+                .get("id").asString();
+        JsonNode run = ok(201, "POST", "/fixed-assets/" + id + "/depreciation/run", Map.of("period", "2026-01",
+                "assetId", id));
+        // 1.5 / 5 years = 30 % a year: 1200 × 0.3 / 12 = 30 (the old fixed 2× charged 40).
+        assertThat(run.get(0).get("depreciationAmount").asString()).isEqualTo("30");
+
+        String ddb = ok(201, "POST", "/asset-categories", Map.of("name", "DDB " + suffix(), "depreciationMethod",
+                "double_declining", "decliningFactor", 1.5)).get("id").asString();
+        String other = asset(Map.of("purchaseCost", 1200, "salvageValue", 0, "usefulLife", 60, "categoryId", ddb))
+                .get("id").asString();
+        JsonNode dd = ok(201, "POST", "/fixed-assets/" + other + "/depreciation/run", Map.of("period", "2026-01",
+                "assetId", other));
+        assertThat(dd.get(0).get("depreciationAmount").asString()).isEqualTo("40");
+    }
+
+    @Test
+    @DisplayName("[R14] a failed GL post rolls the asset back (no entry, book value unchanged); a later run works")
+    void failedPostRollsBack() {
+        String cat = category("straight_line").get("id").asString();
+        String id = asset(Map.of("purchaseCost", 1200, "salvageValue", 0, "usefulLife", 12, "categoryId", cat))
+                .get("id").asString();
+        String base = "/fixed-assets/" + id + "/depreciation";
+        String periodId = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status,"
+                + " \"updatedAt\") VALUES (?, ?, ?, ?::timestamp, ?::timestamp, 'closed', now())")
+                .params(periodId, demoOrg, "R14 closed " + suffix(), "1991-01-01", "1991-01-31").update();
+        try {
+            JsonNode run = ok(201, "POST", base + "/run", Map.of("period", "1991-01", "assetId", id,
+                    "postEntries", true));
+            assertThat(run).isEmpty();
+            assertThat(jdbc.sql("SELECT count(*) FROM \"AssetDepreciation\" WHERE \"assetId\" = ?").param(id)
+                    .query(Long.class).single()).isZero();
+            assertThat(ok(200, "GET", "/fixed-assets/" + id, null).get("currentValue").asString()).isEqualTo("1200");
+        } finally {
+            jdbc.sql("UPDATE \"FiscalPeriod\" SET status = 'open' WHERE id = ?").param(periodId).update();
+            jdbc.sql("DELETE FROM \"FiscalPeriod\" WHERE id = ?").param(periodId).update();
+        }
+        JsonNode posted = ok(201, "POST", base + "/run", Map.of("period", "2026-01", "assetId", id,
+                "postEntries", true));
+        assertThat(posted).hasSize(1);
+        assertThat(posted.get(0).get("isPosted").asBoolean()).isTrue();
+        assertThat(posted.get(0).get("journalEntryId").isNull()).isFalse();
+        assertThat(ok(200, "GET", "/fixed-assets/" + id, null).get("currentValue").asString()).isEqualTo("1100");
+    }
+
+    @Test
     @DisplayName("lifecycle: maintenance, repair, assignment, check-in/out, warranty, insurance, transfer, revaluation,"
             + " acquisition, disposal")
     void lifecycle() {
@@ -226,10 +324,10 @@ class FixedAssetIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("tenant isolation and 401/403 matrix (57 routes)")
+    @DisplayName("tenant isolation and 401/403 matrix (59 routes)")
     void isolationAndAuth() {
         String id = asset(Map.of()).get("id").asString();
         assertThat(call("GET", "/fixed-assets/" + id, null, otherToken).status()).isIn(403, 404);
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.fixedasset")).isEqualTo(57);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.fixedasset")).isEqualTo(59);
     }
 }

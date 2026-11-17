@@ -107,4 +107,18 @@ public class DebitNotesController {
     public Map<String, Object> cancel(@PathVariable String id) {
         return svc.cancel(id);
     }
+
+    /** {@code PATCH /procurement/debit-notes/:id/reverse} body (document reversals, owner decision 2026-11-17). */
+    public record ReverseDebitNoteRequest(
+            @jakarta.validation.constraints.Size(max = 2000, message = "must be shorter than or equal to 2000 characters")
+            String reason) {}
+
+    /** Posted debit-note document reversal; see {@link DebitNotesService#reverse}. */
+    @PatchMapping("/{id}/reverse")
+    @Idempotent
+    @RequirePermissions(Permissions.DEBIT_NOTE__REVERSE)
+    public Map<String, Object> reverse(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReverseDebitNoteRequest dto) {
+        return svc.reverse(id, dto == null ? null : dto.reason());
+    }
 }

@@ -1,6 +1,7 @@
 package com.inventoryerp.fixedasset.web;
 
 import com.inventoryerp.fixedasset.application.AssetDepreciationService;
+import com.inventoryerp.fixedasset.web.FixedAssetDtos.RecordUsageRequest;
 import com.inventoryerp.fixedasset.web.FixedAssetDtos.RunDepreciationRequest;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
@@ -21,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * {@code /fixed-assets/:assetId/depreciation} (port of {@code asset-depreciation.controller.ts}). As in Nest,
  * {@code period/:period} and {@code run} ignore {@code :assetId} (a run targets one asset only via the body).
+ * {@code usage} (R14, extension) records the units an asset used per month for units-of-production depreciation.
  */
 @RestController
 @RequestMapping("/fixed-assets/{assetId}/depreciation")
@@ -51,6 +53,19 @@ public class AssetDepreciationController {
     @RequirePermissions(Permissions.ASSET_DEPRECIATION__RUN)
     public List<Map<String, Object>> run(@Valid @RequestBody RunDepreciationRequest dto) {
         return service.run(dto.period(), dto.postEntries(), dto.assetId());
+    }
+
+    @GetMapping("/usage")
+    @RequirePermissions(Permissions.ASSET_DEPRECIATION__READ)
+    public List<Map<String, Object>> usage(@PathVariable String assetId) {
+        return service.usage(assetId);
+    }
+
+    @PostMapping("/usage")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.ASSET_DEPRECIATION__RUN)
+    public Map<String, Object> recordUsage(@PathVariable String assetId, @Valid @RequestBody RecordUsageRequest dto) {
+        return service.recordUsage(assetId, dto.period(), dto.units(), dto.notes());
     }
 
     @PostMapping("/{id}/post")

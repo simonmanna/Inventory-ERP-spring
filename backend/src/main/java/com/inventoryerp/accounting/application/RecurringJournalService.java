@@ -40,6 +40,16 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code mode = draft} stages the entry as a draft whose maker is the template author, so a second user approves it
  * (maker-checker). A closed or locked period refuses the occurrence; the job records the failure and retries the
  * next day without moving the schedule.
+ *
+ * <p>R3 (review 2026-11-17): occurrences post in system context, so the template enforces what a user's own entry
+ * meets. Every account must allow manual posting and none may be a designated AR / AP control account (control-account
+ * policy, V518: a template can never be a control-account adjustment; {@link PostingService#assertManualPostingAllowed}),
+ * checked when the template is saved, when it is approved and again before each occurrence. {@code mode = post} also
+ * needs the template approved by a user
+ * holding {@code journal_entry:post} who neither created it nor last changed what it posts; changing the lines,
+ * accounts, amounts, journal, currency, dimensions, schedule or mode clears the approval. Until it is approved, a
+ * {@code post} template stages each occurrence as a draft (as {@code mode = draft} does), so nothing reaches the
+ * books without a second user and the schedule keeps moving.
  */
 @Service
 public class RecurringJournalService {
@@ -167,6 +177,15 @@ public class RecurringJournalService {
         } else if (in.journalCode() != null) {
             assertJournal(org, journalCode);
         }
+        boolean changed = differs(in.journalCode(), t.get("journalCode")) || differs(in.frequency(), t.get("frequency"))
+                || (in.intervalCount() != null && in.intervalCount() != ((Number) t.get("intervalCount")).intValue())
+                || (in.startDate() != null && !start.equals(t.get("startDate")))
+                || (in.endDate() != null && !end.equals(t.get("endDate"))) || differs(in.mode(), t.get("mode"))
+                || differs(in.currencyId(), t.get("currencyId")) || differs(in.branchId(), t.get("branchId"))
+                || differs(in.costCenterId(), t.get("costCenterId"))
+                || (lines != null && !Boolean.TRUE.equals(jdbc.sql("SELECT lines = ?::jsonb FROM"
+                        + " \"RecurringJournalTemplate\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(lines, id, org).query(Boolean.class).single()));
         LocalDate next = (LocalDate) t.get("nextRunDate");
         int runCount = ((Number) t.get("runCount")).intValue();
         if (runCount == 0 && (in.startDate() != null || in.frequency() != null)) {
@@ -185,8 +204,43 @@ public class RecurringJournalService {
                         end == null ? null : Date.valueOf(end), next == null ? null : Date.valueOf(next), in.mode(),
                         in.currencyId(), in.branchId(), in.costCenterId(), lines, total, id, org)
                 .update();
+        if (changed) {
+            // R3: what the template posts changed, so it needs a fresh approval by someone else
+            jdbc.sql("UPDATE \"RecurringJournalTemplate\" SET \"lastEditedBy\" = ?, \"approvedBy\" = NULL,"
+                            + " \"approvedAt\" = NULL WHERE id = ? AND \"organizationId\" = ?")
+                    .params(TenantContext.userId(), id, org).update();
+        }
         Map<String, Object> out = render(require(id, false));
         audit.recordInTx(AuditInput.of("RecurringJournalTemplate", id, "update", render(t), out));
+        return out;
+    }
+
+    /**
+     * Approve a template so its {@code post}-mode occurrences post instead of staging drafts (R3 maker-checker). The
+     * approver must hold {@code journal_entry:post} (controller) and be neither the template's author nor the user who
+     * last changed what it posts; its accounts must still allow manual posting. Approving an approved template
+     * returns it unchanged.
+     */
+    @Transactional
+    public Map<String, Object> approve(String id) {
+        Map<String, Object> t = require(id, true);
+        if ("ended".equals(t.get("status"))) {
+            throw ApiException.badRequest("An ended recurring entry cannot be changed");
+        }
+        if (t.get("approvedAt") != null) {
+            return render(t);
+        }
+        String userId = TenantContext.userId();
+        if (userId != null && (userId.equals(t.get("createdBy")) || userId.equals(t.get("lastEditedBy")))) {
+            throw ApiException.forbidden("The user who created or last changed a recurring entry cannot approve it"
+                    + " (maker-checker).");
+        }
+        posting.assertManualPostingAllowed(accountIds(postingLines(t.get("lines"))));
+        jdbc.sql("UPDATE \"RecurringJournalTemplate\" SET \"approvedBy\" = ?, \"approvedAt\" = now(),"
+                        + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?")
+                .params(userId, id, TenantContext.organizationId()).update();
+        Map<String, Object> out = render(require(id, false));
+        audit.recordInTx(AuditInput.of("RecurringJournalTemplate", id, "approve", render(t), out));
         return out;
     }
 
@@ -303,18 +357,24 @@ public class RecurringJournalService {
             return out;
         }
         String key = "recurring:" + id + ":" + date;
+        List<PostingRequest.Line> lines = postingLines(t.get("lines"));
+        // R3: post() below runs in system context, which lets control accounts through; a template may not.
+        posting.assertManualPostingAllowed(accountIds(lines));
         PostingRequest request = new PostingRequest((String) t.get("journalCode"),
                 date.atStartOfDay(ZoneOffset.UTC).toInstant(), description(t, date), (String) t.get("currencyId"),
                 null, "recurring_entry", id, null, key, (String) t.get("branchId"), (String) t.get("costCenterId"),
-                null, postingLines(t.get("lines")));
-        boolean draft = "draft".equals(t.get("mode"));
+                null, lines);
+        // An unapproved post-mode template stages drafts until a second user approves it (R3).
+        boolean draft = "draft".equals(t.get("mode")) || t.get("approvedAt") == null;
         Map<String, Object> entry;
         if (draft) {
             entry = posting.stageDraft(request);
-            // Maker = the template author, so the author cannot approve what the template generates.
+            // Maker = the user who last changed what the template posts (else its author), so they cannot approve
+            // what the template generates.
+            Object maker = t.get("lastEditedBy") != null ? t.get("lastEditedBy") : t.get("createdBy");
             jdbc.sql("UPDATE \"JournalEntry\" SET \"postingKey\" = ?, \"createdBy\" = coalesce(?, \"createdBy\")"
                     + " WHERE id = ? AND \"organizationId\" = ?")
-                    .params(key, t.get("createdBy"), entry.get("id"), org).update();
+                    .params(key, maker, entry.get("id"), org).update();
         } else {
             entry = posting.post(request);
         }
@@ -404,6 +464,15 @@ public class RecurringJournalService {
         return out;
     }
 
+    private static List<String> accountIds(List<PostingRequest.Line> lines) {
+        return lines.stream().map(PostingRequest.Line::accountId).toList();
+    }
+
+    /** A PATCH field that is present and differs from the stored value. */
+    private static boolean differs(String in, Object current) {
+        return in != null && !in.equals(current);
+    }
+
     private static String text(JsonNode n, String key) {
         JsonNode v = n.get(key);
         return v == null || v.isNull() ? null : v.asString();
@@ -447,6 +516,8 @@ public class RecurringJournalService {
         if (found != accounts.size()) {
             throw ApiException.badRequest("One or more accounts do not exist in this organization");
         }
+        // R3: the occurrences post in system context, so the manual-posting rule is enforced here
+        posting.assertManualPostingAllowed(accounts);
         return debit;
     }
 

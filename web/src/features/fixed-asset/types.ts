@@ -6,6 +6,8 @@ export interface AssetCategory {
   depreciationMethod: string;
   defaultUsefulLife: number;
   defaultResidualValue: string;
+  /** Declining-balance factor (annual rate = factor / years); default 2. */
+  decliningFactor?: string;
   isActive: boolean;
   parent?: AssetCategory | null;
   children?: AssetCategory[];
@@ -38,6 +40,8 @@ export interface Asset {
   usefulLife: number;
   acquisitionMethod: string;
   capitalizedCost: string | null;
+  /** Total units over the asset's life (units-of-production depreciation). */
+  totalUnits?: string | null;
   image: string | null;
   status: string;
   notes: string | null;
@@ -101,6 +105,15 @@ export interface AssetDepreciation {
   isPosted: boolean;
   journalEntryId: string | null;
   postedAt: string | null;
+}
+
+export interface AssetUsage {
+  id: string;
+  assetId: string;
+  period: string;
+  units: string;
+  notes: string | null;
+  createdAt: string;
 }
 
 export interface AssetMaintenance {

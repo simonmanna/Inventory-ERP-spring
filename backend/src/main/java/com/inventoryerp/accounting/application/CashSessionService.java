@@ -1427,6 +1427,9 @@ public class CashSessionService {
         TreasuryGuards.AccountRow account = TreasuryGuards.requireAccount(jdbc, organizationId, counterpartAccountId,
                 "Counterpart account");
         TreasuryGuards.assertNotDrawerAccount(jdbc, organizationId, account.id(), "A drawer movement");
+        // Control-account policy (V518): customer / supplier money goes through payments, never a drawer movement
+        // straight on the AR / AP control account.
+        posting.assertNotReceivablePayableControl(List.of(account.id()));
         if ("adjustment".equals(movementType)) {
             return;
         }

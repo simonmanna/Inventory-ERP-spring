@@ -1,9 +1,14 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Send, X } from 'lucide-react';
+import { Plus, RotateCcw, Send, X } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { idempotentPatch } from '@/lib/idempotent-request';
@@ -20,7 +25,7 @@ interface DebitNote {
   partner?: { name: string };
   totalAmount: number | string;
   currencyCode: string;
-  status: 'draft' | 'posted' | 'cancelled';
+  status: 'draft' | 'posted' | 'cancelled' | 'reversed';
   reason: string;
   issueDate: string;
 }
@@ -38,6 +43,24 @@ export function DebitNotesPage() {
     onSuccess: () => {
       notify.success(tx('Updated'));
       qc.invalidateQueries({ queryKey: ['debit-notes'] });
+    },
+    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+  });
+  // Document reversal of a posted note (owner decision 2026-11-17): GL mirrored, the referenced invoice / bill
+  // restored, returned goods brought back; a reason is required.
+  const has = useAuthStore((s) => s.hasPermission);
+  const [reversing, setReversing] = useState<DebitNote | null>(null);
+  const [reverseReason, setReverseReason] = useState('');
+  const reverse = useMutation({
+    mutationFn: async (vars: { id: string; reason: string }) =>
+      await idempotentPatch(`/procurement/debit-notes/${vars.id}/reverse`, { reason: vars.reason }),
+    onSuccess: () => {
+      notify.success(tx('Debit note reversed'));
+      setReversing(null);
+      setReverseReason('');
+      qc.invalidateQueries({ queryKey: ['debit-notes'] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoice'] });
     },
     onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
@@ -86,7 +109,7 @@ export function DebitNotesPage() {
               </div>
               <div className="flex justify-between text-xs">
                 <span className="text-muted-foreground">{tx('Status')}</span>
-                <Badge variant={n.status === 'cancelled' ? 'destructive' : n.status === 'posted' ? 'default' : 'outline'}>
+                <Badge variant={n.status === 'cancelled' || n.status === 'reversed' ? 'destructive' : n.status === 'posted' ? 'default' : 'outline'}>
                   {n.status}
                 </Badge>
               </div>
@@ -101,11 +124,47 @@ export function DebitNotesPage() {
                     </Button>
                   </>
                 )}
+                {n.status === 'posted' && has(PERMISSIONS.debitNote.reverse) && (
+                  <Button size="sm" variant="ghost" onClick={() => setReversing(n)}>
+                    <RotateCcw className="mr-1 h-3 w-3 text-destructive" />{tx('Reverse')}
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      <Dialog open={reversing !== null} onOpenChange={(open) => { if (!open) setReversing(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{tx('Reverse')} {reversing?.noteNumber}</DialogTitle>
+            <DialogDescription>
+              {tx('Reverses the journal entry and gives back what the note changed on its invoice or bill; goods returned to the supplier come back into stock. A note whose amount was already paid cannot be reversed until that payment is voided.')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="debit-note-reverse-reason">{tx('Reason')}</Label>
+            <Textarea
+              id="debit-note-reverse-reason"
+              value={reverseReason}
+              maxLength={2000}
+              onChange={(e) => setReverseReason(e.target.value)}
+              placeholder={tx('Why is this debit note being reversed?')}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReversing(null)}>{tx('Keep')}</Button>
+            <Button
+              variant="destructive"
+              disabled={reverse.isPending || !reverseReason.trim() || !reversing}
+              onClick={() => reversing && reverse.mutate({ id: reversing.id, reason: reverseReason.trim() })}
+            >
+              {reverse.isPending ? tx('Reversing...') : tx('Reverse')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

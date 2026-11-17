@@ -60,13 +60,24 @@ public class DeferralController {
         return service.create(dto);
     }
 
-    /** Defer a posted invoice / bill line (posts the reclassification for a P&amp;L line). */
+    /** Defer a posted invoice / bill line (the reclassification of a P&amp;L line posts on approval). */
     @PostMapping("/from-journal-line")
     @Idempotent
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.DEFERRAL__MANAGE)
     public Map<String, Object> fromLine(@Valid @RequestBody DeferralFromLineInput dto) {
         return service.createFromLine(dto);
+    }
+
+    /**
+     * Maker-checker approval (R3): a schedule posts nothing (reclassification, releases) until a user with the
+     * journal-entry post permission other than its author approves it.
+     */
+    @PostMapping("/{id}/approve")
+    @Idempotent
+    @RequirePermissions(Permissions.JOURNAL_ENTRY__POST)
+    public Map<String, Object> approve(@PathVariable String id) {
+        return service.approve(id);
     }
 
     @PostMapping("/{id}/release")

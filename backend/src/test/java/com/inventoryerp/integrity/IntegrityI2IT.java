@@ -177,7 +177,7 @@ class IntegrityI2IT extends ApiTestSupport {
         assertThat(onHand(p)).as("4 restocked by the credit note").isEqualByComparingTo("4");
         long invoiceJournals = journals(inv);
 
-        Res cancel = as("POST", "/invoices/" + inv + "/cancel", null);
+        Res cancel = as("POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(cancel.status()).as(cancel.raw().body()).isEqualTo(400);
         assertThat(cancel.body().get("message").asString()).contains("has posted credit notes", "cannot be cancelled");
         assertThat(onHand(p)).as("no second restock").isEqualByComparingTo("4");
@@ -191,7 +191,7 @@ class IntegrityI2IT extends ApiTestSupport {
         String p = stocked("Lime", 5);
         String inv = postedInvoice(p, 2);
         String cn = creditNote(inv, p, 1);
-        ok(200, "POST", "/invoices/" + inv + "/cancel", null);
+        ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(onHand(p)).as("cancel returned the 2 issued").isEqualByComparingTo("5");
         Res post = as("POST", "/credit-notes/" + cn + "/post", null);
         assertThat(post.status()).as(post.raw().body()).isEqualTo(400);
@@ -205,8 +205,9 @@ class IntegrityI2IT extends ApiTestSupport {
     void concurrentCancelsReverseOnce() {
         String p = stocked("Sand", 6);
         String inv = postedInvoice(p, 6);
-        CompletableFuture<Res> a = CompletableFuture.supplyAsync(() -> as("POST", "/invoices/" + inv + "/cancel", null));
-        CompletableFuture<Res> b = CompletableFuture.supplyAsync(() -> as("POST", "/invoices/" + inv + "/cancel", null));
+        Map<String, Object> reason = Map.of("reason", "Raised in error");
+        CompletableFuture<Res> a = CompletableFuture.supplyAsync(() -> as("POST", "/invoices/" + inv + "/cancel", reason));
+        CompletableFuture<Res> b = CompletableFuture.supplyAsync(() -> as("POST", "/invoices/" + inv + "/cancel", reason));
         List<Integer> codes = List.of(a.join().status(), b.join().status());
         assertThat(codes).containsExactlyInAnyOrder(200, 400);
         assertThat(onHand(p)).as("returned once").isEqualByComparingTo("6");

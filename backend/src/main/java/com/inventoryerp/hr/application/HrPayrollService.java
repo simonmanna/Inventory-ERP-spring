@@ -5,7 +5,6 @@ import static com.inventoryerp.hr.application.HrDb.org;
 import static com.inventoryerp.hr.application.HrDb.truthy;
 import static com.inventoryerp.hr.application.HrDb.user;
 import static com.inventoryerp.pos.application.PosSql.decOf;
-import static com.inventoryerp.pos.application.PosSql.num;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PostingRequest;
@@ -48,11 +47,16 @@ import org.springframework.stereotype.Service;
 
 /**
  * The payroll engine (port of {@code hr-payroll.service.ts}): components, tax tables, periods, runs (calculate →
- * approve → payslips + GL journal → bank payment), salary advances and employee loans. Amounts are JS doubles stored
- * through {@code new Decimal(number)}, exactly as Nest computes them.
+ * approve → payslips + GL journal → bank payment), salary advances and employee loans. Payroll money is decimal at
+ * full precision and each payroll line is rounded once, {@code HALF_UP}, to the pay scale (the functional currency's
+ * decimals, {@link HrPayMoney}) when the run's items are stored; gross, deductions and net are sums of those lines
+ * (owner decision, currency-aware payroll rounding — Nest stored JS doubles). Payslips, bank payments and the journal
+ * read the stored values and never round again.
  *
  * <p>GL ({@code payroll_run:<runId>}, journal GEN): Dr salaries expense (gross); Cr net pay / PAYE / pension / SSF /
- * insurance payables, loan / advance receivables, other deductions contra.
+ * insurance payables, loan / advance receivables, deduction inputs' credit accounts. R12 (post-parity): Nest credited
+ * "other deductions" back to salaries expense (understating cost, recording no liability); a run with a deduction that
+ * has no liability / receivable account is now refused with a 400 naming it, and the journal sums are decimal.
  */
 @Service
 public class HrPayrollService {
@@ -63,10 +67,18 @@ public class HrPayrollService {
     static final List<String> PERIOD_TYPES = List.of("WEEKLY", "BIWEEKLY", "MONTHLY", "CUSTOM");
     static final List<String> PAYMENT_METHODS = List.of("BANK", "MOBILE_MONEY", "CASH", "CHEQUE");
     static final List<String> BANK_PAYMENT_STATUSES = List.of("DRAFT", "GENERATED", "SENT", "PAID");
-    static final double MONTHLY_HOURS = 173.33;
+    /** Full-precision context of the v1 money maths; amounts are rounded once to the pay scale when stored. */
+    static final java.math.MathContext MC = java.math.MathContext.DECIMAL128;
+    private static final BigDecimal MONTHLY_HOURS_DEC = new BigDecimal("173.33");
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+    private static final BigDecimal SIXTY = BigDecimal.valueOf(60);
     static final int MONTHS_PER_YEAR = 12;
     static final String[] EMPLOYEE_REF = HrAttendanceService.EMPLOYEE_REF;
     static final String[] EMPLOYEE_ITEM_REF = {"id", "employeeCode", "firstName", "lastName"};
+    /** Money columns of a payroll item that leave the calculation (all stored at the pay scale). */
+    static final List<String> ITEM_MONEY = List.of("baseSalary", "overtimePay", "allowancesTotal", "commissionAmount",
+            "bonusAmount", "grossPay", "taxAmount", "pensionAmount", "socialSecurityAmount", "loanDeduction",
+            "advanceDeduction", "insuranceAmount", "otherDeductions", "totalDeductions", "netPay");
     static final String[] EMPLOYEE_BANK_REF = {"id", "employeeCode", "firstName", "lastName", "bankName",
         "bankAccountName", "bankAccountNumber", "mobileMoneyProvider", "mobileMoneyNumber"};
 
@@ -237,19 +249,20 @@ public class HrPayrollService {
 
     /** Progressive tax: sum of (bracket ∩ income) × rate. */
     static double computeProgressive(double income, List<Map<String, Object>> brackets) {
-        // ACC-3 (B12): bracket arithmetic in decimal; float products drifted (1,234,567.89 → 272370.36699999997).
-        java.math.BigDecimal in = java.math.BigDecimal.valueOf(income);
-        java.math.BigDecimal tax = java.math.BigDecimal.ZERO;
+        return computeProgressive(BigDecimal.valueOf(income), brackets).doubleValue();
+    }
+
+    /** Progressive tax at full decimal precision (ACC-3 / B12: float products drifted, 272370.36699999997). */
+    static BigDecimal computeProgressive(BigDecimal in, List<Map<String, Object>> brackets) {
+        BigDecimal tax = BigDecimal.ZERO;
         for (Map<String, Object> b : brackets) {
-            java.math.BigDecimal low = java.math.BigDecimal.valueOf(num(b.get("fromAmount")))
-                    .max(java.math.BigDecimal.ZERO);
-            java.math.BigDecimal high = b.get("toAmount") == null ? in
-                    : java.math.BigDecimal.valueOf(num(b.get("toAmount"))).min(in);
+            BigDecimal low = PosSql.dec(b.get("fromAmount")).max(BigDecimal.ZERO);
+            BigDecimal high = b.get("toAmount") == null ? in : PosSql.dec(b.get("toAmount")).min(in);
             if (high.compareTo(low) > 0) {
-                tax = tax.add(high.subtract(low).multiply(java.math.BigDecimal.valueOf(num(b.get("rate")))));
+                tax = tax.add(high.subtract(low).multiply(PosSql.dec(b.get("rate"))));
             }
         }
-        return tax.doubleValue();
+        return tax;
     }
 
     private Map<String, Object> activeTaxTable(String taxType, Instant runDate) {
@@ -399,9 +412,11 @@ public class HrPayrollService {
         };
     }
 
-    private static double percentOrFixed(Map<String, Object> c, double base) {
-        return "PERCENTAGE".equals(c.get("calcMethod")) ? base * (num(c.get("rate")) / 100)
-                : num(nz(c.get("amount"), 0));
+    /** A component's amount at full precision (rate % of {@code base}, or its fixed amount). */
+    private static BigDecimal percentOrFixed(Map<String, Object> c, BigDecimal base) {
+        return "PERCENTAGE".equals(c.get("calcMethod"))
+                ? base.multiply(PosSql.dec(c.get("rate")), MC).divide(HUNDRED, MC)
+                : PosSql.dec(nz(c.get("amount"), 0));
     }
 
     private static double jsRound(double v) {
@@ -464,29 +479,36 @@ public class HrPayrollService {
                 hr.jdbc().sql("UPDATE \"HrPayrollRun\" SET engine = NULL WHERE id = ? AND \"organizationId\" = ?")
                         .params(id, orgId).update();
             }
+            // Owner decision (currency-aware payroll rounding): full-precision decimal maths; each line is rounded
+            // once to the pay scale as it is stored (HrPayMoney); later lines use the stored amounts of the lines
+            // they build on, and gross / deductions / net are sums of stored lines, so every item foots exactly.
+            int scale = setup.payScale();
             for (Map<String, Object> emp : v2 ? List.<Map<String, Object>>of() : employees) {
                 Object payFreq = nz(emp.get("payFrequency"), "MONTHLY");
-                double baseSalary = truthy(emp.get("baseSalary")) && num(emp.get("baseSalary")) != 0
-                        ? num(emp.get("baseSalary")) : 0;
-                double hourlyRate = truthy(emp.get("hourlyRate")) && num(emp.get("hourlyRate")) != 0
-                        ? num(emp.get("hourlyRate")) : 0;
+                BigDecimal baseSalary = PosSql.dec(emp.get("baseSalary"));
+                BigDecimal hourlyRate = PosSql.dec(emp.get("hourlyRate"));
                 Map<String, Object> att = SqlRows.one(hr.jdbc().sql("SELECT sum(\"workedMinutes\") AS w,"
                         + " sum(\"overtimeMinutes\") AS o FROM \"HrAttendance\" WHERE \"organizationId\" = ? AND"
                         + " \"employeeId\" = ? AND \"deletedAt\" IS NULL AND date >= ? AND date < ?")
                         .params(orgId, emp.get("id"), SqlRows.ts(monthStart), SqlRows.ts(monthEnd)));
                 double workedMin = att.get("w") == null ? 0 : ((Number) att.get("w")).doubleValue();
                 double overtimeMin = att.get("o") == null ? 0 : ((Number) att.get("o")).doubleValue();
-                double baseAmount = "HOURLY".equals(payFreq)
-                        ? (workedMin / 60) * (hourlyRate != 0 ? hourlyRate : baseSalary / MONTHLY_HOURS) : baseSalary;
+                BigDecimal workedHours = PosSql.dec(att.get("w")).divide(SIXTY, MC);
+                BigDecimal overtimeHoursDec = PosSql.dec(att.get("o")).divide(SIXTY, MC);
+                BigDecimal derivedRate = baseSalary.divide(MONTHLY_HOURS_DEC, MC);
+                BigDecimal otRate = hourlyRate.signum() != 0 ? hourlyRate : derivedRate;
+                BigDecimal baseAmount = HrPayMoney.round("HOURLY".equals(payFreq)
+                        ? workedHours.multiply(otRate, MC) : baseSalary, scale);
                 double overtimeHours = overtimeMin / 60;
-                double otRate = hourlyRate != 0 ? hourlyRate : baseSalary / MONTHLY_HOURS;
                 Map<String, Object> overtimeRule = HrOvertimeCalculator.pick(overtimeRules, emp);
-                double overtimePay = overtimeRule == null ? overtimeHours * otRate * 1.5
+                BigDecimal overtimePay = HrPayMoney.round(overtimeRule == null
+                        ? overtimeHoursDec.multiply(otRate, MC).multiply(new BigDecimal("1.5"), MC)
                         : overtime.weightedHours(overtimeRule, emp.get("id"), monthStart, monthEnd, holidays)
-                                .doubleValue() * otRate;
+                                .multiply(otRate, MC), scale);
+                BigDecimal componentBase = baseAmount.add(overtimePay);
 
                 List<Map<String, Object>> allowanceLines = new ArrayList<>();
-                double allowancesTotal = 0;
+                BigDecimal allowancesTotal = BigDecimal.ZERO;
                 for (Map<String, Object> c : components) {
                     if (!"ALLOWANCE".equals(c.get("componentType")) || !Boolean.TRUE.equals(c.get("isRecurring"))) {
                         continue;
@@ -494,32 +516,32 @@ public class HrPayrollService {
                     if (truthy(c.get("appliesTo")) && !componentApplies(c.get("appliesTo"), emp)) {
                         continue;
                     }
-                    double amount = percentOrFixed(c, baseAmount + overtimePay);
-                    if (!(amount > 0)) {
+                    BigDecimal amount = HrPayMoney.round(percentOrFixed(c, componentBase), scale);
+                    if (amount.signum() <= 0) {
                         continue;
                     }
-                    allowancesTotal += amount;
+                    allowancesTotal = allowancesTotal.add(amount);
                     allowanceLines.add(line(orgId, c.get("name"), amount, c.get("isTaxable"), userId));
                 }
                 List<String> inputIds = new ArrayList<>();
-                double nonTaxableInputs = 0;
+                BigDecimal nonTaxableInputs = BigDecimal.ZERO;
                 for (Map<String, Object> in : inputs) {
                     if (!emp.get("id").equals(in.get("employeeId")) || "deduction".equals(in.get("kind"))) {
                         continue;
                     }
-                    double amount = SqlRows.dec(in, "amount").doubleValue();
-                    allowancesTotal += amount;
+                    BigDecimal amount = HrPayMoney.round(SqlRows.dec(in, "amount"), scale);
+                    allowancesTotal = allowancesTotal.add(amount);
                     if (!Boolean.TRUE.equals(in.get("isTaxable"))) {
-                        nonTaxableInputs += amount;
+                        nonTaxableInputs = nonTaxableInputs.add(amount);
                     }
                     allowanceLines.add(line(orgId, in.get("name"), amount, in.get("isTaxable"), userId));
                     inputIds.add((String) in.get("id"));
                 }
                 List<Map<String, Object>> deductionLines = new ArrayList<>();
-                double pension = 0;
-                double ssf = 0;
-                double insurance = 0;
-                double other = 0;
+                BigDecimal pension = BigDecimal.ZERO;
+                BigDecimal ssf = BigDecimal.ZERO;
+                BigDecimal insurance = BigDecimal.ZERO;
+                BigDecimal other = BigDecimal.ZERO;
                 for (Map<String, Object> c : components) {
                     if (!"DEDUCTION".equals(c.get("componentType")) || !Boolean.TRUE.equals(c.get("isRecurring"))) {
                         continue;
@@ -527,78 +549,91 @@ public class HrPayrollService {
                     if (truthy(c.get("appliesTo")) && !componentApplies(c.get("appliesTo"), emp)) {
                         continue;
                     }
-                    double amount = percentOrFixed(c, baseAmount + overtimePay);
-                    if (!(amount > 0)) {
+                    BigDecimal amount = HrPayMoney.round(percentOrFixed(c, componentBase), scale);
+                    if (amount.signum() <= 0) {
                         continue;
                     }
                     String codeUp = String.valueOf(nz(c.get("code"), "")).toUpperCase();
                     if (codeUp.contains("PENSION")) {
-                        pension += amount;
+                        pension = pension.add(amount);
                     } else if (codeUp.contains("SSF") || codeUp.contains("SOCIAL")) {
-                        ssf += amount;
+                        ssf = ssf.add(amount);
                     } else if (codeUp.contains("INSURANCE")) {
-                        insurance += amount;
+                        insurance = insurance.add(amount);
                     } else {
-                        other += amount;
+                        other = other.add(amount);
                     }
                     deductionLines.add(line(orgId, c.get("name"), amount, c.get("isTaxable"), userId));
                 }
-                double gross = baseAmount + overtimePay + allowancesTotal;
-                double taxableGross = Math.max(0, gross - pension - ssf - nonTaxableInputs);
+                BigDecimal gross = baseAmount.add(overtimePay).add(allowancesTotal);
+                BigDecimal taxableGross = gross.subtract(pension).subtract(ssf).subtract(nonTaxableInputs)
+                        .max(BigDecimal.ZERO);
+                BigDecimal months = BigDecimal.valueOf(MONTHS_PER_YEAR);
                 @SuppressWarnings("unchecked")
-                double tax = payeTable != null ? computeProgressive(taxableGross * MONTHS_PER_YEAR,
-                        (List<Map<String, Object>>) payeTable.get("brackets")) / MONTHS_PER_YEAR : 0;
-                if (tax > 0) {
+                BigDecimal tax = payeTable == null ? BigDecimal.ZERO : HrPayMoney.round(computeProgressive(
+                        taxableGross.multiply(months), (List<Map<String, Object>>) payeTable.get("brackets"))
+                        .divide(months, MC), scale);
+                if (tax.signum() > 0) {
                     deductionLines.add(line(orgId, "PAYE Tax", tax, false, userId));
                 }
-                double statutory = tax + pension + ssf + insurance + other;
-                double available = Math.max(0, gross - statutory);
-                double loanDeduction = 0;
-                double advanceDeduction = 0;
+                BigDecimal statutory = tax.add(pension).add(ssf).add(insurance).add(other);
+                // Stored amounts: what is left is at the pay scale, so a recovery rounded below never exceeds it.
+                BigDecimal available = gross.subtract(statutory).max(BigDecimal.ZERO);
+                BigDecimal loanDeduction = BigDecimal.ZERO;
+                BigDecimal advanceDeduction = BigDecimal.ZERO;
                 for (Map<String, Object> loan : loans) {
-                    if (!loan.get("employeeId").equals(emp.get("id")) || num(loan.get("balance")) <= 0) {
+                    BigDecimal balance = PosSql.dec(loan.get("balance"));
+                    if (!loan.get("employeeId").equals(emp.get("id")) || balance.signum() <= 0) {
                         continue;
                     }
-                    if (available <= 0) {
+                    if (available.signum() <= 0) {
                         break;
                     }
-                    double planned = Math.min(num(loan.get("installmentAmount")), num(loan.get("balance")));
-                    double installment = Math.min(planned, available);
-                    loanDeduction += installment;
-                    available -= installment;
+                    BigDecimal planned = PosSql.dec(loan.get("installmentAmount")).min(balance);
+                    BigDecimal installment = HrPayMoney.round(planned.min(available), scale);
+                    if (installment.signum() <= 0) {
+                        continue;
+                    }
+                    loanDeduction = loanDeduction.add(installment);
+                    available = available.subtract(installment);
                     deductionLines.add(line(orgId, "Loan " + loan.get("loanCode"), installment, false, userId));
                 }
                 for (Map<String, Object> adv : advances) {
-                    if (!adv.get("employeeId").equals(emp.get("id")) || num(adv.get("balance")) <= 0) {
+                    BigDecimal balance = PosSql.dec(adv.get("balance"));
+                    if (!adv.get("employeeId").equals(emp.get("id")) || balance.signum() <= 0) {
                         continue;
                     }
-                    if (available <= 0) {
+                    if (available.signum() <= 0) {
                         break;
                     }
-                    double planned = Math.min(num(adv.get("monthlyDeduction")), num(adv.get("balance")));
-                    double installment = Math.min(planned, available);
-                    advanceDeduction += installment;
-                    available -= installment;
+                    BigDecimal planned = PosSql.dec(adv.get("monthlyDeduction")).min(balance);
+                    BigDecimal installment = HrPayMoney.round(planned.min(available), scale);
+                    if (installment.signum() <= 0) {
+                        continue;
+                    }
+                    advanceDeduction = advanceDeduction.add(installment);
+                    available = available.subtract(installment);
                     deductionLines.add(line(orgId, "Advance " + adv.get("advanceCode"), installment, false, userId));
                 }
                 // Additive (fleet 1.9): deduction inputs (e.g. traffic fines charged to the driver) come off the net
                 // pay that is left; one that does not fit waits for a later run. None → the Nest calculation unchanged.
-                double inputDeductions = 0;
+                BigDecimal inputDeductions = BigDecimal.ZERO;
                 for (Map<String, Object> in : inputs) {
                     if (!emp.get("id").equals(in.get("employeeId")) || !"deduction".equals(in.get("kind"))) {
                         continue;
                     }
-                    double amount = SqlRows.dec(in, "amount").doubleValue();
-                    if (amount > available + 1e-9) {
+                    BigDecimal amount = HrPayMoney.round(SqlRows.dec(in, "amount"), scale);
+                    if (amount.compareTo(available) > 0) {
                         continue;
                     }
-                    inputDeductions += amount;
-                    available -= amount;
+                    inputDeductions = inputDeductions.add(amount);
+                    available = available.subtract(amount);
                     deductionLines.add(line(orgId, in.get("name"), amount, false, userId));
                     inputIds.add((String) in.get("id"));
                 }
-                double totalDeductions = statutory + loanDeduction + advanceDeduction + inputDeductions;
-                double netPay = gross - totalDeductions;
+                BigDecimal totalDeductions = statutory.add(loanDeduction).add(advanceDeduction).add(inputDeductions);
+                // Net pay is derived from the stored parts, never rounded on its own.
+                BigDecimal netPay = gross.subtract(totalDeductions);
                 double otHoursRounded = jsRound(overtimeHours * 100) / 100;
                 if (overtimeRule == null && otHoursRounded != Math.rint(otHoursRounded)) {
                     // HrPayrollItem.overtimeHours is an Int column: Prisma rejects a fractional value (Nest 500).
@@ -609,24 +644,24 @@ public class HrPayrollService {
                 data.put("organizationId", orgId);
                 data.put("runId", id);
                 data.put("employeeId", emp.get("id"));
-                data.put("baseSalary", decOf(baseAmount));
-                data.put("hourlyRate", decOf(hourlyRate));
+                data.put("baseSalary", baseAmount);
+                data.put("hourlyRate", hourlyRate);
                 data.put("regularHours", (int) jsRound(workedMin / 60));
                 data.put("overtimeHours", (int) jsRound(otHoursRounded));
-                data.put("overtimePay", decOf(overtimePay));
-                data.put("allowancesTotal", decOf(allowancesTotal));
+                data.put("overtimePay", overtimePay);
+                data.put("allowancesTotal", allowancesTotal);
                 data.put("commissionAmount", BigDecimal.ZERO);
                 data.put("bonusAmount", BigDecimal.ZERO);
-                data.put("grossPay", decOf(gross));
-                data.put("taxAmount", decOf(tax));
-                data.put("pensionAmount", decOf(pension));
-                data.put("socialSecurityAmount", decOf(ssf));
-                data.put("loanDeduction", decOf(loanDeduction));
-                data.put("advanceDeduction", decOf(advanceDeduction));
-                data.put("insuranceAmount", decOf(insurance));
-                data.put("otherDeductions", decOf(other));
-                data.put("totalDeductions", decOf(totalDeductions));
-                data.put("netPay", decOf(netPay));
+                data.put("grossPay", gross);
+                data.put("taxAmount", tax);
+                data.put("pensionAmount", pension);
+                data.put("socialSecurityAmount", ssf);
+                data.put("loanDeduction", loanDeduction);
+                data.put("advanceDeduction", advanceDeduction);
+                data.put("insuranceAmount", insurance);
+                data.put("otherDeductions", other);
+                data.put("totalDeductions", totalDeductions);
+                data.put("netPay", netPay);
                 data.put("absenceDays", BigDecimal.ZERO);
                 data.put("createdBy", userId);
                 Map<String, Object> item = hr.insert(HrPayrollItem.class, data);
@@ -641,16 +676,10 @@ public class HrPayrollService {
                 }
                 items.add(item);
             }
-            double grossSum = 0;
-            double dedSum = 0;
-            double netSum = 0;
-            for (Map<String, Object> i : items) {
-                grossSum += num(i.get("grossPay"));
-                dedSum += num(i.get("totalDeductions"));
-                netSum += num(i.get("netPay"));
-            }
+            // Run totals: exact sums of the stored item amounts (each already at the pay scale; nothing re-rounded).
             Map<String, Object> run2 = hr.update(HrPayrollRun.class, id, Obj.of("status", "CALCULATED",
-                    "totalGross", decOf(grossSum), "totalDeductions", decOf(dedSum), "totalNet", decOf(netSum),
+                    "totalGross", sum(items, "grossPay"), "totalDeductions", sum(items, "totalDeductions"),
+                    "totalNet", sum(items, "netPay"),
                     "processedById", userId, "processedAt", PosDb.raw(PosSql.NOW), "updatedBy", userId));
             List<Map<String, Object>> itemsFull = runItems(id, true, EMPLOYEE_ITEM_REF, "\"createdAt\" ASC");
             withPayslips(itemsFull);
@@ -662,11 +691,13 @@ public class HrPayrollService {
         });
     }
 
-    private static Map<String, Object> line(String orgId, Object name, double amount, Object isTaxable, String userId) {
+    /** A payslip line (allowance / deduction row); {@code amount} is already rounded to the pay scale. */
+    private static Map<String, Object> line(String orgId, Object name, BigDecimal amount, Object isTaxable,
+            String userId) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("organizationId", orgId);
         m.put("name", name);
-        m.put("amount", decOf(amount));
+        m.put("amount", amount);
         m.put("isTaxable", isTaxable);
         m.put("createdBy", userId);
         return m;
@@ -690,6 +721,13 @@ public class HrPayrollService {
         }
         // Additive (HP-0): maker-checker and period lock, only once the organisation saved payroll settings.
         setup.assertCanApprove(run, userId);
+        // R12: every deduction credits a liability / receivable account; salaries expense is never the fallback.
+        assertDeductionsMapped(id, runItems);
+        // Currency-aware payroll rounding: the journal, payslips and bank lines post the stored item values, which
+        // must already be at the pay scale (a run calculated before the rule, or before a currency change, is
+        // recalculated first). Nothing is rounded from here on.
+        int scale = setup.payScale();
+        assertOnPayScale(id, runItems, scale);
         return hr.inTx(() -> {
             for (Map<String, Object> item : runItems) {
                 String payslipNumber = seq.next("hr_payslip", "PS-", 6);
@@ -705,31 +743,31 @@ public class HrPayrollService {
             String insurancePayable = accounts.mapped("insurance_payable");
             String loanReceivable = accounts.mapped("employee_loan_receivable");
             String advanceReceivable = accounts.mapped("employee_advance_receivable");
-            double gross = sum(runItems, "grossPay");
-            double net = sum(runItems, "netPay");
-            double tax = sum(runItems, "taxAmount");
-            double pension = sum(runItems, "pensionAmount");
-            double ssf = sum(runItems, "socialSecurityAmount");
-            double insurance = sum(runItems, "insuranceAmount");
-            double loans = sum(runItems, "loanDeduction");
-            double advances = sum(runItems, "advanceDeduction");
-            double other = sum(runItems, "otherDeductions");
+            // Exact sums of the stored (pay-scale) item amounts: Dr gross = Cr net + deductions, no rounding line.
+            BigDecimal gross = sum(runItems, "grossPay");
+            BigDecimal net = sum(runItems, "netPay");
+            BigDecimal tax = sum(runItems, "taxAmount");
+            BigDecimal pension = sum(runItems, "pensionAmount");
+            BigDecimal ssf = sum(runItems, "socialSecurityAmount");
+            BigDecimal insurance = sum(runItems, "insuranceAmount");
+            BigDecimal loans = sum(runItems, "loanDeduction");
+            BigDecimal advances = sum(runItems, "advanceDeduction");
             List<PostingRequest.Line> lines = new ArrayList<>();
             // Additive (ADR-S009 §2): payroll inputs with a debit account (another module's clearing liability) are
             // debited there instead of salaries expense; without such inputs the journal is the Nest one.
-            List<Map<String, Object>> redirected = payrollInputs.redirectedDebits(id);
+            List<Map<String, Object>> redirected = payrollInputs.redirectedDebits(id, scale);
             // Additive (HR-5): with cost allocation rules the salary debit is split by cost centre and branch; without
             // rules it stays one line. Either way the run's cost lines are kept for the department report.
             if (redirected.isEmpty()) {
-                salaryDebits(lines, salaryExpense, decOf(gross), id, runItems);
+                salaryDebits(lines, salaryExpense, gross, id, runItems, scale);
             } else {
                 BigDecimal moved = BigDecimal.ZERO;
                 for (Map<String, Object> r : redirected) {
                     moved = moved.add(SqlRows.dec(r, "amount"));
                 }
-                BigDecimal rest = decOf(gross).subtract(moved);
+                BigDecimal rest = gross.subtract(moved);
                 if (rest.signum() > 0) {
-                    salaryDebits(lines, salaryExpense, rest, id, runItems);
+                    salaryDebits(lines, salaryExpense, rest, id, runItems, scale);
                 }
                 for (Map<String, Object> r : redirected) {
                     lines.add(PostingRequest.Line.debit((String) r.get("debitAccountId"), SqlRows.dec(r, "amount"),
@@ -747,12 +785,14 @@ public class HrPayrollService {
                 credit(lines, insurancePayable, insurance, "Insurance payable");
                 credit(lines, loanReceivable, loans, "Employee loan installments");
                 credit(lines, advanceReceivable, advances, "Employee advance installments");
-                credit(lines, salaryExpense, other, "Other deductions contra");
+                // R12: "other" deductions are no longer credited back to salaries expense (that understated the cost
+                // and recorded no liability); assertDeductionsMapped refuses a run that has any.
             }
-            // Additive (fleet 1.9): deduction inputs credit their source's account (none → journal unchanged).
-            for (Map<String, Object> dc : payrollInputs.deductionCredits(id)) {
-                String account = dc.get("creditAccountId") == null ? salaryExpense : (String) dc.get("creditAccountId");
-                credit(lines, account, SqlRows.dec(dc, "amount").doubleValue(), "Payroll deductions withheld");
+            // Additive (fleet 1.9): deduction inputs credit their source's account (none → journal unchanged). R12: an
+            // input without a credit account was refused above; salaries expense is never the fallback.
+            for (Map<String, Object> dc : payrollInputs.deductionCredits(id, scale)) {
+                credit(lines, (String) dc.get("creditAccountId"), SqlRows.dec(dc, "amount"),
+                        "Payroll deductions withheld");
             }
             // ACC-3 (B13): the payroll cost belongs to its pay period — post on the period end while that is open.
             Object periodEnd = period == null ? null : period.get("endDate");
@@ -765,22 +805,22 @@ public class HrPayrollService {
             payrollInputs.markIncluded(id);
             for (Map<String, Object> loan : hr.where(HrEmployeeLoan.class).eq("status", "ACTIVE").list(null)) {
                 Map<String, Object> item = itemFor(runItems, loan.get("employeeId"));
-                double installment = item == null ? 0 : num(item.get("loanDeduction"));
-                if (installment > 0) {
-                    double newBalance = Math.max(0, num(loan.get("balance")) - installment);
-                    hr.update(HrEmployeeLoan.class, (String) loan.get("id"), Obj.of("balance", decOf(newBalance),
+                BigDecimal installment = item == null ? BigDecimal.ZERO : PosSql.dec(item.get("loanDeduction"));
+                if (installment.signum() > 0) {
+                    BigDecimal newBalance = PosSql.dec(loan.get("balance")).subtract(installment).max(BigDecimal.ZERO);
+                    hr.update(HrEmployeeLoan.class, (String) loan.get("id"), Obj.of("balance", newBalance,
                             "installmentsPaid", PosSql.intOf(loan.get("installmentsPaid")) + 1,
-                            "status", newBalance <= 0 ? "PAID" : loan.get("status"), "updatedBy", userId));
+                            "status", newBalance.signum() <= 0 ? "PAID" : loan.get("status"), "updatedBy", userId));
                 }
             }
             for (Map<String, Object> adv : hr.where(HrSalaryAdvance.class).and("status::text IN ('APPROVED', 'PAID')")
                     .list(null)) {
                 Map<String, Object> item = itemFor(runItems, adv.get("employeeId"));
-                double installment = item == null ? 0 : num(item.get("advanceDeduction"));
-                if (installment > 0) {
-                    double newBalance = Math.max(0, num(adv.get("balance")) - installment);
-                    hr.update(HrSalaryAdvance.class, (String) adv.get("id"), Obj.of("balance", decOf(newBalance),
-                            "status", newBalance <= 0 ? "SETTLED" : adv.get("status"), "updatedBy", userId));
+                BigDecimal installment = item == null ? BigDecimal.ZERO : PosSql.dec(item.get("advanceDeduction"));
+                if (installment.signum() > 0) {
+                    BigDecimal newBalance = PosSql.dec(adv.get("balance")).subtract(installment).max(BigDecimal.ZERO);
+                    hr.update(HrSalaryAdvance.class, (String) adv.get("id"), Obj.of("balance", newBalance,
+                            "status", newBalance.signum() <= 0 ? "SETTLED" : adv.get("status"), "updatedBy", userId));
                 }
             }
             Map<String, Object> run2 = hr.update(HrPayrollRun.class, id, Obj.of("status", "APPROVED",
@@ -802,9 +842,9 @@ public class HrPayrollService {
 
     /** The salary expense debit of an approved run, split by {@link HrPayrollCostService} when rules exist. */
     private void salaryDebits(List<PostingRequest.Line> lines, String salaryExpense, BigDecimal amount, String runId,
-            List<Map<String, Object>> runItems) {
+            List<Map<String, Object>> runItems, int scale) {
         List<HrPayrollCostAllocator.Debit> debits = costs.allocate(runId, runItems, amount,
-                payrollInputs.redirectedByEmployee(runId));
+                payrollInputs.redirectedByEmployee(runId, scale), scale);
         if (debits.isEmpty()) {
             lines.add(PostingRequest.Line.debit(salaryExpense, amount, "Salaries & wages"));
             return;
@@ -824,18 +864,90 @@ public class HrPayrollService {
         return null;
     }
 
-    private static double sum(List<Map<String, Object>> items, String key) {
-        double s = 0;
+    /** Decimal sum of a money column over items (R12: never accumulated as {@code double}). */
+    private static BigDecimal sum(List<Map<String, Object>> items, String key) {
+        BigDecimal s = BigDecimal.ZERO;
         for (Map<String, Object> i : items) {
-            s += num(i.get(key));
+            s = s.add(PosSql.dec(i.get(key)));
         }
         return s;
     }
 
-    private static void credit(List<PostingRequest.Line> lines, String account, double amount, String description) {
-        if (amount > 0) {
-            lines.add(PostingRequest.Line.credit(account, decOf(amount), description));
+    /**
+     * Currency-aware payroll rounding: refuse (400) to approve a run whose stored amounts are finer than the pay scale
+     * (calculated before the rule, or before the currency / rounding scale changed), so the journal never posts a
+     * value the payslips and bank lines would show differently. Recalculating stores it at the pay scale.
+     */
+    private void assertOnPayScale(String runId, List<Map<String, Object>> runItems, int scale) {
+        boolean fits = true;
+        for (Map<String, Object> item : runItems) {
+            for (String col : ITEM_MONEY) {
+                fits &= HrPayMoney.onScale(PosSql.dec(item.get(col)), scale);
+            }
+            for (String lines : List.of("allowances", "deductions")) {
+                for (Object o : PosSql.list(item.get(lines))) {
+                    fits &= HrPayMoney.onScale(PosSql.dec(PosSql.map(o).get("amount")), scale);
+                }
+            }
         }
+        if (fits && engineV2.isV2Run(runId)) {
+            fits = engineV2.linesOnScale(runId, scale);
+        }
+        if (!fits) {
+            throw ApiException.badRequest("Payroll run amounts are not rounded to the currency's " + scale
+                    + " decimal place(s); recalculate the run before approving it");
+        }
+    }
+
+    private static void credit(List<PostingRequest.Line> lines, String account, BigDecimal amount,
+            String description) {
+        if (amount.signum() > 0) {
+            lines.add(PostingRequest.Line.credit(account, amount, description));
+        }
+    }
+
+    /**
+     * R12: refuse (400) a run whose deductions have no liability / receivable account, naming each component, before
+     * anything is posted. Engine v2 checks its result lines ({@link HrPayrollEngineV2#unmappedDeductions}); the v1
+     * engine maps deduction components by code (PENSION, SSF / SOCIAL, INSURANCE) and has no account for any other
+     * deduction component. Deduction inputs must name their credit account.
+     */
+    private void assertDeductionsMapped(String runId, List<Map<String, Object>> runItems) {
+        List<String> unmapped = new ArrayList<>(engineV2.isV2Run(runId) ? engineV2.unmappedDeductions(runId)
+                : unmappedV1Deductions(runId, runItems));
+        for (String name : payrollInputs.unmappedDeductions(runId)) {
+            unmapped.add(name + ": payroll input deduction has no credit account");
+        }
+        if (!unmapped.isEmpty()) {
+            throw ApiException.badRequest("Payroll run cannot be posted: deductions without a liability or receivable"
+                    + " account — " + String.join("; ", unmapped) + ". Map each one (element GL account, statutory"
+                    + " payable mapping, input credit account) and approve again.");
+        }
+    }
+
+    /** v1 "other deductions" of the run, by component (codes without PENSION, SSF, SOCIAL or INSURANCE). */
+    private List<String> unmappedV1Deductions(String runId, List<Map<String, Object>> runItems) {
+        BigDecimal other = sum(runItems, "otherDeductions");
+        if (other.signum() <= 0) {
+            return List.of();
+        }
+        String reason = ": v1 deduction component has no account (codes containing PENSION, SSF, SOCIAL or INSURANCE"
+                + " credit their payables; any other deduction needs payroll engine v2 with an element GL account)";
+        List<String> out = new ArrayList<>();
+        for (String component : hr.jdbc().sql("SELECT DISTINCT c.code || ' (' || c.name || ')' FROM"
+                + " \"HrPayrollComponent\" c WHERE c.\"organizationId\" = ? AND c.\"deletedAt\" IS NULL AND"
+                + " c.\"componentType\"::text ="
+                + " 'DEDUCTION' AND upper(c.code) NOT LIKE '%PENSION%' AND upper(c.code) NOT LIKE '%SSF%' AND"
+                + " upper(c.code) NOT LIKE '%SOCIAL%' AND upper(c.code) NOT LIKE '%INSURANCE%' AND EXISTS (SELECT 1"
+                + " FROM \"HrPayrollDeduction\" d JOIN \"HrPayrollItem\" i ON i.id = d.\"itemId\" WHERE"
+                + " i.\"runId\" = ? AND i.\"organizationId\" = ? AND d.name = c.name) ORDER BY 1")
+                .params(org(), runId, org()).query(String.class).list()) {
+            out.add(component + reason);
+        }
+        if (out.isEmpty()) {
+            out.add("Other deductions (" + other.stripTrailingZeros().toPlainString() + ")" + reason);
+        }
+        return out;
     }
 
     /** Reverse a run: DRAFT/CALCULATED just flip status; APPROVED/PAID also reverse the journal. */
@@ -984,18 +1096,21 @@ public class HrPayrollService {
         }
         return hr.inTx(() -> {
             String paymentCode = seq.next("hr_bank_payment", "BANK-", 6);
-            List<Map<String, Object>> payable = items.stream().filter(i -> num(i.get("netPay")) > 0).toList();
-            double totalAmount = sum(payable, "netPay");
+            List<Map<String, Object>> payable = items.stream().filter(i -> PosSql.dec(i.get("netPay")).signum() > 0)
+                    .toList();
+            // Bank instructions carry each item's stored net pay (already at the pay scale), never re-rounded: Σ lines
+            // = Σ payslip net = the net-pay payable credit of the approval journal.
+            BigDecimal totalAmount = sum(payable, "netPay");
             Map<String, Object> payment = hr.insert(HrBankPayment.class, Obj.of("organizationId", orgId,
                     "paymentCode", paymentCode, "runId", run.get("id"),
                     "paymentDate", truthy(dto.get("paymentDate")) ? HrDb.jsDate(dto.get("paymentDate"))
                             : PosDb.raw(PosSql.NOW),
-                    "method", method, "status", "GENERATED", "totalAmount", decOf(totalAmount), "notes", dto.get("notes"),
+                    "method", method, "status", "GENERATED", "totalAmount", totalAmount, "notes", dto.get("notes"),
                     "createdBy", userId));
             for (Map<String, Object> item : payable) {
                 Map<String, Object> emp = PosSql.map(item.get("employee"));
                 hr.insert(HrBankPaymentLine.class, Obj.of("organizationId", orgId, "bankPaymentId", payment.get("id"),
-                        "employeeId", emp.get("id"), "amount", decOf(num(item.get("netPay"))),
+                        "employeeId", emp.get("id"), "amount", PosSql.dec(item.get("netPay")),
                         "bankName", emp.get("bankName"), "bankAccountName", emp.get("bankAccountName"),
                         "bankAccountNumber", emp.get("bankAccountNumber"),
                         "mobileMoneyProvider", emp.get("mobileMoneyProvider"),

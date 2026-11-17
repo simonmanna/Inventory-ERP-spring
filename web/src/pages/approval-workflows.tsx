@@ -65,9 +65,9 @@ import { PriorityBadge } from '@/pages/approvals';
 const MODULES: { name: string; types: string[] }[] = [
   {
     name: tx('Procurement'),
-    types: ['purchase_request', 'purchase_order', 'rfq_award', 'goods_receipt', 'supplier_bill_approval', 'vendor_bill', 'debit_note'],
+    types: ['purchase_request', 'purchase_order', 'rfq_award', 'goods_receipt', 'supplier_bill_approval', 'vendor_bill', 'debit_note', 'vendor_bill_cancel', 'debit_note_reverse'],
   },
-  { name: tx('Expenses'), types: ['expense', 'expense_claim', 'expense_payment', 'supplier_payment', 'credit_note', 'invoice_cancel'] },
+  { name: tx('Expenses'), types: ['expense', 'expense_claim', 'expense_payment', 'supplier_payment', 'credit_note', 'invoice_cancel', 'credit_note_reverse', 'payment_void'] },
   { name: tx('Sales'), types: ['sales_order', 'credit_override', 'rental_agreement'] },
   {
     name: tx('Inventory'),

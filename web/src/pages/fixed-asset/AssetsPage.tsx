@@ -40,6 +40,7 @@ const assetSchema = z.object({
   purchaseCost: z.string().optional().or(z.literal('')),
   salvageValue: z.string().optional().or(z.literal('')),
   usefulLife: z.string().optional().or(z.literal('')),
+  totalUnits: z.string().optional().or(z.literal('')),
   acquisitionMethod: z.string().optional().or(z.literal('')),
   supplierId: z.string().optional().or(z.literal('')),
   invoiceNumber: z.string().optional().or(z.literal('')),
@@ -81,7 +82,8 @@ export function AssetsPage() {
       categoryId: asset.categoryId ?? '', department: asset.department ?? '',
       location: asset.location ?? '', purchaseDate: asset.purchaseDate?.split('T')[0] ?? '',
       purchaseCost: asset.purchaseCost ?? '', salvageValue: asset.salvageValue ?? '',
-      usefulLife: String(asset.usefulLife ?? ''), acquisitionMethod: asset.acquisitionMethod,
+      usefulLife: String(asset.usefulLife ?? ''), totalUnits: asset.totalUnits ?? '',
+      acquisitionMethod: asset.acquisitionMethod,
       supplierId: asset.supplierId ?? '', invoiceNumber: asset.invoiceNumber ?? '',
       notes: asset.notes ?? '',
     });
@@ -95,6 +97,7 @@ export function AssetsPage() {
         purchaseCost: values.purchaseCost ? Number(values.purchaseCost) : undefined,
         salvageValue: values.salvageValue ? Number(values.salvageValue) : undefined,
         usefulLife: values.usefulLife ? Number(values.usefulLife) : undefined,
+        totalUnits: values.totalUnits ? Number(values.totalUnits) : undefined,
         categoryId: values.categoryId || undefined,
         supplierId: values.supplierId || undefined,
         purchaseDate: values.purchaseDate || undefined,
@@ -199,6 +202,7 @@ export function AssetsPage() {
               <div><Label>{tx('Salvage Value')}</Label><Input type="number" step="0.01" {...form.register('salvageValue')} /></div>
               <div><Label>{tx('Useful Life (months)')}</Label><Input type="number" {...form.register('usefulLife')} /></div>
             </div>
+            <div><Label>{tx('Total Units (units of production)')}</Label><Input type="number" step="any" min="0" {...form.register('totalUnits')} /></div>
             <div><Label>{tx('Notes')}</Label><Input {...form.register('notes')} /></div>
             <DialogFooter><Button type="submit">{editing ? tx('Update') : tx('Create')}</Button></DialogFooter>
           </form>

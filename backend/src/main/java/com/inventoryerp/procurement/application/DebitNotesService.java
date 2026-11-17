@@ -279,6 +279,10 @@ public class DebitNotesService {
             // debit note raises what we owe: Dr expense / Cr AP.
             Number amt = JsNumbers.js(Money.dec(ln.get("subtotal")));
             postingLines.add(outbound ? Line.credit(accountId, amt, null) : Line.debit(accountId, amt, null));
+            // Control-account policy (V518, "close now"): the income / expense side is configuration (product category,
+            // mapping); on a designated AR / AP account it would move AR / AP with no open item behind it.
+            com.inventoryerp.accounting.application.ControlAccountGuards.assertNotControl(jdbc, orgId,
+                    "Debit note line account (product category or default mapping)", accountId);
         }
         // The status claim, the journal and the flip land together; the claim serialises concurrent posts (P0-3).
         Map<String, Object> updated = tx.execute(st -> {
@@ -290,7 +294,8 @@ public class DebitNotesService {
                     .params(taxTotal, noteTotal, id).update();
             row.put("taxAmount", taxTotal);
             row.put("totalAmount", noteTotal);
-            raiseReferencedDocument((String) note.get("documentId"), outbound, noteTotal);
+            BigDecimal raised = raiseReferencedDocument((String) note.get("documentId"), outbound, noteTotal);
+            recordDocumentAdjustment(id, raised);
             audit.recordInTx(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted")));
             return row;
         });
@@ -348,22 +353,40 @@ public class DebitNotesService {
      * ACC-4 (B8): a note raised against a posted bill (from the supplier) or invoice (to the customer) adds to that
      * document's open amount, so it is settled with it and the sub-ledger matches the GL.
      */
-    private void raiseReferencedDocument(String documentId, boolean outbound, BigDecimal amount) {
+    private BigDecimal raiseReferencedDocument(String documentId, boolean outbound, BigDecimal amount) {
         if (documentId == null || amount.signum() <= 0) {
-            return;
+            return Money.ZERO;
         }
-        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = \"amountResidual\" + ?, status = CASE WHEN status::text ="
+        int raised = jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = \"amountResidual\" + ?, status = CASE WHEN status::text ="
                         + " 'paid' THEN 'posted'::\"DocumentStatus\" ELSE status END, \"paymentStatus\" = CASE WHEN"
                         + " \"amountPaid\" > 0 THEN 'partial'::\"PaymentStatus\" ELSE 'not_paid'::\"PaymentStatus\" END,"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text"
                         + " = ? AND status::text IN ('posted', 'paid')")
                 .params(amount, documentId, org(), outbound ? "sales_invoice" : "vendor_bill").update();
+        return raised > 0 ? amount : Money.ZERO;
     }
 
-    /** A returned-goods note settles that much of the referenced bill's open amount (never below zero). */
-    private void lowerReferencedBill(String documentId, BigDecimal amount) {
+    /**
+     * Document reversals (V520): what the note moved its referenced document's residual by (+ raised, − lowered), so a
+     * reversal gives back exactly that.
+     */
+    private void recordDocumentAdjustment(String noteId, BigDecimal adjustment) {
+        jdbc.sql("UPDATE \"DebitNote\" SET \"documentAdjustment\" = ? WHERE id = ?").params(adjustment, noteId).update();
+    }
+
+    /**
+     * A returned-goods note settles that much of the referenced bill's open amount (never below zero); returns what it
+     * actually took off the residual.
+     */
+    private BigDecimal lowerReferencedBill(String documentId, BigDecimal amount) {
         if (documentId == null || amount.signum() <= 0) {
-            return;
+            return Money.ZERO;
+        }
+        BigDecimal residual = jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " AND \"documentType\"::text = 'vendor_bill' AND status::text = 'posted' FOR UPDATE")
+                .params(documentId, org()).query(BigDecimal.class).optional().orElse(null);
+        if (residual == null) {
+            return Money.ZERO;
         }
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = GREATEST(\"amountResidual\" - ?, 0),"
                         + " status = CASE WHEN \"amountResidual\" - ? <= 0.005 THEN 'paid'::\"DocumentStatus\" ELSE status END,"
@@ -372,6 +395,7 @@ public class DebitNotesService {
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text = 'vendor_bill'"
                         + " AND status::text = 'posted'")
                 .params(amount, amount, amount, documentId, org()).update();
+        return residual.signum() <= 0 ? Money.ZERO : residual.min(amount);
     }
 
     /** Purchase price variance, the stock adjustment expense account when no PPV account is mapped. */
@@ -464,7 +488,8 @@ public class DebitNotesService {
                     .params(noteTax, totalAp, id).update();
             claimed.put("taxAmount", noteTax);
             claimed.put("totalAmount", totalAp);
-            lowerReferencedBill((String) note.get("documentId"), totalAp);
+            BigDecimal lowered = lowerReferencedBill((String) note.get("documentId"), totalAp);
+            recordDocumentAdjustment(id, lowered.negate());
             return claimed;
         });
         audit.record(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted", "kind",
@@ -494,7 +519,7 @@ public class DebitNotesService {
                 + " AND \"isActive\" = true AND \"deletedAt\" IS NULL LIMIT 1").param(orgId));
     }
 
-    /** Cancel a draft (posted notes are reversed with a credit note). */
+    /** Cancel a draft (a posted note is reversed with {@link #reverse}). */
     public Map<String, Object> cancel(String id) {
         String orgId = org();
         Map<String, Object> note = SqlRows.one(DebitNote.class, jdbc.sql("SELECT * FROM \"DebitNote\" WHERE id = ?"
@@ -503,7 +528,11 @@ public class DebitNotesService {
             throw ApiException.notFound("Debit note not found");
         }
         if ("posted".equals(note.get("status"))) {
-            throw ApiException.badRequest("Cannot cancel a posted debit note; reverse with a credit note");
+            throw ApiException.badRequest("Cannot cancel a posted debit note; reverse it instead"
+                    + " (PATCH /procurement/debit-notes/" + id + "/reverse)");
+        }
+        if ("reversed".equals(note.get("status"))) {
+            throw ApiException.badRequest("Debit note " + note.get("noteNumber") + " is already reversed");
         }
         Map<String, Object> row = SqlRows.one(DebitNote.class, jdbc.sql("UPDATE \"DebitNote\" SET status = 'cancelled',"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
@@ -512,6 +541,174 @@ public class DebitNotesService {
             throw new IllegalStateException("No record was found for an update.");
         }
         return row;
+    }
+
+    // ------------------------------------------------------------------ reversal
+
+    private com.inventoryerp.accounting.application.DocumentReversalService reversals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(com.inventoryerp.accounting.application.DocumentReversalService reversals) {
+        this.reversals = reversals;
+    }
+
+    private static final BigDecimal CENT = new BigDecimal("0.005");
+
+    /**
+     * Debit-note document reversal (owner decision 2026-11-17; a posted note could not be cancelled and its only undo
+     * was the generic journal reversal). With a reason, behind the {@code debit_note_reverse} approval gate, the
+     * {@code debit_note:reverse} permission and the {@code document_reversal} separation-of-duties pair, in one
+     * transaction under row locks on the referenced invoice / bill and the note:
+     * <ul>
+     *   <li>sub-ledger: what the note did to its referenced document is given back — a note that raised the open amount
+     *       ({@code documentAdjustment} &gt; 0) lowers it again, refused when that part was already paid (void the
+     *       payments first); a return-to-vendor that lowered the bill raises it again. A note posted before V520 has no
+     *       recorded adjustment: a raise is taken as its total, a lowering as min(total, payable − paid − residual). A
+     *       referenced document that is cancelled is left alone;</li>
+     *   <li>GL: its {@code debit_note} entries (note and return-to-vendor) are mirrored by {@link PostingService#reverse};</li>
+     *   <li>stock: goods a return-to-vendor shipped back come back in at the cost they left at ({@code reversal_in},
+     *       no separate GL: the mirrored entry restores the stock valuation);</li>
+     *   <li>the note becomes {@code reversed} and a {@code DocumentReversal} row keeps reason, who, when and the entries.</li>
+     * </ul>
+     * A replay on a reversed note returns it unchanged.
+     */
+    public Map<String, Object> reverse(String id, String reasonIn) {
+        String orgId = org();
+        Map<String, Object> note = SqlRows.one(DebitNote.class, jdbc.sql("SELECT * FROM \"DebitNote\" WHERE id = ?"
+                + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, orgId));
+        if (note == null) {
+            throw ApiException.notFound("Debit note not found");
+        }
+        if ("reversed".equals(note.get("status"))) {
+            return reversedView(id);
+        }
+        String reason = reversals.requireReason(reasonIn, "reverse a debit note");
+        String number = (String) note.get("noteNumber");
+        if (!"posted".equals(note.get("status"))) {
+            throw ApiException.badRequest("Only a posted debit note can be reversed (debit note " + number + " is "
+                    + note.get("status") + "; cancel a draft instead)");
+        }
+        reversals.requireApproval("debit_note_reverse", id, "debit note " + number, Money.dec(note.get("totalAmount")));
+        reversals.assertSeparated("DebitNote", id, java.util.Arrays.asList((String) note.get("createdBy"),
+                (String) note.get("postedById")));
+        tx.executeWithoutResult(st -> {
+            String documentId = (String) note.get("documentId");
+            if (documentId != null) {
+                jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(documentId, orgId).query().listOfRows();
+            }
+            Map<String, Object> locked = SqlRows.one(jdbc.sql("SELECT status, \"totalAmount\", \"documentAdjustment\","
+                    + " direction, reason::text AS reason FROM \"DebitNote\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " FOR UPDATE").params(id, orgId));
+            if ("reversed".equals(locked.get("status"))) {
+                return; // a concurrent reversal won the lock: replay
+            }
+            if (!"posted".equals(locked.get("status"))) {
+                throw ApiException.badRequest("Only a posted debit note can be reversed");
+            }
+            boolean rtv = "inbound".equals(locked.get("direction")) && "returned_goods".equals(locked.get("reason"));
+            BigDecimal total = Money.dec(locked.get("totalAmount"));
+            List<Map<String, Object>> unwound = new ArrayList<>();
+            if (documentId != null) {
+                unwound.addAll(restoreReferencedDocument(documentId, number, rtv, total,
+                        locked.get("documentAdjustment") == null ? null : Money.dec(locked.get("documentAdjustment"))));
+            }
+            String text = "Reversal of debit note " + number + ": " + reason;
+            for (String entryId : jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND"
+                    + " \"sourceType\" = 'debit_note' AND \"sourceId\" = ? AND status = 'posted' ORDER BY \"postedAt\", id")
+                    .params(orgId, id).query(String.class).list()) {
+                posting.reverse(entryId, null, text);
+            }
+            if (rtv) {
+                bringBackReturnedStock(id, number);
+            }
+            jdbc.sql("UPDATE \"DebitNote\" SET status = 'reversed', \"updatedAt\" = " + NOW + ", \"updatedBy\" = ?"
+                    + " WHERE id = ?").params(user(), id).update();
+            reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("debit_note",
+                    id, number, (String) note.get("partnerId"), reason, "DebitNote", List.of("debit_note"),
+                    List.of("debit_note_reversal"), unwound));
+        });
+        return reversedView(id);
+    }
+
+    /** Undo the note's effect on its referenced invoice / bill; the unwound adjustment for the reversal record. */
+    private List<Map<String, Object>> restoreReferencedDocument(String documentId, String number, boolean rtv,
+            BigDecimal total, BigDecimal recorded) {
+        Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", \"documentType\"::text AS type,"
+                + " status::text AS status, \"totalAmount\", \"withholdingAmount\", \"amountPaid\", \"amountResidual\""
+                + " FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(documentId, org()));
+        if (doc == null || !("posted".equals(doc.get("status")) || "paid".equals(doc.get("status")))) {
+            return List.of();
+        }
+        BigDecimal residual = Money.dec(doc.get("amountResidual"));
+        BigDecimal payable = Money.dec(doc.get("totalAmount")).subtract(Money.dec(doc.get("withholdingAmount")));
+        BigDecimal paid = Money.dec(doc.get("amountPaid"));
+        BigDecimal delta;
+        if (!rtv) {
+            BigDecimal raised = recorded != null ? recorded : total;
+            if (raised.signum() <= 0) {
+                return List.of();
+            }
+            if (residual.add(CENT).compareTo(raised) < 0) {
+                List<Map<String, Object>> payments = reversals.appliedPayments(documentId);
+                throw ApiException.badRequest("Debit note " + number + " cannot be reversed: the " + JsNumbers.dec(raised)
+                        + " it added to " + doc.get("documentNumber") + " is already settled (open " + JsNumbers.dec(residual)
+                        + ")" + (payments.isEmpty() ? "" : "; void " + com.inventoryerp.accounting.application
+                                .DocumentReversalService.describePayments(payments) + " first") + ".");
+            }
+            delta = raised.negate();
+        } else {
+            BigDecimal lowered = recorded != null ? recorded.negate()
+                    : total.min(payable.subtract(paid).subtract(residual).max(Money.ZERO));
+            if (lowered.signum() <= 0) {
+                return List.of();
+            }
+            delta = lowered;
+        }
+        BigDecimal newResidual = residual.add(delta).max(Money.ZERO);
+        String paymentStatus = newResidual.compareTo(CENT) <= 0 ? "paid" : paid.signum() > 0
+                || newResidual.compareTo(payable) < 0 ? "partial" : "not_paid";
+        String status = newResidual.compareTo(CENT) <= 0 ? "paid" : "posted";
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\", status ="
+                        + " ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(newResidual, paymentStatus, status, documentId).update();
+        return List.of(Obj.of("kind", rtv ? "bill_residual_restored" : "document_residual_lowered", "documentId",
+                documentId, "documentNumber", doc.get("documentNumber"), "amount", JsNumbers.dec(delta.abs()),
+                "residualBefore", JsNumbers.dec(residual), "residualAfter", JsNumbers.dec(newResidual)));
+    }
+
+    /** Receive back what a return-to-vendor shipped out, at the cost it left at (once per note; no GL of its own). */
+    private void bringBackReturnedStock(String id, String number) {
+        long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note_reversal'"
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ?").params(id, org()).query(Long.class).single();
+        if (done > 0) {
+            return;
+        }
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
+                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note' AND"
+                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0 ORDER BY \"productId\","
+                + " \"variantId\" NULLS FIRST, \"createdAt\", id").params(id, org()))) {
+            try {
+                stock.receive(StockMove.of((String) r.get("productId"), (String) r.get("locationId"),
+                        Money.dec(r.get("quantityChange")).negate()).variant((String) r.get("variantId"))
+                        .unitCost(Money.dec(r.get("unitCost"))).moveType("reversal_in")
+                        .source("debit_note_reversal", id).reference(number)
+                        .notes("Goods back from supplier on reversal of debit note " + number));
+            } catch (ApiException e) {
+                throw ApiException.badRequest("Cannot reverse debit note " + number + ": the returned goods cannot be"
+                        + " taken back into stock (" + e.getMessage() + ")");
+            }
+        }
+    }
+
+    /** The note with lines and partner, plus its {@code reversal} record once reversed. */
+    private Map<String, Object> reversedView(String id) {
+        Map<String, Object> out = loadForPost(id, org());
+        Map<String, Object> r = reversals.find("debit_note", id);
+        if (out != null && r != null) {
+            out.put("reversal", r);
+        }
+        return out;
     }
 
     /** Latest 200 notes (by issue date) with lines and the partner name. */

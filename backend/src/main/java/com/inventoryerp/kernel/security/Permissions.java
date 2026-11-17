@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (722 permissions). Constant name = GROUP__ACTION.
+ * exactly (726 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -139,6 +139,7 @@ public final class Permissions {
     public static final String JOURNAL_ENTRY__CREATE = "journal_entry:create";
     public static final String JOURNAL_ENTRY__POST = "journal_entry:post";
     public static final String JOURNAL_ENTRY__REVERSE = "journal_entry:reverse";
+    public static final String JOURNAL_ENTRY__CONTROL_ADJUST = "journal_entry:control_adjust";
     public static final String RECURRING_ENTRY__READ = "recurring_entry:read";
     public static final String RECURRING_ENTRY__MANAGE = "recurring_entry:manage";
     public static final String DEFERRAL__READ = "deferral:read";
@@ -166,12 +167,14 @@ public final class Permissions {
     public static final String CREDIT_NOTE__READ = "credit_note:read";
     public static final String CREDIT_NOTE__CREATE = "credit_note:create";
     public static final String CREDIT_NOTE__POST = "credit_note:post";
+    public static final String CREDIT_NOTE__REVERSE = "credit_note:reverse";
     public static final String EXPENSE__READ = "expense:read";
     public static final String EXPENSE__CREATE = "expense:create";
     public static final String EXPENSE__UPDATE = "expense:update";
     public static final String EXPENSE__POST = "expense:post";
     public static final String EXPENSE__CANCEL = "expense:cancel";
     public static final String EXPENSE__APPROVE = "expense:approve";
+    public static final String EXPENSE__WRITE_OFF = "expense:write_off";
     public static final String PAYMENT__READ = "payment:read";
     public static final String PAYMENT__CREATE = "payment:create";
     public static final String PAYMENT__ALLOCATE = "payment:allocate";
@@ -372,6 +375,7 @@ public final class Permissions {
     public static final String DEBIT_NOTE__POST = "debit_note:post";
     public static final String DEBIT_NOTE__CANCEL = "debit_note:cancel";
     public static final String DEBIT_NOTE__APPROVE = "debit_note:approve";
+    public static final String DEBIT_NOTE__REVERSE = "debit_note:reverse";
     public static final String FILES__READ = "files:read";
     public static final String FILES__WRITE = "files:write";
     public static final String FILES__DELETE = "files:delete";
@@ -864,6 +868,7 @@ public final class Permissions {
             "journal_entry:create",
             "journal_entry:post",
             "journal_entry:reverse",
+            "journal_entry:control_adjust",
             "recurring_entry:read",
             "recurring_entry:manage",
             "deferral:read",
@@ -891,12 +896,14 @@ public final class Permissions {
             "credit_note:read",
             "credit_note:create",
             "credit_note:post",
+            "credit_note:reverse",
             "expense:read",
             "expense:create",
             "expense:update",
             "expense:post",
             "expense:cancel",
             "expense:approve",
+            "expense:write_off",
             "payment:read",
             "payment:create",
             "payment:allocate",
@@ -1097,6 +1104,7 @@ public final class Permissions {
             "debit_note:post",
             "debit_note:cancel",
             "debit_note:approve",
+            "debit_note:reverse",
             "files:read",
             "files:write",
             "files:delete",

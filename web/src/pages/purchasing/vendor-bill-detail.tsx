@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -30,9 +31,10 @@ import {
   useExpense,
   usePostExpense,
   useVoidExpense,
+  useWriteOffBill,
   type PostExpenseOptions,
 } from '@/features/invoicing/api';
-import { useCashAccounts } from '@/features/accounting/api';
+import { isPostingAccount, isReceivablePayableControl, useAccounts, useCashAccounts } from '@/features/accounting/api';
 import { tx } from '@/lib/i18n/tx';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 
@@ -43,6 +45,33 @@ function SummaryRow({ label, value, bold }: { label: string; value: string; bold
     <div className={`flex justify-between ${bold ? 'font-semibold' : ''}`}>
       <span className={bold ? '' : 'text-muted-foreground'}>{label}</span>
       <span>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * The P&L account a supplier write-off credits (control-account policy: never the AR / AP control accounts, which the
+ * server refuses too). Mounted only while the dialog is open for a user who can read the chart of accounts.
+ */
+function WriteOffAccountSelect({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const { data } = useAccounts();
+  const options = (data?.data ?? []).filter(
+    (a) =>
+      isPostingAccount(a) &&
+      !isReceivablePayableControl(a) &&
+      (a.category?.classification === 'revenue' || a.category?.classification === 'expense'),
+  );
+  return (
+    <div className="space-y-2">
+      <Label htmlFor="write-off-account">{tx('Account')}</Label>
+      <select id="write-off-account" className={selectClass} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{tx('Purchase discounts received (default)')}</option>
+        {options.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.code} — {a.name}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -71,16 +100,23 @@ export function VendorBillDetailPage() {
   const postBill = usePostExpense();
   const voidBill = useVoidExpense();
   const paySupplier = useCreateSupplierPayment();
+  const writeOffBill = useWriteOffBill();
   const { data: cashAccounts = [] } = useCashAccounts();
   const has = useAuthStore((s) => s.hasPermission);
+  const canWriteOffPerm = has(PERMISSIONS.expense.writeOff);
 
   const [payOpen, setPayOpen] = useState(false);
   const [voidOpen, setVoidOpen] = useState(false);
+  const [voidReason, setVoidReason] = useState('');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('bank');
   const [accountId, setAccountId] = useState('');
   const [hold, setHold] = useState<PostHold | null>(null);
   const [overrides, setOverrides] = useState<PostExpenseOptions>({});
+  const [writeOffOpen, setWriteOffOpen] = useState(false);
+  const [writeOffAmount, setWriteOffAmount] = useState('');
+  const [writeOffAccountId, setWriteOffAccountId] = useState('');
+  const [writeOffReason, setWriteOffReason] = useState('');
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground">{tx('Loading...')}</div>;
@@ -93,6 +129,7 @@ export function VendorBillDetailPage() {
   const residual = Number(bill.amountResidual);
   const canPay = bill.status === 'posted' && residual > 0;
   const canVoid = bill.status === 'posted' && Number(bill.amountPaid) <= 0;
+  const writtenOff = Number(bill.writtenOff ?? 0);
 
   const submitPost = async (options: PostExpenseOptions) => {
     try {
@@ -140,10 +177,36 @@ export function VendorBillDetailPage() {
     }
   };
 
+  const openWriteOff = () => {
+    setWriteOffAmount(bill.amountResidual);
+    setWriteOffAccountId('');
+    setWriteOffReason('');
+    setWriteOffOpen(true);
+  };
+
+  const submitWriteOff = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await writeOffBill.mutateAsync({
+        id: bill.id,
+        body: {
+          amount: writeOffAmount ? Number(writeOffAmount) : undefined,
+          accountId: writeOffAccountId || undefined,
+          reason: writeOffReason.trim(),
+        },
+      });
+      setWriteOffOpen(false);
+      notify.success(tx('Balance written off'));
+    } catch (error) {
+      notify.error(apiMessage(error, tx('Could not write off the balance')));
+    }
+  };
+
   const confirmVoid = async () => {
     try {
-      await voidBill.mutateAsync(bill.id);
+      await voidBill.mutateAsync({ id: bill.id, reason: voidReason.trim() });
       setVoidOpen(false);
+      setVoidReason('');
       notify.success(tx('Bill voided'));
     } catch (error) {
       notify.error(apiMessage(error, tx('Could not void the bill')));
@@ -184,6 +247,11 @@ export function VendorBillDetailPage() {
             </Button>
           )}
           {canPay && has(PERMISSIONS.payment.create) && <Button onClick={openPay}>{tx('Pay supplier')}</Button>}
+          {canPay && canWriteOffPerm && (
+            <Button variant="outline" onClick={openWriteOff} disabled={writeOffBill.isPending}>
+              {tx('Write off')}
+            </Button>
+          )}
           {canVoid && has(PERMISSIONS.expense.cancel) && (
             <Button variant="outline" onClick={() => setVoidOpen(true)} disabled={voidBill.isPending}>
               {tx('Void')}
@@ -243,7 +311,8 @@ export function VendorBillDetailPage() {
                   value={`− ${money((bill as { withholdingAmount?: string | number }).withholdingAmount ?? 0)}`}
                 />
               )}
-              <SummaryRow label={tx('Paid')} value={money(bill.amountPaid)} />
+              <SummaryRow label={tx('Paid')} value={money(Number(bill.amountPaid) - writtenOff)} />
+              {writtenOff > 0 && <SummaryRow label={tx('Written off')} value={money(writtenOff)} />}
               <SummaryRow label={tx('Balance due')} value={money(bill.amountResidual)} bold />
             </div>
           </div>
@@ -324,17 +393,77 @@ export function VendorBillDetailPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={writeOffOpen} onOpenChange={setWriteOffOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tx('Write off')} {bill.documentNumber}</DialogTitle>
+            <DialogDescription>
+              {tx('Clear what is no longer owed to the supplier: debits the supplier payable and credits the chosen income or expense account. A written-off bill cannot be voided.')}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitWriteOff} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="write-off-amount">{tx('Amount')}</Label>
+              <Input
+                id="write-off-amount"
+                type="number"
+                step="any"
+                min="0.01"
+                max={bill.amountResidual}
+                value={writeOffAmount}
+                onChange={(e) => setWriteOffAmount(e.target.value)}
+                required
+              />
+            </div>
+            {/* Without account read access the write-off goes to the purchase discounts mapping. */}
+            {writeOffOpen && has(PERMISSIONS.account.read) && (
+              <WriteOffAccountSelect value={writeOffAccountId} onChange={setWriteOffAccountId} />
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="write-off-reason">{tx('Reason')}</Label>
+              <Textarea
+                id="write-off-reason"
+                value={writeOffReason}
+                maxLength={2000}
+                onChange={(e) => setWriteOffReason(e.target.value)}
+                placeholder={tx('Why is this balance being written off?')}
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setWriteOffOpen(false)}>
+                {tx('Cancel')}
+              </Button>
+              <Button type="submit" disabled={writeOffBill.isPending || !writeOffReason.trim()}>
+                {writeOffBill.isPending ? tx('Saving...') : tx('Write off')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={voidOpen} onOpenChange={setVoidOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{tx('Void')} {bill.documentNumber}</DialogTitle>
             <DialogDescription>
-              {tx('Void this bill? This will reverse the journal entry and cannot be undone.')}
+              {tx('Void this bill? This will reverse the journal entry and cannot be undone.')}{' '}
+              {tx('A bill with payments, write-offs, debit notes or settled claims applied cannot be voided until those are reversed.')}
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="bill-void-reason">{tx('Reason')}</Label>
+            <Textarea
+              id="bill-void-reason"
+              value={voidReason}
+              maxLength={2000}
+              onChange={(e) => setVoidReason(e.target.value)}
+              placeholder={tx('Why is this bill being voided?')}
+            />
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setVoidOpen(false)}>{tx('Cancel')}</Button>
-            <Button variant="destructive" onClick={() => void confirmVoid()} disabled={voidBill.isPending}>
+            <Button variant="destructive" onClick={() => void confirmVoid()} disabled={voidBill.isPending || !voidReason.trim()}>
               {tx('Void')}
             </Button>
           </DialogFooter>

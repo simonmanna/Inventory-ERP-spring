@@ -11,7 +11,7 @@ import { money } from '@/lib/format';
 import { apiMessage, notify } from '@/lib/notify';
 import { usePartners } from '@/features/partners/api';
 import { useProducts } from '@/features/products/api';
-import { isPostingAccount, useAccounts, useTaxes } from '@/features/accounting/api';
+import { isPostingAccount, isReceivablePayableControl, useAccounts, useTaxes } from '@/features/accounting/api';
 import { TaxPicker, WithholdingSelect } from '@/components/tax-picker';
 import {
   useCreateExpense,
@@ -77,7 +77,10 @@ export function VendorBillEditPage() {
   const lines = watch('lines');
   const productList = products.data?.data ?? [];
   const supplierList = (partners.data?.data ?? []).filter((p) => p.isSupplier);
-  const expenseAccounts = (accounts.data?.data ?? []).filter((a) => isPostingAccount(a));
+  // Control-account policy: a bill line never posts to the AR / AP control accounts (the bill's own payable line does).
+  const expenseAccounts = (accounts.data?.data ?? []).filter(
+    (a) => isPostingAccount(a) && !isReceivablePayableControl(a),
+  );
 
   useEffect(() => {
     const bill = existing.data;

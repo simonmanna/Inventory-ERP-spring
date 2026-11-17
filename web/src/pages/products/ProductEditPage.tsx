@@ -27,7 +27,7 @@ import {
 } from '@/features/products/api';
 import { useUoms } from '@/features/uom/api';
 import { unitPrice, type UnitAwareProduct } from '@/features/products/units';
-import { useAccounts, type Account } from '@/features/accounting/api';
+import { isReceivablePayableControl, useAccounts, type Account } from '@/features/accounting/api';
 import { useKitchenStations } from '@/pages/pos/pos-features-api';
 import { api, resolveAssetUrl } from '@/lib/api';
 import { toast } from 'sonner';
@@ -270,7 +270,8 @@ export function ProductEditPage() {
               <span className="text-muted-foreground italic">{tx('— Inherit —')}</span>
             </SelectItem>
             {accounts
-              .filter((a) => a.isActive !== false)
+              // Control-account policy: a product never posts to the AR / AP control accounts.
+              .filter((a) => a.isActive !== false && !isReceivablePayableControl(a))
               .map((a) => (
                 <SelectItem key={a.id} value={a.id}>
                   <span className="font-mono">{a.code}</span> — {a.name}

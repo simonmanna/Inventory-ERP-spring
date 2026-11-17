@@ -237,6 +237,18 @@ public class AccountResolverService {
 
     /** Postability gate; {@code systemContext} lets engine-generated entries into control accounts. */
     public static void assertPostable(AccountMeta meta, boolean systemContext) {
+        assertPostable(meta, systemContext, false);
+    }
+
+    /**
+     * Postability gate. {@code systemContext} (a sub-ledger service posting through {@link PostingService#post}) lets
+     * the entry into any postable control account. Outside it (a user's manual entry, and what recurring templates and
+     * deferral schedules check for themselves) a designated AR / AP control account
+     * ({@link #isReceivablePayableControl}) is refused unless {@code controlAdjustment}: an entry flagged as a
+     * control-account adjustment may post to such an account (its category's manual-posting flag included), every
+     * other account keeps the usual rules (owner decision, control-account policy, V518).
+     */
+    public static void assertPostable(AccountMeta meta, boolean systemContext, boolean controlAdjustment) {
         if (!meta.isPostable()) {
             throw ApiException.badRequest("Account " + meta.code() + " is a summary/group account and cannot be posted to");
         }
@@ -246,11 +258,36 @@ public class AccountResolverService {
         if (meta.deprecatedAt() != null) {
             throw ApiException.badRequest("Account " + meta.code() + " is deprecated and cannot be posted to");
         }
-        if (!systemContext && !meta.allowManualPosting()) {
+        boolean control = isReceivablePayableControl(meta);
+        if (!systemContext && control && !controlAdjustment) {
+            throw ApiException.badRequest(controlAccountRefusal(meta));
+        }
+        if (!systemContext && !(control && controlAdjustment) && !meta.allowManualPosting()) {
             throw ApiException.badRequest("Account " + meta.code() + " does not allow manual posting ("
                     + (meta.categoryName() == null ? "control account" : meta.categoryName())
                     + "). Post through the originating document instead.");
         }
+    }
+
+    /**
+     * Whether the account is a designated accounts receivable / payable control account: its explicit
+     * {@code controlAccountType} is {@code ar} or {@code ap}. Never inferred from the name or the category.
+     */
+    public static boolean isReceivablePayableControl(AccountMeta meta) {
+        return "ar".equals(meta.controlAccountType()) || "ap".equals(meta.controlAccountType());
+    }
+
+    /** The 400 message for a manual / recurring / deferral line on a designated AR / AP control account. */
+    static String controlAccountRefusal(AccountMeta meta) {
+        boolean ar = "ar".equals(meta.controlAccountType());
+        return "Account " + meta.code() + " " + meta.name() + " is a designated accounts "
+                + (ar ? "receivable" : "payable") + " control account: manual, recurring and deferral journals cannot"
+                + " post to it, so the general ledger stays reconciled with the " + (ar ? "customer" : "supplier")
+                + " sub-ledger. Post through the originating document (" + (ar ? "invoice, customer payment, credit note"
+                        : "vendor bill, supplier payment, debit note")
+                + ") or, exceptionally, as a control-account adjustment journal entry (controlAdjustment with a reason"
+                + " and a partner on every control-account line, posted by a second user holding"
+                + " journal_entry:control_adjust).";
     }
 
     /** Validate that {@code accountId} is an acceptable target for {@code mappingKey}. */

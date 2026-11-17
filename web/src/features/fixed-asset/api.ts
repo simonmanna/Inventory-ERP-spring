@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { PaginatedResult } from '@erp/shared';
 import { api } from '@/lib/api';
-import type { Asset, AssetCategory, AssetAcquisition, AssetAssignment, AssetTransfer, AssetDepreciation, AssetMaintenance, AssetWarranty, AssetDisposal } from './types';
+import type { Asset, AssetCategory, AssetAcquisition, AssetAssignment, AssetTransfer, AssetDepreciation, AssetUsage, AssetMaintenance, AssetWarranty, AssetDisposal } from './types';
 
 // ---- Categories ----
 export function useAssetCategories(params?: { page?: number; pageSize?: number }) {
@@ -181,6 +181,24 @@ export function useAssetDepreciation(assetId: string) {
     queryKey: ['fixed-asset', assetId, 'depreciation'],
     queryFn: async () => (await api.get<AssetDepreciation[]>(`/fixed-assets/${assetId}/depreciation`)).data,
     enabled: !!assetId,
+  });
+}
+
+/** Units used per month (units-of-production depreciation). */
+export function useAssetUsage(assetId: string, enabled = true) {
+  return useQuery({
+    queryKey: ['fixed-asset', assetId, 'usage'],
+    queryFn: async () => (await api.get<AssetUsage[]>(`/fixed-assets/${assetId}/depreciation/usage`)).data,
+    enabled: !!assetId && enabled,
+  });
+}
+
+export function useRecordAssetUsage() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ assetId, data }: { assetId: string; data: { period: string; units: number; notes?: string } }) =>
+      (await api.post<AssetUsage>(`/fixed-assets/${assetId}/depreciation/usage`, data)).data,
+    onSuccess: (_, { assetId }) => qc.invalidateQueries({ queryKey: ['fixed-asset', assetId, 'usage'] }),
   });
 }
 

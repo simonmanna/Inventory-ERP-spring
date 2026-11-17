@@ -15,8 +15,8 @@ import tools.jackson.databind.JsonNode;
 /**
  * ADR-PROCUREMENT-001 wave 8 — the cement scenario end to end: a block plant requests cement → RFQ to two suppliers
  * (one answers through the supplier portal) → comparison and award → order → change request → supplier confirms
- * through the portal → receipt → inspection rejects part of it → quality claim settled by debit note → bill held until
- * inspection, then posted and matched. Commitments follow the order and close when it is fully received.
+ * through the portal → receipt → inspection rejects part of it → quality claim settled by supplier credit → bill held
+ * until inspection, then posted and matched. Commitments follow the order and close when it is fully received.
  */
 class SourceToPayEndToEndIT extends ApiTestSupport {
 
@@ -127,14 +127,16 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
         JsonNode done = money("POST", "/procurement/inspections/" + inspId + "/complete", null);
         assertThat(done.get("status").asString()).isEqualTo("partial");
 
-        // 9. The quality claim (6 × 34 000) is accepted and settled by a debit note.
+        // 9. The quality claim (6 × 34 000) is accepted and settled by a supplier credit. Without verified quantity
+        // lines it settles as a price variance (Dr AP / Cr PPV): stock and GRNI are untouched.
         String claimId = done.get("claimId").asString();
         assertThat(ok(200, "GET", "/procurement/claims/" + claimId, null).get("amount").asString()).isEqualTo("204000");
         ok(200, "POST", "/procurement/claims/" + claimId + "/submit", null);
         ok(200, "POST", "/procurement/claims/" + claimId + "/accept", Map.of("response", "credit agreed"));
         JsonNode settled = money("POST", "/procurement/claims/" + claimId + "/settle", null);
         assertThat(settled.get("status").asString()).isEqualTo("settled");
-        assertThat(settled.get("debitNoteId").isNull()).isFalse();
+        assertThat(settled.path("journalEntryId").asString(null)).isNotNull();
+        assertThat(settled.get("classification").asString()).isEqualTo("price_variance");
 
         // 10. Bill posts and matches the receipt exactly.
         JsonNode posted = ok(200, "POST", "/vendor-bills/" + bill + "/post", Map.of());

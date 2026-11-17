@@ -58,6 +58,13 @@ register), `TIES_TO_GL` (AR / AP aging, stock valuation, COGS, VAT return, PAYE)
 (subledger reconciliations), `COST_RECONCILES` / `DEPRECIATION_RECONCILES` (fixed assets), `ALL_FISCALISED` (EFRIS),
 `NONE` (audit exceptions), `NO_SELF_APPROVAL`, `NONE_OVER_LIMIT`, `COMPLETE` (truncated listings).
 
+`fa.reconciliation` (R15) compares register cost including revaluation adjustments with the cost accounts fixed-asset
+postings use (mapped `fixed_asset_valuation`, plus non-current asset accounts those postings hit), and posted
+depreciation plus impairment still on the books with the accumulated depreciation / impairment accounts (mapped
+`accumulated_depreciation` and `accumulated_impairment`, plus contra accounts those postings hit). Construction in
+progress and other non-current assets such as intangibles are left out unless fixed-asset postings use them. Rows
+and tie codes are unchanged.
+
 ## Default layouts
 
 P&L (credit − debit, costs negative): Revenue, Sales returns and discounts, **Net revenue**, Cost of sales, **Gross

@@ -59,6 +59,30 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
    negative deltas 500). Item 1 of "kept on purpose" below no longer applies.
 3. HP-2: runs calculated with engine v2 store whole overtime hours, include the period's last day and fill
    `bonusAmount`-type earnings as result lines; v1 runs keep the Nest behaviour (items 2 and 6 below).
+4. R12 (accounting controls): `POST /hr/payroll/runs/:id/approve` answers 400 `Payroll run cannot be posted:
+   deductions without a liability or receivable account — …` naming each unmapped component, before anything posts.
+   Nest credited v1 "other deductions" (deduction components whose code has no PENSION / SSF / SOCIAL / INSURANCE),
+   and v2 element deductions without a GL account, tax / statutory lines and statutory employer contributions without
+   a payable and payroll-input deductions without a credit account, back to salaries expense — understating cost with
+   no liability. v2 lateness still credits salaries expense (pay not earned). The posting date is unchanged.
+   **Currency-aware payroll rounding (owner decision, 2026-11-17)** replaces the earlier 6-dp rule: payroll maths is
+   `BigDecimal` at full precision (v1 no longer uses JS doubles; rates, hourly proration and tax bands keep full
+   precision), and each line that leaves the calculation — every earning, deduction and employer contribution of a
+   payroll item (v1 allowance / deduction rows and item columns, v2 result lines) — is rounded **once**, `HALF_UP`, to
+   the pay scale when `POST /hr/payroll/runs/:id/calculate` stores the item. The pay scale is the functional currency's
+   `Currency.decimalPlaces` (`Organization.currencyCode`; UGX 0, USD 2), or the saved `roundingScale` when that is
+   coarser — never finer, so a UGX organisation that saved `roundingScale = 2` still pays whole shillings. Gross, total
+   deductions and net pay are sums of the stored lines (net = Σ earnings − Σ deductions, never rounded on its own), a
+   line computed from other lines (percentage components, PAYE on taxable pay, recoveries within what is left) uses
+   their stored amounts, and run totals are sums of items. Payslips (PDF), bank payment lines (`totalAmount` = Σ
+   lines), bank / mobile-money / WPS files, net-pay settlement, statutory remittances, cost-allocation debits (shares
+   rounded to the pay scale) and the approval journal read those stored values and never round again; payroll-input
+   credits / redirected debits count each input at its line amount. So Σ payslip net = Σ bank lines = the net-pay
+   payable credit and Dr salaries = Cr net + deduction / statutory payables exactly, with no rounding line. Approval
+   answers 400 `Payroll run amounts are not rounded to the currency's N decimal place(s); recalculate the run before
+   approving it` for a run calculated before this rule or before a currency / scale change. Approved and paid runs are
+   history and are not recomputed (their files and payslips show the stored decimals, not re-rounded). v2 runs now
+   attach the inputs they pay to the run, as v1 does, so approval credits their accounts and marks them included.
 
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 

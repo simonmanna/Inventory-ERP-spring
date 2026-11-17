@@ -3,6 +3,9 @@ package com.inventoryerp.accounting.application;
 import com.inventoryerp.accounting.application.AccountClassification.RollupNode;
 import com.inventoryerp.accounting.domain.Account;
 import com.inventoryerp.accounting.domain.AccountCategory;
+import com.inventoryerp.accounting.domain.ControlAccountType;
+import com.inventoryerp.kernel.audit.AuditService;
+import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -34,11 +37,13 @@ public class AccountService extends BaseCrudService<Account> {
 
     private final JdbcClient jdbc;
     private final AccountResolverService resolver;
+    private final AuditService audit;
 
-    public AccountService(EntityManager em, JdbcClient jdbc, AccountResolverService resolver) {
+    public AccountService(EntityManager em, JdbcClient jdbc, AccountResolverService resolver, AuditService audit) {
         super(em, Account.class);
         this.jdbc = jdbc;
         this.resolver = resolver;
+        this.audit = audit;
     }
 
     @Override
@@ -54,6 +59,14 @@ public class AccountService extends BaseCrudService<Account> {
     @Override
     protected List<Sort> defaultOrderBy() {
         return List.of(Sort.asc("sortOrder"), Sort.asc("code"));
+    }
+
+    /** By id within the current organization only (explicit predicate, not just the Hibernate tenant filter). */
+    @Override
+    protected Account find(String id) {
+        return em.createQuery("select a from Account a where a.id = :id and a.organizationId = :org", Account.class)
+                .setParameter("id", id).setParameter("org", TenantContext.organizationId())
+                .getResultList().stream().findFirst().orElse(null);
     }
 
     @Override
@@ -106,6 +119,13 @@ public class AccountService extends BaseCrudService<Account> {
         row.setOrganizationId(TenantContext.organizationId());
         persist(row);
         resolver.invalidate(TenantContext.organizationId());
+        if (row.getControlAccountType() != null) {
+            // Control-account policy (V518): a designation is audited from the start, as on update.
+            Map<String, Object> newValues = new LinkedHashMap<>();
+            newValues.put("code", row.getCode());
+            newValues.put("controlAccountType", row.getControlAccountType().value());
+            audit.recordInTx(AuditInput.of("Account", row.getId(), "create", null, newValues));
+        }
         return EntityJson.of(row);
     }
 
@@ -124,12 +144,37 @@ public class AccountService extends BaseCrudService<Account> {
             ForeignCash.assertCurrencyChangeable(jdbc, TenantContext.organizationId(), id,
                     emptyToNull(data.get("currencyId")));
         }
+        ControlAccountType designationBefore = existing.getControlAccountType();
         Map<String, Object> derived = validate(data, existing);
         EntityPatch.apply(existing, data);
         EntityPatch.apply(existing, derived);
         em.flush();
         resolver.invalidate(TenantContext.organizationId());
+        auditDesignation(existing, designationBefore);
         return render(existing);
+    }
+
+    /**
+     * Control-account policy (V518): the {@code controlAccountType} designation decides whether manual, recurring and
+     * deferral journals may post to the account (AR / AP are refused), so every change of it is audited with the
+     * account's posted line count (a change on an account with postings alters how its history is protected).
+     */
+    private void auditDesignation(Account account, ControlAccountType before) {
+        ControlAccountType after = account.getControlAccountType();
+        if (before == after) {
+            return;
+        }
+        long postedLines = jdbc.sql("SELECT count(*) FROM \"JournalLine\" WHERE \"accountId\" = ? AND"
+                + " \"organizationId\" = ?").params(account.getId(), TenantContext.organizationId())
+                .query(Long.class).single();
+        Map<String, Object> oldValues = new LinkedHashMap<>();
+        oldValues.put("code", account.getCode());
+        oldValues.put("controlAccountType", before == null ? null : before.value());
+        Map<String, Object> newValues = new LinkedHashMap<>();
+        newValues.put("code", account.getCode());
+        newValues.put("controlAccountType", after == null ? null : after.value());
+        newValues.put("postedLines", postedLines);
+        audit.recordInTx(AuditInput.of("Account", account.getId(), "update", oldValues, newValues));
     }
 
     private static String emptyToNull(Object v) {
@@ -175,13 +220,15 @@ public class AccountService extends BaseCrudService<Account> {
         if (existing == null || !code.equals(existing.getCode())) {
             List<String> clash;
             if (id != null) {
-                clash = em.createQuery("select a.name from Account a where a.code = :code and a.deletedAt is null"
-                                + " and a.id <> :id", String.class)
-                        .setParameter("code", code).setParameter("id", id).setMaxResults(1).getResultList();
+                clash = em.createQuery("select a.name from Account a where a.organizationId = :org and a.code = :code"
+                                + " and a.deletedAt is null and a.id <> :id", String.class)
+                        .setParameter("org", organizationId).setParameter("code", code).setParameter("id", id)
+                        .setMaxResults(1).getResultList();
             } else {
-                clash = em.createQuery("select a.name from Account a where a.code = :code and a.deletedAt is null",
-                                String.class)
-                        .setParameter("code", code).setMaxResults(1).getResultList();
+                clash = em.createQuery("select a.name from Account a where a.organizationId = :org and a.code = :code"
+                                + " and a.deletedAt is null", String.class)
+                        .setParameter("org", organizationId).setParameter("code", code).setMaxResults(1)
+                        .getResultList();
             }
             if (!clash.isEmpty()) {
                 throw ApiException.conflict("Account code '" + code + "' is already used by '" + clash.getFirst() + "'");
@@ -216,8 +263,9 @@ public class AccountService extends BaseCrudService<Account> {
                             + " account. Group accounts are structural nodes and cannot be posted to.");
                 }
             } else {
-                long childCount = em.createQuery("select count(a) from Account a where a.parentAccountId = :id"
-                        + " and a.deletedAt is null", Long.class).setParameter("id", id).getSingleResult();
+                long childCount = em.createQuery("select count(a) from Account a where a.organizationId = :org"
+                        + " and a.parentAccountId = :id and a.deletedAt is null", Long.class)
+                        .setParameter("org", organizationId).setParameter("id", id).getSingleResult();
                 if (childCount > 0) {
                     throw ApiException.badRequest("This account has child accounts, so it must remain a group account.");
                 }
@@ -295,7 +343,8 @@ public class AccountService extends BaseCrudService<Account> {
     @Transactional(readOnly = true)
     public Map<String, Object> tree(boolean includeInactive, boolean includeBalances, String asOf, String categoryKey,
             String classification) {
-        StringBuilder jpql = new StringBuilder("select a from Account a left join a.category c where a.deletedAt is null");
+        StringBuilder jpql = new StringBuilder("select a from Account a left join a.category c"
+                + " where a.organizationId = :org and a.deletedAt is null");
         if (!includeInactive) {
             jpql.append(" and a.isActive = true");
         }
@@ -307,6 +356,7 @@ public class AccountService extends BaseCrudService<Account> {
         }
         jpql.append(" order by a.sortOrder asc, a.code asc");
         var q = em.createQuery(jpql.toString(), Account.class);
+        q.setParameter("org", TenantContext.organizationId());
         if (categoryKey != null && !categoryKey.isEmpty()) {
             q.setParameter("categoryKey", categoryKey);
         }
@@ -425,8 +475,9 @@ public class AccountService extends BaseCrudService<Account> {
             throw ApiException.badRequest("This is a protected system account and cannot be deleted. Deactivate or"
                     + " deprecate it instead.");
         }
-        long childCount = em.createQuery("select count(a) from Account a where a.parentAccountId = :id", Long.class)
-                .setParameter("id", id).getSingleResult();
+        long childCount = em.createQuery("select count(a) from Account a where a.organizationId = :org"
+                        + " and a.parentAccountId = :id", Long.class)
+                .setParameter("org", TenantContext.organizationId()).setParameter("id", id).getSingleResult();
         if (childCount > 0) {
             throw ApiException.badRequest("Account has child accounts. Reassign or delete them first.");
         }
@@ -447,7 +498,9 @@ public class AccountService extends BaseCrudService<Account> {
     }
 
     private String mappingKeyOf(String accountId) {
-        return em.createQuery("select m.key from AccountMapping m where m.accountId = :id", String.class)
-                .setParameter("id", accountId).setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        return em.createQuery("select m.key from AccountMapping m where m.organizationId = :org and m.accountId = :id",
+                        String.class)
+                .setParameter("org", TenantContext.organizationId()).setParameter("id", accountId).setMaxResults(1)
+                .getResultList().stream().findFirst().orElse(null);
     }
 }
