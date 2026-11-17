@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ChevronRight, ArrowLeft, Edit, Package, MapPin, ArrowRightLeft, FileText, AlertTriangle, TrendingDown, Activity, ShoppingCart, UtensilsCrossed, RefreshCw, MoreHorizontal, BookOpen } from 'lucide-react';
+import { ChevronRight, ArrowLeft, Edit, Package, MapPin, ArrowRightLeft, FileText, AlertTriangle, TrendingDown, Activity, ShoppingCart, UtensilsCrossed, RefreshCw, MoreHorizontal, BookOpen, PackageSearch } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
+import { useAuthStore } from '@/stores/auth.store';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -548,6 +550,7 @@ export default function InventoryDetailPage() {
   const { productId } = useParams<{ productId: string }>();
   const { data, isLoading, refetch, isRefetching } = useInventoryItemDetail(productId);
   const [activeTab, setActiveTab] = useState('overview');
+  const canExplainCost = useAuthStore((st) => st.hasPermission(PERMISSIONS.inventoryValuation.read));
 
   const tabs = [
     { id: 'overview', label: tx('Overview'), icon: FileText, count: null },
@@ -621,6 +624,11 @@ export default function InventoryDetailPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44">
                   <DropdownMenuItem onClick={() => navigate('/inventory/adjustments')}><Package className="h-4 w-4 mr-2 text-primary" />{tx('New Adjustment')}</DropdownMenuItem>
+                  {canExplainCost && (
+                    <DropdownMenuItem onClick={() => navigate(`/inventory/cost-explanation?productId=${encodeURIComponent(productId ?? '')}`)}>
+                      <PackageSearch className="h-4 w-4 mr-2 text-primary" />{tx('Why this cost?')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate('/procurement/purchase-orders')}><ShoppingCart className="h-4 w-4 mr-2 text-primary" />{tx('Purchases')}</DropdownMenuItem>
                 </DropdownMenuContent>

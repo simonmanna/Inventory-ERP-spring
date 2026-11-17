@@ -128,15 +128,18 @@ export interface CoProduct {
   marketValue?: string | number | null;
   weightPerUnit?: string | number | null;
   fixedPct?: string | number | null;
+  /** Review 2026-11-17: costs per unit after the split-off (further processing, selling) — NRV method. */
+  separableCostPerUnit?: string | number | null;
   stocked: boolean;
 }
 
-export type AllocationMethod = 'quantity' | 'weight' | 'market_value' | 'fixed_pct';
+export type AllocationMethod = 'quantity' | 'weight' | 'market_value' | 'fixed_pct' | 'net_realisable_value';
 
 export interface AllocationRule {
   method: AllocationMethod;
   mainWeightPerUnit?: string | number | null;
   mainMarketValue?: string | number | null;
+  mainSeparableCostPerUnit?: string | number | null;
   source?: 'bom' | 'organization' | 'default';
 }
 

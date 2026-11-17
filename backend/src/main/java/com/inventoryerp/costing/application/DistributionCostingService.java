@@ -4,6 +4,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.AccountingPolicyService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.costing.application.DistributionCostCalculator.Charged;
 import com.inventoryerp.costing.application.DistributionCostCalculator.Trip;
@@ -75,6 +76,7 @@ public class DistributionCostingService {
     private final JdbcClient jdbc;
     private final SequenceService seq;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountResolverService accounts;
     private final AccountingPolicyService policies;
     private final StockService stock;
@@ -86,10 +88,11 @@ public class DistributionCostingService {
     public DistributionCostingService(JdbcClient jdbc, SequenceService seq, PostingService posting,
             AccountResolverService accounts, AccountingPolicyService policies, StockService stock,
             StockPostingService stockPosting, LineageCapitalisation capitalisation,
-            ObjectProvider<FleetCostingService> fleet, AuditService audit) {
+            ObjectProvider<FleetCostingService> fleet, AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
+        this.reversals = reversals;
         this.accounts = accounts;
         this.policies = policies;
         this.stock = stock;
@@ -207,8 +210,7 @@ public class DistributionCostingService {
         if (!"posted".equals(r.get("status"))) {
             throw ApiException.badRequest("Only a posted run can be reversed");
         }
-        String reversal = r.get("journalEntryId") == null ? null : (String) posting.reverse((String) r.get(
-                "journalEntryId"), Instant.now(), "Reversal of " + r.get("number")).get("id");
+        String reversal = reversals.reverseId((String) r.get("journalEntryId"), "Reversal of " + r.get("number"));
         jdbc.sql("UPDATE \"DeliveryCostRun\" SET status = 'reversed', \"reversalEntryId\" = ?, \"reversedAt\" = now()"
                 + " WHERE id = ?").params(reversal, id).update();
         audit.recordInTx(AuditInput.of("DeliveryCostRun", id, "cancel", null, Obj.of("reversalEntryId", reversal)));

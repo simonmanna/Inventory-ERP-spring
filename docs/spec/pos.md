@@ -83,6 +83,22 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Deviations
 
+Approved by the owner 2026-11-17 (accounting and costing review,
+[audit](../audits/2026-11-17-accounting-costing-review.md)):
+
+- **ACR-17: abandon a failed stock-posting job.** New route `POST /pos/posting-monitor/jobs/:id/abandon` with body
+  `{note}` (`pos:override`). Nest had no way out: resolving the exceptions left the job failed, and that blocked the
+  period close for ever.
+  - Only a `failed` job can be abandoned (compare-and-set).
+  - The note records how the sale's stock and cost of sales were corrected instead.
+  - The job keeps its error and history and is never claimed again. Its open exceptions are discarded with the note.
+  - Messages:
+    - 400 `A note of at least 10 characters is required — record how the sale's stock and cost of sales were corrected`
+    - 404 `Stock posting job not found`
+    - 400 `Only failed jobs can be abandoned (this one is <status>)`
+    - 409 `Stock posting job changed while abandoning (now <status>)`
+  - Web: the Posting Monitor's Abandon dialog and an `abandoned` filter.
+
 Pending owner approval:
 
 1. **Invoice-item unit snapshot (ADR-S003, V5).** `InvoiceItem` gains `uomId` + `uomFactor` (the product's

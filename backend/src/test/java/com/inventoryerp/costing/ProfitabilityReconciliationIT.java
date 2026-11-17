@@ -148,6 +148,10 @@ class ProfitabilityReconciliationIT extends ApiTestSupport {
         JsonNode est = row(estimate, pid);
         assertThat(num(est.get("revenue"))).isEqualByComparingTo("1200");
         assertThat(num(est.get("cm1"))).isEqualByComparingTo("400");
+        assertThat(est.get("segmentName").asString()).as("screens show the project, not its id").isEqualTo(
+                "P1 · Estimate");
+        assertThat(c.get("segmentName").asString()).as("an unknown dimension value falls back to its id").isEqualTo(
+                customer);
         for (JsonNode r : estimate.get("rows")) {
             assertThat(r.get("segment").asString()).as("no actual project in the estimate layer").isNotEqualTo(
                     project);

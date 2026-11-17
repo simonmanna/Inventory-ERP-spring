@@ -188,6 +188,9 @@ const AdvancedCostingPage = lazy(() => import('@/pages/costing/AdvancedCostingPa
 const CostingSettingsPage = lazy(() => import('@/pages/costing/CostingSettingsPage').then((m) => ({ default: m.CostingSettingsPage })));
 const CostAllocationPage = lazy(() => import('@/pages/costing/CostAllocationPage').then((m) => ({ default: m.CostAllocationPage })));
 const CostOperationsPage = lazy(() => import('@/pages/costing/CostOperationsPage').then((m) => ({ default: m.CostOperationsPage })));
+const CostClosePage = lazy(() => import('@/pages/costing/CostClosePage').then((m) => ({ default: m.CostClosePage })));
+const ProfitabilityPage = lazy(() => import('@/pages/costing/ProfitabilityPage').then((m) => ({ default: m.ProfitabilityPage })));
+const CostExplanationPage = lazy(() => import('@/pages/inventory/CostExplanationPage').then((m) => ({ default: m.CostExplanationPage })));
 const ProcessCostingPage = lazy(() => import('@/pages/costing/ProcessCostingPage').then((m) => ({ default: m.ProcessCostingPage })));
 const CostCenterAccountingPage = lazy(() => import('@/pages/costing/CostCenterAccountingPage').then((m) => ({ default: m.CostCenterAccountingPage })));
 const SupplierPerformancePage = lazy(() => import('@/pages/procurement/supplier-performance').then((m) => ({ default: m.SupplierPerformancePage })));
@@ -518,6 +521,10 @@ export function App() {
             <Route path="/costing/settings" element={<RequirePermission permission={PERMISSIONS.costingSettings.read}><CostingSettingsPage /></RequirePermission>} />
             <Route path="/costing/allocation" element={<RequirePermission permission={PERMISSIONS.costAllocation.read}><CostAllocationPage /></RequirePermission>} />
             <Route path="/costing/operations" element={<RequirePermission permission={PERMISSIONS.advancedCosting.read}><CostOperationsPage /></RequirePermission>} />
+            {/* Review 2026-11-17 (ease of use): screens for the API-only costing routes */}
+            <Route path="/costing/close" element={<RequirePermission permission={PERMISSIONS.costingClose.read}><CostClosePage /></RequirePermission>} />
+            <Route path="/costing/profitability" element={<RequirePermission permission={PERMISSIONS.profitability.read}><ProfitabilityPage /></RequirePermission>} />
+            <Route path="/inventory/cost-explanation" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><CostExplanationPage /></RequirePermission>} />
             <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
             <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
             {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}

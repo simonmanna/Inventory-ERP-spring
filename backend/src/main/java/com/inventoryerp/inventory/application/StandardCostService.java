@@ -5,6 +5,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -75,6 +76,7 @@ public class StandardCostService {
 
     private final JdbcClient jdbc;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final AccountResolverService accounts;
     private final AuditService audit;
@@ -82,10 +84,11 @@ public class StandardCostService {
     private final CostLineageService lineage;
 
     public StandardCostService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            AccountResolverService accounts, AuditService audit, PlatformTransactionManager txm, CostLineageService lineage) {
+            AccountResolverService accounts, AuditService audit, PlatformTransactionManager txm, CostLineageService lineage, CostingReversals reversals) {
         this.lineage = lineage;
         this.jdbc = jdbc;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.accounts = accounts;
         this.audit = audit;
@@ -227,9 +230,19 @@ public class StandardCostService {
         return jeId;
     }
 
-    /** Reverse a variance entry (production order reversed). */
+    /**
+     * Reverse a variance entry (production order reversed). Review 2026-11-17 (ACR-13; deviation): the variance rows the
+     * entry carried are offset by negative rows on the reversal, so the material ledger and the variance reports never
+     * pool (or capitalise) a variance that is no longer in the GL.
+     */
     public void reverseJournal(String journalEntryId, String description) {
-        posting.reverse(journalEntryId, Instant.now(), description);
+        Map<String, Object> rev = reversals.reverseAt(journalEntryId, Instant.now(), description);
+        jdbc.sql("INSERT INTO \"StandardCostVariance\" (id, \"organizationId\", \"productId\", kind, \"sourceType\","
+                        + " \"sourceId\", quantity, \"standardCost\", \"actualCost\", amount, \"journalEntryId\") SELECT"
+                        + " gen_random_uuid()::text, \"organizationId\", \"productId\", kind, \"sourceType\", \"sourceId\","
+                        + " -quantity, -\"standardCost\", -\"actualCost\", -amount, ? FROM \"StandardCostVariance\" WHERE"
+                        + " \"organizationId\" = ? AND \"journalEntryId\" = ?")
+                .params(rev == null ? null : rev.get("id"), TenantContext.organizationId(), journalEntryId).update();
     }
 
     private void recordVariance(String productId, String kind, String sourceType, String sourceId, BigDecimal qty,

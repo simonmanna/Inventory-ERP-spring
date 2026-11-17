@@ -154,7 +154,7 @@ function PeriodPanel({ periodId, canManage, setPeriodId }: { periodId: string; c
   });
   const [units, setUnits] = useState<Record<string, string>>({});
   const [mat, setMat] = useState({ productId: '', locationId: '', quantity: '' });
-  const [cost, setCost] = useState({ element: 'labour', amount: '', creditAccountId: '', description: '' });
+  const [cost, setCost] = useState({ element: 'labour', amount: '', creditAccountId: '', journalEntryId: '', description: '' });
 
   const result = isOpen ? preview?.result : p?.result;
   const run = async (kind: 'units' | 'materials' | 'costs' | 'close', body?: unknown) => {
@@ -238,8 +238,12 @@ function PeriodPanel({ periodId, canManage, setPeriodId }: { periodId: string; c
                   <option value="">{tx('Already in WIP (record only)')}</option>
                   {(accounts?.data ?? []).map((a: any) => <option key={a.id} value={a.id}>{tx('Credit')} {a.code} · {a.name}</option>)}
                 </select>
-                <Button className="col-span-4" size="sm" variant="outline" disabled={!Number(cost.amount)}
-                  onClick={() => run('costs', { element: cost.element, amount: Number(cost.amount), creditAccountId: cost.creditAccountId || undefined, description: cost.description || undefined })}>
+                {!cost.creditAccountId && (
+                  <Input className="col-span-4" placeholder={tx('Journal entry no. that already put this cost in WIP')}
+                    value={cost.journalEntryId} onChange={(e) => setCost({ ...cost, journalEntryId: e.target.value })} />
+                )}
+                <Button className="col-span-4" size="sm" variant="outline" disabled={!Number(cost.amount) || (!cost.creditAccountId && !cost.journalEntryId.trim())}
+                  onClick={() => run('costs', { element: cost.element, amount: Number(cost.amount), creditAccountId: cost.creditAccountId || undefined, journalEntryId: cost.creditAccountId ? undefined : cost.journalEntryId.trim(), description: cost.description || undefined })}>
                   {tx('Apply cost')}
                 </Button>
               </div>

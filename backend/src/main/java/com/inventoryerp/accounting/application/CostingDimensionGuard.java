@@ -66,13 +66,28 @@ public class CostingDimensionGuard {
         if (org == null || date == null) {
             return;
         }
+        // Review 2026-11-17 (ACR-6): shared side of the costing close's advisory lock ("costing-close:<org>", taken
+        // exclusively by CostCloseService.lock). A costing posting in flight makes the close wait for it, and a close in
+        // flight makes the posting wait and then see the new lock, so no entry slips into a period being locked.
+        jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint)").param("costing-close:" + org).query()
+                .listOfRows();
+        String locked = lockedPeriod(date);
+        if (locked != null) {
+            throw ApiException.badRequest("The costing period " + locked + " is locked; reopen it before posting"
+                    + " costing entries into it");
+        }
+    }
+
+    /** The locked costing period ({@code from – to}) containing {@code date}'s org-local day, or null. */
+    public String lockedPeriod(java.time.Instant date) {
+        String org = TenantContext.optionalOrganizationId();
+        if (org == null || date == null) {
+            return null;
+        }
         java.sql.Date day = java.sql.Date.valueOf(AccountingDay.of(date, AccountingDay.zone(jdbc, org)));
-        jdbc.sql("SELECT \"periodFrom\", \"periodTo\" FROM \"CostingPeriodLock\" WHERE \"organizationId\" = ? AND"
+        return jdbc.sql("SELECT \"periodFrom\", \"periodTo\" FROM \"CostingPeriodLock\" WHERE \"organizationId\" = ? AND"
                 + " status = 'locked' AND \"periodFrom\" <= ? AND \"periodTo\" >= ? LIMIT 1").params(org, day, day)
-                .query((rs, n) -> rs.getString(1) + " – " + rs.getString(2)).optional().ifPresent(p -> {
-                    throw ApiException.badRequest("The costing period " + p + " is locked; reopen it before posting"
-                            + " costing entries into it");
-                });
+                .query((rs, n) -> rs.getString(1) + " – " + rs.getString(2)).optional().orElse(null);
     }
 
     /** As {@link #compliance(Timestamp, Timestamp)} for the org-local days {@code from} … {@code to} (ADR-S070). */

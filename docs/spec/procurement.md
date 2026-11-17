@@ -68,6 +68,17 @@ same points as Nest. No subscribers in this module.
 
 ## Deviations
 
+Approved by the owner 2026-11-17 (accounting and costing review,
+[audit](../audits/2026-11-17-accounting-costing-review.md)):
+
+- **ACR-2: `POST /procurement/purchase-orders/:id/pay`.**
+  - Once the PO's receipts have been billed, paying the PO is refused with 400
+    `The goods received on this purchase order have been billed — pay the supplier bill instead`.
+  - The PO's open amount counts only unbilled receipts, less PO payments not yet applied to a bill (V530).
+  - Bill side: [invoicing](invoicing.md#deviations).
+- **GRNI reconciliation screen** (`/procurement/grni`, web only). It shows goods received but not invoiced, from the
+  existing API.
+
 Pending owner approval:
 
 0. **Landed cost LC-1 (ADR-S053, V292; extension).** Vouchers and accruals distribute a charge over the receipt's

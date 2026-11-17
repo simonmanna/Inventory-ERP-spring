@@ -453,7 +453,8 @@ public class StageExecutionService implements StageCheckpointResults {
             mainWeight = overrides.frozen().get("main").weightPerUnit();
             mainMarket = overrides.frozen().get("main").marketValue();
         }
-        shares.add(new Share("main", "main", good, "allocated", mainWeight, mainMarket, null, null));
+        shares.add(new Share("main", "main", good, "allocated", mainWeight, mainMarket, null, null,
+                SetupValues.dec(rule, "mainSeparableCostPerUnit")));
         Map<String, Map<String, Object>> config = new HashMap<>();
         Map<String, Map<String, Object>> bomCo = new HashMap<>();
         if (c.order.get("bomId") != null) {
@@ -484,7 +485,7 @@ public class StageExecutionService implements StageCheckpointResults {
                 market = frozen.marketValue();
             }
             shares.add(new Share(str(o, "id"), str(o, "outputRole"), otherQty.get(str(o, "id")), valuation, weight,
-                    market, fixed, nrv));
+                    market, fixed, nrv, SetupValues.dec(cp, "separableCostPerUnit")));
         }
         String method = rule == null ? "quantity" : str(rule, "method");
         JointCostAllocator.Result alloc = JointCostAllocator.allocate(y.goodValue(), shares, method, SCALE);
@@ -854,7 +855,7 @@ public class StageExecutionService implements StageCheckpointResults {
                 .uom(str(m, "uomId")).moveType("production_consume")
                 .strategy(m.get("distStrategy") != null ? str(m, "distStrategy") : "FEFO")
                 .batch(batchNumber != null ? batchNumber : str(m, "batchNumber")).date(date).source(SOURCE, pid)
-                .notes(code).skipGl().requireAvailable(strict);
+                .notes(code).skipGl().requireAvailable(strict || production.materialsMustBeOnHand()); // ACR-19
         Issued res = stock.issue(move);
         stockPosting.postProductionConsume(str(m, "productId"), res.totalValue(), date, SOURCE, pid,
                 "Stage material · " + code);

@@ -386,10 +386,12 @@ class LandedCostLayers {
     Map<String, Map<String, BigDecimal>> reverseLineage(String sourceType, String sourceId, String originalEntryId,
             List<Map<String, Object>> allocations) {
         String orgId = org();
-        Integer cascaded = jdbc.sql("SELECT count(*)::int FROM \"CostAdjustmentRunLine\" r JOIN \"CostValueAdjustmentLine\" l"
-                + " ON l.id = r.\"adjustmentLineId\" JOIN \"CostValueAdjustment\" a ON a.id = l.\"adjustmentId\" WHERE"
-                + " a.\"organizationId\" = ? AND a.\"sourceType\" = ? AND a.\"sourceId\" = ? AND r.status = 'posted'")
-                .params(orgId, sourceType, sourceId).query(Integer.class).single();
+        // Review 2026-11-17 (ACR-14): adjunct released into an order's WIP is carried on by the run too.
+        Integer cascaded = jdbc.sql("SELECT count(*)::int FROM \"CostAdjustmentRunLine\" r LEFT JOIN"
+                + " \"CostValueAdjustmentLine\" l ON l.id = r.\"adjustmentLineId\" LEFT JOIN \"CostValueAdjustmentRelease\" x"
+                + " ON x.id = r.\"releaseId\" JOIN \"CostValueAdjustment\" a ON a.id = coalesce(l.\"adjustmentId\","
+                + " x.\"adjustmentId\") WHERE a.\"organizationId\" = ? AND a.\"sourceType\" = ? AND a.\"sourceId\" = ? AND"
+                + " r.status = 'posted'").params(orgId, sourceType, sourceId).query(Integer.class).single();
         if (cascaded > 0) {
             throw ApiException.badRequest("Part of this landed cost was cascaded from WIP by a cost adjustment run;"
                     + " reverse that run first");

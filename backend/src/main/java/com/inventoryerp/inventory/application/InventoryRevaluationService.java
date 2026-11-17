@@ -2,6 +2,7 @@ package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.CostLineageService.AdjustmentInput;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -55,15 +56,17 @@ public class InventoryRevaluationService {
     private final JdbcClient jdbc;
     private final SequenceService seq;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final StockPostingService stockPosting;
     private final CostLineageService lineage;
     private final AuditService audit;
 
     public InventoryRevaluationService(JdbcClient jdbc, SequenceService seq, PostingService posting,
-            StockPostingService stockPosting, CostLineageService lineage, AuditService audit) {
+            StockPostingService stockPosting, CostLineageService lineage, AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
+        this.reversals = reversals;
         this.stockPosting = stockPosting;
         this.lineage = lineage;
         this.audit = audit;
@@ -292,7 +295,7 @@ public class InventoryRevaluationService {
         }
         String reversal = null;
         if (d.get("journalEntryId") != null) {
-            Map<String, Object> rev = posting.reverse((String) d.get("journalEntryId"), Instant.now(),
+            Map<String, Object> rev = reversals.reverse((String) d.get("journalEntryId"),
                     "Reversal of " + d.get("number"));
             reversal = (String) rev.get("id");
         }

@@ -11,6 +11,22 @@ import { apiMessage, notify } from '@/lib/notify';
 import { useAbsorb, useOrderCost, useOrderVariances, type Num } from '@/features/manufacturing/api-costing';
 import { qty } from '@/features/manufacturing/api-planning';
 
+/** Review 2026-11-17: translatable names of the variance lines the API returns (it also sends English labels). */
+const LINE_LABELS: Record<string, () => string> = {
+  materialPrice: () => tx('Material price'),
+  materialUsage: () => tx('Material usage'),
+  materialMix: () => tx('Mix'),
+  materialInputYield: () => tx('Input yield'),
+  labourRate: () => tx('Labour rate'),
+  labourEfficiency: () => tx('Labour efficiency'),
+  machineSpending: () => tx('Machine spending'),
+  machineEfficiency: () => tx('Machine efficiency'),
+  energy: () => tx('Energy'),
+  overheadSpending: () => tx('Overhead spending'),
+  overheadEfficiency: () => tx('Overhead efficiency'),
+  yield: () => tx('Output yield'),
+};
+
 /** Actual cost build-up of one order, the absorption due and its variances (ADR-S018). */
 export function OrderCostPage() {
   const { id = '' } = useParams();
@@ -86,6 +102,40 @@ export function OrderCostPage() {
           <CardHeader><CardTitle>{tx('Variances')}</CardTitle></CardHeader>
           <CardContent className="space-y-3 overflow-x-auto">
             <p className="text-sm text-muted-foreground">{tx('Positive is unfavourable. Hours: {{actual}} actual, {{standard}} standard.', { actual: qty(v.actualHours), standard: qty(v.standardHours) })}</p>
+            {v.reconciliation && (
+              <p className="text-sm">
+                {tx('Actual cost {{actual}} − standard cost {{standard}} ({{basis}}) = variances {{variances}}', {
+                  actual: money(v.reconciliation.actualCost),
+                  standard: money(v.reconciliation.standardCost),
+                  basis: v.reconciliation.standardBasis === 'good output' ? tx('for the good output') : tx('for the planned run'),
+                  variances: money(v.reconciliation.variances),
+                })}
+                {Number(v.reconciliation.unexplained) !== 0 && (
+                  <span className="text-destructive"> · {tx('Not explained')}: {money(v.reconciliation.unexplained)}</span>
+                )}
+              </p>
+            )}
+            {v.lines ? (
+              <Table>
+                <TableHeader><TableRow>
+                  <TableHead>{tx('Variance')}</TableHead><TableHead className="text-right">{tx('Amount')}</TableHead><TableHead>{tx('What it means')}</TableHead>
+                </TableRow></TableHeader>
+                <TableBody>
+                  {v.lines.map((l) => (
+                    <TableRow key={l.key}>
+                      <TableCell className={l.parent ? 'pl-8 text-muted-foreground' : 'font-medium'}>{LINE_LABELS[l.key]?.() ?? l.label}</TableCell>
+                      <TableCell className={`text-right tabular-nums ${Number(l.amount ?? 0) > 0 ? 'text-destructive' : ''}`}>{l.amount == null ? '-' : money(l.amount)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{l.amount == null && l.key === 'materialMix' && v.mixNote ? v.mixNote : l.explanation}</TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow>
+                    <TableCell className="font-semibold">{tx('Total')}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums">{money(v.total)}</TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableBody>
+              </Table>
+            ) : (
             <Table>
               <TableHeader><TableRow>
                 <TableHead>{tx('Material price')}</TableHead><TableHead>{tx('Material usage')}</TableHead><TableHead>{tx('Labour efficiency')}</TableHead>
@@ -96,11 +146,15 @@ export function OrderCostPage() {
                 <TableCell>{money(v.overhead)}</TableCell><TableCell>{money(v.yield)}</TableCell><TableCell className="font-semibold">{money(v.total)}</TableCell>
               </TableRow></TableBody>
             </Table>
+            )}
             {v.materials.length > 0 && (
               <Table>
                 <TableHeader><TableRow>
                   <TableHead>{tx('Material')}</TableHead><TableHead className="text-right">{tx('Planned')}</TableHead><TableHead className="text-right">{tx('Actual')}</TableHead>
                   <TableHead className="text-right">{tx('Material price')}</TableHead><TableHead className="text-right">{tx('Material usage')}</TableHead>
+                  {v.materials.some((m) => m.mixVariance != null) && (
+                    <><TableHead className="text-right">{tx('Mix')}</TableHead><TableHead className="text-right">{tx('Input yield')}</TableHead></>
+                  )}
                 </TableRow></TableHeader>
                 <TableBody>
                   {v.materials.map((m) => (
@@ -109,6 +163,12 @@ export function OrderCostPage() {
                       <TableCell className="text-right tabular-nums">{qty(m.actualQty)}</TableCell>
                       <TableCell className="text-right tabular-nums">{money(m.priceVariance)}</TableCell>
                       <TableCell className="text-right tabular-nums">{money(m.usageVariance)}</TableCell>
+                      {v.materials.some((x) => x.mixVariance != null) && (
+                        <>
+                          <TableCell className="text-right tabular-nums">{m.mixVariance == null ? '-' : money(m.mixVariance)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{m.inputYieldVariance == null ? '-' : money(m.inputYieldVariance)}</TableCell>
+                        </>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

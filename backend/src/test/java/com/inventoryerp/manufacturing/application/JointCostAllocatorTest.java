@@ -32,6 +32,27 @@ class JointCostAllocatorTest {
     }
 
     @Test
+    @DisplayName("review 2026-11-17, NRV method: sales value less the costs after the split-off — 1,000 over 600 / 500")
+    void byNetRealisableValue() {
+        // main: 100 × (10 − 4) = 600; co-product: 50 × (12 − 2) = 500 → 545.45 / 454.55 (market value: 625 / 375)
+        Share mainOut = new Share("main", "main", d("100"), "allocated", null, d("10"), null, null, d("4"));
+        Share coOut = new Share("a", "co_product", d("50"), "allocated", null, d("12"), null, null, d("2"));
+        Result r = JointCostAllocator.allocate(d("1000"), List.of(mainOut, coOut), "net_realisable_value", 2);
+        assertThat(r.method()).isEqualTo("net_realisable_value");
+        assertThat(r.values().get("main")).isEqualByComparingTo("545.45");
+        assertThat(r.values().get("a")).isEqualByComparingTo("454.55");
+        assertThat(sum(r)).isEqualByComparingTo("1000");
+        Result byMarket = JointCostAllocator.allocate(d("1000"), List.of(mainOut, coOut), "market_value", 2);
+        assertThat(byMarket.values().get("main")).isEqualByComparingTo("625");
+        // an output whose further costs exceed its sales value carries none of the joint cost (NRV floored at zero)
+        Share loss = new Share("b", "co_product", d("10"), "allocated", null, d("3"), null, null, d("5"));
+        Result floored = JointCostAllocator.allocate(d("1000"), List.of(mainOut, coOut, loss), "net_realisable_value",
+                2);
+        assertThat(floored.values().get("b")).isEqualByComparingTo("0");
+        assertThat(sum(floored)).isEqualByComparingTo("1000");
+    }
+
+    @Test
     @DisplayName("by quantity: 1,000 over 30 / 40 / 30 t → 300 / 400 / 300")
     void byQuantity() {
         Result r = JointCostAllocator.allocate(d("1000"), List.of(main("30"), co("a", "40", null, null, null),

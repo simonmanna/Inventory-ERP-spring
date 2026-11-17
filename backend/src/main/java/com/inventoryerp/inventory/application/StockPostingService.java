@@ -600,6 +600,22 @@ public class StockPostingService {
                         Line.credit(determination.mapped("wip"), v, label))));
     }
 
+    /**
+     * Review 2026-11-17 (rework costing): takes back a {@link #postProductionScrap} loss when its order is reversed —
+     * Dr WIP / Cr Stock Adjustment Expense.
+     */
+    public void postProductionScrapReversal(BigDecimal totalValue, Instant date, String sourceType, String sourceId,
+            String description) {
+        if (totalValue.signum() <= 0) {
+            return;
+        }
+        String label = description != null ? description : "Production scrap reversed";
+        String v = JsNumbers.dec(totalValue);
+        posting.post(PostingRequest.of("INV", date, label, sourceType, sourceId, null,
+                List.of(Line.debit(determination.mapped("wip"), v, label),
+                        Line.credit(determination.mapped("stock_adjustment_expense"), v, label))));
+    }
+
     /** Overhead absorption: Dr WIP / Cr Overhead Absorbed. */
     public void postOverheadAbsorption(BigDecimal totalValue, Instant date, String sourceType, String sourceId,
             String description) {
@@ -611,6 +627,22 @@ public class StockPostingService {
         posting.post(PostingRequest.of("INV", date, label, sourceType, sourceId, null,
                 List.of(Line.debit(determination.mapped("wip"), v, label),
                         Line.credit(determination.mapped("overhead_absorbed"), v, label))));
+    }
+
+    /**
+     * Overhead absorption undone (production order reversed, review 2026-11-17 ACR-5): Dr Overhead Absorbed / Cr WIP,
+     * the mirror of {@link #postOverheadAbsorption}.
+     */
+    public void postOverheadAbsorptionReversal(BigDecimal totalValue, Instant date, String sourceType, String sourceId,
+            String description) {
+        if (totalValue.signum() <= 0) {
+            return;
+        }
+        String label = description != null ? description : "Overhead absorption reversed";
+        String v = JsNumbers.dec(totalValue);
+        posting.post(PostingRequest.of("INV", date, label, sourceType, sourceId, null,
+                List.of(Line.debit(determination.mapped("overhead_absorbed"), v, label),
+                        Line.credit(determination.mapped("wip"), v, label))));
     }
 
     // ------------------------------------------------------------------ helpers

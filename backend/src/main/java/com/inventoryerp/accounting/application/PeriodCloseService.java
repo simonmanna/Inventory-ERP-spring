@@ -106,11 +106,16 @@ public class PeriodCloseService {
                     + " stock-posting job(s) in this period have not posted COGS yet. Drain the stock-posting queue,"
                     + " and resolve any failed jobs in the Posting Monitor, before closing.");
         }
-        String pending = " WHERE \"organizationId\" = ? AND status::text IN ('draft', 'pending', 'approved')";
-        long stockOuts = count("SELECT count(*) FROM \"StockOut\"" + pending, organizationId);
-        long waste = count("SELECT count(*) FROM \"WasteRecord\"" + pending, organizationId);
-        long adjustments = count("SELECT count(*) FROM \"StockAdjustment\"" + pending, organizationId);
-        long transfers = count("SELECT count(*) FROM \"StockTransfer\"" + pending, organizationId);
+        // Review 2026-11-17 (ACR-17; deviation: Nest counted every pending document of the organisation). A stock
+        // document posts when it is approved, never into an earlier date, so only those raised up to the period end
+        // belong to it — a draft stock-out raised on the 2nd no longer blocks closing the month before.
+        String pending = " WHERE \"organizationId\" = ? AND status::text IN ('draft', 'pending', 'approved')"
+                + " AND \"createdAt\" <= ?";
+        long stockOuts = count("SELECT count(*) FROM \"StockOut\"" + pending, organizationId, period.endDate());
+        long waste = count("SELECT count(*) FROM \"WasteRecord\"" + pending, organizationId, period.endDate());
+        long adjustments = count("SELECT count(*) FROM \"StockAdjustment\"" + pending, organizationId,
+                period.endDate());
+        long transfers = count("SELECT count(*) FROM \"StockTransfer\"" + pending, organizationId, period.endDate());
         long totalPending = stockOuts + waste + adjustments + transfers;
         if (totalPending > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + totalPending
@@ -247,16 +252,28 @@ public class PeriodCloseService {
                     + closedYear + "'; reopen the fiscal year first.");
         }
         record Closing(String id, String status) {}
+        // Review 2026-11-17 (ACR-1): the closing entry still in force — this period's own (sourceId), posted. The old
+        // lookup took the latest period_close entry by date with no status filter: after close → reopen → close the
+        // first, already reversed, entry shares the period-end date and could be picked, so the second reopen skipped
+        // the reversal and the closing amounts stayed in the books. The date window stays as the fallback for closing
+        // entries written before the source id was kept, posted ones only.
         Closing closing = jdbc.sql("SELECT id, status::text AS status FROM \"JournalEntry\" WHERE \"organizationId\" = ?"
-                        + " AND \"sourceType\" = 'period_close'"
+                        + " AND \"sourceType\" = 'period_close' AND \"sourceId\" = ? AND status::text = 'posted'"
+                        + " ORDER BY \"createdAt\" DESC LIMIT 1")
+                .params(organizationId, period.id())
+                .query((rs, n) -> new Closing(rs.getString("id"), rs.getString("status")))
+                .optional().orElseGet(() -> jdbc.sql("SELECT id, status::text AS status FROM \"JournalEntry\" WHERE"
+                        + " \"organizationId\" = ? AND \"sourceType\" = 'period_close' AND status::text = 'posted'"
+                        + " AND (\"sourceId\" IS NULL OR \"sourceId\" NOT IN (SELECT id FROM \"FiscalPeriod\" WHERE"
+                        + " \"organizationId\" = ?))"
                         + (period.closedAt() != null ? " AND \"postingDate\" >= ? AND \"postingDate\" <= ?"
                                 : " AND \"postingDate\" <= ?")
-                        + " ORDER BY \"postingDate\" DESC LIMIT 1")
+                        + " ORDER BY \"postingDate\" DESC, \"createdAt\" DESC LIMIT 1")
                 .params(period.closedAt() != null
-                        ? new Object[] {organizationId, period.startDate(), period.endDate()}
-                        : new Object[] {organizationId, period.endDate()})
+                        ? new Object[] {organizationId, organizationId, period.startDate(), period.endDate()}
+                        : new Object[] {organizationId, organizationId, period.endDate()})
                 .query((rs, n) -> new Closing(rs.getString("id"), rs.getString("status")))
-                .optional().orElse(null);
+                .optional().orElse(null));
         jdbc.sql("UPDATE \"FiscalPeriod\" SET status = 'open', \"closedAt\" = NULL, \"closedBy\" = NULL, \"lockedAt\" = NULL,"
                         + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?")
                 .params(period.id(), organizationId).update();

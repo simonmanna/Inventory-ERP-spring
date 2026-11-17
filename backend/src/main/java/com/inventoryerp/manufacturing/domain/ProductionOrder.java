@@ -166,6 +166,14 @@ public class ProductionOrder {
     @Column(name = "orderKind", nullable = false)
     private String orderKind;
 
+    /** Review 2026-11-17 (V534): a rework order's treatment — normal (cost stays in the units) or abnormal (expensed). */
+    @Column(name = "reworkTreatment")
+    private String reworkTreatment;
+
+    /** Review 2026-11-17 (V534): the extra cost an abnormal rework expensed at completion. */
+    @Column(name = "reworkLoss", nullable = false, precision = 20, scale = 6)
+    private BigDecimal reworkLoss;
+
     /** ADR-S006 (V9). */
     @Column(name = "standardCostId")
     private String standardCostId;

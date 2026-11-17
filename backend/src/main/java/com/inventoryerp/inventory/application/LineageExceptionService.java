@@ -170,6 +170,11 @@ public class LineageExceptionService {
             String text = "Lineage exception written off · " + reason;
             entryId = post(List.of(signed(accountId, open, text), signed(lineage.priceDifferenceAccount(),
                     open.negate(), text)), text, id);
+            // Review 2026-11-17 (ACR-14): an accrual clearing takes this part of its estimate back out of that account.
+            jdbc.sql("INSERT INTO \"CostValueAdjustmentRelease\" (id, \"organizationId\", \"adjustmentId\", target,"
+                    + " \"accountId\", amount, \"sourceType\", \"sourceId\") VALUES (?, ?, ?, 'write_off', ?, ?,"
+                    + " 'lineage_exception', ?)").params(UUID.randomUUID().toString(), org(), adj.get("id"), accountId,
+                    open, id).update();
             closeParked(adj, open, text);
         }
         return close(e, "written_off", Obj.of("action", "write_off", "accountId", accountId, "reason", reason,

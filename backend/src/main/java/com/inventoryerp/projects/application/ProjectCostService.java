@@ -9,6 +9,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockMove.Issued;
@@ -87,6 +88,7 @@ public class ProjectCostService {
     private final JdbcClient jdbc;
     private final ProjectService projects;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountResolverService accounts;
     private final StockService stock;
     private final StockPostingService stockPosting;
@@ -95,10 +97,11 @@ public class ProjectCostService {
 
     public ProjectCostService(JdbcClient jdbc, ProjectService projects, PostingService posting,
             AccountResolverService accounts, StockService stock, StockPostingService stockPosting,
-            AuditService audit, ProjectPlantRateService plantRates) {
+            AuditService audit, ProjectPlantRateService plantRates, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.projects = projects;
         this.posting = posting;
+        this.reversals = reversals;
         this.accounts = accounts;
         this.stock = stock;
         this.stockPosting = stockPosting;
@@ -435,7 +438,7 @@ public class ProjectCostService {
         }
         String reversal = null;
         if (c.get("journalEntryId") != null) {
-            reversal = (String) posting.reverse((String) c.get("journalEntryId"), Instant.now(), "Reversal of "
+            reversal = (String) reversals.reverseAt((String) c.get("journalEntryId"), Instant.now(), "Reversal of "
                     + c.get("description")).get("id");
         }
         if ("project_issue".equals(c.get("sourceType")) && c.get("quantity") != null) {

@@ -143,9 +143,25 @@ public class CostingService {
         out.put("subcontractCost", subcontract);
         out.put("overheadCost", overhead);
         out.put("totalCost", total);
-        out.put("unitCost", outputQty.signum() > 0 ? Money.div(total, outputQty) : BigDecimal.ZERO);
+        // Review 2026-11-17 (ACR-18; deviation): the standard is per GOOD unit — a run is expected to yield
+        // outputQuantity × expectedYieldPct (as production plans it), so the normal loss is part of the unit cost.
+        BigDecimal good = goodQuantity(bom, outputQty);
+        out.put("expectedYieldPct", yieldPct(bom));
+        out.put("expectedGoodQuantity", good);
+        out.put("unitCost", good.signum() > 0 ? Money.div(total, good) : BigDecimal.ZERO);
         out.put("breakdown", lines);
         return out;
+    }
+
+    private static BigDecimal yieldPct(Map<String, Object> bom) {
+        BigDecimal pct = bom.get("expectedYieldPct") == null ? HUNDRED : dec(bom, "expectedYieldPct");
+        return pct.signum() > 0 ? pct : HUNDRED;
+    }
+
+    /** Good output expected from {@code outputQty} of the BOM: {@code outputQty × expectedYieldPct / 100}. */
+    static BigDecimal goodQuantity(Map<String, Object> bom, BigDecimal outputQty) {
+        BigDecimal pct = yieldPct(bom);
+        return pct.compareTo(HUNDRED) == 0 ? outputQty : BomService.mul(outputQty, Money.div(pct, HUNDRED));
     }
 
     /** The routing of a BOM: its routingId, else an active routing linked to the BOM or its product. */
@@ -213,7 +229,7 @@ public class CostingService {
     public Map<String, Object> proposeProductStandard(String bomId, String effectiveFrom, Boolean convertMethod) {
         Map<String, Object> bom = boms.getOrThrow(bomId);
         Map<String, Object> frozen = freezeStandard(bomId);
-        BigDecimal qty = dec(frozen, "outputQuantity");
+        BigDecimal qty = goodQuantity(bom, dec(frozen, "outputQuantity"));
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("The BOM output quantity must be positive to derive a unit standard");
         }
@@ -260,12 +276,23 @@ public class CostingService {
         }
         db.jdbc().sql("DELETE FROM \"ProductionVariance\" WHERE \"organizationId\" = ? AND \"orderId\" = ?")
                 .params(MfgDb.org(), orderId).update();
-        BigDecimal scale = Money.div(produced, dec(std, "outputQuantity"));
+        // ACR-18: the standard quantities are per run; a run is expected to yield its good quantity.
+        Map<String, Object> stdBom = SqlRows.one(db.jdbc().sql("SELECT \"expectedYieldPct\" FROM \"Bom\" WHERE id = ?")
+                .param(std.get("bomId")));
+        BigDecimal scale = Money.div(produced, goodQuantity(stdBom == null ? Map.of() : stdBom,
+                dec(std, "outputQuantity")));
         Map<String, BigDecimal[]> actual = new LinkedHashMap<>();
         for (Map<String, Object> m : db.children(ProductionMaterial.class, "orderId", orderId, null)) {
-            BigDecimal[] a = actual.computeIfAbsent(str(m, "productId"),
-                    k -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
-            a[0] = a[0].add(dec(m, "qtyConsumed"));
+            String productId = str(m, "productId");
+            BigDecimal[] a = actual.computeIfAbsent(productId, k -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
+            // Review 2026-11-17 (ACR-10; deviation): the standard breakdown is in base units — so is the actual.
+            BigDecimal qty = dec(m, "qtyConsumed");
+            if (m.get("uomId") != null && qty.signum() != 0) {
+                String baseUom = db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ?").param(productId)
+                        .query(String.class).optional().orElse(null);
+                qty = uom.toBase(qty, str(m, "uomId"), productId, baseUom, false);
+            }
+            a[0] = a[0].add(qty);
             a[1] = a[1].add(dec(m, "totalCost"));
         }
         if (std.get("breakdown") instanceof JsonNode lines) {

@@ -10,8 +10,10 @@ import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -204,5 +206,80 @@ class CostCloseIT extends ApiTestSupport {
         jdbc.sql("UPDATE \"CostValueAdjustment\" SET \"reversedAt\" = now() WHERE id = ?").param(adj).update();
         assertThat(assertAuthorizationMatrix(CostCloseController.class)).isEqualTo(10);
         assertThat(List.of(id)).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("review 2026-11-17 (ACR-16): the NRV gate needs every written-down item re-assessed, not any one review")
+    void nrvGateNeedsEveryWrittenDownItem() {
+        String code = "nrv-" + UUID.randomUUID().toString().substring(0, 8);
+        Res boot = call("POST", "/organizations/bootstrap", Map.of("organizationCode", code, "organizationName",
+                "NRV Co", "adminEmail", "owner@" + code + ".test", "adminFirstName", "Owner", "adminPassword",
+                "Owner@12345"), (String) null);
+        assertThat(boot.status()).as(boot.raw().body()).isEqualTo(201);
+        String org = boot.body().get("organization").get("id").asString();
+        String token = login(code, "owner@" + code + ".test", "Owner@12345");
+        Res loc = call("POST", "/inventory/locations", Map.of("code", "WH-1", "name", "Main", "type", "warehouse"),
+                token);
+        assertThat(loc.status()).as(loc.raw().body()).isEqualTo(201);
+        String location = loc.body().get("id").asString();
+        String yesterday = LocalDate.now(ZoneOffset.UTC).minusDays(1).toString();
+        String alpha = nrvProduct(org, "Alpha");
+        String beta = nrvProduct(org, "Beta");
+        for (String product : List.of(alpha, beta)) {
+            Res grn = call("POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", location, "receivedAt",
+                    Instant.now().minus(2, ChronoUnit.DAYS).toString(), "lines", List.of(Map.of("productId", product,
+                            "description", "Stock", "quantity", 100, "unitCost", 10))), token);
+            assertThat(grn.status()).as(grn.raw().body()).isEqualTo(200);
+        }
+        // both written down before the period
+        nrvReview(token, location, yesterday, Map.of(alpha, 8, beta, 8));
+        String path = "/costing/close/gates?from=" + today + "&to=" + today;
+        JsonNode before = nrvGate(call("GET", path, null, token).body());
+        assertThat(before.get("status").asString()).isEqualTo("fail");
+
+        // one item re-assessed in the period: any one review used to pass the gate
+        nrvReview(token, location, today, Map.of(alpha, 7));
+        JsonNode partial = nrvGate(call("GET", path, null, token).body());
+        assertThat(partial.get("status").asString()).as(partial.toString()).isEqualTo("fail");
+        String alphaCode = productCode(alpha);
+        String betaCode = productCode(beta);
+        assertThat(partial.get("detail").asString()).contains("written down but not re-assessed: " + betaCode
+                + " @ Main").doesNotContain(alphaCode);
+
+        nrvReview(token, location, today, Map.of(beta, 9));
+        JsonNode done = nrvGate(call("GET", path, null, token).body());
+        assertThat(done.get("status").asString()).as(done.toString()).isEqualTo("pass");
+    }
+
+    String nrvProduct(String org, String name) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"costingMethod\","
+                + " \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, ?, 'stockable', 'AVCO', 0, 20, now())")
+                .params(id, org, name.toUpperCase() + "-" + id.substring(0, 4), name).update();
+        return id;
+    }
+
+    String productCode(String id) {
+        return jdbc.sql("SELECT code FROM \"Product\" WHERE id = ?").param(id).query(String.class).single();
+    }
+
+    void nrvReview(String token, String location, String date, Map<String, Integer> nrvByProduct) {
+        List<Map<String, Object>> lines = nrvByProduct.entrySet().stream().map(e -> Map.<String, Object>of(
+                "productId", e.getKey(), "locationId", location, "netRealisableValue", e.getValue())).toList();
+        Res draft = call("POST", "/inventory/revaluations", Map.of("kind", "nrv", "date", date, "reason",
+                "Quarterly NRV review", "lines", lines), token);
+        assertThat(draft.status()).as(draft.raw().body()).isEqualTo(201);
+        Res posted = call("POST", "/inventory/revaluations/" + draft.body().get("id").asString() + "/post", null,
+                headers(token, true));
+        assertThat(posted.status()).as(posted.raw().body()).isIn(200, 201);
+    }
+
+    static JsonNode nrvGate(JsonNode gates) {
+        for (JsonNode g : gates.get("gates")) {
+            if ("nrv".equals(g.get("key").asString())) {
+                return g;
+            }
+        }
+        throw new AssertionError("no nrv gate in " + gates);
     }
 }

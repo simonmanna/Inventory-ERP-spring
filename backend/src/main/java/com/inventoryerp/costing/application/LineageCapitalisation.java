@@ -119,33 +119,15 @@ public class LineageCapitalisation {
         return out;
     }
 
-    /** Split {@code amount} (signed) over the layers by value and each share over its lineage. */
+    /**
+     * Split {@code amount} (signed) over the layers by value and each share over its lineage, following the goods
+     * through transfers. Review 2026-11-17 (ACR-9; deviation): a share whose goods had moved on to another location
+     * used to ride on the source pool's 1396 adjunct — released against the wrong goods, or to cost of sales once the
+     * source pool was empty, while the goods were still on hand at the destination. It now lands where the goods are
+     * (on hand there → adjunct of that pool; consumed there → its target), as landed-cost accruals already did.
+     */
     public List<Part> spread(BigDecimal amount, List<Layer> layers) {
-        List<Part> out = new ArrayList<>();
-        if (amount.signum() == 0) {
-            return out;
-        }
-        if (layers.isEmpty()) {
-            out.add(new Part(null, "cogs", determination.mapped("cogs"), amount, null));
-            return out;
-        }
-        Map<String, Layer> byId = new LinkedHashMap<>();
-        List<Receiver> receivers = new ArrayList<>();
-        for (Layer l : layers) {
-            byId.put(l.ledgerId(), l);
-            receivers.add(new Receiver(l.ledgerId(), l.value().max(BigDecimal.ONE.movePointLeft(6))));
-        }
-        for (AllocationCalculator.Share s : AllocationCalculator.allocate(amount, receivers, Rounding.LARGEST_REMAINDER,
-                2)) {
-            Layer layer = byId.get(s.key());
-            Distribution d = signed(lineage.distribute(layer.ledgerId(), s.amount().abs()), s.amount().signum());
-            lineage.byTarget(d).forEach((target, part) -> {
-                if (part.signum() != 0) {
-                    out.add(new Part(layer, target, accountFor(target), part, d));
-                }
-            });
-        }
-        return out;
+        return spreadFollowing(amount, layers);
     }
 
     /** Σ per account of the parts (positive = debit). */
@@ -165,14 +147,15 @@ public class LineageCapitalisation {
             String journalEntryId, String note) {
         Map<Distribution, String> done = new IdentityHashMap<>();
         Map<Part, String> out = new IdentityHashMap<>();
-        Map<Followed, Boolean> followedDone = new IdentityHashMap<>();
+        Map<Followed, String> followedDone = new IdentityHashMap<>();
         for (Part p : parts) {
             if (p.followed() != null) {
-                if (followedDone.put(p.followed(), Boolean.TRUE) == null) {
+                if (!followedDone.containsKey(p.followed())) {
                     List<String> ids = follower.record(p.followed(), adjustmentType, sourceType, sourceId,
                             journalEntryId, Mode.ADJUNCT, note);
-                    out.put(p, ids.isEmpty() ? null : ids.getFirst());
+                    followedDone.put(p.followed(), ids.isEmpty() ? null : ids.getFirst());
                 }
+                out.put(p, followedDone.get(p.followed())); // every part of a layer share → its root adjustment
                 continue;
             }
             if (p.distribution() == null) {
@@ -208,16 +191,69 @@ public class LineageCapitalisation {
                     originalJournalEntryId, "price_difference", note);
         }
         lineage.closeAdjustments(sourceType, sourceId);
+        // a share parked for an unpaired or unfinished transfer leaves with its source (as a landed-cost voucher's does)
+        jdbc.sql("UPDATE \"LineageException\" SET status = 'resolved', resolution = 'source reversed', \"resolvedBy\" = ?,"
+                + " \"resolvedAt\" = now() WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ? AND"
+                + " status = 'open'").params(TenantContext.userId(), org(), sourceType, sourceId).update();
+    }
+
+    /**
+     * Review 2026-11-17 (ACR-9): refuse to undo a source once a share of it parked in a lineage exception was resolved
+     * (assigned or written off) — that share is no longer where the reversal would take it from.
+     */
+    public void assertNoResolvedExceptions(String sourceType, String sourceId) {
+        if (jdbc.sql("SELECT count(*) FROM \"LineageException\" WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND"
+                + " \"sourceId\" = ? AND status <> 'open'").params(org(), sourceType, sourceId).query(Long.class).single()
+                > 0) {
+            throw ApiException.badRequest("Part of this amount was resolved from a lineage exception; post a correcting"
+                    + " document instead");
+        }
     }
 
     /** Refuse when part of a source's adjunct was already released (call before reversing its journal). */
     public void assertUnreleased(String sourceType, String sourceId) {
+        assertNotCascaded(sourceType, sourceId);
+        assertNoResolvedExceptions(sourceType, sourceId);
         for (Map<String, Object> adj : open(sourceType, sourceId)) {
             if (SqlRows.dec(adj, "openAmount").compareTo(SqlRows.dec(adj, "onHandAmount")) != 0) {
                 throw ApiException.badRequest("Part of this amount was already released to cost of sales; post a"
                         + " correcting document instead");
             }
         }
+    }
+
+    /**
+     * Review 2026-11-17 (ACR-8): refuse to undo a source while a posted cost adjustment run has moved one of its WIP
+     * shares on to the finished order's output — the reversal would credit WIP a second time for an amount that is no
+     * longer in it. Reversing that run first puts the share back in WIP. (The landed-cost voucher reversal has the
+     * same check of its own.)
+     */
+    public void assertNotCascaded(String sourceType, String sourceId) {
+        String run = jdbc.sql("SELECT r.number FROM \"CostAdjustmentRunLine\" rl JOIN \"CostAdjustmentRun\" r ON r.id ="
+                + " rl.\"runId\" LEFT JOIN \"CostValueAdjustmentLine\" l ON l.id = rl.\"adjustmentLineId\" LEFT JOIN"
+                + " \"CostValueAdjustmentRelease\" x ON x.id = rl.\"releaseId\" JOIN \"CostValueAdjustment\" a ON a.id ="
+                + " coalesce(l.\"adjustmentId\", x.\"adjustmentId\") WHERE a.\"organizationId\" = ? AND a.\"sourceType\" = ?"
+                + " AND a.\"sourceId\" = ? AND a.\"reversedAt\" IS NULL AND rl.status = 'posted' ORDER BY r.\"createdAt\""
+                + " DESC LIMIT 1").params(org(), sourceType, sourceId).query(String.class).optional().orElse(null);
+        if (run != null) {
+            throw ApiException.badRequest("Part of this amount was cascaded from WIP by cost adjustment run " + run
+                    + "; reverse that run first");
+        }
+    }
+
+    /**
+     * Output receipt layers of a production order ({@code orderRef} = its id or code): the order's own receipts and
+     * those of its stage postings (ADR-S060) — where a late WIP share of a completed order is carried on to.
+     */
+    public List<Layer> orderOutputs(String orderRef) {
+        String code = jdbc.sql("SELECT \"orderCode\" FROM \"ProductionOrder\" WHERE \"organizationId\" = ? AND (id = ? OR"
+                + " \"orderCode\" = ?) LIMIT 1").params(org(), orderRef, orderRef).query(String.class).optional()
+                .orElse(orderRef);
+        List<Layer> layers = new ArrayList<>(receipts("production_order", List.of(code)));
+        layers.addAll(receipts("production_stage", jdbc.sql("SELECT p.id FROM \"ProductionStagePosting\" p JOIN"
+                + " \"ProductionOrder\" o ON o.id = p.\"orderId\" WHERE p.\"organizationId\" = ? AND o.\"orderCode\" = ?"
+                + " AND p.\"reversedAt\" IS NULL").params(org(), code).query(String.class).list()));
+        return layers;
     }
 
     private List<Map<String, Object>> open(String sourceType, String sourceId) {
@@ -234,12 +270,4 @@ public class LineageCapitalisation {
         };
     }
 
-    private static Distribution signed(Distribution d, int sign) {
-        if (sign >= 0) {
-            return d;
-        }
-        return new Distribution(d.negativeStock().negate(), d.consumed().stream().map(s -> new Share(s.ledgerId(),
-                s.moveType(), s.referenceType(), s.referenceId(), s.amount().negate())).toList(), d.onHand().negate(),
-                d.survival());
-    }
 }

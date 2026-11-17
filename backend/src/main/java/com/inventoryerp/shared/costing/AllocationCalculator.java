@@ -112,9 +112,14 @@ public final class AllocationCalculator {
 
     /**
      * Reciprocal (simultaneous) service-department costs: {@code T_i = D_i + Σ_j f_ji · T_j}, where {@code f_ji} is the
-     * fraction of service centre j's total that goes to service centre i. Fixed-point iteration (capped at 100
-     * rounds, converging to {@code 1e-9}); refused when the service centres allocate (almost) everything to each
-     * other, which has no solution.
+     * fraction of service centre j's total that goes to service centre i. Solved exactly, {@code (I − Fᵀ) · T = D} by
+     * Gaussian elimination with partial pivoting at 34 significant digits; refused when a service centre allocates
+     * (almost) everything to other service centres, which has no solution.
+     *
+     * <p>Review 2026-11-17 (ACR-7): this used to be a fixed-point iteration capped at 100 rounds. When service centres
+     * pass most of their cost to each other the iteration converges slowly (its error shrinks by the internal share
+     * each round: 0.99¹⁰⁰ still leaves a third of it), and the cap stopped it early without saying so — cost stayed in
+     * the service centres and the receivers were under-charged.
      *
      * @param direct    D_i per service centre
      * @param fractions f_ji: sender j → (receiver i → fraction); only service-centre receivers matter
@@ -122,34 +127,80 @@ public final class AllocationCalculator {
      */
     public static Map<String, BigDecimal> reciprocal(Map<String, BigDecimal> direct,
             Map<String, Map<String, BigDecimal>> fractions) {
-        Map<String, BigDecimal> t = new java.util.LinkedHashMap<>(direct);
         for (Map.Entry<String, Map<String, BigDecimal>> e : fractions.entrySet()) {
-            BigDecimal internal = e.getValue().entrySet().stream().filter(x -> direct.containsKey(x.getKey()))
-                    .map(Map.Entry::getValue).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal internal = e.getValue().entrySet().stream().filter(x -> direct.containsKey(x.getKey())
+                    && !x.getKey().equals(e.getKey())).map(Map.Entry::getValue).reduce(BigDecimal.ZERO,
+                    BigDecimal::add);
             if (internal.compareTo(new BigDecimal("0.999999")) > 0) {
                 throw ApiException.badRequest("Service cost centre " + e.getKey() + " allocates everything to other"
                         + " service centres; reciprocal allocation has no solution");
             }
         }
-        BigDecimal eps = new BigDecimal("1e-9");
-        for (int round = 0; round < 100; round++) {
-            Map<String, BigDecimal> next = new java.util.LinkedHashMap<>();
-            BigDecimal delta = BigDecimal.ZERO;
-            for (String i : direct.keySet()) {
-                BigDecimal v = direct.get(i);
-                for (Map.Entry<String, Map<String, BigDecimal>> j : fractions.entrySet()) {
-                    BigDecimal f = j.getValue().get(i);
-                    if (f != null && !j.getKey().equals(i)) {
-                        v = v.add(f.multiply(t.getOrDefault(j.getKey(), BigDecimal.ZERO), MC), MC);
-                    }
+        List<String> keys = new ArrayList<>(direct.keySet());
+        int n = keys.size();
+        Map<String, Integer> index = new java.util.HashMap<>();
+        for (int i = 0; i < n; i++) {
+            index.put(keys.get(i), i);
+        }
+        // Augmented matrix [I − Fᵀ | D]: row i is service centre i's equation.
+        BigDecimal[][] a = new BigDecimal[n][n + 1];
+        for (int i = 0; i < n; i++) {
+            for (int j = 0; j < n; j++) {
+                a[i][j] = i == j ? BigDecimal.ONE : BigDecimal.ZERO;
+            }
+            BigDecimal d = direct.get(keys.get(i));
+            a[i][n] = d == null ? BigDecimal.ZERO : d;
+        }
+        for (Map.Entry<String, Map<String, BigDecimal>> e : fractions.entrySet()) {
+            Integer j = index.get(e.getKey());
+            if (j == null) {
+                continue;
+            }
+            for (Map.Entry<String, BigDecimal> f : e.getValue().entrySet()) {
+                Integer i = index.get(f.getKey());
+                if (i != null && !i.equals(j) && f.getValue() != null) {
+                    a[i][j] = a[i][j].subtract(f.getValue(), MC);
                 }
-                delta = delta.max(v.subtract(t.get(i)).abs());
-                next.put(i, v);
             }
-            t = next;
-            if (delta.compareTo(eps) < 0) {
-                break;
+        }
+        BigDecimal singular = new BigDecimal("1e-12");
+        for (int col = 0; col < n; col++) {
+            int pivot = col;
+            for (int r = col + 1; r < n; r++) {
+                if (a[r][col].abs().compareTo(a[pivot][col].abs()) > 0) {
+                    pivot = r;
+                }
             }
+            if (a[pivot][col].abs().compareTo(singular) < 0) {
+                throw ApiException.badRequest("The service cost centres allocate all their cost among themselves;"
+                        + " reciprocal allocation has no solution");
+            }
+            if (pivot != col) {
+                BigDecimal[] tmp = a[pivot];
+                a[pivot] = a[col];
+                a[col] = tmp;
+            }
+            for (int r = col + 1; r < n; r++) {
+                if (a[r][col].signum() == 0) {
+                    continue;
+                }
+                BigDecimal factor = a[r][col].divide(a[col][col], MC);
+                for (int c = col; c <= n; c++) {
+                    a[r][c] = a[r][c].subtract(factor.multiply(a[col][c], MC), MC);
+                }
+            }
+        }
+        BigDecimal[] x = new BigDecimal[n];
+        for (int i = n - 1; i >= 0; i--) {
+            BigDecimal v = a[i][n];
+            for (int c = i + 1; c < n; c++) {
+                v = v.subtract(a[i][c].multiply(x[c], MC), MC);
+            }
+            x[i] = v.divide(a[i][i], MC);
+        }
+        Map<String, BigDecimal> t = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < n; i++) {
+            t.put(keys.get(i), x[i]);
         }
         return t;
     }

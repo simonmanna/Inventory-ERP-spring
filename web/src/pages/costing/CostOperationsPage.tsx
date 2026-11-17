@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/api-error';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { money } from '@/lib/format';
 import { notify } from '@/lib/notify';
@@ -30,11 +31,13 @@ function useList<T = Row>(key: string[], url: string, enabled = true) {
 function useAction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ url, body }: { url: string; body?: unknown }) => (await idempotentPost(url, body)).data as Row,
+    mutationFn: async ({ url, body }: { url: string; body?: unknown }) => (await idempotentPost<Row>(url, body)),
     onSuccess: () => {
       notify.success(tx('Saved'));
       void qc.invalidateQueries({ queryKey: ['cost-ops'] });
     },
+    // review 2026-11-17: a refused action (400/409) says why instead of failing silently
+    onError: (e) => notify.error(apiErrorMessage(e, tx('Failed'))),
   });
 }
 
@@ -67,7 +70,7 @@ export function CostOperationsPage() {
         </div>
       </div>
       {tab === 'absorption' && <Absorption period={period} canPost={has(PERMISSIONS.advancedCosting.post)} canManage={has(PERMISSIONS.advancedCosting.manage)} />}
-      {tab === 'quarry' && <Quarry period={period} />}
+      {tab === 'quarry' && <Quarry period={period} canPost={has(PERMISSIONS.quarryExtraction.post)} />}
       {tab === 'landed' && <Landed canPost={has(PERMISSIONS.landedCost.post)} />}
       {tab === 'distribution' && <Distribution period={period} canPost={has(PERMISSIONS.advancedCosting.post)} />}
     </div>
@@ -179,7 +182,8 @@ function Absorption({ period, canPost, canManage }: { period: { from: string; to
   );
 }
 
-function Quarry({ period }: { period: { from: string; to: string } }) {
+function Quarry({ period, canPost }: { period: { from: string; to: string }; canPost: boolean }) {
+  const action = useAction();
   const { data: rollForward } = useList<{ rows: Row[] }>(['rehab', period.from, period.to], `/quarry/rehab-roll-forward?from=${period.from}&to=${period.to}`);
   const { data: assets = [] } = useList<Row[]>(['stripping'], '/quarry/stripping-assets');
   const { data: kpis } = useList<{ rows: Row[]; costPerTonne: string | null }>(['kpis', period.from, period.to], `/quarry/cost-kpis?from=${period.from}&to=${period.to}`);
@@ -189,12 +193,18 @@ function Quarry({ period }: { period: { from: string; to: string } }) {
         <CardHeader><CardTitle>{tx('Rehabilitation')}</CardTitle></CardHeader>
         <CardContent>
           <Table>
-            <TableHeader><TableRow><TableHead>{tx('Code')}</TableHead><TableHead>{tx('Opening')}</TableHead><TableHead>{tx('Initial')}</TableHead><TableHead>{tx('Production')}</TableHead><TableHead>{tx('Unwind')}</TableHead><TableHead>{tx('Remeasurement')}</TableHead><TableHead>{tx('Utilisation')}</TableHead><TableHead>{tx('Closing')}</TableHead><TableHead>{tx('Difference')}</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>{tx('Code')}</TableHead><TableHead>{tx('Opening')}</TableHead><TableHead>{tx('Initial')}</TableHead><TableHead>{tx('Production')}</TableHead><TableHead>{tx('Unwind')}</TableHead><TableHead>{tx('Remeasurement')}</TableHead><TableHead>{tx('Utilisation')}</TableHead><TableHead>{tx('Closing')}</TableHead><TableHead>{tx('Difference')}</TableHead>{canPost && <TableHead />}</TableRow></TableHeader>
             <TableBody>
               {(rollForward?.rows ?? []).map((r) => (
                 <TableRow key={s(r.obligationId)}>
                   <TableCell>{s(r.code)} · {s(r.zoneCode)}</TableCell>
                   {['opening', 'initial', 'production', 'unwind', 'remeasurement', 'utilisation', 'closing', 'difference'].map((k) => <TableCell key={k}>{money(s(r[k]))}</TableCell>)}
+                  {canPost && (
+                    <TableCell className="text-right">
+                      {/* review 2026-11-17: the unwinding the cost close asks for (once per period; ACR-15) */}
+                      <Button size="sm" variant="outline" disabled={action.isPending} title={tx('Post the unwinding of the discount for the period')} onClick={() => action.mutate({ url: `/quarry/rehab-obligations/${s(r.obligationId)}/movements`, body: { type: 'unwind', from: period.from, date: period.to } })}>{tx('Unwind for period')}</Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -205,10 +215,18 @@ function Quarry({ period }: { period: { from: string; to: string } }) {
         <CardHeader><CardTitle>{tx('Stripping assets')}</CardTitle></CardHeader>
         <CardContent>
           <Table>
-            <TableHeader><TableRow><TableHead>{tx('Code')}</TableHead><TableHead>{tx('Status')}</TableHead><TableHead>{tx('Carrying amount')}</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>{tx('Code')}</TableHead><TableHead>{tx('Status')}</TableHead><TableHead>{tx('Carrying amount')}</TableHead>{canPost && <TableHead />}</TableRow></TableHeader>
             <TableBody>
               {assets.map((a) => (
-                <TableRow key={s(a.id)}><TableCell>{s(a.code)} · {s(a.zoneCode)}</TableCell><TableCell><Badge variant="secondary">{s(a.status)}</Badge></TableCell><TableCell>{money(s(a.carrying))}</TableCell></TableRow>
+                <TableRow key={s(a.id)}>
+                  <TableCell>{s(a.code)} · {s(a.zoneCode)}</TableCell><TableCell><Badge variant="secondary">{s(a.status)}</Badge></TableCell><TableCell>{money(s(a.carrying))}</TableCell>
+                  {canPost && (
+                    <TableCell className="text-right">
+                      {/* review 2026-11-17: the amortisation the cost close asks for (by ore extracted in the period) */}
+                      {a.status === 'approved' && <Button size="sm" variant="outline" disabled={action.isPending} title={tx('Amortise by the ore extracted in the period')} onClick={() => action.mutate({ url: `/quarry/stripping-assets/${s(a.id)}/amortise`, body: period })}>{tx('Amortise for period')}</Button>}
+                    </TableCell>
+                  )}
+                </TableRow>
               ))}
             </TableBody>
           </Table>

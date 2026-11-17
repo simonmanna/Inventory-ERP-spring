@@ -2,6 +2,7 @@ package com.inventoryerp.manufacturing;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -125,5 +126,61 @@ class ShopFloorIT extends MfgTestSupport {
             ok(204, "DELETE", "/manufacturing/scrap-reasons/" + r1.get("id").asString(), null);
             ok(204, "DELETE", "/manufacturing/scrap-reasons/" + r2.get("id").asString(), null);
         }
+    }
+
+    static BigDecimal num(JsonNode n) {
+        return new BigDecimal(n.asString());
+    }
+
+    @Test
+    @DisplayName("review 2026-11-17: an abnormal rework expenses its extra cost; the units keep what they carried")
+    void abnormalRework() {
+        String flour = product("RWFLOUR");
+        String tart = product("RWTART");
+        stockIn(bakery, flour, 20, 10);
+        String bomId = bom(tart, flour, 10, 2, Map.of("qcRequired", true));
+        String id = started(bomId).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/complete", Map.of("qtyProduced", 10));
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/qc", Map.of("passedQty", 7, "reworkQty", 3));
+        assertThat(as("POST", "/manufacturing/production-orders/" + id + "/rework", Map.of("treatment", "later"))
+                .status()).isEqualTo(400);
+        JsonNode rework = ok(201, "POST", "/manufacturing/production-orders/" + id + "/rework", Map.of("treatment",
+                "abnormal", "materials", List.of(Map.of("productId", flour, "quantity", 1))));
+        assertThat(rework.get("reworkTreatment").asString()).isEqualTo("abnormal");
+        String rid = rework.get("id").asString();
+        stockIn(rework.get("locationId").asString(), flour, 1, 10);
+        String lossAccount = mapped("stock_adjustment_expense");
+        BigDecimal wip0 = balance(wipAccount);
+        BigDecimal loss0 = balance(lossAccount);
+        ok(201, "POST", "/manufacturing/production-orders/" + rid + "/confirm", null);
+        ok(201, "POST", "/manufacturing/production-orders/" + rid + "/start", Map.of());
+        JsonNode done = ok(201, "POST", "/manufacturing/production-orders/" + rid + "/complete", Map.of("qtyProduced",
+                3));
+        // the 3 tarts come back at the 2 a unit they carried; the extra flour (10) is a loss of the period
+        assertThat(num(done.get("reworkLoss"))).isEqualByComparingTo("10");
+        assertThat(num(done.get("outputUnitCost"))).isEqualByComparingTo("2");
+        assertThat(balance(lossAccount).subtract(loss0)).isEqualByComparingTo("10");
+        assertThat(balance(wipAccount).subtract(wip0)).isEqualByComparingTo("0");
+
+        // reversing the rework order takes the loss back with it
+        ok(201, "POST", "/manufacturing/production-orders/" + rid + "/reverse", Map.of("reason", "Test reversal"));
+        assertThat(balance(lossAccount).subtract(loss0)).isEqualByComparingTo("0");
+        assertThat(balance(wipAccount).subtract(wip0)).isEqualByComparingTo("0");
+
+        // a normal rework (the default) keeps its cost in the units
+        String id2 = started(bomId).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id2 + "/complete", Map.of("qtyProduced", 10));
+        ok(201, "POST", "/manufacturing/production-orders/" + id2 + "/qc", Map.of("passedQty", 8, "reworkQty", 2));
+        JsonNode normal = ok(201, "POST", "/manufacturing/production-orders/" + id2 + "/rework", Map.of("materials",
+                List.of(Map.of("productId", flour, "quantity", 1))));
+        assertThat(normal.get("reworkTreatment").asString()).isEqualTo("normal");
+        String nid = normal.get("id").asString();
+        stockIn(normal.get("locationId").asString(), flour, 1, 10);
+        ok(201, "POST", "/manufacturing/production-orders/" + nid + "/confirm", null);
+        ok(201, "POST", "/manufacturing/production-orders/" + nid + "/start", Map.of());
+        JsonNode kept = ok(201, "POST", "/manufacturing/production-orders/" + nid + "/complete", Map.of("qtyProduced",
+                2));
+        assertThat(num(kept.get("reworkLoss"))).isZero();
+        assertThat(num(kept.get("outputUnitCost"))).isEqualByComparingTo("7"); // (2 × 2 + 10) / 2
     }
 }

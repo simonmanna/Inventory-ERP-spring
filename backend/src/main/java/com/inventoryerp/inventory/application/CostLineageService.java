@@ -433,6 +433,30 @@ public class CostLineageService {
                     byAccountDebit.merge(adjunctAccount, t.getValue().negate(), BigDecimal::add);
                 }
             }
+            // Review 2026-11-17 (ACR-14): where each part went, per target (and per order for WIP) — an accrual clearing
+            // takes the released part of its estimate back out of these accounts, and the cost adjustment run carries a
+            // share released into an order's WIP on to the order's output once it completes.
+            Map<List<String>, BigDecimal> releases = new LinkedHashMap<>();
+            if (poolQty.signum() <= 0) {
+                releases.put(java.util.Arrays.asList("cogs", null), openAmount);
+            } else {
+                for (Share s : d.consumed()) {
+                    String t = target(s);
+                    if (!"transfer".equals(t) && s.amount().signum() != 0) {
+                        releases.merge(java.util.Arrays.asList(t, "wip".equals(t) ? wipRef(t, s.referenceId()) : null),
+                                s.amount(), BigDecimal::add);
+                    }
+                }
+            }
+            for (Map.Entry<List<String>, BigDecimal> r : releases.entrySet()) {
+                String account = consumptionAccount(r.getKey().get(0));
+                if (r.getValue().signum() != 0 && !account.equals(adjunctAccount)) {
+                    jdbc.sql("INSERT INTO \"CostValueAdjustmentRelease\" (id, \"organizationId\", \"adjustmentId\", target,"
+                            + " \"targetRef\", \"accountId\", amount, \"sourceType\", \"sourceId\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " 'cost_release', ?)").params(UUID.randomUUID().toString(), org(), a.get("id"),
+                            r.getKey().get(0), r.getKey().get(1), account, r.getValue(), number).update();
+                }
+            }
             BigDecimal transferred = targets.getOrDefault("transfer", BigDecimal.ZERO);
             BigDecimal releasedHere = out.subtract(transferred);
             recordValueOnly(productId, variantId, locationId, null, releasedHere.negate(), "cost_release", number,

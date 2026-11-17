@@ -11,6 +11,7 @@ import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.inventory.application.StockPostingService;
@@ -138,6 +139,7 @@ public class LandedCostVoucherService {
     private final AuditService audit;
     private final StockPostingService stockPosting;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final AccountResolverService accounts;
     private final LandedCostLayers layers;
@@ -156,12 +158,13 @@ public class LandedCostVoucherService {
             AccountResolverService accounts, LandedCostLayers layers, CostComponentService components,
             ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm,
             CostLineageService lineage, AccountingPolicyService policies, SettingResolverService settings,
-            ApprovalLimitService limits, LandedCostCustomsService customs) {
+            ApprovalLimitService limits, LandedCostCustomsService customs, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
         this.stockPosting = stockPosting;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.accounts = accounts;
         this.layers = layers;
@@ -622,7 +625,7 @@ public class LandedCostVoucherService {
             Instant now = Instant.now();
             String reversalId = null;
             if (lc.get("journalEntryId") != null) {
-                Map<String, Object> rev = posting.reverse((String) lc.get("journalEntryId"), now,
+                Map<String, Object> rev = reversals.reverseAt((String) lc.get("journalEntryId"), now,
                         "Reversal of landed cost " + lc.get("code"));
                 reversalId = (String) rev.get("id");
             }
@@ -669,7 +672,7 @@ public class LandedCostVoucherService {
         Map<String, Map<String, BigDecimal>> unwound = layers.reverseLineage(sourceType, code, original, allocations);
         String reversalId = null;
         if (original != null) {
-            reversalId = (String) posting.reverse(original, now, "Reversal of landed cost " + code).get("id");
+            reversalId = (String) reversals.reverseAt(original, now, "Reversal of landed cost " + code).get("id");
         }
         List<Line> reclass = new ArrayList<>();
         String cc = (String) lc.get("costCenterId");

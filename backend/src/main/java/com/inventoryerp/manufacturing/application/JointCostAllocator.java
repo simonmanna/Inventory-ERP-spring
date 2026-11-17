@@ -16,8 +16,10 @@ import java.util.Map;
  *       {@code carve_pct} of the joint cost.</li>
  *   <li><b>The rest</b> is shared by the {@code allocated} outputs (main, co-products, by-products set to allocated)
  *       by the rule's method: {@code quantity}, {@code weight} (quantity × weight per unit), {@code market_value}
- *       (quantity × unit market value) or {@code fixed_pct} (the outputs' percentages; the main output takes
- *       100 − Σ others when it has none). A basis that sums to zero falls back to quantity, then to the main
+ *       (quantity × unit market value), {@code net_realisable_value} (review 2026-11-17: quantity × (unit sales
+ *       value − the separable costs per unit still to come after the split-off, never below zero), the NRV method for
+ *       joint products that are processed further before they can be sold) or {@code fixed_pct} (the outputs'
+ *       percentages; the main output takes 100 − Σ others when it has none). A basis that sums to zero falls back to quantity, then to the main
  *       output.</li>
  *   <li><b>Rounding</b>: every share is rounded down to {@code scale} and the remaining units go to the largest
  *       remainders (ties: list order), so the shares always sum <em>exactly</em> to the joint cost.</li>
@@ -30,18 +32,26 @@ public final class JointCostAllocator {
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     /** Allocation methods. */
-    public static final List<String> METHODS = List.of("quantity", "weight", "market_value", "fixed_pct");
+    public static final List<String> METHODS = List.of("quantity", "weight", "market_value", "fixed_pct",
+            "net_realisable_value");
 
     /**
      * One output to value. {@code valuation}: allocated | nrv | zero | carve_pct. {@code weightPerUnit},
-     * {@code marketValue}, {@code fixedPct} and {@code nrvUnitValue} may be null when the method does not need them.
+     * {@code marketValue}, {@code fixedPct}, {@code nrvUnitValue} and {@code separableCostPerUnit} may be null when the
+     * method does not need them.
      */
     public record Share(String key, String role, BigDecimal quantity, String valuation, BigDecimal weightPerUnit,
-            BigDecimal marketValue, BigDecimal fixedPct, BigDecimal nrvUnitValue) {
+            BigDecimal marketValue, BigDecimal fixedPct, BigDecimal nrvUnitValue, BigDecimal separableCostPerUnit) {
 
         public Share {
             quantity = quantity == null ? BigDecimal.ZERO : quantity;
             valuation = valuation == null ? "allocated" : valuation;
+        }
+
+        /** An output without separable costs. */
+        public Share(String key, String role, BigDecimal quantity, String valuation, BigDecimal weightPerUnit,
+                BigDecimal marketValue, BigDecimal fixedPct, BigDecimal nrvUnitValue) {
+            this(key, role, quantity, valuation, weightPerUnit, marketValue, fixedPct, nrvUnitValue, null);
         }
     }
 
@@ -164,6 +174,8 @@ public final class JointCostAllocator {
             BigDecimal b = switch (method) {
                 case "weight" -> s.quantity().multiply(s.weightPerUnit() == null ? BigDecimal.ONE : s.weightPerUnit());
                 case "market_value" -> s.quantity().multiply(nz(s.marketValue()));
+                case "net_realisable_value" -> s.quantity().multiply(nz(s.marketValue()).subtract(nz(
+                        s.separableCostPerUnit())).max(BigDecimal.ZERO));
                 case "fixed_pct" -> "main".equals(s.role()) && !mainHasPct
                         ? HUNDRED.subtract(othersPct).max(BigDecimal.ZERO) : nz(s.fixedPct());
                 default -> s.quantity();

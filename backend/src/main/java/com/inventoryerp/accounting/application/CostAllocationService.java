@@ -40,13 +40,15 @@ public class CostAllocationService {
 
     private final JdbcClient jdbc;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final CostCenterRulesService rules;
     private final AuditService audit;
 
     public CostAllocationService(JdbcClient jdbc, PostingService posting, CostCenterRulesService rules,
-            AuditService audit) {
+            AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.posting = posting;
+        this.reversals = reversals;
         this.rules = rules;
         this.audit = audit;
     }
@@ -173,7 +175,7 @@ public class CostAllocationService {
         if (!"posted".equals(run.get("status"))) {
             throw ApiException.badRequest("Only a posted allocation run can be reversed");
         }
-        posting.reverse((String) run.get("journalEntryId"), null, "Reversal of cost allocation run");
+        reversals.reverseId((String) run.get("journalEntryId"), "Reversal of cost allocation run");
         jdbc.sql("UPDATE \"CostAllocationRun\" SET status = 'reversed', \"reversedAt\" = CURRENT_TIMESTAMP,"
                 + " \"reversedBy\" = ? WHERE id = ? AND \"organizationId\" = ?").params(TenantContext.userId(), runId,
                 org()).update();

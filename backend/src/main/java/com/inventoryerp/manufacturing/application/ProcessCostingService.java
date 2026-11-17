@@ -224,6 +224,18 @@ public class ProcessCostingService {
     @Transactional
     public Map<String, Object> updateUnits(String id, UnitsInput in) {
         Map<String, Object> p = lockOpen(id);
+        // Review 2026-11-17 (ACR-11; deviation): an opening carried forward from a closed period is the GL's WIP — it
+        // changes only through the documents that move it, never by an edit (an edited opening would leave the
+        // difference in WIP with no owner, or credit WIP for cost that was never there).
+        boolean openingEdited = in.openingUnits() != null || in.openingMaterialPct() != null
+                || in.openingConversionPct() != null || in.openingMaterialCost() != null
+                || in.openingConversionCost() != null || in.openingTransferredInCost() != null;
+        if (openingEdited && jdbc.sql("SELECT count(*) FROM \"ProcessCostPeriod\" WHERE \"organizationId\" = ? AND"
+                + " \"processId\" = ? AND status = 'closed' AND \"periodFrom\" < ?").params(org(), p.get("processId"),
+                p.get("periodFrom")).query(Long.class).single() > 0) {
+            throw ApiException.badRequest("The opening work in process was carried forward from the previous closed"
+                    + " period and cannot be edited");
+        }
         jdbc.sql("UPDATE \"ProcessCostPeriod\" SET \"unitsStarted\" = COALESCE(?, \"unitsStarted\"), \"unitsCompleted\" ="
                         + " COALESCE(?, \"unitsCompleted\"), \"closingUnits\" = COALESCE(?, \"closingUnits\"),"
                         + " \"closingMaterialPct\" = COALESCE(?, \"closingMaterialPct\"), \"closingConversionPct\" ="
@@ -271,6 +283,18 @@ public class ProcessCostingService {
     @Transactional
     public Map<String, Object> addCost(String periodId, String element, BigDecimal amount, String creditAccountId,
             String description) {
+        return addCost(periodId, element, amount, creditAccountId, description, null);
+    }
+
+    /**
+     * As {@link #addCost(String, String, BigDecimal, String, String)}; without {@code creditAccountId} the cost is
+     * recorded only, and (review 2026-11-17, ACR-11; deviation) must name the posted journal entry that already put it
+     * in WIP — by id or entry number. The entry's WIP debit not yet recorded on a process period must cover it: a
+     * close credits WIP for every recorded cost, so a cost nobody debited would turn WIP into a credit.
+     */
+    @Transactional
+    public Map<String, Object> addCost(String periodId, String element, BigDecimal amount, String creditAccountId,
+            String description, String journalEntryRef) {
         Map<String, Object> p = lockOpen(periodId);
         if (!List.of("labour", "overhead", "material").contains(element)) {
             throw ApiException.badRequest("element must be one of the following values: labour, overhead, material");
@@ -279,7 +303,10 @@ public class ProcessCostingService {
             throw ApiException.badRequest("Amount must be positive");
         }
         String je = null;
-        if (blank(creditAccountId) != null) {
+        String backing = null;
+        if (blank(creditAccountId) == null) {
+            backing = backingEntry(journalEntryRef, amount);
+        } else {
             String label = "Process " + p.get("processCode") + " · " + element + (description != null ? " · "
                     + description : "");
             Map<String, Object> posted = posting.post(PostingRequest.of("INV", postingDate(p), label, "process_costing",
@@ -290,8 +317,41 @@ public class ProcessCostingService {
             je = posted == null ? null : (String) posted.get("id");
         }
         insertEntry(periodId, element, amount.setScale(6, RoundingMode.HALF_UP), null, null, null,
-                je == null ? "recorded" : "journal", je, description, je);
+                je == null ? "recorded" : "journal", je != null ? je : backing, description, je != null ? je : backing);
         return period(periodId);
+    }
+
+    /** The posted journal entry whose unrecorded WIP debit covers a recorded-only cost (locked against a race). */
+    private String backingEntry(String ref, BigDecimal amount) {
+        if (blank(ref) == null) {
+            throw ApiException.badRequest("A cost without a credit account must name the posted journal entry that"
+                    + " already put it in work in process (journalEntryId)");
+        }
+        Map<String, Object> e = SqlRows.one(jdbc.sql("SELECT id, \"entryNumber\", status, \"sourceType\" FROM \"JournalEntry\" WHERE"
+                + " \"organizationId\" = ? AND (id = ? OR \"entryNumber\" = ?) FOR UPDATE").params(org(), ref.trim(),
+                ref.trim()));
+        if (e == null) {
+            throw ApiException.badRequest("Journal entry " + ref.trim() + " not found");
+        }
+        if (!"posted".equals(String.valueOf(e.get("status")))) {
+            throw ApiException.badRequest("Journal entry " + e.get("entryNumber") + " is not posted");
+        }
+        if ("process_costing".equals(e.get("sourceType"))) {
+            throw ApiException.badRequest("Journal entry " + e.get("entryNumber") + " was posted by process costing; its"
+                    + " cost is already on a process period");
+        }
+        String id = (String) e.get("id");
+        BigDecimal debit = jdbc.sql("SELECT coalesce(sum(\"baseDebit\" - \"baseCredit\"), 0) FROM \"JournalLine\" WHERE"
+                + " \"journalEntryId\" = ? AND \"accountId\" = ?").params(id, stockPosting.wipAccount())
+                .query(BigDecimal.class).single();
+        BigDecimal recorded = jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"ProcessCostEntry\" WHERE \"organizationId\" ="
+                + " ? AND \"journalEntryId\" = ?").params(org(), id).query(BigDecimal.class).single();
+        if (debit.subtract(recorded).compareTo(amount) < 0) {
+            throw ApiException.badRequest("Journal entry " + e.get("entryNumber") + " put " + JsNumbers.dec(debit.max(
+                    BigDecimal.ZERO)) + " into work in process and " + JsNumbers.dec(recorded) + " of it is already"
+                    + " recorded on process periods; it cannot carry " + JsNumbers.dec(amount) + " more");
+        }
+        return id;
     }
 
     /** What closing would compute now (no writes). */
@@ -313,6 +373,14 @@ public class ProcessCostingService {
         String source = code + ":" + periodId;
         BigDecimal completed = r.completedCost();
         BigDecimal unitsCompleted = SqlRows.dec(full, "unitsCompleted");
+        // Review 2026-11-17 (ACR-11; deviation): cost with no completed and no closing units has nothing to carry it —
+        // closing would leave it in GL WIP with no owner in any later period.
+        if (unitsCompleted.signum() == 0 && SqlRows.dec(full, "closingUnits").signum() == 0
+                && completed.signum() != 0) {
+            throw ApiException.badRequest("Process " + code + " has " + JsNumbers.dec(completed) + " of cost in the"
+                    + " period but no completed or closing units to carry it: record the units still in process at the"
+                    + " period end (closing units), or the units lost (abnormal loss), before closing");
+        }
         List<String> journals = new ArrayList<>();
         String wip = stockPosting.wipAccount();
 

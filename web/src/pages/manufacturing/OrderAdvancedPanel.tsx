@@ -17,7 +17,16 @@ const errMsg = (e: any) => {
 };
 
 /** ADR-S006 order tools: material availability + substitutes, finite scheduling, rework, standard-cost variances. */
-export function OrderAdvancedPanel({ order }: { order: { id: string; status: string; standardCostId?: string | null } }) {
+export function OrderAdvancedPanel({ order }: {
+  order: {
+    id: string;
+    status: string;
+    standardCostId?: string | null;
+    orderKind?: string | null;
+    reworkTreatment?: 'normal' | 'abnormal' | null;
+    reworkLoss?: string | number | null;
+  };
+}) {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canSchedule = hasPermission(PERMISSIONS.workOrder.manage) && !['completed', 'cancelled'].includes(order.status);
   const canRework = hasPermission(PERMISSIONS.productionOrder.qc) && order.status === 'qc_hold';
@@ -27,6 +36,7 @@ export function OrderAdvancedPanel({ order }: { order: { id: string; status: str
   const schedule = useScheduleOrder();
   const rework = useRework();
   const [startAt, setStartAt] = useState('');
+  const [treatment, setTreatment] = useState<'normal' | 'abnormal'>('normal');
 
   return (
     <>
@@ -86,9 +96,18 @@ export function OrderAdvancedPanel({ order }: { order: { id: string; status: str
               </>
             )}
             {canRework && (
+              <select className="h-9 rounded-md border bg-background px-2 text-sm" value={treatment}
+                aria-label={tx('Rework cost treatment')}
+                title={tx('Normal: the rework is part of the process, so its cost stays in the units. Abnormal: the units keep the cost they had and the extra cost of the rework is a loss of the period.')}
+                onChange={(e) => setTreatment(e.target.value as 'normal' | 'abnormal')}>
+                <option value="normal">{tx('Normal rework (cost stays in the units)')}</option>
+                <option value="abnormal">{tx('Abnormal rework (extra cost expensed)')}</option>
+              </select>
+            )}
+            {canRework && (
               <Button variant="outline" disabled={rework.isPending} onClick={async () => {
                 try {
-                  const r = await rework.mutateAsync({ orderId: order.id });
+                  const r = await rework.mutateAsync({ orderId: order.id, body: { treatment } });
                   notify.success(tx('Rework order {{code}} created.', { code: r.orderCode }));
                 } catch (e: any) {
                   notify.error(tx('Failed'), errMsg(e));
@@ -96,6 +115,22 @@ export function OrderAdvancedPanel({ order }: { order: { id: string; status: str
               }}>
                 <RotateCcw className="mr-2 h-4 w-4" /> {tx('Create rework order')}
               </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {order.orderKind === 'rework' && order.reworkTreatment && (
+        <Card>
+          <CardHeader><CardTitle>{tx('Rework costing')}</CardTitle></CardHeader>
+          <CardContent className="space-y-1 text-sm">
+            <p>
+              {order.reworkTreatment === 'abnormal'
+                ? tx('Abnormal rework: the units keep the cost they carried; the extra material and conversion cost is expensed.')
+                : tx('Normal rework: the cost of the rework stays in the reworked units.')}
+            </p>
+            {Number(order.reworkLoss ?? 0) > 0 && (
+              <p className="text-muted-foreground">{tx('Expensed as an abnormal loss')}: {Number(order.reworkLoss).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             )}
           </CardContent>
         </Card>

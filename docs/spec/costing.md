@@ -92,3 +92,65 @@ Design: `docs/roadmap/cost-management-plan.md` (rev 3). Phases CM-0 … CM-11; A
   (unit cost, CM1–CM3, margin, break-even; fixed pool re-spread exactly), results beside ACTUAL and STANDARD of a
   profitability build; ArchUnit + isolation test prove no ledger writes. Tests: `SimulationEngineTest` (3),
   `SimulationIsolationTest`, `SimulationIsolationIT` (1).
+
+## Review 2026-11-17 — accounting and costing fixes
+
+Owner-approved 2026-11-17 ("code & develop the above fixes & enhancements"). Audit and outcome per finding:
+[`docs/audits/2026-11-17-accounting-costing-review.md`](../audits/2026-11-17-accounting-costing-review.md).
+Migrations `V530`–`V534`. Code markers: `Review 2026-11-17 (ACR-n)`.
+
+### New routes
+
+| Verb | Path | Permission |
+|---|---|---|
+| GET | `/inventory/cost-explanation?productId&locationId&limit` (limit 1–500, default 100) | `inventory_valuation:read` |
+| POST | `/pos/posting-monitor/jobs/:id/abandon` (`{note}`, ≥ 10 characters; failed jobs only) | `pos:override` |
+
+New settings:
+
+- `costing.production.requireMaterialsOnHand` (bool, default `false`).
+- `procurement.billWithoutReceipt` (`auto_receive` (default) | `block`).
+
+### Deviations
+
+These deviations come from the review. The accounting and inventory items are recorded here because
+`accounting.md` and `inventory.md` are being changed on `phase/acc-erp-controls`; move them there when the two
+branches meet.
+
+| # | Where | Before (Nest / earlier Spring) | Now |
+|---|---|---|---|
+| ACR-1 | `POST /fiscal-periods/:id/reopen` | took the latest `period_close` entry by date with no status filter, so a second reopen could pick the already-reversed one | the period's own posted closing entry (`sourceId`); the date window is a fallback for old entries |
+| ACR-6 | every costing engine's reverse (allocation, cycles, absorption settlement, cost adjustment, material ledger, distribution, quarry, revaluation, landed cost voucher, project cost / overhead / contract / capital project, standard-cost variances) | reversed at `now()` and skipped the CM-10 costing lock | dated per D-B6: the original date while its period is open, else today. A locked costing period moves the reversal to today. Today being locked refuses it with the guard's message. Postings take the shared side of the `costing-close:<org>` advisory lock |
+| ACR-7 | `POST /costing/allocation-cycles/:id/runs` | overlapping periods allocated the same cost twice | 409 `This cycle already has a posted run for <from> – <to>; reverse it first` / `This cycle's posted run <no> (<from> – <to>) overlaps <from> – <to>; reverse it first` |
+| ACR-7 | reciprocal allocation (`AllocationCalculator`) | fixed-point iteration capped at 100 rounds (inexact for strongly reciprocal centres) | exact solution (Gaussian elimination). A closed loop without an outlet: 400 `The service cost centres allocate all their cost among themselves; reciprocal allocation has no solution` |
+| ACR-8 / ACR-14 | cost adjustment runs, landed-cost accrual clearing (V531) | a run reversed after a clearing, or a clearing after a run, credited WIP twice. A clearing always credited cost of sales | cleared amounts are kept per WIP share and releases per target. A clearing takes the released part back from where it went (COGS, an order's WIP, scrap, write-off). Refused while a dependent run or clearing exists: `Part of this amount was cascaded from WIP by cost adjustment run <no>; reverse that run first`, `A landed-cost accrual clearing has since taken part of the cost carried to <target> back out; post a correcting document instead`, `Part of this amount was resolved from a lineage exception; post a correcting document instead` |
+| ACR-9 | late costs (absorption settlement, lineage capitalisation) on goods moved to another warehouse | stayed on the source pool's 1396 adjunct | follow the goods: on hand at the destination → that pool's adjunct; consumed there → its target |
+| ACR-12 | absorption settlement | the absorption of a cancelled single-step order blocked the work centre's settlement for ever | not counted (it is not in the books). A cancelled multi-stage order's posted stage absorption is settled like any other |
+| ACR-15 | quarry stripping amortisation and provision unwinding (CM-5) | could be run twice for one period | 409 `Stripping asset <code> is already amortised for <from> – <to>; reverse that amortisation first` / `The provision <code> is already unwound for <from> – <to>; reverse that unwinding first` |
+| ACR-16 | cost close gates 2, 4, 5 | passed when any one settlement / NRV review / quarry posting existed | every work centre with overhead to settle, every item still written down to NRV (re-assessed in the period, IAS 2.33), and every provision / stripping asset with something to post; the gate lists what is missing |
+| ACR-17 | period close (gate and checklist) | every pending stock document of the organisation blocked the close | only those raised up to the period end |
+| V532 | `ProfitabilityFact.amount`, `ProfitabilityReconLine.amount` | numeric(20,2): a 0.01 false difference on ledgers with sub-cent postings | numeric(20,6); the run's reconciliation is exact. Fact rows also carry `segmentName` (product, project, branch, cost centre or customer name; falls back to the id) |
+| Cost explanation | `GET /inventory/cost-explanation` | — (extension) | read-only explanation of a carrying cost from the stock sub-ledger. Messages: `productId should not be empty`, `limit must not be less than 1`, `limit must be an integer number`, 404 `Product not found` / `Location not found` |
+
+Production, POS, purchasing and bill entries are in [manufacturing](manufacturing.md#deviations),
+[pos](pos.md#deviations), [procurement](procurement.md#deviations) and [invoicing](invoicing.md#deviations).
+
+### Web
+
+New screens:
+
+- `/inventory/cost-explanation` ("Why this cost?"; `inventoryValuation.read`).
+- `/costing/close` (`costingClose.read`).
+- `/costing/profitability` (`profitability.read`; includes the simulation).
+- `/procurement/grni` (`goodsReceipt.read`).
+
+Additions to existing screens:
+
+- Posting Monitor: abandon a job.
+- Cost operations: quarry unwind / amortise for a period.
+- Process costing: journal-entry reference.
+- Manufacturing order cost: the variance breakdown and reconciliation.
+- BOM stage set-up and the default allocation rule: the NRV method.
+- Production order: the rework treatment.
+
+Checked with `pnpm web:typecheck`, lint and the i18n check. Not exercised in a browser.

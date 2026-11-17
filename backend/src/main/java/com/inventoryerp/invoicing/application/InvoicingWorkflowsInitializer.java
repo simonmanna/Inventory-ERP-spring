@@ -63,6 +63,13 @@ public class InvoicingWorkflowsInitializer {
         this.fxRates = fxRates;
     }
 
+    private com.inventoryerp.kernel.settings.SettingResolverService settings;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSettings(com.inventoryerp.kernel.settings.SettingResolverService settings) {
+        this.settings = settings;
+    }
+
     public InvoicingWorkflowsInitializer(WorkflowRegistry registry, JdbcClient jdbc, PostingService posting,
             StockService stock, DocumentBuilderService builder, AccountDeterminationService determination,
             JournalService journals, BillReceiptMatcherService matcher) {
@@ -335,6 +342,10 @@ public class InvoicingWorkflowsInitializer {
                                         "Void of " + doc.get("documentNumber"));
                             }
                             matcher.releaseForBill(ctx.organizationId(), (String) doc.get("id"));
+                            // ACR-2: PO payments applied to the bill go back to their purchase orders
+                            jdbc.sql("UPDATE \"PurchaseOrderBillApplication\" SET \"releasedAt\" = " + NOW + " WHERE"
+                                    + " \"organizationId\" = ? AND \"vendorBillId\" = ? AND \"releasedAt\" IS NULL")
+                                    .params(ctx.organizationId(), doc.get("id")).update();
                             returnBillReceivedStock((String) doc.get("id"), (String) doc.get("documentNumber"),
                                     instant(doc.get("issueDate")));
                             jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"postingKey\" = ?"
@@ -393,6 +404,7 @@ public class InvoicingWorkflowsInitializer {
         BigDecimal postableTotal = Money.ZERO;
         BigDecimal priceVariance = Money.ZERO;
         BigDecimal voucheredVariance = Money.ZERO;
+        BigDecimal voucheredTaxDiff = Money.ZERO;
         BigDecimal voucheredBillTotal = Money.ZERO;
         for (Map<String, Object> line : lines) {
             Map<String, Object> product = productById.get((String) line.get("productId"));
@@ -406,26 +418,42 @@ public class InvoicingWorkflowsInitializer {
             BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"),
                     (String) line.get("variantId"), qty, line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
             matchByLine.put((String) line.get("id"), match);
+            if (match.unmatchedQuantity().signum() > 0 && billsNeedReceipt()) {
+                // Review 2026-11-17 (ACR-4): the bill would receive goods nobody counted in (three-way match).
+                throw ApiException.badRequest("Bill line " + product.get("name") + ": "
+                        + JsNumbers.dec(match.unmatchedQuantity()) + " not received yet — post the goods receipt first"
+                        + " (Purchasing settings: a supplier bill needs a goods receipt)");
+            }
             if (match.accruedQuantity().signum() > 0) {
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
                 priceVariance = priceVariance.add(billUnit.multiply(match.accruedQuantity()))
                         .subtract(accruedInBillCurrency(match, documentRate));
             }
             if (match.voucheredQuantity().signum() > 0) {
-                voucheredBillTotal = voucheredBillTotal.add(d(line.get("total"))
-                        .multiply(Money.div(match.voucheredQuantity().min(qty), qty)));
-                // P1-7 (post-parity): the receipt voucher raised AP at the receipt price; a bill priced higher owes the
-                // difference too (Dr PPV / Cr AP). A lower bill price is a match exception settled by a supplier credit.
+                BigDecimal share = Money.div(match.voucheredQuantity().min(qty), qty);
+                voucheredBillTotal = voucheredBillTotal.add(d(line.get("total")).multiply(share));
+                // P1-7 (post-parity), review 2026-11-17 ACR-3: the receipt voucher raised AP at the receipt price and the
+                // PO tax rate; the bill is the open item at its own price and tax. The difference is posted either way
+                // (Dr/Cr PPV, Dr/Cr input VAT, Cr/Dr AP) so the ledger's AP equals the bill's residual. A lower bill
+                // price used to post nothing (AP stayed at the receipt price), and a higher one moved AP by the net
+                // difference only while the residual carried the tax on it as well.
                 BigDecimal billUnit = Money.div(d(line.get("subtotal")), qty);
                 BigDecimal receiptValue = Money.ZERO;
+                BigDecimal receiptTax = Money.ZERO;
                 for (BillReceiptMatcherService.Consumption c : match.consumptions()) {
                     if (c.vouchered()) {
-                        receiptValue = receiptValue.add(c.quantity().multiply(c.receiptUnitCost()));
+                        BigDecimal v = c.quantity().multiply(c.receiptUnitCost());
+                        receiptValue = receiptValue.add(v);
+                        receiptTax = receiptTax.add(Money.div(v.multiply(poTaxRate(c)), BigDecimal.valueOf(100)));
                     }
                 }
                 BigDecimal diff = billUnit.multiply(match.voucheredQuantity()).subtract(receiptValue);
-                if (diff.compareTo(VARIANCE_EPSILON) > 0) {
+                if (diff.abs().compareTo(VARIANCE_EPSILON) > 0) {
                     voucheredVariance = voucheredVariance.add(diff);
+                }
+                BigDecimal taxDiff = regularTax(line).multiply(share).subtract(receiptTax);
+                if (taxDiff.abs().compareTo(VARIANCE_EPSILON) > 0) {
+                    voucheredTaxDiff = voucheredTaxDiff.add(taxDiff);
                 }
             }
             BigDecimal postableQty = qty.subtract(match.voucheredQuantity());
@@ -458,11 +486,11 @@ public class InvoicingWorkflowsInitializer {
             postableTotal = postableTotal.add(d(line.get("total")).multiply(factor));
         }
         String entryId = null;
-        postableTotal = postableTotal.add(voucheredVariance);
+        postableTotal = postableTotal.add(voucheredVariance).add(voucheredTaxDiff);
         // ADR-S071: withholding (deducted from the payable) and reverse-charge VAT apply to the whole bill.
         DocumentBuilderService.SpecialTaxes special = builder.specialTaxes(lines);
         BigDecimal withholding = special.withholding();
-        if (postableTotal.signum() > 0 || special.any()) {
+        if (postableTotal.signum() != 0 || special.any()) {
             String grni = determination.mapped("grni_accrued");
             Grouped g = builder.groupForPosting(partnerId, postable, "purchase", grni);
             List<MutableLine> post = new ArrayList<>();
@@ -489,11 +517,23 @@ public class InvoicingWorkflowsInitializer {
             if (voucheredVariance.signum() > 0) {
                 post.add(new MutableLine(priceVarianceAccount(), voucheredVariance, null, null,
                         "Purchase price variance (billed above receipt)"));
+            } else if (voucheredVariance.signum() < 0) {
+                post.add(new MutableLine(priceVarianceAccount(), null, voucheredVariance.negate(), null,
+                        "Purchase price variance (billed below receipt)"));
+            }
+            if (voucheredTaxDiff.signum() != 0) {
+                String inputTax = determination.mapped("tax_receivable");
+                post.add(voucheredTaxDiff.signum() > 0
+                        ? new MutableLine(inputTax, voucheredTaxDiff, null, null, "Input tax (bill vs receipt)")
+                        : new MutableLine(inputTax, null, voucheredTaxDiff.negate(), null, "Input tax (bill vs receipt)"));
             }
             BigDecimal counterCredit = postableTotal.subtract(withholding);
             if (!special.any()) {
-                post.add(new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
-                        "Bill " + full.get("documentNumber")));
+                post.add(postableTotal.signum() >= 0
+                        ? new MutableLine(g.counterAccount(), null, postableTotal, partnerId,
+                                "Bill " + full.get("documentNumber"))
+                        : new MutableLine(g.counterAccount(), postableTotal.negate(), null, partnerId,
+                                "Bill " + full.get("documentNumber") + " · billed below the receipt voucher"));
             } else {
                 if (counterCredit.signum() > 0) {
                     post.add(new MutableLine(g.counterAccount(), null, counterCredit, partnerId,
@@ -558,14 +598,116 @@ public class InvoicingWorkflowsInitializer {
         // ACC-4 (B15): the bill is the open AP item for its whole amount. Vouchered quantities were raised on AP by the
         // receipt voucher, so the bill posts no second AP for them, but the supplier is paid against this bill — its
         // residual carries the vouchered share at bill price (the billed-above-receipt variance is part of that share).
-        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).add(voucheredBillTotal).subtract(withholding);
+        BigDecimal openPayable = postableTotal.subtract(voucheredVariance).subtract(voucheredTaxDiff)
+                .add(voucheredBillTotal).subtract(withholding);
         if (withholding.signum() > 0) {
             issueWithholdingCertificates(full, special, entryId);
         }
-        jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" = 'not_paid',"
-                        + " \"updatedAt\" = " + NOW + " WHERE id = ?")
-                .params(entryId, openPayable, id).update();
+        // ACR-2: what the supplier was already paid on the purchase orders of the receipts this bill takes over.
+        BigDecimal appliedFromPo = applyPurchaseOrderPayments(ctx.organizationId(), full, matchByLine.values());
+        BigDecimal residual = openPayable.subtract(appliedFromPo).max(Money.ZERO);
+        String paymentStatus = appliedFromPo.signum() <= 0 ? "not_paid"
+                : residual.compareTo(VARIANCE_EPSILON) < 0 ? "paid" : "partial";
+        jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" ="
+                        + " ?::\"PaymentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(entryId, residual, paymentStatus, id).update();
         remeasureVoucheredPayable(full, matchByLine.values(), documentRate, partnerId);
+    }
+
+    /** {@code procurement.billWithoutReceipt = block}: a stockable bill line must be covered by posted receipts. */
+    private boolean billsNeedReceipt() {
+        return settings != null && "block".equals(settings.resolveString("procurement.billWithoutReceipt",
+                com.inventoryerp.kernel.settings.SettingResolverService.SettingContext.EMPTY));
+    }
+
+    /** The PO line's tax rate (%) of a consumed receipt line; 0 without one. */
+    private BigDecimal poTaxRate(BillReceiptMatcherService.Consumption c) {
+        if (c.purchaseOrderLineId() == null) {
+            return Money.ZERO;
+        }
+        return jdbc.sql("SELECT coalesce(\"taxRate\", 0) FROM \"PurchaseOrderLine\" WHERE id = ?")
+                .param(c.purchaseOrderLineId()).query(BigDecimal.class).optional().orElse(Money.ZERO);
+    }
+
+    /** The line's ordinary tax (VAT): withholding and reverse charge post on their own (ADR-S071). */
+    private static BigDecimal regularTax(Map<String, Object> line) {
+        if (!(line.get("taxes") instanceof List<?> taxes) || taxes.isEmpty()) {
+            return d(line.get("taxAmount"));
+        }
+        BigDecimal sum = Money.ZERO;
+        for (Object o : taxes) {
+            if (o instanceof Map<?, ?> t && !"withholding".equals(t.get("kind"))
+                    && !"reverse_charge".equals(t.get("kind"))) {
+                sum = sum.add(d(t.get("amount")));
+            }
+        }
+        return sum;
+    }
+
+    /**
+     * Review 2026-11-17 (ACR-2). A PO receipt raised AP (receipt voucher) and the supplier may have been paid on the
+     * purchase order since; this bill now takes the receipt over and is the open item for it. Unapplied PO payments
+     * (paid on the PO, not yet applied to one of its bills) are applied to the bill up to the receipt-priced share it
+     * takes from that PO, and recorded per purchase order ({@code PurchaseOrderBillApplication}); the PO open item
+     * drops by the same amount, so the supplier is neither shown nor paid twice. Only between a PO and a bill in the
+     * same currency (a blank currency is the base one). The PO row is locked like its pay route locks it.
+     *
+     * @return the total applied (bill currency)
+     */
+    private BigDecimal applyPurchaseOrderPayments(String org, Map<String, Object> bill,
+            java.util.Collection<BillLineMatch> matches) {
+        Map<String, BigDecimal> shareByPo = new LinkedHashMap<>();
+        String billCurrency = bill.get("currencyId") == null ? null : bill.get("currencyId").toString();
+        for (BillLineMatch m : matches) {
+            for (BillReceiptMatcherService.Consumption c : m.consumptions()) {
+                if (!c.vouchered()) {
+                    continue;
+                }
+                Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT g.\"purchaseOrderId\" AS po, po.\"currencyCode\" AS"
+                        + " code FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
+                        + " JOIN \"PurchaseOrder\" po ON po.id = g.\"purchaseOrderId\" WHERE l.id = ? AND"
+                        + " g.\"organizationId\" = ?").params(c.goodsReceiptLineId(), org));
+                if (po == null || !sameCurrency(billCurrency, (String) po.get("code"))) {
+                    continue;
+                }
+                BigDecimal gross = c.quantity().multiply(c.receiptUnitCost()).multiply(BigDecimal.ONE.add(
+                        Money.div(poTaxRate(c), BigDecimal.valueOf(100))));
+                shareByPo.merge((String) po.get("po"), gross, BigDecimal::add);
+            }
+        }
+        BigDecimal total = Money.ZERO;
+        for (Map.Entry<String, BigDecimal> e : shareByPo.entrySet()) {
+            String poId = e.getKey();
+            Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT \"totalPaid\" FROM \"PurchaseOrder\" WHERE id = ? AND"
+                    + " \"organizationId\" = ? FOR UPDATE").params(poId, org));
+            if (po == null) {
+                continue;
+            }
+            BigDecimal paid = Money.max(Money.dec(jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"PurchasePayment\""
+                    + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?").params(org, poId)
+                    .query(BigDecimal.class).single()), Money.dec(po.get("totalPaid")));
+            BigDecimal applied = Money.dec(jdbc.sql("SELECT coalesce(sum(amount), 0) FROM"
+                    + " \"PurchaseOrderBillApplication\" WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ? AND"
+                    + " \"releasedAt\" IS NULL").params(org, poId).query(BigDecimal.class).single());
+            BigDecimal amount = Money.min(paid.subtract(applied), e.getValue()).setScale(6,
+                    java.math.RoundingMode.HALF_UP);
+            if (amount.compareTo(VARIANCE_EPSILON) < 0) {
+                continue;
+            }
+            jdbc.sql("INSERT INTO \"PurchaseOrderBillApplication\" (id, \"organizationId\", \"purchaseOrderId\","
+                    + " \"vendorBillId\", amount, \"createdBy\") VALUES (?, ?, ?, ?, ?, ?)").params(
+                    UUID.randomUUID().toString(), org, poId, bill.get("id"), amount,
+                    com.inventoryerp.kernel.tenancy.TenantContext.userId()).update();
+            total = total.add(amount);
+        }
+        return total;
+    }
+
+    private boolean sameCurrency(String billCurrency, String poCurrency) {
+        String base = fxRates == null ? null : fxRates.base();
+        String b = billCurrency == null || billCurrency.isBlank() ? base : billCurrency.trim();
+        String p = poCurrency == null || poCurrency.isBlank() ? base : poCurrency.trim();
+        return b == null || p == null || b.equalsIgnoreCase(p);
     }
 
     /**

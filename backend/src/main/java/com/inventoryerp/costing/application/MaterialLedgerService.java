@@ -3,6 +3,7 @@ package com.inventoryerp.costing.application;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.costing.application.MaterialLedgerCalculator.Input;
 import com.inventoryerp.costing.application.MaterialLedgerCalculator.Result;
@@ -43,6 +44,7 @@ public class MaterialLedgerService {
 
     private final JdbcClient jdbc;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final AccountResolverService accounts;
     private final SequenceService sequence;
@@ -50,10 +52,11 @@ public class MaterialLedgerService {
     private final CostLineageService lineage;
 
     public MaterialLedgerService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            AccountResolverService accounts, SequenceService sequence, AuditService audit, CostLineageService lineage) {
+            AccountResolverService accounts, SequenceService sequence, AuditService audit, CostLineageService lineage, CostingReversals reversals) {
         this.lineage = lineage;
         this.jdbc = jdbc;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.accounts = accounts;
         this.sequence = sequence;
@@ -284,7 +287,7 @@ public class MaterialLedgerService {
         }
         String reversal = null;
         if (r.get("journalEntryId") != null) {
-            Map<String, Object> rev = posting.reverse((String) r.get("journalEntryId"), Instant.now(),
+            Map<String, Object> rev = reversals.reverse((String) r.get("journalEntryId"),
                     "Reversal of material ledger " + r.get("number"));
             reversal = (String) rev.get("id");
             for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT \"productId\", delta FROM \"MaterialLedgerLine\""
