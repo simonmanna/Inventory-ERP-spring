@@ -11,8 +11,10 @@ import { notify } from '@/lib/notify';
 import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, type UnitAwareProduct } from '@/features/products/units';
 import { VariantSelect } from '@/features/products/variant-select';
+import { useSupplierOptions } from '@/features/procurement/api';
 
 interface Warehouse { id: string; code: string; name: string; type: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string }
@@ -21,7 +23,7 @@ interface POLine {
   unitPrice: number; unitOfMeasureId?: string | null; variantId?: string | null;
   variant?: { id: string; name: string; sku?: string | null } | null;
 }
-interface PO { id: string; orderNumber: string; lines: POLine[] }
+interface PO { id: string; orderNumber: string; partner?: { id: string; name: string } | null; lines: POLine[] }
 
 interface Line {
   purchaseOrderLineId?: string;
@@ -47,6 +49,12 @@ export function GoodsReceiptCreatePage() {
   const [warehouseId, setWarehouseId] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<Line[]>([{ description: '', quantity: 1, unitCost: 0 }]);
+  // Blocker fix B1: a receipt names its supplier (from the PO, else picked here). Supplier bills are matched only to
+  // that supplier's receipts, so a receipt without one was received a second time by the bill.
+  const [partnerId, setPartnerId] = useState('');
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [supplierLabel, setSupplierLabel] = useState<string | null>(null);
+  const suppliers = useSupplierOptions(supplierSearch);
 
   const warehouses = useQuery<Warehouse[]>({
     queryKey: ['warehouses'],
@@ -87,6 +95,8 @@ export function GoodsReceiptCreatePage() {
     mutationFn: async () => {
       const data = (await api.post<{ id: string; receiptNumber: string }>('/procurement/goods-receipts', {
         purchaseOrderId: poId || undefined,
+        // With a PO the server takes the PO's supplier.
+        partnerId: poId ? undefined : partnerId || undefined,
         warehouseId,
         notes,
         lines: lines.filter((l) => l.description && l.quantity > 0).map((l) => ({
@@ -140,6 +150,31 @@ export function GoodsReceiptCreatePage() {
               placeholder={tx('PO id (auto-fills lines)')}
             />
             {po.data && <p className="mt-1 text-xs text-muted-foreground">{po.data.orderNumber}</p>}
+          </div>
+          <div>
+            <label className="text-sm font-medium">{tx('Supplier')}</label>
+            {poId ? (
+              <p className="mt-2 text-sm">{po.data?.partner?.name ?? (po.isLoading ? tx('Loading…') : '—')}</p>
+            ) : (
+              <SearchableSelect
+                className="mt-1"
+                value={partnerId}
+                onValueChange={(v) => {
+                  setPartnerId(v);
+                  setSupplierLabel(suppliers.data?.find((s) => s.id === v)?.name ?? null);
+                }}
+                options={(suppliers.data ?? []).map((s) => ({ value: s.id, label: s.name, code: s.code ?? undefined }))}
+                onQueryChange={setSupplierSearch}
+                selectedLabel={supplierLabel}
+                loading={suppliers.isFetching}
+                placeholder={tx('Select supplier…')}
+              />
+            )}
+            {!poId && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {tx("The supplier's bills are matched to this receipt, so the goods are not received twice.")}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-sm font-medium">{tx('Warehouse')}</label>
@@ -289,7 +324,10 @@ export function GoodsReceiptCreatePage() {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate(-1)}>{tx('Cancel')}</Button>
-        <Button onClick={() => create.mutate()} disabled={!warehouseId || lines.length === 0 || create.isPending}>
+        <Button
+          onClick={() => create.mutate()}
+          disabled={!warehouseId || (!poId && !partnerId) || lines.length === 0 || create.isPending}
+        >
           <Truck className="mr-2 h-4 w-4" />{tx('Save & post')}
         </Button>
       </div>

@@ -342,6 +342,18 @@ public class InventoryQueryService {
         return out;
     }
 
+    /**
+     * Usability fix 2026-11-17 (UB1): the people a stock form can name as responsible / approver: the organization's
+     * active users, id and name only. The forms used {@code GET /users}, which needs {@code user:read}, so a storekeeper
+     * without user administration could not fill them in.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> staffOptions() {
+        return SqlRows.list(jdbc.sql("SELECT u.id, u.\"firstName\", u.\"lastName\" FROM \"User\" u WHERE"
+                + " u.\"organizationId\" = ? AND u.\"deletedAt\" IS NULL AND u.\"isActive\" = true ORDER BY"
+                + " u.\"firstName\", u.\"lastName\", u.id LIMIT 2000").param(TenantContext.organizationId()));
+    }
+
     /** {@code {totalItems, lowStockCount, totalLocations, totalProducts}}. */
     public Map<String, Object> getStockStats() {
         DataScope access = scope.current();

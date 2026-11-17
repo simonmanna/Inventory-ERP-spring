@@ -72,6 +72,18 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
+[audit](../audits/2026-11-17-inventory-procurement-readiness.md)):
+
+- **B4: `PATCH /products/:id` keeps batch, expiry and serial tracking while the product has stock on hand.**
+  - A change is refused with 400 `The <batch / expiry / serial> tracking of <name> cannot be changed while it has
+    stock on hand; …`.
+  - The comparison uses the normalized flags, so expiry ⇒ batch and FIFO ⇒ batch count as changes.
+  - Re-sending the current value is accepted.
+  - Why: the stock on hand would lack the batches or serials the engine then requires, or its batch and serial rows
+    would be stranded.
+  - Mirrors the costing-method guard. Test `ReadinessBlockersIT`.
+
 Pending owner approval:
 
 1. **`GET /organizations/users`** omits `passwordHash`, `mfaSecret*` and `pinHash` (Nest returned full

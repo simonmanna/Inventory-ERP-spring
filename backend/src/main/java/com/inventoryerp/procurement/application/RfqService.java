@@ -4,6 +4,7 @@ import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
+import com.inventoryerp.accounting.application.CurrencyService;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -69,11 +70,13 @@ public class RfqService {
     private final ApprovalsService approvals;
     private final SupplierService suppliers;
     private final RequisitionToOrderService orders;
+    private final CurrencyService currencies;
     private final TransactionTemplate tx;
 
     public RfqService(JdbcClient jdbc, SequenceService seq, AuditService audit, EventBus events,
             ApprovalsService approvals, SupplierService suppliers, RequisitionToOrderService orders,
-            PlatformTransactionManager txm) {
+            PlatformTransactionManager txm, CurrencyService currencies) {
+        this.currencies = currencies;
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -237,8 +240,13 @@ public class RfqService {
         for (Map<String, Object> l : lines(rfqId)) {
             rfqLines.put((String) l.get("id"), l);
         }
-        String currency = in.currencyCode() != null && !in.currencyCode().isBlank() ? in.currencyCode()
-                : functionalCurrency();
+        String functional = functionalCurrency();
+        String currency = in.currencyCode() != null && !in.currencyCode().isBlank() ? in.currencyCode() : functional;
+        // Blocker fix 2026-11-17 (B5, Nest deviation): a quotation in another currency carries a real rate (the stated
+        // one, else the rate table, else it is refused). Rate 1 used to rank it as if it were in the functional
+        // currency and passed that rate on to the purchase order.
+        BigDecimal rate = functional.equalsIgnoreCase(currency) ? BigDecimal.ONE
+                : currencies.resolveStated(currency, functional, in.exchangeRate(), Instant.now()).rate();
         String id = UUID.randomUUID().toString();
         tx.executeWithoutResult(st -> {
             int prev = jdbc.sql("SELECT COALESCE(MAX(revision), 0) FROM \"SupplierQuotation\" WHERE \"rfqId\" = ? AND"
@@ -250,8 +258,7 @@ public class RfqService {
                     + " \"paymentTermsDays\", \"freightAmount\", \"qualityScore\", notes, \"submittedVia\", \"createdBy\","
                     + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?::date, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", "
                     + NOW + ")").params(id, org(), rfqId, in.partnerId(), prev + 1,
-                    in.supplierReference(), blank(in.validUntil()), currency,
-                    in.exchangeRate() == null ? BigDecimal.ONE : in.exchangeRate(), in.leadTimeDays(),
+                    in.supplierReference(), blank(in.validUntil()), currency, rate, in.leadTimeDays(),
                     in.paymentTermsDays(), in.freightAmount() == null ? Money.ZERO : in.freightAmount(),
                     in.qualityScore(), in.notes(), via, user()).update();
             for (QuoteLine q : in.lines()) {
@@ -313,8 +320,7 @@ public class RfqService {
         // delivered[quoteId][rfqLineId] = functional delivered unit cost
         Map<String, Map<String, Map<String, Object>>> offer = new LinkedHashMap<>();
         for (Map<String, Object> q : quotes) {
-            BigDecimal rate = functional.equalsIgnoreCase(String.valueOf(q.get("currencyCode"))) ? BigDecimal.ONE
-                    : Money.dec(q.get("exchangeRate"));
+            BigDecimal rate = quoteRate(q, functional);
             List<Map<String, Object>> qLines = SqlRows.list(jdbc.sql("SELECT * FROM \"SupplierQuotationLine\" WHERE"
                     + " \"quotationId\" = ?").param(q.get("id")));
             BigDecimal goods = Money.ZERO;
@@ -587,15 +593,20 @@ public class RfqService {
             bySupplier.computeIfAbsent((String) a.get("partnerId"), k -> new ArrayList<>()).add(a);
         }
         List<Map<String, Object>> created = new ArrayList<>();
+        String functional = functionalCurrency();
         for (Map.Entry<String, List<Map<String, Object>>> e : bySupplier.entrySet()) {
             Map<String, Object> first = e.getValue().getFirst();
+            BigDecimal orderRate = functional.equalsIgnoreCase(String.valueOf(first.get("currencyCode")))
+                    ? BigDecimal.ONE
+                    : currencies.resolve((String) first.get("currencyCode"), functional, first.get("exchangeRate"),
+                            Instant.now()).rate();
             List<OrderLine> lines = e.getValue().stream().map(a -> new OrderLine((String) a.get("requestLineId"),
                     Money.dec(a.get("quantity")), Money.dec(a.get("unitPrice")), Money.dec(a.get("taxRate")), null,
                     (String) a.get("productId"), (String) a.get("description"), (String) a.get("uomId"))).toList();
             Map<String, Object> po = tx.execute(st -> {
                 Map<String, Object> order = orders.createOrder(new OrderInput(e.getKey(), warehouseId,
                         (String) rfq.get("branchId"), paymentType, (String) first.get("currencyCode"),
-                        Money.dec(first.get("exchangeRate")), expectedDate, "From " + rfq.get("rfqNumber"), null, lines));
+                        orderRate, expectedDate, "From " + rfq.get("rfqNumber"), null, lines));
                 jdbc.sql("UPDATE \"RfqAward\" SET \"purchaseOrderId\" = ? WHERE id = ANY(?::text[])").params(order.get("id"),
                         e.getValue().stream().map(a -> a.get("id")).toArray(String[]::new)).update();
                 return order;
@@ -673,6 +684,24 @@ public class RfqService {
     private String functionalCurrency() {
         return jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org()).query(String.class)
                 .single();
+    }
+
+    /**
+     * B5: a quotation's rate to the functional currency. A quotation stored before the fix carries 1 for a foreign
+     * currency when no rate was stated; the comparison then takes the rate table (unchanged when it has none).
+     */
+    private BigDecimal quoteRate(Map<String, Object> q, String functional) {
+        String code = String.valueOf(q.get("currencyCode"));
+        if (functional.equalsIgnoreCase(code)) {
+            return BigDecimal.ONE;
+        }
+        BigDecimal stored = Money.dec(q.get("exchangeRate"));
+        if (stored.signum() > 0 && stored.compareTo(BigDecimal.ONE) != 0) {
+            return stored;
+        }
+        Object at = q.get("createdAt");
+        BigDecimal table = currencies.findRate(code, functional, at instanceof Instant i ? i : Instant.now());
+        return table != null ? table : stored.signum() > 0 ? stored : BigDecimal.ONE;
     }
 
     private static String weightsJson(Map<String, Integer> in) {

@@ -1775,3 +1775,21 @@ channels per event. The actor is never told.
 ## Bonds, subcontractor compliance and CIP capitalisation (ADR-S074, extension: no Nest counterpart)
 
 [Spec](spec/projects.md). 26 routes: `ProjectBondController` (10), `SubcontractComplianceController` (11), `CapitalProjectController` (5); compliance gates on subcontract valuations and supplier payments; `ProjectBondJob`; expiry alerts. Migrations V504–V506. Tests: `ConstructionControlsIT`, `ProjectAuthorizationIT` (142 routes).
+
+## Inventory and procurement readiness blockers (2026-11-17, owner-approved deviations)
+
+[Audit](audits/2026-11-17-inventory-procurement-readiness.md); deviations in [procurement](spec/procurement.md#deviations),
+[inventory](spec/inventory.md#deviations), [core](spec/core.md#deviations) and
+[ADR-S026](adr/ADR-S026-warehouse-management.md).
+
+- [x] B1 goods receipts of a PO take the PO's supplier (V535 backfills posted receipts)
+- [x] B2 PO pay is capped by stocked receipts, net of claims, and by the supplier's AP ledger
+- [x] B3 manual pick orders cannot reference a stock document; the web form asks for the pick's purpose
+- [x] B4 batch / expiry / serial tracking is locked while stock is on hand
+- [x] B5 PO and RFQ quotation exchange rates: stated, else the table, else refused; PO currency defaults to functional
+- [x] B6 (web) debit-note lines default to the purchase price for supplier notes
+- [x] UB1 `GET /api/v1/inventory/staff-options` (`inventory:read`) feeds the stock forms' staff pickers
+- [x] UB2 (web) the shared `Select` accepts an empty item value (Radix 2.x)
+- [x] Tests: `ReadinessBlockersIT` (10), `WarehouseIT#manualPickWithDocumentReferenceRefused`; `PoBillApplicationIT` voids
+  with a reason
+- [ ] P1 / P2 gaps listed in the audit

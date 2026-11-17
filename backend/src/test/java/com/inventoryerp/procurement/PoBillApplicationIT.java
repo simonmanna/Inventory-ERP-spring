@@ -157,7 +157,8 @@ class PoBillApplicationIT extends ApiTestSupport {
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 101 exceeds remaining balance of 100");
 
         // voiding the bill gives the applied payment back to the purchase order
-        ok(200, "POST", "/vendor-bills/" + posted.get("id").asString() + "/cancel", null);
+        // A void needs a reason since the accounting controls (R1-R15, DocumentReversalService.requireReason).
+        ok(200, "POST", "/vendor-bills/" + posted.get("id").asString() + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(jdbc.sql("SELECT count(*) FROM \"PurchaseOrderBillApplication\" WHERE \"vendorBillId\" = ? AND"
                 + " \"releasedAt\" IS NULL").param(posted.get("id").asString()).query(Long.class).single()).isZero();
         assertThat(aging(supplier)).isEqualByComparingTo("180");

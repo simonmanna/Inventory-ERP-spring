@@ -64,6 +64,23 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
+[audit](../audits/2026-11-17-inventory-procurement-readiness.md)):
+
+- **B3: manual WMS pick orders cannot reference a stock document.**
+  - `POST /warehouse/pick-orders` refuses a `manual` order (the default) whose `sourceRef` is the number of a sales
+    order, sales invoice, delivery order, stock-out or transfer, with
+    `Reference X is a <kind>, which takes the stock out itself when it is posted. …`.
+  - Why: shipping a manual order issues the stock itself, so the document would take the goods out a second time.
+  - The web form asks what the pick is for (a document type or "Manual issue") and explains which side issues the
+    stock.
+  - Spring-only feature ([ADR-S026](../adr/ADR-S026-warehouse-management.md)); test `WarehouseIT`.
+- **UB1: `GET /inventory/staff-options`** (new, `inventory:read`).
+  - Returns the organization's active users, with `id`, `firstName` and `lastName` only, for the stock forms'
+    responsible and approver pickers.
+  - Those forms called `GET /users`, which needs `user:read`.
+  - Test `ReadinessBlockersIT`.
+
 Pending owner approval:
 
 1. **`GET /inventory/items?lowStock=true`**: Nest passes a `Prisma.sql` fragment as a `where` field value,

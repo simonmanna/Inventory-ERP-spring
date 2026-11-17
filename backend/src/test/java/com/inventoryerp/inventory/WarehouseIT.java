@@ -604,4 +604,25 @@ class WarehouseIT extends ApiTestSupport {
         Res bad = call("PUT", "/warehouse/locations/" + loc + "/settings", Map.of("outboundSteps", 4), adminToken);
         assertThat(bad.status()).isEqualTo(400);
     }
+
+    @Test
+    @DisplayName("B3 (readiness 2026-11-17): a manual pick referencing a stock-out is refused; with it as source it is not")
+    void manualPickWithDocumentReferenceRefused() {
+        String loc = location();
+        String bolts = product("Bolts");
+        String code = "OUT-B3-" + suffix();
+        jdbc.sql("INSERT INTO \"StockOut\" (id, \"organizationId\", \"outCode\", \"locationId\", \"updatedAt\")"
+                + " VALUES (?, ?, ?, ?, now())").params(UUID.randomUUID().toString(), demoOrg, code, loc).update();
+        Res manual = call("POST", "/warehouse/pick-orders", Map.of("locationId", loc, "sourceRef", code, "lines",
+                List.of(Map.of("productId", bolts, "quantity", 1))), adminToken);
+        assertThat(manual.status()).as(manual.raw().body()).isEqualTo(400);
+        assertThat(manual.body().get("message").asString()).startsWith("Reference " + code + " is a stock-out");
+        JsonNode sourced = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "sourceType", "stock_out",
+                "sourceRef", code, "lines", List.of(Map.of("productId", bolts, "quantity", 1))));
+        assertThat(sourced.get("sourceType").asString()).isEqualTo("stock_out");
+        // A free reference that is no document stays a manual pick.
+        JsonNode free = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "sourceRef", "Van 3",
+                "lines", List.of(Map.of("productId", bolts, "quantity", 1))));
+        assertThat(free.get("sourceType").asString()).isEqualTo("manual");
+    }
 }

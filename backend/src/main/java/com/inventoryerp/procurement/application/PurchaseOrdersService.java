@@ -11,6 +11,7 @@ import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
 import com.inventoryerp.accounting.application.CashSessionService;
+import com.inventoryerp.accounting.application.CurrencyService;
 import com.inventoryerp.core.domain.Partner;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockMove.Received;
@@ -133,14 +134,16 @@ public class PurchaseOrdersService {
     private final PurchaseCommitments commitments;
     private final ReceivingControls receiving;
     private final ProductVariantService variants;
+    private final CurrencyService currencies;
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
             CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
             ProcurementBudgetService budgets, ProcurementDelegationService delegations, SupplierService suppliers,
             ProcurementPolicyService policies, PurchaseCommitments commitments, ReceivingControls receiving,
-            ProductVariantService variants) {
+            ProductVariantService variants, CurrencyService currencies) {
         this.variants = variants;
+        this.currencies = currencies;
         this.jdbc = jdbc;
         this.budgets = budgets;
         this.delegations = delegations;
@@ -216,6 +219,16 @@ public class PurchaseOrdersService {
         BigDecimal sub = subtotal;
         BigDecimal taxes = taxAmount;
 
+        // Blocker fix 2026-11-17 (B5, Nest deviation): an order without a currency is in the functional currency (Nest
+        // stored 'USD'), and an order in another currency carries a real rate: the stated one, else the rate table,
+        // else it is refused. RFQ awards, agreement releases and the portal used to book foreign orders at rate 1, so
+        // stock, GRNI and AP were valued in the wrong currency.
+        String functional = functionalCurrency();
+        String currency = dto.currencyCode() != null && !dto.currencyCode().isBlank() ? dto.currencyCode()
+                : functional != null ? functional : "USD";
+        BigDecimal rate = functional == null || functional.equalsIgnoreCase(currency) ? BigDecimal.ONE
+                : currencies.resolveStated(currency, functional, dto.exchangeRate(), Instant.now()).rate();
+
         // ADR-PROCUREMENT-001 policies (no active policy = the behaviour before policies existed).
         SupplierService.Eligibility eligibility = suppliers.eligibilityForProducts(dto.partnerId(), dto.branchId(),
                 dto.lines().stream().map(LineInput::productId).toList(), java.time.LocalDate.now());
@@ -240,8 +253,7 @@ public class PurchaseOrdersService {
             LineInput ln = dto.lines().get(i);
             drafts.add(new PurchaseCommitments.Draft("new-" + i, ln.productId(), ln.quantity(), ln.unitPrice(), null));
         }
-        List<String> budgetWarnings = commitments.checkBudget(null, dto.branchId(),
-                dto.currencyCode() != null ? dto.currencyCode() : "USD", dto.exchangeRate(), drafts);
+        List<String> budgetWarnings = commitments.checkBudget(null, dto.branchId(), currency, rate, drafts);
 
         // Line unit + conversion snapshot (ADR-S003): validated up front, frozen on the line.
         List<LineUnit> lineUnits = new ArrayList<>();
@@ -252,7 +264,7 @@ public class PurchaseOrdersService {
 
         // Spend control (PROC-3): both in base currency excluding tax. The budget check runs after the insert, under
         // the budget row lock, and before the approval request, so a refused order leaves nothing behind.
-        List<DocLine> baseLines = baseLines(dto);
+        List<DocLine> baseLines = baseLines(dto, rate);
         delegations.enforce(dto.branchId(), baseLines.stream().map(DocLine::amount).reduce(BigDecimal.ZERO,
                 BigDecimal::add));
 
@@ -268,8 +280,7 @@ public class PurchaseOrdersService {
                             + " ?::\"PaymentStatus\", ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                     .params(id, orgId, orderNumber, dto.partnerId(), dto.branchId(), dto.description(),
                             SqlRows.ts(ProcurementSql.date(dto.expectedDeliveryDate())),
-                            dto.currencyCode() != null ? dto.currencyCode() : "USD",
-                            dto.exchangeRate() != null ? dto.exchangeRate() : BigDecimal.ONE, sub, taxes, total, dto.paymentType() != null ? dto.paymentType() : "cash",
+                            currency, rate, sub, taxes, total, dto.paymentType() != null ? dto.paymentType() : "cash",
                             "credit".equals(dto.paymentType()) ? "not_paid" : null, dto.notes(), dto.terms(),
                             dto.requestId(), dto.departmentId(), user()));
             List<Map<String, Object>> lines = new ArrayList<>();
@@ -292,8 +303,10 @@ public class PurchaseOrdersService {
                     dto.requestId()));
 
             // Approval gate: an active policy keeps the PO in draft; none → auto-approve to active.
+            // B5: approval bands are in the functional currency, so a foreign order is measured at its functional value.
+            BigDecimal approvalAmount = total.multiply(rate).setScale(6, RoundingMode.HALF_UP);
             Map<String, Object> approvalResult = newTx.execute(s -> approvals.requestApproval("purchase_order", id,
-                    defined("amount", JsNumbers.js(total), "partnerId", dto.partnerId(), "orderNumber", orderNumber,
+                    defined("amount", JsNumbers.js(approvalAmount), "partnerId", dto.partnerId(), "orderNumber", orderNumber,
                             "createdBy", user(), "branchId", dto.branchId(), "departmentId", dto.departmentId()), null));
             if (approvalResult == null) {
                 jdbc.sql("UPDATE \"PurchaseOrder\" SET status = 'active', \"updatedAt\" = " + NOW + " WHERE id = ?"
@@ -325,9 +338,8 @@ public class PurchaseOrdersService {
         return order;
     }
 
-    /** Each line's value excluding tax, in base currency. */
-    private static List<DocLine> baseLines(CreateInput dto) {
-        BigDecimal rate = dto.exchangeRate() != null ? dto.exchangeRate() : BigDecimal.ONE;
+    /** Each line's value excluding tax, in base currency ({@code rate}: order currency → functional). */
+    private static List<DocLine> baseLines(CreateInput dto, BigDecimal rate) {
         return dto.lines().stream().map(l -> new DocLine(l.productId(), l.quantity().multiply(l.unitPrice())
                 .multiply(rate).setScale(6, RoundingMode.HALF_UP))).toList();
     }
@@ -841,13 +853,18 @@ public class PurchaseOrdersService {
         if (code == null) {
             return BigDecimal.ONE;
         }
-        String functional = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org())
-                .query(String.class).optional().orElse(null);
+        String functional = functionalCurrency();
         if (functional == null || functional.equalsIgnoreCase(String.valueOf(code))) {
             return BigDecimal.ONE;
         }
         BigDecimal rate = Money.dec(po.get("exchangeRate"));
         return rate.signum() > 0 ? rate : BigDecimal.ONE;
+    }
+
+    /** The organization's functional currency, or {@code null} when it has none. */
+    private String functionalCurrency() {
+        return jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org())
+                .query(String.class).optional().orElse(null);
     }
 
     /** Unit handed to the stock engine: the snapshot unit, or the product's purchase unit for legacy lines. */
@@ -905,8 +922,11 @@ public class PurchaseOrdersService {
             // already applied to bills no longer count against the PO.
             BigDecimal received = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
             BigDecimal billed = billedVouchered(id, orgId);
+            BigDecimal rate = functionalRate(po);
+            // Blocker fix 2026-11-17 (B2): a settled claim on this order or its receipts already credited the payable.
+            BigDecimal claimed = Money.div(claimCredits(id, orgId, (String) po.get("partnerId")), rate);
             BigDecimal payable = received.subtract(billed);
-            BigDecimal remaining = payable.subtract(paidToDate.subtract(appliedToBills(id, orgId)));
+            BigDecimal remaining = payable.subtract(claimed).subtract(paidToDate.subtract(appliedToBills(id, orgId)));
             if (received.signum() <= 0) {
                 throw ApiException.badRequest("Nothing has been received on this purchase order yet — receive the goods"
                         + " (or post the supplier bill) before paying");
@@ -915,8 +935,17 @@ public class PurchaseOrdersService {
                 throw ApiException.badRequest("The goods received on this purchase order have been billed — pay the"
                         + " supplier bill instead");
             }
-            BigDecimal payAmount = dto.amount() != null ? dto.amount() : remaining;
+            // Blocker fix 2026-11-17 (B2): a return to the supplier debits their payable without naming the order, so
+            // the order's own figures still show goods that have gone back. Never settle more than the AP ledger says is
+            // owed to the supplier (the supplier-ledger measure), or AP ends in debit and the supplier is paid twice.
+            BigDecimal owed = stockPosting.supplierOpenPayable((String) po.get("partnerId"));
+            BigDecimal owedInOrderCurrency = Money.div(owed, rate);
+            BigDecimal payAmount = dto.amount() != null ? dto.amount() : Money.min(remaining, owedInOrderCurrency);
             if (payAmount.signum() <= 0) {
+                if (remaining.signum() > 0 && owed.signum() <= 0) {
+                    throw ApiException.badRequest("Nothing is owed to this supplier in the ledger — returns, credits or"
+                            + " other payments have already settled what this order received");
+                }
                 throw ApiException.badRequest(remaining.signum() <= 0 ? "This purchase order is already fully paid"
                         : "Payment amount must be positive");
             }
@@ -924,9 +953,14 @@ public class PurchaseOrdersService {
                 throw ApiException.badRequest("Payment of " + JsNumbers.dec(payAmount) + " exceeds remaining balance of "
                         + JsNumbers.dec(remaining));
             }
+            BigDecimal functionalAmount = payAmount.multiply(rate).setScale(6, java.math.RoundingMode.HALF_UP);
+            if (functionalAmount.subtract(owed).compareTo(new BigDecimal("0.005")) > 0) {
+                throw ApiException.badRequest("Payment of " + JsNumbers.dec(payAmount) + " would overpay the supplier:"
+                        + " the ledger shows " + JsNumbers.dec(owed.max(Money.ZERO)) + " still owed to them (returns, credits"
+                        + " or other payments have reduced it)");
+            }
             amount[0] = payAmount;
             BigDecimal amountDec = payAmount;
-            BigDecimal functionalAmount = payAmount.multiply(functionalRate(po)).setScale(6, java.math.RoundingMode.HALF_UP);
             BigDecimal newTotalPaid = paidToDate.add(payAmount);
             String newPaymentStatus = newTotalPaid.compareTo(Money.dec(po.get("totalAmount"))) >= 0 ? "paid" : "partial";
             Instant paidAt = dto.paidAt() != null ? ProcurementSql.date(dto.paidAt()) : null;
@@ -971,20 +1005,48 @@ public class PurchaseOrdersService {
      * line's tax (the same base {@code postReceiptVoucher} used). Reversed receipts no longer count.
      */
     private BigDecimal vouchered(String poId, String orgId) {
+        // Blocker fix 2026-11-17 (B2): only lines the receipt actually vouchered — stocked products, the predicate of
+        // stocked() in GoodsReceiptsService.post. A service line raises no AP at receipt; its bill is the payable, so
+        // counting it here let the PO route pay it a second time.
         return Money.dec(jdbc.sql("SELECT COALESCE(SUM(l.quantity * l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)),"
                 + " 0) FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
+                + " JOIN \"Product\" p ON p.id = l.\"productId\" AND p.\"organizationId\" = g.\"organizationId\""
                 + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
                 + " AND g.\"purchaseOrderId\" = ? AND g.status = 'posted' AND g.\"deletedAt\" IS NULL"
-                + " AND l.\"productId\" IS NOT NULL").params(orgId, poId).query(BigDecimal.class).single());
+                + " AND " + STOCKED_SQL).params(orgId, poId).query(BigDecimal.class).single());
     }
+
+    /**
+     * Blocker fix 2026-11-17 (B2): the AP debit (functional) of settled supplier claims on this order or one of its
+     * receipts. A claim on a bill lowers that bill instead, so it is left out (the bill route pays it).
+     */
+    private BigDecimal claimCredits(String poId, String orgId, String partnerId) {
+        if (partnerId == null) {
+            return Money.ZERO;
+        }
+        return Money.dec(jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"SupplierClaim\" c"
+                        + " JOIN \"JournalEntry\" e ON e.id = c.\"journalEntryId\" AND e.status = 'posted'"
+                        + " JOIN \"JournalLine\" l ON l.\"journalEntryId\" = e.id AND l.\"partnerId\" = ?"
+                        + " AND l.\"accountId\" = ANY(?::text[])"
+                        + " WHERE c.\"organizationId\" = ? AND c.status = 'settled' AND c.\"vendorBillId\" IS NULL"
+                        + " AND (c.\"purchaseOrderId\" = ? OR c.\"goodsReceiptId\" IN (SELECT g.id FROM"
+                        + " \"GoodsReceiptNote\" g WHERE g.\"organizationId\" = ? AND g.\"purchaseOrderId\" = ?))")
+                .params(partnerId, stockPosting.supplierPayableAccounts(partnerId).toArray(String[]::new), orgId, poId,
+                        orgId, poId)
+                .query(BigDecimal.class).single());
+    }
+
+    /** {@link #stocked} in SQL over {@code Product p}: the receipt vouchers (and stocks) these lines only. */
+    private static final String STOCKED_SQL = "p.\"trackInventory\" AND COALESCE(p.\"productType\"::text, '') <> 'service'";
 
     /** Receipt-priced value of the PO's received quantity that supplier bills have taken over (ACR-2). */
     private BigDecimal billedVouchered(String poId, String orgId) {
         return Money.dec(jdbc.sql("SELECT COALESCE(SUM(LEAST(l.\"billedQuantity\", l.quantity) * l.\"unitCost\" * (1 +"
                 + " COALESCE(pl.\"taxRate\", 0) / 100)), 0) FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON"
-                + " g.id = l.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\""
+                + " g.id = l.\"goodsReceiptId\" JOIN \"Product\" p ON p.id = l.\"productId\" AND p.\"organizationId\" ="
+                + " g.\"organizationId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\""
                 + " WHERE g.\"organizationId\" = ? AND g.\"purchaseOrderId\" = ? AND g.status = 'posted' AND"
-                + " g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL").params(orgId, poId).query(BigDecimal.class)
+                + " g.\"deletedAt\" IS NULL AND " + STOCKED_SQL).params(orgId, poId).query(BigDecimal.class)
                 .single());
     }
 

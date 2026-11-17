@@ -161,6 +161,8 @@ public class GoodsReceiptsService {
         assertOwned("PurchaseOrder", input.get("purchaseOrderId"), "Purchase order not found", orgId);
         assertOwned("Partner", input.get("partnerId"), "Supplier not found", orgId);
         assertOwned("Branch", input.get("branchId"), "Branch not found", orgId);
+        String partnerId = receiptSupplier(stringOrNull(input.get("purchaseOrderId")),
+                stringOrNull(input.get("partnerId")), orgId);
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String receiptNumber = sequence.next("grn:" + year, "GRN-" + year + "-", 5);
         Map<String, Object> grn = tx.execute(st -> {
@@ -169,7 +171,7 @@ public class GoodsReceiptsService {
             boolean hasReceivedAt = ProcurementSql.truthy(receivedAt);
             List<Object> params = new ArrayList<>(List.of(id, orgId, receiptNumber));
             params.add(stringOrNull(input.get("purchaseOrderId")));
-            params.add(stringOrNull(input.get("partnerId")));
+            params.add(partnerId);
             params.add(stringOrNull(input.get("branchId")));
             params.add(String.valueOf(warehouseId));
             if (hasReceivedAt) {
@@ -221,6 +223,28 @@ public class GoodsReceiptsService {
         audit.record(AuditInput.of("GoodsReceiptNote", (String) grn.get("id"), "create", null,
                 Obj.of("receiptNumber", receiptNumber, "lines", lines.size(), "status", "draft")));
         return grn;
+    }
+
+    /**
+     * Blocker fix 2026-11-17 (B1, Nest deviation): a receipt of a purchase order belongs to the order's supplier. The
+     * bill matcher pairs bill lines with receipts of the bill's supplier only, so a receipt saved without one was never
+     * matched and the supplier bill received and charged the goods a second time. An omitted supplier is taken from the
+     * order; a different one is refused. A receipt without an order keeps the supplier it names (the web asks for one).
+     */
+    private String receiptSupplier(String purchaseOrderId, String partnerId, String orgId) {
+        if (purchaseOrderId == null || purchaseOrderId.isEmpty()) {
+            return partnerId == null || partnerId.isEmpty() ? null : partnerId;
+        }
+        Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT \"partnerId\" FROM \"PurchaseOrder\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(purchaseOrderId, orgId));
+        String poSupplier = po == null ? null : (String) po.get("partnerId");
+        if (partnerId == null || partnerId.isEmpty()) {
+            return poSupplier;
+        }
+        if (poSupplier != null && !poSupplier.equals(partnerId)) {
+            throw ApiException.badRequest("The supplier must be the purchase order's supplier");
+        }
+        return partnerId;
     }
 
     private void assertOwned(String table, Object id, String message, String orgId) {
@@ -331,6 +355,11 @@ public class GoodsReceiptsService {
                 purchaseOrders.applyReceiptToPO((String) grn.get("purchaseOrderId"), applied);
                 po = SqlRows.one(PurchaseOrder.class, jdbc.sql("SELECT * FROM \"PurchaseOrder\" WHERE id = ?"
                         + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(grn.get("purchaseOrderId"), orgId));
+                if (po != null && updated.get("partnerId") == null && po.get("partnerId") != null) {
+                    // B1: a draft saved before the fix carries no supplier; the bill matcher needs the order's.
+                    jdbc.sql("UPDATE \"GoodsReceiptNote\" SET \"partnerId\" = ? WHERE id = ? AND \"organizationId\" = ?")
+                            .params(po.get("partnerId"), id, orgId).update();
+                }
                 if (po != null) {
                     for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"PurchaseOrderLine\" WHERE"
                             + " \"purchaseOrderId\" = ?").param(po.get("id")))) {

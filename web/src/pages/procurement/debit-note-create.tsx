@@ -9,7 +9,7 @@ import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
-import { defaultUnitId, unitPrice, type UnitAwareProduct } from '@/features/products/units';
+import { defaultUnitId, unitPrice, type UnitAwareProduct, type UnitRole } from '@/features/products/units';
 
 interface Partner { id: string; name: string; code: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string; taxId?: string }
@@ -68,25 +68,40 @@ export function DebitNoteCreatePage() {
 
   const total = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0);
 
+  // Blocker fix B6: a supplier (inbound) note is priced at what we pay the supplier and a customer (outbound) note at
+  // what we sell for. Supplier notes used to default to the sales price, so a return credited the supplier at retail.
+  const roleOf = (d: 'outbound' | 'inbound'): UnitRole => (d === 'inbound' ? 'purchase' : 'sales');
+  const priceRole = roleOf(direction);
+  const changeDirection = (d: 'outbound' | 'inbound') => {
+    setDirection(d);
+    const role = roleOf(d);
+    setLines((prev) => prev.map((l) => {
+      const product = products.data?.find((p) => p.id === l.productId);
+      if (!product) return l;
+      const uomId = defaultUnitId(product, role);
+      return { ...l, uomId, unitPrice: unitPrice(product, uomId, role) ?? l.unitPrice };
+    }));
+  };
   const addLine = () => setLines([...lines, { description: '', quantity: 1, unitPrice: 0 }]);
   const removeLine = (idx: number) => setLines(lines.filter((_, i) => i !== idx));
   const pickProduct = (idx: number, productId: string) => {
     const product = products.data?.find((p) => p.id === productId);
     if (!product) return;
+    const uomId = defaultUnitId(product, priceRole);
     const next = [...lines];
     next[idx] = {
       productId,
       description: product.name,
       quantity: next[idx].quantity || 1,
-      unitPrice: Number(product.salesPrice ?? product.costPrice ?? 0),
+      unitPrice: unitPrice(product, uomId, priceRole) ?? 0,
       taxId: product.taxId,
-      uomId: defaultUnitId(product, 'purchase'),
+      uomId,
     };
     setLines(next);
   };
   const pickUnit = (idx: number, uomId: string) => {
     const product = products.data?.find((p) => p.id === lines[idx].productId);
-    const price = unitPrice(product, uomId, 'purchase');
+    const price = unitPrice(product, uomId, priceRole);
     const next = [...lines];
     next[idx] = { ...next[idx], uomId, unitPrice: price ?? next[idx].unitPrice };
     setLines(next);
@@ -108,7 +123,7 @@ export function DebitNoteCreatePage() {
             <label className="text-sm font-medium">{tx('Direction')}</label>
             <select
               value={direction}
-              onChange={(e) => setDirection(e.target.value as any)}
+              onChange={(e) => changeDirection(e.target.value as 'outbound' | 'inbound')}
               className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
             >
               <option value="outbound">{tx('Outbound (to customer)')}</option>
@@ -215,7 +230,7 @@ export function DebitNoteCreatePage() {
                 <div className="md:col-span-1">
                   <UnitSelect
                     product={products.data?.find((p) => p.id === ln.productId)}
-                    role="purchase"
+                    role={priceRole}
                     value={ln.uomId}
                     onChange={(uomId) => pickUnit(idx, uomId)}
                   />
