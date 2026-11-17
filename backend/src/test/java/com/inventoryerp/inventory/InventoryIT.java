@@ -858,6 +858,8 @@ class InventoryIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every inventory route answers 401 without a token and 403 without its permission")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(142);
+        // 144: GET /inventory/cost-explanation (accounting and costing review) and GET /inventory/staff-options
+        // (readiness blocker UB1) joined the 142 routes.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(144);
     }
 }
