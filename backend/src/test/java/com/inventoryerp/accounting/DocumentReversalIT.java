@@ -38,13 +38,18 @@ class DocumentReversalIT extends AccountingFixtures {
         return id;
     }
 
+    /** One service product per organisation: a credit note may only credit a product its invoice sold (ACC-4). */
+    final Map<String, String> services = new java.util.HashMap<>();
+
     String service(Books b) {
-        String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
-                        + " \"costPrice\", \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, ?, 'service', 100, 0,"
-                        + " false, now())")
-                .params(id, b.org(), "DR-" + id.substring(0, 6), "Reversal service").update();
-        return id;
+        return services.computeIfAbsent(b.org(), org -> {
+            String id = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
+                            + " \"costPrice\", \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, ?, 'service', 100, 0,"
+                            + " false, now())")
+                    .params(id, org, "DR-" + id.substring(0, 6), "Reversal service").update();
+            return id;
+        });
     }
 
     /** Another user with the owner's role (Administrator: every permission). */
@@ -233,7 +238,8 @@ class DocumentReversalIT extends AccountingFixtures {
                         "void each payment first");
         assertThat(status(je)).isEqualTo("posted");
 
-        okAs(b, 200, "POST", "/payments/" + pay.get("id").asString() + "/void", Map.of("reason", "Bounced"));
+        Res voidPay = moneyAs(b, "POST", "/payments/" + pay.get("id").asString() + "/void", Map.of("reason", "Bounced"));
+        assertThat(voidPay.status()).as(voidPay.raw().body()).isEqualTo(200);
         assertThat(residual(id)).as("void gives the allocation back").isEqualByComparingTo("100");
         assertThat(reversalRows("payment", pay.get("id").asString())).isEqualTo(1);
 
@@ -271,7 +277,9 @@ class DocumentReversalIT extends AccountingFixtures {
         Res noReason = as(b, "POST", "/vendor-bills/" + id + "/cancel", Map.of());
         assertThat(noReason.status()).isEqualTo(400);
 
-        okAs(b, 200, "POST", "/payments/" + pay.get("id").asString() + "/void", Map.of("reason", "Paid twice"));
+        Res voidPay = moneyAs(b, "POST", "/payments/" + pay.get("id").asString() + "/void", Map.of("reason",
+                "Paid twice"));
+        assertThat(voidPay.status()).as(voidPay.raw().body()).isEqualTo(200);
         assertThat(residual(id)).isEqualByComparingTo("300");
         JsonNode voided = okAs(b, 200, "POST", "/vendor-bills/" + id + "/cancel", REASON);
         assertThat(voided.get("status").asString()).isEqualTo("cancelled");

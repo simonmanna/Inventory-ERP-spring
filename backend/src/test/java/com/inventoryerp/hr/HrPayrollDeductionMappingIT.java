@@ -100,7 +100,7 @@ class HrPayrollDeductionMappingIT extends ApiTestSupport {
 
             Res refused = as("POST", "/hr/payroll/runs/" + runId + "/approve", null);
             assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
-            assertThat(refused.body().get("message").asString()).contains("no liability or receivable account")
+            assertThat(refused.body().get("message").asString()).contains("without a liability or receivable account")
                     .contains("UNION" + s + " (Union dues)");
             assertThat(runStatus(runId)).isEqualTo("CALCULATED");
             assertThat(entries(runId)).as("nothing posted").isZero();

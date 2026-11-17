@@ -230,7 +230,8 @@ class ControlAccountRoutesIT extends AccountingFixtures {
                 ar, "accrualDate", LocalDate.now().toString())), AR_REFUSAL);
         Res accrual = moneyAs(b, "POST", "/expense-accruals", Map.of("title", "Accrual ok " + sfx, "amount", 50,
                 "accountId", expense, "accrualDate", LocalDate.now().toString()));
-        assertThat(accrual.status()).as(accrual.raw().body()).isEqualTo(201);
+        // An @Idempotent route answers 200 like Nest's idempotency interceptor (kernel/idempotency/Idempotent).
+        assertThat(accrual.status()).as(accrual.raw().body()).isEqualTo(200);
     }
 
     // ------------------------------------------------------------------ payments

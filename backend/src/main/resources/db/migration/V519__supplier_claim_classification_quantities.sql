@@ -39,5 +39,10 @@ CREATE TABLE "SupplierClaimLine" (
 CREATE INDEX "SupplierClaimLine_claim_idx" ON "SupplierClaimLine" ("claimId");
 CREATE INDEX "SupplierClaimLine_receipt_line_idx" ON "SupplierClaimLine" ("organizationId", "goodsReceiptLineId");
 
+-- V214-style tenant policy (as V517 / V520): reads outside a tenant transaction (no app.org_id) still see the rows the
+-- service filters by organizationId itself; without the fallback a claim's lines vanished from its own response.
 ALTER TABLE "SupplierClaimLine" ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON "SupplierClaimLine" USING (("organizationId" = current_setting('app.org_id', true)));
+CREATE POLICY tenant_isolation ON "SupplierClaimLine"
+    USING (coalesce(current_setting('app.org_id', true), '') = '' OR "organizationId" = current_setting('app.org_id', true))
+    WITH CHECK (coalesce(current_setting('app.org_id', true), '') = ''
+        OR "organizationId" = current_setting('app.org_id', true));
