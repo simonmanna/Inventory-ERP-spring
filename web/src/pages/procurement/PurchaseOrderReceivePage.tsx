@@ -6,11 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { api } from '@/lib/api';
+import { notifyApiError } from '@/lib/api-error';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
+import { roundQty, subtractQty } from '@/lib/quantity';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
 
 interface PO {
   id: string; orderNumber: string; status: string;
@@ -24,8 +28,6 @@ interface PO {
     variant?: { id: string; name: string; sku?: string | null } | null;
   }>;
 }
-
-interface Warehouse { id: string; name: string; code: string }
 
 export function PurchaseOrderReceivePage() {
   const uomCode = useUomCode();
@@ -41,13 +43,8 @@ export function PurchaseOrderReceivePage() {
     enabled: !!id,
   });
 
-  const warehouses = useQuery<Warehouse[]>({
-    queryKey: ['warehouses'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Warehouse[] }>('/inventory/locations?type=warehouse');
-      return res.data.data ?? [];
-    },
-  });
+  // Every warehouse: the default page held only the 25 newest locations.
+  const warehouses = useStockLocations({ type: 'warehouse' });
 
   const [receivedQtys, setReceivedQtys] = useState<Record<string, number>>({});
 
@@ -62,8 +59,8 @@ export function PurchaseOrderReceivePage() {
             purchaseOrderLineId: l.id,
             productId: l.productId,
             description: l.description,
-            quantity: receivedQtys[l.id] ?? l.quantity,
-            unitCost: l.unitPrice,
+            quantity: roundQty(receivedQtys[l.id] ?? l.quantity),
+            // No unitCost: this page has no cost field, and the server values a PO receipt at the PO line's price.
             // ADR-S058: the PO line's own variant (the server uses it in any case).
             variantId: l.variantId || undefined,
           })) ?? [],
@@ -78,7 +75,7 @@ export function PurchaseOrderReceivePage() {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       navigate(`/procurement/purchase-orders/${id}`);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+    onError: (e: unknown) => notifyApiError(e, tx('Failed')),
   });
 
   if (po.isLoading) return <Skeleton className="h-96 w-full" />;
@@ -97,7 +94,8 @@ export function PurchaseOrderReceivePage() {
   const autoFillAll = () => {
     const all: Record<string, number> = {};
     data.lines.forEach((l) => {
-      const remaining = Number(l.quantity) - Number(l.receivedQuantity);
+      // Exact to 6 decimals: 10.3 − 10.1 must be 0.2, not 0.20000000000000107 (refused as over-receiving).
+      const remaining = subtractQty(l.quantity, l.receivedQuantity);
       if (remaining > 0) all[l.id] = remaining;
     });
     setReceivedQtys(all);
@@ -120,16 +118,15 @@ export function PurchaseOrderReceivePage() {
         <CardContent className="grid gap-3 md:grid-cols-2">
           <div>
             <label className="text-sm font-medium">{tx('Warehouse')}</label>
-            <select
+            <SearchableSelect
+              className="mt-1"
               value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
-            >
-              <option value="">{tx('Select…')}</option>
-              {warehouses.data?.map((w) => (
-                <option key={w.id} value={w.id}>{w.code} — {w.name}</option>
-              ))}
-            </select>
+              onValueChange={setWarehouseId}
+              options={(warehouses.locations ?? []).map(locationOption)}
+              footer={warehouses.footer}
+              placeholder={tx('Select…')}
+              searchPlaceholder={tx('Search warehouses…')}
+            />
           </div>
           <div>
             <label className="text-sm font-medium">{tx('Notes')}</label>
@@ -167,7 +164,7 @@ export function PurchaseOrderReceivePage() {
               {data.lines.map((l) => {
                 const ordered = Number(l.quantity);
                 const received = Number(l.receivedQuantity);
-                const remaining = ordered - received;
+                const remaining = subtractQty(l.quantity, l.receivedQuantity);
                 return (
                   <tr key={l.id} className="border-b hover:bg-muted/30">
                     <td className="px-3 py-2 font-medium">

@@ -19,6 +19,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
+import { describeApiError, notifyApiError } from '@/lib/api-error';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { dateTime, formatMoney } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
@@ -27,8 +29,10 @@ import {
 } from '@/features/inventory/stock-levels';
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
 
-interface Location { id: string; code: string; name: string }
+/** The most records `GET /inventory/waste` returns (newest first). */
+const WASTE_LIST_LIMIT = 500;
 
 interface WasteItem {
   id: string; productId: string; productName: string; unit: string | null;
@@ -151,10 +155,8 @@ export function WastePage() {
     queryFn: async () => (await api.get<WasteSummary>(`/inventory/waste/summary?${filterParams.toString()}`)).data,
   });
 
-  const locations = useQuery<Location[]>({
-    queryKey: ['inventory-locations'],
-    queryFn: async () => (await api.get<{ data: Location[] }>('/inventory/locations')).data.data ?? [],
-  });
+  const locations = useStockLocations();
+  const locationOptions = useMemo(() => (locations.locations ?? []).map(locationOption), [locations.locations]);
 
   const stockLevels = useQuery<StockLevel[]>({
     queryKey: ['inventory-product-stock-levels', 'waste', locationId],
@@ -208,7 +210,8 @@ export function WastePage() {
 
   const create = useMutation({
     mutationFn: async (post: boolean) => {
-      const doc = (await api.post<WasteRow>('/inventory/waste', {
+      // Stable keys: a retry after a lost answer replays the record instead of registering the loss twice.
+      const doc = await idempotentPost<WasteRow>('/inventory/waste', {
         locationId,
         responsibleById: responsibleId,
         approvedById: approvedId,
@@ -222,12 +225,12 @@ export function WastePage() {
           ...(l.batchNumber.trim() ? { batchNumber: l.batchNumber.trim() } : {}),
           isExpiry: l.isExpiry,
         })),
-      })).data;
+      });
       if (!post) return { doc, posted: false as const };
       try {
-        return { doc: (await api.post<WasteRow>(`/inventory/waste/${doc.id}/approve`)).data, posted: true as const };
+        return { doc: await idempotentPost<WasteRow>(`/inventory/waste/${doc.id}/approve`), posted: true as const };
       } catch (e) {
-        return { doc, posted: false as const, postError: errMsg(e, tx('Posting failed')) };
+        return { doc, posted: false as const, postError: describeApiError(e, tx('Posting failed')) };
       }
     },
     onSuccess: (r) => {
@@ -238,27 +241,27 @@ export function WastePage() {
       resetForm();
       invalidate();
     },
-    onError: (e: any) => notify.error(errMsg(e, tx('Could not save record'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Could not save record')),
   });
 
   const approve = useMutation({
-    mutationFn: async (id: string) => (await api.post<WasteRow>(`/inventory/waste/${id}/approve`)).data,
+    mutationFn: (id: string) => idempotentPost<WasteRow>(`/inventory/waste/${id}/approve`),
     onSuccess: (d) => { notify.success(tx('{{wasteCode}} posted — stock written off', { wasteCode: d.wasteCode })); invalidate(); },
-    onError: (e: any) => notify.error(errMsg(e, tx('Posting failed'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Posting failed')),
   });
 
   const [reversing, setReversing] = useState<{ id: string; code: string } | null>(null);
   const reverse = useMutation({
-    mutationFn: async (v: { id: string; reason: string }) =>
-      (await api.post<WasteRow>(`/inventory/waste/${v.id}/reverse`, { reason: v.reason })).data,
+    mutationFn: (v: { id: string; reason: string }) =>
+      idempotentPost<WasteRow>(`/inventory/waste/${v.id}/reverse`, { reason: v.reason }),
     onSuccess: (d) => { notify.success(tx('{{wasteCode}} reversed — stock restored and write-off undone', { wasteCode: d.wasteCode })); setReversing(null); invalidate(); },
-    onError: (e: any) => notify.error(errMsg(e, tx('Reversal failed'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Reversal failed')),
   });
 
   const cancel = useMutation({
-    mutationFn: async (id: string) => (await api.post<WasteRow>(`/inventory/waste/${id}/cancel`)).data,
+    mutationFn: (id: string) => idempotentPost<WasteRow>(`/inventory/waste/${id}/cancel`),
     onSuccess: (d) => { notify.success(`${d.wasteCode} cancelled`); invalidate(); },
-    onError: (e: any) => notify.error(errMsg(e, tx('Cancel failed'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Cancel failed')),
   });
 
   const updateLine = (key: number, patch: Partial<DraftLine>) =>
@@ -341,13 +344,16 @@ export function WastePage() {
             {CATEGORIES.map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterLoc} onValueChange={setFilterLoc}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{tx('All locations')}</SelectItem>
-            {locations.data?.map((l) => <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          className="w-44"
+          value={filterLoc === 'all' ? '' : filterLoc}
+          onValueChange={(v) => setFilterLoc(v || 'all')}
+          options={locationOptions}
+          footer={locations.footer}
+          placeholder={tx('All locations')}
+          clearLabel={tx('All locations')}
+          searchPlaceholder={tx('Search locations…')}
+        />
         <Input type="date" className="w-40" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} aria-label={tx('From')} />
         <Input type="date" className="w-40" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} aria-label={tx('To')} />
       </div>
@@ -360,6 +366,11 @@ export function WastePage() {
           )}
           {records.data && records.data.length === 0 && (
             <Card><CardContent className="p-8 text-center text-muted-foreground">{tx('No damages or waste recorded for these filters.')}</CardContent></Card>
+          )}
+          {records.data && records.data.length >= WASTE_LIST_LIMIT && (
+            <p role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {tx('Showing the newest {{n}} records only. Narrow the dates or filters to see older ones.', { n: WASTE_LIST_LIMIT })}
+            </p>
           )}
           {records.data && records.data.length > 0 && (
             <div className="overflow-x-auto rounded-md border">
@@ -509,12 +520,14 @@ export function WastePage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-sm font-medium">{tx('Location')} <span className="text-destructive">*</span></label>
-                <Select value={locationId} onValueChange={setLocationId}>
-                  <SelectTrigger><SelectValue placeholder={tx('Select location')} /></SelectTrigger>
-                  <SelectContent>
-                    {locations.data?.map((l) => <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={locationId}
+                  onValueChange={setLocationId}
+                  options={locationOptions}
+                  footer={locations.footer}
+                  placeholder={tx('Select location')}
+                  searchPlaceholder={tx('Search locations…')}
+                />
               </div>
               <div>
                 <label className="text-sm font-medium">{tx('Category')}</label>

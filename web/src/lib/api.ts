@@ -50,6 +50,14 @@ export const api = axios.create({
  * the server is perfectly reachable. Only a request that actually failed counts,
  * and any answered request — including a 4xx — clears it.
  */
+/**
+ * True when this client already showed the user a message for the failed request (a 403, a 5xx, a licence refusal,
+ * the first lost connection of an outage). Call sites check it so one failure is not toasted twice.
+ */
+export function wasNotified(error: unknown): boolean {
+  return !!error && typeof error === 'object' && (error as { notified?: unknown }).notified === true;
+}
+
 let lastNetworkFailureAt: number | null = null;
 export function noteServerUnreachable(): void { lastNetworkFailureAt = Date.now(); }
 export function noteServerReachable(): void { lastNetworkFailureAt = null; }
@@ -161,15 +169,18 @@ api.interceptors.response.use(
     const body: any = err.response?.data;
     const serverMsg = Array.isArray(body?.message) ? body.message.join('; ') : (typeof body?.message === 'string' ? body.message : undefined);
     (err as any).userMessage = serverMsg;
+    // Marks the failures this interceptor tells the user about itself (see `wasNotified`).
+    const flag = err as AxiosError & { notified?: boolean };
     noteLicenceHeaders(err.response?.headers);
     if (status === 402) {
       useLicenseStore.getState().noteRefusal(
         refusalFromResponse(body, serverMsg || tx('Your licence does not allow this.')),
       );
+      flag.notified = true;
       throw err;
     }
-    if (status === 403) notify.error(serverMsg || tx('Permission denied'));
-    if (status && status >= 500) notify.error(serverMsg || tx('Server error — please retry'));
+    if (status === 403) { notify.error(serverMsg || tx('Permission denied')); flag.notified = true; }
+    if (status && status >= 500) { notify.error(serverMsg || tx('Server error — please retry')); flag.notified = true; }
     // A cancelled request (a component unmounted, a query superseded) says
     // nothing about the server, so it must not be read as an outage.
     if (!status && !axios.isCancel(err) && err.code !== 'ERR_CANCELED') {
@@ -177,7 +188,7 @@ api.interceptors.response.use(
       // quotes and polls constantly, and it used to toast on every one of them.
       const alreadyKnown = serverUnreachable();
       noteServerUnreachable();
-      if (!alreadyKnown) notify.error(tx('No connection to the server — work is kept on this device'));
+      if (!alreadyKnown) { notify.error(tx('No connection to the server — work is kept on this device')); flag.notified = true; }
     }
     throw err;
   },

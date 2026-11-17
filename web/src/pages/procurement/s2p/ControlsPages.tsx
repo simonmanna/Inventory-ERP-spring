@@ -9,12 +9,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { ListPageHeader, StatusPill } from '@/components/list';
+import { DataTablePagination } from '@/components/list/data-table-pagination';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   CLAIM_STATUS_TONE,
   claimApi,
-  errMsg,
   poChangeApi,
   useClaimMutation,
   useClaimReceiptLines,
@@ -22,13 +24,14 @@ import {
   useCommitments,
   usePendingPoChanges,
   usePoChangeMutation,
-  useSupplierOptions,
   type ClaimClassification,
   type ClaimStatus,
   type ClaimStockAction,
   type ClaimType,
   type SupplierClaim,
 } from '@/features/procurement/api';
+import { useSupplierPicker } from '@/features/procurement/supplier-picker';
+import { notifyApiError } from '@/lib/api-error';
 import { notify } from '@/lib/notify';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
@@ -83,9 +86,15 @@ export function SupplierClaimsPage() {
   const canManage = has(PERMISSIONS.supplierClaim.manage);
   const canVerify = has(PERMISSIONS.inspection.manage);
   const [status, setStatus] = useState('');
-  const { data } = useClaims({ status });
-  const { data: suppliers = [] } = useSupplierOptions();
+  // The list is paged on the server (25 a page by default); without a pager only page 1 was ever shown.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const { data } = useClaims({ status, page, limit: pageSize });
+  const suppliers = useSupplierPicker();
   const mutate = useClaimMutation((fn: () => Promise<unknown>) => fn());
+  /** Every claim action shares one mutation: while one runs, the buttons that start another are disabled. */
+  const busy = mutate.isPending;
+  const [cancelling, setCancelling] = useState<SupplierClaim | null>(null);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ partnerId: '', type: 'shortage' as ClaimType, amount: '', description: '' });
   const [accepting, setAccepting] = useState<SupplierClaim | null>(null);
@@ -104,7 +113,7 @@ export function SupplierClaimsPage() {
       notify.success(ok);
       return true;
     } catch (e) {
-      notify.error(tx('Action failed'), errMsg(e));
+      notifyApiError(e, tx('Action failed'));
       return false;
     }
   };
@@ -130,6 +139,12 @@ export function SupplierClaimsPage() {
     }
   };
 
+  const cancelClaim = async () => {
+    if (cancelling && await run(() => claimApi.action(cancelling.id, 'cancel'), tx('Claim cancelled'))) {
+      setCancelling(null);
+    }
+  };
+
   const reject = async (c: SupplierClaim) => {
     const response = window.prompt(tx("What did the supplier say?")) ?? '';
     if (response.trim()) await run(() => claimApi.reject(c.id, response), tx('Claim rejected'));
@@ -141,7 +156,7 @@ export function SupplierClaimsPage() {
         description={tx('Short, damaged, rejected or mispriced deliveries claimed back from suppliers and settled by a supplier credit that reduces what you owe.')}
         actions={canManage && <Button onClick={() => setOpen(true)}><Plus className="mr-1 h-4 w-4" />{tx('New claim')}</Button>} />
       <div className="flex gap-2">
-        <select className="h-9 rounded-md border bg-background px-2 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select className="h-9 rounded-md border bg-background px-2 text-sm" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
           <option value="">{tx('All statuses')}</option>
           {(Object.keys(STATUS_LABEL) as ClaimStatus[]).map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
         </select>
@@ -174,14 +189,14 @@ export function SupplierClaimsPage() {
                   <TableCell className="space-x-1 whitespace-nowrap text-right">
                     {canManage && c.status === 'open' && (
                       <>
-                        <Button size="sm" variant="outline" onClick={() => run(() => claimApi.action(c.id, 'submit'), tx('Claim sent'))}>{tx('Send')}</Button>
-                        <Button size="sm" variant="ghost" onClick={() => run(() => claimApi.action(c.id, 'cancel'), tx('Claim cancelled'))}>{tx('Cancel')}</Button>
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => claimApi.action(c.id, 'submit'), tx('Claim sent'))}>{tx('Send')}</Button>
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => setCancelling(c)}>{tx('Cancel')}</Button>
                       </>
                     )}
                     {canManage && (c.status === 'open' || c.status === 'submitted') && (
                       <>
                         <Button size="sm" onClick={() => { setAccepting(c); setAgreed({ amount: String(Number(c.amount)), response: '' }); }}><Check className="mr-1 h-4 w-4" />{tx('Accepted')}</Button>
-                        <Button size="sm" variant="ghost" onClick={() => reject(c)}><X className="mr-1 h-4 w-4" />{tx('Rejected')}</Button>
+                        <Button size="sm" variant="ghost" disabled={busy} onClick={() => reject(c)}><X className="mr-1 h-4 w-4" />{tx('Rejected')}</Button>
                       </>
                     )}
                     {QUANTITY_TYPES.includes(c.type) && (LINE_EDITABLE.includes(c.status) || (c.quantityLines?.length ?? 0) > 0) && (
@@ -199,6 +214,25 @@ export function SupplierClaimsPage() {
           </Table>
         </CardContent>
       </Card>
+      {data?.meta && data.meta.total > 0 && (
+        <DataTablePagination
+          page={data.meta.page} pageSize={pageSize} total={data.meta.total} totalPages={data.meta.totalPages}
+          onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }}
+          pageSizeOptions={[25, 50, 100]} noun={tx('claim')}
+        />
+      )}
+
+      <ConfirmDialog
+        open={!!cancelling}
+        onOpenChange={(v) => { if (!v) setCancelling(null); }}
+        title={tx('Cancel {{claimNumber}}?', { claimNumber: cancelling?.claimNumber ?? '' })}
+        description={<p>{tx('The claim is closed without asking the supplier for anything. A cancelled claim cannot be reopened.')}</p>}
+        confirmLabel={tx('Cancel claim')}
+        pendingLabel={tx('Cancelling…')}
+        destructive
+        pending={busy}
+        onConfirm={cancelClaim}
+      />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -206,10 +240,17 @@ export function SupplierClaimsPage() {
           <div className="space-y-3">
             <div>
               <Label>{tx('Supplier')}</Label>
-              <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={form.partnerId} onChange={(e) => setForm({ ...form, partnerId: e.target.value })}>
-                <option value="">{tx('Select…')}</option>
-                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              <SearchableSelect
+                value={form.partnerId}
+                onValueChange={(v) => setForm({ ...form, partnerId: v })}
+                options={suppliers.options}
+                onQueryChange={suppliers.onQueryChange}
+                loading={suppliers.loading}
+                footer={suppliers.footer}
+                selectedLabel={suppliers.labelOf(form.partnerId)}
+                placeholder={tx('Select…')}
+                searchPlaceholder={tx('Search suppliers…')}
+              />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -230,7 +271,9 @@ export function SupplierClaimsPage() {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>{tx('Cancel')}</Button>
-            <Button onClick={create} disabled={!form.partnerId || form.amount === '' || !form.description.trim()}>{tx('Raise claim')}</Button>
+            <Button onClick={create} disabled={busy || !form.partnerId || form.amount === '' || !form.description.trim()}>
+              {busy ? tx('Saving…') : tx('Raise claim')}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -250,9 +293,9 @@ export function SupplierClaimsPage() {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setAccepting(null)}>{tx('Cancel')}</Button>
-            <Button onClick={async () => {
+            <Button disabled={busy} onClick={async () => {
               if (accepting && await run(() => claimApi.accept(accepting.id, Number(agreed.amount), agreed.response || undefined), tx('Claim accepted'))) setAccepting(null);
-            }}>{tx('Save')}</Button>
+            }}>{busy ? tx('Saving…') : tx('Save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -277,11 +320,12 @@ export function SupplierClaimsPage() {
               {classification === 'stock_adjustment' && !(settling.quantityLines ?? []).length && (
                 <p className="text-xs text-destructive">{tx('Record the received quantities on the claim first.')}</p>
               )}
+              <p className="text-xs text-muted-foreground">{tx('Settling posts the supplier credit to the ledger. It cannot be undone from this screen.')}</p>
             </div>
           )}
           <DialogFooter>
             <Button variant="ghost" onClick={() => setSettling(null)}>{tx('Cancel')}</Button>
-            <Button onClick={settle}>{tx('Settle')}</Button>
+            <Button onClick={settle} disabled={busy}>{busy ? tx('Settling…') : tx('Settle')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -383,7 +427,7 @@ export function PoChangeApprovalsPage() {
         notify.success(tx('Change rejected'));
       }
     } catch (e) {
-      notify.error(tx('Action failed'), errMsg(e));
+      notifyApiError(e, tx('Action failed'));
     }
   };
 
