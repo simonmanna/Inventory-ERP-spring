@@ -16,7 +16,8 @@ value. Two usability blockers stopped storekeepers from working.
 
 **After `phase/inv-proc-blockers`:**
 - All eight blockers are fixed and tested.
-- The P1 / P2 gaps below remain; they are worked through next, in the same order.
+- The P1 / P2 gaps below remain. The web-screen gaps are fixed; the rest are in progress on branches, see the
+  [Phase B handoff](readiness-gaps/HANDOFF.md).
 - Run the data checks below once after deploying V535.
 
 ## Blockers

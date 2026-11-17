@@ -1792,4 +1792,6 @@ channels per event. The actor is never told.
 - [x] UB2 (web) the shared `Select` accepts an empty item value (Radix 2.x)
 - [x] Tests: `ReadinessBlockersIT` (10), `WarehouseIT#manualPickWithDocumentReferenceRefused`; `PoBillApplicationIT` voids
   with a reason
-- [ ] P1 / P2 gaps listed in the audit
+- [ ] P1 / P2 gaps listed in the audit: in progress, see the [handoff](audits/readiness-gaps/HANDOFF.md).
+  - [x] Web screens (stream gW; [notes](audits/readiness-gaps/gW-web.md)).
+  - [ ] Six backend streams: work in progress on `phase/gaps-*` branches, not merged.
