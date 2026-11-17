@@ -106,7 +106,7 @@ class InvoicingIT extends ApiTestSupport {
         assertThat(list.get("data").get(0).get("source").asString()).isEqualTo("manual");
         assertThat(list.get("data").get(0).get("paymentStatus").asString()).isEqualTo("unpaid");
 
-        JsonNode cancelled = ok(200, "POST", "/invoices/" + id + "/cancel", null);
+        JsonNode cancelled = ok(200, "POST", "/invoices/" + id + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(cancelled.get("status").asString()).isEqualTo("cancelled");
         assertThat(cancelled.get("amountResidual").asString()).isEqualTo("0");
         String jeStatus = jdbc.sql("SELECT status::text FROM \"JournalEntry\" WHERE id = ?")
@@ -328,8 +328,9 @@ class InvoicingIT extends ApiTestSupport {
     @DisplayName("authorization: invoicing (40 base + 10 ADR-S011 deposits / mobile money + 15 Phase 4 + 2 ADR-S025"
             + " line dimensions + 1 ACC-4 credit allocation + 4 ADR-S071 withholding certificates) and expenses (18 + 55 ADR-S052) routes answer 401 / 403")
     void authorizationMatrix() {
-        // ADR-S071: +4 withholding certificate routes.
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(72);
+        // ADR-S071: +4 withholding certificate routes. Control-account policy (2026-11-17): +1 bill write-off, +1 write-off reversal.
+        // Document reversals (2026-11-17): +2 (credit-note reverse, customer-deposit application reverse).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(76);
         // ADR-S052: +2 expense return/submit, +6 limits/settings, +18 claims/advances, +7 petty cash,
         // +14 schedules, +8 reports.
         assertThat(assertAuthorizationMatrix("com.inventoryerp.expenses")).isEqualTo(73);

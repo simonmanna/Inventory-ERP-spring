@@ -17,8 +17,11 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -112,7 +115,8 @@ public class IntercompanyConsolidationService {
 
         Map<String, BigDecimal> rates = new LinkedHashMap<>();
         for (Member m : g.members()) {
-            rates.put(m.organizationId(), "pl".equals(kind) ? averageRate(m.currencyCode(), g.currencyCode(), from, asOf)
+            rates.put(m.organizationId(), "pl".equals(kind)
+                    ? averageRate(g.parentOrganizationId(), m.currencyCode(), g.currencyCode(), from, asOf)
                     : currencies.getRate(m.currencyCode(), g.currencyCode(), asOf));
         }
         Map<String, Ledger> ledgers = unscopedRead(() -> {
@@ -474,27 +478,89 @@ public class IntercompanyConsolidationService {
         return total;
     }
 
-    /** Average of the rates dated in the period; the closing rate when there are none. */
-    private BigDecimal averageRate(String fromCcy, String toCcy, Instant from, Instant to) {
+    /** One rate row of the pair: direct (1 FROM = rate TO) or the inverse pair; the organization's own or shared. */
+    record RatePoint(Instant asOf, BigDecimal rate, boolean direct, boolean own) {}
+
+    /**
+     * Average rate of the period for translating a member's P&amp;L: time-weighted over [from, to], each rate weighted
+     * by how long it was in force inside the period, the rate in force at {@code from} carried in. Only the
+     * consolidating (parent) organization's rates and the shared ones (no organization) are read, with
+     * {@link CurrencyService#findRate}'s precedence; the closing rate when no rate is in force inside the period.
+     */
+    private BigDecimal averageRate(String org, String fromCcy, String toCcy, Instant from, Instant to) {
         if (fromCcy.equals(toCcy)) {
             return BigDecimal.ONE;
         }
-        List<BigDecimal> rs = new ArrayList<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"fromCode\", rate FROM \"CurrencyRate\" WHERE"
-                + " ((\"fromCode\" = ? AND \"toCode\" = ?) OR (\"fromCode\" = ? AND \"toCode\" = ?)) AND \"asOf\" <= ?"
-                + (from == null ? "" : " AND \"asOf\" >= ?")).params(from == null
-                        ? List.of(fromCcy, toCcy, toCcy, fromCcy, Timestamp.from(to))
-                        : List.of(fromCcy, toCcy, toCcy, fromCcy, Timestamp.from(to), Timestamp.from(from))))) {
-            BigDecimal v = SqlRows.dec(r, "rate");
-            if (v.signum() == 0) {
-                continue;
+        List<RatePoint> points = jdbc.sql("SELECT \"fromCode\", \"asOf\", rate, \"organizationId\" IS NOT NULL AS own"
+                        + " FROM \"CurrencyRate\" WHERE ((\"fromCode\" = ? AND \"toCode\" = ?) OR (\"fromCode\" = ? AND"
+                        + " \"toCode\" = ?)) AND \"asOf\" <= ? AND (\"organizationId\" IS NULL OR \"organizationId\" = ?)"
+                        + " ORDER BY \"asOf\"")
+                .params(fromCcy, toCcy, toCcy, fromCcy, Timestamp.valueOf(to.atOffset(ZoneOffset.UTC).toLocalDateTime()),
+                        org)
+                .query((rs, n) -> new RatePoint(rs.getTimestamp("asOf").toLocalDateTime().toInstant(ZoneOffset.UTC),
+                        rs.getBigDecimal("rate"), fromCcy.equals(rs.getString("fromCode")), rs.getBoolean("own")))
+                .list();
+        BigDecimal average = timeWeightedRate(points, from, to);
+        return average != null ? average : currencies.getRate(fromCcy, toCcy, to);
+    }
+
+    /**
+     * Time-weighted average of a step function of rates over [from, to] ({@code from} null = from the first rate), or
+     * null when no rate is in force for any part of it. At each instant the rate in force is {@code findRate}'s: the
+     * latest direct rate (the organization's own when it has one, else the shared one), else the reciprocal of the
+     * latest inverse rate (same precedence). Stretches with no rate in force, or a zero rate, carry no weight.
+     */
+    static BigDecimal timeWeightedRate(List<RatePoint> points, Instant from, Instant to) {
+        List<RatePoint> sorted = new ArrayList<>(points);
+        sorted.sort(Comparator.comparing(RatePoint::asOf));
+        Instant start = from != null ? from : sorted.isEmpty() ? null : sorted.get(0).asOf();
+        if (start == null || to == null || !start.isBefore(to)) {
+            return null;
+        }
+        // latest row per slot: [direct own, direct shared, inverse own, inverse shared]
+        RatePoint[] latest = new RatePoint[4];
+        int i = 0;
+        while (i < sorted.size() && !sorted.get(i).asOf().isAfter(start)) {
+            latest[slot(sorted.get(i))] = sorted.get(i);
+            i++;
+        }
+        BigDecimal weighted = BigDecimal.ZERO;
+        long weight = 0;
+        Instant cursor = start;
+        for (; i < sorted.size() && !sorted.get(i).asOf().isAfter(to); i++) {
+            RatePoint p = sorted.get(i);
+            if (p.asOf().isAfter(cursor)) {
+                BigDecimal rate = inForce(latest);
+                if (rate != null) {
+                    long ms = Duration.between(cursor, p.asOf()).toMillis();
+                    weighted = weighted.add(rate.multiply(BigDecimal.valueOf(ms), MC));
+                    weight += ms;
+                }
+                cursor = p.asOf();
             }
-            rs.add(fromCcy.equals(r.get("fromCode")) ? v : BigDecimal.ONE.divide(v, MC));
+            latest[slot(p)] = p;
         }
-        if (rs.isEmpty()) {
-            return currencies.getRate(fromCcy, toCcy, to);
+        BigDecimal rate = inForce(latest);
+        if (rate != null && to.isAfter(cursor)) {
+            long ms = Duration.between(cursor, to).toMillis();
+            weighted = weighted.add(rate.multiply(BigDecimal.valueOf(ms), MC));
+            weight += ms;
         }
-        return rs.stream().reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(rs.size()), MC);
+        return weight == 0 ? null : weighted.divide(BigDecimal.valueOf(weight), MC);
+    }
+
+    private static int slot(RatePoint p) {
+        return (p.direct() ? 0 : 2) + (p.own() ? 0 : 1);
+    }
+
+    /** The rate in force given the latest row per slot (direct own, direct shared, inverse own, inverse shared). */
+    private static BigDecimal inForce(RatePoint[] latest) {
+        RatePoint direct = latest[0] != null ? latest[0] : latest[1];
+        if (direct != null) {
+            return direct.rate().signum() == 0 ? null : direct.rate();
+        }
+        RatePoint inverse = latest[2] != null ? latest[2] : latest[3];
+        return inverse == null || inverse.rate().signum() == 0 ? null : BigDecimal.ONE.divide(inverse.rate(), MC);
     }
 
     // ---- helpers --------------------------------------------------------------------------------------------------

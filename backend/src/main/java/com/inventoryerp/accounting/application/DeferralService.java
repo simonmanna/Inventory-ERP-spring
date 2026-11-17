@@ -37,6 +37,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  * with the key {@code deferral:<scheduleId>:<periodIndex>}, so the daily job and a manual release never book a slice
  * twice. Revenue: Dr deferred revenue / Cr revenue. Expense: Dr expense / Cr prepaid. Cancelling releases nothing
  * further; what is left stays on the deferral account and shows in the remaining-balance report.
+ *
+ * <p>R3 (review 2026-11-17): releases post in system context, so a schedule enforces what a user's own entry meets.
+ * Both accounts must allow manual posting and neither may be a designated AR / AP control account (control-account
+ * policy, V518: a schedule can never be a control-account adjustment; {@link PostingService#assertManualPostingAllowed}),
+ * checked when the schedule is created, when it is approved and before each release. A schedule posts nothing until a
+ * user holding
+ * {@code journal_entry:post} other than its author approves it (maker-checker): the reclassification of a deferred
+ * P&amp;L line posts on approval, manual releases are refused and the daily job skips the schedule until then.
  */
 @Service
 public class DeferralService {
@@ -184,8 +192,9 @@ public class DeferralService {
     /**
      * Defer (part of) a posted journal line, typically an invoice or bill line. A credit line is revenue, a debit line
      * an expense. On a P&amp;L account the deferred amount is first moved to the deferral account (posting key
-     * {@code deferral:<id>:initial}, on the line's date while open, else today) and released back over time; on a
-     * balance-sheet account the line itself is the balance and {@code targetAccountId} is required.
+     * {@code deferral:<id>:initial}, on the line's date while open, else today) once a second user approves the
+     * schedule ({@link #approve}, R3), and released back over time; on a balance-sheet account the line itself is the
+     * balance and {@code targetAccountId} is required.
      */
     @Transactional
     public Map<String, Object> createFromLine(DeferralFromLineInput in) {
@@ -239,23 +248,39 @@ public class DeferralService {
                 in.months(), in.method(), null, in.journalLineId(), (String) line.get("entryId"),
                 (String) line.get("partnerId"), (String) line.get("branchId"), (String) line.get("costCenterId"),
                 in.notes());
-        if (pnl) {
-            String value = plain(amount);
-            String partner = (String) line.get("partnerId");
-            Line drLine = "revenue".equals(kind)
-                    ? new Line(target, value, null, partner, "Deferred to " + meta.code(), null, null, null)
-                    : new Line(source, value, null, partner, "Prepaid from " + meta.code(), null, null, null);
-            Line crLine = "revenue".equals(kind)
-                    ? new Line(source, null, value, partner, "Deferred revenue", null, null, null)
-                    : new Line(target, null, value, partner, "Expense deferred", null, null, null);
-            Map<String, Object> entry = posting.post(new PostingRequest("GEN",
-                    posting.openDateOrToday((Instant) line.get("postingDate")), "Deferral of " + line.get("entryNumber"),
-                    null, null, "deferral", id, null, "deferral:" + id + ":initial", (String) line.get("branchId"),
-                    (String) line.get("costCenterId"), null, List.of(drLine, crLine)));
-            jdbc.sql("UPDATE \"DeferralSchedule\" SET \"reclassEntryId\" = ? WHERE id = ?").params(entry.get("id"), id)
-                    .update();
-        }
+        // R3: the reclassification of a P&L line posts when a second user approves the schedule (approve()).
         audit.recordInTx(AuditInput.of("DeferralSchedule", id, "create", null, render(require(id, false))));
+        return get(id);
+    }
+
+    /**
+     * Approve a schedule so it may post (R3 maker-checker): the approver must hold {@code journal_entry:post}
+     * (controller) and not be the schedule's author, and both accounts must still allow manual posting. A schedule
+     * deferring a P&amp;L line posts its reclassification now (key {@code deferral:<id>:initial}, on the line's date
+     * while open, else today). Approving an approved schedule returns it unchanged.
+     */
+    @Transactional
+    public Map<String, Object> approve(String id) {
+        Map<String, Object> s = require(id, true);
+        if (!"active".equals(s.get("status"))) {
+            throw ApiException.badRequest("Only an active deferral schedule can be approved");
+        }
+        if (s.get("approvedAt") != null) {
+            return get(id);
+        }
+        String userId = TenantContext.userId();
+        if (userId != null && userId.equals(s.get("createdBy"))) {
+            throw ApiException.forbidden("The user who created a deferral schedule cannot approve it (maker-checker).");
+        }
+        posting.assertManualPostingAllowed(List.of((String) s.get("sourceAccountId"),
+                (String) s.get("targetAccountId")));
+        jdbc.sql("UPDATE \"DeferralSchedule\" SET \"approvedBy\" = ?, \"approvedAt\" = now(), \"updatedAt\" = now()"
+                        + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(userId, id, TenantContext.organizationId()).update();
+        if (s.get("journalLineId") != null && s.get("reclassEntryId") == null) {
+            postReclass(s);
+        }
+        audit.recordInTx(AuditInput.of("DeferralSchedule", id, "approve", render(s), render(require(id, false))));
         return get(id);
     }
 
@@ -266,6 +291,7 @@ public class DeferralService {
         if (!"active".equals(s.get("status"))) {
             throw ApiException.badRequest("Only an active deferral schedule can be released");
         }
+        assertApproved(s);
         LocalDate day = asOf == null || asOf.isEmpty() ? LocalDate.now(AccountingDay.zone(jdbc))
                 : RecurringJournalService.day(asOf);
         int released = 0;
@@ -286,10 +312,15 @@ public class DeferralService {
      */
     public Map<String, Object> releaseDue(LocalDate asOf) {
         String org = TenantContext.organizationId();
+        // R3: an unapproved schedule posts nothing; it is counted, not failed.
         List<String> scheduleIds = isolated.execute(s -> jdbc.sql("SELECT DISTINCT s.id FROM \"DeferralSchedule\" s"
                 + " JOIN \"DeferralRelease\" r ON r.\"scheduleId\" = s.id WHERE s.\"organizationId\" = ? AND s.status ="
-                + " 'active' AND r.status = 'planned' AND r.\"periodEnd\" <= ?").params(org, Date.valueOf(asOf))
-                .query(String.class).list());
+                + " 'active' AND s.\"approvedAt\" IS NOT NULL AND r.status = 'planned' AND r.\"periodEnd\" <= ?")
+                .params(org, Date.valueOf(asOf)).query(String.class).list());
+        long awaitingApproval = isolated.execute(s -> jdbc.sql("SELECT count(DISTINCT s.id) FROM \"DeferralSchedule\" s"
+                + " JOIN \"DeferralRelease\" r ON r.\"scheduleId\" = s.id WHERE s.\"organizationId\" = ? AND s.status ="
+                + " 'active' AND s.\"approvedAt\" IS NULL AND r.status = 'planned' AND r.\"periodEnd\" <= ?")
+                .params(org, Date.valueOf(asOf)).query(Long.class).single());
         int released = 0;
         List<Map<String, Object>> failures = new ArrayList<>();
         for (String id : scheduleIds) {
@@ -297,7 +328,7 @@ public class DeferralService {
                 try {
                     isolated.executeWithoutResult(st -> {
                         Map<String, Object> s = require(id, true);
-                        if ("active".equals(s.get("status"))) {
+                        if ("active".equals(s.get("status")) && s.get("approvedAt") != null) {
                             postRelease(s, releaseId);
                             completeIfDone(id);
                         }
@@ -318,6 +349,7 @@ public class DeferralService {
         out.put("asOf", asOf.toString());
         out.put("schedules", scheduleIds.size());
         out.put("released", released);
+        out.put("awaitingApproval", awaitingApproval);
         out.put("failures", failures);
         return out;
     }
@@ -359,6 +391,8 @@ public class DeferralService {
         String value = plain(amount);
         String source = (String) s.get("sourceAccountId");
         String target = (String) s.get("targetAccountId");
+        // R3: post() below runs in system context, which lets control accounts through; a schedule may not.
+        posting.assertManualPostingAllowed(List.of(source, target));
         String partner = (String) s.get("partnerId");
         boolean revenue = "revenue".equals(s.get("kind"));
         String label = s.get("name") + " " + index + "/" + s.get("months");
@@ -375,6 +409,53 @@ public class DeferralService {
                 + " id = ?").params(entry.get("id"), releaseId).update();
         jdbc.sql("UPDATE \"DeferralSchedule\" SET \"releasedAmount\" = \"releasedAmount\" + ?, \"updatedAt\" = now()"
                 + " WHERE id = ?").params(amount, id).update();
+    }
+
+    /**
+     * The reclassification of a deferred P&amp;L line to the deferral account (revenue: Dr revenue / Cr deferred
+     * revenue; expense: Dr prepaid / Cr expense), posted when the schedule is approved. A balance-sheet line needs
+     * none: the line itself is the balance (its account is the schedule's source).
+     */
+    private void postReclass(Map<String, Object> s) {
+        String id = (String) s.get("id");
+        Map<String, Object> line = SqlRows.one(jdbc.sql("SELECT l.\"accountId\", l.\"partnerId\", l.\"branchId\","
+                + " l.\"costCenterId\", e.\"entryNumber\", e.\"postingDate\", e.status::text AS status FROM"
+                + " \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.id = ? AND"
+                + " l.\"organizationId\" = ?").params(s.get("journalLineId"), TenantContext.organizationId()));
+        if (line == null) {
+            throw ApiException.notFound("Journal line not found");
+        }
+        String target = (String) s.get("targetAccountId");
+        if (!target.equals(line.get("accountId"))) {
+            return;
+        }
+        if (!"posted".equals(line.get("status"))) {
+            throw ApiException.badRequest("Only a line of a posted entry can be deferred");
+        }
+        String source = (String) s.get("sourceAccountId");
+        String kind = (String) s.get("kind");
+        AccountMeta meta = accounts.metaById(target);
+        String value = plain(SqlRows.dec(s, "totalAmount"));
+        String partner = (String) line.get("partnerId");
+        Line drLine = "revenue".equals(kind)
+                ? new Line(target, value, null, partner, "Deferred to " + meta.code(), null, null, null)
+                : new Line(source, value, null, partner, "Prepaid from " + meta.code(), null, null, null);
+        Line crLine = "revenue".equals(kind)
+                ? new Line(source, null, value, partner, "Deferred revenue", null, null, null)
+                : new Line(target, null, value, partner, "Expense deferred", null, null, null);
+        Map<String, Object> entry = posting.post(new PostingRequest("GEN",
+                posting.openDateOrToday((Instant) line.get("postingDate")), "Deferral of " + line.get("entryNumber"),
+                null, null, "deferral", id, null, "deferral:" + id + ":initial", (String) line.get("branchId"),
+                (String) line.get("costCenterId"), null, List.of(drLine, crLine)));
+        jdbc.sql("UPDATE \"DeferralSchedule\" SET \"reclassEntryId\" = ? WHERE id = ?").params(entry.get("id"), id)
+                .update();
+    }
+
+    private void assertApproved(Map<String, Object> s) {
+        if (s.get("approvedAt") == null) {
+            throw ApiException.badRequest("A deferral schedule must be approved by a second user before it can post"
+                    + " (maker-checker)");
+        }
     }
 
     private void completeIfDone(String id) {
@@ -427,6 +508,8 @@ public class DeferralService {
         if (!AccountClassification.isProfitAndLoss(t.classification())) {
             throw ApiException.badRequest("The target account " + t.code() + " must be a revenue or expense account");
         }
+        // R3: the releases post in system context, so the manual-posting rule is enforced here
+        posting.assertManualPostingAllowed(List.of(source, target));
     }
 
     private Map<String, Object> require(String id, boolean lock) {

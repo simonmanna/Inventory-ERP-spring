@@ -380,7 +380,16 @@ public class FinancialReportsService {
 
     // ------------------------------------------------------------------ cash-flow statement
 
-    /** Direct-method cash flow: cash moved attributed by the counter account's section. */
+    /**
+     * Direct-method cash flow (IAS 7). Per entry touching a cash account, its net cash movement (cash debits − cash
+     * credits, so transfers between cash accounts net out) is allocated only across the entry's opposite-side non-cash
+     * lines — cash in against the credit lines, cash out against the debit lines — in proportion to their amounts, and
+     * each share is classified by that counter account's cash-flow class (review R10: sharing it across every non-cash
+     * line let non-cash legs of a multi-line entry shift amounts between sections). Revaluation of cash balances
+     * ({@code fx_revaluation} entries and their reversals) is not a cash flow: it is reported as
+     * {@code effectOfExchangeRateChanges}, and {@code reconciled} proves opening + net cash flow + that effect = the
+     * ledger's closing cash.
+     */
     @Transactional(readOnly = true)
     public Map<String, Object> cashFlow(String fromRaw, String toRaw) {
         ZoneId zone = zone();
@@ -392,7 +401,8 @@ public class FinancialReportsService {
         Set<String> cash = new HashSet<>(accounts.cashEquivalentIds());
         if (cash.isEmpty()) {
             return body("from", fromRaw, "to", toRaw, "openingCash", "0", "operating", "0", "investing", "0", "financing", "0",
-                    "netCashFlow", "0", "closingCash", "0", "actualClosingCash", "0", "reconciled", true);
+                    "netCashFlow", "0", "effectOfExchangeRateChanges", "0", "closingCash", "0", "actualClosingCash", "0",
+                    "reconciled", true);
         }
         BigDecimal opening = from == null ? BigDecimal.ZERO : sumCash(cash, null, from);
         Map<String, Object> params = new LinkedHashMap<>();
@@ -407,40 +417,92 @@ public class FinancialReportsService {
             period.append(" AND e.\"postingDate\" <= :to");
             params.put("to", FiscalPeriodControl.ts(to));
         }
-        List<Map<String, Object>> lines = SqlRows.list(spec("SELECT l.\"accountId\", l.\"baseDebit\", l.\"baseCredit\" FROM \"JournalLine\" l"
+        List<Map<String, Object>> lines = SqlRows.list(spec("SELECT l.\"journalEntryId\", l.\"accountId\", l.\"baseDebit\","
+                + " l.\"baseCredit\", (coalesce(x.\"sourceType\", '') = 'fx_revaluation' OR EXISTS (SELECT 1 FROM"
+                + " \"JournalEntry\" o WHERE o.id = x.\"reversalOfId\" AND o.\"sourceType\" = 'fx_revaluation')) AS fx"
+                + " FROM \"JournalLine\" l JOIN \"JournalEntry\" x ON x.id = l.\"journalEntryId\""
                 + " WHERE l.\"journalEntryId\" IN (SELECT DISTINCT cl.\"journalEntryId\" FROM \"JournalLine\" cl JOIN \"JournalEntry\" e"
                 + " ON e.id = cl.\"journalEntryId\" WHERE cl.\"organizationId\" = :org AND cl.\"accountId\" IN (:cash)"
                 + " AND e.status::text IN ('posted', 'reversed')" + period + ")", params));
         Set<String> ids = new HashSet<>();
-        lines.forEach(l -> ids.add((String) l.get("accountId")));
-        Map<String, AccountMeta> meta = accounts.meta(ids);
-        BigDecimal operating = BigDecimal.ZERO;
-        BigDecimal investing = BigDecimal.ZERO;
-        BigDecimal financing = BigDecimal.ZERO;
+        Map<String, List<Map<String, Object>>> byEntry = new LinkedHashMap<>();
         for (Map<String, Object> l : lines) {
-            String accountId = (String) l.get("accountId");
-            if (cash.contains(accountId)) {
-                continue;
-            }
-            BigDecimal contribution = SqlRows.dec(l, "baseCredit").subtract(SqlRows.dec(l, "baseDebit"));
-            if (contribution.signum() == 0) {
-                continue;
-            }
-            AccountMeta a = meta.get(accountId);
-            String section = a == null ? "operating" : AccountClassification.cashFlowSectionOf(a.classification(), a.cashFlowClass());
-            switch (section) {
-                case "operating" -> operating = operating.add(contribution);
-                case "investing" -> investing = investing.add(contribution);
-                default -> financing = financing.add(contribution);
-            }
+            ids.add((String) l.get("accountId"));
+            byEntry.computeIfAbsent((String) l.get("journalEntryId"), k -> new ArrayList<>()).add(l);
         }
+        Map<String, AccountMeta> meta = accounts.meta(ids);
+        Map<String, BigDecimal> sections = new LinkedHashMap<>();
+        BigDecimal fxEffect = BigDecimal.ZERO;
+        for (List<Map<String, Object>> entry : byEntry.values()) {
+            BigDecimal cashNet = BigDecimal.ZERO;
+            for (Map<String, Object> l : entry) {
+                if (cash.contains((String) l.get("accountId"))) {
+                    cashNet = cashNet.add(SqlRows.dec(l, "baseDebit")).subtract(SqlRows.dec(l, "baseCredit"));
+                }
+            }
+            if (cashNet.signum() == 0) {
+                continue;
+            }
+            if (Boolean.TRUE.equals(entry.get(0).get("fx"))) {
+                fxEffect = fxEffect.add(cashNet);
+                continue;
+            }
+            allocateCash(cashNet, entry, cash, meta, sections);
+        }
+        BigDecimal operating = sections.getOrDefault("operating", BigDecimal.ZERO);
+        BigDecimal investing = sections.getOrDefault("investing", BigDecimal.ZERO);
+        BigDecimal financing = sections.getOrDefault("financing", BigDecimal.ZERO);
         BigDecimal net = operating.add(investing).add(financing);
-        BigDecimal closing = opening.add(net);
+        BigDecimal closing = opening.add(net).add(fxEffect);
         BigDecimal actual = sumCash(cash, to, null);
         return body("from", fromRaw, "to", toRaw, "openingCash", plain(opening), "operating", plain(operating),
                 "investing", plain(investing), "financing", plain(financing), "netCashFlow", plain(net),
-                "closingCash", plain(closing), "actualClosingCash", plain(actual),
+                "effectOfExchangeRateChanges", plain(fxEffect), "closingCash", plain(closing),
+                "actualClosingCash", plain(actual),
                 "reconciled", closing.subtract(actual).abs().compareTo(new BigDecimal("0.01")) <= 0);
+    }
+
+    /**
+     * Spreads one entry's net cash movement over its opposite-side non-cash lines (credit lines for cash in, debit
+     * lines for cash out) in proportion to their amounts, by each counter account's cash-flow section; the last share
+     * takes the rounding remainder so the entry's shares sum exactly to its cash movement.
+     */
+    static void allocateCash(BigDecimal cashNet, List<Map<String, Object>> entry, Set<String> cash,
+            Map<String, AccountMeta> meta, Map<String, BigDecimal> sections) {
+        boolean inflow = cashNet.signum() > 0;
+        List<Map<String, Object>> counter = new ArrayList<>();
+        List<BigDecimal> weights = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (Map<String, Object> l : entry) {
+            if (cash.contains((String) l.get("accountId"))) {
+                continue;
+            }
+            BigDecimal side = inflow ? SqlRows.dec(l, "baseCredit").subtract(SqlRows.dec(l, "baseDebit"))
+                    : SqlRows.dec(l, "baseDebit").subtract(SqlRows.dec(l, "baseCredit"));
+            if (side.signum() > 0) {
+                counter.add(l);
+                weights.add(side);
+                total = total.add(side);
+            }
+        }
+        if (counter.isEmpty()) {
+            // an unbalanced or cash-only remainder (cannot happen on a balanced entry): keep it visible in operating
+            sections.merge("operating", cashNet, BigDecimal::add);
+            return;
+        }
+        BigDecimal left = cashNet;
+        for (int k = 0; k < counter.size(); k++) {
+            BigDecimal share = k == counter.size() - 1 ? left
+                    : cashNet.multiply(weights.get(k)).divide(total, 6, java.math.RoundingMode.HALF_UP);
+            left = left.subtract(share);
+            AccountMeta a = meta.get((String) counter.get(k).get("accountId"));
+            String section = a == null ? "operating"
+                    : AccountClassification.cashFlowSectionOf(a.classification(), a.cashFlowClass());
+            sections.merge(switch (section) {
+                case "operating", "investing" -> section;
+                default -> "financing";
+            }, share, BigDecimal::add);
+        }
     }
 
     private BigDecimal sumCash(Set<String> cash, Instant upTo, Instant before) {

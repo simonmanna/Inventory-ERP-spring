@@ -1,6 +1,7 @@
 package com.inventoryerp.fixedasset.web;
 
 import com.inventoryerp.shared.validation.OneOf;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -17,6 +18,7 @@ final class FixedAssetDtos {
     static final String ISO_DATE =
             "^\\d{4}-\\d{2}-\\d{2}([Tt ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?([Zz]|[+-]\\d{2}(:?\\d{2})?)?)?$";
     static final String DATE_MSG = "must be a valid ISO 8601 date string";
+    static final String POSITIVE = "must be a positive number";
 
     static final String[] ASSET_STATUSES = {"active", "under_maintenance", "disposed", "lost_stolen", "in_repair",
         "reserved"};
@@ -29,7 +31,8 @@ final class FixedAssetDtos {
             String depreciationMethod,
             BigDecimal defaultUsefulLife,
             BigDecimal defaultResidualValue,
-            Boolean isActive) {}
+            Boolean isActive,
+            @DecimalMin(value = "0", inclusive = false, message = POSITIVE) BigDecimal decliningFactor) {}
 
     /** {@code UpdateAssetCategoryDto}. */
     public record UpdateCategoryRequest(
@@ -40,7 +43,8 @@ final class FixedAssetDtos {
             String depreciationMethod,
             BigDecimal defaultUsefulLife,
             BigDecimal defaultResidualValue,
-            Boolean isActive) {}
+            Boolean isActive,
+            @DecimalMin(value = "0", inclusive = false, message = POSITIVE) BigDecimal decliningFactor) {}
 
     /** {@code CreateAssetDto}. */
     public record CreateAssetRequest(
@@ -73,7 +77,8 @@ final class FixedAssetDtos {
             String image,
             String notes,
             @OneOf({"active", "under_maintenance", "disposed", "lost_stolen", "in_repair", "reserved"})
-            String status) {}
+            String status,
+            @DecimalMin(value = "0", inclusive = false, message = POSITIVE) BigDecimal totalUnits) {}
 
     /** {@code UpdateAssetDto}. */
     public record UpdateAssetRequest(
@@ -106,7 +111,8 @@ final class FixedAssetDtos {
             String image,
             String notes,
             @OneOf({"active", "under_maintenance", "disposed", "lost_stolen", "in_repair", "reserved"})
-            String status) {}
+            String status,
+            @DecimalMin(value = "0", inclusive = false, message = POSITIVE) BigDecimal totalUnits) {}
 
     /** {@code CreateAcquisitionDto}. */
     public record AcquisitionRequest(
@@ -248,4 +254,11 @@ final class FixedAssetDtos {
             @NotNull(message = STR) String period,
             Boolean postEntries,
             String assetId) {}
+
+    /** R14: units an asset used in one period ({@code YYYY-MM}), for units-of-production depreciation. */
+    public record RecordUsageRequest(
+            @NotNull(message = STR) @Pattern(regexp = "^\\d{4}-\\d{2}$", message = "must be a YYYY-MM month")
+            String period,
+            @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal units,
+            String notes) {}
 }

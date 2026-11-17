@@ -68,6 +68,27 @@ class GlAutomationIT extends AccountingFixtures {
         return login(b.code(), email, "Checker@12345");
     }
 
+    /** A user of the books' organization holding only {@code permissions}. */
+    String userWith(Books b, String... permissions) {
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                + " VALUES (?, ?, ?, false, ?, now())").params(role, b.org(), "Limited-" + role, permissions).update();
+        String email = "limited-" + UUID.randomUUID().toString().substring(0, 8) + "@" + b.code() + ".test";
+        createUser(b.org(), email, "Limited@12345", role);
+        return login(b.code(), email, "Limited@12345");
+    }
+
+    /** Approve a recurring template or deferral schedule as a second user (R3 maker-checker). */
+    JsonNode approveAsChecker(Books b, String path) {
+        Res r = call("POST", path + "/approve", null, secondAdmin(b));
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        return r.body();
+    }
+
+    void manualPosting(String accountId, Boolean allowed) {
+        jdbc.sql("UPDATE \"Account\" SET \"allowManualPosting\" = ? WHERE id = ?").params(allowed, accountId).update();
+    }
+
     // ------------------------------------------------------------------ recurring entries
 
     @Test
@@ -80,6 +101,7 @@ class GlAutomationIT extends AccountingFixtures {
         long expected = java.time.temporal.ChronoUnit.DAYS.between(start, today) + 1;
         String id = okAs(b, 201, "POST", "/recurring-entries", template(b, "daily", start, "post", 75)).get("id")
                 .asString();
+        approveAsChecker(b, "/recurring-entries/" + id);
         Map<String, Object> first = inTenant(b.org(), null, () -> recurring.runDue(today));
         assertThat(first.get("generated")).isEqualTo((int) expected);
         Map<String, Object> second = inTenant(b.org(), null, () -> recurring.runDue(today));
@@ -127,6 +149,7 @@ class GlAutomationIT extends AccountingFixtures {
         closePeriod(b, lastMonthDay.toString());
         String id = okAs(b, 201, "POST", "/recurring-entries", template(b, "monthly", lastMonthDay, "post", 30))
                 .get("id").asString();
+        approveAsChecker(b, "/recurring-entries/" + id);
         Res manual = as(b, "POST", "/recurring-entries/" + id + "/run", Map.of("date", lastMonthDay.toString()));
         assertThat(manual.status()).isEqualTo(400);
         assertThat(manual.body().get("message").asString()).contains("closed");
@@ -160,6 +183,71 @@ class GlAutomationIT extends AccountingFixtures {
         assertThat(as(b, "POST", "/recurring-entries", foreign).status()).isEqualTo(400);
     }
 
+    @Test
+    @DisplayName("[R3] recurring: post mode stages drafts until a second user with journal_entry:post approves")
+    void recurringPostModeNeedsApproval() {
+        Books b = freshBooks();
+        monthlyPeriods(b, lastAndThisMonth());
+        LocalDate today = LocalDate.now();
+        String id = okAs(b, 201, "POST", "/recurring-entries", template(b, "monthly", today, "post", 60)).get("id")
+                .asString();
+        String path = "/recurring-entries/" + id;
+        assertThat(okAs(b, 200, "GET", path, null).get("approvedAt").isNull()).isTrue();
+        JsonNode unapproved = okAs(b, 200, "POST", path + "/run", Map.of("date", today.toString()));
+        assertThat(unapproved.get("status").asString()).as("unapproved occurrence").isEqualTo("draft");
+        assertThat(recurringEntries(b.org(), id, "posted")).isZero();
+        Res self = as(b, "POST", "/journal-entries/" + unapproved.get("journalEntryId").asString() + "/post", null);
+        assertThat(self.status()).as("the template author cannot post its draft").isEqualTo(403);
+
+        String manager = userWith(b, "recurring_entry:read", "recurring_entry:manage");
+        assertThat(call("POST", path + "/approve", null, manager).status()).as("no journal_entry:post").isEqualTo(403);
+        assertThat(as(b, "POST", path + "/approve", null).status()).as("author approves").isEqualTo(403);
+        JsonNode approved = approveAsChecker(b, path);
+        assertThat(approved.get("approvedAt").isNull()).isFalse();
+        assertThat(approved.get("approvedBy").asString()).isNotEqualTo(b.ownerId());
+        JsonNode posted = okAs(b, 200, "POST", path + "/run", Map.of("date", today.minusDays(1).toString()));
+        assertThat(posted.get("status").asString()).isEqualTo("posted");
+        assertThat(recurringEntries(b.org(), id, "posted")).isEqualTo(1);
+
+        // A rename, or re-saving the same lines, keeps the approval; a new amount clears it.
+        assertThat(okAs(b, 200, "PATCH", path, Map.of("name", "Renamed rent")).get("approvedAt").isNull()).isFalse();
+        Map<String, Object> same = template(b, "monthly", today, "post", 60);
+        assertThat(okAs(b, 200, "PATCH", path, Map.of("lines", same.get("lines"))).get("approvedAt").isNull())
+                .isFalse();
+        Map<String, Object> changed = template(b, "monthly", today, "post", 65);
+        JsonNode edited = okAs(b, 200, "PATCH", path, Map.of("lines", changed.get("lines")));
+        assertThat(edited.get("approvedAt").isNull()).isTrue();
+        assertThat(edited.get("lastEditedBy").asString()).isEqualTo(b.ownerId());
+        JsonNode again = okAs(b, 200, "POST", path + "/run", Map.of("date", today.minusDays(2).toString()));
+        assertThat(again.get("status").asString()).as("changed, so unapproved again").isEqualTo("draft");
+        assertThat(recurringEntries(b.org(), id, "posted")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("[R3] recurring: an account that disallows manual posting is refused at save and at each run")
+    void recurringRefusesNoManualPostingAccounts() {
+        Books b = freshBooks();
+        String expense = account(b.org(), accountCodeOfCategory(b.org(), "operating_expense"));
+        manualPosting(expense, false);
+        Res refused = as(b, "POST", "/recurring-entries", template(b, "monthly", LocalDate.now(), "post", 20));
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).contains("does not allow manual posting");
+
+        manualPosting(expense, null);
+        String id = okAs(b, 201, "POST", "/recurring-entries", template(b, "monthly", LocalDate.now(), "post", 20))
+                .get("id").asString();
+        approveAsChecker(b, "/recurring-entries/" + id);
+        // The account becomes a control account after the template was saved and approved: the run is refused.
+        manualPosting(expense, false);
+        Res run = as(b, "POST", "/recurring-entries/" + id + "/run", Map.of());
+        assertThat(run.status()).isEqualTo(400);
+        assertThat(run.body().get("message").asString()).contains("does not allow manual posting");
+        assertThat(recurringEntries(b.org(), id, "posted")).isZero();
+        Map<String, Object> job = inTenant(b.org(), null, () -> recurring.runDue(LocalDate.now()));
+        assertThat(job.get("failed")).isEqualTo(1);
+        assertThat(recurringEntries(b.org(), id, "posted")).isZero();
+    }
+
     // ------------------------------------------------------------------ deferrals
 
     @Test
@@ -179,6 +267,12 @@ class GlAutomationIT extends AccountingFixtures {
         String id = s.get("id").asString();
         assertThat(s.get("kind").asString()).isEqualTo("revenue");
         assertThat(s.get("releases")).hasSize(12);
+        // R3: nothing posts before a second user approves the schedule
+        assertThat(s.get("reclassEntryId").isNull()).isTrue();
+        assertThat(net(b.org(), revenue, "deferral")).as("not yet reclassified").isEqualByComparingTo("0");
+        assertThat(as(b, "POST", "/deferrals/" + id + "/approve", null).status()).as("author approves").isEqualTo(403);
+        JsonNode approved = approveAsChecker(b, "/deferrals/" + id);
+        assertThat(approved.get("reclassEntryId").isNull()).isFalse();
         assertThat(net(b.org(), revenue, "deferral")).as("revenue moved out").isEqualByComparingTo("1200");
         Res again = as(b, "POST", "/deferrals/from-journal-line", Map.of("journalLineId", lineId, "startDate",
                 m0.toString(), "months", 12));
@@ -221,6 +315,7 @@ class GlAutomationIT extends AccountingFixtures {
             total = total.add(new BigDecimal(r.get("amount").asString()));
         }
         assertThat(total).isEqualByComparingTo("600");
+        approveAsChecker(b, "/deferrals/" + s.get("id").asString());
         Res refused = as(b, "POST", "/deferrals/" + s.get("id").asString() + "/release",
                 Map.of("asOf", months[0].plusMonths(1).minusDays(1).toString()));
         assertThat(refused.status()).isEqualTo(400);
@@ -229,6 +324,46 @@ class GlAutomationIT extends AccountingFixtures {
                 account(b.org(), mappedCode(b.org(), "default_bank")), "totalAmount", 10, "startDate",
                 months[1].toString(), "months", 1));
         assertThat(wrongTarget.status()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName("[R3] deferral: no-manual-posting accounts refused; nothing releases until a second user approves")
+    void deferralNeedsApprovalAndManualAccounts() {
+        Books b = freshBooks();
+        LocalDate[] months = lastAndThisMonth();
+        monthlyPeriods(b, months);
+        String expense = account(b.org(), accountCodeOfCategory(b.org(), "operating_expense"));
+        Map<String, Object> body = Map.of("name", "Insurance", "kind", "expense", "targetAccountId", expense,
+                "totalAmount", 200, "startDate", months[0].toString(), "months", 2);
+        String id = okAs(b, 201, "POST", "/deferrals", body).get("id").asString();
+        // (created first, so the default prepaid account exists before the refused request rolls back)
+        manualPosting(expense, false);
+        Res refused = as(b, "POST", "/deferrals", body);
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).contains("does not allow manual posting");
+        manualPosting(expense, null);
+        String asOf = months[0].plusMonths(1).minusDays(1).toString();
+        Res early = as(b, "POST", "/deferrals/" + id + "/release", Map.of("asOf", asOf));
+        assertThat(early.status()).isEqualTo(400);
+        assertThat(early.body().get("message").asString()).contains("approved");
+        Map<String, Object> job = inTenant(b.org(), null, () -> deferrals.releaseDue(LocalDate.parse(asOf)));
+        assertThat(job.get("released")).isEqualTo(0);
+        assertThat(job.get("awaitingApproval")).isEqualTo(1L);
+        assertThat(net(b.org(), expense, "deferral_release")).isEqualByComparingTo("0");
+
+        String manager = userWith(b, "deferral:read", "deferral:manage");
+        assertThat(call("POST", "/deferrals/" + id + "/approve", null, manager).status()).isEqualTo(403);
+        assertThat(as(b, "POST", "/deferrals/" + id + "/approve", null).status()).isEqualTo(403);
+        approveAsChecker(b, "/deferrals/" + id);
+        // A target account that turns into a control account after approval stops the release.
+        manualPosting(expense, false);
+        Res blocked = as(b, "POST", "/deferrals/" + id + "/release", Map.of("asOf", asOf));
+        assertThat(blocked.status()).isEqualTo(400);
+        assertThat(blocked.body().get("message").asString()).contains("does not allow manual posting");
+        manualPosting(expense, null);
+        JsonNode released = okAs(b, 200, "POST", "/deferrals/" + id + "/release", Map.of("asOf", asOf));
+        assertThat(released.get("releasedNow").asInt()).isEqualTo(1);
+        assertThat(net(b.org(), expense, "deferral_release")).isEqualByComparingTo("100");
     }
 
     // ------------------------------------------------------------------ bank rules and grouped matches

@@ -137,6 +137,12 @@ public class CreditNoteService {
         }
         d.put("lines", builder.lines(id, true));
         d.put("partner", builder.partner(d.get("partnerId")));
+        if ("cancelled".equals(String.valueOf(d.get("status"))) && reversals != null) {
+            Map<String, Object> r = reversals.find("credit_note", id);
+            if (r != null) {
+                d.put("reversal", r);
+            }
+        }
         return d;
     }
 
@@ -529,6 +535,200 @@ public class CreditNoteService {
         Map<String, Object> out = builder.document(id);
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
+        return out;
+    }
+
+    // ------------------------------------------------------------------ reversal
+
+    private com.inventoryerp.accounting.application.DocumentReversalService reversals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(com.inventoryerp.accounting.application.DocumentReversalService reversals) {
+        this.reversals = reversals;
+    }
+
+    private static final BigDecimal CENT = new BigDecimal("0.005");
+
+    /**
+     * Credit-note document reversal (owner decision 2026-11-17; a posted credit note — a sales write-off included —
+     * had no reversal but the generic journal one). With a reason, behind the {@code credit_note_reverse} approval gate,
+     * the {@code credit_note:reverse} permission and the {@code document_reversal} separation-of-duties pair, in one
+     * transaction under row locks on the credit note and every invoice it was applied to (id order, as
+     * {@link #allocate} locks):
+     * <ul>
+     *   <li>refused while credit was paid out: a refund payment still posted (void it first), a payment applied to the
+     *       note, or a refunded remainder that no voided refund accounts for;</li>
+     *   <li>GL: its journal entry and realised-FX entries ({@code credit_note_fx}) are mirrored by
+     *       {@link PostingService#reverse} (an entry already reversed is left alone);</li>
+     *   <li>allocations: each {@code CreditAllocation} is unwound — the invoice's residual and payment status are
+     *       restored (paid → posted) and the row is removed, kept in the {@code DocumentReversal} record;</li>
+     *   <li>stock: goods the note restocked are issued back out (source {@code credit_note_cancel}) at the current cost
+     *       (Dr COGS / Cr stock); refused when they are no longer on hand;</li>
+     *   <li>the note becomes {@code cancelled} with residual 0, cancelledAt / cancelledBy, and a {@code DocumentReversal}
+     *       row (reason, entries, unwound allocations).</li>
+     * </ul>
+     * A replay on a cancelled note returns it unchanged; a concurrent second call waits on the lock and then replays.
+     */
+    @Transactional
+    public Map<String, Object> reverse(String id, String reasonIn) {
+        Map<String, Object> cn = builder.document(id, "credit_note");
+        if (cn == null) {
+            throw ApiException.notFound("Credit note not found");
+        }
+        if ("cancelled".equals(String.valueOf(cn.get("status")))) {
+            return reversedView(id);
+        }
+        String reason = reversals.requireReason(reasonIn, "reverse a credit note");
+        String number = (String) cn.get("documentNumber");
+        reversals.requireApproval("credit_note_reverse", id, "credit note " + number, Money.dec(cn.get("totalAmount")));
+        reversals.assertSeparated("Document", id, java.util.Arrays.asList((String) cn.get("createdBy"),
+                (String) cn.get("postedBy")));
+
+        List<String> lockIds = new ArrayList<>(jdbc.sql("SELECT DISTINCT \"documentId\" FROM \"CreditAllocation\" WHERE"
+                + " \"creditDocumentId\" = ? AND \"organizationId\" = ?").params(id, org()).query(String.class).list());
+        lockIds.add(id);
+        jdbc.sql("SELECT id FROM \"Document\" WHERE id = ANY(?::text[]) AND \"organizationId\" = ? ORDER BY id FOR UPDATE")
+                .params(lockIds.toArray(String[]::new), org()).query().listOfRows();
+        cn = builder.document(id, "credit_note");
+        String status = String.valueOf(cn.get("status"));
+        if ("cancelled".equals(status)) {
+            return reversedView(id);
+        }
+        if (!"posted".equals(status) && !"paid".equals(status)) {
+            throw ApiException.badRequest("Only a posted credit note can be reversed (credit note " + number + " is "
+                    + status + ")");
+        }
+
+        List<Map<String, Object>> allocations = SqlRows.list(jdbc.sql("SELECT a.id, a.\"documentId\", a.amount,"
+                + " a.\"createdAt\", d.\"documentNumber\", d.status::text AS \"documentStatus\" FROM \"CreditAllocation\" a"
+                + " JOIN \"Document\" d ON d.id = a.\"documentId\" WHERE a.\"creditDocumentId\" = ? AND"
+                + " a.\"organizationId\" = ? ORDER BY a.\"createdAt\", a.id").params(id, org()));
+        assertCreditNotPaidOut(cn, allocations);
+
+        // GL: the note's own entry and its realised FX, mirrored (never twice: only posted entries).
+        String note = "Reversal of credit note " + number + ": " + reason;
+        List<String> entries = new ArrayList<>();
+        if (cn.get("journalEntryId") != null) {
+            entries.add((String) cn.get("journalEntryId"));
+        }
+        entries.addAll(jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
+                + " 'credit_note_fx' AND \"sourceId\" = ? ORDER BY \"postedAt\", id").params(org(), id)
+                .query(String.class).list());
+        for (String entryId : entries) {
+            String entryStatus = jdbc.sql("SELECT status::text FROM \"JournalEntry\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(entryId, org()).query(String.class).optional().orElse(null);
+            if ("posted".equals(entryStatus)) {
+                posting.reverse(entryId, null, note);
+            }
+        }
+
+        // Sub-ledger: give every applied credit back to its invoice.
+        List<Map<String, Object>> unwound = new ArrayList<>();
+        for (Map<String, Object> a : allocations) {
+            BigDecimal amount = Money.dec(a.get("amount"));
+            Map<String, Object> inv = SqlRows.one(jdbc.sql("SELECT id, \"totalAmount\", \"withholdingAmount\","
+                    + " \"amountResidual\", status::text AS status FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(a.get("documentId"), org()));
+            BigDecimal residual = Money.dec(inv.get("amountResidual")).add(amount);
+            BigDecimal payable = Money.dec(inv.get("totalAmount")).subtract(Money.dec(inv.get("withholdingAmount")));
+            String paymentStatus = residual.signum() <= 0 ? "paid" : residual.compareTo(payable) < 0 ? "partial"
+                    : "not_paid";
+            String invStatus = "paid".equals(inv.get("status")) && residual.signum() > 0 ? "posted"
+                    : String.valueOf(inv.get("status"));
+            jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\", status ="
+                            + " ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                    .params(residual, paymentStatus, invStatus, inv.get("id")).update();
+            jdbc.sql("DELETE FROM \"CreditAllocation\" WHERE id = ?").param(a.get("id")).update();
+            unwound.add(Obj.of("kind", "credit_allocation", "creditAllocationId", a.get("id"), "documentId",
+                    a.get("documentId"), "documentNumber", a.get("documentNumber"), "amount", JsNumbers.dec(amount),
+                    "allocatedAt", a.get("createdAt") == null ? null : String.valueOf(a.get("createdAt"))));
+        }
+
+        takeBackRestock(id, number, (Instant) cn.get("issueDate"));
+
+        jdbc.sql("UPDATE \"Document\" SET status = 'cancelled', \"amountResidual\" = 0, \"cancelledAt\" = " + NOW + ","
+                + " \"cancelledBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?").params(TenantContext.userId(), id)
+                .update();
+        reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("credit_note", id,
+                number, (String) cn.get("partnerId"), reason, "Document", List.of("credit_note", "credit_note_fx"),
+                List.of("credit_note_cancel"), unwound));
+        return reversedView(id);
+    }
+
+    /**
+     * Credit that left the note other than through its allocations blocks the reversal: payments applied to the note,
+     * or a refunded remainder (total − residual − allocations) unless every refund payment of the note is voided.
+     */
+    private void assertCreditNotPaidOut(Map<String, Object> cn, List<Map<String, Object>> allocations) {
+        String id = (String) cn.get("id");
+        String number = (String) cn.get("documentNumber");
+        List<Map<String, Object>> paid = reversals.appliedPayments(id);
+        if (!paid.isEmpty()) {
+            throw ApiException.badRequest("Credit note " + number + " cannot be reversed while payments are applied to"
+                    + " it: " + com.inventoryerp.accounting.application.DocumentReversalService.describePayments(paid)
+                    + ". Void them first.");
+        }
+        BigDecimal allocated = Money.ZERO;
+        for (Map<String, Object> a : allocations) {
+            allocated = allocated.add(Money.dec(a.get("amount")));
+        }
+        BigDecimal refunded = Money.dec(cn.get("totalAmount")).subtract(Money.dec(cn.get("amountResidual")))
+                .subtract(allocated);
+        if (refunded.compareTo(CENT) <= 0) {
+            return;
+        }
+        List<Map<String, Object>> refunds = SqlRows.list(jdbc.sql("SELECT \"paymentNumber\", status::text AS status FROM"
+                + " \"Payment\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND direction::text = 'outbound' AND"
+                + " reference = ? ORDER BY \"paymentNumber\"").params(org(), cn.get("partnerId"),
+                        "Refund of credit note " + number));
+        List<String> live = refunds.stream().filter(r -> !"cancelled".equals(r.get("status")))
+                .map(r -> String.valueOf(r.get("paymentNumber"))).toList();
+        if (refunds.isEmpty() || !live.isEmpty()) {
+            throw ApiException.badRequest("Credit note " + number + " cannot be reversed: " + JsNumbers.dec(refunded)
+                    + " of its credit was refunded to the customer" + (live.isEmpty() ? ""
+                            : " (refund payment " + String.join(", ", live) + ")") + ". Void the refund payment first.");
+        }
+    }
+
+    /** Issue back out the goods the note restocked (once per note), refusing when they are no longer on hand. */
+    private void takeBackRestock(String id, String number, Instant issueDate) {
+        long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'credit_note_cancel' AND"
+                + " \"referenceId\" = ? AND \"organizationId\" = ?").params(id, org()).query(Long.class).single();
+        if (done > 0) {
+            return;
+        }
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
+                + " SUM(\"quantityChange\") AS qty FROM \"InventoryLedger\" WHERE \"referenceType\" = 'credit_note' AND"
+                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" > 0 GROUP BY \"productId\","
+                + " \"variantId\", \"locationId\" ORDER BY \"productId\", \"variantId\" NULLS FIRST, \"locationId\"")
+                .params(id, org()))) {
+            BigDecimal qty = Money.dec(r.get("qty"));
+            if (qty.signum() <= 0) {
+                continue;
+            }
+            try {
+                stock.issue(StockMove.of((String) r.get("productId"), (String) r.get("locationId"), qty)
+                        .variant((String) r.get("variantId")).requireAvailable(true)
+                        .source("credit_note_cancel", id).reference(number).date(posting.reversalDate(issueDate))
+                        .notes("Restocked goods taken back on reversal of credit note " + number));
+            } catch (ApiException e) {
+                String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(r.get("productId"))
+                        .query(String.class).optional().orElse(String.valueOf(r.get("productId")));
+                throw ApiException.badRequest("Cannot reverse credit note " + number + ": the " + JsNumbers.dec(qty)
+                        + " of " + name + " it restocked cannot be taken back (" + e.getMessage() + ")");
+            }
+        }
+    }
+
+    /** The cancelled note with lines, partner and its {@code reversal} record. */
+    private Map<String, Object> reversedView(String id) {
+        Map<String, Object> out = builder.document(id);
+        out.put("lines", builder.lines(id, false));
+        out.put("partner", builder.partner(out.get("partnerId")));
+        Map<String, Object> r = reversals.find("credit_note", id);
+        if (r != null) {
+            out.put("reversal", r);
+        }
         return out;
     }
 }

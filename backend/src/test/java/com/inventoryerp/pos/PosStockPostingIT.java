@@ -155,6 +155,9 @@ class PosStockPostingIT extends ApiTestSupport {
     @DisplayName("a sale dated in a closed period drains at today's date, noted on the ledger row")
     void cogsOfClosedPeriodSalePostsToday() {
         String suffix = UUID.randomUUID().toString().substring(0, 6);
+        // periods may not overlap (V512): drop an earlier run's copy on a reused database
+        jdbc.sql("DELETE FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND name LIKE 'Closed 1999-03 %'")
+                .param(demoOrg).update();
         jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status,"
                         + " \"updatedAt\") VALUES (?, ?, ?, '1999-03-01', '1999-03-31 23:59:59.999', 'closed', now())")
                 .params(UUID.randomUUID().toString(), demoOrg, "Closed 1999-03 " + suffix).update();
@@ -281,6 +284,9 @@ class PosStockPostingIT extends ApiTestSupport {
     @Test
     @DisplayName("a fiscal period cannot close while stock-posting jobs are queued in it")
     void periodCloseGuard() {
+        // periods may not overlap (V512): drop an earlier run's copy on a reused database
+        jdbc.sql("DELETE FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND name LIKE 'FY-GUARD-%'").param(demoOrg)
+                .update();
         String periodId = insert("FiscalPeriod", Map.of("organizationId", demoOrg, "name", "FY-GUARD-" + UUID.randomUUID(),
                 "startDate", java.sql.Timestamp.valueOf("2001-01-01 00:00:00"),
                 "endDate", java.sql.Timestamp.valueOf("2001-12-31 23:59:59"),

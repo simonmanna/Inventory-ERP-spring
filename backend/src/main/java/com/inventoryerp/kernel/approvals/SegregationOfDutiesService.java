@@ -35,6 +35,11 @@ public class SegregationOfDutiesService {
     public static final String SUPPLIER_BILL_APPROVAL = "supplier_bill_approval";
     /** EX-2 (ADR-S052): whoever raised, approved or claims an expense cannot also pay it. */
     public static final String EXPENSE_PAYMENT = "expense_payment";
+    /**
+     * Document reversals (owner decision 2026-11-17): whoever created or posted a sales invoice, supplier bill, credit /
+     * debit note or payment cannot also reverse (cancel / void) it.
+     */
+    public static final String DOCUMENT_REVERSAL = "document_reversal";
 
     public static final String AUDIT_ENTITY = "SodCheck";
 
@@ -54,7 +59,9 @@ public class SegregationOfDutiesService {
                 new Pair(CREDIT_OVERRIDE, "Credit override", "Raises the sale", "Overrides the credit hold", false),
                 new Pair(SUPPLIER_BILL_APPROVAL, "Supplier bill approval", "Enters the bill", "Approves it", false),
                 new Pair(EXPENSE_PAYMENT, "Expense payment", "Raises, approves or claims the expense", "Pays it",
-                        false))) {
+                        false),
+                new Pair(DOCUMENT_REVERSAL, "Document reversal", "Creates or posts the invoice, bill, note or payment",
+                        "Cancels, voids or reverses it", false))) {
             PAIRS.put(p.key(), p);
         }
     }

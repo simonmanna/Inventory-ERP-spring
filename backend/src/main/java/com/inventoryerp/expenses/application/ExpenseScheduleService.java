@@ -1,6 +1,7 @@
 package com.inventoryerp.expenses.application;
 
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.ControlAccountGuards;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -293,6 +294,9 @@ public class ExpenseScheduleService {
         if (account == null) {
             account = accounts.byMapping("default_expense");
         }
+        // Control-account policy (V518, "close now"): the accrual's expense side never debits a designated AR / AP
+        // account (the accrued-expenses credit is the liability, not the supplier's payable).
+        ControlAccountGuards.assertNotControl(jdbc, org(), "Expense accrual account", account);
         LocalDate date = LocalDate.parse(in.accrualDate().substring(0, 10));
         LocalDate reversal = in.reversalDate() == null || in.reversalDate().isBlank()
                 ? date.withDayOfMonth(1).plusMonths(1) : LocalDate.parse(in.reversalDate().substring(0, 10));

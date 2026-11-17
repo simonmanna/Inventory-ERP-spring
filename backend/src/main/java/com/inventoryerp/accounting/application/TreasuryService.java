@@ -153,7 +153,7 @@ public class TreasuryService {
             if (toFx == null) {
                 targetBase = received;
             } else {
-                CurrencyService.Resolution rate = currency.resolve(toCcy, functional, exchangeRate, postingDate);
+                CurrencyService.Resolution rate = currency.resolveStated(toCcy, functional, exchangeRate, postingDate);
                 legs.add(rate);
                 targetBase = received.multiply(rate.rate()).setScale(6, RoundingMode.HALF_UP);
             }

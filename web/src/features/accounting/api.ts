@@ -191,6 +191,14 @@ export function allowsManualPosting(a: Account): boolean {
   return a.allowManualPosting ?? a.category?.allowManualPosting ?? true;
 }
 
+/**
+ * A designated AR / AP control account (explicit `controlAccountType`, never the name). Manual, recurring and
+ * deferral journals cannot post to it; only a control-account adjustment entry can (server control-account policy).
+ */
+export function isReceivablePayableControl(a: Pick<Account, 'controlAccountType'>): boolean {
+  return a.controlAccountType === 'ar' || a.controlAccountType === 'ap';
+}
+
 /** The server caps `pageSize` at 1000; page through until `total` so pickers see every account. */
 const ACCOUNT_PAGE_SIZE = 1000;
 
@@ -498,6 +506,8 @@ export interface CashFlowResult {
   investing: string;
   financing: string;
   netCashFlow: string;
+  /** IAS 7: revaluation of cash balances; closingCash = openingCash + netCashFlow + this. Absent on older APIs. */
+  effectOfExchangeRateChanges?: string;
   closingCash: string;
   actualClosingCash: string;
   reconciled: boolean;
@@ -1161,7 +1171,32 @@ export interface JournalEntryRow {
   postedAt?: string | null;
   postedBy?: string | null;
   createdBy?: string | null;
+  /** A control-account adjustment (the only manual entry allowed on a designated AR / AP control account). */
+  controlAdjustment?: boolean;
+  controlAdjustmentReason?: string | null;
+  /**
+   * Present when a customer / supplier sub-ledger document posted the entry (or the entry reverses one that did). Such
+   * an entry is never reversed generically: it is reversed by the document's own action (`action` / `route`).
+   */
+  sourceDocument?: JournalSourceDocument | null;
   _count?: { lines: number };
+}
+
+/** The sub-ledger document behind a journal entry (document reversals, owner decision 2026-11-17). */
+export interface JournalSourceDocument {
+  documentType: string;
+  label: string;
+  id: string;
+  number: string | null;
+  sourceType: string;
+  /** The document-level reversal action, e.g. "Cancel the invoice"; null when the document has none. */
+  action: string | null;
+  route: string | null;
+  /** Web path of the document, when it has a page. */
+  path: string | null;
+  /** True when this entry is itself the reversal of the document's entry. */
+  viaReversal: boolean;
+  genericReversal: false;
 }
 
 export interface JournalLine {
@@ -1169,7 +1204,10 @@ export interface JournalLine {
   description: string | null;
   debit: string;
   credit: string;
-  account: { code: string; name: string };
+  partnerId?: string | null;
+  /** Present when the line names a partner. */
+  partner?: { id: string; code: string | null; name: string } | null;
+  account: { code: string; name: string; controlAccountType?: ControlAccountType | null };
 }
 
 export interface JournalEntryDetail extends JournalEntryRow {
@@ -1315,6 +1353,9 @@ export interface CreateJournalEntryInput {
   date: string;
   description?: string;
   lines: ManualJournalLineInput[];
+  /** Stage a control-account adjustment (needs journal_entry:control_adjust; a partner on every AR / AP line). */
+  controlAdjustment?: boolean;
+  controlAdjustmentReason?: string;
 }
 
 function invalidateJournalEntry(qc: ReturnType<typeof useQueryClient>, id?: string) {

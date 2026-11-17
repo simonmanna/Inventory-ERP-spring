@@ -73,9 +73,20 @@ export function JournalEntriesPage() {
       key: 'entryNumber',
       header: tx('Entry #'),
       render: (e) => (
-        <Link to={`/journal-entries/${e.id}`} className="font-medium text-primary hover:underline">
-          {e.entryNumber}
-        </Link>
+        <span className="inline-flex items-center gap-1.5">
+          <Link to={`/journal-entries/${e.id}`} className="font-medium text-primary hover:underline">
+            {e.entryNumber}
+          </Link>
+          {e.controlAdjustment && (
+            <Badge
+              variant="outline"
+              className="text-[10px] px-1.5 py-0 border-amber-300 text-amber-700"
+              title={e.controlAdjustmentReason ?? undefined}
+            >
+              {tx('Control adj.')}
+            </Badge>
+          )}
+        </span>
       ),
     },
     { key: 'postingDate', header: tx('Date'), render: (e) => date(e.postingDate) },

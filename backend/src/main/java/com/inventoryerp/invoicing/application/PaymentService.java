@@ -377,6 +377,9 @@ public class PaymentService {
             if (!Boolean.TRUE.equals(DEPOSIT_APPLICATION.get()) || dto.accountId() == null) {
                 throw ApiException.badRequest("Unsupported payment method");
             }
+            // Control-account policy (V518): the deposit liability side is never an AR / AP control account.
+            com.inventoryerp.accounting.application.ControlAccountGuards.assertNotControl(jdbc, org,
+                    "Deposit application account", dto.accountId());
             resolved = new TenderAccount.Resolved(dto.accountId(), "GEN", null);
         } else {
             resolved = TenderAccount.resolve(jdbc, determination, org, method, dto.accountId(), dto.cashSessionId(),
@@ -603,7 +606,7 @@ public class PaymentService {
      */
     private FxSettlement fxSettlement(PaymentInput dto, String direction, String payCurrency, String baseCode,
             BigDecimal amount, List<AllocationInput> allocations, String org) {
-        CurrencyService.Resolution rate = currency.resolve(payCurrency, baseCode, dto.exchangeRate(),
+        CurrencyService.Resolution rate = currency.resolveStated(payCurrency, baseCode, dto.exchangeRate(),
                 EntityPatch.toInstant(dto.paymentDate()));
         Map<String, BigDecimal> carrying = new HashMap<>();
         BigDecimal relieved = Money.ZERO;
@@ -765,16 +768,30 @@ public class PaymentService {
 
     // ------------------------------------------------------------------ void
 
-    /** Void a posted payment (reversal, drawer correction, residuals restored). */
+    private com.inventoryerp.accounting.application.DocumentReversalService reversals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(com.inventoryerp.accounting.application.DocumentReversalService reversals) {
+        this.reversals = reversals;
+    }
+
+    /**
+     * Payment document reversal (void; hardened by the owner decision 2026-11-17): with a reason, behind the
+     * {@code payment_void} approval gate and the {@code document_reversal} separation-of-duties pair; refused while the
+     * payment is matched to a bank statement line (unmatch it in bank reconciliation first), for a deposit application
+     * (reversed from its customer deposit) and for POS tenders (refunded through the POS invoice). Under the payment's
+     * row lock the workflow mirrors its journal entry, corrects the drawer, gives every allocation back to its invoice /
+     * bill (residual and status restored; the allocations kept in {@code voidedAllocations}), cancels its withholding
+     * certificates and stamps voidedAt / voidedById / voidReason; a {@code DocumentReversal} row keeps the entry links.
+     * A replay on a voided payment returns it unchanged.
+     */
     @Transactional
     public Map<String, Object> voidPayment(String id, String reason, String correctionSessionId) {
         String voidMethod = jdbc.sql("SELECT \"paymentMethod\" FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?")
                 .params(id, org()).query(String.class).optional().orElse(null);
         if (DEPOSIT_METHOD.equals(voidMethod)) {
-            throw ApiException.badRequest("A deposit application is reversed from the customer deposit, not voided");
-        }
-        if (reason == null || reason.trim().isEmpty()) {
-            throw ApiException.badRequest("A reason is required to void a payment");
+            throw ApiException.badRequest("A deposit application is reversed from the customer deposit, not voided"
+                    + " (POST /customer-deposits/{depositId}/applications/" + id + "/reverse)");
         }
         Map<String, Object> payment = SqlRows.one(Payment.class, jdbc.sql("SELECT * FROM \"Payment\" WHERE id = ?"
                 + " AND \"organizationId\" = ?").params(id, org()));
@@ -784,21 +801,60 @@ public class PaymentService {
         if ("cancelled".equals(String.valueOf(payment.get("status")))) {
             return payment;
         }
+        if (reason == null || reason.trim().isEmpty()) {
+            throw ApiException.badRequest("A reason is required to void a payment");
+        }
         long invoiceAllocs = jdbc.sql("SELECT count(*) FROM \"PaymentAllocation\" WHERE \"paymentId\" = ?"
                 + " AND \"invoiceId\" IS NOT NULL").param(id).query(Long.class).single();
         if (payment.get("refundOfId") != null || "store_credit".equals(payment.get("paymentMethod")) || invoiceAllocs > 0) {
             throw ApiException.badRequest("Use the linked POS invoice refund so tender, receivable and stock disposition"
                     + " remain consistent");
         }
+        String number = (String) payment.get("paymentNumber");
+        reversals.requireApproval("payment_void", id, "payment " + number, Money.dec(payment.get("amount")));
+        reversals.assertSeparated("Payment", id, java.util.Arrays.asList((String) payment.get("createdBy")));
+        jdbc.sql("SELECT id FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
+                .query().listOfRows();
+        // Bank-reconciled cash is not silently un-reconciled: unmatch the statement line first (POST
+        // /bank-reconciliation/unmatch/{lineId}), then void.
+        List<String> matched = jdbc.sql("SELECT COALESCE(\"externalRef\", description) FROM \"BankStatementLine\" WHERE"
+                        + " \"organizationId\" = ? AND status <> 'unmatched' AND (\"matchedPaymentId\" = ? OR"
+                        + " \"matchedJournalLineId\" IN (SELECT l.id FROM \"JournalLine\" l WHERE l.\"journalEntryId\" = ?))"
+                        + " ORDER BY \"postedAt\"")
+                .params(org(), id, payment.get("journalEntryId")).query(String.class).list();
+        if (!matched.isEmpty()) {
+            throw ApiException.badRequest("Payment " + number + " is matched to bank statement line(s) "
+                    + String.join(", ", matched) + "; unmatch it in bank reconciliation before voiding it");
+        }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("reason", reason.trim());
         payload.put("correctionSessionId", correctionSessionId);
         workflow.transition("payment", id, "void", payload, payment);
+        reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("payment", id,
+                number, (String) payment.get("partnerId"), reason.trim(), "Payment", List.of("payment"), List.of(),
+                voidedAllocations(id)));
         Map<String, Object> voided = new HashMap<>();
         voided.put("organizationId", org());
         voided.put("paymentId", id);
         voided.put("amount", JsNumbers.dec(Money.dec(payment.get("amount"))));
         events.publish("payment.voided", voided);
         return SqlRows.one(Payment.class, jdbc.sql("SELECT * FROM \"Payment\" WHERE id = ?").param(id));
+    }
+
+    /** The allocations the void gave back (its {@code voidedAllocations} snapshot), for the reversal record. */
+    private List<Map<String, Object>> voidedAllocations(String id) {
+        return jdbc.sql("SELECT a->>'id' AS \"allocationId\", a->>'documentId' AS \"documentId\", a->>'invoiceId' AS"
+                        + " \"invoiceId\", a->>'amount' AS amount FROM \"Payment\" p, jsonb_array_elements(CASE WHEN"
+                        + " jsonb_typeof(p.\"voidedAllocations\") = 'array' THEN p.\"voidedAllocations\" ELSE '[]'::jsonb END)"
+                        + " a WHERE p.id = ?").param(id)
+                .query((rs, n) -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("kind", "payment_allocation");
+                    m.put("allocationId", rs.getString("allocationId"));
+                    m.put("documentId", rs.getString("documentId"));
+                    m.put("invoiceId", rs.getString("invoiceId"));
+                    m.put("amount", rs.getString("amount"));
+                    return m;
+                }).list();
     }
 }

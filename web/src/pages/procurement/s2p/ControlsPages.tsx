@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ClipboardCheck, Landmark, MessageSquareWarning, Plus, X } from 'lucide-react';
+import { Check, ClipboardCheck, Landmark, ListChecks, MessageSquareWarning, Plus, Trash2, X } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,12 +17,15 @@ import {
   errMsg,
   poChangeApi,
   useClaimMutation,
+  useClaimReceiptLines,
   useClaims,
   useCommitments,
   usePendingPoChanges,
   usePoChangeMutation,
   useSupplierOptions,
+  type ClaimClassification,
   type ClaimStatus,
+  type ClaimStockAction,
   type ClaimType,
   type SupplierClaim,
 } from '@/features/procurement/api';
@@ -39,6 +42,28 @@ const CLAIM_TYPES: Array<{ value: ClaimType; label: string }> = [
   { value: 'other', label: tx('Other') },
 ];
 const TYPE_LABEL = Object.fromEntries(CLAIM_TYPES.map((t) => [t.value, t.label])) as Record<ClaimType, string>;
+const CLASSIFICATION_LABEL: Record<ClaimClassification, string> = {
+  price_variance: tx('Price variance'),
+  expense_correction: tx('Expense correction'),
+  vat_adjustment: tx('VAT adjustment'),
+  stock_adjustment: tx('Stock adjustment (verified quantities)'),
+};
+const CLASSIFICATION_HINT: Record<ClaimClassification, string> = {
+  price_variance: tx('Credits purchase price variance on stock lines and the expense on non-stock lines. Stock quantities do not change.'),
+  expense_correction: tx('Credits the expense account of the non-stock lines (services, consumables).'),
+  vat_adjustment: tx('Reverses over-charged input VAT only. The amount is the VAT, at most the VAT on the linked bill.'),
+  stock_adjustment: tx('Uses the verified quantity lines: goods leave stock at receipt cost (or reverse a write-off), against the payable or, for an unbilled receipt, GRNI.'),
+};
+/** Claim types that carry verified quantities (stock adjustment). */
+const QUANTITY_TYPES: ClaimType[] = ['shortage', 'damage', 'quality'];
+/** Classifications the server accepts per claim type. */
+function classificationsFor(type: ClaimType): ClaimClassification[] {
+  if (QUANTITY_TYPES.includes(type)) return ['price_variance', 'expense_correction', 'stock_adjustment'];
+  if (type === 'price' || type === 'other') return ['price_variance', 'expense_correction', 'vat_adjustment'];
+  return ['price_variance', 'expense_correction'];
+}
+const LINE_EDITABLE: ClaimStatus[] = ['open', 'submitted', 'accepted'];
+
 const STATUS_LABEL: Record<ClaimStatus, string> = {
   open: tx('Open'),
   submitted: tx('Sent to supplier'),
@@ -50,11 +75,13 @@ const STATUS_LABEL: Record<ClaimStatus, string> = {
 
 /**
  * Supplier claims (ADR-PROCUREMENT-001 wave 5): raise a claim for a short, damaged, rejected, mispriced or late
- * delivery, send it, record the supplier's answer and settle it with a debit note.
+ * delivery, send it, record the supplier's answer and settle it with a supplier credit (Dr AP / Cr expense or variance).
  */
 export function SupplierClaimsPage() {
   const has = useAuthStore((s) => s.hasPermission);
+  const userId = useAuthStore((s) => s.user?.id);
   const canManage = has(PERMISSIONS.supplierClaim.manage);
+  const canVerify = has(PERMISSIONS.inspection.manage);
   const [status, setStatus] = useState('');
   const { data } = useClaims({ status });
   const { data: suppliers = [] } = useSupplierOptions();
@@ -63,7 +90,13 @@ export function SupplierClaimsPage() {
   const [form, setForm] = useState({ partnerId: '', type: 'shortage' as ClaimType, amount: '', description: '' });
   const [accepting, setAccepting] = useState<SupplierClaim | null>(null);
   const [agreed, setAgreed] = useState({ amount: '', response: '' });
+  const [settling, setSettling] = useState<SupplierClaim | null>(null);
+  const [classification, setClassification] = useState<ClaimClassification | ''>('');
+  const [linesForId, setLinesForId] = useState<string | null>(null);
+  const [lineForm, setLineForm] = useState({ goodsReceiptLineId: '', quantity: '', stockAction: 'issue' as ClaimStockAction, notes: '' });
   const rows = data?.data ?? [];
+  const linesFor = rows.find((c) => c.id === linesForId) ?? null;
+  const { data: receiptLines = [] } = useClaimReceiptLines(linesFor && LINE_EDITABLE.includes(linesFor.status) ? linesFor.id : null);
 
   const run = async (fn: () => Promise<unknown>, ok: string) => {
     try {
@@ -83,6 +116,20 @@ export function SupplierClaimsPage() {
     }
   };
 
+  const addLine = async () => {
+    if (!linesFor) return;
+    const body = { goodsReceiptLineId: lineForm.goodsReceiptLineId, quantity: Number(lineForm.quantity), stockAction: lineForm.stockAction, notes: lineForm.notes.trim() || undefined };
+    if (await run(() => claimApi.addLine(linesFor.id, body), tx('Quantity recorded — a second user must verify it'))) {
+      setLineForm({ goodsReceiptLineId: '', quantity: '', stockAction: 'issue', notes: '' });
+    }
+  };
+
+  const settle = async () => {
+    if (settling && await run(() => claimApi.settle(settling.id, classification || undefined), tx('Claim settled — supplier credit posted'))) {
+      setSettling(null);
+    }
+  };
+
   const reject = async (c: SupplierClaim) => {
     const response = window.prompt(tx("What did the supplier say?")) ?? '';
     if (response.trim()) await run(() => claimApi.reject(c.id, response), tx('Claim rejected'));
@@ -91,7 +138,7 @@ export function SupplierClaimsPage() {
   return (
     <div className="space-y-4 p-6">
       <ListPageHeader title={tx('Supplier claims')} icon={MessageSquareWarning}
-        description={tx('Short, damaged, rejected or mispriced deliveries claimed back from suppliers and settled by debit note.')}
+        description={tx('Short, damaged, rejected or mispriced deliveries claimed back from suppliers and settled by a supplier credit that reduces what you owe.')}
         actions={canManage && <Button onClick={() => setOpen(true)}><Plus className="mr-1 h-4 w-4" />{tx('New claim')}</Button>} />
       <div className="flex gap-2">
         <select className="h-9 rounded-md border bg-background px-2 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -105,7 +152,7 @@ export function SupplierClaimsPage() {
             <TableHeader><TableRow>
               <TableHead>{tx('Claim')}</TableHead><TableHead>{tx('Supplier')}</TableHead><TableHead>{tx('Type')}</TableHead>
               <TableHead>{tx('Order')}</TableHead><TableHead className="text-right">{tx('Amount')}</TableHead>
-              <TableHead>{tx('Status')}</TableHead><TableHead>{tx('Debit note')}</TableHead><TableHead />
+              <TableHead>{tx('Status')}</TableHead><TableHead>{tx('Credit entry')}</TableHead><TableHead />
             </TableRow></TableHeader>
             <TableBody>
               {!rows.length && <TableRow><TableCell colSpan={8} className="py-8 text-center text-muted-foreground">{tx('No claims.')}</TableCell></TableRow>}
@@ -116,11 +163,14 @@ export function SupplierClaimsPage() {
                     <div className="text-xs text-muted-foreground">{c.description}</div>
                   </TableCell>
                   <TableCell>{c.partnerName}</TableCell>
-                  <TableCell>{TYPE_LABEL[c.type]}</TableCell>
+                  <TableCell>
+                    <div>{TYPE_LABEL[c.type]}</div>
+                    {c.classification && <div className="text-xs text-muted-foreground">{CLASSIFICATION_LABEL[c.classification]}</div>}
+                  </TableCell>
                   <TableCell>{c.purchaseOrderId ? <Link className="font-mono text-xs hover:underline" to={`/procurement/purchase-orders/${c.purchaseOrderId}`}>{c.orderNumber}</Link> : '—'}</TableCell>
                   <TableCell className="text-right">{money(c.amount)}</TableCell>
                   <TableCell><StatusPill tone={CLAIM_STATUS_TONE[c.status]}>{STATUS_LABEL[c.status]}</StatusPill></TableCell>
-                  <TableCell className="font-mono text-xs">{c.debitNoteNumber ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">{c.journalEntryNumber ?? c.debitNoteNumber ?? '—'}</TableCell>
                   <TableCell className="space-x-1 whitespace-nowrap text-right">
                     {canManage && c.status === 'open' && (
                       <>
@@ -134,8 +184,13 @@ export function SupplierClaimsPage() {
                         <Button size="sm" variant="ghost" onClick={() => reject(c)}><X className="mr-1 h-4 w-4" />{tx('Rejected')}</Button>
                       </>
                     )}
+                    {QUANTITY_TYPES.includes(c.type) && (LINE_EDITABLE.includes(c.status) || (c.quantityLines?.length ?? 0) > 0) && (
+                      <Button size="sm" variant="outline" onClick={() => setLinesForId(c.id)}>
+                        <ListChecks className="mr-1 h-4 w-4" />{tx('Quantities')}{c.quantityLines?.length ? ` (${c.quantityLines.length})` : ''}
+                      </Button>
+                    )}
                     {canManage && c.status === 'accepted' && (
-                      <Button size="sm" onClick={() => run(() => claimApi.settle(c.id), tx('Debit note created — post it to reduce what you owe'))}>{tx('Settle')}</Button>
+                      <Button size="sm" onClick={() => { setSettling(c); setClassification(''); }}>{tx('Settle')}</Button>
                     )}
                   </TableCell>
                 </TableRow>
@@ -198,6 +253,111 @@ export function SupplierClaimsPage() {
             <Button onClick={async () => {
               if (accepting && await run(() => claimApi.accept(accepting.id, Number(agreed.amount), agreed.response || undefined), tx('Claim accepted'))) setAccepting(null);
             }}>{tx('Save')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!settling} onOpenChange={(v) => !v && setSettling(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{tx('Settle claim')} {settling?.claimNumber}</DialogTitle></DialogHeader>
+          {settling && (
+            <div className="space-y-3">
+              <div className="text-sm">{tx('Agreed amount')}: <span className="font-medium">{money(settling.amount)}</span></div>
+              <div>
+                <Label>{tx('Settle as')}</Label>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={classification} onChange={(e) => setClassification(e.target.value as ClaimClassification | '')}>
+                  <option value="">{tx('Automatic (from the claim type and its quantities)')}</option>
+                  {classificationsFor(settling.type).map((k) => <option key={k} value={k}>{CLASSIFICATION_LABEL[k]}</option>)}
+                </select>
+                {classification && <p className="mt-1 text-xs text-muted-foreground">{CLASSIFICATION_HINT[classification]}</p>}
+              </div>
+              {classification === 'stock_adjustment' && (settling.quantityLines ?? []).some((l) => !l.verified) && (
+                <p className="text-xs text-destructive">{tx('Every quantity line must be verified by a second user first.')}</p>
+              )}
+              {classification === 'stock_adjustment' && !(settling.quantityLines ?? []).length && (
+                <p className="text-xs text-destructive">{tx('Record the received quantities on the claim first.')}</p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSettling(null)}>{tx('Cancel')}</Button>
+            <Button onClick={settle}>{tx('Settle')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!linesFor} onOpenChange={(v) => !v && setLinesForId(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader><DialogTitle>{tx('Claim quantities')} {linesFor?.claimNumber}</DialogTitle></DialogHeader>
+          {linesFor && (
+            <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">{tx('Only verified quantities can settle a claim as a stock adjustment. A second user — not the one who raised the claim or recorded the quantity — verifies each line.')}</p>
+              <Table>
+                <TableHeader><TableRow>
+                  <TableHead>{tx('Receipt')}</TableHead><TableHead>{tx('Product')}</TableHead>
+                  <TableHead className="text-right">{tx('Quantity')}</TableHead><TableHead className="text-right">{tx('Receipt cost')}</TableHead>
+                  <TableHead className="text-right">{tx('Value')}</TableHead><TableHead>{tx('Goods')}</TableHead><TableHead>{tx('Verified')}</TableHead><TableHead />
+                </TableRow></TableHeader>
+                <TableBody>
+                  {!(linesFor.quantityLines ?? []).length && <TableRow><TableCell colSpan={8} className="py-6 text-center text-muted-foreground">{tx('No quantities recorded.')}</TableCell></TableRow>}
+                  {(linesFor.quantityLines ?? []).map((l) => (
+                    <TableRow key={l.id}>
+                      <TableCell className="font-mono text-xs">{l.receiptNumber ?? '—'}</TableCell>
+                      <TableCell>{l.productName ?? l.productId}</TableCell>
+                      <TableCell className="text-right">{Number(l.quantity)}</TableCell>
+                      <TableCell className="text-right">{money(l.unitCost)}</TableCell>
+                      <TableCell className="text-right">{money(l.value)}</TableCell>
+                      <TableCell className="text-xs">{l.stockAction === 'issue' ? tx('Leave stock') : tx('Already written off')}</TableCell>
+                      <TableCell className="text-xs">{l.verified ? <>{l.verifiedByName ?? tx('Verified')} · {date(l.verifiedAt)}</> : <span className="text-muted-foreground">{tx('Not verified')}</span>}</TableCell>
+                      <TableCell className="space-x-1 whitespace-nowrap text-right">
+                        {canVerify && !l.verified && LINE_EDITABLE.includes(linesFor.status) && userId !== l.createdBy && userId !== linesFor.createdBy && (
+                          <Button size="sm" onClick={() => run(() => claimApi.verifyLine(linesFor.id, l.id), tx('Quantity verified'))}><Check className="mr-1 h-4 w-4" />{tx('Verify')}</Button>
+                        )}
+                        {canManage && LINE_EDITABLE.includes(linesFor.status) && (
+                          <Button size="sm" variant="ghost" aria-label={tx('Remove')} onClick={() => run(() => claimApi.removeLine(linesFor.id, l.id), tx('Quantity removed'))}><Trash2 className="h-4 w-4" /></Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {canManage && LINE_EDITABLE.includes(linesFor.status) && (
+                <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-4">
+                  <div className="sm:col-span-2">
+                    <Label>{tx('Received line')}</Label>
+                    <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={lineForm.goodsReceiptLineId} onChange={(e) => setLineForm({ ...lineForm, goodsReceiptLineId: e.target.value })}>
+                      <option value="">{tx('Select…')}</option>
+                      {receiptLines.map((r) => (
+                        <option key={r.goodsReceiptLineId} value={r.goodsReceiptLineId} disabled={Number(r.claimable) <= 0}>
+                          {r.receiptNumber} · {r.productName ?? r.description} · {tx('unclaimed')} {Number(r.claimable)} / {Number(r.quantity)} @ {money(r.unitCost)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <Label>{tx('Quantity')}</Label>
+                    <Input type="number" min={0} value={lineForm.quantity} onChange={(e) => setLineForm({ ...lineForm, quantity: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label>{tx('Goods')}</Label>
+                    <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={lineForm.stockAction} onChange={(e) => setLineForm({ ...lineForm, stockAction: e.target.value as ClaimStockAction })}>
+                      <option value="issue">{tx('Leave stock (return / not delivered)')}</option>
+                      <option value="written_off">{tx('Already written off')}</option>
+                    </select>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <Label>{tx('Notes')}</Label>
+                    <Input value={lineForm.notes} onChange={(e) => setLineForm({ ...lineForm, notes: e.target.value })} />
+                  </div>
+                  <div className="flex items-end">
+                    <Button className="w-full" onClick={addLine} disabled={!lineForm.goodsReceiptLineId || !(Number(lineForm.quantity) > 0)}><Plus className="mr-1 h-4 w-4" />{tx('Add')}</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setLinesForId(null)}>{tx('Close')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useAccounts } from '@/features/accounting/api';
 import { useHrEmployees } from '@/features/hr/api';
 import { downloadHrFile, fullName, money, useHrGet, useHrSend, type Page, type Row } from '@/features/hr/hr-pro-api';
 import { notify } from '@/lib/notify';
@@ -120,7 +121,10 @@ function Inputs() {
   const { data: emps } = useHrEmployees({ isActive: 'true', pageSize: 200 });
   const post = useHrSend('post');
   const del = useHrSend('delete');
-  const [f, setF] = useState({ employeeId: '', kind: 'earning', name: '', amount: '', isTaxable: true });
+  const { data: accountPage } = useAccounts();
+  const accounts = (accountPage?.data ?? []).filter((a) => a.isPostable !== false && a.isActive !== false);
+  const [f, setF] = useState({ employeeId: '', kind: 'earning', name: '', amount: '', isTaxable: true, creditAccountId: '' });
+  const needsAccount = f.kind === 'deduction' && !f.creditAccountId;
   return (
     <Section title={tx('One-off inputs')} actions={
       <select className={selectClass} value={status} onChange={(e) => setStatus(e.target.value)} aria-label={tx('Status')}>
@@ -140,11 +144,19 @@ function Inputs() {
             <option value="deduction">{tx('Deduction')}</option>
           </select>
         </Field>
+        {f.kind === 'deduction' && (
+          <Field label={tx('Credit account')}>
+            <select className={selectClass} value={f.creditAccountId} onChange={(e) => setF({ ...f, creditAccountId: e.target.value })}>
+              <option value="">—</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label={tx('Description')}><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} /></Field>
         <Field label={tx('Amount')}><Input type="number" value={f.amount} onChange={(e) => setF({ ...f, amount: e.target.value })} /></Field>
         <label className="flex items-end gap-1 pb-2 text-sm"><input type="checkbox" checked={f.isTaxable} onChange={(e) => setF({ ...f, isTaxable: e.target.checked })} />{tx('Taxable')}</label>
         <div className="flex items-end">
-          <Button disabled={!f.employeeId || !f.name || !f.amount} onClick={() => post.mutate({ path: '/hr/payroll/inputs', body: { ...f, amount: Number(f.amount) } }, done(tx('Input queued')))}>{tx('Add')}</Button>
+          <Button disabled={!f.employeeId || !f.name || !f.amount || needsAccount} onClick={() => post.mutate({ path: '/hr/payroll/inputs', body: { ...f, amount: Number(f.amount), creditAccountId: f.kind === 'deduction' ? f.creditAccountId : undefined } }, done(tx('Input queued')))}>{tx('Add')}</Button>
         </div>
       </div>
       <DataTable loading={isLoading} rows={data?.rows} empty={tx('No inputs.')} cols={[

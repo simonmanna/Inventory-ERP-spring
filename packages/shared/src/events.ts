@@ -539,7 +539,7 @@ export interface DomainEventMap {
   'purchase_order.changed': { organizationId: string; orderId: string; changeRequestId: string; revision: number };
   'budget.exceeded': { organizationId: string; sourceType: string; sourceId: string; accountId: string; overBy: string; mode: string };
   'supplier_claim.raised': { organizationId: string; claimId: string; partnerId: string; amount: string };
-  'supplier_claim.settled': { organizationId: string; claimId: string; debitNoteId: string };
+  'supplier_claim.settled': { organizationId: string; claimId: string; debitNoteId: string | null; journalEntryId: string; amount: number | string };
   'bill.duplicate_suspected': { organizationId: string; billId: string; duplicateOfIds: string[] };
   'supplier_portal.used': { organizationId: string; tokenId: string; documentType: string; documentId: string; action: string };
   'replenishment.raised': { organizationId: string; requestId: string; lines: number };
@@ -618,7 +618,13 @@ export interface DomainEventMap {
   'fixed_asset.assigned': { organizationId: string; assetId: string; assignedToId: string; assignedToType: string };
   'fixed_asset.transferred': { organizationId: string; assetId: string; fromLocation: string; toLocation: string };
   'fixed_asset.disposed': { organizationId: string; assetId: string; method: string; value: string };
-  'fixed_asset.depreciation_run': { organizationId: string; period: string; entriesCount: number };
+  'fixed_asset.depreciation_run': {
+    organizationId: string;
+    period: string;
+    entriesCount: number;
+    /** R14: assets not depreciated (units of production without total units / usage, or a failed GL post). */
+    skipped?: { assetId: string; reason: string }[];
+  };
   'fixed_asset.maintenance_due': { organizationId: string; assetId: string; assetName: string; maintenanceId: string };
   'fixed_asset.warranty_expiring': { organizationId: string; assetId: string; assetName: string; daysLeft: number };
 

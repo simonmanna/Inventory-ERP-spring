@@ -130,6 +130,11 @@ public class SalesSettingsService {
                 if (v != null && !db.exists("Account", v)) {
                     throw ApiException.badRequest(k + " is not an account of this organization");
                 }
+                // Control-account policy (V518, "close now"): returns and write-offs post this account on a credit
+                // note's income side, in system context; a designated AR / AP account there bypasses the sub-ledger.
+                // (The write-off itself also checks the bad debt account is a postable expense / income account.)
+                com.inventoryerp.accounting.application.ControlAccountGuards.assertNotControl(db.jdbc(), org(),
+                        "Sales settings " + k, v);
                 sets.add("\"" + k + "\" = ?");
                 params.add(v);
             }

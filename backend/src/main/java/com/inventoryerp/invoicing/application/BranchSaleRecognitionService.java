@@ -172,7 +172,14 @@ public class BranchSaleRecognitionService {
             rows.add(m);
         }
         List<String> out = new ArrayList<>();
-        Grouped g = builder.groupForPosting(partnerId, rows, "sales", null);
+        Grouped g;
+        try {
+            g = builder.groupForPosting(partnerId, rows, "sales", null);
+        } catch (ApiException e) {
+            // e.g. a product category whose income account is a designated AR / AP control account (V518)
+            out.add(e.getMessage());
+            return out;
+        }
         g.itemByAccount().keySet().forEach(acc -> check(out, "revenue", acc, REVENUE));
         g.taxByAccount().keySet().forEach(acc -> check(out, "output tax", acc, LIABILITY));
         return out;

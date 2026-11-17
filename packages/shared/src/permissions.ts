@@ -224,6 +224,11 @@ export const PERMISSIONS = {
     create: 'journal_entry:create',
     post: 'journal_entry:post',
     reverse: 'journal_entry:reverse',
+    /**
+     * Owner decision (control-account policy): stage, or approve as the second user, a manual journal entry flagged
+     * as a control-account adjustment, the only manual way into a designated AR / AP control account.
+     */
+    controlAdjust: 'journal_entry:control_adjust',
   },
   /** ADR-S073: recurring journal templates (generate entries on a schedule). */
   recurringEntry: {
@@ -273,6 +278,7 @@ export const PERMISSIONS = {
     read: 'credit_note:read',
     create: 'credit_note:create',
     post: 'credit_note:post',
+    reverse: 'credit_note:reverse',
   },
   expense: {
     read: 'expense:read',
@@ -281,6 +287,7 @@ export const PERMISSIONS = {
     post: 'expense:post',
     cancel: 'expense:cancel',
     approve: 'expense:approve',
+    writeOff: 'expense:write_off',
   },
   payment: {
     read: 'payment:read',
@@ -627,6 +634,7 @@ export const PERMISSIONS = {
     post: 'debit_note:post',
     cancel: 'debit_note:cancel',
     approve: 'debit_note:approve',
+    reverse: 'debit_note:reverse',
   },
   files: {
     read: 'files:read',

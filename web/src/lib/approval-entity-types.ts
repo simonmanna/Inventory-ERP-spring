@@ -43,6 +43,11 @@ export const ENTITY_TYPE_LABELS: Record<string, string> = {
   config_change: tx('Configuration Changes'),
   rfq_award: tx('RFQ Awards'),
   bom_version: tx('BOM Versions'),
+  // Document reversals (owner decision 2026-11-17) — each document-level reversal can be held for approval.
+  vendor_bill_cancel: tx('Vendor Bill Void'),
+  credit_note_reverse: tx('Credit Note Reversal'),
+  debit_note_reverse: tx('Debit Note Reversal'),
+  payment_void: tx('Payment Void'),
 };
 
 export function entityTypeLabel(entityType: string): string {

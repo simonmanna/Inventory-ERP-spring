@@ -72,6 +72,26 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
    the column is not part of the asset JSON. Reversing a capitalisation soft-deletes its assets. It is refused once
    depreciation is posted.
 
+4. R14 (deviation from Nest): depreciation methods do what they say, and a run cannot leave the register ahead of
+   the ledger.
+   - `units_of_production` charges `(cost − residual) × units used in the month / Asset.totalUnits`, stopping at the
+     residual value (after an impairment: carrying amount less residual over the units still to come). Nest fell
+     back to straight line. Usage is recorded per month with `POST /fixed-assets/:assetId/depreciation/usage
+     {period: YYYY-MM, units ≥ 0, notes?}` (`asset_depreciation:run`; upsert, refused with 400 once that month is
+     depreciated) and listed by `GET .../depreciation/usage` (`asset_depreciation:read`). An asset without
+     `totalUnits` or without usage for the month is skipped, logged and listed under `skipped` in the
+     `fixed_asset.depreciation_run` event; it is never depreciated on straight line. `totalUnits` (> 0) is accepted
+     on `POST/PATCH /fixed-assets` and rendered on the asset.
+   - `declining_balance` uses `AssetCategory.decliningFactor` (annual rate = factor / years; default 2.0, so
+     existing schedules are unchanged; must be > 0, typically 1.5). `double_declining` is always 2×.
+   - Each asset of a run is one transaction: its entry, its new book value and, with `postEntries`, its journal
+     entry commit together. A failed GL post rolls the asset back (no entry, book value unchanged) and is logged and
+     reported under `skipped`; the run continues with the next asset. Nest committed each step separately and left
+     the entry unposted. The run response stays the list of entries created; a posted entry now shows
+     `isPosted: true` and its `journalEntryId`.
+   - Migration `V517__depreciation_methods_usage.sql` (`AssetCategory.decliningFactor`, `Asset.totalUnits`,
+     `AssetUsage`).
+
 ## Same as Nest, kept on purpose
 
 - `period/:period` and `run` ignore the `:assetId` path segment. A run targets one asset only through `body.assetId`.
@@ -83,13 +103,12 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 - The approval gates (`asset_acquisition`, `asset_transfer`, `asset_revaluation`, `asset_disposal`,
   `depreciation_run`) commit their request row before the 403 / 400. This matches Nest, which runs without a
   transaction.
-- A depreciation run commits per asset, and a GL post that fails leaves its entry unposted (logged, not fatal).
 
 ## Status
 
 54/54 routes. The controllers are `AssetController`, `AssetCategoryController`, `AssetRecordsController`,
 `AssetDepreciationController` and `AssetDashboardController`. Tests:
-- `DepreciationCalculatorTest`: every method, salvage floor, short lives.
+- `DepreciationCalculatorTest`: every method, salvage floor, short lives, declining factor, units of production.
 - `FixedAssetIT`: categories and tree, register CRUD and lookups, depreciation run, idempotent period, balanced
   GL post, lifecycle sub-records and status transitions, disposal gain/loss, dashboards, validation, tenant
   isolation, and the authorization matrix (54).

@@ -62,7 +62,7 @@ class Acc0ReversalIT extends AccountingFixtures {
                 "lines", List.of(Map.of("productId", product(b.org(), false, 100, 0), "quantity", 1, "unitPrice", 100))))
                 .get("id").asString();
         String je = okAs(b, 200, "POST", "/invoices/" + inv + "/post", null).get("journalEntryId").asString();
-        okAs(b, 200, "POST", "/invoices/" + inv + "/cancel", null);
+        okAs(b, 200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
         Map<String, Object> original = entry(je);
         Map<String, Object> reversal = entry(reversalOf(je));
         assertThat(original.get("status")).isEqualTo("reversed");
@@ -84,7 +84,7 @@ class Acc0ReversalIT extends AccountingFixtures {
                 .get("id").asString();
         String je = okAs(b, 200, "POST", "/invoices/" + inv + "/post", null).get("journalEntryId").asString();
         closePeriod(b, issue);
-        Res cancel = as(b, "POST", "/invoices/" + inv + "/cancel", null);
+        Res cancel = as(b, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(cancel.status()).as(cancel.raw().body()).isEqualTo(200);
         Map<String, Object> reversal = entry(reversalOf(je));
         assertThat(day(reversal.get("postingDate"))).as("reversal lands in the open current month")
@@ -113,7 +113,7 @@ class Acc0ReversalIT extends AccountingFixtures {
         BigDecimal cogsBooked = cogsForProduct(cogs, item, inv);
         assertThat(cogsBooked).as("COGS booked on sale").isEqualByComparingTo("12");
 
-        ok(200, "POST", "/invoices/" + inv + "/cancel", null);
+        ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
         org.assertj.core.api.SoftAssertions soft = new org.assertj.core.api.SoftAssertions();
         soft.assertThat(onHand(item)).as("stock after cancel").isEqualByComparingTo("10");
         soft.assertThat(stockValue(item)).as("stock value after cancel").isEqualByComparingTo(valueBefore);
@@ -140,7 +140,7 @@ class Acc0ReversalIT extends AccountingFixtures {
         Res posted = as("POST", "/invoices/" + inv + "/post", null);
         assertThat(posted.status()).as("over-sale post → " + posted.raw().body()).isEqualTo(200);
         BigDecimal afterSale = onHand(item);
-        ok(200, "POST", "/invoices/" + inv + "/cancel", null);
+        ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(onHand(item)).as("stock after cancel (sold 5 of 3, on hand after sale " + afterSale + ")")
                 .isEqualByComparingTo("3");
     }

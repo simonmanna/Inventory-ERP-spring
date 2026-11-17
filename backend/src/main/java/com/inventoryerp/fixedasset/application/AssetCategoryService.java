@@ -97,6 +97,10 @@ public class AssetCategoryService extends BaseCrudService<AssetCategory> {
             throw ApiException.notFound("AssetCategory " + id + " not found");
         }
         EntityPatch.apply(row, dto);
+        if (row.getDecliningFactor() == null) {
+            // R14: an explicit null would clear the NOT NULL declining-balance factor.
+            throw ApiException.badRequest("decliningFactor must be a positive number");
+        }
         em.flush();
         return render(row);
     }

@@ -75,7 +75,18 @@ public class RecurringEntryController {
         return service.resume(id);
     }
 
-    /** Generate one occurrence now (posts, or stages a draft in maker-checker mode). */
+    /**
+     * Maker-checker approval (R3): an approved {@code post}-mode template posts its occurrences; until then they are
+     * staged as drafts. The approver needs the journal-entry post permission and must not be the template's author or
+     * last editor.
+     */
+    @PostMapping("/{id}/approve")
+    @RequirePermissions(Permissions.JOURNAL_ENTRY__POST)
+    public Map<String, Object> approve(@PathVariable String id) {
+        return service.approve(id);
+    }
+
+    /** Generate one occurrence now (posts, or stages a draft in maker-checker mode or while unapproved). */
     @PostMapping("/{id}/run")
     @Idempotent
     @RequirePermissions(Permissions.RECURRING_ENTRY__MANAGE)

@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify } from '@/lib/notify';
 import { formatCurrency } from '@/lib/utils';
-import { useAsset, useAllAssetCategories, useAssetAssignments, useCreateAssignment, useAssetTransfers, useCreateTransfer, useAssetMaintenance, useCreateMaintenance, useAssetWarranties, useCreateWarranty, useAssetDisposal, useCreateDisposal, useAssetAcquisition, useUpsertAcquisition, useAssetDepreciation } from '@/features/fixed-asset/api';
+import { useAsset, useAllAssetCategories, useAssetAssignments, useCreateAssignment, useAssetTransfers, useCreateTransfer, useAssetMaintenance, useCreateMaintenance, useAssetWarranties, useCreateWarranty, useAssetDisposal, useCreateDisposal, useAssetAcquisition, useUpsertAcquisition, useAssetDepreciation, useAssetUsage, useRecordAssetUsage } from '@/features/fixed-asset/api';
 import type { Asset } from '@/features/fixed-asset/types';
 import { tx } from '@/lib/i18n/tx';
 import { PlantUnitLink } from './PlantUnitLink';
@@ -66,7 +66,7 @@ export function AssetDetailPage() {
         <TabsContent value="acquisition"><AcquisitionTab assetId={asset.id} /></TabsContent>
         <TabsContent value="assignments"><AssignmentsTab assetId={asset.id} /></TabsContent>
         <TabsContent value="transfers"><TransfersTab assetId={asset.id} canCreate={canEdit} /></TabsContent>
-        <TabsContent value="depreciation"><DepreciationTab assetId={asset.id} /></TabsContent>
+        <TabsContent value="depreciation"><DepreciationTab assetId={asset.id} unitsOfProduction={asset.category?.depreciationMethod === 'units_of_production'} totalUnits={asset.totalUnits ?? null} /></TabsContent>
         <TabsContent value="maintenance"><MaintenanceTab assetId={asset.id} canCreate={canEdit} /></TabsContent>
         <TabsContent value="warranty"><WarrantyTab assetId={asset.id} canCreate={canEdit} /></TabsContent>
         <TabsContent value="impairment"><ImpairmentTab assetId={asset.id} canImpair={canImpair} disposed={asset.status === 'disposed'} /></TabsContent>
@@ -216,11 +216,12 @@ function TransfersTab({ assetId, canCreate }: { assetId: string; canCreate: bool
   );
 }
 
-function DepreciationTab({ assetId }: { assetId: string }) {
+function DepreciationTab({ assetId, unitsOfProduction, totalUnits }: { assetId: string; unitsOfProduction: boolean; totalUnits: string | null }) {
   const { data, isLoading } = useAssetDepreciation(assetId);
   if (isLoading) return <div className="text-muted-foreground">{tx('Loading...')}</div>;
   return (
     <div>
+      {unitsOfProduction && <UsagePanel assetId={assetId} totalUnits={totalUnits} />}
       <h3 className="text-lg font-semibold mb-4">{tx('Depreciation Schedule')}</h3>
       {data?.length ? (
         <div className="space-y-2">
@@ -237,6 +238,45 @@ function DepreciationTab({ assetId }: { assetId: string }) {
           ))}
         </div>
       ) : <p className="text-muted-foreground">{tx('No depreciation entries. Run depreciation from the dashboard.')}</p>}
+    </div>
+  );
+}
+
+/** Units-of-production usage: one entry per month, required before that month is depreciated. */
+function UsagePanel({ assetId, totalUnits }: { assetId: string; totalUnits: string | null }) {
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const canRecord = hasPermission(PERMISSIONS.assetDepreciation.run);
+  const { data } = useAssetUsage(assetId);
+  const record = useRecordAssetUsage();
+  const form = useForm<{ period: string; units: string; notes: string }>({ defaultValues: { period: new Date().toISOString().slice(0, 7), units: '', notes: '' } });
+  const onSubmit = async (values: { period: string; units: string; notes: string }) => {
+    try {
+      await record.mutateAsync({ assetId, data: { period: values.period, units: Number(values.units), notes: values.notes || undefined } });
+      notify.success(tx('Usage recorded'));
+      form.reset({ period: values.period, units: '', notes: '' });
+    } catch (err: any) { notify.error(err?.response?.data?.message ?? tx('Error')); }
+  };
+  return (
+    <div className="mb-6 space-y-3">
+      <h3 className="text-lg font-semibold">{tx('Usage (units of production)')}</h3>
+      {!totalUnits && <p className="text-sm text-amber-700">{tx('Set the asset\'s total units; until then depreciation runs skip it.')}</p>}
+      {canRecord && (
+        <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-wrap items-end gap-2">
+          <div><Label>{tx('Month')}</Label><Input type="month" {...form.register('period', { required: true })} /></div>
+          <div><Label>{tx('Units')}</Label><Input type="number" step="any" min="0" {...form.register('units', { required: true })} /></div>
+          <div className="flex-1 min-w-[10rem]"><Label>{tx('Notes')}</Label><Input {...form.register('notes')} /></div>
+          <Button type="submit" disabled={record.isPending}>{tx('Record')}</Button>
+        </form>
+      )}
+      {data?.length ? (
+        <div className="space-y-1">
+          {data.map((u) => (
+            <div key={u.id} className="grid grid-cols-3 gap-4 text-sm bg-card border rounded-lg px-3 py-2">
+              <span>{u.period}</span><span className="text-right">{u.units}{totalUnits ? ` / ${totalUnits}` : ''}</span><span className="text-muted-foreground">{u.notes}</span>
+            </div>
+          ))}
+        </div>
+      ) : <p className="text-sm text-muted-foreground">{tx('No usage recorded yet.')}</p>}
     </div>
   );
 }

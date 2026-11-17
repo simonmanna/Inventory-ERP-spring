@@ -33,6 +33,7 @@ const schema = z.object({
   depreciationMethod: z.string().min(1),
   defaultUsefulLife: z.string().optional().or(z.literal('')),
   defaultResidualValue: z.string().optional().or(z.literal('')),
+  decliningFactor: z.string().optional().or(z.literal('')),
 });
 type FormValues = z.infer<typeof schema>;
 
@@ -63,6 +64,7 @@ export function AssetCategoriesPage() {
       depreciationMethod: cat.depreciationMethod,
       defaultUsefulLife: String(cat.defaultUsefulLife ?? ''),
       defaultResidualValue: String(cat.defaultResidualValue ?? ''),
+      decliningFactor: String(cat.decliningFactor ?? '2'),
     });
     setOpen(true);
   };
@@ -76,6 +78,8 @@ export function AssetCategoriesPage() {
         defaultUsefulLife: values.defaultUsefulLife ? Number(values.defaultUsefulLife) : undefined,
         defaultResidualValue: values.defaultResidualValue ? Number(values.defaultResidualValue) : undefined,
         parentId: values.parentId || undefined,
+        decliningFactor: values.depreciationMethod === 'declining_balance' && values.decliningFactor
+          ? Number(values.decliningFactor) : undefined,
       };
       if (editing) {
         await updateCat.mutateAsync({ id: editing.id, data: data as any });
@@ -141,6 +145,16 @@ export function AssetCategoriesPage() {
                 <SelectContent>{DEPR_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
+            {form.watch('depreciationMethod') === 'declining_balance' && (
+              <div>
+                <Label>{tx('Declining Factor')}</Label>
+                <Input type="number" step="0.01" min="0.01" placeholder="2" {...form.register('decliningFactor')} />
+                <p className="text-xs text-muted-foreground mt-1">{tx('Annual rate = factor ÷ useful life in years (2 = double, 1.5 = 150%).')}</p>
+              </div>
+            )}
+            {form.watch('depreciationMethod') === 'units_of_production' && (
+              <p className="text-xs text-muted-foreground">{tx('Set each asset\'s total units and record its usage every month before running depreciation.')}</p>
+            )}
             <div><Label>{tx('Default Useful Life (months)')}</Label><Input type="number" {...form.register('defaultUsefulLife')} /></div>
             <div><Label>{tx('Default Residual Value')}</Label><Input type="number" step="0.01" {...form.register('defaultResidualValue')} /></div>
             <DialogFooter><Button type="submit">{editing ? tx('Update') : tx('Create')}</Button></DialogFooter>

@@ -173,7 +173,7 @@ public class HrSeparationService {
         String empId = (String) s.get("employeeId");
         Map<String, Object> emp = rows.queryOne("SELECT * FROM \"HrEmployee\" WHERE id = ?", empId);
         Map<String, Object> st = setup.effectiveSettings();
-        int scale = ((Number) st.get("roundingScale")).intValue();
+        int scale = setup.payScale(); // currency-aware payroll rounding (HrPayMoney)
         LocalDate last = HrRows.date(s.get("lastWorkingDay"));
         LocalDate hire = HrRows.date(emp.get("hireDate"));
         Map<String, Object> comp = compensation.compensationOn(empId, last);
@@ -428,7 +428,7 @@ public class HrSeparationService {
     public Map<String, Object> accrueProvision(LocalDate asOf) {
         Map<String, Object> st = setup.effectiveSettings();
         String pack = (String) st.get("statutoryPack");
-        int scale = ((Number) st.get("roundingScale")).intValue();
+        int scale = setup.payScale(); // currency-aware payroll rounding (HrPayMoney)
         BigDecimal total = BigDecimal.ZERO;
         BigDecimal movementTotal = BigDecimal.ZERO;
         List<Map<String, Object>> detail = new ArrayList<>();
@@ -524,7 +524,7 @@ public class HrSeparationService {
         m.put("code", code);
         m.put("name", name);
         m.put("kind", kind);
-        m.put("amount", amount.setScale(scale, RoundingMode.HALF_UP));
+        m.put("amount", HrPayMoney.round(amount, scale));
         m.put("taxable", taxable);
         m.put("quantity", quantity);
         lines.add(m);

@@ -318,6 +318,9 @@ public class InvoiceService {
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(l.get("taxId"), org())));
             }
             doc.put("lines", lines);
+            if ("cancelled".equals(String.valueOf(doc.get("status")))) {
+                withReversal(doc, id);
+            }
             return doc;
         }
         Map<String, Object> inv = SqlRows.one(Invoice.class, jdbc.sql("SELECT * FROM \"Invoice\" WHERE id = ?"
@@ -670,14 +673,38 @@ public class InvoiceService {
         }
     }
 
-    /** Cancel a posted, unpaid invoice (reversal), behind the {@code invoice_cancel} approval gate. */
+    private com.inventoryerp.accounting.application.DocumentReversalService reversals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(com.inventoryerp.accounting.application.DocumentReversalService reversals) {
+        this.reversals = reversals;
+    }
+
+    /**
+     * Internal cancel for a workflow that owns the invoice and ran its own controls (cash-sale invoice cancel, which
+     * unapplies its deposits first): no approval gate or separation-of-duties check, the same settlement checks, GL
+     * reversal and reversal record as {@link #cancel(String, String)}.
+     */
     @Transactional
     public Map<String, Object> cancel(String id) {
-        Map<String, Object> approval = newTx.execute(s -> approvals.checkOrRequestApproval("invoice_cancel", id, Map.of()));
-        if (approval != null && Boolean.TRUE.equals(approval.get("needsApproval"))) {
-            throw ApiException.forbidden("Invoice cancellation requires approval. Request ID: " + approval.get("requestId")
-                    + ". Please have an authorized person approve it via the approvals endpoint.");
-        }
+        return cancel(id, "Cancelled by its source workflow", false);
+    }
+
+    /**
+     * Sales-invoice document reversal (owner decision 2026-11-17): cancel a posted invoice with a reason, behind the
+     * {@code invoice_cancel} approval gate and the {@code document_reversal} separation-of-duties pair. Refused while
+     * anything is settled against it — payments (void them; a deposit application is reversed from its deposit),
+     * posted debit notes (reverse them), posted credit notes (the workflow names them). Under the invoice's row lock
+     * the workflow reverses its journal entry, returns the auto-issued stock with its COGS, zeroes the residual and
+     * stamps cancelledAt / cancelledBy; a {@code DocumentReversal} row keeps the reason and the entry links. A replay on
+     * a cancelled invoice returns it unchanged.
+     */
+    @Transactional
+    public Map<String, Object> cancel(String id, String reason) {
+        return cancel(id, reason, true);
+    }
+
+    private Map<String, Object> cancel(String id, String reasonIn, boolean userAction) {
         Map<String, Object> doc = builder.document(id, "sales_invoice");
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
@@ -686,11 +713,64 @@ public class InvoiceService {
         doc.put("allocations", SqlRows.list(PaymentAllocation.class, jdbc.sql("SELECT * FROM \"PaymentAllocation\""
                 + " WHERE \"documentId\" = ?").param(id)));
         if ("cancelled".equals(String.valueOf(doc.get("status")))) {
+            withReversal(doc, id);
             return doc;
         }
-        workflow.transition("invoice", id, "cancel", null, doc);
+        String reason = reversals.requireReason(reasonIn, "cancel an invoice");
+        if (userAction) {
+            Map<String, Object> approval = newTx.execute(s -> approvals.checkOrRequestApproval("invoice_cancel", id,
+                    Map.of()));
+            if (approval != null && Boolean.TRUE.equals(approval.get("needsApproval"))) {
+                throw ApiException.forbidden("Invoice cancellation requires approval. Request ID: "
+                        + approval.get("requestId") + ". Please have an authorized person approve it via the approvals"
+                        + " endpoint.");
+            }
+            reversals.assertSeparated("Document", id, java.util.Arrays.asList((String) doc.get("createdBy"),
+                    (String) doc.get("postedBy")));
+        }
+        // Lock before reading what is settled against it: a payment allocation or credit note locks the invoice too.
+        jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
+                .query().listOfRows();
+        assertNothingSettled(id, (String) doc.get("documentNumber"));
+        workflow.transition("invoice", id, "cancel", Obj.of("reason", reason), doc);
+        reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("sales_invoice",
+                id, (String) doc.get("documentNumber"), (String) doc.get("partnerId"), reason, "Document",
+                List.of("invoice"), List.of(), List.of()));
         publish("invoice.cancelled", doc);
-        return builder.document(id);
+        Map<String, Object> out = builder.document(id);
+        withReversal(out, id);
+        return out;
+    }
+
+    /** Additive {@code reversal} block (reason, who, when, entry links) on a cancelled invoice. */
+    private void withReversal(Map<String, Object> doc, String id) {
+        Map<String, Object> r = reversals == null ? null : reversals.find("sales_invoice", id);
+        if (r != null && doc != null) {
+            doc.put("reversal", r);
+        }
+    }
+
+    /** Payments (deposit applications included) and posted debit notes block a cancel; each is named with its action. */
+    private void assertNothingSettled(String id, String number) {
+        List<Map<String, Object>> paid = reversals.appliedPayments(id);
+        BigDecimal amountPaid = jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ?").param(id)
+                .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+        List<String> notes = reversals.postedDebitNotes(id);
+        List<String> problems = new ArrayList<>();
+        if (!paid.isEmpty()) {
+            problems.add("payments applied: " + com.inventoryerp.accounting.application.DocumentReversalService
+                    .describePayments(paid) + " (void each payment first; a deposit application is reversed from its"
+                    + " customer deposit)");
+        } else if (amountPaid != null && amountPaid.signum() > 0) {
+            problems.add(JsNumbers.dec(amountPaid) + " is recorded as paid (unallocate it first)");
+        }
+        if (!notes.isEmpty()) {
+            problems.add("posted debit notes raised against it: " + String.join(", ", notes) + " (reverse them first)");
+        }
+        if (!problems.isEmpty()) {
+            throw ApiException.badRequest("Invoice " + number + " cannot be cancelled while settlements are applied to it: "
+                    + String.join("; ", problems) + ".");
+        }
     }
 
     /** Lines with the Prisma relation shape (used by credit notes and bills). */

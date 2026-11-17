@@ -829,7 +829,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(as("PATCH", "/procurement/debit-notes/" + id + "/post", null).body().get("message").asString())
                 .isEqualTo("Cannot post debit note in status posted");
         assertThat(as("PATCH", "/procurement/debit-notes/" + id + "/cancel", null).body().get("message").asString())
-                .isEqualTo("Cannot cancel a posted debit note; reverse with a credit note");
+                .isEqualTo("Cannot cancel a posted debit note; reverse it instead (PATCH /procurement/debit-notes/" + id
+                        + "/reverse)");
         JsonNode list = ok(200, "GET", "/procurement/debit-notes?direction=outbound&status=posted", null);
         assertThat(list.get(0).get("partner").get("name").asString()).startsWith("Customer");
         assertThat(ok(200, "GET", "/procurement/debit-notes/" + id, null).get("partner").get("id").asString())
@@ -851,7 +852,7 @@ class ProcurementIT extends ApiTestSupport {
                 .params(inbound.get("id").asString(), supplier).query(Long.class).single()).isEqualTo(1);
         Res cancelPosted = as("PATCH", "/procurement/debit-notes/" + inbound.get("id").asString() + "/cancel", null);
         assertThat(cancelPosted.body().get("message").asString())
-                .isEqualTo("Cannot cancel a posted debit note; reverse with a credit note");
+                .startsWith("Cannot cancel a posted debit note; reverse it instead");
         Res badPartner = as("POST", "/procurement/debit-notes", Map.of("direction", "inbound", "partnerId",
                 UUID.randomUUID().toString(), "reason", "other", "lines", List.of(Map.of("description", "x", "quantity",
                         1, "unitPrice", 1))));
@@ -927,7 +928,7 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal g2 = balance(grni);
         JsonNode bill = postBill(sup, Map.of("productId", sugar, "description", "Sugar", "quantity", 10, "unitPrice", 5));
         assertThat(balance(grni).subtract(g2)).isEqualByComparingTo("50");
-        ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/cancel", null);
+        ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(balance(grni)).isEqualByComparingTo(g2);
         assertThat(jdbc.sql("SELECT \"billedQuantity\" FROM \"GoodsReceiptLine\" WHERE \"productId\" = ?").param(sugar)
                 .query(BigDecimal.class).single()).isEqualByComparingTo("0");
@@ -1115,6 +1116,7 @@ class ProcurementIT extends ApiTestSupport {
     @DisplayName("authorization: every procurement route answers 401 without a token and 403 without its permission")
     void authorization() {
         // 158 Source-to-Pay + 1 PROC-4 supplier performance + 14 PROC-3/5 (budgets, delegations, PR approval).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(194);
+        // Accounting controls (2026-11-17): +4 supplier-claim quantity routes, +1 debit-note reversal.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(199);
     }
 }

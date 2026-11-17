@@ -212,6 +212,9 @@ public class VendorBillService {
         d.put("partner", builder.partner(d.get("partnerId")));
         d.put("allocations", SqlRows.list(PaymentAllocation.class, jdbc.sql("SELECT * FROM \"PaymentAllocation\""
                 + " WHERE \"documentId\" = ?").param(id)));
+        if ("cancelled".equals(String.valueOf(d.get("status")))) {
+            withReversal(d, id);
+        }
         return d;
     }
 
@@ -435,9 +438,37 @@ public class VendorBillService {
         }
     }
 
-    /** Void a posted bill (reversal, receipt quantities released). */
+    private com.inventoryerp.accounting.application.DocumentReversalService reversals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(com.inventoryerp.accounting.application.DocumentReversalService reversals) {
+        this.reversals = reversals;
+    }
+
+    /**
+     * Internal void for a workflow that owns the bill and ran its own controls (a landed-cost voucher reversing the
+     * bills it generated): no approval gate or separation-of-duties check, the same settlement checks, GL reversal and
+     * reversal record as {@link #cancel(String, String)}.
+     */
     @Transactional
     public Map<String, Object> cancel(String id) {
+        return cancel(id, "Voided by its source workflow", false);
+    }
+
+    /**
+     * Supplier-bill document reversal (owner decision 2026-11-17): void a posted bill with a reason, behind the
+     * {@code vendor_bill_cancel} approval gate and the {@code document_reversal} separation-of-duties pair. Refused
+     * while anything is settled against it — supplier payments (void them), posted debit notes (reverse them), settled
+     * supplier claims. Under the bill's row lock the workflow reverses its journal entry and FX voucher, releases the
+     * receipt matches, returns auto-received stock, cancels issued withholding certificates and zeroes the residual; a
+     * {@code DocumentReversal} row keeps the reason and the entry links. A replay on a voided bill returns it unchanged.
+     */
+    @Transactional
+    public Map<String, Object> cancel(String id, String reason) {
+        return cancel(id, reason, true);
+    }
+
+    private Map<String, Object> cancel(String id, String reasonIn, boolean userAction) {
         Map<String, Object> doc = builder.document(id, "vendor_bill");
         if (doc == null) {
             throw ApiException.notFound("Vendor bill not found");
@@ -445,15 +476,76 @@ public class VendorBillService {
         doc.put("allocations", SqlRows.list(PaymentAllocation.class, jdbc.sql("SELECT * FROM \"PaymentAllocation\""
                 + " WHERE \"documentId\" = ?").param(id)));
         if ("cancelled".equals(String.valueOf(doc.get("status")))) {
+            withReversal(doc, id);
             return doc;
         }
-        workflow.transition("vendor_bill", id, "cancel", null, doc);
+        String reason = reversals.requireReason(reasonIn, "void a bill");
+        String number = (String) doc.get("documentNumber");
+        if (userAction) {
+            reversals.requireApproval("vendor_bill_cancel", id, "bill " + number, Money.dec(doc.get("totalAmount")));
+            reversals.assertSeparated("Document", id, java.util.Arrays.asList((String) doc.get("createdBy"),
+                    (String) doc.get("postedBy")));
+        }
+        jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
+                .query().listOfRows();
+        assertNothingSettled(id, number);
+        workflow.transition("vendor_bill", id, "cancel", Obj.of("reason", reason), doc);
+        reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("vendor_bill", id,
+                number, (String) doc.get("partnerId"), reason, "Document", List.of("vendor_bill"),
+                List.of("vendor_bill_cancel"), List.of()));
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org());
         payload.put("documentId", id);
         payload.put("documentNumber", doc.get("documentNumber"));
         events.publish("bill.cancelled", payload);
-        return builder.document(id);
+        Map<String, Object> out = builder.document(id);
+        withReversal(out, id);
+        return out;
+    }
+
+    /** Additive {@code reversal} block (reason, who, when, entry links) on a voided bill. */
+    private void withReversal(Map<String, Object> doc, String id) {
+        Map<String, Object> r = reversals == null ? null : reversals.find("vendor_bill", id);
+        if (r != null && doc != null) {
+            doc.put("reversal", r);
+        }
+    }
+
+    /** Supplier payments, posted debit notes and settled supplier claims block a void; each is named with its action. */
+    private void assertNothingSettled(String id, String number) {
+        List<Map<String, Object>> paid = reversals.appliedPayments(id);
+        BigDecimal amountPaid = jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ?").param(id)
+                .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+        List<String> notes = reversals.postedDebitNotes(id);
+        List<String> claims = jdbc.sql("SELECT \"claimNumber\" FROM \"SupplierClaim\" WHERE \"vendorBillId\" = ? AND"
+                + " \"organizationId\" = ? AND status = 'settled' ORDER BY \"claimNumber\"").params(id, org())
+                .query(String.class).list();
+        List<String> problems = new ArrayList<>();
+        BigDecimal writtenOff = jdbc.sql("SELECT COALESCE(SUM(l.debit), 0) FROM \"JournalLine\" l JOIN \"JournalEntry\" e"
+                + " ON e.id = l.\"journalEntryId\" WHERE e.\"organizationId\" = ? AND e.\"sourceType\" ="
+                + " 'vendor_bill_writeoff' AND e.\"sourceId\" = ? AND e.status = 'posted' AND l.\"partnerId\" IS NOT NULL"
+                + " AND l.debit > 0").params(org(), id).query(BigDecimal.class).single();
+        if (!paid.isEmpty()) {
+            problems.add("supplier payments applied: " + com.inventoryerp.accounting.application.DocumentReversalService
+                    .describePayments(paid) + " (void each payment first)");
+        }
+        if (writtenOff.signum() > 0) {
+            problems.add(JsNumbers.dec(writtenOff) + " written off (a written-off bill cannot be voided)");
+        }
+        if (paid.isEmpty() && writtenOff.signum() <= 0 && amountPaid != null && amountPaid.signum() > 0) {
+            problems.add(JsNumbers.dec(amountPaid) + " is recorded as paid (unallocate it first)");
+        }
+        if (!notes.isEmpty()) {
+            problems.add("posted debit notes raised against it: " + String.join(", ", notes) + " (reverse them first)");
+        }
+        if (!claims.isEmpty()) {
+            problems.add("supplier claims settled against it: " + String.join(", ", claims) + " (a settled claim has no"
+                    + " document-level reversal; correct the supplier balance with a debit note instead)");
+        }
+        if (!problems.isEmpty()) {
+            throw ApiException.badRequest("Bill " + number + " cannot be voided while settlements are applied to it: "
+                    + String.join("; ", problems) + ".");
+        }
     }
 
     private void validateDates(String issueDate, String dueDate) {
@@ -499,6 +591,7 @@ public class VendorBillService {
             String source = String.valueOf(r.get("sourceType"));
             String type = r.get("reversalOfId") != null ? "reversal" : switch (source) {
                 case "vendor_bill" -> "bill";
+                case VendorBillWriteOffService.SOURCE -> "write_off";
                 case "payment" -> "payment";
                 case "goods_receipt" -> "receipt";
                 case "purchase_order" -> "purchase_payment";
