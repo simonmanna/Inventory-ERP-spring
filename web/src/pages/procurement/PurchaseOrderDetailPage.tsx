@@ -16,8 +16,11 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
+import { PERMISSIONS } from '@erp/shared';
 import { api } from '@/lib/api';
+import { notifyApiError } from '@/lib/api-error';
 import { notify } from '@/lib/notify';
+import { useAuthStore } from '@/stores/auth.store';
 import { formatMoney, date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useUomCode } from '@/features/uom/api';
@@ -66,6 +69,8 @@ export function PurchaseOrderDetailPage() {
   const qc = useQueryClient();
   const [rejectReason, setRejectReason] = useState('');
   const [showCancel, setShowCancel] = useState(false);
+  // The permissions the receive, pay and cancel routes enforce: actions a user cannot run are not offered.
+  const has = useAuthStore((s) => s.hasPermission);
 
   const po = useQuery<PO>({
     queryKey: ['purchase-order', id],
@@ -82,7 +87,7 @@ export function PurchaseOrderDetailPage() {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       setShowCancel(false);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+    onError: (e: unknown) => notifyApiError(e, tx('Failed')),
   });
 
   if (po.isLoading) return <Skeleton className="h-96 w-full" />;
@@ -123,7 +128,7 @@ export function PurchaseOrderDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {/* Step 2: Receive (active or partially received) */}
-          {(data.status === 'active' || data.status === 'partially_received') && (
+          {(data.status === 'active' || data.status === 'partially_received') && has(PERMISSIONS.procurement.purchaseOrder.receive) && (
             <Button size="sm" onClick={() => navigate(`/procurement/purchase-orders/${id}/receive`)}>
               <Truck className="mr-1 h-3 w-3" />{tx('Receive')}
             </Button>
@@ -131,13 +136,14 @@ export function PurchaseOrderDetailPage() {
           {/* Step 3: Pay (credit + received + unpaid) */}
           {data.status === 'received' &&
             data.paymentType === 'credit' &&
-            data.paymentStatus !== 'paid' && (
+            data.paymentStatus !== 'paid' &&
+            has(PERMISSIONS.procurement.purchaseOrder.pay) && (
             <Button size="sm" variant="outline" onClick={() => navigate(`/procurement/purchase-orders/${id}/pay`)}>
               <CreditCard className="mr-1 h-3 w-3" />{tx('Pay')}
             </Button>
           )}
           {/* Cancel */}
-          {!['received', 'cancelled'].includes(data.status) && (
+          {!['received', 'cancelled'].includes(data.status) && has(PERMISSIONS.procurement.purchaseOrder.cancel) && (
             <Button size="sm" variant="ghost" onClick={() => setShowCancel(true)}>
               <X className="mr-1 h-3 w-3 text-destructive" />{tx('Cancel')}
             </Button>
@@ -346,7 +352,11 @@ export function PurchaseOrderDetailPage() {
                 <div className="text-sm space-y-1">
                   <div>
                     <span className="text-muted-foreground">{tx('Request:')} </span>
-                    <Link to={`/procurement/purchase-requests/${data.request.id}`} className="font-mono text-primary underline">
+                    {/* Requests have no detail route: the list opens with this request highlighted. */}
+                    <Link
+                      to={`/procurement/purchase-requests?highlight=${encodeURIComponent(data.request.id)}`}
+                      className="font-mono text-primary underline"
+                    >
                       {data.request.requestNumber}
                     </Link>
                   </div>

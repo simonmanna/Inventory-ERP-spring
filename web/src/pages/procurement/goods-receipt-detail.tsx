@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Undo2 } from 'lucide-react';
 import { idempotentPatch } from '@/lib/idempotent-request';
+import { notifyApiError } from '@/lib/api-error';
 import { notify } from '@/lib/notify';
+import { ConfirmDialog } from '@/components/confirm-dialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { ReasonDialog } from '@/features/inventory/reason-dialog';
 import { LandedCostPanel } from '@/features/procurement/landed-cost-panel';
@@ -88,6 +90,7 @@ export default function GoodsReceiptDetailPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const uomCode = useUomCode();
   const [reversing, setReversing] = useState(false);
+  const [confirmPost, setConfirmPost] = useState(false);
 
   const { data: grn, isLoading } = useQuery<GRNDetail>({
     queryKey: ['goods-receipt', id],
@@ -100,22 +103,17 @@ export default function GoodsReceiptDetailPage() {
       qc.invalidateQueries({ queryKey: [key] });
     }
   };
-  const errText = (e: any, fallback: string) => {
-    const m = e?.response?.data?.message;
-    return Array.isArray(m) ? m.join(', ') : (m ?? fallback);
-  };
-
   const post = useMutation({
     mutationFn: async () => await idempotentPatch<GRNDetail>(`/procurement/goods-receipts/${id}/post`),
-    onSuccess: () => { notify.success(tx('Goods receipt posted — stock received')); refresh(); },
-    onError: (e: any) => notify.error(errText(e, tx('Posting failed'))),
+    onSuccess: () => { notify.success(tx('Goods receipt posted — stock received')); setConfirmPost(false); refresh(); },
+    onError: (e: unknown) => notifyApiError(e, tx('Posting failed')),
   });
 
   const reverse = useMutation({
     mutationFn: async (reason: string) =>
       await idempotentPatch<GRNDetail>(`/procurement/goods-receipts/${id}/reverse`, { reason }),
     onSuccess: () => { notify.success(tx('Goods receipt reversed — stock returned and journals reversed')); setReversing(false); refresh(); },
-    onError: (e: any) => notify.error(errText(e, tx('Reversal failed'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Reversal failed')),
   });
 
   if (isLoading) {
@@ -196,7 +194,7 @@ export default function GoodsReceiptDetailPage() {
         <span className="font-mono text-sm text-sky-900 font-semibold">{grn.receiptNumber}</span>
         <div className="ml-auto flex gap-2">
           {grn.status === 'draft' && has('goods_receipt:post') && (
-            <Button size="sm" disabled={post.isPending} onClick={() => post.mutate()}>
+            <Button size="sm" disabled={post.isPending} onClick={() => setConfirmPost(true)}>
               <CheckCircle2 className="mr-1.5 h-4 w-4" />{post.isPending ? tx('Posting…') : tx('Post receipt')}
             </Button>
           )}
@@ -372,6 +370,17 @@ export default function GoodsReceiptDetailPage() {
         destructive
         pending={reverse.isPending}
         onConfirm={(reason) => reverse.mutate(reason)}
+      />
+
+      <ConfirmDialog
+        open={confirmPost}
+        onOpenChange={setConfirmPost}
+        title={tx('Post {{receiptNumber}}?', { receiptNumber: grn.receiptNumber })}
+        description={<p>{tx('Posting moves the received quantities into stock and books the receipt to the ledger. Undoing it later needs a reversal.')}</p>}
+        confirmLabel={tx('Post receipt')}
+        pendingLabel={tx('Posting…')}
+        pending={post.isPending}
+        onConfirm={() => post.mutate()}
       />
     </div>
   );

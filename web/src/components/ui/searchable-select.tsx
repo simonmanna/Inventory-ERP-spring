@@ -42,6 +42,8 @@ interface SearchableSelectProps {
   clearLabel?: string;
   /** Long labels wrap onto more lines instead of being cut off (e.g. product names). */
   wrap?: boolean;
+  /** A note under the options, e.g. that a capped list holds more rows than it shows ("keep typing to narrow"). */
+  footer?: React.ReactNode;
 }
 
 /** Wide dropdown panel for product pickers in document lines, so long product names show in full. */
@@ -68,6 +70,7 @@ export function SearchableSelect({
   onOpenChange,
   clearLabel,
   wrap,
+  footer,
 }: SearchableSelectProps) {
   const [open, setOpenState] = React.useState(false);
   const setOpen = (v: boolean) => { setOpenState(v); onOpenChange?.(v); };
@@ -210,6 +213,9 @@ export function SearchableSelect({
             </button>
           ))}
         </div>
+        {footer && (
+          <div className="border-t bg-popover px-3 py-1.5 text-xs text-muted-foreground">{footer}</div>
+        )}
       </PopoverContent>
     </Popover>
   );

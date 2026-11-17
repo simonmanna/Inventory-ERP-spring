@@ -630,11 +630,11 @@ export const CLAIM_STATUS_TONE: Record<ClaimStatus, 'neutral' | 'info' | 'succes
   cancelled: 'neutral',
 };
 
-export function useClaims(params: { status?: string; partnerId?: string; purchaseOrderId?: string; page?: number }) {
+export function useClaims(params: { status?: string; partnerId?: string; purchaseOrderId?: string; page?: number; limit?: number }) {
   return useQuery({
     queryKey: ['supplier-claims', params],
-    queryFn: async () => (await api.get<{ data: SupplierClaim[]; meta: { total: number; page: number; pageSize: number } }>('/procurement/claims', {
-      params: { status: params.status || undefined, partnerId: params.partnerId || undefined, purchaseOrderId: params.purchaseOrderId || undefined, page: params.page ?? 1 },
+    queryFn: async () => (await api.get<{ data: SupplierClaim[]; meta: { total: number; page: number; pageSize: number; totalPages: number } }>('/procurement/claims', {
+      params: { status: params.status || undefined, partnerId: params.partnerId || undefined, purchaseOrderId: params.purchaseOrderId || undefined, page: params.page ?? 1, limit: params.limit },
     })).data,
   });
 }
@@ -645,10 +645,12 @@ export function useClaimMutation<TBody = unknown>(fn: (body: TBody) => Promise<u
 }
 
 export const claimApi = {
+  /** Stable key per payload: a retry after a lost answer reuses it instead of raising a second claim. */
   create: (body: { partnerId: string; type: ClaimType; amount: number; description: string; purchaseOrderId?: string; goodsReceiptId?: string; vendorBillId?: string }) =>
-    api.post<SupplierClaim>('/procurement/claims', body).then((r) => r.data),
+    idempotentPost<SupplierClaim>('/procurement/claims', body),
   action: (id: string, action: 'submit' | 'cancel') => api.post<SupplierClaim>(`/procurement/claims/${id}/${action}`).then((r) => r.data),
-  accept: (id: string, amount?: number, response?: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/accept`, { amount, response }).then((r) => r.data),
+  accept: (id: string, amount?: number, response?: string) =>
+    idempotentPost<SupplierClaim>(`/procurement/claims/${id}/accept`, { amount, response }),
   reject: (id: string, response: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/reject`, { response }).then((r) => r.data),
   /** Omitting the classification lets the server derive it from the claim. */
   settle: (id: string, classification?: ClaimClassification) =>

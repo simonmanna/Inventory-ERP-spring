@@ -544,14 +544,14 @@ export function App() {
             {mfgCostingRoutes}
             {/* Product lifecycle management (ADR-S063) */}
             {plmRoutes}
-            <Route path="/inventory" element={<InventoryItemsPage />} />
-            <Route path="/inventory/items" element={<InventoryItemsPage />} />
-            <Route path="/inventory/items/:productId" element={<InventoryDetailPage />} />
-            <Route path="/inventory/adjustments" element={<StockAdjustmentsPage />} />
-            <Route path="/inventory/waste" element={<WastePage />} />
-            <Route path="/inventory/transfers" element={<StockTransfersPage />} />
+            <Route path="/inventory" element={<RequirePermission permission={PERMISSIONS.inventory.read}><InventoryItemsPage /></RequirePermission>} />
+            <Route path="/inventory/items" element={<RequirePermission permission={PERMISSIONS.inventory.read}><InventoryItemsPage /></RequirePermission>} />
+            <Route path="/inventory/items/:productId" element={<RequirePermission permission={PERMISSIONS.inventory.read}><InventoryDetailPage /></RequirePermission>} />
+            <Route path="/inventory/adjustments" element={<RequirePermission permission={PERMISSIONS.inventoryDoc.read}><StockAdjustmentsPage /></RequirePermission>} />
+            <Route path="/inventory/waste" element={<RequirePermission permission={PERMISSIONS.inventoryDoc.read}><WastePage /></RequirePermission>} />
+            <Route path="/inventory/transfers" element={<RequirePermission permission={PERMISSIONS.inventoryDoc.read}><StockTransfersPage /></RequirePermission>} />
             <Route path="/inventory/reports" element={<RequireReport reportId="inventory.reports"><InventoryReportsPage /></RequireReport>} />
-            <Route path="/inventory/count" element={<InventoryCountPage />} />
+            <Route path="/inventory/count" element={<RequirePermission permission={PERMISSIONS.inventoryCount.read}><InventoryCountPage /></RequirePermission>} />
             <Route path="/beverage" element={<BeverageDashboardPage />} />
             <Route path="/beverage/count" element={<BottleCountPage />} />
             {/* Rental — static segments before /rental/agreements/:id */}
@@ -619,16 +619,16 @@ export function App() {
             <Route path="/hr/payslips" element={<HrPayslipsPage />} />
             <Route path="/hr/advances-loans" element={<HrAdvancesLoansPage />} />
             <Route path="/hr/reports" element={<RequireReport reportId="hr.reports"><HrReportsPage /></RequireReport>} />
-            <Route path="/inventory/ledger" element={<StockLedgerPage />} />
-            <Route path="/inventory/ledger/:id" element={<StockMovementDetailPage />} />
-            <Route path="/inventory/locations" element={<LocationsPage />} />
-            <Route path="/inventory/reservations" element={<StockReservationsPage />} />
-            <Route path="/inventory/replenishment" element={<ReplenishmentPage />} />
+            <Route path="/inventory/ledger" element={<RequirePermission permission={PERMISSIONS.inventory.read}><StockLedgerPage /></RequirePermission>} />
+            <Route path="/inventory/ledger/:id" element={<RequirePermission permission={PERMISSIONS.inventory.read}><StockMovementDetailPage /></RequirePermission>} />
+            <Route path="/inventory/locations" element={<RequirePermission permission={PERMISSIONS.inventoryLocation.read}><LocationsPage /></RequirePermission>} />
+            <Route path="/inventory/reservations" element={<RequirePermission permission={PERMISSIONS.inventory.read}><StockReservationsPage /></RequirePermission>} />
+            <Route path="/inventory/replenishment" element={<RequirePermission permission={PERMISSIONS.inventory.read}><ReplenishmentPage /></RequirePermission>} />
             <Route path="/inventory/warehouse" element={<RequirePermission permission={PERMISSIONS.warehouse.read}><WarehousePage /></RequirePermission>} />
-            <Route path="/procurement/budgets" element={<ProcurementBudgetsPage />} />
-            <Route path="/procurement/delegations" element={<ProcurementDelegationsPage />} />
+            <Route path="/procurement/budgets" element={<RequirePermission permission={PERMISSIONS.procurement.budget.read}><ProcurementBudgetsPage /></RequirePermission>} />
+            <Route path="/procurement/delegations" element={<RequirePermission permission={PERMISSIONS.procurement.delegation.read}><ProcurementDelegationsPage /></RequirePermission>} />
             <Route path="/procurement/supplier-performance" element={<RequirePermission permission="purchase_order:read"><SupplierPerformancePage /></RequirePermission>} />
-            <Route path="/inventory/cost-policies" element={<CostPoliciesPage />} />
+            <Route path="/inventory/cost-policies" element={<RequirePermission permission={PERMISSIONS.costingPolicy.read}><CostPoliciesPage /></RequirePermission>} />
             <Route path="/projects" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectsPage /></RequirePermission>} />
             <Route path="/projects/dashboard" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectDashboardPage /></RequirePermission>} />
             <Route path="/projects/my-tasks" element={<RequirePermission permission={PERMISSIONS.projectTask.read}><ProjectMyTasksPage /></RequirePermission>} />

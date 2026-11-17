@@ -5,8 +5,14 @@ import { Plus, Trash2, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
 import { useBranchChoices, useDepartmentChoices, type BudgetCheck } from '@/features/approval-controls/api';
+import { useSupplierPicker } from '@/features/procurement/supplier-picker';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
+import { useProductSearch } from '@/features/products/product-search';
 import { api } from '@/lib/api';
+import { notifyApiError } from '@/lib/api-error';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
@@ -16,11 +22,11 @@ import {
 import { VariantSelect } from '@/features/products/variant-select';
 import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
 
-interface Partner { id: string; name: string; code: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string; taxId?: string }
-interface Warehouse { id: string; name: string; code: string }
 
 interface Line {
+  /** Stable row identity: with index keys, removing line 1 left each dropdown showing the row it used to belong to. */
+  uid: string;
   productId?: string;
   /** ADR-S058: product variant (required for a product with variants). */
   variantId?: string | null;
@@ -33,6 +39,9 @@ interface Line {
   /** Screen only: the unit's conversion is unknown here, so the price was cleared and must be typed. */
   priceUnknown?: boolean;
 }
+
+let lineSeq = 0;
+const newLine = (): Line => ({ uid: `line-${++lineSeq}`, description: '', quantity: 1, unitPrice: 0 });
 
 export function PurchaseOrderCreatePage() {
   const navigate = useNavigate();
@@ -47,34 +56,19 @@ export function PurchaseOrderCreatePage() {
   const requestId = searchParams.get('requestId') ?? undefined;
   const branches = useBranchChoices();
   const departments = useDepartmentChoices();
-  const [lines, setLines] = useState<Line[]>([{ description: '', quantity: 1, unitPrice: 0 }]);
+  const [lines, setLines] = useState<Line[]>(() => [newLine()]);
 
-  const partners = useQuery<Partner[]>({
-    queryKey: ['partners-supplier'],
-    queryFn: async () => {
-      // Suppliers only (ADR-PROCUREMENT-001): the old `search=SUPP` text match missed most suppliers.
-      const res = await api.get<Partner[]>('/procurement/suppliers/options');
-      return res.data ?? [];
-    },
-  });
-  const products = useQuery<Product[]>({
-    queryKey: ['products'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Product[] }>('/products?pageSize=200');
-      return res.data.data ?? [];
-    },
-  });
-  const warehouses = useQuery<Warehouse[]>({
-    queryKey: ['warehouses'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Warehouse[] }>('/inventory/locations?type=warehouse');
-      return res.data.data ?? [];
-    },
-  });
+  // Suppliers only (ADR-PROCUREMENT-001), searched on the server: the unsearched list stops at the first 50.
+  const suppliers = useSupplierPicker();
+  // Searched on the server: one page of 200 products left product #201 unpickable.
+  const products = useProductSearch<Product>();
+  // Every warehouse: the default page held only the 25 newest locations.
+  const warehouses = useStockLocations({ type: 'warehouse' });
 
   const create = useMutation({
+    // A stable key per payload: a retry after a lost answer reuses it (see idempotent-request.ts).
     mutationFn: async () =>
-      (await api.post('/procurement/purchase-orders', {
+      idempotentPost('/procurement/purchase-orders', {
         partnerId,
         description,
         paymentType,
@@ -91,13 +85,13 @@ export function PurchaseOrderCreatePage() {
           taxId: l.taxId,
           unitOfMeasureId: l.unitOfMeasureId,
         })),
-      })).data,
+      }),
     onSuccess: (data: any) => {
       notify.success(tx('Purchase {{orderNumber}} created', { orderNumber: data.orderNumber }));
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
       navigate('/procurement/purchase-orders');
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
+    onError: (e: unknown) => notifyApiError(e, tx('Failed')),
   });
 
   const total = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0);
@@ -119,8 +113,10 @@ export function PurchaseOrderCreatePage() {
   });
   const budgetAlerts = budgetCheck.data?.filter((b) => b.exceeded || b.warning) ?? [];
 
-  const addLine = () => setLines([...lines, { description: '', quantity: 1, unitPrice: 0 }]);
-  const removeLine = (idx: number) => setLines(lines.filter((_, i) => i !== idx));
+  const addLine = () => setLines([...lines, newLine()]);
+  const removeLine = (uid: string) => setLines(lines.filter((l) => l.uid !== uid));
+  const updateLine = (uid: string, patch: Partial<Line>) =>
+    setLines((cur) => cur.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
   /**
    * Purchase price of a line in `uomId` from the cost (the variant's when one is picked; costs are per base unit).
    * `unknown` when the unit cannot be converted here: the price is then cleared for the user to type, never assumed.
@@ -129,46 +125,36 @@ export function PurchaseOrderCreatePage() {
     const priced = withVariantPrices(product, variant);
     return { price: unitPrice(priced, uomId, 'purchase'), unknown: unitPriceUnknown(priced, uomId, 'purchase') };
   };
-  const pickProduct = (idx: number, productId: string) => {
-    const product = products.data?.find((p) => p.id === productId);
+  const pickProduct = (line: Line, productId: string) => {
+    const product = products.get(productId);
     if (!product) return;
-    const next = [...lines];
     const unitOfMeasureId = defaultUnitId(product, 'purchase');
     const { price, unknown } = costFor(product, null, unitOfMeasureId);
-    next[idx] = {
+    setLines((cur) => cur.map((l) => (l.uid !== line.uid ? l : {
+      uid: l.uid,
       productId,
       description: product.name,
-      quantity: next[idx].quantity || 1,
+      quantity: l.quantity || 1,
       // Never the sales price: no known cost leaves the price for the user.
       unitPrice: price ?? 0,
       taxId: product.taxId,
       unitOfMeasureId,
       priceUnknown: unknown,
-    };
-    setLines(next);
+    })));
   };
-  const pickUnit = (idx: number, uomId: string) => {
-    const line = lines[idx];
-    const product = products.data?.find((p) => p.id === line.productId);
+  const pickUnit = (line: Line, uomId: string) => {
+    const product = products.get(line.productId);
     const { price, unknown } = costFor(product, cachedVariantOption(qc, line.productId, line.variantId), uomId);
-    const next = [...lines];
-    next[idx] = {
-      ...line, unitOfMeasureId: uomId,
-      unitPrice: unknown ? 0 : price ?? line.unitPrice, priceUnknown: unknown,
-    };
-    setLines(next);
+    updateLine(line.uid, { unitOfMeasureId: uomId, unitPrice: unknown ? 0 : price ?? line.unitPrice, priceUnknown: unknown });
   };
-  const pickVariant = (idx: number, variantId: string | null, opt: VariantOption | null) => {
-    const line = lines[idx];
-    const next = [...lines];
+  const pickVariant = (line: Line, variantId: string | null, opt: VariantOption | null) => {
     let pricing: Partial<Line> = {};
     if (opt && opt.costPrice != null) {
       // The variant cost is per base unit: scale it to the line's unit.
-      const { price, unknown } = costFor(products.data?.find((p) => p.id === line.productId), opt, line.unitOfMeasureId);
+      const { price, unknown } = costFor(products.get(line.productId), opt, line.unitOfMeasureId);
       pricing = unknown ? { unitPrice: 0, priceUnknown: true } : price !== null ? { unitPrice: price, priceUnknown: false } : {};
     }
-    next[idx] = { ...line, variantId, ...(opt ? { description: opt.displayName } : {}), ...pricing };
-    setLines(next);
+    updateLine(line.uid, { variantId, ...(opt ? { description: opt.displayName } : {}), ...pricing });
   };
   const priceMissing = lines.some((l) => l.quantity > 0 && l.priceUnknown);
 
@@ -189,16 +175,18 @@ export function PurchaseOrderCreatePage() {
         <CardContent className="grid gap-3 md:grid-cols-2">
           <div>
             <label className="text-sm font-medium">{tx('Supplier')}</label>
-            <select
+            <SearchableSelect
+              className="mt-1"
               value={partnerId}
-              onChange={(e) => setPartnerId(e.target.value)}
-              className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
-            >
-              <option value="">{tx('Select supplier…')}</option>
-              {partners.data?.map((p) => (
-                <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-              ))}
-            </select>
+              onValueChange={setPartnerId}
+              options={suppliers.options}
+              onQueryChange={suppliers.onQueryChange}
+              loading={suppliers.loading}
+              footer={suppliers.footer}
+              selectedLabel={suppliers.labelOf(partnerId)}
+              placeholder={tx('Select supplier…')}
+              searchPlaceholder={tx('Search suppliers…')}
+            />
           </div>
           <div>
             <label className="text-sm font-medium">{tx('Description / notes')}</label>
@@ -222,16 +210,15 @@ export function PurchaseOrderCreatePage() {
           </div>
           <div>
             <label className="text-sm font-medium">{tx('Warehouse')}</label>
-            <select
+            <SearchableSelect
+              className="mt-1"
               value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
-            >
-              <option value="">{tx('Select warehouse…')}</option>
-              {warehouses.data?.map((w) => (
-                <option key={w.id} value={w.id}>{w.code} — {w.name}</option>
-              ))}
-            </select>
+              onValueChange={setWarehouseId}
+              options={(warehouses.locations ?? []).map(locationOption)}
+              footer={warehouses.footer}
+              placeholder={tx('Select warehouse…')}
+              searchPlaceholder={tx('Search warehouses…')}
+            />
           </div>
           <div>
             <label className="text-sm font-medium">{tx('Branch')}</label>
@@ -278,38 +265,34 @@ export function PurchaseOrderCreatePage() {
             <div className="md:col-span-1 text-right">{tx('Total')}</div>
           </div>
           <div className="space-y-2">
-            {lines.map((ln, idx) => (
-              <div key={idx} className="grid gap-2 md:grid-cols-12 items-center">
+            {lines.map((ln) => (
+              <div key={ln.uid} className="grid gap-2 md:grid-cols-12 items-center">
                 <div className="md:col-span-4">
-                  <select
-                    className="w-full rounded border bg-background px-2 py-1 text-sm"
-                    onChange={(e) => pickProduct(idx, e.target.value)}
-                    defaultValue=""
-                  >
-                    <option value="">{tx('Pick product (optional)…')}</option>
-                    {products.isLoading ? (
-                      <option>{tx('Loading…')}</option>
-                    ) : (
-                      products.data?.map((p) => (
-                        <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                      ))
-                    )}
-                  </select>
+                  {/* Controlled by the line's own product, so the screen always shows what will be saved. */}
+                  <SearchableSelect
+                    value={ln.productId ?? ''}
+                    onValueChange={(v) => pickProduct(ln, v)}
+                    options={products.options}
+                    onQueryChange={products.onQueryChange}
+                    loading={products.loading}
+                    footer={products.footer}
+                    selectedLabel={products.labelOf(ln.productId) ?? (ln.productId ? ln.description : null)}
+                    placeholder={tx('Pick product (optional)…')}
+                    searchPlaceholder={tx('Search by code or name…')}
+                    contentClassName={PRODUCT_PICKER_PANEL}
+                    wrap
+                  />
                   <VariantSelect
                     productId={ln.productId}
                     value={ln.variantId}
-                    onChange={(variantId, opt) => pickVariant(idx, variantId, opt)}
+                    onChange={(variantId, opt) => pickVariant(ln, variantId, opt)}
                   />
                 </div>
                 <div className="md:col-span-3">
                   <Input
                     placeholder={tx('Description')}
                     value={ln.description}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[idx] = { ...next[idx], description: e.target.value };
-                      setLines(next);
-                    }}
+                    onChange={(e) => updateLine(ln.uid, { description: e.target.value })}
                   />
                 </div>
                 <div className="md:col-span-1">
@@ -318,19 +301,15 @@ export function PurchaseOrderCreatePage() {
                     step="0.01"
                     min="0"
                     value={ln.quantity}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[idx] = { ...next[idx], quantity: Number(e.target.value) };
-                      setLines(next);
-                    }}
+                    onChange={(e) => updateLine(ln.uid, { quantity: Number(e.target.value) })}
                   />
                 </div>
                 <div className="md:col-span-1">
                   <UnitSelect
-                    product={products.data?.find((p) => p.id === ln.productId)}
+                    product={products.get(ln.productId)}
                     role="purchase"
                     value={ln.unitOfMeasureId}
-                    onChange={(uomId) => pickUnit(idx, uomId)}
+                    onChange={(uomId) => pickUnit(ln, uomId)}
                   />
                 </div>
                 <div className="md:col-span-2">
@@ -340,11 +319,7 @@ export function PurchaseOrderCreatePage() {
                     min="0"
                     value={ln.priceUnknown ? '' : ln.unitPrice}
                     className={ln.priceUnknown ? 'border-amber-500' : undefined}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[idx] = { ...next[idx], unitPrice: Number(e.target.value), priceUnknown: false };
-                      setLines(next);
-                    }}
+                    onChange={(e) => updateLine(ln.uid, { unitPrice: Number(e.target.value), priceUnknown: false })}
                   />
                   {ln.priceUnknown && <p className="mt-0.5 text-xs text-amber-700">{tx('No conversion for this unit — enter the price')}</p>}
                 </div>
@@ -352,7 +327,7 @@ export function PurchaseOrderCreatePage() {
                   {(ln.quantity * ln.unitPrice).toFixed(2)}
                 </div>
                 <div className="md:col-span-0">
-                  <Button size="icon" variant="ghost" onClick={() => removeLine(idx)} aria-label={tx('Remove line')}>
+                  <Button size="icon" variant="ghost" onClick={() => removeLine(ln.uid)} aria-label={tx('Remove line')}>
                     <Trash2 className="h-3 w-3 text-destructive" />
                   </Button>
                 </div>

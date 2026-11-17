@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { Minus, Plus, XCircle } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
 import { useStaffOptions } from '@/features/inventory/staff-options';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
+import { useProductSearch } from '@/features/products/product-search';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -12,6 +15,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { api } from '@/lib/api';
+import { notifyApiError } from '@/lib/api-error';
 import { useIdempotencyKey } from '@/lib/idempotency';
 import { formatMoney } from '@/lib/format';
 import { notify } from '@/lib/notify';
@@ -19,7 +23,13 @@ import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
 
-interface Location { id: string; code: string; name: string; type: string }
+type InLine = { uid: string; productId: string; variantId?: string | null; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string };
+type OutLine = { uid: string; productId: string; variantId?: string | null; name: string; quantity: number; distStrategy: string; batchNumber: string };
+
+let lineSeq = 0;
+const lineId = () => `line-${++lineSeq}`;
+const blankIn = (): InLine => ({ uid: lineId(), productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' });
+const blankOut = (): OutLine => ({ uid: lineId(), productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' });
 
 interface DirectStockActionsProps {
   /** Extra query keys to invalidate after a successful post (page-specific lists). */
@@ -32,27 +42,33 @@ interface DirectStockActionsProps {
  * Owns its own queries, form state and posting — the host page only renders it.
  */
 export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsProps) {
-  const locations = useQuery<Location[]>({
-    queryKey: ['inventory-locations'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Location[] }>('/inventory/locations');
-      return res.data.data ?? [];
-    },
-  });
+  // Both routes need `inventory:move`: without it the buttons are not offered at all.
+  const has = useAuthStore((s) => s.hasPermission);
+  const canMove = has(PERMISSIONS.inventory.move);
+  const [inOpen, setInOpen] = useState(false);
+  const [outOpen, setOutOpen] = useState(false);
+  const dialogOpen = inOpen || outOpen;
+
+  // Every location (the default page held only the 25 newest), loaded when a dialog opens.
+  const locations = useStockLocations({ enabled: canMove && dialogOpen });
+  const locationOptions = useMemo(() => (locations.locations ?? []).map(locationOption), [locations.locations]);
 
   const staffOptionsQuery = useStaffOptions();
   const staffOptions = staffOptionsQuery.data ?? [];
 
-  const products = useQuery<{ data: { id: string; code: string; name: string }[] }>({
-    queryKey: ['products-simple'],
-    queryFn: async () => (await api.get('/products?pageSize=1000')).data,
-  });
-
-  /** Options for the searchable product pickers in the stock-in/out dialogs. */
-  const productOptions = useMemo(
-    () => (products.data?.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code })),
-    [products.data],
-  );
+  // Searched on the server: loading one page of products left the rest unpickable.
+  const products = useProductSearch<{ id: string; code: string; name: string }>({ enabled: canMove && dialogOpen });
+  const productPicker = {
+    options: products.options,
+    onQueryChange: products.onQueryChange,
+    loading: products.loading,
+    footer: products.footer,
+    placeholder: tx('Select product…'),
+    searchPlaceholder: tx('Search by code or name…'),
+    emptyText: tx('No products match'),
+    contentClassName: PRODUCT_PICKER_PANEL,
+    wrap: true,
+  };
 
   const qc = useQueryClient();
   // A named approver other than the signed-in user must prove the approval
@@ -62,6 +78,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   const invSettings = useQuery<{ key: string; value: unknown }[]>({
     queryKey: ['settings-effective', 'inventory'],
     queryFn: async () => (await api.get('/settings/effective?group=inventory')).data,
+    enabled: canMove,
     staleTime: 60_000,
   });
   const settingOn = (key: string) => Boolean(invSettings.data?.find((s) => s.key === key)?.value);
@@ -76,15 +93,12 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   };
 
   // — Direct Stock In state
-  const [inOpen, setInOpen] = useState(false);
   const [inLocId, setInLocId] = useState('');
   const [inNotes, setInNotes] = useState('');
   const [inResponsibleId, setInResponsibleId] = useState('');
   const [inApprovedId, setInApprovedId] = useState('');
   const [inApproverPin, setInApproverPin] = useState('');
-  const [inLines, setInLines] = useState<{ productId: string; variantId?: string | null; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string }[]>([
-    { productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' },
-  ]);
+  const [inLines, setInLines] = useState<InLine[]>(() => [blankIn()]);
 
   // Direct stock moves stock without a document: the server requires an Idempotency-Key (one per action).
   const inKey = useIdempotencyKey();
@@ -121,22 +135,19 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setInResponsibleId('');
       setInApprovedId('');
       setInApproverPin('');
-      setInLines([{ productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' }]);
+      setInLines([blankIn()]);
       invalidateAll();
     },
-    onError: (e: any) => { inKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Stock in failed')); },
+    onError: (e: unknown) => { inKey.settle(e); notifyApiError(e, tx('Stock in failed')); },
   });
 
   // — Direct Stock Out state
-  const [outOpen, setOutOpen] = useState(false);
   const [outLocId, setOutLocId] = useState('');
   const [outNotes, setOutNotes] = useState('');
   const [outResponsibleId, setOutResponsibleId] = useState('');
   const [outApprovedId, setOutApprovedId] = useState('');
   const [outApproverPin, setOutApproverPin] = useState('');
-  const [outLines, setOutLines] = useState<{ productId: string; variantId?: string | null; name: string; quantity: number; distStrategy: string; batchNumber: string }[]>([
-    { productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' },
-  ]);
+  const [outLines, setOutLines] = useState<OutLine[]>(() => [blankOut()]);
 
   const directOut = useMutation({
     mutationFn: async () => {
@@ -168,26 +179,25 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
       setOutResponsibleId('');
       setOutApprovedId('');
       setOutApproverPin('');
-      setOutLines([{ productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' }]);
+      setOutLines([blankOut()]);
       invalidateAll();
     },
-    onError: (e: any) => { outKey.settle(e); notify.error(e?.response?.data?.message ?? tx('Stock out failed')); },
+    onError: (e: unknown) => { outKey.settle(e); notifyApiError(e, tx('Stock out failed')); },
   });
 
-  const pickInProduct = (idx: number, productId: string) => {
-    const p = products.data?.data?.find((x) => x.id === productId);
-    if (!p) return;
-    const next = [...inLines];
-    next[idx] = { ...next[idx], productId, variantId: null, name: p.name };
-    setInLines(next);
+  const updateIn = (uid: string, patch: Partial<InLine>) =>
+    setInLines((cur) => cur.map((x) => (x.uid === uid ? { ...x, ...patch } : x)));
+  const updateOut = (uid: string, patch: Partial<OutLine>) =>
+    setOutLines((cur) => cur.map((x) => (x.uid === uid ? { ...x, ...patch } : x)));
+
+  const pickInProduct = (uid: string, productId: string) => {
+    const p = products.get(productId);
+    if (p) updateIn(uid, { productId, variantId: null, name: p.name });
   };
 
-  const pickOutProduct = (idx: number, productId: string) => {
-    const p = products.data?.data?.find((x) => x.id === productId);
-    if (!p) return;
-    const next = [...outLines];
-    next[idx] = { ...next[idx], productId, variantId: null, name: p.name };
-    setOutLines(next);
+  const pickOutProduct = (uid: string, productId: string) => {
+    const p = products.get(productId);
+    if (p) updateOut(uid, { productId, variantId: null, name: p.name });
   };
 
   // Footer figures and the Manual-batch guard, so each dialog states what it is
@@ -201,6 +211,8 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
   const outFilledCount = outFilled.length;
   const outTotalQty = outFilled.reduce((n, l) => n + l.quantity, 0);
   const outMissingBatch = outFilled.filter((l) => l.distStrategy === 'MANUAL' && !l.batchNumber.trim()).length;
+
+  if (!canMove) return null;
 
   return (
     <>
@@ -233,14 +245,14 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
               <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {tx('Location')} <span className="text-destructive">*</span>
               </label>
-              <Select value={inLocId} onValueChange={setInLocId}>
-                <SelectTrigger><SelectValue placeholder={tx('Select location…')} /></SelectTrigger>
-                <SelectContent className="max-h-64">
-                  {locations.data?.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={inLocId}
+                onValueChange={setInLocId}
+                options={locationOptions}
+                footer={locations.footer}
+                placeholder={tx('Select location…')}
+                searchPlaceholder={tx('Search locations…')}
+              />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -302,32 +314,28 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                 </tr>
               </thead>
               <tbody>
-                {inLines.map((line, idx) => (
-                  <tr key={idx} className="border-b align-middle last:border-0">
+                {inLines.map((line) => (
+                  <tr key={line.uid} className="border-b align-middle last:border-0">
                     <td className="px-2 py-2">
                       <SearchableSelect
+                        {...productPicker}
                         value={line.productId}
-                        onValueChange={(v) => pickInProduct(idx, v)}
-                        options={productOptions}
-                        placeholder={tx('Select product…')}
-                        searchPlaceholder={tx('Search products…')}
-                        emptyText={tx('No products match')}
+                        onValueChange={(v) => pickInProduct(line.uid, v)}
+                        selectedLabel={products.labelOf(line.productId) ?? line.name}
                       />
                       <VariantSelect
                         productId={line.productId || null}
                         value={line.variantId}
-                        onChange={(v) => setInLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
+                        onChange={(v) => updateIn(line.uid, { variantId: v })}
                       />
                     </td>
                     <td className="px-2 py-2">
-                      <Input type="number" min={1} className="text-right tabular-nums" value={line.quantity} onChange={(e) => {
-                        const next = [...inLines]; next[idx] = { ...next[idx], quantity: Number(e.target.value) }; setInLines(next);
-                      }} />
+                      <Input type="number" min={1} className="text-right tabular-nums" value={line.quantity}
+                        onChange={(e) => updateIn(line.uid, { quantity: Number(e.target.value) })} />
                     </td>
                     <td className="px-2 py-2">
-                      <Input type="number" step="0.01" min={0} className="text-right tabular-nums" placeholder={tx('Avg cost')} value={line.unitCost} onChange={(e) => {
-                        const next = [...inLines]; next[idx] = { ...next[idx], unitCost: e.target.value }; setInLines(next);
-                      }} />
+                      <Input type="number" step="0.01" min={0} className="text-right tabular-nums" placeholder={tx('Avg cost')} value={line.unitCost}
+                        onChange={(e) => updateIn(line.uid, { unitCost: e.target.value })} />
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-xs tabular-nums text-slate-600">
                       {line.unitCost && line.quantity > 0
@@ -335,17 +343,13 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-2 py-2">
-                      <Input placeholder={tx('Optional')} value={line.batchNumber} onChange={(e) => {
-                        const next = [...inLines]; next[idx] = { ...next[idx], batchNumber: e.target.value }; setInLines(next);
-                      }} />
+                      <Input placeholder={tx('Optional')} value={line.batchNumber} onChange={(e) => updateIn(line.uid, { batchNumber: e.target.value })} />
                     </td>
                     <td className="px-2 py-2">
-                      <Input type="date" value={line.expiryDate} onChange={(e) => {
-                        const next = [...inLines]; next[idx] = { ...next[idx], expiryDate: e.target.value }; setInLines(next);
-                      }} />
+                      <Input type="date" value={line.expiryDate} onChange={(e) => updateIn(line.uid, { expiryDate: e.target.value })} />
                     </td>
                     <td className="px-2 py-2 text-center">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-destructive" disabled={inLines.length <= 1} title={tx('Remove line')} onClick={() => setInLines((prev) => prev.filter((_, i) => i !== idx))}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-destructive" disabled={inLines.length <= 1} title={tx('Remove line')} onClick={() => setInLines((prev) => prev.filter((x) => x.uid !== line.uid))}>
                         <XCircle className="h-4 w-4" />
                       </Button>
                     </td>
@@ -354,7 +358,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
               </tbody>
             </table>
             <div className="border-t bg-slate-50/60 px-3 py-2">
-              <Button variant="outline" size="sm" onClick={() => setInLines((prev) => [...prev, { productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' }])}>
+              <Button variant="outline" size="sm" onClick={() => setInLines((prev) => [...prev, blankIn()])}>
                 <Plus className="mr-1 h-3 w-3" />{tx('Add Item')}
               </Button>
             </div>
@@ -398,14 +402,14 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
               <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 {tx('Location')} <span className="text-destructive">*</span>
               </label>
-              <Select value={outLocId} onValueChange={setOutLocId}>
-                <SelectTrigger><SelectValue placeholder={tx('Select location…')} /></SelectTrigger>
-                <SelectContent className="max-h-64">
-                  {locations.data?.map((l) => (
-                    <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={outLocId}
+                onValueChange={setOutLocId}
+                options={locationOptions}
+                footer={locations.footer}
+                placeholder={tx('Select location…')}
+                searchPlaceholder={tx('Search locations…')}
+              />
             </div>
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -463,32 +467,29 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                 </tr>
               </thead>
               <tbody>
-                {outLines.map((line, idx) => (
-                  <tr key={idx} className="border-b align-middle last:border-0">
+                {outLines.map((line) => (
+                  <tr key={line.uid} className="border-b align-middle last:border-0">
                     <td className="px-2 py-2">
                       <SearchableSelect
+                        {...productPicker}
                         value={line.productId}
-                        onValueChange={(v) => pickOutProduct(idx, v)}
-                        options={productOptions}
-                        placeholder={tx('Select product…')}
-                        searchPlaceholder={tx('Search products…')}
-                        emptyText={tx('No products match')}
+                        onValueChange={(v) => pickOutProduct(line.uid, v)}
+                        selectedLabel={products.labelOf(line.productId) ?? line.name}
                       />
                       <VariantSelect
                         productId={line.productId || null}
                         value={line.variantId}
-                        onChange={(v) => setOutLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
+                        onChange={(v) => updateOut(line.uid, { variantId: v })}
                       />
                     </td>
                     <td className="px-2 py-2">
-                      <Input type="number" min={1} className="text-right tabular-nums" value={line.quantity} onChange={(e) => {
-                        const next = [...outLines]; next[idx] = { ...next[idx], quantity: Number(e.target.value) }; setOutLines(next);
-                      }} />
+                      <Input type="number" min={1} className="text-right tabular-nums" value={line.quantity}
+                        onChange={(e) => updateOut(line.uid, { quantity: Number(e.target.value) })} />
                     </td>
                     <td className="px-2 py-2">
-                      <Select value={line.distStrategy} onValueChange={(v) => {
-                        const next = [...outLines]; next[idx] = { ...next[idx], distStrategy: v, batchNumber: v !== 'MANUAL' ? '' : next[idx].batchNumber }; setOutLines(next);
-                      }}>
+                      <Select value={line.distStrategy} onValueChange={(v) => updateOut(line.uid, {
+                        distStrategy: v, batchNumber: v !== 'MANUAL' ? '' : line.batchNumber,
+                      })}>
                         <SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="FEFO">{tx('FEFO — earliest expiry')}</SelectItem>
@@ -502,13 +503,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                         placeholder={line.distStrategy === 'MANUAL' ? tx('Required') : tx('Auto-picked')}
                         disabled={line.distStrategy !== 'MANUAL'}
                         value={line.batchNumber}
-                        onChange={(e) => {
-                          const next = [...outLines]; next[idx] = { ...next[idx], batchNumber: e.target.value }; setOutLines(next);
-                        }}
+                        onChange={(e) => updateOut(line.uid, { batchNumber: e.target.value })}
                       />
                     </td>
                     <td className="px-2 py-2 text-center">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-destructive" disabled={outLines.length <= 1} title={tx('Remove line')} onClick={() => setOutLines((prev) => prev.filter((_, i) => i !== idx))}>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-destructive" disabled={outLines.length <= 1} title={tx('Remove line')} onClick={() => setOutLines((prev) => prev.filter((x) => x.uid !== line.uid))}>
                         <XCircle className="h-4 w-4" />
                       </Button>
                     </td>
@@ -517,7 +516,7 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
               </tbody>
             </table>
             <div className="border-t bg-slate-50/60 px-3 py-2">
-              <Button variant="outline" size="sm" onClick={() => setOutLines((prev) => [...prev, { productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' }])}>
+              <Button variant="outline" size="sm" onClick={() => setOutLines((prev) => [...prev, blankOut()])}>
                 <Plus className="mr-1 h-3 w-3" />{tx('Add Item')}
               </Button>
             </div>
