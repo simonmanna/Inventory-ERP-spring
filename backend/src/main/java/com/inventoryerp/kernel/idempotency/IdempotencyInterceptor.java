@@ -16,6 +16,8 @@ import org.springframework.http.server.ServerHttpResponse;
 import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.ModelAndView;
@@ -47,9 +49,32 @@ public class IdempotencyInterceptor implements HandlerInterceptor, ResponseBodyA
     private static final class State {
         final BusinessOutcome.Operation operation;
         boolean finished;
+        /** Gaps h-06 F7: a write transaction of the handler committed (not a {@link BusinessOutcome#RETRY_SAFE_TX}). */
+        boolean committed;
+        /** Gaps h-06 F7: a write transaction of the handler rolled back. */
+        boolean rolledBack;
 
         State(BusinessOutcome.Operation operation) {
             this.operation = operation;
+        }
+    }
+
+    /**
+     * Gaps h-06 F7: record on the current request (if it reserved a key) that one of its write transactions committed
+     * or rolled back ({@link IdempotencyTransactionListener}).
+     */
+    static void noteTransaction(boolean committed) {
+        RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
+        if (attributes == null) {
+            return;
+        }
+        if (attributes.getAttribute(STATE, RequestAttributes.SCOPE_REQUEST) instanceof State state
+                && state.operation != null && !state.finished) {
+            if (committed) {
+                state.committed = true;
+            } else {
+                state.rolledBack = true;
+            }
         }
     }
 
@@ -154,6 +179,11 @@ public class IdempotencyInterceptor implements HandlerInterceptor, ResponseBodyA
             return null;
         }
         var replay = service.fail(state.operation, status, body, status < 500);
+        if (replay == null && state.rolledBack && !state.committed) {
+            // Gaps h-06 F7: the handler's work rolled back and nothing of it committed, so there is nothing to
+            // recover: release the key and let a retry with it run again (it answered OPERATION_PENDING forever).
+            service.release(state.operation);
+        }
         return replay == null ? null : new Replacement(replay.statusCode(), replay.body());
     }
 

@@ -293,15 +293,21 @@ public class StockService {
         Resolution cost = costResolver.resolveReceiptCost(
                 new ProductCost(costing, (BigDecimal) product.get("costPrice")),
                 quant.created() ? null : new Quant(qtyBefore, quant.average()), qty, unitCost);
+        // Gaps h-00 F1: a serial-tracked quant averages only its units without a serial (see serialAverage).
+        SerialAverage serialAvg = bool(product, "serialTracking")
+                ? serialAverage(org, dto.productId, variantId, dto.locationId, quant, product,
+                        qty.subtract(BigDecimal.valueOf(serials.size())), unitCost, cost.newRunningAverage())
+                : null;
         // A lot-tracked quant that went short (issued without a lot): the receipt first covers that shortfall, so only
         // the remainder becomes an open lot (open lots always sum to max(0, on-hand)); the covered units are trued up
         // from the cost they were issued at to this receipt's cost.
         BigDecimal netted = batchTracking && qtyBefore.signum() < 0 ? Money.min(qty, qtyBefore.negate()) : Money.ZERO;
-        BigDecimal correction = batchTracking
-                ? netted.multiply(unitCost.subtract(shortfallCost(quant, product)))
+        BigDecimal correction = serialAvg != null ? serialAvg.correction()
+                : batchTracking ? netted.multiply(unitCost.subtract(shortfallCost(quant, product)))
                 : cost.costCorrection();
+        BigDecimal newAverage = serialAvg != null ? serialAvg.average() : cost.newRunningAverage();
 
-        Map<String, Object> stockItem = addToQuant(quant.id(), qty, cost.newRunningAverage());
+        Map<String, Object> stockItem = addToQuant(quant.id(), qty, newAverage);
 
         String batchId = null;
         if (batchTracking) {
@@ -347,6 +353,9 @@ public class StockService {
                                 + " ON CONFLICT (\"organizationId\", \"productId\", \"serialNumber\") DO UPDATE SET"
                                 + " \"locationId\" = EXCLUDED.\"locationId\", \"variantId\" = EXCLUDED.\"variantId\","
                                 + " \"batchId\" = EXCLUDED.\"batchId\", status = 'in_stock', \"issuedAt\" = NULL,"
+                                // Gaps h-00 F1: a returned unit is carried at the cost it came back at (what the GL
+                                // debited), not the cost of its earlier stay.
+                                + " \"unitCost\" = EXCLUDED.\"unitCost\","
                                 + " \"issueRef\" = NULL, \"receiptRef\" = EXCLUDED.\"receiptRef\", \"updatedAt\" = " + NOW)
                         .params(UUID.randomUUID().toString(), org, dto.productId, variantId, dto.locationId, serial,
                                 batchId, unitCost, receiptRef)
@@ -393,8 +402,8 @@ public class StockService {
         payload.put("ledgerCode", ledgerCode);
         payload.put("quantity", JsNumbers.dec(dto.quantity));
         payload.put("unitCost", JsNumbers.dec(unitCost));
-        if (cost.newRunningAverage() != null) {
-            payload.put("newRunningAverage", JsNumbers.dec(cost.newRunningAverage()));
+        if (newAverage != null) {
+            payload.put("newRunningAverage", JsNumbers.dec(newAverage));
         }
         events.publishOnCommit("stock.received", payload);
         audit.recordInTx(AuditInput.of("StockItem", str(stockItem, "id"), "receive", null,
@@ -403,8 +412,39 @@ public class StockService {
         BigDecimal actualValue = standardUnit != null
                 ? actualUnitCost.multiply(qty).setScale(6, java.math.RoundingMode.HALF_UP) : cost.totalValue();
         return new Received(ledgerCode, dto.quantity, unitCost, cost.totalValue(),
-                cost.newRunningAverage() != null ? cost.newRunningAverage() : dec(stockItem, "runningAverageCost"),
-                actualValue);
+                newAverage != null ? newAverage : dec(stockItem, "runningAverageCost"), actualValue);
+    }
+
+    /** New average (null = unchanged) and negative-stock correction of a serial-tracked receipt. */
+    private record SerialAverage(BigDecimal average, BigDecimal correction) {}
+
+    /**
+     * Gaps h-00 F1: the running average of a serial-tracked quant is the cost of its units that carry no serial. The
+     * valuation carries those units at it (the cost price while it is 0) and {@link #issue} issues them at it, so the
+     * stock account and the sub-ledger stay equal when such items move without serials. Units received without a
+     * serial blend into it; when the quant is short of unserialised units the receipt first covers that shortfall and
+     * the covered units are trued up from the cost they left at, as for lot-tracked quants. While the quant holds no
+     * unit without a serial the average values nothing, so it keeps following every unit ({@code blended}, as before).
+     */
+    private SerialAverage serialAverage(String org, String productId, String variantId, String locationId,
+            LockedQuant quant, Map<String, Object> product, BigDecimal unserialised, BigDecimal unitCost,
+            BigDecimal blended) {
+        long serialised = jdbc.sql("SELECT count(*) FROM \"InventorySerial\" WHERE \"organizationId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?"
+                        + " AND status = 'in_stock'")
+                .params(org, productId, variantId, locationId).query(Long.class).single();
+        BigDecimal before = quant.quantity().subtract(BigDecimal.valueOf(serialised));
+        if (unserialised.signum() <= 0) {
+            return new SerialAverage(before.signum() == 0 ? blended : null, Money.ZERO);
+        }
+        BigDecimal avg = quant.average().signum() > 0 ? quant.average() : dec(product, "costPrice");
+        if (before.signum() >= 0) {
+            return new SerialAverage(Money.div(before.multiply(avg).add(unserialised.multiply(unitCost)),
+                    before.add(unserialised)), Money.ZERO);
+        }
+        BigDecimal netted = Money.min(unserialised, before.negate());
+        return new SerialAverage(before.add(unserialised).signum() > 0 ? unitCost : null,
+                netted.multiply(unitCost.subtract(avg)));
     }
 
     /**
@@ -627,7 +667,10 @@ public class StockService {
             }
             if (qty.compareTo(covered) > 0) {
                 BigDecimal remaining = qty.subtract(covered);
-                BigDecimal overflowUnit = dec(product, "costPrice");
+                // Gaps h-00 F1: units without a serial leave at the quant's average, which is what they entered at
+                // (serialAverage); the cost price only while the quant has none.
+                BigDecimal overflowUnit = dec(stockItem, "runningAverageCost").signum() > 0
+                        ? dec(stockItem, "runningAverageCost") : dec(product, "costPrice");
                 BigDecimal overflowValue = overflowUnit.multiply(remaining);
                 BigDecimal after = running.subtract(remaining);
                 decrementStockItem(stockItemId, remaining);
@@ -1108,12 +1151,7 @@ public class StockService {
         Resolution destCost = costResolver.resolveReceiptCost(
                 new ProductCost(costing, (BigDecimal) product.get("costPrice")),
                 to.created() ? null : new Quant(toBefore, to.average()), qty, carriedUnit);
-        Map<String, Object> toItem = addToQuant(to.id(), qty, destCost.newRunningAverage() != null
-                ? destCost.newRunningAverage() : to.created() ? carriedUnit : null);
-        if (carried) {
-            reAverage(from.id(), fromBefore, sourceAvg, carriedValue, newFromQty);
-        }
-
+        List<Map<String, Object>> moving = List.of();
         if (serialTracking) {
             List<Object> sp = new ArrayList<>(List.of(org, dto.productId));
             sp.add(variantId);
@@ -1122,12 +1160,26 @@ public class StockService {
                 sp.add(dto.pinnedSerialIds.toArray(String[]::new));
             }
             sp.add(qty.intValueExact());
-            List<Map<String, Object>> moving = SqlRows.list(jdbc.sql("SELECT id, \"batchId\" FROM \"InventorySerial\""
+            moving = SqlRows.list(jdbc.sql("SELECT id, \"batchId\" FROM \"InventorySerial\""
                             + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
                             + " AND \"locationId\" = ? AND status = 'in_stock'"
                             + (dto.pinnedSerialIds != null ? " AND id = ANY(?::text[])" : "")
                             + " ORDER BY \"receivedAt\" ASC LIMIT ?")
                     .params(sp));
+        }
+        // Gaps h-00 F1: units arriving without a serial blend into the destination's average of such units at the
+        // cost they leave the source at (its average, the cost price while it has none), as on a receipt.
+        BigDecimal toAverage = destCost.newRunningAverage() != null ? destCost.newRunningAverage()
+                : to.created() ? carriedUnit : null;
+        SerialAverage serialAvg = serialTracking ? serialAverage(org, dto.productId, variantId, dto.toLocationId, to,
+                product, qty.subtract(BigDecimal.valueOf(moving.size())),
+                carried ? carriedAvg : sourceAvg.signum() > 0 ? sourceAvg : dec(product, "costPrice"), toAverage) : null;
+        Map<String, Object> toItem = addToQuant(to.id(), qty, serialAvg != null ? serialAvg.average() : toAverage);
+        if (carried) {
+            reAverage(from.id(), fromBefore, sourceAvg, carriedValue, newFromQty);
+        }
+
+        if (serialTracking) {
             if (!moving.isEmpty()) {
                 Set<String> oldBatchIds = new LinkedHashSet<>();
                 moving.forEach(s -> {
@@ -1186,7 +1238,8 @@ public class StockService {
                     dto.sourceId != null ? dto.sourceId : ledgerCode,
                     "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(qty));
         }
-        postCostCorrection(org, dto.productId, str(product, "name"), batchTracking ? layerCorrection
+        postCostCorrection(org, dto.productId, str(product, "name"), serialAvg != null ? serialAvg.correction()
+                        : batchTracking ? layerCorrection
                         : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
                 dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode);
         Map<String, Object> payload = new HashMap<>();
@@ -1252,6 +1305,24 @@ public class StockService {
     /** The advisory-lock key of one quant (shared with {@link LayerCostWriter}). */
     static String quantLockKey(String org, String productId, String variantKey, String locationId) {
         return "avco:" + org + ":" + productId + ":" + variantKey + ":" + locationId;
+    }
+
+    /**
+     * Gaps h-00 F7: hold the quant locks of these lines' cells ({@code productId} / {@code variantId}) at one location
+     * until the caller's transaction ends, taken in the engine lock order. The advisory half is enough: every
+     * movement takes it before it reads or writes the quant, so a caller that computes a variance from on-hand and
+     * ledger before posting it (count submit) sees no movement commit in between. Creates no quant.
+     */
+    @Transactional
+    public void lockQuants(String locationId, List<? extends Map<String, Object>> lines) {
+        String org = TenantContext.organizationId();
+        Set<String> seen = new HashSet<>();
+        for (Map<String, Object> l : StockMove.inLockOrder(new ArrayList<Map<String, Object>>(lines))) {
+            String variantKey = l.get("variantId") == null ? "" : str(l, "variantId");
+            if (seen.add(str(l, "productId") + ":" + variantKey)) {
+                lockQuantForAvco(org, str(l, "productId"), variantKey, locationId);
+            }
+        }
     }
 
     /** Transaction-scoped advisory lock serialising one quant's AVCO recompute (first half of the quant lock). */

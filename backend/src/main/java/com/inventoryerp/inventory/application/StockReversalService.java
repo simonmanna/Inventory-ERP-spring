@@ -129,6 +129,10 @@ public class StockReversalService {
 
     private record Cell(String productId, String variantId, String locationId) {}
 
+    private static Cell cell(Map<String, Object> ledgerRow) {
+        return new Cell(str(ledgerRow, "productId"), str(ledgerRow, "variantId"), str(ledgerRow, "locationId"));
+    }
+
     private static final java.util.Comparator<Cell> CELL_ORDER = java.util.Comparator.comparing(Cell::productId)
             .thenComparing(c -> c.variantId() == null ? "" : c.variantId()).thenComparing(Cell::locationId);
 
@@ -170,9 +174,27 @@ public class StockReversalService {
         if (!losses.isEmpty()) {
             reverseLedgerSource(new LedgerSource("stock_transfer_loss", code, "stock_transfer_reversal", code,
                     List.of("stock_transfer_loss"), notes, null));
-            sum(losses, true).forEach((c, qty) -> stock.transfer(StockMove.transfer(c.productId(), c.locationId(),
-                            str(doc, "fromLocId"), qty).variant(c.variantId()).source("stock_transfer_reversal", code)
-                    .notes(notes).people(null, TenantContext.userId())));
+            // Gaps h-00 F9: move back the units the reversal just restored in transit (their lots and serials, at the
+            // cost they were written off at), not the oldest lots there, which can be another transfer's in transit.
+            List<Map<String, Object>> restored = ledgerRows("stock_transfer_reversal", code, "reversal_in");
+            sum(losses, true).forEach((c, qty) -> {
+                List<String> lots = new ArrayList<>();
+                restored.stream().filter(r -> c.equals(cell(r)) && r.get("batchId") != null)
+                        .forEach(r -> lots.add(str(r, "batchId")));
+                List<String> serials = new ArrayList<>();
+                BigDecimal value = Money.ZERO;
+                for (Map<String, Object> r : losses) {
+                    if (c.equals(cell(r))) {
+                        value = value.add(dec(r, "totalValue").abs());
+                        if (r.get("serialId") != null) {
+                            serials.add(str(r, "serialId"));
+                        }
+                    }
+                }
+                stock.transfer(StockMove.transfer(c.productId(), c.locationId(), str(doc, "fromLocId"), qty)
+                        .variant(c.variantId()).source("stock_transfer_reversal", code).notes(notes)
+                        .people(null, TenantContext.userId()).pin(lots, serials, Money.div(value, qty)));
+            });
         }
         if (received.isEmpty() && losses.isEmpty()) {
             throw ApiException.badRequest("Transfer " + code + " has no received or written-off quantities to reverse");

@@ -73,7 +73,11 @@ public class InventoryPostingRuleService {
         for (Map<String, Object> rule : rules) {
             String accountId = resolveAccount(rule, product, category);
             if (accountId == null) {
-                continue;
+                // Gaps h-00 F3 / h-02 F8: a line without an account was skipped, so the entry came out one-sided
+                // (refused with no hint) or, when no line resolved, empty: the stock moved with no journal at all.
+                throw ApiException.badRequest("The " + movementType + " posting rule (" + rule.get("debitOrCredit")
+                        + " line " + rule.get("lineIndex") + ") resolves no GL account for " + product.get("name")
+                        + "; fix it under Accounting > Posting Rules");
             }
             boolean debit = "debit".equals(rule.get("debitOrCredit"));
             MutableLine existing = null;
@@ -122,6 +126,40 @@ public class InventoryPostingRuleService {
                     debit ? null : resolveAccount(rule, product, category), (String) rule.get("accountSource")));
         }
         return out;
+    }
+
+    /**
+     * Gaps h-00 F3 / h-02 F8: the account an active rule resolves to for the products it covers, or null when it can
+     * resolve none (checked when a rule is saved). A mapping rule needs a mapped key. A field rule reads the account
+     * field its key names on the product, then the category, then falls back to the mapping of the key: a product rule
+     * must resolve for its product, a category rule for a product of that category without an override of its own, a
+     * movement-type default for any product (so through the mapping).
+     */
+    public String accountForScope(String accountSource, String key, String productId, String categoryId) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        if ("account_mapping".equals(accountSource)) {
+            return accounts.byMappingOptional(key);
+        }
+        if (productId != null) {
+            Map<String, Object> product = product(productId);
+            Map<String, Object> rule = new java.util.HashMap<>();
+            rule.put("accountSource", accountSource);
+            rule.put("accountMappingKey", key);
+            try {
+                return resolveAccount(rule, product, category((String) product.get("categoryId")));
+            } catch (ApiException e) {
+                return null;
+            }
+        }
+        // The category comes from the request here, so it is read within the organisation.
+        List<Map<String, Object>> categories = categoryId == null ? List.of() : jdbc.sql("SELECT * FROM"
+                        + " \"ProductCategory\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(categoryId, TenantContext.organizationId()).query().listOfRows();
+        Map<String, Object> category = categories.isEmpty() ? null : categories.getFirst();
+        Object field = category == null ? null : category.get(CATEGORY_FIELDS.getOrDefault(key, key));
+        return field != null ? field.toString() : accounts.byMappingOptional(key);
     }
 
     // ------------------------------------------------------------------ internals
