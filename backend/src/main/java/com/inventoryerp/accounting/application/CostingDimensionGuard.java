@@ -29,7 +29,8 @@ public class CostingDimensionGuard {
             "absorption_settlement", "quarry_stripping", "quarry_rehab", "landed_cost_accrual",
             "landed_cost_accrual_clearing", "delivery_cost_run", "branch_transfer", "project_issue",
             "project_timesheet", "project_equipment", "project_reclass", "project_subcontract", "project_back_charge",
-            "progress_claim", "revenue_recognition", "onerous_contract", "cost_adjustment_run");
+            "progress_claim", "revenue_recognition", "onerous_contract", "cost_adjustment_run",
+            "lineage_exception");
 
     private final SettingResolverService settings;
     private final JdbcClient jdbc;

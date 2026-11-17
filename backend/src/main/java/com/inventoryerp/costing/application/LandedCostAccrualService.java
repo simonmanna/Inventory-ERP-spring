@@ -652,7 +652,9 @@ public class LandedCostAccrualService {
 
     /**
      * Where the released part of an adjustment's on-hand share went (review 2026-11-17, ACR-14): the recorded releases
-     * (per account, per WIP share), and cost of sales for what was released before they were recorded.
+     * (per account, per WIP share), and cost of sales for what was released before they were recorded. A lineage
+     * exception assigned to its goods (readiness gaps h-02 F10) is not a release out of stock: the parked amount left
+     * this adjustment's on-hand share for child adjustments at the destination, which the clearing unwinds themselves.
      */
     private List<Sink> releaseSinks(String adjustmentId, BigDecimal releasedSoFar) {
         Map<String, Sink> sinks = new LinkedHashMap<>();
@@ -660,7 +662,7 @@ public class LandedCostAccrualService {
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT x.id, x.target, x.\"targetRef\", x.\"accountId\","
                 + " x.amount, EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"releaseId\" = x.id AND r.status ="
                 + " 'posted') AS cascaded FROM \"CostValueAdjustmentRelease\" x WHERE x.\"adjustmentId\" = ? AND x.amount"
-                + " <> 0 ORDER BY x.\"createdAt\", x.id").param(adjustmentId))) {
+                + " <> 0 AND x.target <> 'assigned' ORDER BY x.\"createdAt\", x.id").param(adjustmentId))) {
             BigDecimal amount = SqlRows.dec(r, "amount");
             recorded = recorded.add(amount);
             if ("wip".equals(r.get("target"))) {

@@ -8,6 +8,8 @@ import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.LineageFollower.Followed;
 import com.inventoryerp.inventory.application.LineageFollower.Mode;
 import com.inventoryerp.inventory.application.LineageFollower.Placement;
+import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -21,10 +23,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Landed cost LC-1 (ADR-S053): the lineage exception workspace. A share that could not follow its goods (transfer with
@@ -44,10 +50,17 @@ public class LineageExceptionService {
     private final AccountResolverService accounts;
     private final StockPostingService stockPosting;
     private final AuditService audit;
+    private final ApprovalsService approvals;
+    private final SegregationOfDutiesService sod;
+    private final TransactionTemplate newTx;
+
+    /** Adjustment types of a landed-cost voucher (their own disposition; every other source capitalises as adjunct). */
+    private static final Set<String> VOUCHER_TYPES = Set.of("landed_cost", "std_price_difference");
 
     public LineageExceptionService(JdbcClient jdbc, LineageFollower follower, CostLineageService lineage,
             PostingService posting, AccountDeterminationService determination, AccountResolverService accounts,
-            StockPostingService stockPosting, AuditService audit) {
+            StockPostingService stockPosting, AuditService audit, ApprovalsService approvals,
+            SegregationOfDutiesService sod, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.follower = follower;
         this.lineage = lineage;
@@ -56,6 +69,10 @@ public class LineageExceptionService {
         this.accounts = accounts;
         this.stockPosting = stockPosting;
         this.audit = audit;
+        this.approvals = approvals;
+        this.sod = sod;
+        this.newTx = new TransactionTemplate(txm);
+        this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     private static String org() {
@@ -131,21 +148,39 @@ public class LineageExceptionService {
         String entryId = null;
         BigDecimal open = adj == null ? BigDecimal.ZERO : SqlRows.dec(adj, "openAmount");
         if (open.signum() != 0) {
+            String productId = (String) in.get("productId");
+            // Readiness gaps h-02 F2: the destination's method is read under the costing locks, as a stock move does.
+            CostingLocks.shareProduct(jdbc, org(), productId);
             BigDecimal before = SqlRows.dec(in, "qtyBefore").add(SqlRows.dec(in, "quantityChange").subtract(qty)
                     .max(BigDecimal.ZERO));
-            boolean standard = "STANDARD".equals(jdbc.sql("SELECT \"costingMethod\"::text FROM \"Product\" WHERE id = ?")
-                    .param(in.get("productId")).query(String.class).optional().orElse(null));
+            boolean standard = "STANDARD".equals(jdbc.sql("SELECT \"costingMethod\"::text FROM \"Product\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(productId, org()).query(String.class).optional()
+                    .orElse(null));
+            // Readiness gaps h-02 F10 / ACR-14: the share follows its goods the way its source capitalised it. A voucher
+            // raises the average of AVCO / FIFO goods (adjunct for STANDARD); every other source (an accrual, a cost
+            // adjustment, freight on a transfer, ...) always capitalises into the 1396 adjunct.
+            String type = (String) adj.get("adjustmentType");
+            boolean voucher = VOUCHER_TYPES.contains(type);
+            Mode mode = voucher && !standard ? Mode.AVERAGE : Mode.ADJUNCT;
             Followed f = follower.follow(in, qty, before, open.abs());
             if (open.signum() < 0) {
                 f = f.negate();
             }
-            if (!standard) {
+            if (mode == Mode.AVERAGE) {
                 f = follower.retargetEmptyPools(f);
             }
-            entryId = release(f, open, adj, standard, "Lineage exception resolved · goods assigned");
-            follower.record(f, (String) adj.get("adjustmentType"), (String) adj.get("sourceType"),
-                    (String) adj.get("sourceId"), entryId, standard ? Mode.ADJUNCT : Mode.AVERAGE,
-                    "Parked landed cost released to its goods");
+            String text = "Lineage exception resolved · goods assigned";
+            entryId = release(f, open, adj, voucher, standard, text);
+            // The parked amount is handed on to the destination's adjustments (children of the parked one, same root):
+            // it leaves the parked adjustment's carried amount, and the hand-over is recorded as a release.
+            jdbc.sql("UPDATE \"CostValueAdjustment\" SET \"onHandAmount\" = \"onHandAmount\" - ? WHERE id = ?")
+                    .params(open, adj.get("id")).update();
+            lineage.recordRelease((String) adj.get("id"), "assigned", destinationLedgerId,
+                    lineage.priceDifferenceAccount(), open, "lineage_exception", id);
+            follower.record(f, type, (String) adj.get("sourceType"), (String) adj.get("sourceId"), entryId, mode,
+                    "Parked landed cost released to its goods", (String) adj.get("id"),
+                    adj.get("rootAdjustmentId") != null ? (String) adj.get("rootAdjustmentId") : (String) adj.get("id"),
+                    (String) adj.get("sourceReceiptLedgerId"));
         }
         return close(e, "resolved", Obj.of("action", "assign", "destinationLedgerId", destinationLedgerId,
                 "quantity", JsNumbers.dec(qty), "reason", reason, "journalEntryId", entryId));
@@ -163,29 +198,49 @@ public class LineageExceptionService {
                 .params(accountId, org()).query(Long.class).single() == 0) {
             throw ApiException.notFound("Account not found");
         }
+        // Readiness gaps h-02 F5: the chosen account follows the manual-journal control-account policy.
+        lineage.assertOffsetAccount(accountId);
         Map<String, Object> adj = parked(e);
         BigDecimal open = adj == null ? BigDecimal.ZERO : SqlRows.dec(adj, "openAmount");
         String entryId = null;
         if (open.signum() != 0) {
+            // Readiness gaps h-02 F5: maker-checker — the approval engine (when the organisation runs a workflow for
+            // inventory valuation changes) and the separation-of-duties pair (who posted the parked cost cannot write
+            // it off).
+            Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval(
+                    SegregationOfDutiesService.INVENTORY_VALUATION, id, Obj.of("amount", JsNumbers.js(open.abs()),
+                            "kind", "lineage_write_off", "accountId", accountId, "makerIds",
+                            adj.get("createdBy") == null ? "" : adj.get("createdBy"))));
+            if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
+                throw ApiException.badRequest("Approval required before writing off this lineage exception. Pending"
+                        + " approval request " + gate.get("requestId") + ".");
+            }
+            List<String> makers = new ArrayList<>();
+            makers.add((String) adj.get("createdBy"));
+            sod.assertSeparated(SegregationOfDutiesService.INVENTORY_VALUATION, "LineageException", id, makers);
             String text = "Lineage exception written off · " + reason;
             entryId = post(List.of(signed(accountId, open, text), signed(lineage.priceDifferenceAccount(),
                     open.negate(), text)), text, id);
             // Review 2026-11-17 (ACR-14): an accrual clearing takes this part of its estimate back out of that account.
-            jdbc.sql("INSERT INTO \"CostValueAdjustmentRelease\" (id, \"organizationId\", \"adjustmentId\", target,"
-                    + " \"accountId\", amount, \"sourceType\", \"sourceId\") VALUES (?, ?, ?, 'write_off', ?, ?,"
-                    + " 'lineage_exception', ?)").params(UUID.randomUUID().toString(), org(), adj.get("id"), accountId,
-                    open, id).update();
+            lineage.recordRelease((String) adj.get("id"), "write_off", null, accountId, open, "lineage_exception", id);
             closeParked(adj, open, text);
         }
         return close(e, "written_off", Obj.of("action", "write_off", "accountId", accountId, "reason", reason,
                 "amount", JsNumbers.dec(open), "journalEntryId", entryId));
     }
 
-    /** Dr each target / Cr 1396 for the parked amount, and take it out of the parked adjunct. */
-    private String release(Followed f, BigDecimal open, Map<String, Object> adj, boolean standard, String text) {
+    /**
+     * Dr each target / Cr 1396 for the parked amount, and take it out of the parked adjunct. A voucher's share posts as
+     * the voucher does (on hand → stock, or the 1396 adjunct for STANDARD; returns → 5976; every other consumption →
+     * cost of sales); any other source's share as its capitalisation does (readiness gaps h-02 F10): on hand / in transit
+     * stays in the 1396 adjunct, consumption goes where the automatic release sends it (WIP, scrap → stock adjustment
+     * expense, the rest → cost of sales), so an accrual clearing later takes it back out of the same accounts.
+     */
+    private String release(Followed f, BigDecimal open, Map<String, Object> adj, boolean voucher, boolean standard,
+            String text) {
         Map<String, BigDecimal> debits = new LinkedHashMap<>();
         for (Placement p : f.placements()) {
-            String account = switch (p.target()) {
+            String account = voucher ? switch (p.target()) {
                 case "on_hand" -> standard ? lineage.priceDifferenceAccount()
                         : stockPosting.landedAccount(p.productId(), p.amount().abs());
                 case "wip" -> determination.mapped("wip");
@@ -193,6 +248,9 @@ public class LineageExceptionService {
                 case "return" -> accounts.ensureByCode("5976", "Landed Cost on Returned Goods", "cost_of_goods_sold",
                         "landed_cost_returns");
                 default -> determination.mapped("cogs");
+            } : switch (p.target()) {
+                case "on_hand", "transfer", "in_transit" -> lineage.priceDifferenceAccount();
+                default -> lineage.consumptionAccount(p.target());
             };
             debits.merge(account, p.amount(), BigDecimal::add);
         }

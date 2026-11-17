@@ -80,8 +80,9 @@ class StandardProcessCostingIT extends MfgTestSupport {
         String id = draft.get("id").asString();
         Res notApproved = call("POST", "/inventory/standard-costs/" + id + "/activate", null, key());
         assertThat(notApproved.body().get("message").asString()).isEqualTo("Only an approved standard cost can be activated");
-        ok(200, "POST", "/inventory/standard-costs/" + id + "/approve", null);
-        Res noConvert = call("POST", "/inventory/standard-costs/" + id + "/activate", null, key());
+        // Readiness gaps h-02 F7: a standard that could never activate is refused at approval, not at activation.
+        Res noConvert = as("POST", "/inventory/standard-costs/" + id + "/approve", null);
+        assertThat(noConvert.status()).isEqualTo(400);
         assertThat(noConvert.body().get("message").asString()).endsWith("is costed at AVCO; set convertMethod to switch"
                 + " it to standard cost");
         ok(200, "POST", "/inventory/standard-costs/" + id + "/cancel", null);
