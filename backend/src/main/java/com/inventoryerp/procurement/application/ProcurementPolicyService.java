@@ -210,10 +210,10 @@ public class ProcurementPolicyService {
                     + " \"organizationId\" = ? AND key = ? AND \"scopeType\" = ? AND \"scopeId\" IS NOT DISTINCT FROM ?")
                     .params(org(), def.key(), scopeType, scopeId).query(Integer.class).single();
             jdbc.sql("INSERT INTO \"ProcurementPolicy\" (id, \"organizationId\", key, \"scopeType\", \"scopeId\", version,"
-                    + " status, \"effectiveFrom\", value, notes, \"createdBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?,"
-                    + " ?, ?, ?, ?, 'draft', ?, ?::jsonb, ?, ?, " + NOW + ", " + NOW + ")")
+                    + " status, \"effectiveFrom\", value, notes, \"createdBy\", \"updatedBy\", \"createdAt\", \"updatedAt\")"
+                    + " VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?::jsonb, ?, ?, ?, " + NOW + ", " + NOW + ")")
                     .params(id, org(), def.key(), scopeType, scopeId, version, from, value.toString(), in.notes(),
-                            user()).update();
+                            user(), user()).update();
             audit.recordInTx(AuditInput.of("ProcurementPolicy", id, "create", null, Obj.of("key", def.key(),
                     "scopeType", scopeType, "scopeId", scopeId, "version", version, "value", value.toString())));
         });
@@ -230,8 +230,9 @@ public class ProcurementPolicyService {
                 : ProcurementPolicyRegistry.validate((String) current.get("key"), value);
         LocalDate from = effectiveFrom == null ? null : parseDate(effectiveFrom);
         int n = jdbc.sql("UPDATE \"ProcurementPolicy\" SET value = ?::jsonb, \"effectiveFrom\" = COALESCE(?,"
-                + " \"effectiveFrom\"), notes = COALESCE(?, notes), \"updatedAt\" = " + NOW + " WHERE id = ? AND"
-                + " \"organizationId\" = ? AND status = 'draft'").params(v.toString(), from, notes, id, org()).update();
+                + " \"effectiveFrom\"), notes = COALESCE(?, notes), \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE"
+                + " id = ? AND \"organizationId\" = ? AND status = 'draft'").params(v.toString(), from, notes, user(), id,
+                org()).update();
         if (n == 0) {
             throw ApiException.badRequest("Only a draft policy can be edited");
         }
@@ -240,14 +241,37 @@ public class ProcurementPolicyService {
         return get(id);
     }
 
-    /** Maker-checker approval: the author of a draft cannot approve it. */
+    /**
+     * Maker-checker approval: neither the author of a draft nor the last person who edited it can approve it, and the
+     * approver must be a signed-in user (h04-F11). The check is repeated in the update itself, so an edit racing the
+     * approval cannot slip through.
+     */
     public Map<String, Object> approve(String id) {
         Map<String, Object> current = get(id);
-        if (user() != null && user().equals(current.get("createdBy"))) {
+        String me = user();
+        if (me == null) {
+            throw ApiException.forbidden("A policy cannot be approved without a signed-in user; approve it from a user"
+                    + " account");
+        }
+        if (me.equals(current.get("createdBy"))) {
             throw ApiException.forbidden("A policy must be approved by someone other than its author");
         }
-        transition(id, List.of("draft"), "approved", "\"approvedBy\" = ?, \"approvedAt\" = " + NOW, user(),
-                "Only a draft policy can be approved");
+        String lastEdited = "A policy must be approved by someone other than the person who last edited it";
+        if (me.equals(current.get("updatedBy"))) {
+            throw ApiException.forbidden(lastEdited);
+        }
+        int n = jdbc.sql("UPDATE \"ProcurementPolicy\" SET status = 'approved', \"approvedBy\" = ?, \"approvedAt\" = "
+                + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft' AND"
+                + " \"createdBy\" IS DISTINCT FROM ? AND \"updatedBy\" IS DISTINCT FROM ?").params(me, id, org(), me, me)
+                .update();
+        if (n == 0) {
+            if (!"draft".equals(get(id).get("status"))) {
+                throw ApiException.badRequest("Only a draft policy can be approved");
+            }
+            throw ApiException.forbidden(lastEdited);
+        }
+        audit.record(AuditInput.of("ProcurementPolicy", id, "update", null, Obj.of("status", "approved")));
+        active.invalidate(org());
         return get(id);
     }
 

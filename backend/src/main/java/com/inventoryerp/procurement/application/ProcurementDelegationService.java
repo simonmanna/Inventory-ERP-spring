@@ -43,12 +43,23 @@ public class ProcurementDelegationService {
         this.permissions = permissions;
     }
 
-    /** Refuse the current user when the branch's rules do not let them place this order. */
+    /**
+     * Refuse the current user when the branch's rules do not let them place this order. An order without a branch is
+     * outside every branch's limit, so once any branch has a rule only central purchasing may place one (h04-F2: a
+     * delegate used to skip their limit by leaving the branch out).
+     */
     public void enforce(String branchId, BigDecimal orderAmount) {
+        String today = LocalDate.now(BusinessZone.get()).toString();
         if (branchId == null || branchId.isEmpty()) {
+            long rules = jdbc.sql("SELECT count(*) FROM \"ProcurementDelegation\" WHERE \"organizationId\" = ? AND"
+                    + " \"isActive\" = TRUE AND (\"validFrom\" IS NULL OR \"validFrom\" <= ?::date) AND (\"validTo\" IS"
+                    + " NULL OR \"validTo\" >= ?::date)").params(org(), today, today).query(Long.class).single();
+            if (rules > 0 && !permissions.current().contains(Permissions.PROCUREMENT__DELEGATION__CENTRAL)) {
+                throw ApiException.forbidden("An order without a branch cannot be placed while branch purchasing limits"
+                        + " apply; choose the branch it is for");
+            }
             return;
         }
-        String today = LocalDate.now(BusinessZone.get()).toString();
         List<Map<String, Object>> rules = SqlRows.list(jdbc.sql("SELECT * FROM \"ProcurementDelegation\" WHERE"
                 + " \"organizationId\" = ? AND \"branchId\" = ? AND \"isActive\" = TRUE AND (\"validFrom\" IS NULL OR"
                 + " \"validFrom\" <= ?::date) AND (\"validTo\" IS NULL OR \"validTo\" >= ?::date)")

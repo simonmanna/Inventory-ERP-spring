@@ -193,7 +193,7 @@ public class GlobalExceptionHandler {
         if (!isUniqueViolation(ex)) {
             return unhandled(ex, req);
         }
-        log.warn("Unique conflict on {} {}: {}", req.getMethod(), req.getRequestURI(),
+        log.warn("Unique conflict on {} {}: {}", req.getMethod(), safeUri(req),
                 ex.getMostSpecificCause().getMessage());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message", "This operation conflicts with one that was just completed. Refresh and try again.");
@@ -213,7 +213,7 @@ public class GlobalExceptionHandler {
     }
 
     private ResponseEntity<Object> lockConflictBody(Exception ex, HttpServletRequest req) {
-        log.warn("Lock conflict on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.toString());
+        log.warn("Lock conflict on {} {}: {}", req.getMethod(), safeUri(req), ex.toString());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message", "This operation collided with a concurrent update and was not applied. Please retry.");
         body.put("statusCode", 409);
@@ -240,7 +240,16 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler({AsyncRequestNotUsableException.class, AsyncRequestTimeoutException.class})
     void clientGone(Exception ex, HttpServletRequest req) {
-        log.debug("Async request ended on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.toString());
+        log.debug("Async request ended on {} {}: {}", req.getMethod(), safeUri(req), ex.toString());
+    }
+
+    /**
+     * The request path for a log line, with secrets in the path masked: a supplier-portal link token is the only
+     * credential for its document, so it never reaches the logs (h04-F7).
+     */
+    static String safeUri(HttpServletRequest req) {
+        String uri = req.getRequestURI();
+        return uri == null ? null : uri.replaceAll("(/supplier-portal/)[^/?#]+", "$1***");
     }
 
     @ExceptionHandler(Exception.class)
@@ -248,7 +257,7 @@ public class GlobalExceptionHandler {
         if (isLockConflict(ex)) {
             return lockConflictBody(ex, req);
         }
-        log.error("Unhandled exception on {} {} [req: {}]", req.getMethod(), req.getRequestURI(),
+        log.error("Unhandled exception on {} {} [req: {}]", req.getMethod(), safeUri(req),
                 req.getAttribute(RequestIdFilter.ATTRIBUTE), ex);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("message", "Internal Server Error");

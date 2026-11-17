@@ -151,11 +151,19 @@ public class IncomingInspectionService {
             String status = defects.isEmpty() ? "passed" : acceptedQty.signum() == 0 ? "failed" : "partial";
             String claimId = null;
             if (!defects.isEmpty() && insp.get("partnerId") != null) {
+                // Checked before the claim exists: a refused quantity line inside this transaction would roll it back.
+                List<SupplierClaimService.QuantityLineInput> quantities = claimQuantities(insp, lines(id).values());
                 Map<String, Object> claim = claims.create(new SupplierClaimService.CreateInput((String) insp.get("partnerId"),
                         "quality", Money.round(rejectedValue), "Rejected at inspection " + insp.get("inspectionNumber") + ": "
                                 + String.join("; ", defects), (String) insp.get("purchaseOrderId"),
                         (String) insp.get("goodsReceiptId"), null));
                 claimId = (String) claim.get("id");
+                // h04-F5: the claim carries the rejected stock as quantity lines, so once a second user verifies them it
+                // settles as a stock adjustment that takes the rejected units out of stock, instead of a price variance
+                // that leaves them sellable at full cost.
+                for (SupplierClaimService.QuantityLineInput q : quantities) {
+                    claims.addQuantityLine(claimId, q);
+                }
             }
             jdbc.sql("UPDATE \"IncomingInspection\" SET status = ?, \"claimId\" = ?, \"completedBy\" = ?, \"completedAt\" = "
                     + NOW + ", version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ?")
@@ -166,12 +174,75 @@ public class IncomingInspectionService {
         return get(id);
     }
 
-    /** Cancel a pending inspection. */
-    public Map<String, Object> cancel(String id) {
+    /**
+     * h04-F5: the rejected quantities a quality claim can carry: stocked receipt lines with a unit cost, at most what is
+     * still unclaimed on each receipt line (the rules {@link SupplierClaimService#addQuantityLine} enforces). Lines it
+     * would refuse (a service, no cost, a reversed receipt) stay on the claim's amount only.
+     */
+    private List<SupplierClaimService.QuantityLineInput> claimQuantities(Map<String, Object> insp,
+            java.util.Collection<Map<String, Object>> lines) {
+        List<SupplierClaimService.QuantityLineInput> out = new ArrayList<>();
+        for (Map<String, Object> l : lines) {
+            BigDecimal rejected = Money.dec(l.get("rejectedQuantity"));
+            if (rejected.signum() <= 0 || l.get("goodsReceiptLineId") == null) {
+                continue;
+            }
+            Map<String, Object> gl = SqlRows.one(jdbc.sql("SELECT gl.quantity, gl.\"unitCost\", gl.\"productId\","
+                    + " g.status::text AS status, g.\"reversedAt\", g.\"purchaseOrderId\", COALESCE(g.\"partnerId\","
+                    + " o.\"partnerId\") AS \"partnerId\", COALESCE(p.\"trackInventory\", false) AND"
+                    + " COALESCE(p.\"productType\"::text, '') <> 'service' AS stocked, (SELECT COALESCE(sum(cl.quantity), 0)"
+                    + " FROM \"SupplierClaimLine\" cl JOIN \"SupplierClaim\" c ON c.id = cl.\"claimId\" WHERE"
+                    + " cl.\"goodsReceiptLineId\" = gl.id AND c.status NOT IN ('rejected', 'cancelled') AND (c.status <>"
+                    + " 'settled' OR c.classification = 'stock_adjustment')) AS claimed FROM \"GoodsReceiptLine\" gl JOIN"
+                    + " \"GoodsReceiptNote\" g ON g.id = gl.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrder\" o ON o.id ="
+                    + " g.\"purchaseOrderId\" LEFT JOIN \"Product\" p ON p.id = gl.\"productId\" WHERE gl.id = ? AND"
+                    + " gl.\"organizationId\" = ? AND gl.\"goodsReceiptId\" = ?").params(l.get("goodsReceiptLineId"), org(),
+                    insp.get("goodsReceiptId")));
+            if (gl == null || gl.get("productId") == null || !Boolean.TRUE.equals(gl.get("stocked"))
+                    || !"posted".equals(gl.get("status")) || gl.get("reversedAt") != null
+                    || Money.dec(gl.get("unitCost")).signum() <= 0
+                    || !String.valueOf(insp.get("partnerId")).equals(gl.get("partnerId"))
+                    || !java.util.Objects.equals(insp.get("purchaseOrderId"), gl.get("purchaseOrderId"))) {
+                continue;
+            }
+            BigDecimal left = Money.dec(gl.get("quantity")).subtract(Money.dec(gl.get("claimed")));
+            BigDecimal qty = rejected.min(left);
+            if (qty.signum() > 0) {
+                out.add(new SupplierClaimService.QuantityLineInput((String) l.get("goodsReceiptLineId"),
+                        (String) gl.get("productId"), qty, "issue", "Rejected at inspection " + insp.get("inspectionNumber")));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Cancel a pending inspection. Cancelling lifts the bill hold, so it needs a reason and someone other than the
+     * person who received the goods or opened the inspection (h04-F5); who and why are recorded.
+     */
+    public Map<String, Object> cancel(String id, String reason) {
+        String why = reason == null || reason.isBlank() ? null : reason.trim();
+        if (why == null) {
+            throw ApiException.badRequest("A reason is required to cancel an inspection");
+        }
+        String me = user();
+        if (me == null) {
+            throw ApiException.forbidden("An inspection cannot be cancelled without a signed-in user; cancel it from a"
+                    + " user account");
+        }
         tx.executeWithoutResult(st -> {
-            lockPending(id);
-            jdbc.sql("UPDATE \"IncomingInspection\" SET status = 'cancelled', \"updatedAt\" = " + NOW + " WHERE id = ?")
-                    .param(id).update();
+            Map<String, Object> insp = lockPending(id);
+            Map<String, Object> grn = SqlRows.one(jdbc.sql("SELECT \"createdBy\", \"postedById\" FROM \"GoodsReceiptNote\""
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(insp.get("goodsReceiptId"), org()));
+            if (me.equals(insp.get("createdBy"))
+                    || grn != null && (me.equals(grn.get("createdBy")) || me.equals(grn.get("postedById")))) {
+                throw ApiException.forbidden("An inspection cannot be cancelled by the person who received the goods or"
+                        + " opened it; ask another inspector");
+            }
+            jdbc.sql("UPDATE \"IncomingInspection\" SET status = 'cancelled', \"cancelReason\" = ?, \"cancelledBy\" = ?,"
+                    + " \"cancelledAt\" = " + NOW + ", version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                    .params(why, me, id).update();
+            audit.recordInTx(AuditInput.of("IncomingInspection", id, "update", Obj.of("status", "pending"),
+                    Obj.of("status", "cancelled", "reason", why)));
         });
         return get(id);
     }

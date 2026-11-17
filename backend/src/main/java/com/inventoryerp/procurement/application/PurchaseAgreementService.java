@@ -46,8 +46,9 @@ public class PurchaseAgreementService {
 
     public record ReleaseLine(String agreementLineId, BigDecimal quantity) {}
 
+    /** {@code departmentId} (optional, h04-F2) puts the release in that department's budget. */
     public record ReleaseInput(String warehouseId, String expectedDeliveryDate, String paymentType, String notes,
-            List<ReleaseLine> lines) {}
+            List<ReleaseLine> lines, String departmentId) {}
 
     private final JdbcClient jdbc;
     private final SequenceService seq;
@@ -120,7 +121,12 @@ public class PurchaseAgreementService {
     /** Draft → active, by someone other than the author; agreed prices enter the price history. */
     public Map<String, Object> activate(String id) {
         Map<String, Object> pa = require(id);
-        if (user() != null && user().equals(pa.get("createdBy"))) {
+        if (user() == null) {
+            // h04-F11: a token without a user cannot prove it is not the author.
+            throw ApiException.forbidden("An agreement cannot be approved without a signed-in user; approve it from a"
+                    + " user account");
+        }
+        if (user().equals(pa.get("createdBy"))) {
             throw ApiException.forbidden("An agreement must be approved by someone other than its author");
         }
         transition(id, List.of("draft"), "active", "\"approvedBy\" = ?, \"approvedAt\" = " + NOW, user(), null,
@@ -210,11 +216,17 @@ public class PurchaseAgreementService {
                             + JsNumbers.dec(leftValue) + " left on " + pa.get("agreementNumber"));
                 }
             }
-            Map<String, Object> po = orders.create(new PurchaseOrdersService.CreateInput((String) pa.get("partnerId"), (String) pa.get("branchId"),
+            // h04-F2: a release belongs to the agreement's branch, else to the receiving warehouse's, and to the
+            // department it is raised for, so branch limits and scoped budgets see it.
+            String branchId = pa.get("branchId") != null ? (String) pa.get("branchId") : in.warehouseId() == null ? null
+                    : jdbc.sql("SELECT \"branchId\" FROM \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?")
+                            .params(in.warehouseId(), orgId).query(String.class).optional().orElse(null);
+            Map<String, Object> po = orders.create(new PurchaseOrdersService.CreateInput((String) pa.get("partnerId"), branchId,
                     "Release of " + pa.get("agreementNumber"), in.expectedDeliveryDate(), (String) pa.get("currencyCode"),
                     (BigDecimal) null, in.paymentType() == null ? "credit" : in.paymentType(), in.notes(),
                     (String) pa.get("terms"),
-                    in.warehouseId(), null, poLines, null));
+                    in.warehouseId(), null, poLines, in.departmentId() == null || in.departmentId().isBlank() ? null
+                            : in.departmentId()));
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> created = (List<Map<String, Object>>) po.get("lines");
             for (int i = 0; i < in.lines().size(); i++) {

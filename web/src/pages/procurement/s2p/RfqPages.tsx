@@ -129,6 +129,9 @@ export function RfqDetailPage() {
   };
 
   const unordered = rfq.awards.filter((a) => !a.purchaseOrderId).length;
+  // h04-F6: bids stay sealed while the RFQ takes quotations; the deadline ends the tender for new or revised quotes.
+  const sealed = cmp as (typeof cmp & { sealed?: boolean; sealedUntil?: string | null; quotationsReceived?: number }) | undefined;
+  const takesQuotes = rfq.status === 'sent' && (!rfq.deadline || new Date(rfq.deadline).getTime() > Date.now());
 
   return (
     <div className="space-y-4 p-6">
@@ -168,7 +171,7 @@ export function RfqDetailPage() {
                     {s.status === 'responded' ? tx('Quoted (rev. {{r}})', { r: s.lastRevision ?? 1 }) : s.status === 'declined' ? tx('Declined') : tx('Invited')}
                   </div>
                 </div>
-                {canManage && rfq.status === 'sent' && s.status !== 'declined' && (
+                {canManage && takesQuotes && s.status !== 'declined' && (
                   <Button size="sm" variant="outline" onClick={() => setQuoteFor(s.partnerId)}>{s.status === 'responded' ? tx('Revise quote') : tx('Enter quote')}</Button>
                 )}
                 {['draft', 'sent'].includes(rfq.status) && s.status !== 'declined' && (
@@ -191,6 +194,16 @@ export function RfqDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      {sealed?.sealed && (
+        <Card>
+          <CardContent className="py-4 text-sm text-muted-foreground">
+            {sealed.sealedUntil
+              ? tx('Bids are sealed until the deadline ({{d}}) or until quotations are closed. {{n}} quotation(s) received so far.', { d: date(sealed.sealedUntil), n: sealed.quotationsReceived ?? 0 })
+              : tx('Bids are sealed until quotations are closed. {{n}} quotation(s) received so far.', { n: sealed.quotationsReceived ?? 0 })}
+          </CardContent>
+        </Card>
+      )}
 
       {cmp && cmp.suppliers.length > 0 && (
         <Card>
@@ -272,7 +285,8 @@ export function RfqDetailPage() {
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle>{tx('Awards')}</CardTitle>
-            {unordered > 0 && rfq.status === 'awarded' && (
+            {/* A closed RFQ holds an award that waited for approval: ordering checks that it was approved. */}
+            {unordered > 0 && ['awarded', 'closed'].includes(rfq.status) && (
               <div className="flex items-center gap-2">
                 <select className="h-9 rounded-md border bg-background px-2 text-sm" value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
                   {(warehouses.data ?? []).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}

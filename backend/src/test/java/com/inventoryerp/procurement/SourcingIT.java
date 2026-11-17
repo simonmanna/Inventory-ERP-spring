@@ -135,6 +135,8 @@ class SourcingIT extends ApiTestSupport {
                 Map.of("rfqLineId", cementLine, "unitPrice", 1)), Map.of()));
         assertThat(stranger.body().get("message").asString()).isEqualTo("This supplier was not invited to the RFQ");
 
+        // h04-F6: bids are sealed until the deadline or until the RFQ is closed.
+        ok(200, "POST", "/procurement/rfqs/" + rfqId + "/close", null);
         JsonNode cmp = ok(200, "GET", "/procurement/rfqs/" + rfqId + "/comparison", null);
         assertThat(cmp.get("suppliers")).hasSize(3);
         JsonNode bravo = null;

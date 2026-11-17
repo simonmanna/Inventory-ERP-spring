@@ -80,7 +80,9 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
                 "leadTimeDays", 5, "freightAmount", 600000, "lines", List.of(Map.of("rfqLineId", rfqLine, "unitPrice",
                         33000))));
 
-        // 3. Comparison: Tororo is cheaper per bag but its freight makes Hima the lowest delivered cost.
+        // 3. Comparison: Tororo is cheaper per bag but its freight makes Hima the lowest delivered cost. Bids are
+        // sealed until the RFQ is closed (h04-F6).
+        ok(200, "POST", "/procurement/rfqs/" + rfqId + "/close", null);
         JsonNode cmp = ok(200, "GET", "/procurement/rfqs/" + rfqId + "/comparison", null);
         assertThat(cmp.get("suppliers")).hasSize(2);
         ok(200, "POST", "/procurement/rfqs/" + rfqId + "/award", Map.of("lines", List.of(Map.of("rfqLineId", rfqLine,
@@ -127,13 +129,17 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
         JsonNode done = money("POST", "/procurement/inspections/" + inspId + "/complete", null);
         assertThat(done.get("status").asString()).isEqualTo("partial");
 
-        // 9. The quality claim (6 × 34 000) is accepted and settled by a supplier credit. Without verified quantity
-        // lines it settles as a price variance (Dr AP / Cr PPV): stock and GRNI are untouched.
+        // 9. The quality claim (6 × 34 000) carries the 6 wet bags as a quantity line (h04-F5): verified by a second
+        // user it would settle as a stock adjustment that takes them out of stock. Here the plant keeps the bags at a
+        // discount, so the credit is settled explicitly as a price variance (Dr AP / Cr PPV): stock and GRNI untouched.
         String claimId = done.get("claimId").asString();
-        assertThat(ok(200, "GET", "/procurement/claims/" + claimId, null).get("amount").asString()).isEqualTo("204000");
+        JsonNode claim = ok(200, "GET", "/procurement/claims/" + claimId, null);
+        assertThat(claim.get("amount").asString()).isEqualTo("204000");
+        assertThat(claim.get("quantityLines")).hasSize(1);
         ok(200, "POST", "/procurement/claims/" + claimId + "/submit", null);
         ok(200, "POST", "/procurement/claims/" + claimId + "/accept", Map.of("response", "credit agreed"));
-        JsonNode settled = money("POST", "/procurement/claims/" + claimId + "/settle", null);
+        JsonNode settled = money("POST", "/procurement/claims/" + claimId + "/settle",
+                Map.of("classification", "price_variance"));
         assertThat(settled.get("status").asString()).isEqualTo("settled");
         assertThat(settled.path("journalEntryId").asString(null)).isNotNull();
         assertThat(settled.get("classification").asString()).isEqualTo("price_variance");
