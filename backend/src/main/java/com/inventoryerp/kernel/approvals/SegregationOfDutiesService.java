@@ -40,6 +40,8 @@ public class SegregationOfDutiesService {
      * debit note or payment cannot also reverse (cancel / void) it.
      */
     public static final String DOCUMENT_REVERSAL = "document_reversal";
+    /** Readiness gap h03-F7: whoever raised a supplier claim cannot also accept or settle it. */
+    public static final String SUPPLIER_CLAIM_SETTLEMENT = "supplier_claim_settlement";
 
     public static final String AUDIT_ENTITY = "SodCheck";
 
@@ -61,7 +63,9 @@ public class SegregationOfDutiesService {
                 new Pair(EXPENSE_PAYMENT, "Expense payment", "Raises, approves or claims the expense", "Pays it",
                         false),
                 new Pair(DOCUMENT_REVERSAL, "Document reversal", "Creates or posts the invoice, bill, note or payment",
-                        "Cancels, voids or reverses it", false))) {
+                        "Cancels, voids or reverses it", false),
+                new Pair(SUPPLIER_CLAIM_SETTLEMENT, "Supplier claim settlement", "Raises the claim",
+                        "Accepts or settles it", false))) {
             PAIRS.put(p.key(), p);
         }
     }

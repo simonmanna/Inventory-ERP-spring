@@ -163,6 +163,15 @@ public class GoodsReceiptsService {
         assertOwned("Branch", input.get("branchId"), "Branch not found", orgId);
         String partnerId = receiptSupplier(stringOrNull(input.get("purchaseOrderId")),
                 stringOrNull(input.get("partnerId")), orgId);
+        // Gap fix h03-F9: the lines are checked before anything is written (a negative quantity used to lower the
+        // order's received quantity, or end in a 500 on a stock line). Gap fix h03-F8: a line of the order is valued
+        // at the order price.
+        String purchaseOrderId = stringOrNull(input.get("purchaseOrderId"));
+        OrderLines orderLines = purchaseOrderId == null || purchaseOrderId.isEmpty() ? null
+                : orderLines(purchaseOrderId, orgId);
+        for (Object o : lines) {
+            checkLine(o);
+        }
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String receiptNumber = sequence.next("grn:" + year, "GRN-" + year + "-", 5);
         Map<String, Object> grn = tx.execute(st -> {
@@ -202,6 +211,13 @@ public class GoodsReceiptsService {
                 ProductVariantService.VariantRef variant = variants.resolve(stringOrNull(ln.get("productId")), variantId);
                 LineUnit unit = purchaseOrders.receiptUnit(poLine, stringOrNull(ln.get("productId")),
                         stringOrNull(ln.get("uomId")));
+                BigDecimal unitCost = ln.get("unitCost") == null ? null : requiredDecimal(ln.get("unitCost"));
+                Map<String, Object> ordered = orderLines == null ? null
+                        : orderLines.resolve(poLineId, stringOrNull(ln.get("productId")));
+                if (ordered != null) {
+                    unitCost = PurchaseOrdersService.receiptCost(ln.get("description"), unitCost,
+                            PurchaseOrdersService.orderPriceInLineUnit(ordered, unit.factor()));
+                }
                 created.add(SqlRows.one(GoodsReceiptLine.class, jdbc.sql("INSERT INTO \"GoodsReceiptLine\" (id,"
                                 + " \"organizationId\", \"goodsReceiptId\", \"purchaseOrderLineId\", \"productId\","
                                 + " description, quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\","
@@ -210,7 +226,7 @@ public class GoodsReceiptsService {
                         .params(UUID.randomUUID().toString(), orgId, id, stringOrNull(ln.get("purchaseOrderLineId")),
                                 stringOrNull(ln.get("productId")), requiredString(ln.get("description")),
                                 requiredDecimal(ln.get("quantity")),
-                                ln.get("unitCost") == null ? BigDecimal.ZERO : requiredDecimal(ln.get("unitCost")),
+                                unitCost == null ? BigDecimal.ZERO : unitCost,
                                 stringOrNull(ln.get("batchNumber")),
                                 ProcurementSql.truthy(expiry) ? SqlRows.ts(EntityPatch.toInstant(String.valueOf(expiry)))
                                         : null,
@@ -229,11 +245,16 @@ public class GoodsReceiptsService {
      * Blocker fix 2026-11-17 (B1, Nest deviation): a receipt of a purchase order belongs to the order's supplier. The
      * bill matcher pairs bill lines with receipts of the bill's supplier only, so a receipt saved without one was never
      * matched and the supplier bill received and charged the goods a second time. An omitted supplier is taken from the
-     * order; a different one is refused. A receipt without an order keeps the supplier it names (the web asks for one).
+     * order; a different one is refused. Gap fix h03 residual (a): a receipt without an order must name its supplier
+     * (the web asked for one, the API did not).
      */
     private String receiptSupplier(String purchaseOrderId, String partnerId, String orgId) {
         if (purchaseOrderId == null || purchaseOrderId.isEmpty()) {
-            return partnerId == null || partnerId.isEmpty() ? null : partnerId;
+            if (partnerId == null || partnerId.isEmpty()) {
+                throw ApiException.badRequest("A goods receipt without a purchase order needs a supplier; select the"
+                        + " supplier who delivered the goods");
+            }
+            return partnerId;
         }
         Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT \"partnerId\" FROM \"PurchaseOrder\" WHERE id = ?"
                 + " AND \"organizationId\" = ?").params(purchaseOrderId, orgId));
@@ -276,6 +297,71 @@ public class GoodsReceiptsService {
             return Money.dec(v);
         }
         throw new IllegalStateException("Invalid Decimal value: " + v);
+    }
+
+    /** A JSON number or numeric string, else {@code null}. */
+    private static BigDecimal number(Object v) {
+        if (v instanceof Number || v instanceof String s && !s.isBlank()) {
+            try {
+                return new BigDecimal(String.valueOf(v).trim());
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gap fix h03-F9: a receipt line is an object with a description, a quantity above zero and, when given, a unit
+     * cost that is a number and not negative.
+     */
+    private static void checkLine(Object o) {
+        if (!(o instanceof Map<?, ?> ln)) {
+            throw ApiException.badRequest("Each receipt line must be an object with a description and a quantity");
+        }
+        if (!(ln.get("description") instanceof String description)) {
+            throw ApiException.badRequest("Each receipt line needs a description");
+        }
+        BigDecimal quantity = number(ln.get("quantity"));
+        if (quantity == null || quantity.signum() <= 0) {
+            throw ApiException.badRequest("Receipt line \"" + description + "\": quantity must be a number greater"
+                    + " than zero");
+        }
+        if (ln.get("unitCost") != null) {
+            BigDecimal unitCost = number(ln.get("unitCost"));
+            if (unitCost == null || unitCost.signum() < 0) {
+                throw ApiException.badRequest("Receipt line \"" + description + "\": unit cost must be a number that is"
+                        + " not negative");
+            }
+        }
+    }
+
+    /** An order's lines by id, and per product (a receipt line may name only its product). */
+    private record OrderLines(Map<String, Map<String, Object>> byId, Map<String, List<Map<String, Object>>> byProduct) {
+
+        /** The order line a receipt line advances: the one it names, else the order's only line of its product. */
+        Map<String, Object> resolve(String purchaseOrderLineId, String productId) {
+            if (purchaseOrderLineId != null && !purchaseOrderLineId.isEmpty()) {
+                return byId.get(purchaseOrderLineId);
+            }
+            List<Map<String, Object>> candidates = productId == null ? List.of()
+                    : byProduct.getOrDefault(productId, List.of());
+            return candidates.size() == 1 ? candidates.getFirst() : null;
+        }
+    }
+
+    private OrderLines orderLines(String purchaseOrderId, String orgId) {
+        Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
+        Map<String, List<Map<String, Object>>> byProduct = new HashMap<>();
+        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"PurchaseOrderLine\" WHERE"
+                + " \"purchaseOrderId\" = ? AND \"organizationId\" = ? ORDER BY \"lineNumber\", id")
+                .params(purchaseOrderId, orgId))) {
+            byId.put((String) l.get("id"), l);
+            if (l.get("productId") != null && !((String) l.get("productId")).isEmpty()) {
+                byProduct.computeIfAbsent((String) l.get("productId"), k -> new ArrayList<>()).add(l);
+            }
+        }
+        return new OrderLines(byId, byProduct);
     }
 
     /** The single audited draft→posted transition. */
@@ -343,7 +429,7 @@ public class GoodsReceiptsService {
             List<Map<String, Object>> updatedLines = (List<Map<String, Object>>) updated.get("lines");
 
             Map<String, Object> po = null;
-            Map<String, Map<String, Object>> poLineById = new HashMap<>();
+            OrderLines orderLines = null;
             if (grn.get("purchaseOrderId") != null) {
                 List<PurchaseOrdersService.ReceiptLine> applied = new ArrayList<>();
                 for (Map<String, Object> l : updatedLines) {
@@ -361,9 +447,22 @@ public class GoodsReceiptsService {
                             .params(po.get("partnerId"), id, orgId).update();
                 }
                 if (po != null) {
-                    for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"PurchaseOrderLine\" WHERE"
-                            + " \"purchaseOrderId\" = ?").param(po.get("id")))) {
-                        poLineById.put((String) l.get("id"), l);
+                    orderLines = orderLines((String) po.get("id"), orgId);
+                    // Gap fix h03-F8: a line of the order is valued at the order price (a draft saved before the fix,
+                    // or before a price change on the order, is re-priced here).
+                    for (Map<String, Object> l : updatedLines) {
+                        Map<String, Object> ordered = orderLines.resolve((String) l.get("purchaseOrderLineId"),
+                                (String) l.get("productId"));
+                        if (ordered == null) {
+                            continue;
+                        }
+                        BigDecimal price = PurchaseOrdersService.orderPriceInLineUnit(ordered,
+                                l.get("uomFactor") == null ? null : Money.dec(l.get("uomFactor")));
+                        if (price.compareTo(Money.dec(l.get("unitCost"))) != 0) {
+                            jdbc.sql("UPDATE \"GoodsReceiptLine\" SET \"unitCost\" = ? WHERE id = ? AND"
+                                    + " \"organizationId\" = ?").params(price, l.get("id"), orgId).update();
+                            l.put("unitCost", price);
+                        }
                     }
                 }
             }
@@ -383,9 +482,14 @@ public class GoodsReceiptsService {
                     continue;
                 }
                 BigDecimal unitCost = Money.dec(ln.get("unitCost"));
+                Map<String, Object> poLine = orderLines == null ? null
+                        : orderLines.resolve((String) ln.get("purchaseOrderLineId"), (String) ln.get("productId"));
+                // An order line is valued at its (possibly zero) order price, as the PO receive route does; a line
+                // without one falls back to the product cost when it carries no cost.
                 StockMove move = StockMove.of((String) ln.get("productId"), (String) grn.get("warehouseId"),
                                 Money.dec(ln.get("quantity"))).variant((String) ln.get("variantId"))
-                        .unitCost(unitCost.signum() > 0 ? unitCost.multiply(rate) : Money.dec(product.get("costPrice")))
+                        .unitCost(poLine != null || unitCost.signum() > 0 ? unitCost.multiply(rate)
+                                : Money.dec(product.get("costPrice")))
                         .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), product),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor")))
@@ -396,9 +500,9 @@ public class GoodsReceiptsService {
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 receiptNet = receiptNet.add(lineNet);
                 if (po != null) {
-                    Map<String, Object> poLine = ln.get("purchaseOrderLineId") == null ? null
-                            : poLineById.get((String) ln.get("purchaseOrderLineId"));
-                    BigDecimal taxRate = poLine != null ? Money.dec(poLine.get("taxRate")) : Money.ZERO;
+                    Map<String, Object> taxLine = ln.get("purchaseOrderLineId") == null ? null
+                            : orderLines.byId().get((String) ln.get("purchaseOrderLineId"));
+                    BigDecimal taxRate = taxLine != null ? Money.dec(taxLine.get("taxRate")) : Money.ZERO;
                     receiptTax = receiptTax.add(Money.div(lineNet.multiply(taxRate), BigDecimal.valueOf(100)));
                 }
             }
@@ -464,22 +568,16 @@ public class GoodsReceiptsService {
         }
         List<Map<String, Object>> grnLines = (List<Map<String, Object>>) grn.get("lines");
         List<String> lineIds = grnLines.stream().map(l -> (String) l.get("id")).toList();
-        long matched = jdbc.sql("SELECT count(*) FROM \"VendorBillReceiptMatch\" WHERE \"organizationId\" = ?"
-                        + " AND \"goodsReceiptLineId\" = ANY(?::text[])")
-                .params(orgId, lineIds.toArray(String[]::new)).query(Long.class).single();
-        if (matched > 0) {
-            throw ApiException.badRequest("Goods receipt " + grn.get("receiptNumber") + " is matched to a vendor bill —"
-                    + " reverse the bill or raise a debit note instead");
+        // Fast refusals before any lock; the transaction checks again under locks (h03-F5).
+        String blockedNow = reversalBlocker(grn, lineIds, orgId);
+        if (blockedNow != null) {
+            throw ApiException.badRequest(blockedNow);
         }
         Object poId = grn.get("purchaseOrderId");
         if (poId != null) {
-            long links = jdbc.sql("SELECT count(*) FROM \"VendorBillLink\" WHERE \"organizationId\" = ?"
-                    + " AND \"purchaseOrderId\" = ?").params(orgId, poId).query(Long.class).single();
-            long payments = jdbc.sql("SELECT count(*) FROM \"PurchasePayment\" WHERE \"organizationId\" = ?"
-                    + " AND \"purchaseOrderId\" = ?").params(orgId, poId).query(Long.class).single();
-            if (links > 0 || payments > 0) {
-                throw ApiException.badRequest("The purchase order for " + grn.get("receiptNumber") + " already has "
-                        + (links > 0 ? "a vendor bill" : "payments") + " — return the goods with a debit note instead");
+            String orderBlocked = orderBlocker(grn, poId, orgId);
+            if (orderBlocked != null) {
+                throw ApiException.badRequest(orderBlocked);
             }
         }
 
@@ -495,6 +593,23 @@ public class GoodsReceiptsService {
             if (landedNow > 0) {
                 throw ApiException.badRequest("Goods receipt " + grn.get("receiptNumber") + " has posted landed cost —"
                         + " the capitalised freight/duty would be stranded; return the goods with a debit note instead");
+            }
+            // Gap fix h03-F5: the bill, return, claim, accrual and order checks run again under locks — the receipt
+            // lines (the bill matcher's lock), then the order (bill post's and pay's lock) — so a bill, payment or
+            // return that committed after the checks above is seen.
+            jdbc.sql("SELECT id FROM \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ? AND \"organizationId\" = ?"
+                    + " ORDER BY \"lineNumber\", id FOR UPDATE").params(id, orgId).query().listOfRows();
+            String blocked = reversalBlocker(grn, lineIds, orgId);
+            if (blocked != null) {
+                throw ApiException.badRequest(blocked);
+            }
+            if (poId != null) {
+                jdbc.sql("SELECT id FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(poId, orgId).query().listOfRows();
+                String orderBlocked = orderBlocker(grn, poId, orgId);
+                if (orderBlocked != null) {
+                    throw ApiException.badRequest(orderBlocked);
+                }
             }
             // B7 (post-parity): draft landed costs are cancelled only once the reversal is certain.
             jdbc.sql("UPDATE \"LandedCost\" SET status = 'cancelled', \"updatedAt\" = " + NOW + " WHERE"
@@ -534,9 +649,16 @@ public class GoodsReceiptsService {
                         if (poLineId == null) {
                             continue;
                         }
+                        // Gap fix h03-F5: posting added the quantity in the order line's unit; take back the same.
+                        String advanced = poLineId;
+                        Map<String, Object> poLine = poLines.stream().filter(l -> advanced.equals(l.get("id")))
+                                .findFirst().orElse(null);
+                        BigDecimal back = PurchaseOrdersService.inPoUnits(new PurchaseOrdersService.ReceiptLine(poLineId,
+                                (String) ln.get("productId"), Money.dec(ln.get("quantity")), (String) ln.get("description"),
+                                ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), poLine);
                         jdbc.sql("UPDATE \"PurchaseOrderLine\" SET \"receivedQuantity\" = GREATEST(0, \"receivedQuantity\""
                                         + " - ?), version = version + 1 WHERE id = ? AND \"organizationId\" = ?")
-                                .params(ln.get("quantity"), poLineId, orgId).update();
+                                .params(back, poLineId, orgId).update();
                     }
                     boolean anyReceived = false;
                     boolean allReceived = true;
@@ -568,6 +690,62 @@ public class GoodsReceiptsService {
         });
     }
 
+    /**
+     * Gap fix h03-F5: why a posted receipt cannot be reversed, or {@code null}. A bill matched it; goods of it went back
+     * on a debit note; a supplier claim names it (an open one would settle against goods that are gone, a settled one
+     * already moved the payable, GRNI or stock); a landed-cost accrual is on it.
+     */
+    private String reversalBlocker(Map<String, Object> grn, List<String> lineIds, String orgId) {
+        Object number = grn.get("receiptNumber");
+        String[] ids = lineIds.toArray(String[]::new);
+        long matched = jdbc.sql("SELECT count(*) FROM \"VendorBillReceiptMatch\" WHERE \"organizationId\" = ?"
+                + " AND \"goodsReceiptLineId\" = ANY(?::text[])").params(orgId, ids).query(Long.class).single();
+        if (matched > 0) {
+            return "Goods receipt " + number + " is matched to a vendor bill — reverse the bill or raise a debit note"
+                    + " instead";
+        }
+        String note = jdbc.sql("SELECT n.\"noteNumber\" FROM \"DebitNoteReceiptMatch\" m JOIN \"DebitNote\" n ON n.id ="
+                        + " m.\"debitNoteId\" WHERE m.\"organizationId\" = ? AND m.\"goodsReceiptLineId\" = ANY(?::text[])"
+                        + " AND m.\"releasedAt\" IS NULL ORDER BY m.\"createdAt\" LIMIT 1")
+                .params(orgId, ids).query(String.class).optional().orElse(null);
+        if (note != null) {
+            return "Goods receipt " + number + " has goods returned to the supplier on debit note " + note
+                    + " — reverse the debit note first";
+        }
+        Map<String, Object> claim = SqlRows.one(jdbc.sql("SELECT c.\"claimNumber\", c.status FROM \"SupplierClaim\" c"
+                + " WHERE c.\"organizationId\" = ? AND c.status NOT IN ('rejected', 'cancelled') AND (c.\"goodsReceiptId\""
+                + " = ? OR EXISTS (SELECT 1 FROM \"SupplierClaimLine\" cl WHERE cl.\"claimId\" = c.id AND"
+                + " cl.\"goodsReceiptId\" = ?)) ORDER BY c.\"createdAt\" LIMIT 1")
+                .params(orgId, grn.get("id"), grn.get("id")));
+        if (claim != null) {
+            return "settled".equals(claim.get("status"))
+                    ? "Goods receipt " + number + " has settled supplier claim " + claim.get("claimNumber")
+                            + " — return the goods with a debit note instead"
+                    : "Goods receipt " + number + " has open supplier claim " + claim.get("claimNumber")
+                            + " — cancel or reject the claim first";
+        }
+        String accrual = jdbc.sql("SELECT number FROM \"LandedCostAccrual\" WHERE \"organizationId\" = ? AND"
+                        + " \"goodsReceiptId\" = ? AND status <> 'reversed' ORDER BY \"createdAt\" LIMIT 1")
+                .params(orgId, grn.get("id")).query(String.class).optional().orElse(null);
+        if (accrual != null) {
+            return "Goods receipt " + number + " has landed-cost accrual " + accrual + " — reverse the accrual first";
+        }
+        return null;
+    }
+
+    /** Why the receipt's order stops the reversal (a bill or payments on it), or {@code null}. */
+    private String orderBlocker(Map<String, Object> grn, Object poId, String orgId) {
+        long links = jdbc.sql("SELECT count(*) FROM \"VendorBillLink\" WHERE \"organizationId\" = ?"
+                + " AND \"purchaseOrderId\" = ?").params(orgId, poId).query(Long.class).single();
+        long payments = jdbc.sql("SELECT count(*) FROM \"PurchasePayment\" WHERE \"organizationId\" = ?"
+                + " AND \"purchaseOrderId\" = ?").params(orgId, poId).query(Long.class).single();
+        if (links > 0 || payments > 0) {
+            return "The purchase order for " + grn.get("receiptNumber") + " already has "
+                    + (links > 0 ? "a vendor bill" : "payments") + " — return the goods with a debit note instead";
+        }
+        return null;
+    }
+
     /** Paged receipts (latest received first) with lines and the order number. */
     @Transactional(readOnly = true)
     public Map<String, Object> list(String pageRaw, String pageSizeRaw, String search, String status) {
@@ -589,11 +767,30 @@ public class GoodsReceiptsService {
         List<Map<String, Object>> data = SqlRows.list(GoodsReceiptNote.class, jdbc.sql("SELECT g.* FROM"
                 + " \"GoodsReceiptNote\" g WHERE" + where + " ORDER BY g.\"receivedAt\" DESC LIMIT " + pageSize
                 + " OFFSET " + (long) (page - 1) * pageSize).params(params));
+        // Gap fix h03-F10: lines and order numbers load once for the page (they were two queries per receipt).
+        Map<String, List<Map<String, Object>>> linesByReceipt = new HashMap<>();
+        Map<String, String> orderNumbers = new HashMap<>();
+        if (!data.isEmpty()) {
+            String[] receiptIds = data.stream().map(g -> (String) g.get("id")).toArray(String[]::new);
+            for (Map<String, Object> l : SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM"
+                    + " \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ANY(?::text[]) AND \"organizationId\" = ?"
+                    + " ORDER BY \"goodsReceiptId\", \"lineNumber\", id").params(receiptIds, orgId))) {
+                linesByReceipt.computeIfAbsent((String) l.get("goodsReceiptId"), k -> new ArrayList<>()).add(l);
+            }
+            String[] orderIds = data.stream().map(g -> (String) g.get("purchaseOrderId")).filter(o -> o != null)
+                    .distinct().toArray(String[]::new);
+            if (orderIds.length > 0) {
+                for (Map<String, Object> o : SqlRows.list(jdbc.sql("SELECT id, \"orderNumber\" FROM \"PurchaseOrder\""
+                        + " WHERE id = ANY(?::text[]) AND \"organizationId\" = ?").params(orderIds, orgId))) {
+                    orderNumbers.put((String) o.get("id"), (String) o.get("orderNumber"));
+                }
+            }
+        }
         for (Map<String, Object> g : data) {
-            g.put("lines", SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM \"GoodsReceiptLine\" WHERE"
-                    + " \"goodsReceiptId\" = ?").param(g.get("id"))));
-            g.put("order", g.get("purchaseOrderId") == null ? null : SqlRows.one(jdbc.sql("SELECT \"orderNumber\" FROM"
-                    + " \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?").params(g.get("purchaseOrderId"), orgId)));
+            g.put("lines", linesByReceipt.getOrDefault((String) g.get("id"), new ArrayList<>()));
+            Object orderId = g.get("purchaseOrderId");
+            g.put("order", orderId == null || !orderNumbers.containsKey(orderId) ? null
+                    : new LinkedHashMap<>(Map.of("orderNumber", orderNumbers.get(orderId))));
         }
         long total = jdbc.sql("SELECT count(*) FROM \"GoodsReceiptNote\" g WHERE" + where).params(params)
                 .query(Long.class).single();

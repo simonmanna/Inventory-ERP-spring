@@ -226,6 +226,11 @@ public class PurchaseOrdersService {
         String functional = functionalCurrency();
         String currency = dto.currencyCode() != null && !dto.currencyCode().isBlank() ? dto.currencyCode()
                 : functional != null ? functional : "USD";
+        // Gap fix h03-F9: a stated rate of zero or less is refused, also on a functional-currency order (it used to be
+        // ignored there and silently became 1).
+        if (dto.exchangeRate() != null && dto.exchangeRate().signum() <= 0) {
+            throw ApiException.badRequest("exchangeRate must be greater than zero");
+        }
         BigDecimal rate = functional == null || functional.equalsIgnoreCase(currency) ? BigDecimal.ONE
                 : currencies.resolveStated(currency, functional, dto.exchangeRate(), Instant.now()).rate();
 
@@ -396,9 +401,19 @@ public class PurchaseOrdersService {
         List<Map<String, Object>> data = SqlRows.list(PurchaseOrder.class, jdbc.sql("SELECT * FROM \"PurchaseOrder\""
                 + " WHERE" + where + " ORDER BY \"orderDate\" DESC LIMIT " + pageSize + " OFFSET "
                 + (page - 1) * pageSize).params(params));
+        // Gap fix h03-F10: the suppliers load once for the page (one query per order before).
+        Map<String, Map<String, Object>> partners = new HashMap<>();
+        String[] partnerIds = data.stream().map(po -> (String) po.get("partnerId")).filter(p -> p != null).distinct()
+                .toArray(String[]::new);
+        if (partnerIds.length > 0) {
+            for (Map<String, Object> p : SqlRows.list(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id ="
+                    + " ANY(?::text[]) AND \"organizationId\" = ?").params(partnerIds, org()))) {
+                partners.put((String) p.get("id"), p);
+            }
+        }
         for (Map<String, Object> po : data) {
-            po.put("partner", SqlRows.one(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
-                    .params(po.get("partnerId"), org())));
+            Map<String, Object> partner = partners.get(po.get("partnerId"));
+            po.put("partner", partner == null ? null : new LinkedHashMap<>(partner));
         }
         long total = jdbc.sql("SELECT count(*) FROM \"PurchaseOrder\" WHERE" + where).params(params).query(Long.class)
                 .single();
@@ -421,9 +436,18 @@ public class PurchaseOrdersService {
         po.put("lines", withVariants(poLines(id)));
         List<Map<String, Object>> receipts = SqlRows.list(GoodsReceiptNote.class, jdbc.sql("SELECT * FROM"
                 + " \"GoodsReceiptNote\" WHERE \"purchaseOrderId\" = ? AND \"organizationId\" = ?").params(id, org()));
+        // Gap fix h03-F10: the receipts' lines load in one query (one per receipt before).
+        Map<String, List<Map<String, Object>>> receiptLines = new HashMap<>();
+        if (!receipts.isEmpty()) {
+            for (Map<String, Object> l : SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM"
+                    + " \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ANY(?::text[]) AND \"organizationId\" = ?"
+                    + " ORDER BY \"goodsReceiptId\", \"lineNumber\", id").params(receipts.stream()
+                    .map(r -> (String) r.get("id")).toArray(String[]::new), org()))) {
+                receiptLines.computeIfAbsent((String) l.get("goodsReceiptId"), k -> new ArrayList<>()).add(l);
+            }
+        }
         for (Map<String, Object> r : receipts) {
-            r.put("lines", withVariants(SqlRows.list(GoodsReceiptLine.class, jdbc.sql("SELECT * FROM"
-                    + " \"GoodsReceiptLine\" WHERE \"goodsReceiptId\" = ?").param(r.get("id")))));
+            r.put("lines", withVariants(receiptLines.getOrDefault((String) r.get("id"), new ArrayList<>())));
         }
         po.put("receipts", receipts);
         po.put("payments", SqlRows.list(PurchasePayment.class, jdbc.sql("SELECT * FROM \"PurchasePayment\" WHERE"
@@ -557,13 +581,44 @@ public class PurchaseOrdersService {
      * matched by product, in the product's purchase unit) converts through both frozen factors; same unit or no factor
      * = as received.
      */
-    private static BigDecimal inPoUnits(ReceiptLine ln, Map<String, Object> poLine) {
+    static BigDecimal inPoUnits(ReceiptLine ln, Map<String, Object> poLine) {
         BigDecimal poFactor = poLine == null || poLine.get("uomFactor") == null ? null : Money.dec(poLine.get("uomFactor"));
         if (ln.uomFactor() == null || poFactor == null || poFactor.signum() <= 0
                 || ln.uomFactor().compareTo(poFactor) == 0) {
             return ln.quantity();
         }
         return ln.quantity().multiply(ln.uomFactor()).divide(poFactor, 6, java.math.RoundingMode.HALF_UP);
+    }
+
+    /** Half a cent: a receiver's unit cost this close to the order price is the order price (rounding). */
+    private static final BigDecimal PRICE_EPSILON = new BigDecimal("0.005");
+
+    /**
+     * Gap fix h03-F8: the order price of {@code poLine} in a receipt line's unit. A line received in another unit
+     * converts through both frozen factors, as {@link #inPoUnits} converts its quantity.
+     */
+    static BigDecimal orderPriceInLineUnit(Map<String, Object> poLine, BigDecimal lineFactor) {
+        BigDecimal price = Money.dec(poLine.get("unitPrice"));
+        BigDecimal poFactor = poLine.get("uomFactor") == null ? null : Money.dec(poLine.get("uomFactor"));
+        if (lineFactor == null || poFactor == null || poFactor.signum() <= 0 || lineFactor.compareTo(poFactor) == 0) {
+            return price;
+        }
+        return price.multiply(lineFactor).divide(poFactor, 6, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Gap fix h03-F8 (Nest deviation, owner-approved 2026-11-17): a purchase-order receipt is valued at the order
+     * price, which stock, the receipt voucher's payable and the PO pay cap all follow; the receiver's unit cost is only
+     * checked against it. A different cost (beyond half a cent of rounding) is refused: a price change goes through a
+     * PO change, and a supplier's different price through the bill (price variance).
+     */
+    static BigDecimal receiptCost(Object description, BigDecimal given, BigDecimal orderPrice) {
+        if (given != null && given.subtract(orderPrice).abs().compareTo(PRICE_EPSILON) > 0) {
+            throw ApiException.badRequest("Receipt line \"" + description + "\" costs " + JsNumbers.dec(given)
+                    + " but the order price is " + JsNumbers.dec(orderPrice) + "; a purchase order receipt is valued"
+                    + " at the order price — change the order or bill the difference");
+        }
+        return orderPrice;
     }
 
     /** Bind a receipt line to exactly one PO line (explicit id, else a product on a single PO line). */
@@ -666,10 +721,12 @@ public class PurchaseOrdersService {
         if (session == null) {
             throw ApiException.badRequest("Select an open cashier register for this cash purchase");
         }
+        // Gap fix h03-F3: a foreign PO's settlement carries the PO currency and amount, like the voucher's AP line, so
+        // the currency open item it relieves is closed (an untagged line left it to FX revaluation).
         Map<String, Object> paymentJournal = stockPosting.postPurchasePayment((String) session.get("id"),
                 (String) po.get("partnerId"), settleAmount, "cash", date, "purchase_order", purchaseOrderId,
                 "Cash purchase " + po.get("orderNumber") + " · GRN " + receiptNumber,
-                "purchase_payment:goods_receipt:" + grnId);
+                "purchase_payment:goods_receipt:" + grnId, (String) po.get("currencyCode"), poAmount);
         // Drawer artifact: the till's expected cash reflects the withdrawal. GL already done.
         cashSession.recordExternalPayOut((String) session.get("id"), settleAmount,
                 "Cash purchase PO " + po.get("orderNumber"), (String) paymentJournal.get("id"));
@@ -727,8 +784,10 @@ public class PurchaseOrdersService {
                 lineId = (String) poLinesByProduct.get(rln.productId()).get("id");
             }
             Map<String, Object> poLine = lineId == null ? null : poLines.get(lineId);
-            BigDecimal unitCost = rln.unitCost() != null ? rln.unitCost()
-                    : poLine != null ? Money.dec(poLine.get("unitPrice")) : null;
+            // Gap fix h03-F8: a PO-backed line is valued at the order price (it is received in the PO line's unit).
+            BigDecimal unitCost = poLine != null
+                    ? receiptCost(rln.description(), rln.unitCost(), Money.dec(poLine.get("unitPrice")))
+                    : rln.unitCost();
             // ADR-S058: the PO line's variant wins; a free receipt line names its own.
             String variantId = poLine != null && poLine.get("variantId") != null ? (String) poLine.get("variantId")
                     : rln.variantId();
@@ -903,48 +962,28 @@ public class PurchaseOrdersService {
             if (po == null) {
                 throw ApiException.notFound("Purchase order not found");
             }
-            if (!"credit".equals(po.get("paymentType"))) {
-                throw ApiException.badRequest("Only credit purchases can accept manual payments");
+            String refused = payStatusRefusal(po);
+            if (refused != null) {
+                throw ApiException.badRequest(refused);
             }
-            if ("cancelled".equals(po.get("status"))) {
-                throw ApiException.badRequest("Cannot pay a cancelled PO");
+            // Gap fix h03 residual (b): the B2 cap reads the supplier's AP ledger, so PO payments to one supplier are
+            // serialised on the supplier row (after the PO lock; key-share FK inserts are not blocked).
+            jdbc.sql("SELECT id FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ? FOR NO KEY UPDATE")
+                    .params(po.get("partnerId"), orgId).query().listOfRows();
+            PayFigures f = payFigures(po, orgId);
+            BigDecimal remaining = f.remaining();
+            BigDecimal owed = f.owed();
+            BigDecimal rate = f.rate();
+            if (f.received().signum() <= 0) {
+                throw ApiException.badRequest(NOTHING_RECEIVED);
             }
-            if ("draft".equals(po.get("status"))) {
-                throw ApiException.badRequest("Cannot pay a purchase order that is not approved yet");
+            if (f.payable().compareTo(new BigDecimal("0.005")) < 0) {
+                throw ApiException.badRequest(ALL_BILLED);
             }
-            // Paid-to-date from the immutable payment rows, not the cached aggregate.
-            BigDecimal paidSum = jdbc.sql("SELECT sum(amount) FROM \"PurchasePayment\" WHERE \"organizationId\" = ?"
-                    + " AND \"purchaseOrderId\" = ?").params(orgId, id).query(BigDecimal.class).optional().orElse(null);
-            BigDecimal paidToDate = Money.max(Money.dec(paidSum), Money.dec(po.get("totalPaid")));
-            // P0-4: the PO route settles the payable its receipts raised (receipt vouchers), never more — paying ahead
-            // of a receipt would leave AP in debit. Lines without a receipt voucher are billed and paid as bills.
-            // Review 2026-11-17 (ACR-2): a receipt a supplier bill has taken over is paid on that bill; the PO payments
-            // already applied to bills no longer count against the PO.
-            BigDecimal received = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
-            BigDecimal billed = billedVouchered(id, orgId);
-            BigDecimal rate = functionalRate(po);
-            // Blocker fix 2026-11-17 (B2): a settled claim on this order or its receipts already credited the payable.
-            BigDecimal claimed = Money.div(claimCredits(id, orgId, (String) po.get("partnerId")), rate);
-            BigDecimal payable = received.subtract(billed);
-            BigDecimal remaining = payable.subtract(claimed).subtract(paidToDate.subtract(appliedToBills(id, orgId)));
-            if (received.signum() <= 0) {
-                throw ApiException.badRequest("Nothing has been received on this purchase order yet — receive the goods"
-                        + " (or post the supplier bill) before paying");
-            }
-            if (payable.compareTo(new BigDecimal("0.005")) < 0) {
-                throw ApiException.badRequest("The goods received on this purchase order have been billed — pay the"
-                        + " supplier bill instead");
-            }
-            // Blocker fix 2026-11-17 (B2): a return to the supplier debits their payable without naming the order, so
-            // the order's own figures still show goods that have gone back. Never settle more than the AP ledger says is
-            // owed to the supplier (the supplier-ledger measure), or AP ends in debit and the supplier is paid twice.
-            BigDecimal owed = stockPosting.supplierOpenPayable((String) po.get("partnerId"));
-            BigDecimal owedInOrderCurrency = Money.div(owed, rate);
-            BigDecimal payAmount = dto.amount() != null ? dto.amount() : Money.min(remaining, owedInOrderCurrency);
+            BigDecimal payAmount = dto.amount() != null ? dto.amount() : f.payableNow();
             if (payAmount.signum() <= 0) {
                 if (remaining.signum() > 0 && owed.signum() <= 0) {
-                    throw ApiException.badRequest("Nothing is owed to this supplier in the ledger — returns, credits or"
-                            + " other payments have already settled what this order received");
+                    throw ApiException.badRequest(NOTHING_OWED);
                 }
                 throw ApiException.badRequest(remaining.signum() <= 0 ? "This purchase order is already fully paid"
                         : "Payment amount must be positive");
@@ -961,7 +1000,7 @@ public class PurchaseOrdersService {
             }
             amount[0] = payAmount;
             BigDecimal amountDec = payAmount;
-            BigDecimal newTotalPaid = paidToDate.add(payAmount);
+            BigDecimal newTotalPaid = f.paidToDate().add(payAmount);
             String newPaymentStatus = newTotalPaid.compareTo(Money.dec(po.get("totalAmount"))) >= 0 ? "paid" : "partial";
             Instant paidAt = dto.paidAt() != null ? ProcurementSql.date(dto.paidAt()) : null;
 
@@ -998,6 +1037,109 @@ public class PurchaseOrdersService {
         events.publish("purchase_order.paid", Obj.of("organizationId", orgId, "orderId", id, "amount",
                 JsNumbers.js(amount[0])));
         return result;
+    }
+
+    private static final String NOTHING_RECEIVED = "Nothing has been received on this purchase order yet — receive the"
+            + " goods (or post the supplier bill) before paying";
+    private static final String ALL_BILLED = "The goods received on this purchase order have been billed — pay the"
+            + " supplier bill instead";
+    private static final String NOTHING_OWED = "Nothing is owed to this supplier in the ledger — returns, credits or"
+            + " other payments have already settled what this order received";
+
+    /**
+     * The figures the pay route checks, in the order currency ({@code owed} and {@code rate} functional): what the
+     * receipts vouchered (capped at the order total), what bills took over, settled claims, paid to date, PO payments
+     * applied to bills, what is left on the order, and what the supplier's AP ledger still shows owed.
+     */
+    record PayFigures(BigDecimal received, BigDecimal billed, BigDecimal claimed, BigDecimal paidToDate,
+            BigDecimal appliedToBills, BigDecimal payable, BigDecimal remaining, BigDecimal owed, BigDecimal rate) {
+
+        /** The default payment: what is left on the order, never more than the ledger shows owed. */
+        BigDecimal payableNow() {
+            return Money.min(remaining, Money.div(owed, rate));
+        }
+    }
+
+    private PayFigures payFigures(Map<String, Object> po, String orgId) {
+        String id = (String) po.get("id");
+        // Paid-to-date from the immutable payment rows, not the cached aggregate.
+        BigDecimal paidSum = jdbc.sql("SELECT sum(amount) FROM \"PurchasePayment\" WHERE \"organizationId\" = ?"
+                + " AND \"purchaseOrderId\" = ?").params(orgId, id).query(BigDecimal.class).optional().orElse(null);
+        BigDecimal paidToDate = Money.max(Money.dec(paidSum), Money.dec(po.get("totalPaid")));
+        // P0-4: the PO route settles the payable its receipts raised (receipt vouchers), never more — paying ahead of a
+        // receipt would leave AP in debit. Lines without a receipt voucher are billed and paid as bills. Review
+        // 2026-11-17 (ACR-2): a receipt a supplier bill has taken over is paid on that bill; the PO payments already
+        // applied to bills no longer count against the PO.
+        BigDecimal received = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
+        BigDecimal billed = billedVouchered(id, orgId);
+        BigDecimal rate = functionalRate(po);
+        // Blocker fix 2026-11-17 (B2): a settled claim on this order or its receipts already credited the payable.
+        BigDecimal claimed = Money.div(claimCredits(id, orgId, (String) po.get("partnerId")), rate);
+        BigDecimal payable = received.subtract(billed);
+        BigDecimal applied = appliedToBills(id, orgId);
+        BigDecimal remaining = payable.subtract(claimed).subtract(paidToDate.subtract(applied));
+        // Blocker fix 2026-11-17 (B2): a return to the supplier debits their payable without naming the order, so the
+        // order's own figures can still show goods that have gone back. Never settle more than the AP ledger says is
+        // owed to the supplier (the supplier-ledger measure), or AP ends in debit and the supplier is paid twice.
+        BigDecimal owed = stockPosting.supplierOpenPayable((String) po.get("partnerId"));
+        return new PayFigures(received, billed, claimed, paidToDate, applied, payable, remaining, owed, rate);
+    }
+
+    /** Why the order takes no manual payment at all, or {@code null}. */
+    private static String payStatusRefusal(Map<String, Object> po) {
+        if (!"credit".equals(po.get("paymentType"))) {
+            return "Only credit purchases can accept manual payments";
+        }
+        if ("cancelled".equals(po.get("status"))) {
+            return "Cannot pay a cancelled PO";
+        }
+        if ("draft".equals(po.get("status"))) {
+            return "Cannot pay a purchase order that is not approved yet";
+        }
+        return null;
+    }
+
+    /**
+     * Gap fix h06-F6 (additive route): the server's payable figures for the Pay screen, which used to compute its own
+     * balance from the order total. {@code payableNow} is what a payment without an amount would pay; {@code message}
+     * is why nothing can be paid now (the refusal the pay route would give), else {@code null}. Order currency,
+     * except {@code supplierOwedFunctional}.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> payable(String id) {
+        String orgId = org();
+        Map<String, Object> po = requireOwned(id);
+        PayFigures f = payFigures(po, orgId);
+        String message = payStatusRefusal(po);
+        BigDecimal now = f.payableNow();
+        if (message == null) {
+            if (f.received().signum() <= 0) {
+                message = NOTHING_RECEIVED;
+            } else if (f.payable().compareTo(new BigDecimal("0.005")) < 0) {
+                message = ALL_BILLED;
+            } else if (now.signum() <= 0) {
+                message = f.remaining().signum() > 0 && f.owed().signum() <= 0 ? NOTHING_OWED
+                        : "This purchase order is already fully paid";
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("purchaseOrderId", id);
+        out.put("orderNumber", po.get("orderNumber"));
+        out.put("currencyCode", po.get("currencyCode"));
+        out.put("paymentType", po.get("paymentType"));
+        out.put("totalAmount", JsNumbers.dec(Money.dec(po.get("totalAmount"))));
+        out.put("received", JsNumbers.dec(f.received()));
+        out.put("billed", JsNumbers.dec(f.billed()));
+        out.put("claimed", JsNumbers.dec(f.claimed()));
+        out.put("paid", JsNumbers.dec(f.paidToDate()));
+        out.put("appliedToBills", JsNumbers.dec(f.appliedToBills()));
+        out.put("remaining", JsNumbers.dec(f.remaining()));
+        out.put("supplierOwed", JsNumbers.dec(Money.div(f.owed(), f.rate())));
+        out.put("supplierOwedFunctional", JsNumbers.dec(f.owed()));
+        out.put("payableNow", JsNumbers.dec(message == null ? now.max(Money.ZERO) : Money.ZERO));
+        out.put("canPay", message == null);
+        out.put("message", message);
+        return out;
     }
 
     /**
@@ -1179,24 +1321,36 @@ public class PurchaseOrdersService {
                 .params(purchaseOrderId, orgId).update();
     }
 
-    /** Hard delete (not received / cancelled). */
+    /**
+     * Hard delete (not received / cancelled). Gap fix h03-F9: one transaction under the order's row lock — the checks
+     * run under the lock, the undelivered balance goes back to its request / agreement lines and the budget
+     * commitments are released before the row goes (Nest left request lines ordered and commitments held).
+     */
     public Map<String, Object> remove(String id) {
-        Map<String, Object> po = requireOwned(id);
-        if ("received".equals(po.get("status")) || "cancelled".equals(po.get("status"))) {
-            throw ApiException.badRequest("Cannot delete a received or cancelled PO");
-        }
-        // P0-2: a PO with receipts, payments or bills is evidence for posted GL — deleting it would orphan vouchered
-        // receipts (FK SET NULL) and let a later bill raise AP a second time. Cancel it instead.
-        long evidence = jdbc.sql("SELECT (SELECT count(*) FROM \"GoodsReceiptNote\" WHERE \"organizationId\" = ?"
-                + " AND \"purchaseOrderId\" = ? AND status <> 'cancelled') + (SELECT count(*) FROM \"PurchasePayment\""
-                + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?) + (SELECT count(*) FROM \"VendorBillLink\""
-                + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?)").params(org(), id, org(), id, org(), id)
-                .query(Long.class).single();
-        if (evidence > 0) {
-            throw ApiException.badRequest("Cannot delete a purchase order that has goods receipts, payments or bills"
-                    + " — cancel it instead");
-        }
+        requireOwned(id);
         tx.executeWithoutResult(st -> {
+            jdbc.sql("SELECT id FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                    .params(id, org()).query().listOfRows();
+            Map<String, Object> po = requireOwned(id);
+            if ("received".equals(po.get("status")) || "cancelled".equals(po.get("status"))) {
+                throw ApiException.badRequest("Cannot delete a received or cancelled PO");
+            }
+            // P0-2: a PO with receipts, payments or bills is evidence for posted GL — deleting it would orphan
+            // vouchered receipts (FK SET NULL) and let a later bill raise AP a second time. Cancel it instead.
+            long evidence = jdbc.sql("SELECT (SELECT count(*) FROM \"GoodsReceiptNote\" WHERE \"organizationId\" = ?"
+                    + " AND \"purchaseOrderId\" = ? AND status <> 'cancelled') + (SELECT count(*) FROM \"PurchasePayment\""
+                    + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?) + (SELECT count(*) FROM \"VendorBillLink\""
+                    + " WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?)").params(org(), id, org(), id, org(), id)
+                    .query(Long.class).single();
+            if (evidence > 0) {
+                throw ApiException.badRequest("Cannot delete a purchase order that has goods receipts, payments or"
+                        + " bills — cancel it instead");
+            }
+            returnOpenBalance(id);
+            // The commitments follow the order's status: release them as for a cancelled order before the row goes.
+            jdbc.sql("UPDATE \"PurchaseOrder\" SET status = 'cancelled' WHERE id = ? AND \"organizationId\" = ?")
+                    .params(id, org()).update();
+            commitments.sync(id);
             int deleted = jdbc.sql("DELETE FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?"
                     + " AND \"deletedAt\" IS NULL").params(id, org()).update();
             if (deleted == 0) {
@@ -1228,12 +1382,23 @@ public class PurchaseOrdersService {
         if ("rejected".equals(latest)) {
             throw ApiException.forbidden("This purchase order's approval was rejected — it cannot be activated");
         }
+        // Gap fix h03-F6 (Nest deviation, owner-approved 2026-11-17): activating a draft is approving it, so it passes
+        // the purchase_order gate again — a draft whose request was withdrawn or never raised no longer activates on
+        // the creator's word while a workflow applies. No workflow: the order would have been active when created.
+        Map<String, Object> gate = approvals.checkOrRequestApproval("purchase_order", id, activationSnapshot(po));
+        if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
+            throw ApiException.forbidden(
+                    "This purchase order is awaiting approval. Approve or reject the request first.");
+        }
+        // Gap fix h03-F9: only a draft activates (a concurrent activation or cancel wins).
         Map<String, Object> updated = SqlRows.one(PurchaseOrder.class, jdbc.sql("UPDATE \"PurchaseOrder\" SET status ="
-                        + " 'active', \"approvedAt\" = " + NOW + ", \"approvedById\" = ?, \"updatedAt\" = " + NOW
-                        + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL RETURNING *")
+                        + " 'active', \"approvedAt\" = " + NOW + ", \"approvedById\" = ?, version = version + 1,"
+                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft'"
+                        + " AND \"deletedAt\" IS NULL RETURNING *")
                 .params(user(), id, org()));
         if (updated == null) {
-            throw new IllegalStateException("No record was found for an update.");
+            throw ApiException.badRequest("Only draft POs can be activated, current status: "
+                    + requireOwned(id).get("status"));
         }
         commitments.sync(id);
         audit.record(AuditInput.of("PurchaseOrder", id, "approve", null, Obj.of("status", "active")));
@@ -1260,6 +1425,17 @@ public class PurchaseOrdersService {
         events.publish("purchase_order.approved", Obj.of("organizationId", org(), "orderId", id, "orderNumber",
                 updated.get("orderNumber"), "approverId", approverId == null ? "" : approverId));
         return true;
+    }
+
+    /** The order as its approval request saw it at creation (functional amount, the maker, branch, department). */
+    private Map<String, Object> activationSnapshot(Map<String, Object> po) {
+        BigDecimal amount = Money.dec(po.get("totalAmount")).multiply(functionalRate(po)).setScale(6,
+                RoundingMode.HALF_UP);
+        String department = jdbc.sql("SELECT \"departmentId\" FROM \"PurchaseOrder\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(po.get("id"), org()).query(String.class).optional().orElse(null);
+        return defined("amount", JsNumbers.js(amount), "partnerId", po.get("partnerId"), "orderNumber",
+                po.get("orderNumber"), "createdBy", po.get("createdBy"), "branchId", po.get("branchId"),
+                "departmentId", department);
     }
 
     /** Re-state an order's budget commitments after another service changed its quantities (GRN reverse). */

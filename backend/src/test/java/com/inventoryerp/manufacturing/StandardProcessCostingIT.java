@@ -61,7 +61,8 @@ class StandardProcessCostingIT extends MfgTestSupport {
     }
 
     void receive(String productId, int qty, int unitCost) {
-        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", warehouse, "receivedAt",
+        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, demoOrg), "warehouseId", warehouse, "receivedAt",
                 java.time.Instant.now().toString(), "lines", List.of(Map.of("productId", productId, "description", "x",
                         "quantity", qty, "unitCost", unitCost))));
     }

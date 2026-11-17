@@ -138,7 +138,8 @@ class ProcurementControlIT extends ApiTestSupport {
         assertThat(over.body().get("code").asString()).isEqualTo("PROCUREMENT_BUDGET_EXCEEDED");
         assertThat(over.body().get("budgetId").asString()).isEqualTo(id);
 
-        okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + pr + "/approve", null);
+        // Gap fix h03-F6: the buyer raised the request, so the checker approves it.
+        okBy(checkerToken, 200, "PATCH", "/procurement/purchase-requests/" + pr + "/approve", null);
         assertThat(order(buyerToken, yard, 600, pr).status()).isEqualTo(201);
         JsonNode after = okBy(otherToken, 200, "GET", "/procurement/budgets/" + id, null);
         assertThat(after.get("reserved").asDouble()).isZero();
@@ -257,7 +258,10 @@ class ProcurementControlIT extends ApiTestSupport {
             okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + small + "/submit", null);
             assertThat(by(buyerToken, "GET", "/procurement/purchase-requests/" + small + "/approval", null).raw().body())
                     .isEmpty();
-            assertThat(okBy(buyerToken, 200, "PATCH", "/procurement/purchase-requests/" + small + "/approve", null)
+            // Gap fix h03-F6: below the workflow the raiser still cannot approve their own request.
+            assertThat(by(buyerToken, "PATCH", "/procurement/purchase-requests/" + small + "/approve", null).status())
+                    .isEqualTo(403);
+            assertThat(okBy(checkerToken, 200, "PATCH", "/procurement/purchase-requests/" + small + "/approve", null)
                     .get("status").asString()).isEqualTo("approved");
 
             String big = request(branch, 5000);

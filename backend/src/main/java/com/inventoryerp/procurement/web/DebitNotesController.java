@@ -16,6 +16,7 @@ import com.inventoryerp.procurement.application.DebitNotesService.CreateInput;
 import com.inventoryerp.procurement.application.DebitNotesService.LineInput;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import java.math.BigDecimal;
@@ -41,8 +42,10 @@ public class DebitNotesController {
     public record DebitNoteLineRequest(
             String productId,
             @NotNull(message = STR) String description,
-            @NotNull(message = NUM) BigDecimal quantity,
-            @NotNull(message = NUM) BigDecimal unitPrice,
+            // Gap fix h03-F9: bounded (a negative return or price used to post).
+            @NotNull(message = NUM) @DecimalMin(value = "0", inclusive = false, message = "must be greater than 0")
+            BigDecimal quantity,
+            @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal unitPrice,
             String taxId,
             String notes,
             String uomId,

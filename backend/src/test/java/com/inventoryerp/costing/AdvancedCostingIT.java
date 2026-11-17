@@ -104,7 +104,8 @@ class AdvancedCostingIT extends ApiTestSupport {
         ok(200, "POST", "/inventory/standard-costs/" + stdId + "/approve", null);
         assertThat(keyed("POST", "/inventory/standard-costs/" + stdId + "/activate", null).status()).isIn(200, 201);
         // 40 received at 13 against a standard of 10 → PPV +120; 25 consumed, 15 remain.
-        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", location, "receivedAt",
+        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, org), "warehouseId", location, "receivedAt",
                 Instant.now().toString(), "lines", List.of(Map.of("productId", bolt, "description", "Bolts", "quantity",
                         40, "unitCost", 13))));
         ok(200, "POST", "/inventory/direct-stock/out", Map.of("locationId", location, "responsibleById", userId,
