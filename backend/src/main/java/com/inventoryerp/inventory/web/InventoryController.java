@@ -306,6 +306,13 @@ public class InventoryController {
         return queries.listProductStockLevels(query);
     }
 
+    /** UB1 (post-parity): active staff (id + name) for the stock forms' responsible / approver pickers. */
+    @GetMapping("/staff-options")
+    @RequirePermissions(Permissions.INVENTORY__READ)
+    public List<Map<String, Object>> staffOptions() {
+        return queries.staffOptions();
+    }
+
     @GetMapping("/ledger")
     @RequirePermissions(Permissions.INVENTORY__READ)
     public PageResult<Map<String, Object>> ledger(@RequestParam Map<String, String> query) {

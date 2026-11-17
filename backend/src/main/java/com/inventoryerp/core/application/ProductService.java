@@ -213,6 +213,7 @@ public class ProductService extends BaseCrudService<Product> {
                 applyCostingPolicy(data, existing);
                 assertCostingMethodChangeAllowed(data, existing);
                 applyInventoryConfig(data, existing);
+                assertTrackingChangeAllowed(data, existing);
             }
             if (costTouched) {
                 revalue = costPriceRevaluation(data, existing);
@@ -498,6 +499,39 @@ public class ProductService extends BaseCrudService<Product> {
                     + " has stock on hand; re-cost the stock through a cost policy (/inventory/cost-policies) or a"
                     + " standard cost (/inventory/standard-costs) instead");
         }
+    }
+
+    /**
+     * Blocker fix 2026-11-17 (B4, Nest deviation): batch, expiry and serial tracking decide how the stock on hand is
+     * held (batch rows, serial units). Switching one with stock on hand leaves that stock without the batches or
+     * serials the engine then requires, or strands batch and serial rows it no longer reads, so the change waits until
+     * no location holds the product. Compared after {@link #applyInventoryConfig}, so implied flags count (expiry ⇒
+     * batch, FIFO ⇒ batch). Re-sending the current value is not a change.
+     */
+    private void assertTrackingChangeAllowed(Map<String, Object> data, Product existing) {
+        ProductStockGuard guard = stockGuard.getIfAvailable();
+        if (guard == null || existing == null) {
+            return;
+        }
+        List<String> changed = new ArrayList<>();
+        if (flagChanged(data, "batchTracking", existing.getBatchTracking())) {
+            changed.add("batch");
+        }
+        if (flagChanged(data, "expiryTracking", existing.getExpiryTracking())) {
+            changed.add("expiry");
+        }
+        if (flagChanged(data, "serialTracking", existing.getSerialTracking())) {
+            changed.add("serial");
+        }
+        if (!changed.isEmpty() && guard.hasStockOnHand(existing.getId())) {
+            throw ApiException.badRequest("The " + String.join(" / ", changed) + " tracking of " + existing.getName()
+                    + " cannot be changed while it has stock on hand; issue or transfer the stock out first (or set"
+                    + " it up on a new product)");
+        }
+    }
+
+    private static boolean flagChanged(Map<String, Object> data, String key, Boolean current) {
+        return data.get(key) != null && Boolean.TRUE.equals(data.get(key)) != Boolean.TRUE.equals(current);
     }
 
     /**

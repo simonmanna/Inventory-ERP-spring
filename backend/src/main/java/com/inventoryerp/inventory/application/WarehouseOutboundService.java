@@ -144,6 +144,10 @@ public class WarehouseOutboundService {
         if (in.lines() == null || in.lines().isEmpty()) {
             throw ApiException.badRequest("A pick order needs at least one line");
         }
+        String sourceType = in.sourceType() == null || in.sourceType().isBlank() ? MANUAL : in.sourceType();
+        if (MANUAL.equals(sourceType)) {
+            refuseDocumentReference(in.sourceRef());
+        }
         int steps = in.steps() != null ? in.steps() : store.settings(in.locationId()).outboundSteps();
         String id = id();
         String code = store.nextCode("wms_pick", "PK-");
@@ -151,7 +155,7 @@ public class WarehouseOutboundService {
                         + " \"sourceId\", \"sourceRef\", steps, status, priority, \"scheduledDate\", notes, \"createdBy\","
                         + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, " + NOW + ", "
                         + NOW + ")")
-                .params(id, org(), in.locationId(), code, in.sourceType() == null ? MANUAL : in.sourceType(),
+                .params(id, org(), in.locationId(), code, sourceType,
                         in.sourceId(), in.sourceRef(), steps, in.priority() == null ? 0 : in.priority(),
                         in.scheduledDate() == null ? null : Date.valueOf(in.scheduledDate()), in.notes(), user())
                 .update();
@@ -163,6 +167,34 @@ public class WarehouseOutboundService {
         }
         audit.recordInTx(AuditInput.of("WarehousePickOrder", id, "create", null, Obj.of("code", code, "steps", steps)));
         return view(id);
+    }
+
+    /**
+     * Blocker fix 2026-11-17 (B3): shipping a {@code manual} pick order issues the stock itself. When its reference is
+     * the number of a document that issues the same goods when it posts (a sales order, sales invoice, delivery order,
+     * stock-out or transfer), shipping would take the goods out a second time. Such an order must name the document
+     * as its source instead.
+     */
+    private void refuseDocumentReference(String sourceRef) {
+        if (sourceRef == null || sourceRef.isBlank()) {
+            return;
+        }
+        String ref = sourceRef.trim();
+        String kind = jdbc.sql("SELECT kind FROM ("
+                        + "SELECT 'sales order' AS kind FROM \"SalesOrder\" WHERE \"organizationId\" = :org AND number = :ref"
+                        + " UNION ALL SELECT 'sales invoice' FROM \"Document\" WHERE \"organizationId\" = :org"
+                        + " AND \"documentNumber\" = :ref AND \"documentType\"::text = 'sales_invoice'"
+                        + " UNION ALL SELECT 'delivery order' FROM \"FleetDeliveryOrder\" WHERE \"organizationId\" = :org"
+                        + " AND code = :ref"
+                        + " UNION ALL SELECT 'stock-out' FROM \"StockOut\" WHERE \"organizationId\" = :org AND \"outCode\" = :ref"
+                        + " UNION ALL SELECT 'transfer' FROM \"StockTransfer\" WHERE \"organizationId\" = :org"
+                        + " AND \"transferCode\" = :ref) x LIMIT 1")
+                .param("org", org()).param("ref", ref).query(String.class).optional().orElse(null);
+        if (kind != null) {
+            throw ApiException.badRequest("Reference " + ref + " is a " + kind + ", which takes the stock out itself when"
+                    + " it is posted. Create the pick order with that " + kind + " as its source (not a manual pick), or"
+                    + " clear the reference");
+        }
     }
 
     /** Allocate bin stock and create the pick tasks (400 when a line cannot be covered from the bins). */

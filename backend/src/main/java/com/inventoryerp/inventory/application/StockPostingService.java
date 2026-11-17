@@ -722,6 +722,36 @@ public class StockPostingService {
         return p == null ? productId : (String) p.get("name");
     }
 
+    /** The payable accounts a supplier's AP lines can sit on: the default payable and the supplier's own, if any. */
+    public List<String> supplierPayableAccounts(String partnerId) {
+        List<String> accounts = new ArrayList<>();
+        accounts.add(determination.payableAccount(null));
+        String own = partnerPayable(partnerId);
+        if (own != null && !accounts.contains(own)) {
+            accounts.add(own);
+        }
+        return accounts;
+    }
+
+    /**
+     * What the AP ledger says is still owed to a supplier, in functional currency: the credits less the debits of every
+     * posted journal line tagged with the supplier on its {@linkplain #supplierPayableAccounts payable accounts}. This
+     * is the supplier ledger's measure ({@code GET /vendor-bills/suppliers/:id/ledger}), so it counts receipts, bills,
+     * payments, returns to the vendor and claim credits.
+     */
+    public BigDecimal supplierOpenPayable(String partnerId) {
+        if (partnerId == null) {
+            return Money.ZERO;
+        }
+        return Money.dec(jdbc.sql("SELECT COALESCE(SUM(l.\"baseCredit\" - l.\"baseDebit\"), 0) FROM \"JournalLine\" l"
+                        + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
+                        + " AND l.\"partnerId\" = ? AND l.\"accountId\" = ANY(?::text[])"
+                        + " AND e.status IN ('posted', 'reversed')")
+                .params(TenantContext.organizationId(), partnerId,
+                        supplierPayableAccounts(partnerId).toArray(String[]::new))
+                .query(BigDecimal.class).single());
+    }
+
     private String partnerPayable(String partnerId) {
         if (partnerId == null) {
             return null;
