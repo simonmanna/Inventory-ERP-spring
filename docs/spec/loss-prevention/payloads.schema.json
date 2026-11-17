@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "loss-prevention/payloads/1",
+  "title": "Payload of each canonical event type, schema version 1",
+  "description": "Amounts and quantities are decimal numbers or decimal strings. A field not listed is kept and ignored. Only kitchen.stage.stage is enforced at ingest; a rule skips an event that lacks a field it needs.",
+  "$defs": {
+    "decimal": { "type": ["number", "string"] },
+    "sale.completed": {
+      "type": "object",
+      "required": ["total"],
+      "properties": {
+        "invoiceNumber": { "type": "string" },
+        "subtotal": { "$ref": "#/$defs/decimal" },
+        "discountTotal": { "$ref": "#/$defs/decimal", "description": "All discount given on the sale. Read by C07." },
+        "taxAmount": { "$ref": "#/$defs/decimal" },
+        "total": { "$ref": "#/$defs/decimal", "description": "Amount charged, after discount." },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lineId": { "type": "string" }, "productId": { "type": "string" }, "description": { "type": "string" },
+              "quantity": { "$ref": "#/$defs/decimal" }, "unitPrice": { "$ref": "#/$defs/decimal" },
+              "discountAmount": { "$ref": "#/$defs/decimal" }, "total": { "$ref": "#/$defs/decimal" }
+            }
+          }
+        }
+      }
+    },
+    "sale.line_voided": {
+      "type": "object",
+      "required": ["quantity", "firedQuantity"],
+      "properties": {
+        "quantity": { "$ref": "#/$defs/decimal", "description": "Quantity voided so far on this line. Send lineId; the largest quantity per line counts." },
+        "firedQuantity": { "$ref": "#/$defs/decimal", "description": "Quantity already sent to the kitchen. Above 0 raises C01." },
+        "whole": { "type": "boolean" }, "reason": { "type": ["string", "null"] },
+        "approvedById": { "type": ["string", "null"] }, "description": { "type": "string" },
+        "amount": { "$ref": "#/$defs/decimal", "description": "Voided quantity × unit price; the exposure of C01." }
+      }
+    },
+    "order.cancelled": {
+      "type": "object",
+      "properties": {
+        "reason": { "type": ["string", "null"] },
+        "firedLines": {
+          "type": "array", "description": "Lines already sent to the kitchen. Not empty raises C02.",
+          "items": { "type": "object", "properties": {
+            "description": { "type": "string" }, "quantity": { "$ref": "#/$defs/decimal" },
+            "firedQuantity": { "$ref": "#/$defs/decimal" } } }
+        },
+        "firedAmount": { "$ref": "#/$defs/decimal" }
+      }
+    },
+    "refund.issued": {
+      "type": "object",
+      "required": ["amount"],
+      "properties": {
+        "amount": { "$ref": "#/$defs/decimal" }, "reason": { "type": ["string", "null"] },
+        "stockDisposition": { "type": ["string", "null"] }, "approvedById": { "type": ["string", "null"] },
+        "originalActorId": { "type": ["string", "null"], "description": "Who made the sale being refunded." }
+      }
+    },
+    "override.approved": {
+      "type": "object",
+      "required": ["approverId"],
+      "description": "actorId is the cashier the override was given to.",
+      "properties": { "kind": { "type": "string" }, "approverId": { "type": "string" }, "endpoint": { "type": "string" } }
+    },
+    "cash_session.opened": { "type": "object", "properties": { "openingFloat": { "$ref": "#/$defs/decimal" } } },
+    "cash_session.closed": {
+      "type": "object",
+      "required": ["difference"],
+      "description": "Send sessionId. A session closed again is a new event; the latest occurredAt counts.",
+      "properties": {
+        "expected": { "$ref": "#/$defs/decimal" }, "counted": { "$ref": "#/$defs/decimal" },
+        "difference": { "$ref": "#/$defs/decimal", "description": "counted − expected. Negative is short." },
+        "varianceReason": { "type": ["string", "null"] }, "varianceStatus": { "type": ["string", "null"] }
+      }
+    },
+    "cash_session.reconciled": { "type": "object", "properties": { "difference": { "$ref": "#/$defs/decimal" } } },
+    "cash.movement": { "type": "object", "properties": { "kind": { "type": "string" }, "amount": { "$ref": "#/$defs/decimal" }, "reason": { "type": ["string", "null"] } } },
+    "kitchen.ticket_created": { "type": "object", "properties": { "station": { "type": ["string", "null"] }, "ticketNo": { "type": ["string", "null"] } } },
+    "kitchen.stage": {
+      "type": "object",
+      "required": ["stage"],
+      "properties": {
+        "stage": { "enum": ["preparation_started", "prepared", "dispatched", "delivered", "remade", "wasted", "cancelled"] },
+        "station": { "type": ["string", "null"] },
+        "recallCount": { "type": "integer" }, "recallReason": { "type": ["string", "null"] },
+        "afterReady": { "type": "boolean", "description": "The ticket had been marked ready. With remade or cancelled it raises C10." }
+      }
+    },
+    "stock_count.line": {
+      "type": "object",
+      "required": ["productId", "systemMl", "countedMl", "varianceMl"],
+      "description": "Send lineId. A line sent again replaces the earlier copy.",
+      "properties": {
+        "productId": { "type": "string" }, "productName": { "type": "string" }, "countCode": { "type": "string" },
+        "systemMl": { "$ref": "#/$defs/decimal" }, "countedMl": { "$ref": "#/$defs/decimal" },
+        "varianceMl": { "$ref": "#/$defs/decimal", "description": "counted − system. Negative is a shortage." },
+        "reasonCode": { "type": ["string", "null"], "description": "Null, unexplained or unrecorded_sale leaves the variance unexplained (B01)." },
+        "toleranceMl": { "type": ["number", "string", "null"], "description": "The product's own tolerance; else the rule's." },
+        "costPerMl": { "type": ["number", "string", "null"], "description": "Gives B01 an exposure estimate." },
+        "openingMl": { "type": ["number", "string", "null"], "description": "Counted at the previous count." },
+        "ledgerNetMl": { "type": ["number", "string", "null"], "description": "Net stock movement since the previous count. B03 checks opening + net = system." },
+        "movements": { "type": "object", "description": "The net movement by kind." },
+        "soldMl": { "type": ["number", "string", "null"], "description": "Drawn by sales through their recipes, as recorded at each sale." }
+      }
+    },
+    "staff.session": { "type": "object", "properties": { "kind": { "enum": ["login", "logoff"] } } }
+  }
+}

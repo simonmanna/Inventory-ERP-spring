@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "loss-prevention/event-envelope/1",
+  "title": "Loss prevention ingest batch, contract version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["events"],
+  "properties": {
+    "events": { "type": "array", "minItems": 1, "maxItems": 500, "items": { "$ref": "#/$defs/event" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventId", "source", "sourceEventId", "type", "schemaVersion", "occurredAt", "evidenceLevel",
+        "evidenceSource", "observationStatus", "payload"],
+      "properties": {
+        "eventId": { "type": "string", "format": "uuid" },
+        "source": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,39}$" },
+        "sourceEventId": { "$ref": "#/$defs/id" },
+        "branchId": { "$ref": "#/$defs/id" },
+        "deviceId": { "$ref": "#/$defs/id" },
+        "actorId": { "$ref": "#/$defs/id" },
+        "transactionId": { "$ref": "#/$defs/id" },
+        "orderId": { "$ref": "#/$defs/id" },
+        "ticketId": { "$ref": "#/$defs/id" },
+        "lineId": { "$ref": "#/$defs/id" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "businessDate": { "type": "string", "format": "date" },
+        "occurredAt": { "type": "string", "format": "date-time" },
+        "schemaVersion": { "const": 1 },
+        "type": {
+          "enum": ["sale.completed", "sale.line_voided", "order.cancelled", "refund.issued", "override.approved",
+            "cash_session.opened", "cash_session.closed", "cash_session.reconciled", "cash.movement",
+            "kitchen.ticket_created", "kitchen.stage", "stock_count.line", "staff.session"]
+        },
+        "evidenceLevel": { "enum": ["item", "ticket", "order", "session", "zone"] },
+        "evidenceSource": { "enum": ["pos", "kds", "stock", "camera", "sensor", "manual"] },
+        "observationStatus": { "enum": ["observed", "inferred", "unavailable"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "payload": { "type": "object" }
+      }
+    }
+  }
+}

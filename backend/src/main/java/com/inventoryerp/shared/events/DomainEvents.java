@@ -195,6 +195,7 @@ public final class DomainEvents {
     public static final String FLEET_FINE_DEDUCTION_REQUESTED = "fleet.fine.deduction_requested";
     public static final String FLEET_FINE_DEDUCTION_CANCELLED = "fleet.fine.deduction_cancelled";
     public static final String FLEET_TELEMATICS_ALERT_RAISED = "fleet.telematics.alert_raised";
+    public static final String LP_CASE_OPENED = "lp.case.opened";
     public static final String FLEET_TRIP_DISPATCHED = "fleet.trip.dispatched";
     public static final String FLEET_TRIP_DELIVERED = "fleet.trip.delivered";
     public static final String FLEET_TRIP_CLOSED = "fleet.trip.closed";

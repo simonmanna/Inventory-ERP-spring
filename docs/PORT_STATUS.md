@@ -1773,3 +1773,24 @@ channels per event. The actor is never told.
 ## Bonds, subcontractor compliance and CIP capitalisation (ADR-S074, extension: no Nest counterpart)
 
 [Spec](spec/projects.md). 26 routes: `ProjectBondController` (10), `SubcontractComplianceController` (11), `CapitalProjectController` (5); compliance gates on subcontract valuations and supplier payments; `ProjectBondJob`; expiry alerts. Migrations V504–V506. Tests: `ConstructionControlsIT`, `ProjectAuthorizationIT` (142 routes).
+
+## Loss prevention (ADR-S077, extension: no Nest counterpart)
+
+[Spec](spec/loss-prevention.md) · [LP0 brief](phases/LP0-exception-intelligence.md). Behind `ENABLE_LOSS_PREVENTION`.
+
+27 routes: `LossPreventionEventController` (3), `LossPreventionRuleController` (6), `LossPreventionRunController` (6),
+`LossPreventionCaseController` (8), `LossPreventionReportController` (4). Migrations V520–V522. Permissions `lp:*`,
+licence feature `lossPrevention`, event `lp.case.opened`. Web: `/loss-prevention`.
+Tests: `LpEventValidatorTest`, `LpEnginesTest`, `LpLedgerIT`, `LpReconIT`.
+
+- [x] WP1 event ledger and ingest
+- [x] WP2 projection from POS, kitchen, cash sessions and beverage counts (`LpProjectionService`)
+- [x] WP3 reconciliation runs, late events, replay, comparison, verification (`LpReconService`)
+- [x] WP4 cashier rules C01–C10 (`LpCashierEngine`)
+- [x] WP5 bar rules B01–B03 (`LpBarEngine`); B03 off by default
+- [x] WP6 cases (`LpCaseService`)
+- [x] WP7 reports and web screens
+- [x] WP8 integration contract schemas (`docs/spec/loss-prevention/`)
+
+Not verified against live POS traffic: the projection has only run against the demo seed. See the spec, "Assumptions
+to check on real data".
