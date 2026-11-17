@@ -210,6 +210,15 @@ has the same gaps:
     (productId, variantId) order (`StockMove.inLockOrder`), extending item 3. Landed cost takes the same quant locks
     before re-costing lots, serials or averages (`LayerCostWriter`, S-3).
 
+Approved by the owner — accounting and costing review 2026-11-17
+([audit](../audits/2026-11-17-accounting-costing-review.md)); an extension, Nest has no such route:
+
+30. **Cost explanation.** `GET /inventory/cost-explanation?productId&locationId&limit` (`inventory_valuation:read`;
+    limit 1–500, default 100): a read-only explanation of an item's carrying cost from the stock sub-ledger (method,
+    value per location, price-difference and NRV adjuncts, value-only changes, every movement with running quantity,
+    value and unit cost). Messages: `productId should not be empty`, `limit must not be less than 1`, `limit must be
+    an integer number`, 404 `Product not found` / `Location not found`. Test: `CostExplanationIT`.
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation

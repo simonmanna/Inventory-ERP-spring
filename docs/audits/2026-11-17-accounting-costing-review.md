@@ -1,6 +1,7 @@
 # Accounting and costing review — 2026-11-17
 
-- Branch: `phase/acr-costing-integrity` (worktree `Inventory-ERP-spring-1-acr`), migrations `V530`–`V534`.
+- Branch: `phase/acr-costing-integrity` (worktree `Inventory-ERP-spring-1-acr`), migrations `V530`–`V534`. Merged into
+  `main` on 2026-11-17 together with `phase/acc-erp-controls` (V512–V520), which fixed A1, A2 and A8a, and A8b in part.
 - Owner approval: the owner asked for every fix and enhancement in the review (2026-11-17). That covers the deviations
   from the Nest reference listed here. Each deviation is also recorded in its spec's "Deviations" section.
 - Markers in the code: `Review 2026-11-17 (ACR-n)`. The tables below give the ACR number of each fix.
@@ -27,15 +28,15 @@ Costing coverage was broad, but some techniques were missing or half-wired, and 
 
 | # | Finding | Outcome |
 |---|---|---|
-| A1 | A closed period can be reopened by a plain `PATCH /fiscal-periods/{id}` (status, dates, delete) | **Not fixed here.** `FiscalPeriodService` / controller belong to the parallel `phase/acc-erp-controls` work |
-| A2 | "Reverse" works on any journal entry, including sub-ledger documents | **Not fixed here.** `JournalEntryService` / controller belong to `phase/acc-erp-controls` |
+| A1 | A closed period can be reopened by a plain `PATCH /fiscal-periods/{id}` (status, dates, delete) | **Fixed on `phase/acc-erp-controls` (R1, V512).** `PATCH` refuses `status`. Dates change and `DELETE` works only on an open period with no posted entry. Periods cannot overlap. Tests: `Acc0ControlsIT` (R1) |
+| A2 | "Reverse" works on any journal entry, including sub-ledger documents | **Fixed on `phase/acc-erp-controls` (document reversals, V520).** The journal-entry reverse refuses an entry a sub-ledger document posted and names that document's own reversal. Test: `DocumentReversalIT` |
 | A3 | PO receipt + supplier bill = two open payables (AP ageing, PO pay and bill pay) | **Fixed (ACR-2, V530).** A billed receipt is the bill's open item only. PO payments are applied to the bill that takes the receipt over (`PurchaseOrderBillApplication`). The PO pay route refuses billed receipts. `ApAgingService`, `OpenItems` and `ReportSnapshotService` use the same measure. Test: `PoBillApplicationIT` |
 | A4 | A bill priced or taxed differently from the receipt leaves a permanent AP difference | **Fixed (ACR-3).** The difference is posted both ways (PPV, input VAT, AP), so the ledger's AP equals the bill's residual. Test: `PoBillApplicationIT` (bill below the receipt price) |
-| A5 | Return to supplier on an unbilled receipt debits AP; foreign-currency debit notes post document amounts as base | **Not fixed here.** `DebitNotesService` belongs to `phase/acc-erp-controls` |
+| A5 | Return to supplier on an unbilled receipt debits AP; foreign-currency debit notes post document amounts as base | **Not fixed.** `phase/acc-erp-controls` added the debit-note reversal and the control-account guard, but neither of these postings changed |
 | A6 | A bill auto-receives any quantity not matched to a receipt | **Option added (ACR-4).** Setting `procurement.billWithoutReceipt`: `auto_receive` (default, the Nest behaviour) or `block` (three-way match). Test: `PoBillApplicationIT` |
 | A7 | A second reopen can pick the already-reversed closing entry | **Fixed (ACR-1).** It now uses the period's own posted closing entry. Test: `PeriodReopenIT` |
-| A8a | Recurring entries post with no second approver | **Not fixed here** (`RecurringJournalService`, `phase/acc-erp-controls`) |
-| A8b | Manual journals can hit inventory / AR / AP / WIP control accounts | **Not fixed here** (`JournalEntryService`, `phase/acc-erp-controls`) |
+| A8a | Recurring entries post with no second approver | **Fixed on `phase/acc-erp-controls` (R3, V514).** Templates and deferral schedules need a second user holding `journal_entry:post`. Test: `GlAutomationIT` (R3) |
+| A8b | Manual journals can hit inventory / AR / AP / WIP control accounts | **Partly fixed on `phase/acc-erp-controls` (V518).** AR and AP are designated control accounts: manual journals cannot post to them, except through a maker-checker control-account adjustment. Inventory and WIP accounts are refused only when their `allowManualPosting` is off (it defaults to on). Tests: `ControlAccountPolicyIT`, `ControlAccountRoutesIT` |
 | A8c | A failed POS stock-posting job blocks period close for ever | **Fixed (ACR-17).** New `POST /pos/posting-monitor/jobs/{id}/abandon` (note ≥ 10 characters, failed jobs only). Both the close gate and the checklist count only stock documents raised up to the period end. Tests: `PostingMonitorAbandonIT`, `PeriodReopenIT` |
 | A8d | Business events are written after commit, so a crash can lose one | **Not addressed** |
 
@@ -106,8 +107,9 @@ New controls on existing pages:
 
 Not done:
 
-- Journal drill-down to documents.
-- The product form still sends `AVCO` (`ProductEditPage`, owned by `phase/acc-erp-controls`).
+- Journal drill-down: an entry posted by a sub-ledger document now links to that document
+  (`phase/acc-erp-controls`); other entries still have no link to their source.
+- The product form still sends `AVCO` (`ProductEditPage`).
 - A wider jargon clean-up.
 - Screens that still ask for raw ids.
 
@@ -139,6 +141,8 @@ Numbers are the production reviewer's own. All were confirmed by reading the cod
 ## Verification
 
 - Targeted `fastTest` runs on a private Postgres; see `docs/PORT_STATUS.md` (REV-2) for the classes.
+- After the merge with `phase/acc-erp-controls`, the combined run on `main` was stopped by low memory on the box
+  before it finished (no failures up to then); see REV-3.
 - Web: `pnpm web:typecheck` clean, eslint with no new errors, i18n check passed.
 - The screens were **not** exercised in a browser.
 - The full `./gradlew build` was **not** run (CI runs it on push).

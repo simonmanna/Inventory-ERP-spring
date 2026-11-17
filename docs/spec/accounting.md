@@ -443,6 +443,19 @@ and closed periods from before this change are corrected, if at all, by approved
   explicitly stated rate of 1 (`CurrencyService.resolveStated`; internal callers pass no rate); stored documents still
   treat 1 as "not stated" (`exchangeRate` column default).
 
+## Accounting and costing review deviations (2026-11-17)
+
+Owner-approved 2026-11-17 ("code & develop the above fixes & enhancements"). Audit and outcome per finding:
+[`docs/audits/2026-11-17-accounting-costing-review.md`](../audits/2026-11-17-accounting-costing-review.md). The costing
+items are in [costing](costing.md#review-2026-11-17--accounting-and-costing-fixes); the purchasing and bill items in
+[procurement](procurement.md#deviations) and [invoicing](invoicing.md#deviations); the POS abandon route in
+[pos](pos.md#deviations).
+
+| # | Where | Before (Nest / earlier Spring) | Now |
+|---|---|---|---|
+| ACR-1 | `POST /fiscal-periods/:id/reopen` | took the latest `period_close` entry by date with no status filter, so a second reopen could pick the already-reversed one | the period's own posted closing entry (`sourceId`); the date window is a fallback for old entries |
+| ACR-17 | period close (gate and checklist) | every pending stock document of the organisation blocked the close | only those raised up to the period end. A failed POS stock-posting job can be abandoned (`POST /pos/posting-monitor/jobs/:id/abandon`, see pos), so it no longer blocks the close for ever |
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
