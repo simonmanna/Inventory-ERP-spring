@@ -79,6 +79,12 @@ public final class SettingRegistry {
         def("costing.landedCost.defaultAllocationMethod", "costing", "enum", "Landed Cost Default Allocation",
                 "Basis used by a landed cost charge when neither the charge nor its cost component names one.",
                 "value", List.of("value", "quantity", "equal", "weight", "volume", "manual"), false, ORG_ONLY);
+        // ---- Review 2026-11-17 (ACR-19): production consumes only stock that is there ----
+        def("costing.production.requireMaterialsOnHand", "costing", "bool", "Production Needs Materials On Hand",
+                "When on, a production order cannot consume more of a material than is on hand at its location: it never"
+                        + " issues stock at a stale cost that a later receipt then corrects through cost of sales."
+                        + " When off (default), the inventory settings and the item's stock policy decide.",
+                false, null, false, ORG_ONLY);
         // ---- Landed cost LC-0 (ADR-S053) ----
         def("costing.landedCost.taxRecoverableDefault", "costing", "enum", "Landed Cost Tax Recoverability",
                 "Whether tax on a landed cost charge is recoverable input tax when neither the charge's tax nor its"
@@ -105,6 +111,11 @@ public final class SettingRegistry {
                 "strict = upper case, trimmed, separators (space - _ / .) ignored, so AB-12 and AB12 are the same"
                         + " invoice (and so are AB-12 and A-B12); exact = upper case and trimmed only.",
                 "strict", List.of("strict", "exact"), false, ORG_ONLY);
+        // Review 2026-11-17 (ACR-4): three-way match. auto_receive keeps the Nest behaviour.
+        def("procurement.billWithoutReceipt", "purchasing", "enum", "Supplier Bill Without Goods Receipt",
+                "auto_receive = a bill for stock items nobody received yet receives them into stock itself (default);"
+                        + " block = the bill is refused until a goods receipt covers it (three-way match).",
+                "auto_receive", List.of("auto_receive", "block"), false, ORG_ONLY);
         def("costing.dimensionEnforcement", "costing", "enum", "Costing Branch Dimension",
                 "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
                         + " report (default); enforce = a costing posting without a branch is refused.",

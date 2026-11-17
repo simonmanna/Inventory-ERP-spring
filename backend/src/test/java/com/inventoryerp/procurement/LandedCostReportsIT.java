@@ -90,7 +90,7 @@ class LandedCostReportsIT extends LandedCostFixtures {
         String cc = UUID.randomUUID().toString();
         String code = "CC-LC6-" + suffix();
         jdbc.sql("INSERT INTO \"CostCenter\" (id, \"organizationId\", code, name, \"updatedAt\") VALUES (?, ?, ?, ?, now())")
-                .params(cc, demoOrg, code, "Import project").update();
+                .params(cc, demoOrg, code, "Import project " + code).update();
         String p = product("AVCO", false, 0);
         approveAndPost(voucher(List.of(receive(p, 10, 50)), List.of(charge("kind", "freight", "amount", 300,
                 "costCenterId", cc), charge("kind", "handling", "amount", 50, "treatment", "expense", "costCenterId",
@@ -146,5 +146,9 @@ class LandedCostReportsIT extends LandedCostFixtures {
         assertThat(new BigDecimal(r.get("landedInMaterials").asString())).isEqualByComparingTo("400");
         // Output 10 × 200 = 2000 at receipt + 400 landed waiting in WIP → 2400 / 10 = 240 per output unit.
         assertThat(new BigDecimal(r.get("costPerOutputUnit").asString())).isEqualByComparingTo("240");
+        // carry the 400 on to the output: nothing of this test waits in the shared WIP for another suite's run
+        String today = java.time.LocalDate.now(java.time.ZoneOffset.UTC).toString();
+        Res carried = call("POST", "/costing/cost-adjustment-runs", Map.of("from", today, "to", today), key());
+        assertThat(carried.status()).as(carried.raw().body()).isIn(200, 201);
     }
 }

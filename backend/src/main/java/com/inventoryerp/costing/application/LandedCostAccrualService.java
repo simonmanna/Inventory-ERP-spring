@@ -507,15 +507,19 @@ public class LandedCostAccrualService {
         BigDecimal covered = BigDecimal.ZERO;
         BigDecimal taken = BigDecimal.ZERO;
         List<Object[]> clearingLines = new ArrayList<>();
+        List<Part> cascaded = new ArrayList<>();
         for (Map<String, Object> adj : SqlRows.list(jdbc.sql("SELECT * FROM \"CostValueAdjustment\" WHERE"
                 + " \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ? AND \"reversedAt\" IS NULL ORDER BY"
                 + " \"createdAt\", id").params(org(), SOURCE, id))) {
             boolean followed = adj.get("rootAdjustmentId") != null || adj.get("parentAdjustmentId") != null;
             BigDecimal onHand = SqlRows.dec(adj, "onHandAmount");
             BigDecimal open = SqlRows.dec(adj, "openAmount");
-            Map<String, BigDecimal> lineTargets = new LinkedHashMap<>();
-            for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT target, amount FROM \"CostValueAdjustmentLine\""
-                    + " WHERE \"adjustmentId\" = ? AND target <> 'on_hand'").param(adj.get("id")))) {
+            // Where the consumed part went: one sink per target, and one per WIP share (each tracks what was cleared).
+            Map<String, Sink> sinks = new LinkedHashMap<>();
+            for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT l.id, l.target, l.amount, l.\"targetRef\", EXISTS"
+                    + " (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"adjustmentLineId\" = l.id AND r.status ="
+                    + " 'posted') AS cascaded FROM \"CostValueAdjustmentLine\" l WHERE l.\"adjustmentId\" = ? AND l.target"
+                    + " <> 'on_hand' ORDER BY l.\"createdAt\", l.id").param(adj.get("id")))) {
                 String target = (String) l.get("target");
                 if (followed && List.of("transfer", "in_transit").contains(target)) {
                     continue; // LC-1: a followed share is its own child adjustment
@@ -524,12 +528,19 @@ public class LandedCostAccrualService {
                     onHand = onHand.add(SqlRows.dec(l, "amount")); // legacy: rode on the source pool's adjunct
                     continue;
                 }
-                lineTargets.merge(target, SqlRows.dec(l, "amount"), BigDecimal::add);
+                if ("wip".equals(target)) {
+                    sinks.put("line:" + l.get("id"), new Sink(capitalisation.accountFor(target), "CostValueAdjustmentLine",
+                            (String) l.get("id"), (String) l.get("targetRef"), Boolean.TRUE.equals(l.get("cascaded")),
+                            SqlRows.dec(l, "amount")));
+                } else {
+                    sinks.merge(target, new Sink(capitalisation.accountFor(target), null, null, null, false,
+                            SqlRows.dec(l, "amount")), Sink::plus);
+                }
             }
-            BigDecimal consumed = lineTargets.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal consumed = sinks.values().stream().map(Sink::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
             Map<String, Object> prior = SqlRows.one(jdbc.sql("SELECT coalesce(sum(\"onHandAmount\"), 0) AS on_hand,"
-                    + " coalesce(sum(\"consumedAmount\"), 0) AS consumed FROM \"LandedCostAccrualClearingLine\" WHERE"
-                    + " \"adjustmentId\" = ?").param(adj.get("id")));
+                    + " coalesce(sum(\"consumedAmount\"), 0) AS consumed, coalesce(sum(\"adjunctAmount\"), 0) AS adjunct FROM"
+                    + " \"LandedCostAccrualClearingLine\" WHERE \"adjustmentId\" = ?").param(adj.get("id")));
             BigDecimal priorOnHand = SqlRows.dec(prior, "on_hand");
             BigDecimal priorConsumed = SqlRows.dec(prior, "consumed");
             BigDecimal onHandDue = (last ? onHand : onHand.multiply(fraction).setScale(2, RoundingMode.HALF_UP))
@@ -539,16 +550,13 @@ public class LandedCostAccrualService {
             BigDecimal fromAdjunct = last ? open : onHandDue.min(open).max(BigDecimal.ZERO);
             BigDecimal released = onHandDue.subtract(fromAdjunct);
             credits.merge(lineage.priceDifferenceAccount(), fromAdjunct, BigDecimal::add);
-            credits.merge(determination.mapped("cogs"), released, BigDecimal::add);
-            if (consumed.signum() != 0 && consumedDue.signum() != 0) {
-                BigDecimal given = BigDecimal.ZERO;
-                List<Map.Entry<String, BigDecimal>> entries = new ArrayList<>(lineTargets.entrySet());
-                for (int i = 0; i < entries.size(); i++) {
-                    BigDecimal part = i == entries.size() - 1 ? consumedDue.subtract(given)
-                            : consumedDue.multiply(entries.get(i).getValue()).divide(consumed, 2, RoundingMode.HALF_UP);
-                    given = given.add(part);
-                    credits.merge(capitalisation.accountFor(entries.get(i).getKey()), part, BigDecimal::add);
-                }
+            // Review 2026-11-17 (ACR-14; deviation): the released part comes back out of where the release put it —
+            // cost of sales, the WIP of an order, scrap, a write-off account — not always out of cost of sales.
+            BigDecimal releasedSoFar = SqlRows.dec(adj, "onHandAmount").subtract(open)
+                    .subtract(SqlRows.dec(prior, "adjunct"));
+            spread(released, releaseSinks((String) adj.get("id"), releasedSoFar), credits, cascaded);
+            if (consumed.signum() != 0) {
+                spread(consumedDue, new ArrayList<>(sinks.values()), credits, cascaded);
             }
             if (fromAdjunct.signum() != 0) {
                 lineage.recordValueOnly((String) adj.get("productId"), (String) adj.get("variantId"),
@@ -593,6 +601,9 @@ public class LandedCostAccrualService {
                 SOURCE + "_clearing", id, null, "costing:landed_accrual_clearing:" + org() + ":" + id + ":" + clearingId,
                 null, null, null, lines));
         String entryId = je == null ? null : (String) je.get("id");
+        if (!cascaded.isEmpty()) {
+            capitalisation.record(cascaded, "landed_accrual", SOURCE + "_clearing", clearingId, entryId, text);
+        }
         // Accrual currency side: the rule's currency and rate of the accrued lines (receipt-date rate).
         Map<String, Object> orig = SqlRows.one(jdbc.sql("SELECT CASE WHEN count(DISTINCT coalesce(\"currencyCode\", ''))"
                 + " = 1 THEN max(\"currencyCode\") END AS cur, sum(\"currencyAmount\") AS amt, max(\"exchangeRate\") AS rate"
@@ -626,6 +637,86 @@ public class LandedCostAccrualService {
                 .params(status, "reverse".equals(kind) ? cleared : newCleared, newRemaining, entryId,
                         newRemaining.signum() == 0, id).update();
         return clearingId;
+    }
+
+    /**
+     * One place part of an estimate went: an account, or one WIP share of an order ({@code table} / {@code id} name the
+     * lineage line or release that carries it, so what a clearing takes back out of WIP is tracked against it).
+     */
+    private record Sink(String accountId, String table, String id, String ref, boolean cascaded, BigDecimal amount) {
+
+        Sink plus(Sink o) {
+            return new Sink(accountId, table, id, ref, cascaded, amount.add(o.amount));
+        }
+    }
+
+    /**
+     * Where the released part of an adjustment's on-hand share went (review 2026-11-17, ACR-14): the recorded releases
+     * (per account, per WIP share), and cost of sales for what was released before they were recorded.
+     */
+    private List<Sink> releaseSinks(String adjustmentId, BigDecimal releasedSoFar) {
+        Map<String, Sink> sinks = new LinkedHashMap<>();
+        BigDecimal recorded = BigDecimal.ZERO;
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT x.id, x.target, x.\"targetRef\", x.\"accountId\","
+                + " x.amount, EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"releaseId\" = x.id AND r.status ="
+                + " 'posted') AS cascaded FROM \"CostValueAdjustmentRelease\" x WHERE x.\"adjustmentId\" = ? AND x.amount"
+                + " <> 0 ORDER BY x.\"createdAt\", x.id").param(adjustmentId))) {
+            BigDecimal amount = SqlRows.dec(r, "amount");
+            recorded = recorded.add(amount);
+            if ("wip".equals(r.get("target"))) {
+                sinks.put("release:" + r.get("id"), new Sink((String) r.get("accountId"), "CostValueAdjustmentRelease",
+                        (String) r.get("id"), (String) r.get("targetRef"), Boolean.TRUE.equals(r.get("cascaded")),
+                        amount));
+            } else {
+                sinks.merge((String) r.get("accountId"), new Sink((String) r.get("accountId"), null, null, null, false,
+                        amount), Sink::plus);
+            }
+        }
+        BigDecimal unrecorded = releasedSoFar.subtract(recorded);
+        if (sinks.isEmpty() || unrecorded.signum() > 0) {
+            String cogs = determination.mapped("cogs");
+            sinks.merge(cogs, new Sink(cogs, null, null, null, false, sinks.isEmpty() ? BigDecimal.ONE : unrecorded),
+                    Sink::plus);
+        }
+        return new ArrayList<>(sinks.values());
+    }
+
+    /**
+     * Credit {@code amount} over the sinks pro rata to their amounts (the last takes the cents). A WIP share records
+     * what was taken back out of WIP; one a cost adjustment run already carried on to its order's output is taken out
+     * there instead, through the output's lineage (review 2026-11-17, ACR-8; deviation: it was credited to WIP twice).
+     */
+    private void spread(BigDecimal amount, List<Sink> sinks, Map<String, BigDecimal> credits, List<Part> cascaded) {
+        if (amount.signum() == 0 || sinks.isEmpty()) {
+            return;
+        }
+        BigDecimal weight = sinks.stream().map(Sink::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (weight.signum() == 0) {
+            credits.merge(determination.mapped("cogs"), amount, BigDecimal::add);
+            return;
+        }
+        BigDecimal given = BigDecimal.ZERO;
+        for (int i = 0; i < sinks.size(); i++) {
+            Sink sink = sinks.get(i);
+            BigDecimal part = i == sinks.size() - 1 ? amount.subtract(given)
+                    : amount.multiply(sink.amount()).divide(weight, 2, RoundingMode.HALF_UP);
+            given = given.add(part);
+            if (part.signum() == 0) {
+                continue;
+            }
+            if (sink.table() != null) {
+                jdbc.sql("UPDATE \"" + sink.table() + "\" SET \"clearedAmount\" = \"clearedAmount\" + ? WHERE id = ?")
+                        .params(part, sink.id()).update();
+                if (sink.cascaded() && sink.ref() != null) {
+                    for (Part p : capitalisation.spread(part.negate(), capitalisation.orderOutputs(sink.ref()))) {
+                        credits.merge(p.accountId(), p.amount().negate(), BigDecimal::add);
+                        cascaded.add(p);
+                    }
+                    continue;
+                }
+            }
+            credits.merge(sink.accountId(), part, BigDecimal::add);
+        }
     }
 
     private Map<String, Object> lock(String id) {

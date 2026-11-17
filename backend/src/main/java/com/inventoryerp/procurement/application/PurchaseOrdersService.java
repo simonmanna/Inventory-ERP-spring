@@ -901,11 +901,19 @@ public class PurchaseOrdersService {
             BigDecimal paidToDate = Money.max(Money.dec(paidSum), Money.dec(po.get("totalPaid")));
             // P0-4: the PO route settles the payable its receipts raised (receipt vouchers), never more — paying ahead
             // of a receipt would leave AP in debit. Lines without a receipt voucher are billed and paid as bills.
-            BigDecimal payable = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
-            BigDecimal remaining = payable.subtract(paidToDate);
-            if (payable.signum() <= 0) {
+            // Review 2026-11-17 (ACR-2): a receipt a supplier bill has taken over is paid on that bill; the PO payments
+            // already applied to bills no longer count against the PO.
+            BigDecimal received = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
+            BigDecimal billed = billedVouchered(id, orgId);
+            BigDecimal payable = received.subtract(billed);
+            BigDecimal remaining = payable.subtract(paidToDate.subtract(appliedToBills(id, orgId)));
+            if (received.signum() <= 0) {
                 throw ApiException.badRequest("Nothing has been received on this purchase order yet — receive the goods"
                         + " (or post the supplier bill) before paying");
+            }
+            if (payable.compareTo(new BigDecimal("0.005")) < 0) {
+                throw ApiException.badRequest("The goods received on this purchase order have been billed — pay the"
+                        + " supplier bill instead");
             }
             BigDecimal payAmount = dto.amount() != null ? dto.amount() : remaining;
             if (payAmount.signum() <= 0) {
@@ -968,6 +976,23 @@ public class PurchaseOrdersService {
                 + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
                 + " AND g.\"purchaseOrderId\" = ? AND g.status = 'posted' AND g.\"deletedAt\" IS NULL"
                 + " AND l.\"productId\" IS NOT NULL").params(orgId, poId).query(BigDecimal.class).single());
+    }
+
+    /** Receipt-priced value of the PO's received quantity that supplier bills have taken over (ACR-2). */
+    private BigDecimal billedVouchered(String poId, String orgId) {
+        return Money.dec(jdbc.sql("SELECT COALESCE(SUM(LEAST(l.\"billedQuantity\", l.quantity) * l.\"unitCost\" * (1 +"
+                + " COALESCE(pl.\"taxRate\", 0) / 100)), 0) FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON"
+                + " g.id = l.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\""
+                + " WHERE g.\"organizationId\" = ? AND g.\"purchaseOrderId\" = ? AND g.status = 'posted' AND"
+                + " g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL").params(orgId, poId).query(BigDecimal.class)
+                .single());
+    }
+
+    /** PO payments applied to the PO's bills (ACR-2). */
+    private BigDecimal appliedToBills(String poId, String orgId) {
+        return Money.dec(jdbc.sql("SELECT COALESCE(SUM(amount), 0) FROM \"PurchaseOrderBillApplication\" WHERE"
+                + " \"organizationId\" = ? AND \"purchaseOrderId\" = ? AND \"releasedAt\" IS NULL").params(orgId, poId)
+                .query(BigDecimal.class).single());
     }
 
     private static Object[] paymentParams(String orgId, String id, BigDecimal amount, Instant paidAt, PayInput dto) {

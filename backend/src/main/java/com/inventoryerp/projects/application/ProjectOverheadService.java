@@ -5,6 +5,7 @@ import static com.inventoryerp.projects.application.ProjectService.day;
 import static com.inventoryerp.projects.application.ProjectService.org;
 
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -51,13 +52,15 @@ public class ProjectOverheadService {
     private final JdbcClient jdbc;
     private final ProjectCostService costs;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AuditService audit;
 
     public ProjectOverheadService(JdbcClient jdbc, ProjectCostService costs, PostingService posting,
-            AuditService audit) {
+            AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.costs = costs;
         this.posting = posting;
+        this.reversals = reversals;
         this.audit = audit;
     }
 
@@ -247,8 +250,8 @@ public class ProjectOverheadService {
         if (!"posted".equals(r.get("status"))) {
             throw ApiException.badRequest("This overhead run is already reversed");
         }
-        String reversal = r.get("journalEntryId") == null ? null : (String) posting.reverse(
-                (String) r.get("journalEntryId"), Instant.now(), "Reversal of overhead run " + r.get("period")).get("id");
+        String reversal = reversals.reverseId((String) r.get("journalEntryId"), "Reversal of overhead run "
+                + r.get("period"));
         jdbc.sql("UPDATE \"ProjectCostLine\" SET status = 'reversed', \"reversalEntryId\" = ? WHERE \"organizationId\" ="
                 + " ? AND \"sourceType\" = 'project_overhead' AND \"sourceId\" = ? AND status = 'posted'").params(reversal,
                 org(), runId).update();

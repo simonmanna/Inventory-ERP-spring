@@ -39,6 +39,10 @@ public class MfgCostAllocationRule {
     @Column(name = "mainMarketValue", precision = 20, scale = 6)
     private BigDecimal mainMarketValue;
 
+    /** Review 2026-11-17 (V533): the main output's costs per unit after the split-off (NRV method). */
+    @Column(name = "mainSeparableCostPerUnit", precision = 20, scale = 6)
+    private BigDecimal mainSeparableCostPerUnit;
+
     @Column(name = "notes")
     private String notes;
 

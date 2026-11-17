@@ -93,7 +93,8 @@ public class ProcessCostingController {
             @NotNull(message = "amount must be a positive number") @Positive(message = "amount must be a positive number")
             BigDecimal amount,
             String creditAccountId,
-            String description) {}
+            String description,
+            String journalEntryId) {}
 
     private final ProcessCostingService svc;
 
@@ -171,7 +172,8 @@ public class ProcessCostingController {
     @Idempotent
     @RequirePermissions(Permissions.PROCESS_COSTING__MANAGE)
     public Map<String, Object> cost(@PathVariable String id, @Valid @RequestBody CostRequest dto) {
-        return svc.addCost(id, dto.element(), dto.amount(), dto.creditAccountId(), dto.description());
+        return svc.addCost(id, dto.element(), dto.amount(), dto.creditAccountId(), dto.description(),
+                dto.journalEntryId());
     }
 
     @PostMapping("/periods/{id}/close")

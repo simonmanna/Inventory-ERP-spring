@@ -25,23 +25,27 @@ public class ApAgingService {
     private static final List<String> BUCKETS = List.of("current", "b1_30", "b31_60", "b61_90", "b90p");
 
     /**
-     * Payables raised by purchase-order receipts (receipt vouchers, P1-7): the bill matched to such a receipt carries no
-     * residual, so the open amount lives on the PO — vouchered receipts less PO payments, aged from the first receipt.
-     * Same measure as the PO pay route ({@code PurchaseOrdersService.vouchered}). Two org parameters.
+     * Payables raised by purchase-order receipts (receipt vouchers, P1-7) that no supplier bill has taken over yet:
+     * unbilled receipts less the PO payments not applied to a bill, aged from the first receipt (review 2026-11-17,
+     * ACR-2 — a billed receipt is the bill's open item, ACC-4, and counting it here too doubled the supplier's
+     * balance). Same measure as the PO pay route. Two org parameters.
      */
-    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.\"partnerId\", p.name AS \"partnerName\", v.at AS \"dueDate\","
-            + " v.at AS \"issueDate\", LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
-            + " COALESCE(po.\"totalPaid\", 0)) AS \"amountResidual\" FROM (SELECT g.\"purchaseOrderId\" AS po,"
-            + " MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS amt"
-            + " FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
-            + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
-            + " AND g.status::text = 'posted' AND g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL"
-            + " AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY g.\"purchaseOrderId\") v"
-            + " JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id = po.\"partnerId\""
-            + " LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\" WHERE"
-            + " \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id"
-            + " WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
-            + " COALESCE(po.\"totalPaid\", 0)) > 0.005";
+    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.\"partnerId\", p.name AS \"partnerName\", v.at AS \"dueDate\", v.at AS \"issueDate\","
+            + " LEAST(po.\"totalAmount\", v.amt) - v.billed - (GREATEST(COALESCE(pp.paid, 0),"
+            + " COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) AS \"amountResidual\" FROM (SELECT"
+            + " g.\"purchaseOrderId\" AS po, MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 +"
+            + " COALESCE(pl.\"taxRate\", 0) / 100)) AS amt, SUM(LEAST(l.\"billedQuantity\", l.quantity) *"
+            + " l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS billed FROM \"GoodsReceiptLine\" l JOIN"
+            + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id ="
+            + " l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ? AND g.status::text = 'posted' AND"
+            + " g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY"
+            + " g.\"purchaseOrderId\") v JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id ="
+            + " po.\"partnerId\" LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\""
+            + " WHERE \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id LEFT"
+            + " JOIN LATERAL (SELECT SUM(a.amount) AS applied FROM \"PurchaseOrderBillApplication\" a WHERE"
+            + " a.\"organizationId\" = po.\"organizationId\" AND a.\"purchaseOrderId\" = po.id AND a.\"releasedAt\" IS"
+            + " NULL) ap ON true WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - v.billed -"
+            + " (GREATEST(COALESCE(pp.paid, 0), COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) > 0.005";
 
     private final JdbcClient jdbc;
 

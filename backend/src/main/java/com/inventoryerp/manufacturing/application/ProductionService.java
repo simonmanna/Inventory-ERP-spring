@@ -103,6 +103,23 @@ public class ProductionService {
 
     private final ProductVariantService variants;
 
+    private com.inventoryerp.kernel.settings.SettingResolverService settings;
+
+    /** Optional (setter) so the many existing constructions stay as they are. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSettings(com.inventoryerp.kernel.settings.SettingResolverService settings) {
+        this.settings = settings;
+    }
+
+    /**
+     * Review 2026-11-17 (ACR-19): the organisation requires materials on hand before production consumes them (single-step
+     * orders here, multi-stage stage issues in {@link StageExecutionService}).
+     */
+    boolean materialsMustBeOnHand() {
+        return settings != null && settings.resolveBool("costing.production.requireMaterialsOnHand",
+                com.inventoryerp.kernel.settings.SettingResolverService.SettingContext.EMPTY);
+    }
+
     public ProductionService(MfgDb db, SequenceService seq, AuditService audit, ApprovalsService approvals,
             ControlledActionService controlled, StockService stock, StockPostingService stockPosting,
             StockReservationService reservations,
@@ -403,7 +420,8 @@ public class ProductionService {
                     .variant(substitute != null ? null : str(line, "variantId"))
                     .uom(substitute != null ? null : str(line, "uomId")).moveType("production_consume")
                     .strategy(line.get("distStrategy") != null ? str(line, "distStrategy") : "FEFO")
-                    .batch(batchNumber).date(date).source(SOURCE, code).notes(code);
+                    .batch(batchNumber).date(date).source(SOURCE, code).notes(code)
+                    .requireAvailable(materialsMustBeOnHand());
             Issued res = stock.issue(move);
             materialCost = materialCost.add(res.totalValue());
             Map<String, Object> upd = new LinkedHashMap<>();
@@ -532,6 +550,22 @@ public class ProductionService {
             byproductCredit = byproductCredit.add(value);
         }
 
+        // 1b) Review 2026-11-17 (rework costing): an abnormal rework — a defect that is not part of the normal process —
+        // brings the units back at the cost they already carried; the extra material and conversion it took is a loss
+        // of the period (IAS 2.16(a)), not stock value (Dr Stock Adjustment Expense / Cr WIP). A normal rework keeps its
+        // cost in the units.
+        BigDecimal reworkLoss = BigDecimal.ZERO;
+        if ("rework".equals(order.get("orderKind")) && "abnormal".equals(order.get("reworkTreatment"))) {
+            BigDecimal carried = db.jdbc().sql("SELECT coalesce(sum(\"totalCost\"), 0) FROM \"ProductionMaterial\" WHERE"
+                    + " \"organizationId\" = ? AND \"orderId\" = ? AND \"productId\" = ?").params(MfgDb.org(), id,
+                            order.get("outputProductId")).query(BigDecimal.class).single();
+            reworkLoss = pool.subtract(carried).max(BigDecimal.ZERO);
+            if (reworkLoss.signum() > 0) {
+                stockPosting.postProductionScrap(reworkLoss, date, SOURCE, code, "Abnormal rework · " + code);
+                pool = pool.subtract(reworkLoss);
+            }
+        }
+
         // 2) Main output absorbs the remaining pool; dividing by ACTUAL produced absorbs normal scrap.
         BigDecimal qtyProducedBase = uom.toBase(dto.qtyProduced(),
                 dto.uomId() != null ? dto.uomId() : str(order, "uomId"), str(outProduct, "id"),
@@ -567,6 +601,7 @@ public class ProductionService {
         data.put("totalCost", totalCost);
         data.put("outputUnitCost", outputUnitCost);
         data.put("yieldVariance", yieldVariance);
+        data.put("reworkLoss", reworkLoss);
         data.put("batchNumber", mainBatch != null ? mainBatch : order.get("batchNumber"));
         data.put("completedAt", qc ? null : date);
         data.put("postedAt", Instant.now());
@@ -828,6 +863,22 @@ public class ProductionService {
         }
         // 2) Materials back to their source location, clearing WIP (Dr Stock Valuation / Cr WIP).
         returnMaterials(order, "production_reversal", date, "Production reversal · " + code);
+        // 2b) Review 2026-11-17 (ACR-5; deviation: Nest left it): the overhead the complete leg absorbed into WIP leaves
+        // it again (Dr Overhead Absorbed / Cr WIP). Step 1 put the full output value — materials plus overhead — back
+        // into WIP and step 2 took only the materials out, so WIP kept a debit equal to the overhead and the period's
+        // absorbed-overhead credit stayed as if the order had produced.
+        BigDecimal overhead = dec(order, "overheadCost");
+        if (overhead.signum() > 0) {
+            stockPosting.postOverheadAbsorptionReversal(overhead, date, "production_reversal", code,
+                    "Overhead absorption reversed · " + code);
+        }
+        // 2c) Review 2026-11-17 (rework costing): the loss an abnormal rework expensed goes back into WIP with it
+        // (Dr WIP / Cr Stock Adjustment Expense); steps 2 and 2b took the whole rework cost out of WIP.
+        BigDecimal reworkLoss = dec(order, "reworkLoss");
+        if (reworkLoss.signum() > 0) {
+            stockPosting.postProductionScrapReversal(reworkLoss, date, "production_reversal", code,
+                    "Abnormal rework loss reversed · " + code);
+        }
         // 3) ADR-S008: standard-cost variances of the order are reversed with it.
         String varianceJe = db.jdbc().sql("SELECT \"varianceJournalEntryId\" FROM \"ProductionOrder\" WHERE id = ?")
                 .param(id).query(String.class).optional().orElse(null);

@@ -52,10 +52,15 @@ public class CostCloseService {
     private final InventoryValuationService valuation;
     private final AuditService audit;
     private final JsonMapper json;
+    private final AbsorptionSettlementService absorption;
+    private final QuarryCostingService quarryCosting;
 
     public CostCloseService(JdbcClient jdbc, CostAdjustmentService adjustments, InventoryValuationService valuation,
-            AuditService audit, JsonMapper json) {
+            AuditService audit, JsonMapper json, AbsorptionSettlementService absorption,
+            QuarryCostingService quarryCosting) {
         this.jdbc = jdbc;
+        this.absorption = absorption;
+        this.quarryCosting = quarryCosting;
         this.adjustments = adjustments;
         this.valuation = valuation;
         this.audit = audit;
@@ -76,6 +81,15 @@ public class CostCloseService {
 
     private static String status(boolean applicable, boolean ok) {
         return !applicable ? "n/a" : ok ? "pass" : "fail";
+    }
+
+    /** "; not settled: WC1, WC2" — what still blocks a gate, by code (at most ten). */
+    private static String missing(String what, List<String> codes) {
+        if (codes.isEmpty()) {
+            return "";
+        }
+        return "; " + what + ": " + String.join(", ", codes.subList(0, Math.min(10, codes.size())))
+                + (codes.size() > 10 ? " and " + (codes.size() - 10) + " more" : "");
     }
 
     /** The nine gates, in order, with the first failing one. */
@@ -100,8 +114,10 @@ public class CostCloseService {
         boolean capacities = count("SELECT count(*) FROM \"WorkCenterCapacity\" WHERE \"organizationId\" = ?", o) > 0;
         long settled = count("SELECT count(*) FROM \"AbsorptionSettlement\" WHERE \"organizationId\" = ? AND status ="
                 + " 'posted' AND \"periodFrom\" <= ? AND \"periodTo\" >= ?", o, t, f);
-        gates.add(gate(2, "absorption", "Absorption settled", status(capacities, settled > 0), settled
-                + " posted settlement(s) in the period"));
+        // Review 2026-11-17 (ACR-16): every work centre with overhead to settle, not any one settlement
+        List<String> unsettled = capacities ? absorption.unsettled(from, to) : List.of();
+        gates.add(gate(2, "absorption", "Absorption settled", status(capacities, unsettled.isEmpty()), settled
+                + " posted settlement(s) in the period" + missing("not settled", unsettled)));
 
         long cycles = count("SELECT count(*) FROM \"AllocationCycle\" WHERE \"organizationId\" = ? AND \"isActive\"", o);
         long unrun = count("SELECT count(*) FROM \"AllocationCycle\" c WHERE c.\"organizationId\" = ? AND c.\"isActive\""
@@ -113,8 +129,20 @@ public class CostCloseService {
         boolean stock = count("SELECT count(*) FROM \"StockItem\" WHERE \"organizationId\" = ? AND quantity > 0", o) > 0;
         long nrv = count("SELECT count(*) FROM \"InventoryRevaluation\" WHERE \"organizationId\" = ? AND kind = 'nrv' AND"
                 + " status = 'posted' AND \"revaluationDate\" BETWEEN ? AND ?", o, f, t);
-        gates.add(gate(4, "nrv", "NRV review done", status(stock, nrv > 0), nrv + " posted NRV review(s) in the"
-                + " period"));
+        // Review 2026-11-17 (ACR-16; deviation): every item still carrying an NRV write-down is re-assessed in the period
+        // (IAS 2.33), not just any one review posted
+        List<String> unreviewed = stock ? jdbc.sql("SELECT p.code || ' @ ' || loc.name FROM (SELECT \"productId\","
+                + " coalesce(\"variantId\", '') AS v, \"locationId\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"valuationComponent\" = 'nrv_allowance' GROUP BY 1, 2, 3 HAVING sum(\"totalValue\") < 0) a JOIN"
+                + " \"StockItem\" s ON s.\"organizationId\" = ? AND s.\"productId\" = a.\"productId\" AND s.\"variantKey\" = a.v"
+                + " AND s.\"locationId\" = a.\"locationId\" AND s.quantity > 0 JOIN \"Product\" p ON p.id = a.\"productId\" JOIN"
+                + " \"InventoryLocation\" loc ON loc.id = a.\"locationId\" WHERE NOT EXISTS (SELECT 1 FROM"
+                + " \"InventoryRevaluationLine\" l JOIN \"InventoryRevaluation\" r ON r.id = l.\"revaluationId\" WHERE"
+                + " r.\"organizationId\" = ? AND r.kind = 'nrv' AND r.status = 'posted' AND r.\"revaluationDate\" BETWEEN ? AND"
+                + " ? AND l.\"productId\" = a.\"productId\" AND coalesce(l.\"variantId\", '') = a.v AND l.\"locationId\" ="
+                + " a.\"locationId\") ORDER BY 1").params(o, o, o, f, t).query(String.class).list() : List.of();
+        gates.add(gate(4, "nrv", "NRV review done", status(stock, nrv > 0 && unreviewed.isEmpty()), nrv
+                + " posted NRV review(s) in the period" + missing("written down but not re-assessed", unreviewed)));
 
         long obligations = count("SELECT count(*) FROM \"QuarryRehabObligation\" WHERE \"organizationId\" = ? AND status"
                 + " = 'open'", o);
@@ -125,9 +153,12 @@ public class CostCloseService {
         long amortised = count("SELECT count(*) FROM \"QuarryStrippingMovement\" WHERE \"organizationId\" = ? AND type ="
                 + " 'amortise' AND status = 'posted' AND \"periodFrom\" <= ? AND \"periodTo\" >= ?", o, t, f);
         boolean quarry = obligations > 0 || assets > 0;
+        // Review 2026-11-17 (ACR-16): every provision and every stripping asset that has something to post
+        List<String> toUnwind = obligations > 0 ? quarryCosting.unwindingDue(from, to) : List.of();
+        List<String> toAmortise = assets > 0 ? quarryCosting.amortisationDue(from, to) : List.of();
         gates.add(gate(5, "quarry", "Stripping amortisation and provision unwinding posted", status(quarry,
-                (obligations == 0 || unwound > 0) && (assets == 0 || amortised > 0)), "unwinding " + unwound
-                + ", amortisation " + amortised));
+                toUnwind.isEmpty() && toAmortise.isEmpty()), "unwinding " + unwound + ", amortisation " + amortised
+                + missing("not unwound", toUnwind) + missing("not amortised", toAmortise)));
 
         long contracts = count("SELECT count(*) FROM \"Project\" p WHERE p.\"organizationId\" = ? AND p.status IN"
                 + " ('active', 'completed') AND p.\"customerId\" IS NOT NULL AND EXISTS (SELECT 1 FROM \"ProjectCostLine\""

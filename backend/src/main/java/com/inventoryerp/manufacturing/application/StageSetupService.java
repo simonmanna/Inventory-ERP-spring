@@ -201,6 +201,7 @@ public class StageSetupService {
             row.put("nrvUnitValue", c.nrvUnitValue());
             row.put("marketValue", c.marketValue());
             row.put("weightPerUnit", c.weightPerUnit());
+            row.put("separableCostPerUnit", c.separableCostPerUnit());
             row.put("fixedPct", c.fixedPct());
             row.put("stocked", c.stocked() == null || c.stocked());
             row.put("locationId", c.locationId());
@@ -254,6 +255,7 @@ public class StageSetupService {
         builtin.put("method", "quantity");
         builtin.put("mainWeightPerUnit", null);
         builtin.put("mainMarketValue", null);
+        builtin.put("mainSeparableCostPerUnit", null);
         builtin.put("source", "default");
         return builtin;
     }
@@ -276,6 +278,7 @@ public class StageSetupService {
         data.put("method", dto.method());
         data.put("mainWeightPerUnit", dto.mainWeightPerUnit());
         data.put("mainMarketValue", dto.mainMarketValue());
+        data.put("mainSeparableCostPerUnit", dto.mainSeparableCostPerUnit());
         data.put("notes", dto.notes());
         Map<String, Object> existing = ruleRow(bomId);
         if (existing == null) {

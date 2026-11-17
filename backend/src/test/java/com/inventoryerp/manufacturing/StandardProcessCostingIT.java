@@ -157,6 +157,25 @@ class StandardProcessCostingIT extends MfgTestSupport {
     }
 
     @Test
+    @DisplayName("ACR-13: reversing an order produced at standard offsets its variance rows — the material ledger and"
+            + " the variance reports pool nothing of it")
+    void reversedOrderVariancesOffset() {
+        String flour = product("RFLOUR");
+        String cake = product("RCAKE");
+        stockIn(bakery, flour, 10, 5000);
+        activateStandard(cake, 900, true);
+        String bomId = bom(cake, flour, 20, 4, Map.of());
+        String id = started(bomId).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/complete", Map.of("qtyProduced", 20));
+        String sum = "SELECT coalesce(sum(amount), 0) FROM \"StandardCostVariance\" WHERE \"organizationId\" = ? AND"
+                + " \"productId\" = ?";
+        assertThat(jdbc.sql(sum).params(demoOrg, cake).query(BigDecimal.class).single()).isEqualByComparingTo("2000");
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/reverse", Map.of());
+        assertThat(jdbc.sql(sum).params(demoOrg, cake).query(BigDecimal.class).single()).as("offset on the reversal")
+                .isZero();
+    }
+
+    @Test
     @DisplayName("process costing: MIX (WA) → GRIND → cement stock; EU, transfer, closing WIP carried forward")
     void processCosting() {
         String limestone = product("LIME");

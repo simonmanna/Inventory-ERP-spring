@@ -8,6 +8,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.AccountingPolicyService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.costing.application.AbsorptionSettlementCalculator.Decomposition;
 import com.inventoryerp.costing.application.AbsorptionSettlementCalculator.Inputs;
@@ -15,10 +16,7 @@ import com.inventoryerp.costing.application.AbsorptionSettlementCalculator.Plan;
 import com.inventoryerp.costing.application.AbsorptionSettlementCalculator.Treatment;
 import com.inventoryerp.shared.costing.AllocationCalculator.Receiver;
 import com.inventoryerp.shared.costing.AllocationCalculator.Rounding;
-import com.inventoryerp.inventory.application.AvcoLineageCalculator.Distribution;
-import com.inventoryerp.inventory.application.AvcoLineageCalculator.Share;
 import com.inventoryerp.inventory.application.CostLineageService;
-import com.inventoryerp.inventory.application.CostLineageService.AdjustmentInput;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -91,25 +89,29 @@ public class AbsorptionSettlementService {
 
     /** One computed settlement line before posting. */
     record Computed(Treatment t, String target, String orderId, Layer layer, String accountId, BigDecimal amount,
-            Distribution distribution) {}
+            LineageCapitalisation.Part part) {}
 
     private final JdbcClient jdbc;
     private final SequenceService seq;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final AccountResolverService accounts;
     private final AccountingPolicyService policies;
     private final CostLineageService lineage;
     private final CostAbsorptionService absorption;
     private final AuditService audit;
+    private final LineageCapitalisation capitalisation;
 
     public AbsorptionSettlementService(JdbcClient jdbc, SequenceService seq, PostingService posting,
             AccountDeterminationService determination, AccountResolverService accounts,
             AccountingPolicyService policies, CostLineageService lineage, CostAbsorptionService absorption,
-            AuditService audit) {
+            AuditService audit, CostingReversals reversals, LineageCapitalisation capitalisation) {
+        this.capitalisation = capitalisation;
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.accounts = accounts;
         this.policies = policies;
@@ -315,14 +317,20 @@ public class AbsorptionSettlementService {
                         + " amount FROM \"ProductionCostAbsorption\" a JOIN \"ProductionOrder\" o ON o.id = a.\"orderId\""
                         + " LEFT JOIN \"ProductionStagePosting\" p ON p.id = a.\"stagePostingId\" WHERE"
                         + " a.\"organizationId\" = ? AND a.\"workCenterId\" = ? AND a.\"createdAt\" >= ? AND"
-                        + " a.\"createdAt\" < ? AND p.\"reversedAt\" IS NULL GROUP BY a.\"orderId\", o.\"orderCode\","
+                        + " a.\"createdAt\" < ? AND p.\"reversedAt\" IS NULL"
+                        // ACR-12: a cancelled plain order's absorption is not in the books — never posted (cancelled
+                        // before completion) or taken back out by the reversal (ACR-5)
+                        + " AND NOT (a.\"stagePostingId\" IS NULL AND o.status::text = 'cancelled')"
+                        + " GROUP BY a.\"orderId\", o.\"orderCode\","
                         + " o.status, o.\"postedAt\" ORDER BY o.\"orderCode\"")
                 .params(org(), in.workCenterId(), start, end))) {
             String status = (String) r.get("status");
+            // ACR-12: a cancelled order never completes; its posted stage absorption is settled like any other (no
+            // output layers → cost of sales) instead of blocking every settlement of the centre forever.
             if (Boolean.TRUE.equals(r.get("plain")) && r.get("postedAt") == null) {
                 blockers.add("Production order " + r.get("orderCode") + " has absorbed cost that is not posted yet;"
                         + " complete the order first (timing)");
-            } else if (!Set.of("completed", "closed", "qc_hold").contains(status)) {
+            } else if (!Set.of("completed", "closed", "qc_hold", "cancelled").contains(status)) {
                 blockers.add("Production order " + r.get("orderCode") + " is still open; settle once it has"
                         + " completed (timing)");
             }
@@ -448,42 +456,18 @@ public class AbsorptionSettlementService {
                 out.add(new Computed(t, "cogs", os.key(), null, determination.mapped("cogs"), os.amount(), null));
                 continue;
             }
-            List<Receiver> byValue = layers.stream().map(l -> new Receiver(l.ledgerId(), l.value().max(
-                    BigDecimal.ONE.movePointLeft(6)))).toList();
             Map<String, Layer> byId = new LinkedHashMap<>();
             layers.forEach(l -> byId.put(l.ledgerId(), l));
-            for (AllocationCalculator.Share ls : AllocationCalculator.allocate(os.amount(), byValue,
-                    Rounding.LARGEST_REMAINDER, 2)) {
-                Layer layer = byId.get(ls.key());
-                Distribution d = signed(lineage.distribute(layer.ledgerId(), ls.amount().abs()), ls.amount().signum());
-                Map<String, BigDecimal> targets = lineage.byTarget(d);
-                targets.forEach((target, amount) -> {
-                    if (amount.signum() != 0) {
-                        out.add(new Computed(t, target, os.key(), layer, account(target, layer.productId()), amount,
-                                d));
-                    }
-                });
+            // Review 2026-11-17 (ACR-9; deviation): each share follows its goods through transfers — on hand at the
+            // destination → adjunct there, consumed there → its target — instead of riding on the source pool's adjunct.
+            for (LineageCapitalisation.Part p : capitalisation.spreadFollowing(os.amount(), layers.stream()
+                    .map(l -> new LineageCapitalisation.Layer(l.ledgerId(), l.productId(), l.variantId(), l.locationId(),
+                            l.value())).toList())) {
+                out.add(new Computed(t, p.target(), os.key(), byId.get(p.layer().ledgerId()), p.accountId(), p.amount(),
+                        p));
             }
         }
         return out;
-    }
-
-    private String account(String target, String productId) {
-        return switch (target) {
-            case "on_hand", "transfer" -> lineage.priceDifferenceAccount();
-            case "wip" -> determination.mapped("wip");
-            case "scrap" -> determination.mapped("stock_adjustment_expense");
-            default -> determination.mapped("cogs");
-        };
-    }
-
-    private static Distribution signed(Distribution d, int sign) {
-        if (sign >= 0) {
-            return d;
-        }
-        return new Distribution(d.negativeStock().negate(), d.consumed().stream().map(s -> new Share(s.ledgerId(),
-                s.moveType(), s.referenceType(), s.referenceId(), s.amount().negate())).toList(), d.onHand().negate(),
-                d.survival());
     }
 
     /** Output receipts of a production order (plain or staged), in posting order. */
@@ -498,6 +482,33 @@ public class AbsorptionSettlementService {
                         + " ORDER BY l.\"createdAt\", l.\"ledgerCode\"").params(orderId, org()))) {
             out.add(new Layer(orderId, (String) r.get("id"), (String) r.get("productId"), (String) r.get("variantId"),
                     (String) r.get("locationId"), SqlRows.dec(r, "totalValue").abs()));
+        }
+        return out;
+    }
+
+    /**
+     * Review 2026-11-17 (ACR-16; deviation): the work centres whose overhead for the period still has to be settled —
+     * an approved normal capacity in force, actual and absorbed apart, and no posted settlement in the period. The cost
+     * close gate passes only when this is empty (it passed on any one settlement before).
+     */
+    @Transactional
+    public List<String> unsettled(LocalDate from, LocalDate to) {
+        LocalDate end = to.isAfter(today()) ? today() : to;
+        List<String> out = new ArrayList<>();
+        if (end.isBefore(from)) {
+            return out;
+        }
+        for (Map<String, Object> wc : SqlRows.list(jdbc.sql("SELECT DISTINCT w.id, w.code FROM \"WorkCenterCapacity\" c"
+                        + " JOIN \"WorkCenter\" w ON w.id = c.\"workCenterId\" WHERE c.\"organizationId\" = ? AND c.status ="
+                        + " 'approved' AND c.\"effectiveFrom\" <= ? AND NOT EXISTS (SELECT 1 FROM \"AbsorptionSettlement\" s"
+                        + " WHERE s.\"organizationId\" = c.\"organizationId\" AND s.\"workCenterId\" = w.id AND s.status ="
+                        + " 'posted' AND s.\"periodFrom\" <= ? AND s.\"periodTo\" >= ?) ORDER BY w.code")
+                .params(org(), Date.valueOf(end), Date.valueOf(to), Date.valueOf(from)))) {
+            Map<String, Object> a = analyse(new SettleInput((String) wc.get("id"), from.toString(), end.toString(), null,
+                    null), new ArrayList<>());
+            if (a.get("decomposition") instanceof Decomposition d && d.total().signum() != 0) {
+                out.add((String) wc.get("code"));
+            }
         }
         return out;
     }
@@ -567,20 +578,12 @@ public class AbsorptionSettlementService {
                         d.rateError(), blankToNull(in.classification()), blankToNull(in.justification()), entryId,
                         TenantContext.userId())
                 .update();
-        Map<Distribution, String> recorded = new java.util.IdentityHashMap<>();
+        List<LineageCapitalisation.Part> parts = computed.stream().map(Computed::part).filter(java.util.Objects::nonNull)
+                .toList();
+        Map<LineageCapitalisation.Part, String> recorded = parts.isEmpty() ? Map.of()
+                : capitalisation.record(parts, "overhead_settlement", SOURCE, id, entryId, "Overhead settlement " + number);
         for (Computed c : computed) {
-            String adjustmentId = c.distribution() == null ? null : recorded.get(c.distribution());
-            if (c.layer() != null && c.distribution() != null && adjustmentId == null) {
-                Layer l = c.layer();
-                BigDecimal amount = c.distribution().total();
-                BigDecimal adjunct = c.distribution().onHand().add(transferred(c.distribution()));
-                lineage.recordValueOnly(l.productId(), l.variantId(), l.locationId(), null, adjunct, SOURCE, id,
-                        "price_difference", "Overhead settlement " + number);
-                adjustmentId = lineage.recordAdjustment(new AdjustmentInput("overhead_settlement", SOURCE, id,
-                        l.productId(), l.variantId(), l.locationId(), null, l.ledgerId(), amount, "price_difference",
-                        entryId, c.distribution()));
-                recorded.put(c.distribution(), adjustmentId);
-            }
+            String adjustmentId = c.part() == null ? null : recorded.get(c.part());
             jdbc.sql("INSERT INTO \"AbsorptionSettlementLine\" (id, \"organizationId\", \"settlementId\", component,"
                             + " cause, treatment, target, \"orderId\", \"productId\", \"layerLedgerId\", \"adjustmentId\","
                             + " \"accountId\", amount) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -594,12 +597,6 @@ public class AbsorptionSettlementService {
         return get(id);
     }
 
-    /** Transferred shares stay in inventory: they ride on the adjunct of the source pool (ADR-S031). */
-    private BigDecimal transferred(Distribution d) {
-        return d.consumed().stream().filter(s -> "transfer_out".equals(s.moveType())).map(Share::amount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
-
     /** Reverse a posted settlement while none of its inventory share has been released. */
     @Transactional
     public Map<String, Object> reverse(String id) {
@@ -611,6 +608,8 @@ public class AbsorptionSettlementService {
         if (!"posted".equals(s.get("status"))) {
             throw ApiException.badRequest("Only a posted settlement can be reversed");
         }
+        capitalisation.assertNotCascaded(SOURCE, id);
+        capitalisation.assertNoResolvedExceptions(SOURCE, id);
         List<Map<String, Object>> adjustments = SqlRows.list(jdbc.sql("SELECT * FROM \"CostValueAdjustment\" WHERE"
                 + " \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ? AND \"reversedAt\" IS NULL")
                 .params(org(), SOURCE, id));
@@ -622,16 +621,11 @@ public class AbsorptionSettlementService {
         }
         String reversal = null;
         if (s.get("journalEntryId") != null) {
-            Map<String, Object> rev = posting.reverse((String) s.get("journalEntryId"), Instant.now(),
+            Map<String, Object> rev = reversals.reverse((String) s.get("journalEntryId"),
                     "Reversal of " + s.get("number"));
             reversal = (String) rev.get("id");
         }
-        for (Map<String, Object> adj : adjustments) {
-            lineage.recordValueOnly((String) adj.get("productId"), (String) adj.get("variantId"),
-                    (String) adj.get("locationId"), null, SqlRows.dec(adj, "onHandAmount").negate(), "reversal",
-                    (String) s.get("journalEntryId"), "price_difference", "Reversal of " + s.get("number"));
-        }
-        lineage.closeAdjustments(SOURCE, id);
+        capitalisation.reverse(SOURCE, id, (String) s.get("journalEntryId"), "Reversal of " + s.get("number"));
         jdbc.sql("UPDATE \"AbsorptionSettlement\" SET status = 'reversed', \"reversalEntryId\" = ?, \"reversedAt\" ="
                 + " now() WHERE id = ?").params(reversal, id).update();
         audit.recordInTx(AuditInput.of("AbsorptionSettlement", id, "cancel", null, Obj.of("reversalEntryId",

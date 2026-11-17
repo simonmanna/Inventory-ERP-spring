@@ -31,6 +31,9 @@ public class StockPostingController {
             @OneOf({"resolved", "discarded"}) String status,
             @NotNull(message = STR) String note) {}
 
+    /** Abandon a failed job (review 2026-11-17, ACR-17): how the sale was corrected instead. */
+    public record AbandonJobRequest(@NotNull(message = STR) String note) {}
+
     /** {@code AssignExceptionDto}. */
     public record AssignExceptionRequest(@NotNull(message = STR) String assignedToId) {}
 
@@ -57,6 +60,13 @@ public class StockPostingController {
     @RequirePermissions(Permissions.POS__OVERRIDE)
     public Map<String, Object> retryJob(@PathVariable String id) {
         return svc.retryJob(id);
+    }
+
+    @PostMapping("/jobs/{id}/abandon")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.POS__OVERRIDE)
+    public Map<String, Object> abandonJob(@PathVariable String id, @Valid @RequestBody AbandonJobRequest dto) {
+        return svc.abandonJob(id, dto.note());
     }
 
     @GetMapping("/exceptions")

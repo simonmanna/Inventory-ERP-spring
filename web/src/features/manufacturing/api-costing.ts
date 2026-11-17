@@ -32,14 +32,23 @@ export interface OrderCost {
 }
 export interface MaterialVariance {
   productId: string; productName: string; plannedQty: Num; actualQty: Num; standardUnitCost: Num; priceVariance: Num; usageVariance: Num;
+  /** Review 2026-11-17: the usage variance split into mix and input yield (two or more materials in one unit). */
+  mixVariance?: Num | null; inputYieldVariance?: Num | null;
 }
+/** Review 2026-11-17: one line of the variance breakdown; a line with a parent is a split of that line. */
+export interface VarianceLine { key: string; parent: string | null; label: string; explanation: string; amount: Num | null }
+export interface VarianceReconciliation { actualCost: Num; standardCost: Num; standardBasis: string; variances: Num; unexplained: Num }
 export interface OrderVariances {
   materials: MaterialVariance[]; materialPrice: Num; materialUsage: Num; labourEfficiency: Num; overhead: Num; yield: Num;
   total: Num; actualHours: Num; standardHours: Num; expectedOutput: Num; producedQty: Num; standardUnitCost: Num;
+  materialMix?: Num | null; materialInputYield?: Num | null; mixNote?: string | null; labourRate?: Num; machine?: Num;
+  machineSpending?: Num; machineEfficiency?: Num; energy?: Num; overheadSpending?: Num; overheadEfficiency?: Num;
+  lines?: VarianceLine[]; reconciliation?: VarianceReconciliation;
 }
 export interface VarianceRow {
   orderId?: string; orderCode?: string; productId?: string; productName: string; materialPrice: Num; materialUsage: Num;
   labourEfficiency: Num; overhead: Num; yield: Num; total: Num;
+  materialMix?: Num; materialInputYield?: Num; labourRate?: Num; machine?: Num; energy?: Num;
 }
 export interface VarianceSummary { totals: VarianceRow; byProduct: VarianceRow[]; orders: VarianceRow[] }
 export interface CostSummary {

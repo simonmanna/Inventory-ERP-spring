@@ -19,6 +19,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Posting Monitor back-office API over {@code StockPostingJob} / {@code InventoryException}, plus the per-shift
@@ -144,6 +145,49 @@ public class PosStockPostingService {
         audit.record(AuditInput.of("StockPostingJob", id, "update", null,
                 Obj.of("retried", true, "from", status, "invoiceNumber", job.get("invoiceNumber"))));
         return Obj.of("id", updated.get("id"), "status", updated.get("status"));
+    }
+
+    /**
+     * Abandon a FAILED job that can never post (review 2026-11-17, ACR-17; deviation: Nest had no way out). Its
+     * exceptions were the only other exit, and resolving them left the job failed — which blocks the period close
+     * forever. The note records how the sale's stock and cost of sales were corrected instead (a manual adjustment,
+     * usually). The job keeps its error and history and is never claimed again; its open exceptions are discarded with
+     * the same note. Compare-and-set on {@code failed}, as {@link #retryJob}.
+     */
+    @Transactional
+    public Map<String, Object> abandonJob(String id, String note) {
+        if (note == null || note.trim().length() < 10) {
+            throw ApiException.badRequest("A note of at least 10 characters is required — record how the sale's stock"
+                    + " and cost of sales were corrected");
+        }
+        Map<String, Object> job = db.first(StockPostingJob.class, "id = ? AND \"organizationId\" = ?", id, org());
+        if (job == null) {
+            throw ApiException.notFound("Stock posting job not found");
+        }
+        if (!"failed".equals(job.get("status"))) {
+            throw ApiException.badRequest("Only failed jobs can be abandoned (this one is " + job.get("status") + ")");
+        }
+        String text = note.trim();
+        int changed = db.jdbc().sql("UPDATE \"StockPostingJob\" SET status = 'abandoned', \"processedAt\" = " + NOW
+                + " WHERE id = ? AND \"organizationId\" = ? AND status = 'failed' AND \"claimToken\" IS NULL")
+                .params(id, org()).update();
+        if (changed == 0) {
+            Object now = db.jdbc().sql("SELECT status::text FROM \"StockPostingJob\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(id, org()).query(String.class).optional().orElse(null);
+            throw ApiException.conflict("Stock posting job changed while abandoning (now " + now
+                    + "); refresh and try again");
+        }
+        int discarded = 0;
+        if (job.get("invoiceId") != null) {
+            discarded = db.jdbc().sql("UPDATE \"InventoryException\" SET status = 'discarded', \"resolutionNote\" = ?,"
+                    + " \"resolvedById\" = ?, \"resolvedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND status = 'open'"
+                    + " AND \"invoiceId\" = ?").params("Stock posting job abandoned: " + text, user(), org(),
+                    job.get("invoiceId")).update();
+        }
+        audit.record(AuditInput.of("StockPostingJob", id, "update", Obj.of("status", "failed"), Obj.of("status",
+                "abandoned", "note", text, "invoiceNumber", job.get("invoiceNumber"), "exceptionsDiscarded",
+                discarded)));
+        return Obj.of("id", id, "status", "abandoned", "exceptionsDiscarded", discarded);
     }
 
     public Map<String, Object> assignException(String id, String assignedToId) {

@@ -95,4 +95,48 @@ class AllocationCalculatorTest {
         assertThatThrownBy(() -> AllocationCalculator.reciprocal(direct, loop)).isInstanceOf(ApiException.class)
                 .hasMessageContaining("no solution");
     }
+
+    @Test
+    @DisplayName("reciprocal, ACR-7: centres passing 99 % to each other are solved exactly (the 100-round iteration"
+            + " left a third of the cost behind)")
+    void reciprocalExactWhenServiceCentresMostlyServeEachOther() {
+        Map<String, BigDecimal> direct = new LinkedHashMap<>();
+        direct.put("S1", d("100"));
+        direct.put("S2", d("0"));
+        Map<String, Map<String, BigDecimal>> f = new LinkedHashMap<>();
+        f.put("S1", Map.of("S2", d("0.99"), "P1", d("0.01")));
+        f.put("S2", Map.of("S1", d("0.99"), "P2", d("0.01")));
+        Map<String, BigDecimal> t = AllocationCalculator.reciprocal(direct, f);
+        // T1 = 100 / (1 − 0.99²) = 5025.1256…, T2 = 0.99 · T1 = 4974.8743…
+        assertThat(t.get("S1").setScale(4, java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("5025.1256");
+        assertThat(t.get("S2").setScale(4, java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("4974.8744");
+        // What leaves the service centres for production is exactly their direct cost.
+        BigDecimal out = t.get("S1").multiply(d("0.01")).add(t.get("S2").multiply(d("0.01")));
+        assertThat(out.setScale(8, java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("100");
+        // Each equation holds to well below a cent.
+        assertThat(t.get("S1").subtract(d("100")).subtract(t.get("S2").multiply(d("0.99"))).abs())
+                .isLessThan(d("1e-20"));
+    }
+
+    @Test
+    @DisplayName("reciprocal, ACR-7: three centres in a ring, and a sender outside the service set is ignored")
+    void reciprocalThreeCentres() {
+        Map<String, BigDecimal> direct = new LinkedHashMap<>();
+        direct.put("A", d("300"));
+        direct.put("B", d("200"));
+        direct.put("C", d("100"));
+        Map<String, Map<String, BigDecimal>> f = new LinkedHashMap<>();
+        f.put("A", Map.of("B", d("0.5"), "P", d("0.5")));
+        f.put("B", Map.of("C", d("0.5"), "P", d("0.5")));
+        f.put("C", Map.of("A", d("0.5"), "P", d("0.5")));
+        f.put("X", Map.of("A", d("0.9")));
+        Map<String, BigDecimal> t = AllocationCalculator.reciprocal(direct, f);
+        // A = 300 + C/2, B = 200 + A/2, C = 100 + B/2 → A = 3200/7, B = 3000/7, C = 2200/7
+        assertThat(t.get("A").setScale(6, java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("457.142857");
+        assertThat(t.get("B").setScale(6, java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("428.571429");
+        assertThat(t.get("C").setScale(6, java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("314.285714");
+        // Half of every total goes to production: exactly the 600 of direct cost.
+        assertThat(t.get("A").add(t.get("B")).add(t.get("C")).multiply(d("0.5")).setScale(8,
+                java.math.RoundingMode.HALF_UP)).isEqualByComparingTo("600");
+    }
 }
