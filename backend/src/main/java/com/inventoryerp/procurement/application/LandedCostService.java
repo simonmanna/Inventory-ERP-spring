@@ -199,6 +199,12 @@ public class LandedCostService {
             throw ApiException.badRequest("This is a landed cost voucher; post it through /procurement/landed-cost-vouchers");
         }
         return tx.execute(st -> {
+            // Readiness gap h-05 F6: the receipt is locked before the landed cost is claimed, the order a receipt
+            // reversal takes them in (it locks the receipt, re-checks for posted landed cost, then cancels drafts), so
+            // the post either sees the receipt reversed or the reversal sees the landed cost posted.
+            jdbc.sql("SELECT g.id FROM \"GoodsReceiptNote\" g JOIN \"LandedCost\" l ON l.\"goodsReceiptId\" = g.id WHERE"
+                    + " l.id = ? AND l.\"organizationId\" = ? AND g.\"organizationId\" = ? FOR UPDATE OF g")
+                    .params(id, orgId, orgId).query().listOfRows();
             int claim = jdbc.sql("UPDATE \"LandedCost\" SET status = 'posted', \"postedAt\" = " + NOW + ", \"postedById\""
                     + " = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft'")
                     .params(user(), id, orgId).update();
@@ -216,7 +222,7 @@ public class LandedCostService {
                 throw ApiException.badRequest("The goods receipt is no longer posted; landed cost cannot be applied");
             }
             List<Map<String, Object>> grnLines = SqlRows.list(jdbc.sql("SELECT * FROM \"GoodsReceiptLine\" WHERE"
-                    + " \"goodsReceiptId\" = ?").param(grn.get("id")));
+                    + " \"goodsReceiptId\" = ? ORDER BY \"lineNumber\", id").param(grn.get("id")));
             Instant lcDate = (Instant) lc.get("date");
             assertPeriodOpen(lcDate);
 
@@ -227,7 +233,7 @@ public class LandedCostService {
                             + " p.\"batchTracking\" AS \"p_batchTracking\", p.\"serialTracking\" AS \"p_serialTracking\""
                             + " FROM \"InventoryLedger\" l JOIN \"Product\" p ON p.id = l.\"productId\""
                             + " WHERE l.\"organizationId\" = ? AND l.\"referenceType\" = 'goods_receipt'"
-                            + " AND l.\"referenceId\" = ? AND l.\"quantityChange\" > 0 ORDER BY l.\"createdAt\" ASC")
+                            + " AND l.\"referenceId\" = ? AND l.\"quantityChange\" > 0 ORDER BY l.\"createdAt\" ASC, l.id")
                     .params(orgId, grn.get("id")));
             if (rows.isEmpty()) {
                 throw ApiException.badRequest(grn.get("receiptNumber") + " put no goods into stock; nothing to allocate to");
@@ -260,6 +266,8 @@ public class LandedCostService {
             BigDecimal capitalizedTotal = Money.ZERO;
             BigDecimal expensedTotal = Money.ZERO;
             List<LandedLine> glLines = new ArrayList<>();
+            // h-05 F13: every pool this posting re-costs, locked once in the engine's order before any split.
+            layers.lockPools(list.stream().map(g -> new LandedCostLayers.Pool((String) grn.get("id"), g)).toList());
             for (int i = 0; i < list.size(); i++) {
                 Group g = list.get(i);
                 // The last group absorbs rounding so Σ = total exactly.
@@ -277,22 +285,7 @@ public class LandedCostService {
                 String batchNumber = g.batchId() == null ? null : jdbc.sql("SELECT \"batchNumber\" FROM \"InventoryBatch\""
                         + " WHERE id = ? AND \"organizationId\" = ?").params(g.batchId(), orgId).query(String.class)
                         .optional().orElse(null);
-                Map<String, Object> grnLine = null;
-                for (Map<String, Object> l : grnLines) {
-                    if (g.productId().equals(l.get("productId")) && batchNumber != null
-                            && batchNumber.equals(l.get("batchNumber"))) {
-                        grnLine = l;
-                        break;
-                    }
-                }
-                if (grnLine == null) {
-                    for (Map<String, Object> l : grnLines) {
-                        if (g.productId().equals(l.get("productId"))) {
-                            grnLine = l;
-                            break;
-                        }
-                    }
-                }
+                Map<String, Object> grnLine = lineOf(grnLines, g, batchNumber);
                 jdbc.sql("INSERT INTO \"LandedCostAllocation\" (id, \"organizationId\", \"landedCostId\","
                                 + " \"goodsReceiptLineId\", \"productId\", \"locationId\", \"batchId\", \"receivedQty\","
                                 + " \"onHandQty\", \"basisValue\", \"allocatedAmount\", \"capitalizedAmount\","
@@ -318,6 +311,37 @@ public class LandedCostService {
                     + " AND \"organizationId\" = ?").params(id, orgId));
             return withChildren(out);
         });
+    }
+
+    /**
+     * Readiness gap h-05 F10: the receipt line of a stock group — same product and variant (its lot number first), then
+     * a line of the product without a variant, then any line of the product.
+     */
+    private static Map<String, Object> lineOf(List<Map<String, Object>> grnLines, Group g, String batchNumber) {
+        for (boolean sameVariant : new boolean[] {true, false}) {
+            Map<String, Object> first = null;
+            for (Map<String, Object> l : grnLines) {
+                if (!g.productId().equals(l.get("productId")) || (sameVariant
+                        ? !java.util.Objects.equals(g.variantId(), l.get("variantId")) : l.get("variantId") != null)) {
+                    continue;
+                }
+                if (batchNumber != null && batchNumber.equals(l.get("batchNumber"))) {
+                    return l;
+                }
+                if (first == null) {
+                    first = l;
+                }
+            }
+            if (first != null) {
+                return first;
+            }
+        }
+        for (Map<String, Object> l : grnLines) {
+            if (g.productId().equals(l.get("productId"))) {
+                return l;
+            }
+        }
+        return null;
     }
 
     private static String nz(Object v) {

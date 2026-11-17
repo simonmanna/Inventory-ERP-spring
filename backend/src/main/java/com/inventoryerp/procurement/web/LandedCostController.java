@@ -21,6 +21,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -96,6 +97,10 @@ public class LandedCostController {
         return landedCosts.cancel(id);
     }
 
+    /** Optional body of a reversal (readiness gap h-06 F13): why the landed cost is reversed, kept in the audit trail. */
+    public record ReverseLandedCostRequest(@Size(max = 500, message = "reason must be shorter than or equal to 500"
+            + " characters") String reason) {}
+
     /**
      * Extension (Cost Management CM-6, ADR-S036; no Nest counterpart): reverse a posted per-receipt landed cost through
      * the voucher engine — capitalisation out of stock, entry reversed, the share sold since back to COGS.
@@ -103,8 +108,9 @@ public class LandedCostController {
     @PostMapping("/{id}/reverse")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.LANDED_COST__REVERSE)
-    public Map<String, Object> reverse(@PathVariable String id) {
-        vouchers.reverseReceipt(id);
+    public Map<String, Object> reverse(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReverseLandedCostRequest dto) {
+        vouchers.reverseReceipt(id, dto == null ? null : dto.reason());
         return landedCosts.get(id);
     }
 }
