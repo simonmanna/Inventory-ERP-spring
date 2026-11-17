@@ -155,6 +155,11 @@ function OverviewTab({ loc }: { loc: string }) {
               <TableCell>
                 {p.productName}
                 {p.mismatch && <Badge variant="destructive" className="ml-2">{tx('Bins exceed stock by {{qty}}', { qty: q(p.excessBinnedQty ?? 0) })}</Badge>}
+                {Number(p.awaitingShipQty ?? 0) > 0 && (
+                  <Badge variant="outline" className="ml-2" title={tx('A posted document already took these goods out of stock; they leave the bins when their pick order is picked and shipped.')}>
+                    {tx('{{qty}} issued, waiting to ship', { qty: q(p.awaitingShipQty) })}
+                  </Badge>
+                )}
               </TableCell>
               <TableCell className="text-right">{q(p.locationQty)}</TableCell>
               <TableCell className="text-right">{q(p.binnedQty)}</TableCell>
@@ -472,11 +477,15 @@ function PicksTab({ loc }: { loc: string }) {
           {purpose === 'manual' && (
             <p className="text-xs text-amber-700 dark:text-amber-400">
               {tx('Shipping a manual pick takes the stock out of inventory. Use it only when no sales order, delivery, stock-out or transfer will take out the same goods.')}
+              {' '}
+              {tx('Someone other than its creator, who may approve stock-outs, ships it, through the stock-out approval workflow when one applies.')}
             </p>
           )}
           {sourced && (
             <p className="text-xs text-muted-foreground">
               {tx('The document takes the stock out when it is posted; shipping this pick only records the shipment.')}
+              {' '}
+              {tx('Post the document before shipping: the pick order ships only once the document has taken the goods out.')}
             </p>
           )}
         </div>

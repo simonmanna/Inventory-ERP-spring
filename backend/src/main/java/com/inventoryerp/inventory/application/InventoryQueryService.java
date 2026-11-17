@@ -129,7 +129,11 @@ public class InventoryQueryService {
         return PageResult.of(data, page, size, total);
     }
 
-    /** All products with aggregated stock levels (+ reservations), one row per product. */
+    /**
+     * All products with aggregated stock levels (+ reservations), one row per product. h-01 F6: the low / out-of-stock
+     * filters run in SQL so only the page is mapped, each page is mapped with one query per kind of data, quantities
+     * stay decimal, and a branch-restricted user's {@code locationBreakdown} lists only the locations they may see.
+     */
     public PageResult<Map<String, Object>> listProductStockLevels(Map<String, String> query) {
         Map<String, String> q = scope.apply(query);
         int page = page(q.get("page"));
@@ -142,48 +146,34 @@ public class InventoryQueryService {
             String s = like(q.get("search"));
             params.addAll(List.of(s, s, s));
         }
-        boolean needsFilter = "true".equals(q.get("lowStock")) || "true".equals(q.get("outOfStock"));
-        if (needsFilter) {
-            List<Map<String, Object>> all = SqlRows.list(jdbc.sql("SELECT * FROM \"Product\" WHERE" + where
-                    + " ORDER BY name ASC").params(params));
-            List<Map<String, Object>> filtered = new ArrayList<>();
-            for (Map<String, Object> p : all) {
-                Map<String, Object> m = mapProduct(p, locationId, null);
-                if ("true".equals(q.get("lowStock")) && !(Boolean.TRUE.equals(m.get("isLow"))
-                        || Boolean.TRUE.equals(m.get("isOut")))) {
-                    continue;
-                }
-                if ("true".equals(q.get("outOfStock")) && !Boolean.TRUE.equals(m.get("isOut"))) {
-                    continue;
-                }
-                filtered.add(p);
+        boolean low = "true".equals(q.get("lowStock"));
+        boolean out = "true".equals(q.get("outOfStock"));
+        if (low || out) {
+            // The isOut / isLow rule of mapProduct: out = no stock; low = a minimum is set and stock is at most that.
+            List<Object> all = new ArrayList<>();
+            if (locationId != null) {
+                all.add(locationId);
             }
-            int fromIdx = Math.min(filtered.size(), (page - 1) * size);
-            List<Map<String, Object>> paged = filtered.subList(fromIdx, Math.min(filtered.size(), page * size));
-            Map<String, Double> reserved = loadReserved(paged, locationId);
-            List<Map<String, Object>> data = new ArrayList<>();
-            for (Map<String, Object> p : paged) {
-                data.add(mapProduct(p, locationId, reserved));
-            }
-            return PageResult.of(data, page, size, filtered.size());
+            all.addAll(params);
+            String stocked = "WITH p AS (SELECT \"Product\".*, (SELECT COALESCE(SUM(si.quantity), 0) FROM \"StockItem\" si"
+                    + " WHERE si.\"organizationId\" = \"Product\".\"organizationId\" AND si.\"productId\" = \"Product\".id"
+                    + (locationId != null ? " AND si.\"locationId\" = ?" : "") + ") AS stock_qty FROM \"Product\" WHERE"
+                    + where + ") ";
+            String cond = out ? " WHERE stock_qty <= 0"
+                    : " WHERE (stock_qty <= 0 OR (COALESCE(\"minQuantity\", 0) > 0 AND stock_qty <= \"minQuantity\"))";
+            List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(stocked + "SELECT * FROM p" + cond
+                    + " ORDER BY name ASC LIMIT " + size + " OFFSET " + (page - 1) * size).params(all));
+            long total = jdbc.sql(stocked + "SELECT count(*) FROM p" + cond).params(all).query(Long.class).single();
+            return PageResult.of(mapProducts(rows, locationId), page, size, total);
         }
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT * FROM \"Product\" WHERE" + where
                 + " ORDER BY name ASC LIMIT " + size + " OFFSET " + (page - 1) * size).params(params));
         long total = jdbc.sql("SELECT count(*) FROM \"Product\" WHERE" + where).params(params).query(Long.class).single();
-        Map<String, Double> reserved = loadReserved(rows, locationId);
-        List<Map<String, Object>> data = new ArrayList<>();
-        for (Map<String, Object> p : rows) {
-            data.add(mapProduct(p, locationId, reserved));
-        }
-        return PageResult.of(data, page, size, total);
+        return PageResult.of(mapProducts(rows, locationId), page, size, total);
     }
 
-    private Map<String, Double> loadReserved(List<Map<String, Object>> products, String locationId) {
-        Map<String, Double> out = new HashMap<>();
-        if (products.isEmpty()) {
-            return out;
-        }
-        List<String> ids = products.stream().map(p -> str(p, "id")).toList();
+    private Map<String, BigDecimal> loadReserved(List<String> ids, String locationId) {
+        Map<String, BigDecimal> out = new HashMap<>();
         var spec = jdbc.sql("SELECT \"productId\", SUM(quantity) AS q FROM \"StockReservation\" WHERE"
                         + " \"organizationId\" = :org AND status = 'active' AND \"productId\" IN (:ids)"
                         + (locationId != null ? " AND \"locationId\" = :loc" : "") + " GROUP BY \"productId\"")
@@ -192,42 +182,78 @@ public class InventoryQueryService {
             spec = spec.param("loc", locationId);
         }
         for (Map<String, Object> g : spec.query().listOfRows()) {
-            out.put((String) g.get("productId"), g.get("q") == null ? 0 : ((BigDecimal) g.get("q")).doubleValue());
+            out.put((String) g.get("productId"), g.get("q") == null ? BigDecimal.ZERO : (BigDecimal) g.get("q"));
         }
         return out;
     }
 
-    private Map<String, Object> mapProduct(Map<String, Object> p, String locationId, Map<String, Double> reserved) {
-        List<Map<String, Object>> items = SqlRows.list(jdbc.sql("SELECT si.quantity, si.\"runningAverageCost\","
-                + " si.\"locationId\", l.id AS lid, l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l"
-                + " ON l.id = si.\"locationId\" WHERE si.\"productId\" = ? AND si.\"organizationId\" = ?").params(
-                        p.get("id"), org()));
-        List<Map<String, Object>> breakdown = new ArrayList<>();
-        double totalQty = 0;
-        for (Map<String, Object> si : items) {
-            double qty = dec(si, "quantity").doubleValue();
-            breakdown.add(Obj.of("locationId", si.get("lid"), "code", si.get("code"), "name", si.get("name"),
-                    "quantity", JsNumbers.js(qty)));
-            if (locationId == null || locationId.equals(si.get("locationId"))) {
-                totalQty += qty;
-            }
+    /** One page of products: stock rows, reservations, values and units read once for the whole page. */
+    private List<Map<String, Object>> mapProducts(List<Map<String, Object>> products, String locationId) {
+        List<Map<String, Object>> data = new ArrayList<>();
+        if (products.isEmpty()) {
+            return data;
+        }
+        List<String> ids = products.stream().map(p -> str(p, "id")).toList();
+        Map<String, BigDecimal> reserved = loadReserved(ids, locationId);
+        Map<String, List<Map<String, Object>>> items = new HashMap<>();
+        for (Map<String, Object> si : SqlRows.list(jdbc.sql("SELECT si.\"productId\", si.quantity, si.\"locationId\","
+                        + " l.id AS lid, l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l"
+                        + " ON l.id = si.\"locationId\" WHERE si.\"organizationId\" = :org AND si.\"productId\" IN (:ids)"
+                        + " ORDER BY si.\"createdAt\", si.id")
+                .param("org", org()).param("ids", ids))) {
+            items.computeIfAbsent(str(si, "productId"), k -> new ArrayList<>()).add(si);
         }
         // Phase I2 (audit C-2): value by the product's costing method (lots, serials, standard), not qty × average.
-        BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(str(p, "id")), locationId).get(str(p, "id"));
-        double totalCost = qv == null ? 0 : qv[1].doubleValue();
-        double avg = totalQty > 0 ? totalCost / totalQty : 0;
+        Map<String, BigDecimal[]> values = valuation.qtyAndValueByProduct(ids, locationId);
+        Set<String> uomIds = new HashSet<>();
+        products.forEach(p -> {
+            if (p.get("uomId") != null) {
+                uomIds.add(str(p, "uomId"));
+            }
+        });
+        Map<String, String> uoms = new HashMap<>();
+        if (!uomIds.isEmpty()) {
+            for (Map<String, Object> u : SqlRows.list(jdbc.sql("SELECT id, code FROM \"UnitOfMeasure\" WHERE id IN (:ids)")
+                    .param("ids", List.copyOf(uomIds)))) {
+                uoms.put(str(u, "id"), str(u, "code"));
+            }
+        }
+        DataScope access = scope.current();
+        for (Map<String, Object> p : products) {
+            String id = str(p, "id");
+            data.add(mapProduct(p, locationId, access, items.getOrDefault(id, List.of()), values.get(id),
+                    reserved.getOrDefault(id, BigDecimal.ZERO), p.get("uomId") == null ? null : uoms.get(str(p, "uomId"))));
+        }
+        return data;
+    }
+
+    private static Map<String, Object> mapProduct(Map<String, Object> p, String locationId, DataScope access,
+            List<Map<String, Object>> items, BigDecimal[] qv, BigDecimal res, String uom) {
+        List<Map<String, Object>> breakdown = new ArrayList<>();
+        BigDecimal totalQty = BigDecimal.ZERO;
+        for (Map<String, Object> si : items) {
+            BigDecimal qty = dec(si, "quantity");
+            // h-01 F6: a branch-restricted user sees only the locations of their own access.
+            if (access.allowsLocation(str(si, "locationId"))) {
+                breakdown.add(Obj.of("locationId", si.get("lid"), "code", si.get("code"), "name", si.get("name"),
+                        "quantity", JsNumbers.js(qty)));
+            }
+            if (locationId == null || locationId.equals(si.get("locationId"))) {
+                totalQty = totalQty.add(qty);
+            }
+        }
+        BigDecimal totalCost = qv == null ? BigDecimal.ZERO : qv[1];
+        BigDecimal avg = totalQty.signum() > 0 ? Money.div(totalCost, totalQty) : BigDecimal.ZERO;
         BigDecimal min = (BigDecimal) p.get("minQuantity");
-        double minQty = min != null ? min.doubleValue() : 0;
-        double res = reserved == null ? 0 : reserved.getOrDefault(str(p, "id"), 0.0);
-        Object uom = p.get("uomId") == null ? null : jdbc.sql("SELECT code FROM \"UnitOfMeasure\" WHERE id = ?")
-                .param(p.get("uomId")).query(String.class).optional().orElse(null);
+        BigDecimal minQty = min != null ? min : BigDecimal.ZERO;
         return Obj.of("id", p.get("id"), "code", p.get("code"), "name", p.get("name"), "sku", p.get("sku"),
                 "productType", p.get("productType"),
                 "minQuantity", min != null && min.signum() != 0 ? JsNumbers.js(min) : null,
                 "batchTracking", p.get("batchTracking"), "uom", uom, "totalQuantity", JsNumbers.js(totalQty),
                 "averageCost", JsNumbers.js(avg), "totalValue", JsNumbers.js(totalCost), "locationBreakdown", breakdown,
-                "reservedQuantity", JsNumbers.js(res), "availableQuantity", JsNumbers.js(totalQty - res),
-                "isLow", minQty > 0 && totalQty > 0 && totalQty <= minQty, "isOut", totalQty <= 0);
+                "reservedQuantity", JsNumbers.js(res), "availableQuantity", JsNumbers.js(totalQty.subtract(res)),
+                "isLow", minQty.signum() > 0 && totalQty.signum() > 0 && totalQty.compareTo(minQty) <= 0,
+                "isOut", totalQty.signum() <= 0);
     }
 
     /** Product header, quants, batches, recent ledger, recipes and purchase lines for one product. */
@@ -655,71 +681,68 @@ public class InventoryQueryService {
         return stockReconciliation(scope.resolve(locationId), toleranceIn, includeMatched);
     }
 
+    /** Most cells one reconciliation returns (h-01 F10); {@code summary.truncated} says when there were more. */
+    private static final int RECON_ROWS = 5000;
+
+    /**
+     * h-01 F10: the cells are compared in the database and only the cells shown come back (drifted ones, or every cell
+     * with {@code includeMatched}), at most {@value #RECON_ROWS}. A lot-tracked quant below zero has no lots to match,
+     * so its lots are compared with zero rather than with the negative quantity (negative stock has its own report).
+     */
     private Map<String, Object> stockReconciliation(String locationId, Double toleranceIn, boolean includeMatched) {
         BigDecimal tolerance = new BigDecimal(JsNumbers.toJsString(toleranceIn != null ? toleranceIn : 0.000001));
-        List<Object> params = new ArrayList<>(List.of(org()));
-        String loc = "";
-        if (notBlank(locationId)) {
-            loc = " AND \"locationId\" = ?";
-            params.add(locationId);
+        String loc = notBlank(locationId) ? " AND \"locationId\" = :loc" : "";
+        var spec = jdbc.sql("WITH si AS (SELECT \"productId\" AS pid, \"variantKey\" AS vk, \"locationId\" AS lid,"
+                        + " SUM(quantity) AS cached FROM \"StockItem\" WHERE \"organizationId\" = :org" + loc
+                        + " GROUP BY 1, 2, 3),"
+                        + " lg AS (SELECT \"productId\" AS pid, COALESCE(\"variantId\", '') AS vk, \"locationId\" AS lid,"
+                        + " SUM(\"quantityChange\") AS ledger FROM \"InventoryLedger\" WHERE \"organizationId\" = :org" + loc
+                        + " GROUP BY 1, 2, 3),"
+                        + " bt AS (SELECT \"productId\" AS pid, COALESCE(\"variantId\", '') AS vk, \"locationId\" AS lid,"
+                        + " SUM(quantity) AS batches FROM \"InventoryBatch\" WHERE \"organizationId\" = :org" + loc
+                        + " GROUP BY 1, 2, 3),"
+                        + " k AS (SELECT pid, vk, lid FROM si UNION SELECT pid, vk, lid FROM lg UNION SELECT pid, vk, lid FROM bt),"
+                        + " c AS (SELECT k.pid, k.vk, k.lid, si.pid IS NOT NULL AS quant, COALESCE(si.cached, 0) AS cached,"
+                        + " COALESCE(lg.ledger, 0) AS ledger, COALESCE(bt.batches, 0) AS batches, p.code, p.name,"
+                        + " COALESCE(p.\"batchTracking\", false) AS lots, l.name AS lname FROM k"
+                        + " LEFT JOIN si ON si.pid = k.pid AND si.vk = k.vk AND si.lid = k.lid"
+                        + " LEFT JOIN lg ON lg.pid = k.pid AND lg.vk = k.vk AND lg.lid = k.lid"
+                        + " LEFT JOIN bt ON bt.pid = k.pid AND bt.vk = k.vk AND bt.lid = k.lid"
+                        + " LEFT JOIN \"Product\" p ON p.id = k.pid AND p.\"organizationId\" = :org"
+                        + " AND (si.pid IS NOT NULL OR p.\"deletedAt\" IS NULL)"
+                        + " LEFT JOIN \"InventoryLocation\" l ON l.id = k.lid),"
+                        + " e AS (SELECT c.*, abs(c.cached - c.ledger) > :tol"
+                        + " OR (c.lots AND abs(GREATEST(c.cached, 0) - c.batches) > :tol) AS drifted FROM c)"
+                        // The first cell always comes back, so the counts arrive even when nothing drifted.
+                        + " SELECT x.* FROM (SELECT e.*, count(*) OVER () AS cells,"
+                        + " count(*) FILTER (WHERE e.drifted) OVER () AS drifted_cells,"
+                        + " row_number() OVER (ORDER BY NOT e.quant, e.name, e.pid, e.lid, e.vk) AS rn FROM e) x"
+                        + " WHERE x.drifted OR :all OR x.rn = 1 ORDER BY x.rn LIMIT " + (RECON_ROWS + 1))
+                .param("org", org()).param("tol", tolerance).param("all", includeMatched);
+        if (!loc.isEmpty()) {
+            spec = spec.param("loc", locationId);
         }
-        List<Map<String, Object>> items = SqlRows.list(jdbc.sql("SELECT si.\"productId\", si.\"variantKey\","
-                + " si.\"locationId\", si.quantity, p.code, p.name, p.\"batchTracking\", l.name AS lname FROM \"StockItem\" si"
-                + " LEFT JOIN \"Product\" p ON p.id = si.\"productId\" LEFT JOIN \"InventoryLocation\" l"
-                + " ON l.id = si.\"locationId\" WHERE si.\"organizationId\" = ?" + loc.replace("\"locationId\"",
-                "si.\"locationId\"")).params(params));
-        Map<Cell, BigDecimal> ledger = new LinkedHashMap<>();
-        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\", SUM(\"quantityChange\") AS s"
-                + " FROM \"InventoryLedger\" WHERE \"organizationId\" = ?" + loc
-                + " GROUP BY \"productId\", \"variantId\", \"locationId\"").params(params).query().listOfRows()) {
-            ledger.put(new Cell((String) g.get("productId"), g.get("variantId") == null ? "" : (String) g.get("variantId"),
-                    (String) g.get("locationId")), g.get("s") == null ? Money.ZERO : (BigDecimal) g.get("s"));
-        }
-        Map<Cell, BigDecimal> batches = new LinkedHashMap<>();
-        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\", SUM(quantity) AS s"
-                + " FROM \"InventoryBatch\" WHERE \"organizationId\" = ?" + loc
-                + " GROUP BY \"productId\", \"variantId\", \"locationId\"").params(params).query().listOfRows()) {
-            batches.put(new Cell((String) g.get("productId"), g.get("variantId") == null ? "" : (String) g.get("variantId"),
-                    (String) g.get("locationId")), g.get("s") == null ? Money.ZERO : (BigDecimal) g.get("s"));
-        }
-        Set<Cell> seen = new HashSet<>();
+        List<Map<String, Object>> found = SqlRows.list(spec);
+        long cells = found.isEmpty() ? 0 : ((Number) found.getFirst().get("cells")).longValue();
+        long drifted = found.isEmpty() ? 0 : ((Number) found.getFirst().get("drifted_cells")).longValue();
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map<String, Object> it : items) {
-            Cell key = new Cell(str(it, "productId"), str(it, "variantKey"), str(it, "locationId"));
-            seen.add(key);
-            boolean bt = Boolean.TRUE.equals(it.get("batchTracking"));
-            pushRow(rows, key, str(it, "code"), str(it, "name"), str(it, "lname"), dec(it, "quantity"),
-                    ledger.getOrDefault(key, Money.ZERO), bt ? batches.getOrDefault(key, Money.ZERO) : null, tolerance,
-                    includeMatched);
-        }
-        Set<Cell> orphans = new LinkedHashSet<>();
-        ledger.keySet().stream().filter(k -> !seen.contains(k)).forEach(orphans::add);
-        batches.keySet().stream().filter(k -> !seen.contains(k)).forEach(orphans::add);
-        if (!orphans.isEmpty()) {
-            Map<String, Map<String, Object>> prods = new HashMap<>();
-            for (Map<String, Object> p : jdbc.sql("SELECT id, code, name, \"batchTracking\" FROM \"Product\" WHERE id IN"
-                    + " (:ids) AND \"organizationId\" = :org AND \"deletedAt\" IS NULL")
-                    .param("ids", orphans.stream().map(Cell::productId).distinct().toList()).param("org", org())
-                    .query().listOfRows()) {
-                prods.put((String) p.get("id"), p);
+        for (Map<String, Object> r : found) {
+            if (rows.size() == RECON_ROWS) {
+                break;
             }
-            for (Cell k : orphans) {
-                Map<String, Object> p = prods.get(k.productId());
-                boolean bt = p != null && Boolean.TRUE.equals(p.get("batchTracking"));
-                pushRow(rows, k, p == null ? null : str(p, "code"), p == null ? null : str(p, "name"), null, Money.ZERO,
-                        ledger.getOrDefault(k, Money.ZERO), bt ? batches.getOrDefault(k, Money.ZERO) : null, tolerance,
-                        includeMatched);
-            }
+            pushRow(rows, new Cell(str(r, "pid"), str(r, "vk"), str(r, "lid")), str(r, "code"), str(r, "name"),
+                    str(r, "lname"), dec(r, "cached"), dec(r, "ledger"),
+                    Boolean.TRUE.equals(r.get("lots")) ? dec(r, "batches") : null, tolerance, includeMatched);
         }
-        long drifted = rows.stream().filter(r -> Boolean.TRUE.equals(r.get("drifted"))).count();
-        return Obj.of("summary", Obj.of("cellsChecked", items.size() + orphans.size(), "driftedCells", drifted, "clean",
-                drifted == 0, "tolerance", JsNumbers.dec(tolerance)), "rows", rows);
+        return Obj.of("summary", Obj.of("cellsChecked", cells, "driftedCells", drifted, "clean", drifted == 0,
+                "tolerance", JsNumbers.dec(tolerance), "truncated", (includeMatched ? cells : drifted) > rows.size()),
+                "rows", rows);
     }
 
     private static void pushRow(List<Map<String, Object>> rows, Cell key, String code, String name, String locationName,
             BigDecimal cached, BigDecimal ledger, BigDecimal batches, BigDecimal tolerance, boolean includeMatched) {
         BigDecimal ledgerDrift = cached.subtract(ledger);
-        BigDecimal batchDrift = batches != null ? cached.subtract(batches) : null;
+        BigDecimal batchDrift = batches != null ? cached.max(BigDecimal.ZERO).subtract(batches) : null;
         boolean drifted = ledgerDrift.abs().compareTo(tolerance) > 0
                 || (batchDrift != null && batchDrift.abs().compareTo(tolerance) > 0);
         if (!drifted && !includeMatched) {

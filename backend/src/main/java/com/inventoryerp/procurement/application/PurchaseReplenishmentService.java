@@ -1,6 +1,7 @@
 package com.inventoryerp.procurement.application;
 
 import com.inventoryerp.core.application.ProductVariantService;
+import com.inventoryerp.core.application.UomConversionService;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
@@ -36,6 +37,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       point; order up to max(max, reorder point + daily use × lead time).</li>
  * </ul>
  * Quantities round up to the rule's order multiple.
+ *
+ * <p>h-04 F10 (readiness gaps 2026-11-17): the open order and request quantities are those for the rule's store, as
+ * in the inventory replenishment scan ({@link PurchaseIncomingSupply}): an order line counts for the store its request
+ * line delivers to, a request line for its delivery location, both in the product's base unit; lines with no store
+ * count only for a product's only rule. A rule's branch and preferred supplier must belong to the organisation, and
+ * raising locks the rules before it re-reads the suggestions, so two raises at once cannot both order the same gap.
  */
 @Service
 public class PurchaseReplenishmentService {
@@ -61,11 +68,13 @@ public class PurchaseReplenishmentService {
     private final TransactionTemplate tx;
 
     private final ProductVariantService variants;
+    private final UomConversionService uom;
 
     public PurchaseReplenishmentService(JdbcClient jdbc, PurchaseRequestsService requests, AuditService audit,
-            PlatformTransactionManager txm, ProductVariantService variants) {
+            PlatformTransactionManager txm, ProductVariantService variants, UomConversionService uom) {
         this.jdbc = jdbc;
         this.variants = variants;
+        this.uom = uom;
         this.requests = requests;
         this.audit = audit;
         this.tx = new TransactionTemplate(txm);
@@ -78,9 +87,29 @@ public class PurchaseReplenishmentService {
                 .params(in.productId(), orgId).query(Long.class).single() == 0) {
             throw ApiException.notFound("Product not found");
         }
-        if (jdbc.sql("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?")
-                .params(in.locationId(), orgId).query(Long.class).single() == 0) {
+        String storeBranch = jdbc.sql("SELECT COALESCE(\"branchId\", '') FROM \"InventoryLocation\" WHERE id = ?"
+                + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(in.locationId(), orgId)
+                .query(String.class).optional().orElse(null);
+        if (storeBranch == null) {
             throw ApiException.notFound("Store not found");
+        }
+        // h-04 F10: ids from the body must belong to this organisation, and the branch must be the store's own.
+        String branchId = in.branchId() == null || in.branchId().isBlank() ? null : in.branchId();
+        if (branchId != null) {
+            if (jdbc.sql("SELECT count(*) FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\""
+                    + " IS NULL").params(branchId, orgId).query(Long.class).single() == 0) {
+                throw ApiException.notFound("Branch not found");
+            }
+            if (!storeBranch.isEmpty() && !storeBranch.equals(branchId)) {
+                throw ApiException.badRequest("The store belongs to another branch; use the store's own branch or"
+                        + " leave the branch empty");
+            }
+        }
+        String supplierId = in.preferredSupplierId() == null || in.preferredSupplierId().isBlank() ? null
+                : in.preferredSupplierId();
+        if (supplierId != null && jdbc.sql("SELECT count(*) FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"deletedAt\" IS NULL").params(supplierId, orgId).query(Long.class).single() == 0) {
+            throw ApiException.notFound("Supplier not found");
         }
         // Phase I2 (audit V-10, D2): a rule for a product with variants watches one active variant of its own.
         String variantId = in.variantId() == null || in.variantId().isBlank() ? null : in.variantId();
@@ -101,9 +130,9 @@ public class PurchaseReplenishmentService {
                         + " \"leadTimeDays\" = EXCLUDED.\"leadTimeDays\", \"orderMultiple\" = EXCLUDED.\"orderMultiple\","
                         + " \"preferredSupplierId\" = EXCLUDED.\"preferredSupplierId\", \"autoRaise\" = EXCLUDED.\"autoRaise\","
                         + " \"isActive\" = EXCLUDED.\"isActive\", \"updatedAt\" = " + NOW + " RETURNING id")
-                .params(UUID.randomUUID().toString(), orgId, in.productId(), in.locationId(), in.branchId(),
+                .params(UUID.randomUUID().toString(), orgId, in.productId(), in.locationId(), branchId,
                         in.method() == null ? "min_max" : in.method(), min, max, nz(in.safetyStock()),
-                        in.leadTimeDays() == null ? 7 : in.leadTimeDays(), in.orderMultiple(), in.preferredSupplierId(),
+                        in.leadTimeDays() == null ? 7 : in.leadTimeDays(), in.orderMultiple(), supplierId,
                         Boolean.TRUE.equals(in.autoRaise()), in.isActive() == null || in.isActive(), user(), variantId)
                 .query(String.class).single();
         audit.record(AuditInput.of("ReorderRule", id, "update", null, Obj.of("productId", in.productId(), "locationId",
@@ -125,10 +154,20 @@ public class PurchaseReplenishmentService {
 
     /** Suggestions for every active rule whose stock position is low (all rules when {@code all}). */
     public List<Map<String, Object>> suggestions(boolean all) {
+        return suggestions(all, false);
+    }
+
+    /** {@link #suggestions(boolean)}; {@code lock}: lock the rules first (inside the caller's transaction). */
+    private List<Map<String, Object>> suggestions(boolean all, boolean lock) {
+        List<Map<String, Object>> rules = SqlRows.list(jdbc.sql(RULES + " WHERE r.\"organizationId\" = ? AND r.\"isActive\""
+                + " ORDER BY p.name, l.name, r.id" + (lock ? " FOR UPDATE OF r" : "")).param(org()));
+        Map<String, Integer> perProduct = new java.util.HashMap<>();
+        for (Map<String, Object> r : rules) {
+            perProduct.merge(r.get("productId") + "|" + r.get("variantId"), 1, Integer::sum);
+        }
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql(RULES + " WHERE r.\"organizationId\" = ? AND r.\"isActive\""
-                + " ORDER BY p.name, l.name").param(org()))) {
-            Map<String, Object> s = evaluate(r);
+        for (Map<String, Object> r : rules) {
+            Map<String, Object> s = evaluate(r, perProduct.get(r.get("productId") + "|" + r.get("variantId")) == 1);
             if (all || Boolean.TRUE.equals(s.get("needed"))) {
                 out.add(s);
             }
@@ -141,17 +180,19 @@ public class PurchaseReplenishmentService {
      * {@code ruleIds} is empty). Returns the request, or {@code null} when nothing is needed.
      */
     public Map<String, Object> raise(List<String> ruleIds, boolean autoOnly) {
-        List<Map<String, Object>> picked = new ArrayList<>();
-        for (Map<String, Object> s : suggestions(false)) {
-            boolean listed = ruleIds == null || ruleIds.isEmpty() || ruleIds.contains((String) s.get("ruleId"));
-            if (listed && (!autoOnly || Boolean.TRUE.equals(s.get("autoRaise")))) {
-                picked.add(s);
-            }
-        }
-        if (picked.isEmpty()) {
-            return null;
-        }
+        // h-04 F10: lock the rules, then read the suggestions: a second raise at the same time waits for this one and
+        // then sees its request as open supply, instead of ordering the same gap again.
         return tx.execute(st -> {
+            List<Map<String, Object>> picked = new ArrayList<>();
+            for (Map<String, Object> s : suggestions(false, true)) {
+                boolean listed = ruleIds == null || ruleIds.isEmpty() || ruleIds.contains((String) s.get("ruleId"));
+                if (listed && (!autoOnly || Boolean.TRUE.equals(s.get("autoRaise")))) {
+                    picked.add(s);
+                }
+            }
+            if (picked.isEmpty()) {
+                return null;
+            }
             List<PurchaseRequestsService.LineInput> lines = new ArrayList<>();
             for (Map<String, Object> s : picked) {
                 lines.add(new PurchaseRequestsService.LineInput((String) s.get("productId"), "Reorder: " + s.get("productName")
@@ -172,7 +213,7 @@ public class PurchaseReplenishmentService {
         });
     }
 
-    private Map<String, Object> evaluate(Map<String, Object> r) {
+    private Map<String, Object> evaluate(Map<String, Object> r, boolean onlyRule) {
         String orgId = org();
         String productId = (String) r.get("productId");
         // Phase I2 (audit V-10): a variant rule measures that variant's stock, orders, requests and use.
@@ -181,17 +222,28 @@ public class PurchaseReplenishmentService {
                 + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ?"
                 + " AND (?::text IS NULL OR \"variantId\" = ?::text)").params(orgId, productId,
                 r.get("locationId"), variantId, variantId).query(BigDecimal.class).single());
+        // h-04 F10: open orders and requests for this store only (see the class comment), in the base unit.
+        Object store = r.get("locationId");
         BigDecimal onOrder = Money.dec(jdbc.sql("SELECT COALESCE(SUM(GREATEST(0, l.quantity - l.\"receivedQuantity\""
                 + " - l.\"cancelledQuantity\") * COALESCE(l.\"uomFactor\", 1)), 0) FROM \"PurchaseOrderLine\" l JOIN"
-                + " \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\" WHERE l.\"organizationId\" = ? AND l.\"productId\" = ?"
+                + " \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\""
+                + " LEFT JOIN \"PurchaseRequestLine\" rl ON rl.id = l.\"requestLineId\" AND rl.\"organizationId\" = l.\"organizationId\""
+                + " WHERE l.\"organizationId\" = ? AND l.\"productId\" = ?"
                 + " AND o.status::text IN ('draft', 'active', 'partially_received') AND o.\"deletedAt\" IS NULL"
-                + " AND (?::text IS NULL OR l.\"variantId\" = ?::text)")
-                .params(orgId, productId, variantId, variantId).query(BigDecimal.class).single());
-        BigDecimal requested = Money.dec(jdbc.sql("SELECT COALESCE(SUM(GREATEST(0, l.quantity - l.\"orderedQuantity\")), 0)"
+                + " AND (?::text IS NULL OR l.\"variantId\" = ?::text)"
+                + " AND (rl.\"deliveryLocationId\" = ? OR (? AND rl.\"deliveryLocationId\" IS NULL))")
+                .params(orgId, productId, variantId, variantId, store, onlyRule).query(BigDecimal.class).single());
+        BigDecimal requested = BigDecimal.ZERO;
+        for (Map<String, Object> u : SqlRows.list(jdbc.sql("SELECT l.\"unitOfMeasureId\" AS uom,"
+                + " COALESCE(SUM(GREATEST(0, l.quantity - l.\"orderedQuantity\")), 0) AS qty"
                 + " FROM \"PurchaseRequestLine\" l JOIN \"PurchaseRequest\" q ON q.id = l.\"purchaseRequestId\" WHERE"
                 + " l.\"organizationId\" = ? AND l.\"productId\" = ? AND q.status::text IN ('draft', 'submitted', 'approved')"
-                + " AND q.\"deletedAt\" IS NULL AND (?::text IS NULL OR l.\"variantId\" = ?::text)")
-                .params(orgId, productId, variantId, variantId).query(BigDecimal.class).single());
+                + " AND q.\"deletedAt\" IS NULL AND (?::text IS NULL OR l.\"variantId\" = ?::text)"
+                + " AND (l.\"deliveryLocationId\" = ? OR (? AND l.\"deliveryLocationId\" IS NULL)) GROUP BY 1")
+                .params(orgId, productId, variantId, variantId, store, onlyRule))) {
+            BigDecimal factor = uom.tryFactorToBase(productId, (String) u.get("uom"));
+            requested = requested.add(SqlRows.dec(u, "qty").multiply(factor == null ? BigDecimal.ONE : factor));
+        }
         BigDecimal used = Money.dec(jdbc.sql("SELECT COALESCE(-SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND \"quantityChange\" < 0 AND"
                 + " type::text NOT IN ('transfer_out', 'reversal_out', 'return_to_supplier') AND \"createdAt\" >= "
@@ -273,7 +325,7 @@ public class PurchaseReplenishmentService {
             + " \"locationName\", s.name AS \"supplierName\", pv.name AS \"variantName\" FROM \"ReorderRule\" r"
             + " JOIN \"Product\" p ON p.id = r.\"productId\" LEFT JOIN \"ProductVariant\" pv ON pv.id = r.\"variantId\""
             + " JOIN \"InventoryLocation\" l ON l.id = r.\"locationId\" LEFT JOIN \"Partner\" s ON s.id ="
-            + " r.\"preferredSupplierId\"";
+            + " r.\"preferredSupplierId\" AND s.\"organizationId\" = r.\"organizationId\"";
 
     private static BigDecimal nz(BigDecimal v) {
         return v == null ? BigDecimal.ZERO : v;
