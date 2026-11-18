@@ -1,0 +1,13 @@
+{
+  "module": "finance",
+  "title": "Finance",
+  "slug": "erp-finance",
+  "charts": [
+    { "name": "Cash received", "viz": "big_number_total", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE 0 END)", "width": 4 },
+    { "name": "Cash paid", "viz": "big_number_total", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'outbound' THEN \"amount\" ELSE 0 END)", "width": 4 },
+    { "name": "Journal entries", "viz": "big_number_total", "dataset": "journal_lines", "metric": "COUNT(DISTINCT \"entryNumber\")", "width": 4 },
+    { "name": "Payments by month", "viz": "bar_by_month", "dataset": "payments", "time": "paymentDate", "metric": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE -\"amount\" END)", "width": 8 },
+    { "name": "Activity by report section", "viz": "pie", "dataset": "journal_lines", "groupby": "reportSection", "metric": "SUM(ABS(\"baseNet\"))", "width": 4 },
+    { "name": "Account balances", "viz": "table", "dataset": "journal_lines", "groupby": "accountName", "metric": "SUM(\"baseNet\")", "width": 12 }
+  ]
+}

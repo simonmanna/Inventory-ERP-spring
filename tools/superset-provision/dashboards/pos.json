@@ -1,0 +1,20 @@
+{
+  "module": "pos",
+  "title": "Point of sale",
+  "slug": "erp-pos",
+  "charts": [
+    { "name": "Net sales", "viz": "big_number_total", "dataset": "pos_sales", "metric": "SUM(\"netSales\")", "width": 3 },
+    { "name": "Tickets", "viz": "big_number_total", "dataset": "pos_sales", "metric": "COUNT(*)", "width": 3 },
+    { "name": "Average ticket", "viz": "big_number_total", "dataset": "pos_sales", "metric": "SUM(\"netSales\") / NULLIF(COUNT(*), 0)", "width": 3 },
+    { "name": "Voided value", "viz": "big_number_total", "dataset": "pos_voided_items", "metric": "SUM(\"voidedValue\")", "width": 3 },
+    { "name": "Net sales by month", "viz": "bar_by_month", "dataset": "pos_sales", "time": "tradingDate", "metric": "SUM(\"netSales\")", "width": 8 },
+    { "name": "Sales by payment mode", "viz": "pie", "dataset": "pos_sales", "groupby": "paymentMode", "metric": "SUM(\"netSales\")", "width": 4 },
+    { "name": "Top products", "viz": "table", "dataset": "pos_sale_lines", "groupby": "productName", "metric": "SUM(\"subtotal\")", "width": 6 },
+    { "name": "Sales by category", "viz": "pie", "dataset": "pos_sale_lines", "groupby": "categoryName", "metric": "SUM(\"subtotal\")", "width": 6 },
+    { "name": "Sales by order type", "viz": "pie", "dataset": "pos_sales", "groupby": "orderType", "metric": "SUM(\"netSales\")", "width": 4 },
+    { "name": "Sales by waiter", "viz": "table", "dataset": "pos_sales", "groupby": "waiterName", "metric": "SUM(\"netSales\")", "width": 4 },
+    { "name": "Sales by branch", "viz": "table", "dataset": "pos_sales", "groupby": "branchName", "metric": "SUM(\"netSales\")", "width": 4 },
+    { "name": "Cash over / short by cashier", "viz": "table", "dataset": "pos_cash_sessions", "groupby": "cashierName", "metric": "SUM(\"closingDifference\")", "where": "\"closedAt\" IS NOT NULL", "width": 6 },
+    { "name": "Voids by reason", "viz": "table", "dataset": "pos_voided_items", "groupby": "cancelReason", "metric": "SUM(\"voidedValue\")", "width": 6 }
+  ]
+}

@@ -258,6 +258,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -f infra/docker/Dockerfile.api -t inventory-erp-api:ci .
       - run: docker build -f infra/docker/Dockerfile.web -t inventory-erp-web:ci .
+      # Built, not scanned: it is the upstream apache/superset image plus a driver, and its CVEs are upstream's.
+      - run: docker build -f infra/docker/Dockerfile.superset -t inventory-erp-superset:ci .
       - name: Scan API image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

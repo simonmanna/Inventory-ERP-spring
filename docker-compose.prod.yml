@@ -21,3 +21,13 @@ services:
   web:
     image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-web:${IMAGE_TAG:-latest}
     pull_policy: always
+
+  superset:
+    image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-superset:${IMAGE_TAG:-latest}
+    pull_policy: always
+    environment:
+      SUPERSET_COOKIE_SECURE: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 2g

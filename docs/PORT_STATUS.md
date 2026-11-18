@@ -1934,3 +1934,21 @@ Nothing measured at a real checkout, door, queue or table.
       five-question legal assessment, COCO images and annotations as separate entries
 - [ ] Real pytest/OpenCV/ONNX Runtime run in CI
 - [ ] Labelled pilot footage, a run on the edge hardware, a legal check of the register
+
+## Embedded Superset dashboards (ADR-S078, extension: no Nest counterpart)
+
+[Integration notes](integrations.md#embedded-dashboards-apache-superset). Off unless `SUPERSET_URL` is set; compose
+profile `bi`.
+
+2 routes: `BiDashboardController` (`GET /bi/dashboards`, `GET /bi/dashboards/{module}/guest-token`). Migrations V570
+(`bi` schema, `superset_reader`) and V571 (POS, HR, Manufacturing views). Permissions reused: `analytics:view` + the
+module's (`analytics:<module>`, `pos:reports`, `hr:report`, `production_order:read`). Web: Explore view on
+`/analytics/<module>`; `/analytics/bi/<module>` for modules without a built-in dashboard. Tests: `SupersetEmbedServiceTest`, `BiDashboardIT`, plus `provision.mjs --check-isolation`
+against a live Superset.
+
+- [x] B0 Sales, Procurement, Inventory, Finance dashboards
+- [x] B1 POS, HR, Manufacturing
+- [ ] B2 remaining modules
+- [ ] B3 AI "ask your data" (own ADR)
+
+Not verified yet: the dashboards rendered in a browser through the ERP web app.

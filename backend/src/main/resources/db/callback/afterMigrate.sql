@@ -35,3 +35,14 @@ BEGIN
         EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA reporting GRANT SELECT ON TABLES TO %I', app);
     END IF;
 END $body$;
+
+-- Embedded Superset (V570, ADR-S078): superset_reader reads every view in `bi`, including views a later migration adds.
+-- The API role gets nothing there: those views are not filtered by row-level security.
+DO $bi$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'bi')
+            AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'superset_reader') THEN
+        GRANT USAGE ON SCHEMA bi TO superset_reader;
+        GRANT SELECT ON ALL TABLES IN SCHEMA bi TO superset_reader;
+    END IF;
+END $bi$;

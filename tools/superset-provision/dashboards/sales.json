@@ -1,0 +1,15 @@
+{
+  "module": "sales",
+  "title": "Sales",
+  "slug": "erp-sales",
+  "charts": [
+    { "name": "Net sales", "viz": "big_number_total", "dataset": "sales_lines", "metric": "SUM(\"signedSubtotal\")", "width": 3 },
+    { "name": "Invoices", "viz": "big_number_total", "dataset": "sales_invoices", "metric": "COUNT(DISTINCT \"documentId\")", "width": 3 },
+    { "name": "Receivables outstanding", "viz": "big_number_total", "dataset": "sales_invoices", "metric": "SUM(\"amountResidual\")", "width": 3 },
+    { "name": "Receivables overdue", "viz": "big_number_total", "dataset": "sales_invoices", "metric": "SUM(CASE WHEN \"daysOverdue\" > 0 THEN \"amountResidual\" ELSE 0 END)", "width": 3 },
+    { "name": "Net sales by month", "viz": "bar_by_month", "dataset": "sales_lines", "time": "issueDate", "metric": "SUM(\"signedSubtotal\")", "width": 8 },
+    { "name": "Receivables aging", "viz": "pie", "dataset": "sales_invoices", "groupby": "agingBucket", "metric": "SUM(\"amountResidual\")", "width": 4 },
+    { "name": "Top customers", "viz": "table", "dataset": "sales_lines", "groupby": "customerName", "metric": "SUM(\"signedSubtotal\")", "width": 6 },
+    { "name": "Top products", "viz": "table", "dataset": "sales_lines", "groupby": "productName", "metric": "SUM(\"signedSubtotal\")", "width": 6 }
+  ]
+}
