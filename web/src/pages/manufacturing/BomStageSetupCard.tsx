@@ -47,6 +47,7 @@ const METHODS: Array<{ value: AllocationMethod; label: () => string }> = [
   { value: 'weight', label: () => tx('By weight') },
   { value: 'market_value', label: () => tx('By market value') },
   { value: 'fixed_pct', label: () => tx('By fixed %') },
+  { value: 'net_realisable_value', label: () => tx('By net realisable value') },
 ];
 
 /**
@@ -71,6 +72,7 @@ export function BomStageSetupCard({ bom }: { bom: { id: string; routingId?: stri
   const [method, setMethod] = useState<AllocationMethod>('quantity');
   const [mainWeight, setMainWeight] = useState('');
   const [mainMarket, setMainMarket] = useState('');
+  const [mainSeparable, setMainSeparable] = useState('');
 
   useEffect(() => {
     if (!routing) return;
@@ -97,6 +99,7 @@ export function BomStageSetupCard({ bom }: { bom: { id: string; routingId?: stri
     setMethod((setup.allocationRule?.method ?? setup.effectiveRule.method) as AllocationMethod);
     setMainWeight(setup.allocationRule?.mainWeightPerUnit != null ? String(Number(setup.allocationRule.mainWeightPerUnit)) : '');
     setMainMarket(setup.allocationRule?.mainMarketValue != null ? String(Number(setup.allocationRule.mainMarketValue)) : '');
+    setMainSeparable(setup.allocationRule?.mainSeparableCostPerUnit != null ? String(Number(setup.allocationRule.mainSeparableCostPerUnit)) : '');
   }, [setup]);
 
   const productList = products ?? [];
@@ -149,9 +152,12 @@ export function BomStageSetupCard({ bom }: { bom: { id: string; routingId?: stri
             marketValue: numOrNull(c.marketValue),
             weightPerUnit: numOrNull(c.weightPerUnit),
             fixedPct: numOrNull(c.fixedPct),
+            separableCostPerUnit: numOrNull(c.separableCostPerUnit),
             stocked: c.stocked,
           })),
-          allocationRule: override ? { method, mainWeightPerUnit: numOrNull(mainWeight), mainMarketValue: numOrNull(mainMarket) } : null,
+          allocationRule: override
+            ? { method, mainWeightPerUnit: numOrNull(mainWeight), mainMarketValue: numOrNull(mainMarket), mainSeparableCostPerUnit: numOrNull(mainSeparable) }
+            : null,
         },
       });
       notify.success(tx('Co-products and allocation saved.'));
@@ -264,6 +270,7 @@ export function BomStageSetupCard({ bom }: { bom: { id: string; routingId?: stri
                   <TableHead>{tx('Valuation')}</TableHead>
                   <TableHead>{tx('NRV / unit')}</TableHead>
                   <TableHead>{tx('Market value')}</TableHead>
+                  <TableHead title={tx('Costs per unit still to come after the split-off: further processing and selling. Used by the net realisable value method.')}>{tx('Costs after split-off / unit')}</TableHead>
                   <TableHead>{tx('Weight / unit')}</TableHead>
                   <TableHead>{tx('Fixed %')}</TableHead>
                   <TableHead>{tx('Stocked')}</TableHead>
@@ -315,6 +322,7 @@ export function BomStageSetupCard({ bom }: { bom: { id: string; routingId?: stri
                     </TableCell>
                     <TableCell><Input className="w-24" type="number" min="0" step="any" value={c.nrvUnitValue == null ? '' : String(c.nrvUnitValue)} disabled={!canEditBom || c.valuation !== 'nrv'} onChange={(e) => patchCo(i, { nrvUnitValue: e.target.value })} /></TableCell>
                     <TableCell><Input className="w-24" type="number" min="0" step="any" value={c.marketValue == null ? '' : String(c.marketValue)} disabled={!canEditBom} onChange={(e) => patchCo(i, { marketValue: e.target.value })} /></TableCell>
+                    <TableCell><Input className="w-24" type="number" min="0" step="any" value={c.separableCostPerUnit == null ? '' : String(c.separableCostPerUnit)} disabled={!canEditBom} onChange={(e) => patchCo(i, { separableCostPerUnit: e.target.value })} /></TableCell>
                     <TableCell><Input className="w-24" type="number" min="0" step="any" value={c.weightPerUnit == null ? '' : String(c.weightPerUnit)} disabled={!canEditBom} onChange={(e) => patchCo(i, { weightPerUnit: e.target.value })} /></TableCell>
                     <TableCell><Input className="w-20" type="number" min="0" max="100" step="any" value={c.fixedPct == null ? '' : String(c.fixedPct)} disabled={!canEditBom} onChange={(e) => patchCo(i, { fixedPct: e.target.value })} /></TableCell>
                     <TableCell>
@@ -347,7 +355,16 @@ export function BomStageSetupCard({ bom }: { bom: { id: string; routingId?: stri
               <Label className="text-xs">{tx('Main output market value')}</Label>
               <Input type="number" min="0" step="any" value={mainMarket} disabled={!canEditBom || !override} onChange={(e) => setMainMarket(e.target.value)} />
             </div>
+            <div className="space-y-1">
+              <Label className="text-xs">{tx('Main output costs after split-off / unit')}</Label>
+              <Input type="number" min="0" step="any" value={mainSeparable} disabled={!canEditBom || !override} onChange={(e) => setMainSeparable(e.target.value)} />
+            </div>
           </div>
+          {(override ? method : setup?.effectiveRule.method) === 'net_realisable_value' && (
+            <p className="text-xs text-muted-foreground">
+              {tx('Net realisable value: each output takes the joint cost in proportion to its sales value (market value, or the sales price) less the costs still to come after the split-off. An output whose costs after the split-off exceed its sales value takes none.')}
+            </p>
+          )}
           {!override && setup && (
             <p className="text-xs text-muted-foreground">{tx('Using the organization default')}: {METHODS.find((m) => m.value === setup.effectiveRule.method)?.label()}</p>
           )}

@@ -114,7 +114,7 @@ export function InventoryGlTieOutPage() {
               <CardHeader className="border-b bg-destructive/5 px-5 pb-2 pt-4">
                 <CardTitle className="text-xs font-bold uppercase tracking-wider text-destructive">{tx('Stock movements with no journal entry')}</CardTitle>
                 <p className="text-xs text-muted-foreground">
-                  {tx('Stock value moved but nothing reached the GL. Post the catch-up with')} <code className="rounded bg-muted px-1">pnpm --filter @erp/api backfill:inventory-gl-gaps</code> {tx('(dry run first). Opening balances are memo rows; post opening inventory through a manual journal against equity.')}
+                  {tx('Stock value moved but nothing reached the GL. For each source below, post a correcting journal entry for the value moved: the stock account against the account the movement should have used, dated on the movement, with its document as the reference. Opening balances are memo rows; post opening inventory through a manual journal against equity.')}
                 </p>
               </CardHeader>
               <CardContent className="overflow-x-auto p-0">

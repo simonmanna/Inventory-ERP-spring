@@ -293,8 +293,20 @@ public class LineageFollower {
      */
     public List<String> record(Followed f, String adjustmentType, String sourceType, String sourceId,
             String journalEntryId, Mode mode, String note) {
+        return record(f, adjustmentType, sourceType, sourceId, journalEntryId, mode, note, null, null, null);
+    }
+
+    /**
+     * {@link #record} continuing an existing lineage (readiness gaps h-02 F10 / ACR-14): the first pool's adjustment is
+     * a child of {@code parentId}, every adjustment keeps {@code rootId} and {@code rootLedgerId} (the original
+     * receipt layer), so a parked share assigned to its goods stays one tree with the adjustment it was parked from.
+     * With {@code parentId} null it starts a new tree (the first pool is its own root).
+     */
+    public List<String> record(Followed f, String adjustmentType, String sourceType, String sourceId,
+            String journalEntryId, Mode mode, String note, String parentId, String rootId, String rootLedgerId) {
         List<String> ids = new ArrayList<>();
-        String rootLedger = f.nodes().isEmpty() ? null : f.nodes().getFirst().ledgerId();
+        String rootLedger = rootLedgerId != null ? rootLedgerId
+                : f.nodes().isEmpty() ? null : f.nodes().getFirst().ledgerId();
         for (int i = 0; i < f.nodes().size(); i++) {
             Node n = f.nodes().get(i);
             List<Placement> mine = f.of(i);
@@ -322,8 +334,8 @@ public class LineageFollower {
                     .params(id, org(), adjustmentType, sourceType, sourceId, n.productId(), n.variantId(),
                             n.locationId(), n.ledgerId(), n.amount(), onHand, n.amount().subtract(onHand),
                             adjunct ? "price_difference" : null, adjunct ? onHand : BigDecimal.ZERO, anchor,
-                            journalEntryId, TenantContext.userId(), n.parent() < 0 ? null : ids.get(n.parent()),
-                            ids.isEmpty() ? id : ids.getFirst(), rootLedger)
+                            journalEntryId, TenantContext.userId(), n.parent() < 0 ? parentId : ids.get(n.parent()),
+                            rootId != null ? rootId : ids.isEmpty() ? id : ids.getFirst(), rootLedger)
                     .update();
             ids.add(id);
             Map<String, Object[]> lines = new LinkedHashMap<>();
@@ -353,8 +365,8 @@ public class LineageFollower {
             for (Placement p : mine) {
                 if ("in_transit".equals(p.target())) {
                     String parked = park(p.productId(), p.variantId(), p.locationId(), p.consumptionLedgerId(),
-                            p.amount(), adjustmentType, sourceType, sourceId, journalEntryId, id, ids.getFirst(),
-                            rootLedger, note + " · parked (lineage)");
+                            p.amount(), adjustmentType, sourceType, sourceId, journalEntryId, id,
+                            rootId != null ? rootId : ids.getFirst(), rootLedger, note + " · parked (lineage)");
                     raiseException(p.exceptionKind() == null ? new Placement(p.target(), p.productId(), p.variantId(),
                             p.locationId(), p.layerLedgerId(), p.consumptionLedgerId(), p.moveType(), p.referenceId(),
                             p.amount(), "in_transit", p.nodeIndex()) : p, parked, sourceType, sourceId);

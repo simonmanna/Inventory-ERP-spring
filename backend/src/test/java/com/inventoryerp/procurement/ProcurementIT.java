@@ -241,9 +241,13 @@ class ProcurementIT extends ApiTestSupport {
                 .isEqualTo("submitted");
         Res resubmit = as("PATCH", "/procurement/purchase-requests/" + id + "/submit", null);
         assertThat(resubmit.body().get("message").asString()).isEqualTo("Cannot submit PR in status submitted");
-        JsonNode approved = ok(200, "PATCH", "/procurement/purchase-requests/" + id + "/approve", null);
+        // Gap fix h03-F6: whoever raised the request cannot approve it, so a second administrator approves it.
+        Res approvedBy = call("PATCH", "/procurement/purchase-requests/" + id + "/approve", null,
+                com.inventoryerp.TestApprovers.secondAdmin(this));
+        assertThat(approvedBy.status()).as(approvedBy.raw().body()).isEqualTo(200);
+        JsonNode approved = approvedBy.body();
         assertThat(approved.get("status").asString()).isEqualTo("approved");
-        assertThat(approved.get("approvedById").asString()).isEqualTo(adminId);
+        assertThat(approved.get("approvedById").asString()).isNotEqualTo(adminId);
         Res rejectApproved = as("PATCH", "/procurement/purchase-requests/" + id + "/reject", Map.of("reason", "x"));
         assertThat(rejectApproved.body().get("message").asString()).isEqualTo("Cannot reject PR in status approved");
         Res deleteApproved = as("DELETE", "/procurement/purchase-requests/" + id, null);
@@ -614,8 +618,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(twice.body().get("message").asString()).isEqualTo("Goods receipt " + draft.get("receiptNumber")
                 .asString() + " is already reversed");
 
-        String fresh = ok(201, "POST", "/procurement/goods-receipts", Map.of("warehouseId", warehouse, "lines",
-                List.of(rline(product, 1, 1)))).get("id").asString();
+        String fresh = ok(201, "POST", "/procurement/goods-receipts", Map.of("partnerId", supplier, "warehouseId",
+                warehouse, "lines", List.of(rline(product, 1, 1)))).get("id").asString();
         Res draftReverse = keyed("PATCH", "/procurement/goods-receipts/" + fresh + "/reverse", Map.of("reason", "x"));
         assertThat(draftReverse.body().get("message").asString()).isEqualTo("Only posted goods receipts can be reversed");
         Res noWh = as("POST", "/procurement/goods-receipts", Map.of("lines", List.of(rline(product, 1, 1))));
@@ -624,8 +628,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(noLines.body().get("message").asString()).isEqualTo("At least one line required");
         String ghost = UUID.randomUUID().toString();
         Res missingProduct = keyed("PATCH", "/procurement/goods-receipts/" + ok(201, "POST",
-                "/procurement/goods-receipts", Map.of("warehouseId", warehouse, "lines", List.of(rline(ghost, 1, 1))))
-                .get("id").asString() + "/post", null);
+                "/procurement/goods-receipts", Map.of("partnerId", supplier, "warehouseId", warehouse, "lines",
+                List.of(rline(ghost, 1, 1)))).get("id").asString() + "/post", null);
         assertThat(missingProduct.status()).isEqualTo(404);
         assertThat(missingProduct.body().get("message").asString()).isEqualTo("Product(s) not found: " + ghost);
     }
@@ -674,15 +678,15 @@ class ProcurementIT extends ApiTestSupport {
         String product = product();
         String wf = workflow("goods_receipt");
         try {
-            String draft = ok(201, "POST", "/procurement/goods-receipts", Map.of("warehouseId", warehouse, "lines",
-                    List.of(rline(product, 3, 10)))).get("id").asString();
+            String draft = ok(201, "POST", "/procurement/goods-receipts", Map.of("partnerId", supplier, "warehouseId",
+                    warehouse, "lines", List.of(rline(product, 3, 10)))).get("id").asString();
             Res post = keyed("PATCH", "/procurement/goods-receipts/" + draft + "/post", null);
             assertThat(post.status()).isEqualTo(400);
             assertThat(post.body().get("message").asString()).startsWith("Goods receipt requires approval before posting");
             Res pending = keyed("PATCH", "/procurement/goods-receipts/" + draft + "/post", null);
             assertThat(pending.body().get("message").asString()).startsWith("Goods receipt is pending approval (request ");
             assertThat(onHand(product, warehouse)).isEqualByComparingTo("0");
-            JsonNode adhoc = adhoc(null, product, 2, 10);
+            JsonNode adhoc = adhoc(supplier, product, 2, 10);
             assertThat(adhoc.get("status").asString()).isEqualTo("draft");
 
             // inv-readiness P1-3: PO receive under the policy only drafts the GRN.
@@ -708,8 +712,8 @@ class ProcurementIT extends ApiTestSupport {
         String email = "clerk-" + suffix() + "@demo.test";
         createUser(demoOrg, email, "Clerk@12345", role);
         String clerk = login("DEMO", email, "Clerk@12345");
-        Res clerkRes = call("POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", warehouse, "lines",
-                List.of(rline(product, 2, 10))), clerk);
+        Res clerkRes = call("POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId", supplier, "warehouseId",
+                warehouse, "lines", List.of(rline(product, 2, 10))), clerk);
         assertThat(clerkRes.status()).as(clerkRes.raw().body()).isEqualTo(200);
         assertThat(clerkRes.body().get("status").asString()).isEqualTo("draft");
         assertThat(onHand(product, warehouse)).isEqualByComparingTo("0");
@@ -728,8 +732,9 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal ap0 = balance(mapped("accounts_payable"));
 
         Res draftGrn = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", ok(201, "POST",
-                "/procurement/goods-receipts", Map.of("warehouseId", warehouse, "lines", List.of(rline(product, 1, 1))))
-                .get("id").asString(), "creditAccountId", mapped("accounts_payable"), "charges",
+                "/procurement/goods-receipts", Map.of("partnerId", supplier, "warehouseId", warehouse, "lines",
+                List.of(rline(product, 1, 1)))).get("id").asString(), "creditAccountId", mapped("accounts_payable"),
+                "charges",
                 List.of(Map.of("kind", "freight", "amount", 1))));
         assertThat(draftGrn.body().get("message").asString()).matches(
                 "Landed cost can only be added to a posted goods receipt \\(GRN-.* is draft\\)");
@@ -787,9 +792,9 @@ class ProcurementIT extends ApiTestSupport {
     @DisplayName("landed cost FIFO lot: only the receipt lot is re-costed; a posted landed cost blocks GRN reversal")
     void landedCostFifoLot() {
         String product = product("FIFO", true);
-        String grn = ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", warehouse, "lines",
-                List.of(Map.of("productId", product, "description", "goods", "quantity", 10, "unitCost", 50,
-                        "batchNumber", "LC-" + suffix())))).get("id").asString();
+        String grn = ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId", supplier, "warehouseId",
+                warehouse, "lines", List.of(Map.of("productId", product, "description", "goods", "quantity", 10,
+                        "unitCost", 50, "batchNumber", "LC-" + suffix())))).get("id").asString();
         asAdmin(() -> stock.issue(StockMove.of(product, warehouse, new BigDecimal("5")).source("audit", suffix())));
         String draft = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
                 mapped("grni_accrued"), "allocationMethod", "quantity", "charges", List.of(Map.of("kind", "freight",
@@ -829,7 +834,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(as("PATCH", "/procurement/debit-notes/" + id + "/post", null).body().get("message").asString())
                 .isEqualTo("Cannot post debit note in status posted");
         assertThat(as("PATCH", "/procurement/debit-notes/" + id + "/cancel", null).body().get("message").asString())
-                .isEqualTo("Cannot cancel a posted debit note; reverse with a credit note");
+                .isEqualTo("Cannot cancel a posted debit note; reverse it instead (PATCH /procurement/debit-notes/" + id
+                        + "/reverse)");
         JsonNode list = ok(200, "GET", "/procurement/debit-notes?direction=outbound&status=posted", null);
         assertThat(list.get(0).get("partner").get("name").asString()).startsWith("Customer");
         assertThat(ok(200, "GET", "/procurement/debit-notes/" + id, null).get("partner").get("id").asString())
@@ -851,7 +857,7 @@ class ProcurementIT extends ApiTestSupport {
                 .params(inbound.get("id").asString(), supplier).query(Long.class).single()).isEqualTo(1);
         Res cancelPosted = as("PATCH", "/procurement/debit-notes/" + inbound.get("id").asString() + "/cancel", null);
         assertThat(cancelPosted.body().get("message").asString())
-                .isEqualTo("Cannot cancel a posted debit note; reverse with a credit note");
+                .startsWith("Cannot cancel a posted debit note; reverse it instead");
         Res badPartner = as("POST", "/procurement/debit-notes", Map.of("direction", "inbound", "partnerId",
                 UUID.randomUUID().toString(), "reason", "other", "lines", List.of(Map.of("description", "x", "quantity",
                         1, "unitPrice", 1))));
@@ -864,13 +870,14 @@ class ProcurementIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("return to vendor: stock leaves at cost, Dr AP / Cr Stock Valuation + Cr price variance")
+    @DisplayName("return to vendor: unbilled goods leave at cost and clear their GRNI (no supplier credit, no variance)")
     void returnToVendor() {
         String product = product();
         adhoc(supplier, product, 10, 4);
         BigDecimal sv0 = balance(mapped("stock_valuation"));
         BigDecimal ap0 = balance(mapped("accounts_payable"));
         BigDecimal ppv0 = balance(mapped("purchase_price_variance"));
+        BigDecimal grni0 = balance(mapped("grni_accrued"));
         JsonNode note = ok(201, "POST", "/procurement/debit-notes", Map.of("direction", "inbound", "partnerId", supplier,
                 "reason", "returned_goods", "locationId", warehouse, "lines", List.of(Map.of("productId", product,
                         "description", "Damaged beans", "quantity", 3, "unitPrice", 5))));
@@ -878,10 +885,13 @@ class ProcurementIT extends ApiTestSupport {
         JsonNode posted = ok(200, "PATCH", "/procurement/debit-notes/" + note.get("id").asString() + "/post", null);
         assertThat(posted.get("status").asString()).isEqualTo("posted");
         assertThat(onHand(product, warehouse)).isEqualByComparingTo("7");
-        assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("15");
+        // Gap fix h03-F4: the goods were received without an order and never billed, so the return clears their GRNI
+        // at the receipt cost (3 × 4) and the receipt keeps 7 open to bill; the supplier was never credited.
+        assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("0");
+        assertThat(balance(mapped("grni_accrued")).subtract(grni0)).isEqualByComparingTo("12");
         assertThat(balance(mapped("stock_valuation")).subtract(sv0)).isEqualByComparingTo("-12");
-        // review 2026-11-15 (P-5): the return variance goes to purchase price variance, not stock adjustment income
-        assertThat(balance(mapped("purchase_price_variance")).subtract(ppv0)).isEqualByComparingTo("-3");
+        // review 2026-11-15 (P-5): a return variance goes to purchase price variance; here cost = GRNI, so none
+        assertThat(balance(mapped("purchase_price_variance")).subtract(ppv0)).isEqualByComparingTo("0");
         String ledgerType = jdbc.sql("SELECT type::text FROM \"InventoryLedger\" WHERE \"productId\" = ? AND"
                 + " \"quantityChange\" < 0").param(product).query(String.class).single();
         assertThat(ledgerType).isEqualTo("return_to_supplier");
@@ -927,7 +937,7 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal g2 = balance(grni);
         JsonNode bill = postBill(sup, Map.of("productId", sugar, "description", "Sugar", "quantity", 10, "unitPrice", 5));
         assertThat(balance(grni).subtract(g2)).isEqualByComparingTo("50");
-        ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/cancel", null);
+        ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/cancel", Map.of("reason", "Raised in error"));
         assertThat(balance(grni)).isEqualByComparingTo(g2);
         assertThat(jdbc.sql("SELECT \"billedQuantity\" FROM \"GoodsReceiptLine\" WHERE \"productId\" = ?").param(sugar)
                 .query(BigDecimal.class).single()).isEqualByComparingTo("0");
@@ -1115,6 +1125,8 @@ class ProcurementIT extends ApiTestSupport {
     @DisplayName("authorization: every procurement route answers 401 without a token and 403 without its permission")
     void authorization() {
         // 158 Source-to-Pay + 1 PROC-4 supplier performance + 14 PROC-3/5 (budgets, delegations, PR approval).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(194);
+        // Accounting controls (2026-11-17): +4 supplier-claim quantity routes, +1 debit-note reversal.
+        // Readiness gaps h06-F6 (2026-11-18): +1 GET /procurement/purchase-orders/{id}/payable.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(200);
     }
 }

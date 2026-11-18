@@ -78,15 +78,23 @@ public final class TenderAccount {
                         + " account or configure its account mapping");
             }
         }
-        record Acct(String id, String name, String currencyId, String category) {}
-        Acct account = jdbc.sql("SELECT a.id, a.name, a.\"currencyId\", c.key FROM \"Account\" a"
-                        + " LEFT JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
+        record Acct(String id, String name, String currencyId, String category, String code, String controlType) {}
+        Acct account = jdbc.sql("SELECT a.id, a.name, a.\"currencyId\", c.key, a.code, a.\"controlAccountType\"::text"
+                        + " FROM \"Account\" a LEFT JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
                         + " WHERE a.id = ? AND a.\"organizationId\" = ? AND a.\"isActive\" = true AND a.\"deletedAt\" IS NULL")
                 .params(accountId, organizationId)
-                .query((rs, n) -> new Acct(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)))
+                .query((rs, n) -> new Acct(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4),
+                        rs.getString(5), rs.getString(6)))
                 .optional().orElse(null);
         if (account == null) {
             throw ApiException.badRequest("Payment account is inactive or unavailable");
+        }
+        if ("ar".equals(account.controlType()) || "ap".equals(account.controlType())) {
+            // Control-account policy (V518, "close now"): a payment whose cash side is AR / AP books receivable against
+            // payable directly, outside both sub-ledgers, whatever the method or the account's category.
+            throw ApiException.badRequest(ControlAccountGuards.refusal("Payment account",
+                    new ControlAccountGuards.ControlAccount(account.id(), account.code(), account.name(),
+                            account.controlType())));
         }
         if (account.currencyId() != null) {
             String orgCurrency = ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")

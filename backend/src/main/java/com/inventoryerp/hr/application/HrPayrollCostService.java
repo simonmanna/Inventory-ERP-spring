@@ -163,10 +163,11 @@ public class HrPayrollCostService {
     /**
      * Split {@code amount} (the run's salary debit) over the run's employees: {@code redirected} is what other modules'
      * inputs already took from an employee's pay. Writes the run's cost lines. Returns the journal debits, or an empty
-     * list when the organisation has no rules, in which case the caller posts the single salary line.
+     * list when the organisation has no rules, in which case the caller posts the single salary line. Percentage
+     * shares are rounded to the pay {@code scale}, so every salary debit is a whole currency amount.
      */
     List<Debit> allocate(String runId, List<Map<String, Object>> items, BigDecimal amount,
-            Map<String, BigDecimal> redirected) {
+            Map<String, BigDecimal> redirected, int scale) {
         List<Map<String, Object>> rules = hr.where(HrCostAllocationRule.class).list("percent DESC, \"costCenterId\""
                 + " ASC");
         Map<String, List<Rule>> byEmployee = new LinkedHashMap<>();
@@ -191,7 +192,7 @@ public class HrPayrollCostService {
             costs.add(new Cost(employeeId, (String) employee.get("departmentId"), (String) employee.get("branchId"),
                     cost));
         }
-        List<Share> shares = HrPayrollCostAllocator.split(costs, byEmployee, byDepartment, amount);
+        List<Share> shares = HrPayrollCostAllocator.split(costs, byEmployee, byDepartment, amount, scale);
         for (Share s : shares) {
             hr.insert(HrPayrollCostLine.class, Obj.of("organizationId", org(), "runId", runId,
                     "employeeId", s.employeeId(), "departmentId", s.departmentId(), "branchId", s.branchId(),

@@ -45,15 +45,17 @@ public class HrPayrollEngineV2 {
     private final HrCompensationService compensation;
     private final HrOvertimeService overtime;
     private final AccountResolverService accountsResolver;
+    private final HrPayrollInputService payrollInputs;
 
     public HrPayrollEngineV2(HrDb hr, HrRows rows, HrPayrollSetupService setup, HrCompensationService compensation,
-            HrOvertimeService overtime, AccountResolverService accountsResolver) {
+            HrOvertimeService overtime, AccountResolverService accountsResolver, HrPayrollInputService payrollInputs) {
         this.hr = hr;
         this.rows = rows;
         this.setup = setup;
         this.compensation = compensation;
         this.overtime = overtime;
         this.accountsResolver = accountsResolver;
+        this.payrollInputs = payrollInputs;
     }
 
     /** Engine v2 is on once the organisation saved settings with {@code engine = v2}. */
@@ -101,7 +103,9 @@ public class HrPayrollEngineV2 {
         LocalDate start = HrRows.date(period.get("startDate"));
         LocalDate end = HrRows.date(period.get("endDate"));
         int ppy = periodsPerYear(period.get("periodType"));
-        int scale = ((Number) s.get("roundingScale")).intValue();
+        // Owner decision (currency-aware payroll rounding): each result line is rounded once to the pay scale (the
+        // functional currency's decimals, or a coarser saved roundingScale); totals and net are sums of those lines.
+        int scale = setup.payScale();
         Set<DayOfWeek> weekend = new HashSet<>();
         for (String d : String.valueOf(s.get("weekendDays")).split(",")) {
             if (!d.isBlank()) {
@@ -199,6 +203,9 @@ public class HrPayrollEngineV2 {
         data.put("createdBy", userId);
         Map<String, Object> item = hr.insert(HrPayrollItem.class, data);
         String itemId = (String) item.get("id");
+        // The inputs this item pays / recovers belong to the run (as in v1): approval credits their accounts from
+        // the same rounded amounts the lines carry and marks them included, so they are not paid again.
+        payrollInputs.attach(res.usedInputIds(), runId, itemId);
         for (HrPayrollCalculator.Line l : res.lines()) {
             if ("EARNING".equals(l.kind()) && !"BASIC".equals(l.category()) && !"OVERTIME".equals(l.category())) {
                 hr.insert(HrPayrollAllowance.class, nestLine(orgId, itemId, l, userId));
@@ -346,9 +353,80 @@ public class HrPayrollEngineV2 {
     // ------------------------------------------------------------------ approval journal (v2 credit side)
 
     /**
+     * Result lines of a v2 run that have no liability / receivable account to credit, one entry per component (R12):
+     * an element deduction without a GL account, a tax / statutory deduction or a statutory employer contribution
+     * whose payable mapping is missing, a non-statutory employer contribution without a GL account. Empty when the
+     * run can post. Lateness is not listed: it is pay not earned, credited back to salaries expense by design.
+     */
+    List<String> unmappedDeductions(String runId) {
+        Set<String> out = new java.util.LinkedHashSet<>();
+        for (Map<String, Object> l : rows.list("HrPayrollResultLine", "\"runId\" = ?", "\"sortOrder\" ASC", runId)) {
+            String kind = (String) l.get("kind");
+            String category = String.valueOf(l.get("category"));
+            if (HrRows.dec(l.get("amount")).signum() == 0) {
+                continue;
+            }
+            String component = l.get("code") + " (" + l.get("name") + ")";
+            if ("DEDUCTION".equals(kind)) {
+                switch (category) {
+                    case "INPUT_DEDUCTION", "LOAN", "ADVANCE", "LATE" -> {
+                        // Inputs are checked by HrPayrollInputService; loans / advances credit their receivables.
+                    }
+                    case "TAX", "STATUTORY" -> {
+                        String problem = payableProblem((String) l.get("payableKey"));
+                        if (problem != null) {
+                            out.add(component + ": " + category.toLowerCase(java.util.Locale.ROOT) + " deduction, "
+                                    + problem);
+                        }
+                    }
+                    default -> {
+                        if (l.get("glAccountId") == null) {
+                            out.add(component + ": deduction has no GL account");
+                        }
+                    }
+                }
+            } else if ("EMPLOYER_CONTRIBUTION".equals(kind)) {
+                if (l.get("statutoryCode") != null) {
+                    String problem = payableProblem((String) l.get("payableKey"));
+                    if (problem != null) {
+                        out.add(component + ": employer contribution, " + problem);
+                    }
+                } else if (l.get("glAccountId") == null) {
+                    out.add(component + ": employer contribution has no GL (payable) account");
+                }
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
+    /**
+     * Currency-aware payroll rounding: {@code true} when every result line of the run is stored at {@code scale}
+     * decimals (the journal credits / debits are sums of these lines, so they post without re-rounding).
+     */
+    boolean linesOnScale(String runId, int scale) {
+        for (Map<String, Object> l : rows.list("HrPayrollResultLine", "\"runId\" = ?", null, runId)) {
+            if (!HrPayMoney.onScale(HrRows.dec(l.get("amount")), scale)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Why a payable mapping key cannot be credited, or {@code null} when it resolves. */
+    private String payableProblem(String key) {
+        if (key == null) {
+            return "no payable account mapping";
+        }
+        return accountsResolver.byMappingOptional(key) == null ? "account mapping '" + key + "' is not configured"
+                : null;
+    }
+
+    /**
      * Debits and credits of a v2 run besides the gross salary debit and the payroll-input lines the v1 journal keeps:
      * net pay, each statutory payable, employer contributions (expense and payable), element deductions,
-     * lateness, loans and advances.
+     * lateness, loans and advances. Every deduction credits its liability / receivable account; there is no salaries
+     * expense fallback (R12) and {@link #unmappedDeductions} refuses an unmapped run before it posts. Lateness alone
+     * credits salaries expense: it is pay the employee did not earn, not an amount withheld for someone else.
      */
     void journalLines(String runId, List<PostingRequest.Line> lines, String salaryExpense, String netPayable,
             String loanReceivable, String advanceReceivable) {
@@ -364,20 +442,23 @@ public class HrPayrollEngineV2 {
             String kind = (String) l.get("kind");
             String category = (String) l.get("category");
             BigDecimal amount = HrRows.dec(l.get("amount"));
+            if (amount.signum() == 0) {
+                continue;
+            }
             if ("DEDUCTION".equals(kind) && !"INPUT_DEDUCTION".equals(category)) {
                 String account = switch (category) {
                     case "LOAN" -> loanReceivable;
                     case "ADVANCE" -> advanceReceivable;
-                    case "TAX", "STATUTORY" -> account((String) l.get("payableKey"), salaryExpense);
-                    default -> l.get("glAccountId") != null ? (String) l.get("glAccountId") : salaryExpense;
+                    case "LATE" -> salaryExpense;
+                    case "TAX", "STATUTORY" -> payable(l);
+                    default -> glAccount(l);
                 };
                 credits.merge(account, amount, BigDecimal::add);
                 names.putIfAbsent(account, label(category, l));
             } else if ("EMPLOYER_CONTRIBUTION".equals(kind)) {
                 String expense = l.get("expenseKey") != null ? account((String) l.get("expenseKey"), salaryExpense)
                         : salaryExpense;
-                String payable = l.get("statutoryCode") != null ? account((String) l.get("payableKey"), salaryExpense)
-                        : l.get("glAccountId") != null ? (String) l.get("glAccountId") : salaryExpense;
+                String payable = l.get("statutoryCode") != null ? payable(l) : glAccount(l);
                 debits.merge(expense, amount, BigDecimal::add);
                 credits.merge(payable, amount, BigDecimal::add);
                 names.putIfAbsent(payable, label(category, l));
@@ -405,6 +486,23 @@ public class HrPayrollEngineV2 {
             case "TAX", "STATUTORY" -> l.get("statutoryCode") + " payable";
             default -> "Payroll deductions";
         };
+    }
+
+    /** The payable a tax / statutory line credits; never salaries expense (R12). */
+    private String payable(Map<String, Object> l) {
+        String key = (String) l.get("payableKey");
+        if (key == null) {
+            throw ApiException.badRequest("Payroll component " + l.get("code") + " has no payable account mapping");
+        }
+        return account(key, null);
+    }
+
+    /** The GL account an element deduction / contribution credits; never salaries expense (R12). */
+    private static String glAccount(Map<String, Object> l) {
+        if (l.get("glAccountId") == null) {
+            throw ApiException.badRequest("Payroll component " + l.get("code") + " has no GL account");
+        }
+        return (String) l.get("glAccountId");
     }
 
     private String account(String key, String fallback) {

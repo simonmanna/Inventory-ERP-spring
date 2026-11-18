@@ -130,11 +130,18 @@ final class HrPayslipPdf {
         return c;
     }
 
+    /**
+     * A stored payroll amount with thousands separators at the pay scale. Never re-rounds (currency-aware payroll
+     * rounding, {@link HrPayMoney}): the amount was rounded once when the run was calculated, so the payslip shows
+     * exactly what the bank line and the journal carry; a run stored before that rule shows its stored decimals.
+     */
     static String money(BigDecimal v, int scale) {
         if (v == null) {
             return "";
         }
-        java.text.DecimalFormat f = new java.text.DecimalFormat(scale == 0 ? "#,##0" : "#,##0." + "0".repeat(scale));
-        return f.format(v.setScale(scale, RoundingMode.HALF_UP));
+        int places = Math.max(scale, Math.max(0, v.stripTrailingZeros().scale()));
+        java.text.DecimalFormat f = new java.text.DecimalFormat(places == 0 ? "#,##0" : "#,##0." + "0".repeat(places));
+        f.setRoundingMode(RoundingMode.HALF_UP); // never applied: places covers every stored decimal
+        return f.format(v.setScale(places));
     }
 }

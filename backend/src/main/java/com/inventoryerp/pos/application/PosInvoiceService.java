@@ -1023,6 +1023,10 @@ public class PosInvoiceService {
                 throw ApiException.badRequest("Nothing to write off");
             }
             String badDebt = determination.mapped("bad_debt");
+            // Control-account policy (V518, "close now"): the bad_debt mapping is configuration, but on a designated
+            // AR / AP account the write-off would be Dr AR / Cr AR (or move AR onto AP) outside the sub-ledger.
+            com.inventoryerp.accounting.application.ControlAccountGuards.assertNotControl(jdbc, orgId,
+                    "POS write-off (bad_debt account mapping)", badDebt);
             String ar = (String) invoice.get("receivableAccountId");
             if (ar == null) {
                 throw ApiException.badRequest(

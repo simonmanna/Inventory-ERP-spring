@@ -75,11 +75,13 @@ public class PeriodCloseChecklistService {
         Timestamp startAt = AccountingDay.fromWallClock(start, zone);
         Timestamp endAt = AccountingDay.fromWallClock(end, zone);
 
-        String pending = " WHERE \"organizationId\" = ? AND status::text IN ('draft', 'pending', 'approved')";
-        long mutations = count("SELECT count(*) FROM \"StockOut\"" + pending, org)
-                + count("SELECT count(*) FROM \"WasteRecord\"" + pending, org)
-                + count("SELECT count(*) FROM \"StockAdjustment\"" + pending, org)
-                + count("SELECT count(*) FROM \"StockTransfer\"" + pending, org);
+        // As the close gate (review 2026-11-17, ACR-17): only stock documents raised up to the period end.
+        String pending = " WHERE \"organizationId\" = ? AND status::text IN ('draft', 'pending', 'approved')"
+                + " AND \"createdAt\" <= ?";
+        long mutations = count("SELECT count(*) FROM \"StockOut\"" + pending, org, endAt)
+                + count("SELECT count(*) FROM \"WasteRecord\"" + pending, org, endAt)
+                + count("SELECT count(*) FROM \"StockAdjustment\"" + pending, org, endAt)
+                + count("SELECT count(*) FROM \"StockTransfer\"" + pending, org, endAt);
         List<Map<String, Object>> checks = new ArrayList<>();
         checks.add(check("register_shifts", "Register shifts reconciled", true,
                 count("SELECT count(*) FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"openedAt\" <= ?"

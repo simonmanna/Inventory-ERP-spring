@@ -110,7 +110,8 @@ public class RequisitionToOrderService {
             r.put("lastPrice", r.get("productId") == null ? null : SqlRows.one(jdbc.sql("SELECT sp.\"unitPrice\","
                     + " sp.\"currencyCode\", sp.\"validFrom\", sp.\"partnerId\", p.name AS \"partnerName\" FROM"
                     + " \"SupplierPrice\" sp JOIN \"Partner\" p ON p.id = sp.\"partnerId\" WHERE sp.\"organizationId\" = ?"
-                    + " AND sp.\"productId\" = ? ORDER BY sp.\"validFrom\" DESC, sp.\"createdAt\" DESC LIMIT 1")
+                    + " AND sp.\"productId\" = ?" + SupplierService.NOT_SEALED + " ORDER BY sp.\"validFrom\" DESC,"
+                    + " sp.\"createdAt\" DESC LIMIT 1")
                     .params(org(), r.get("productId"))));
         }
         return rows;
@@ -134,7 +135,8 @@ public class RequisitionToOrderService {
                     .distinct().sorted().toList();
             Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
             for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT l.*, r.status::text AS \"requestStatus\","
-                    + " r.\"requestNumber\" FROM \"PurchaseRequestLine\" l JOIN \"PurchaseRequest\" r ON r.id ="
+                    + " r.\"requestNumber\", r.\"branchId\" AS \"requestBranchId\", r.\"departmentId\" AS"
+                    + " \"requestDepartmentId\" FROM \"PurchaseRequestLine\" l JOIN \"PurchaseRequest\" r ON r.id ="
                     + " l.\"purchaseRequestId\" WHERE l.\"organizationId\" = ? AND l.id = ANY(?::text[]) ORDER BY l.id"
                     + " FOR UPDATE OF l").params(orgId, ids.toArray(String[]::new)))) {
                 byId.put((String) l.get("id"), l);
@@ -185,9 +187,20 @@ public class RequisitionToOrderService {
                         (String) rl.get("variantId")));
                 requestId = requestId == null ? (String) rl.get("purchaseRequestId") : requestId;
             }
-            Map<String, Object> po = orders.create(new CreateInput(in.partnerId(), in.branchId(), null,
+            // h04-F2: the order carries the branch and department of the requests it is raised from, so scoped budgets
+            // and delegation limits see it.
+            String branchId = orderBranch(in.branchId(), in.warehouseId(), byId.values());
+            String departmentId = orderDepartment(byId.values());
+            // h04-F9: the request lines hand over what is ordered before the order's budget check runs, so the order is
+            // not counted again as a reservation of the requests it comes from.
+            for (Map.Entry<String, BigDecimal> e : taking.entrySet()) {
+                jdbc.sql("UPDATE \"PurchaseRequestLine\" SET \"orderedQuantity\" = \"orderedQuantity\" + ? WHERE id = ? AND"
+                        + " \"organizationId\" = ?").params(e.getValue(), e.getKey(), orgId).update();
+            }
+            Map<String, Object> po = orders.create(new CreateInput(in.partnerId(), branchId, null,
                     in.expectedDeliveryDate(), in.currencyCode(), in.exchangeRate(), in.paymentType() == null ? "credit"
-                            : in.paymentType(), in.notes(), in.terms(), in.warehouseId(), requestId, poLines, null));
+                            : in.paymentType(), in.notes(), in.terms(), in.warehouseId(), requestId, poLines,
+                    departmentId));
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> created = (List<Map<String, Object>>) po.get("lines");
             for (int i = 0; i < in.lines().size(); i++) {
@@ -197,10 +210,6 @@ public class RequisitionToOrderService {
                 }
                 jdbc.sql("UPDATE \"PurchaseOrderLine\" SET \"requestLineId\" = ? WHERE id = ? AND \"organizationId\" = ?")
                         .params(ol.requestLineId(), created.get(i).get("id"), orgId).update();
-            }
-            for (Map.Entry<String, BigDecimal> e : taking.entrySet()) {
-                jdbc.sql("UPDATE \"PurchaseRequestLine\" SET \"orderedQuantity\" = \"orderedQuantity\" + ? WHERE id = ? AND"
-                        + " \"organizationId\" = ?").params(e.getValue(), e.getKey(), orgId).update();
             }
             List<String> requests = byId.values().stream().map(l -> (String) l.get("purchaseRequestId")).distinct()
                     .toList();
@@ -267,17 +276,76 @@ public class RequisitionToOrderService {
         return lifecycle(poId);
     }
 
-    /** Record the supplier's confirmation: their reference and promised delivery date. */
+    /**
+     * Record the supplier's confirmation: their reference and promised delivery date. The first promised date is kept
+     * ({@code firstPromisedDate}, h04-F7): on-time measures use it, so a later re-confirmation cannot turn a late
+     * delivery into an on-time one. Every change of the promise is in the audit trail.
+     */
     public Map<String, Object> acknowledge(String poId, String supplierReference, String promisedDate) {
         requireOpen(poId);
-        java.time.LocalDate promised = promisedDate == null || promisedDate.isBlank() ? null
-                : java.time.LocalDate.parse(promisedDate.substring(0, 10));
+        java.time.LocalDate promised = day(promisedDate, "promisedDate");
+        String before = jdbc.sql("SELECT \"promisedDate\"::text FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\""
+                + " = ?").params(poId, org()).query(String.class).optional().orElse(null);
         jdbc.sql("UPDATE \"PurchaseOrder\" SET \"acknowledgedAt\" = " + NOW + ", \"supplierReference\" = ?,"
-                + " \"promisedDate\" = ?, \"sentAt\" = COALESCE(\"sentAt\", " + NOW + "), \"updatedAt\" = " + NOW
-                + " WHERE id = ? AND \"organizationId\" = ?").params(supplierReference, promised, poId, org()).update();
-        audit.record(AuditInput.of("PurchaseOrder", poId, "update", null, Obj.of("acknowledged", true,
-                "supplierReference", supplierReference, "promisedDate", promisedDate)));
+                + " \"promisedDate\" = ?, \"firstPromisedDate\" = COALESCE(\"firstPromisedDate\", ?), \"sentAt\" ="
+                + " COALESCE(\"sentAt\", " + NOW + "), \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(supplierReference, promised, promised, poId, org()).update();
+        audit.record(AuditInput.of("PurchaseOrder", poId, "update", Obj.of("promisedDate", before == null ? null
+                : before.toString()), Obj.of("acknowledged", true, "supplierReference", supplierReference,
+                "promisedDate", promised == null ? null : promised.toString())));
         return lifecycle(poId);
+    }
+
+    /**
+     * A calendar date sent by a client ({@code YYYY-MM-DD}; the date part of an ISO date-time is taken). A value that
+     * is not a date is a 400, never a 500 (h04-F7).
+     */
+    static java.time.LocalDate day(String value, String field) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String v = value.trim();
+        try {
+            return java.time.LocalDate.parse(v.length() > 10 ? v.substring(0, 10) : v);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw ApiException.badRequest(field + " must be a valid ISO 8601 date string (YYYY-MM-DD)");
+        }
+    }
+
+    /**
+     * h04-F2: the branch an order is for: the one given, else the one its requests share, else the receiving
+     * warehouse's. Requests of several branches need the branch chosen.
+     */
+    private String orderBranch(String given, String warehouseId, java.util.Collection<Map<String, Object>> lines) {
+        if (given != null && !given.isBlank()) {
+            return given;
+        }
+        List<String> branches = lines.stream().map(l -> (String) l.get("requestBranchId"))
+                .filter(java.util.Objects::nonNull).distinct().sorted().toList();
+        if (branches.size() > 1) {
+            throw ApiException.badRequest("Request lines of different branches cannot be ordered together without a"
+                    + " branch; choose the branch the order is for");
+        }
+        if (!branches.isEmpty()) {
+            return branches.getFirst();
+        }
+        return warehouseId == null || warehouseId.isBlank() ? null : jdbc.sql("SELECT \"branchId\" FROM"
+                + " \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?").params(warehouseId, org())
+                .query(String.class).optional().orElse(null);
+    }
+
+    /**
+     * h04-F2: the department of the requests an order is raised from. Requests of two departments cannot share an
+     * order, because a department budget could then not see its share of it.
+     */
+    private static String orderDepartment(java.util.Collection<Map<String, Object>> lines) {
+        List<String> departments = lines.stream().map(l -> (String) l.get("requestDepartmentId"))
+                .filter(java.util.Objects::nonNull).distinct().sorted().toList();
+        if (departments.size() > 1) {
+            throw ApiException.badRequest("Request lines of different departments cannot be ordered together; raise one"
+                    + " order per department");
+        }
+        return departments.isEmpty() ? null : departments.getFirst();
     }
 
     /**
@@ -350,7 +418,7 @@ public class RequisitionToOrderService {
     public Map<String, Object> lifecycle(String poId) {
         Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT o.id, o.\"orderNumber\", o.status::text AS status,"
                 + " o.\"partnerId\", p.name AS \"partnerName\", o.\"orderDate\", o.\"expectedDeliveryDate\", o.\"promisedDate\","
-                + " o.\"sentAt\", o.\"acknowledgedAt\", o.\"supplierReference\", o.\"approvedAt\", o.\"closedAt\","
+                + " o.\"firstPromisedDate\", o.\"sentAt\", o.\"acknowledgedAt\", o.\"supplierReference\", o.\"approvedAt\", o.\"closedAt\","
                 + " o.\"closeReason\", o.\"requestId\", o.\"currencyCode\", o.\"totalAmount\", o.\"totalPaid\","
                 + " o.\"isEmergency\", o.\"emergencyReason\", o.\"emergencyReviewedAt\" FROM"
                 + " \"PurchaseOrder\" o LEFT JOIN \"Partner\" p ON p.id = o.\"partnerId\" WHERE o.id = ? AND"

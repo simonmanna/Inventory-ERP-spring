@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pause, Play, Plus, Repeat, Trash2, Zap } from 'lucide-react';
+import { Pause, Play, Plus, Repeat, ShieldCheck, Trash2, Zap } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,8 +10,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DataTable, type Column } from '@/components/data-table';
 import { ListCard, ListPageHeader } from '@/components/list';
-import { useAccounts } from '@/features/accounting/api';
+import { isReceivablePayableControl, useAccounts } from '@/features/accounting/api';
 import {
+  useApproveRecurringTemplate,
   useDeleteRecurringTemplate,
   useRecurringAction,
   useRecurringRuns,
@@ -38,12 +39,16 @@ const blankLine = (): LineForm => ({ accountId: '', debit: '', credit: '', descr
 export default function RecurringEntriesPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const canManage = has(PERMISSIONS.recurringEntry.manage);
+  // R3 maker-checker: approving needs the journal-entry post permission and a user other than the maker.
+  const canApprove = has(PERMISSIONS.journalEntry.post);
+  const me = useAuthStore((s) => s.user);
   const templates = useRecurringTemplates();
   const { data: accounts } = useAccounts();
   const save = useSaveRecurringTemplate();
   const action = useRecurringAction();
   const runNow = useRunRecurringNow();
   const remove = useDeleteRecurringTemplate();
+  const approve = useApproveRecurringTemplate();
   const [selected, setSelected] = useState<RecurringTemplate | null>(null);
   const runs = useRecurringRuns(selected?.id);
 
@@ -112,19 +117,35 @@ export default function RecurringEntriesPage() {
     { key: 'next', header: tx('Next run'), render: (t) => t.nextRunDate ?? '—' },
     { key: 'status', header: tx('Status'), render: (t) => <Badge variant={t.status === 'active' ? 'default' : 'secondary'}>{t.status}</Badge> },
     {
+      key: 'approval',
+      header: tx('Approval'),
+      render: (t) => {
+        if (t.approvedAt) return <Badge variant="secondary">{tx('Approved')}</Badge>;
+        // draft mode needs no template approval: every occurrence is a draft for a second user anyway
+        if (t.mode === 'draft') return '—';
+        return <Badge variant="outline" title={tx('Occurrences are staged as drafts until a second user approves this entry.')}>{tx('Awaiting approval')}</Badge>;
+      },
+    },
+    {
       key: 'actions',
       header: '',
-      render: (t) => canManage && (
+      render: (t) => (canManage || canApprove) && (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" title={tx('Run now')} aria-label={tx('Run now')}
-            onClick={() => void act(() => runNow.mutateAsync({ id: t.id }), tx('Occurrence generated'))}><Zap className="h-4 w-4" /></Button>
-          {t.status === 'active' && <Button variant="ghost" size="icon" title={tx('Pause')} aria-label={tx('Pause')}
-            onClick={() => void act(() => action.mutateAsync({ id: t.id, action: 'pause' }), tx('Paused'))}><Pause className="h-4 w-4" /></Button>}
-          {t.status === 'paused' && <Button variant="ghost" size="icon" title={tx('Resume')} aria-label={tx('Resume')}
-            onClick={() => void act(() => action.mutateAsync({ id: t.id, action: 'resume' }), tx('Resumed'))}><Play className="h-4 w-4" /></Button>}
-          {t.status !== 'ended' && <Button variant="ghost" size="sm" onClick={() => startEdit(t)}>{tx('Edit')}</Button>}
-          <Button variant="ghost" size="icon" title={tx('Delete')} aria-label={tx('Delete')}
-            onClick={() => void act(() => remove.mutateAsync(t.id), tx('Deleted'))}><Trash2 className="h-4 w-4" /></Button>
+          {canApprove && t.mode === 'post' && !t.approvedAt && t.status !== 'ended' && me?.id !== t.createdBy && me?.id !== t.lastEditedBy && (
+            <Button variant="ghost" size="icon" title={tx('Approve')} aria-label={tx('Approve')}
+              onClick={() => void act(() => approve.mutateAsync(t.id), tx('Recurring entry approved'))}><ShieldCheck className="h-4 w-4" /></Button>
+          )}
+          {canManage && <>
+            <Button variant="ghost" size="icon" title={tx('Run now')} aria-label={tx('Run now')}
+              onClick={() => void act(() => runNow.mutateAsync({ id: t.id }), tx('Occurrence generated'))}><Zap className="h-4 w-4" /></Button>
+            {t.status === 'active' && <Button variant="ghost" size="icon" title={tx('Pause')} aria-label={tx('Pause')}
+              onClick={() => void act(() => action.mutateAsync({ id: t.id, action: 'pause' }), tx('Paused'))}><Pause className="h-4 w-4" /></Button>}
+            {t.status === 'paused' && <Button variant="ghost" size="icon" title={tx('Resume')} aria-label={tx('Resume')}
+              onClick={() => void act(() => action.mutateAsync({ id: t.id, action: 'resume' }), tx('Resumed'))}><Play className="h-4 w-4" /></Button>}
+            {t.status !== 'ended' && <Button variant="ghost" size="sm" onClick={() => startEdit(t)}>{tx('Edit')}</Button>}
+            <Button variant="ghost" size="icon" title={tx('Delete')} aria-label={tx('Delete')}
+              onClick={() => void act(() => remove.mutateAsync(t.id), tx('Deleted'))}><Trash2 className="h-4 w-4" /></Button>
+          </>}
         </div>
       ),
     },
@@ -134,7 +155,7 @@ export default function RecurringEntriesPage() {
     <div className="space-y-4">
       <ListPageHeader
         title={tx('Recurring Entries')}
-        description={tx('Journal entries generated on a schedule: posted directly or staged as drafts for a second approver.')}
+        description={tx('Journal entries generated on a schedule: posted directly once a second user approves the entry, or staged as drafts for a second approver.')}
         icon={Repeat}
         actions={canManage ? <Button onClick={() => startEdit(null)}><Plus className="mr-2 h-4 w-4" />{tx('New recurring entry')}</Button> : undefined}
       />
@@ -194,7 +215,8 @@ export default function RecurringEntriesPage() {
                   <Select value={l.accountId} onValueChange={(v) => setLines((ls) => ls.map((x, j) => (j === i ? { ...x, accountId: v } : x)))}>
                     <SelectTrigger><SelectValue placeholder={tx('Account')} /></SelectTrigger>
                     <SelectContent>
-                      {(accounts?.data ?? []).map((a) => <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>)}
+                      {/* AR / AP control accounts are refused for templates (control-account policy). */}
+                      {(accounts?.data ?? []).filter((a) => !isReceivablePayableControl(a)).map((a) => <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>

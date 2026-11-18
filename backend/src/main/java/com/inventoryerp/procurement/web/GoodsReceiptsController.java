@@ -30,9 +30,12 @@ public class GoodsReceiptsController {
         this.svc = svc;
     }
 
-    /** Capture + post an ad-hoc stock-in (draft only without {@code goods_receipt:post} or pending approval). */
+    /**
+     * Capture + post an ad-hoc stock-in (draft only without {@code goods_receipt:post} or pending approval). Gap fix
+     * h03-F9: a retry would receive the goods twice, so the Idempotency-Key is required.
+     */
     @PostMapping("/adhoc")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.PROCUREMENT__GOODS_RECEIPT__CREATE)
     public Map<String, Object> createAdhoc(@RequestBody(required = false) Map<String, Object> body) {
         return svc.createAdhoc(body == null ? Map.of() : body);

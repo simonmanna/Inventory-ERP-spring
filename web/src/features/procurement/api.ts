@@ -549,6 +549,48 @@ export const poChangeApi = {
 
 export type ClaimStatus = 'open' | 'submitted' | 'accepted' | 'rejected' | 'settled' | 'cancelled';
 export type ClaimType = 'shortage' | 'damage' | 'quality' | 'price' | 'late_delivery' | 'other';
+/** How a settlement credits the supplier (owner decision: no stock / GRNI credit without verified quantities). */
+export type ClaimClassification = 'price_variance' | 'expense_correction' | 'vat_adjustment' | 'stock_adjustment';
+export type ClaimStockAction = 'issue' | 'written_off';
+
+/** A received quantity a shortage / damage / quality claim covers; counts once a second user verified it. */
+export interface SupplierClaimLine {
+  id: string;
+  claimId: string;
+  goodsReceiptId: string;
+  receiptNumber: string | null;
+  goodsReceiptLineId: string;
+  productId: string;
+  productName: string | null;
+  variantId: string | null;
+  quantity: string;
+  unitCost: string;
+  value: string;
+  stockAction: ClaimStockAction;
+  notes: string | null;
+  createdBy: string | null;
+  verifiedBy: string | null;
+  verifiedByName: string | null;
+  verifiedAt: string | null;
+  verified: boolean;
+  grniQuantity: string;
+  issuedValue: string | null;
+  stockLedgerCode: string | null;
+}
+
+/** A goods-receipt line a claim quantity may reference. */
+export interface ClaimReceiptLine {
+  goodsReceiptLineId: string;
+  goodsReceiptId: string;
+  receiptNumber: string;
+  receivedAt: string | null;
+  productId: string;
+  productName: string | null;
+  description: string;
+  quantity: string;
+  unitCost: string;
+  claimable: string;
+}
 
 export interface SupplierClaim {
   id: string;
@@ -570,6 +612,12 @@ export interface SupplierClaim {
   debitNoteId: string | null;
   debitNoteNumber: string | null;
   debitNoteStatus: string | null;
+  journalEntryId?: string | null;
+  journalEntryNumber?: string | null;
+  classification?: ClaimClassification | null;
+  settledTax?: string;
+  createdBy?: string | null;
+  quantityLines?: SupplierClaimLine[];
   createdAt: string;
 }
 
@@ -582,11 +630,11 @@ export const CLAIM_STATUS_TONE: Record<ClaimStatus, 'neutral' | 'info' | 'succes
   cancelled: 'neutral',
 };
 
-export function useClaims(params: { status?: string; partnerId?: string; purchaseOrderId?: string; page?: number }) {
+export function useClaims(params: { status?: string; partnerId?: string; purchaseOrderId?: string; page?: number; limit?: number }) {
   return useQuery({
     queryKey: ['supplier-claims', params],
-    queryFn: async () => (await api.get<{ data: SupplierClaim[]; meta: { total: number; page: number; pageSize: number } }>('/procurement/claims', {
-      params: { status: params.status || undefined, partnerId: params.partnerId || undefined, purchaseOrderId: params.purchaseOrderId || undefined, page: params.page ?? 1 },
+    queryFn: async () => (await api.get<{ data: SupplierClaim[]; meta: { total: number; page: number; pageSize: number; totalPages: number } }>('/procurement/claims', {
+      params: { status: params.status || undefined, partnerId: params.partnerId || undefined, purchaseOrderId: params.purchaseOrderId || undefined, page: params.page ?? 1, limit: params.limit },
     })).data,
   });
 }
@@ -597,13 +645,30 @@ export function useClaimMutation<TBody = unknown>(fn: (body: TBody) => Promise<u
 }
 
 export const claimApi = {
+  /** Stable key per payload: a retry after a lost answer reuses it instead of raising a second claim. */
   create: (body: { partnerId: string; type: ClaimType; amount: number; description: string; purchaseOrderId?: string; goodsReceiptId?: string; vendorBillId?: string }) =>
-    api.post<SupplierClaim>('/procurement/claims', body).then((r) => r.data),
+    idempotentPost<SupplierClaim>('/procurement/claims', body),
   action: (id: string, action: 'submit' | 'cancel') => api.post<SupplierClaim>(`/procurement/claims/${id}/${action}`).then((r) => r.data),
-  accept: (id: string, amount?: number, response?: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/accept`, { amount, response }).then((r) => r.data),
+  accept: (id: string, amount?: number, response?: string) =>
+    idempotentPost<SupplierClaim>(`/procurement/claims/${id}/accept`, { amount, response }),
   reject: (id: string, response: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/reject`, { response }).then((r) => r.data),
-  settle: (id: string) => idempotentPost<SupplierClaim>(`/procurement/claims/${id}/settle`, {}),
+  /** Omitting the classification lets the server derive it from the claim. */
+  settle: (id: string, classification?: ClaimClassification) =>
+    idempotentPost<SupplierClaim>(`/procurement/claims/${id}/settle`, classification ? { classification } : {}),
+  receiptLines: (id: string) => api.get<ClaimReceiptLine[]>(`/procurement/claims/${id}/receipt-lines`).then((r) => r.data),
+  addLine: (id: string, body: { goodsReceiptLineId: string; quantity: number; stockAction?: ClaimStockAction; notes?: string }) =>
+    api.post<SupplierClaim>(`/procurement/claims/${id}/quantity-lines`, body).then((r) => r.data),
+  removeLine: (id: string, lineId: string) => api.delete<SupplierClaim>(`/procurement/claims/${id}/quantity-lines/${lineId}`).then((r) => r.data),
+  verifyLine: (id: string, lineId: string) => api.post<SupplierClaim>(`/procurement/claims/${id}/quantity-lines/${lineId}/verify`).then((r) => r.data),
 };
+
+export function useClaimReceiptLines(claimId: string | null) {
+  return useQuery({
+    queryKey: ['supplier-claims', 'receipt-lines', claimId],
+    queryFn: () => claimApi.receiptLines(claimId as string),
+    enabled: !!claimId,
+  });
+}
 
 export interface CommitmentRow {
   id: string;

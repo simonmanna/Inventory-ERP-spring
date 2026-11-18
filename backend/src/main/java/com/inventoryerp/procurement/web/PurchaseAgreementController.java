@@ -58,7 +58,8 @@ public class PurchaseAgreementController {
 
     public record ReleaseRequest(@NotBlank(message = "warehouseId is required") String warehouseId,
             String expectedDeliveryDate, @OneOf({"cash", "credit"}) String paymentType, String notes,
-            @NotNull(message = "lines must be an array") @ArrayMinSize(1) List<@Valid ReleaseLineRequest> lines) {}
+            @NotNull(message = "lines must be an array") @ArrayMinSize(1) List<@Valid ReleaseLineRequest> lines,
+            String departmentId) {}
 
     private final PurchaseAgreementService agreements;
 
@@ -119,6 +120,6 @@ public class PurchaseAgreementController {
     public Map<String, Object> release(@PathVariable String id, @Valid @RequestBody ReleaseRequest dto) {
         return agreements.release(id, new ReleaseInput(dto.warehouseId(), dto.expectedDeliveryDate(),
                 dto.paymentType(), dto.notes(), dto.lines().stream().map(l -> new ReleaseLine(l.agreementLineId(),
-                        l.quantity())).toList()));
+                        l.quantity())).toList(), dto.departmentId()));
     }
 }

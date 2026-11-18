@@ -2,8 +2,11 @@ package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.CostLineageService.AdjustmentInput;
+import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -19,12 +22,19 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Inventory revaluation and IAS 2 net-realisable-value review documents (ADR-S031), draft → posted → reversed.
@@ -40,7 +50,14 @@ import org.springframework.transaction.annotation.Transactional;
  * </ul>
  *
  * <p>Every posting writes value-only stock-ledger rows and a {@code CostValueAdjustment}; reversal is refused once stock
- * has moved (revaluation) or the allowance was partly released (NRV) — post a new document instead.
+ * has moved or its cost changed since (revaluation) or the allowance was partly released (NRV) — post a new document
+ * instead.
+ *
+ * <p>Readiness gaps (h-02): one line per pool (F3); a reversal never overwrites a later value change and posting re-checks
+ * the item (F4); maker-checker through the {@code inventory_valuation} separation-of-duties pair and the approval engine,
+ * and an offset account outside the control, cash and stock accounts (F5); the posted amount is the quant's exact value
+ * change, so the GL, the stock ledger and the quants agree to the 6-decimal ledger precision (F9); lines are posted in
+ * the stock engine's lock order under the costing locks (F2).
  */
 @Service
 public class InventoryRevaluationService {
@@ -52,21 +69,34 @@ public class InventoryRevaluationService {
     /** Document body. */
     public record RevaluationInput(String kind, String date, String reason, String accountId, List<LineInput> lines) {}
 
+    /** Quantity, carrying unit cost (6 dp) and exact carrying value of one pool. */
+    record Carrying(BigDecimal qty, BigDecimal unit, BigDecimal value) {}
+
     private final JdbcClient jdbc;
     private final SequenceService seq;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final StockPostingService stockPosting;
     private final CostLineageService lineage;
     private final AuditService audit;
+    private final ApprovalsService approvals;
+    private final SegregationOfDutiesService sod;
+    private final TransactionTemplate newTx;
 
     public InventoryRevaluationService(JdbcClient jdbc, SequenceService seq, PostingService posting,
-            StockPostingService stockPosting, CostLineageService lineage, AuditService audit) {
+            StockPostingService stockPosting, CostLineageService lineage, AuditService audit, CostingReversals reversals,
+            ApprovalsService approvals, SegregationOfDutiesService sod, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
+        this.reversals = reversals;
         this.stockPosting = stockPosting;
         this.lineage = lineage;
         this.audit = audit;
+        this.approvals = approvals;
+        this.sod = sod;
+        this.newTx = new TransactionTemplate(txm);
+        this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     private static String org() {
@@ -122,6 +152,9 @@ public class InventoryRevaluationService {
                 + " AND \"deletedAt\" IS NULL").params(in.accountId(), org()).query(Long.class).single() == 0) {
             throw ApiException.badRequest("Account not found");
         }
+        if (in.accountId() != null) {
+            lineage.assertOffsetAccount(in.accountId());
+        }
         String id = UUID.randomUUID().toString();
         String number = "nrv".equals(kind) ? seq.next("inventory_nrv", "NRV/", 5)
                 : seq.next("inventory_revaluation", "IRV/", 5);
@@ -130,6 +163,7 @@ public class InventoryRevaluationService {
                 .params(id, org(), number, kind, java.sql.Date.valueOf(date), in.reason(), in.accountId(),
                         TenantContext.userId())
                 .update();
+        Set<String> pools = new HashSet<>();
         for (LineInput l : in.lines()) {
             Map<String, Object> product = product(l.productId());
             String method = (String) product.get("method");
@@ -137,26 +171,23 @@ public class InventoryRevaluationService {
                     + " \"organizationId\" = ?").params(l.locationId(), org()).query(Long.class).single() == 0) {
                 throw ApiException.badRequest("Location not found");
             }
+            if (!pools.add(poolKey(l.productId(), l.variantId(), l.locationId()))) {
+                throw duplicate(product);
+            }
             if ("revaluation".equals(kind)) {
-                if ("STANDARD".equals(method)) {
-                    throw ApiException.badRequest(product.get("name") + " is carried at standard cost; revalue it by"
-                            + " activating a new standard cost");
-                }
-                if (Boolean.TRUE.equals(product.get("serialTracking"))) {
-                    throw ApiException.badRequest(product.get("name") + " is serial-tracked; serials keep their own cost");
-                }
+                assertRevaluable(product, method);
                 if (l.unitCostAfter() == null || l.unitCostAfter().signum() < 0) {
                     throw ApiException.badRequest("unitCostAfter must not be less than 0");
                 }
             } else if (l.netRealisableValue() == null || l.netRealisableValue().signum() < 0) {
                 throw ApiException.badRequest("netRealisableValue must not be less than 0");
             }
-            BigDecimal[] carrying = carrying(product, l.productId(), l.variantId(), l.locationId());
+            Carrying carrying = carrying(product, l.productId(), l.variantId(), l.locationId());
             jdbc.sql("INSERT INTO \"InventoryRevaluationLine\" (id, \"organizationId\", \"revaluationId\", \"productId\","
                             + " \"variantId\", \"locationId\", quantity, \"unitCostBefore\", \"unitCostAfter\","
                             + " \"netRealisableValue\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                     .params(UUID.randomUUID().toString(), org(), id, l.productId(), l.variantId(), l.locationId(),
-                            carrying[0], carrying[1], l.unitCostAfter(), l.netRealisableValue())
+                            carrying.qty(), carrying.unit(), l.unitCostAfter(), l.netRealisableValue())
                     .update();
         }
         audit.recordInTx(AuditInput.of("InventoryRevaluation", id, "create", null, Obj.of("number", number, "kind",
@@ -186,22 +217,47 @@ public class InventoryRevaluationService {
         boolean nrv = "nrv".equals(d.get("kind"));
         String sourceType = nrv ? "inventory_nrv" : "inventory_revaluation";
         Instant date = ((LocalDate) toDate(d.get("revaluationDate"))).atStartOfDay(ZoneOffset.UTC).toInstant();
+        List<Map<String, Object>> docLines = inPoolOrder(SqlRows.list(jdbc.sql("SELECT * FROM"
+                + " \"InventoryRevaluationLine\" WHERE \"revaluationId\" = ?").param(id)));
+        // h-02 F3: a draft saved before one-line-per-pool was enforced is refused here too.
+        Set<String> pools = new HashSet<>();
+        for (Map<String, Object> l : docLines) {
+            if (!pools.add(poolKey((String) l.get("productId"), (String) l.get("variantId"),
+                    (String) l.get("locationId")))) {
+                throw duplicate(product((String) l.get("productId")));
+            }
+        }
+        // h-02 F5: the offset follows the control-account policy; maker-checker through the approval engine (when the
+        // organisation runs a workflow for inventory valuation changes) and the separation-of-duties pair.
+        if (d.get("accountId") != null) {
+            lineage.assertOffsetAccount((String) d.get("accountId"));
+        }
+        gateApproval(d, docLines, nrv);
+        List<String> makers = new ArrayList<>();
+        makers.add((String) d.get("createdBy"));
+        sod.assertSeparated(SegregationOfDutiesService.INVENTORY_VALUATION, "InventoryRevaluation", id, makers);
         String offset = d.get("accountId") != null ? (String) d.get("accountId")
                 : nrv ? lineage.nrvExpenseAccount() : lineage.revaluationAccount();
         String allowance = nrv ? lineage.nrvAllowanceAccount() : null;
+        String org = org();
         List<Line> lines = new ArrayList<>();
         List<Object[]> rows = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
-        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"InventoryRevaluationLine\" WHERE"
-                + " \"revaluationId\" = ? ORDER BY id").param(id))) {
+        for (Map<String, Object> l : docLines) {
             String productId = (String) l.get("productId");
             String variantId = (String) l.get("variantId");
             String locationId = (String) l.get("locationId");
+            // h-02 F2: like a stock move, the method is read under the costing locks, then the quant is locked.
+            CostingLocks.shareProduct(jdbc, org, productId);
             Map<String, Object> product = product(productId);
+            if (!nrv) {
+                // h-02 F4: the item may have been converted to standard cost or serial tracking since the draft.
+                assertRevaluable(product, (String) product.get("method"));
+            }
             lockQuant(productId, variantId, locationId);
-            BigDecimal[] carrying = carrying(product, productId, variantId, locationId);
-            BigDecimal qty = carrying[0];
-            BigDecimal before = carrying[1];
+            Carrying carrying = carrying(product, productId, variantId, locationId);
+            BigDecimal qty = carrying.qty();
+            BigDecimal before = carrying.unit();
             BigDecimal amount;
             BigDecimal allowanceBefore = BigDecimal.ZERO;
             String text = (nrv ? "NRV review " : "Inventory revaluation ") + d.get("number") + " · " + product.get("name");
@@ -209,10 +265,13 @@ public class InventoryRevaluationService {
                 allowanceBefore = openAllowance(productId, variantId, locationId);
                 BigDecimal gap = before.subtract(SqlRows.dec(l, "netRealisableValue")).max(BigDecimal.ZERO);
                 BigDecimal target = gap.multiply(qty.max(BigDecimal.ZERO)).setScale(2, RoundingMode.HALF_UP).negate();
-                amount = target.subtract(allowanceBefore);
+                amount = target.subtract(allowanceBefore).setScale(6, RoundingMode.HALF_UP);
             } else {
                 BigDecimal after = SqlRows.dec(l, "unitCostAfter");
-                amount = after.subtract(before).multiply(qty.max(BigDecimal.ZERO)).setScale(2, RoundingMode.HALF_UP);
+                // h-02 F9: the quant's exact value change (its carrying value at the new cost minus before), not the
+                // unit difference rounded to cents, so the GL and the stock ledger move exactly as the quant does.
+                amount = qty.signum() > 0 ? qty.multiply(after).subtract(carrying.value()).setScale(6,
+                        RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(6);
                 if (qty.signum() > 0) {
                     setUnitCost(product, productId, variantId, locationId, after);
                 }
@@ -257,7 +316,13 @@ public class InventoryRevaluationService {
         return get(id);
     }
 
-    /** Reverse a posted document (mirrored entry, costs / allowance restored) while nothing has moved since. */
+    /**
+     * Reverse a posted document (mirrored entry, costs / allowance restored) while nothing has changed since: a
+     * revaluation is refused once its stock moved, its cost changed through any other value change (another
+     * revaluation, a landed cost, a re-costing — restoring the old unit cost would silently undo it in the quant while
+     * its GL and ledger rows stay; h-02 F4), or the item became STANDARD or serial-tracked; an NRV review once part of
+     * its allowance was released. Post a new document instead.
+     */
     @Transactional
     public Map<String, Object> reverse(String id) {
         Map<String, Object> d = doc(id, true);
@@ -266,8 +331,20 @@ public class InventoryRevaluationService {
         }
         boolean nrv = "nrv".equals(d.get("kind"));
         String sourceType = nrv ? "inventory_nrv" : "inventory_revaluation";
-        List<Map<String, Object>> docLines = SqlRows.list(jdbc.sql("SELECT * FROM \"InventoryRevaluationLine\" WHERE"
-                + " \"revaluationId\" = ? AND amount <> 0").param(id));
+        List<String> makers = new ArrayList<>();
+        makers.add((String) d.get("createdBy"));
+        makers.add((String) d.get("postedBy"));
+        sod.assertSeparated(SegregationOfDutiesService.INVENTORY_VALUATION, "InventoryRevaluation", id, makers);
+        List<Map<String, Object>> docLines = inPoolOrder(SqlRows.list(jdbc.sql("SELECT * FROM"
+                + " \"InventoryRevaluationLine\" WHERE \"revaluationId\" = ? AND amount <> 0").param(id)));
+        String org = org();
+        List<Map<String, Object>> products = new ArrayList<>();
+        for (Map<String, Object> l : docLines) {
+            String productId = (String) l.get("productId");
+            CostingLocks.shareProduct(jdbc, org, productId);
+            products.add(product(productId));
+            lockQuant(productId, (String) l.get("variantId"), (String) l.get("locationId"));
+        }
         if (nrv) {
             long released = jdbc.sql("SELECT count(*) FROM \"CostValueAdjustment\" WHERE \"organizationId\" = ? AND"
                     + " \"sourceType\" = ? AND \"sourceId\" = ? AND \"openAmount\" <> amount").params(org(), sourceType, id)
@@ -277,31 +354,54 @@ public class InventoryRevaluationService {
                         + " NRV review instead");
             }
         } else {
-            for (Map<String, Object> l : docLines) {
+            for (int i = 0; i < docLines.size(); i++) {
+                Map<String, Object> l = docLines.get(i);
+                Map<String, Object> product = products.get(i);
+                Object[] pool = {org(), l.get("productId"), l.get("variantId") == null ? "" : l.get("variantId"),
+                        l.get("locationId"), CostLineageService.tsOf(d.get("postedAt"))};
                 long moved = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
                                 + " \"productId\" = ? AND coalesce(\"variantId\", '') = ? AND \"locationId\" = ? AND"
                                 + " \"quantityChange\" <> 0 AND \"createdAt\" > ?")
-                        .params(org(), l.get("productId"), l.get("variantId") == null ? "" : l.get("variantId"),
-                                l.get("locationId"), CostLineageService.tsOf(d.get("postedAt")))
-                        .query(Long.class).single();
+                        .params(pool).query(Long.class).single();
                 if (moved > 0) {
                     throw ApiException.badRequest("Stock has moved since the revaluation; post a new revaluation"
                             + " instead");
+                }
+                if ("STANDARD".equals(product.get("method"))) {
+                    throw ApiException.badRequest(product.get("name") + " is now carried at standard cost; its"
+                            + " revaluation can no longer be reversed — activate a new standard cost instead");
+                }
+                if (Boolean.TRUE.equals(product.get("serialTracking"))) {
+                    throw ApiException.badRequest(product.get("name") + " is now serial-tracked; serials keep their own"
+                            + " cost, so its revaluation can no longer be reversed");
+                }
+                // Net value-only change of the pool's carrying cost since posting (not the adjunct / allowance
+                // components, which sit beside the quant's cost, and not this document's own rows): with the quantity
+                // unchanged, zero means the quant still carries exactly what this revaluation left.
+                BigDecimal changed = jdbc.sql("SELECT coalesce(sum(\"totalValue\"), 0) FROM \"InventoryLedger\" WHERE"
+                                + " \"organizationId\" = ? AND \"productId\" = ? AND coalesce(\"variantId\", '') = ? AND"
+                                + " \"locationId\" = ? AND \"quantityChange\" = 0 AND \"valuationComponent\" IS NULL AND"
+                                + " \"createdAt\" > ? AND NOT (coalesce(\"referenceType\", '') = ? AND"
+                                + " coalesce(\"referenceId\", '') = ?)")
+                        .params(pool[0], pool[1], pool[2], pool[3], pool[4], sourceType, id).query(BigDecimal.class)
+                        .single();
+                if (changed.signum() != 0) {
+                    throw ApiException.badRequest("The cost of " + product.get("name") + " has changed since the"
+                            + " revaluation; post a new revaluation instead");
                 }
             }
         }
         String reversal = null;
         if (d.get("journalEntryId") != null) {
-            Map<String, Object> rev = posting.reverse((String) d.get("journalEntryId"), Instant.now(),
+            Map<String, Object> rev = reversals.reverse((String) d.get("journalEntryId"),
                     "Reversal of " + d.get("number"));
             reversal = (String) rev.get("id");
         }
-        for (Map<String, Object> l : docLines) {
+        for (int i = 0; i < docLines.size(); i++) {
+            Map<String, Object> l = docLines.get(i);
             String productId = (String) l.get("productId");
             if (!nrv && SqlRows.dec(l, "quantity").signum() > 0) {
-                Map<String, Object> product = product(productId);
-                lockQuant(productId, (String) l.get("variantId"), (String) l.get("locationId"));
-                setUnitCost(product, productId, (String) l.get("variantId"), (String) l.get("locationId"),
+                setUnitCost(products.get(i), productId, (String) l.get("variantId"), (String) l.get("locationId"),
                         SqlRows.dec(l, "unitCostBefore"));
             }
             lineage.recordValueOnly(productId, (String) l.get("variantId"), (String) l.get("locationId"), null,
@@ -317,6 +417,69 @@ public class InventoryRevaluationService {
     }
 
     // ---- helpers ------------------------------------------------------------------------------------------------------
+
+    /**
+     * h-02 F5: the approval engine gate of a posting (no-op unless the organisation runs an approval workflow for
+     * {@code inventory_valuation}). The amount is what the document would post now, from the current stock.
+     */
+    private void gateApproval(Map<String, Object> d, List<Map<String, Object>> docLines, boolean nrv) {
+        BigDecimal amount = BigDecimal.ZERO;
+        for (Map<String, Object> l : docLines) {
+            String productId = (String) l.get("productId");
+            String variantId = (String) l.get("variantId");
+            String locationId = (String) l.get("locationId");
+            Carrying c = carrying(product(productId), productId, variantId, locationId);
+            if (c.qty().signum() <= 0) {
+                continue;
+            }
+            if (nrv) {
+                BigDecimal gap = c.unit().subtract(SqlRows.dec(l, "netRealisableValue")).max(BigDecimal.ZERO);
+                amount = amount.add(gap.multiply(c.qty()).negate().subtract(openAllowance(productId, variantId,
+                        locationId)).abs());
+            } else {
+                amount = amount.add(c.qty().multiply(SqlRows.dec(l, "unitCostAfter")).subtract(c.value()).abs());
+            }
+        }
+        String id = (String) d.get("id");
+        Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(amount.setScale(2, RoundingMode.HALF_UP)),
+                "number", d.get("number"), "kind", d.get("kind"), "makerIds", d.get("createdBy") == null ? ""
+                        : d.get("createdBy"));
+        Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval(
+                SegregationOfDutiesService.INVENTORY_VALUATION, id, snapshot));
+        if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
+            throw ApiException.badRequest("Approval required before posting " + (nrv ? "NRV review " : "revaluation ")
+                    + d.get("number") + ". Pending approval request " + gate.get("requestId") + ".");
+        }
+    }
+
+    /** Refused for a revaluation: STANDARD items are revalued through a new standard, serials keep their own cost. */
+    private static void assertRevaluable(Map<String, Object> product, String method) {
+        if ("STANDARD".equals(method)) {
+            throw ApiException.badRequest(product.get("name") + " is carried at standard cost; revalue it by"
+                    + " activating a new standard cost");
+        }
+        if (Boolean.TRUE.equals(product.get("serialTracking"))) {
+            throw ApiException.badRequest(product.get("name") + " is serial-tracked; serials keep their own cost");
+        }
+    }
+
+    private static String poolKey(String productId, String variantId, String locationId) {
+        return productId + "|" + (variantId == null ? "" : variantId) + "|" + locationId;
+    }
+
+    private static ApiException duplicate(Map<String, Object> product) {
+        return ApiException.badRequest(product.get("name") + " is listed more than once at the same location; use one"
+                + " line per product, variant and location");
+    }
+
+    /** Lines in the stock engine's lock order: product, variant, location. */
+    private static List<Map<String, Object>> inPoolOrder(List<Map<String, Object>> lines) {
+        List<Map<String, Object>> out = new ArrayList<>(lines);
+        out.sort(Comparator.comparing((Map<String, Object> l) -> (String) l.get("productId"))
+                .thenComparing(l -> Objects.toString(l.get("variantId"), ""))
+                .thenComparing(l -> (String) l.get("locationId")));
+        return out;
+    }
 
     private Map<String, Object> product(String productId) {
         Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT id, name, \"costingMethod\"::text AS method, \"costPrice\","
@@ -334,8 +497,11 @@ public class InventoryRevaluationService {
                 + variantKey + ":" + locationId).query().listOfRows();
     }
 
-    /** {quantity, carrying unit cost} of one pool; STANDARD includes its open price difference per unit. */
-    BigDecimal[] carrying(Map<String, Object> product, String productId, String variantId, String locationId) {
+    /**
+     * Quantity, carrying unit cost (6 dp) and exact carrying value of one pool, as the valuation counts it; STANDARD
+     * includes its open price difference per unit.
+     */
+    Carrying carrying(Map<String, Object> product, String productId, String variantId, String locationId) {
         String variantKey = variantId == null ? "" : variantId;
         Map<String, Object> q = SqlRows.one(jdbc.sql("SELECT coalesce(sum(quantity), 0) AS qty,"
                         + " coalesce(max(\"runningAverageCost\"), 0) AS avg FROM \"StockItem\" WHERE \"organizationId\" = ?"
@@ -343,16 +509,16 @@ public class InventoryRevaluationService {
                 .params(org(), productId, variantKey, locationId));
         BigDecimal qty = SqlRows.dec(q, "qty");
         if (qty.signum() <= 0) {
-            return new BigDecimal[] {qty, BigDecimal.ZERO};
+            return new Carrying(qty, BigDecimal.ZERO, BigDecimal.ZERO);
         }
         String method = (String) product.get("method");
-        BigDecimal unit;
+        BigDecimal value;
         if ("STANDARD".equals(method)) {
             BigDecimal diff = jdbc.sql("SELECT coalesce(sum(\"totalValue\"), 0) FROM \"InventoryLedger\" WHERE"
                             + " \"organizationId\" = ? AND \"productId\" = ? AND coalesce(\"variantId\", '') = ? AND"
                             + " \"locationId\" = ? AND \"valuationComponent\" = 'price_difference'")
                     .params(org(), productId, variantKey, locationId).query(BigDecimal.class).single();
-            unit = SqlRows.dec(product, "costPrice").add(diff.divide(qty, 6, RoundingMode.HALF_UP));
+            value = SqlRows.dec(product, "costPrice").multiply(qty).add(diff);
         } else if ("FIFO".equals(method) || Boolean.TRUE.equals(product.get("batchTracking"))) {
             Map<String, Object> lot = SqlRows.one(jdbc.sql("SELECT coalesce(sum(quantity), 0) AS qty,"
                             + " coalesce(sum(quantity * coalesce(\"unitCost\", 0)), 0) AS value FROM \"InventoryBatch\""
@@ -361,12 +527,11 @@ public class InventoryRevaluationService {
                     .params(org(), productId, variantKey, locationId));
             BigDecimal lotQty = SqlRows.dec(lot, "qty");
             BigDecimal avg = SqlRows.dec(q, "avg");
-            BigDecimal value = SqlRows.dec(lot, "value").add(qty.subtract(lotQty).max(BigDecimal.ZERO).multiply(avg));
-            unit = value.divide(qty, 6, RoundingMode.HALF_UP);
+            value = SqlRows.dec(lot, "value").add(qty.subtract(lotQty).max(BigDecimal.ZERO).multiply(avg));
         } else {
-            unit = SqlRows.dec(q, "avg");
+            value = qty.multiply(SqlRows.dec(q, "avg"));
         }
-        return new BigDecimal[] {qty, unit.setScale(6, RoundingMode.HALF_UP)};
+        return new Carrying(qty, value.divide(qty, 6, RoundingMode.HALF_UP), value);
     }
 
     private void setUnitCost(Map<String, Object> product, String productId, String variantId, String locationId,

@@ -189,7 +189,7 @@ function ControlTypeSelect({ value, onChange }: { value: string; onChange: (v: s
         </SelectContent>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {tx('Backed by a subledger (e.g. AR / AP / stock). Manual journals and opening balances may refuse it.')}
+        {tx('Backed by a subledger (e.g. AR / AP / stock). Receivable (AR) and payable (AP) control accounts refuse manual, recurring and deferral journals and opening balances; only a control-account adjustment entry can post to them. Changing the designation is audited.')}
       </p>
     </div>
   );

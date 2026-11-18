@@ -115,10 +115,17 @@ public class InvoiceController {
         return invoices.postChecked(id);
     }
 
+    /** Document reversal request (owner decision 2026-11-17): the reason is mandatory. */
+    public record ReversalRequest(
+            @jakarta.validation.constraints.Size(max = 2000, message = "must be shorter than or equal to 2000 characters")
+            String reason) {}
+
+    /** Sales-invoice document reversal: GL, stock and residual undone together; see {@link InvoiceService#cancel}. */
     @PostMapping("/{id}/cancel")
     @Idempotent
     @RequirePermissions(Permissions.INVOICE__CANCEL)
-    public Map<String, Object> cancel(@PathVariable String id) {
-        return invoices.cancel(id);
+    public Map<String, Object> cancel(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReversalRequest dto) {
+        return invoices.cancel(id, dto == null ? null : dto.reason());
     }
 }

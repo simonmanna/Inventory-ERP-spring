@@ -102,7 +102,9 @@ function VariancesTab({ from, to }: { from: string; to: string }) {
           <Table>
             <TableHeader><TableRow>
               <TableHead>{tx('Order')}</TableHead><TableHead>{tx('Product')}</TableHead><TableHead className="text-right">{tx('Material price')}</TableHead>
-              <TableHead className="text-right">{tx('Material usage')}</TableHead><TableHead className="text-right">{tx('Labour efficiency')}</TableHead>
+              <TableHead className="text-right">{tx('Material usage')}</TableHead><TableHead className="text-right">{tx('Labour rate')}</TableHead>
+              <TableHead className="text-right">{tx('Labour efficiency')}</TableHead><TableHead className="text-right">{tx('Machine')}</TableHead>
+              <TableHead className="text-right">{tx('Energy')}</TableHead>
               <TableHead className="text-right">{tx('Overhead')}</TableHead><TableHead className="text-right">{tx('Yield')}</TableHead><TableHead className="text-right">{tx('Total')}</TableHead>
             </TableRow></TableHeader>
             <TableBody>
@@ -110,7 +112,9 @@ function VariancesTab({ from, to }: { from: string; to: string }) {
                 <TableRow key={o.orderId}>
                   <TableCell><Link className="underline" to={`/manufacturing/costing/orders/${o.orderId}`}>{o.orderCode}</Link></TableCell>
                   <TableCell>{o.productName}</TableCell><TableCell className="text-right tabular-nums">{money(o.materialPrice)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{money(o.materialUsage)}</TableCell><TableCell className="text-right tabular-nums">{money(o.labourEfficiency)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{money(o.materialUsage)}</TableCell><TableCell className="text-right tabular-nums">{money(o.labourRate ?? 0)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{money(o.labourEfficiency)}</TableCell><TableCell className="text-right tabular-nums">{money(o.machine ?? 0)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{money(o.energy ?? 0)}</TableCell>
                   <TableCell className="text-right tabular-nums">{money(o.overhead)}</TableCell><TableCell className="text-right tabular-nums">{money(o.yield)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{money(o.total)}</TableCell>
                 </TableRow>

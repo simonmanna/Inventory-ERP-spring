@@ -62,15 +62,20 @@ public final class StageCommands {
             BigDecimal fixedPct,
             Boolean stocked,
             String locationId,
-            String notes) {}
+            String notes,
+            /** Review 2026-11-17: costs per unit still to come after the split-off (NRV method). */
+            @DecimalMin(value = "0", message = "separableCostPerUnit " + MIN0) BigDecimal separableCostPerUnit) {}
 
     /** Joint-cost allocation rule body. */
     public record AllocationRuleInput(
-            @NotNull(message = "method must be one of the following values: quantity, weight, market_value, fixed_pct")
-            @OneOf({"quantity", "weight", "market_value", "fixed_pct"}) String method,
+            @NotNull(message = "method must be one of the following values: quantity, weight, market_value, fixed_pct,"
+                    + " net_realisable_value")
+            @OneOf({"quantity", "weight", "market_value", "fixed_pct", "net_realisable_value"}) String method,
             @DecimalMin(value = "0", message = "mainWeightPerUnit " + MIN0) BigDecimal mainWeightPerUnit,
             @DecimalMin(value = "0", message = "mainMarketValue " + MIN0) BigDecimal mainMarketValue,
-            String notes) {}
+            String notes,
+            /** Review 2026-11-17: the main output's costs per unit after the split-off (NRV method). */
+            @DecimalMin(value = "0", message = "mainSeparableCostPerUnit " + MIN0) BigDecimal mainSeparableCostPerUnit) {}
 
     /** {@code PUT /boms/{id}/stage-setup}: replaces the co-products; {@code allocationRule} null = use the default. */
     public record BomStageSetup(

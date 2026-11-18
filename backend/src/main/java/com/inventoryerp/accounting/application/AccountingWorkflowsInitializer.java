@@ -16,17 +16,25 @@ public class AccountingWorkflowsInitializer {
 
     private final WorkflowRegistry registry;
     private final PostingService posting;
+    private final SubledgerSources subledger;
 
-    public AccountingWorkflowsInitializer(WorkflowRegistry registry, PostingService posting) {
+    public AccountingWorkflowsInitializer(WorkflowRegistry registry, PostingService posting,
+            SubledgerSources subledger) {
         this.registry = registry;
         this.posting = posting;
+        this.subledger = subledger;
     }
 
     @PostConstruct
     void register() {
         registry.register(new WorkflowDefinition("journal_entry", "draft", List.of(
                 new Transition("posted", "reversed", "reverse", "journal_entry:reverse", null,
-                        ctx -> posting.reverse(ctx.entityId(), null, "Reversal of " + ctx.entity().get("entryNumber")),
+                        ctx -> {
+                            // A generic route like JournalEntryService.reverse: sub-ledger entries are reversed by
+                            // their document's own workflow (owner decision 2026-11-17).
+                            subledger.assertGenericReversible(ctx.entityId());
+                            posting.reverse(ctx.entityId(), null, "Reversal of " + ctx.entity().get("entryNumber"));
+                        },
                         null))));
     }
 }

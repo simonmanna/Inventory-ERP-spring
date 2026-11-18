@@ -12,6 +12,7 @@ import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +43,12 @@ public class JournalEntryController {
             String costCenterId,
             Map<String, Object> dimensions) {}
 
-    /** {@code CreateJournalEntryDto}. */
+    /**
+     * {@code CreateJournalEntryDto}. {@code controlAdjustment} / {@code controlAdjustmentReason} (V518, owner decision
+     * on the control-account policy): stage the entry as a control-account adjustment, the only manual way into a
+     * designated AR / AP control account (needs {@code journal_entry:control_adjust}, a partner on every control-account
+     * line and a second user to post it).
+     */
     public record CreateJournalEntryRequest(
             @NotNull(message = "must be a string") String journalCode,
             @NotNull(message = "must be a valid ISO 8601 date string")
@@ -51,7 +57,10 @@ public class JournalEntryController {
             String branchId,
             String costCenterId,
             @NotNull(message = "must be an array")
-            @ArrayMinSize(2) List<@Valid ManualLine> lines) {}
+            @ArrayMinSize(2) List<@Valid ManualLine> lines,
+            Boolean controlAdjustment,
+            @Size(max = 2000, message = "must be shorter than or equal to 2000 characters")
+            String controlAdjustmentReason) {}
 
     /** {@code ReverseJournalEntryDto}. */
     public record ReverseJournalEntryRequest(
@@ -87,7 +96,7 @@ public class JournalEntryController {
                         l.branchId(), l.costCenterId(), l.dimensions()))
                 .toList();
         return entries.createManual(dto.journalCode(), EntityPatch.toInstant(dto.date()), dto.description(),
-                dto.branchId(), dto.costCenterId(), lines);
+                dto.branchId(), dto.costCenterId(), lines, dto.controlAdjustment(), dto.controlAdjustmentReason());
     }
 
     @PostMapping("/{id}/post")

@@ -61,7 +61,8 @@ class StandardProcessCostingIT extends MfgTestSupport {
     }
 
     void receive(String productId, int qty, int unitCost) {
-        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", warehouse, "receivedAt",
+        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, demoOrg), "warehouseId", warehouse, "receivedAt",
                 java.time.Instant.now().toString(), "lines", List.of(Map.of("productId", productId, "description", "x",
                         "quantity", qty, "unitCost", unitCost))));
     }
@@ -80,8 +81,9 @@ class StandardProcessCostingIT extends MfgTestSupport {
         String id = draft.get("id").asString();
         Res notApproved = call("POST", "/inventory/standard-costs/" + id + "/activate", null, key());
         assertThat(notApproved.body().get("message").asString()).isEqualTo("Only an approved standard cost can be activated");
-        ok(200, "POST", "/inventory/standard-costs/" + id + "/approve", null);
-        Res noConvert = call("POST", "/inventory/standard-costs/" + id + "/activate", null, key());
+        // Readiness gaps h-02 F7: a standard that could never activate is refused at approval, not at activation.
+        Res noConvert = as("POST", "/inventory/standard-costs/" + id + "/approve", null);
+        assertThat(noConvert.status()).isEqualTo(400);
         assertThat(noConvert.body().get("message").asString()).endsWith("is costed at AVCO; set convertMethod to switch"
                 + " it to standard cost");
         ok(200, "POST", "/inventory/standard-costs/" + id + "/cancel", null);
@@ -154,6 +156,25 @@ class StandardProcessCostingIT extends MfgTestSupport {
         ok(200, "POST", "/inventory/standard-costs/" + pid + "/approve", null);
         JsonNode act = keyed("/inventory/standard-costs/" + pid + "/activate", null);
         assertThat(act.get("revaluationAmount").asString()).isEqualTo("2000");
+    }
+
+    @Test
+    @DisplayName("ACR-13: reversing an order produced at standard offsets its variance rows — the material ledger and"
+            + " the variance reports pool nothing of it")
+    void reversedOrderVariancesOffset() {
+        String flour = product("RFLOUR");
+        String cake = product("RCAKE");
+        stockIn(bakery, flour, 10, 5000);
+        activateStandard(cake, 900, true);
+        String bomId = bom(cake, flour, 20, 4, Map.of());
+        String id = started(bomId).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/complete", Map.of("qtyProduced", 20));
+        String sum = "SELECT coalesce(sum(amount), 0) FROM \"StandardCostVariance\" WHERE \"organizationId\" = ? AND"
+                + " \"productId\" = ?";
+        assertThat(jdbc.sql(sum).params(demoOrg, cake).query(BigDecimal.class).single()).isEqualByComparingTo("2000");
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/reverse", Map.of());
+        assertThat(jdbc.sql(sum).params(demoOrg, cake).query(BigDecimal.class).single()).as("offset on the reversal")
+                .isZero();
     }
 
     @Test

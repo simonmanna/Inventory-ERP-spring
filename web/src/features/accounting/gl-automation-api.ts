@@ -32,6 +32,11 @@ export interface RecurringTemplate {
   totalAmount: string;
   runCount: number;
   lines: TemplateLine[];
+  createdBy: string | null;
+  /** R3 maker-checker: who last changed what the template posts; a change clears the approval. */
+  lastEditedBy: string | null;
+  approvedBy: string | null;
+  approvedAt: string | null;
 }
 
 export interface RecurringRun {
@@ -99,6 +104,11 @@ export function useRunRecurringNow() {
   );
 }
 
+/** R3: approve a template so its post-mode occurrences post (until then they are staged as drafts). */
+export function useApproveRecurringTemplate() {
+  return useRecurringMutation(async (id: string) => (await api.post<RecurringTemplate>(`/recurring-entries/${id}/approve`)).data);
+}
+
 export function useDeleteRecurringTemplate() {
   return useRecurringMutation(async (id: string) => (await api.delete(`/recurring-entries/${id}`)).data);
 }
@@ -134,6 +144,10 @@ export interface DeferralSchedule {
   method: 'monthly' | 'daily';
   status: 'active' | 'completed' | 'cancelled';
   journalLineId: string | null;
+  createdBy: string | null;
+  /** R3 maker-checker: a schedule posts nothing until approved by a second user. */
+  approvedBy: string | null;
+  approvedAt: string | null;
   releases?: DeferralRelease[];
 }
 
@@ -182,6 +196,11 @@ export function useReleaseDeferral() {
   return useDeferralMutation((input: { id?: string; asOf?: string }) =>
     idempotentPost<Record<string, unknown>>(input.id ? `/deferrals/${input.id}/release` : '/deferrals/run', input.asOf ? { asOf: input.asOf } : {}),
   );
+}
+
+/** R3: approve a schedule (posts the reclassification of a deferred P&L line, then allows releases). */
+export function useApproveDeferral() {
+  return useDeferralMutation((id: string) => idempotentPost<DeferralSchedule>(`/deferrals/${id}/approve`, {}));
 }
 
 export function useCancelDeferral() {

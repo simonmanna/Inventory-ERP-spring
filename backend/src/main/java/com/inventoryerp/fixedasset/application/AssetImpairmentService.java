@@ -214,16 +214,46 @@ public class AssetImpairmentService {
         AssetCategory category = asset.getCategoryId() == null ? null : em.find(AssetCategory.class, asset.getCategoryId());
         String method = category != null && category.getDepreciationMethod() != null
                 ? category.getDepreciationMethod().value() : "straight_line";
+        BigDecimal factor = category != null ? category.getDecliningFactor() : null;
         BigDecimal book = cost;
         BigDecimal acc = BigDecimal.ZERO;
+        if ("units_of_production".equals(method)) {
+            // R14: replay each depreciated month with the units recorded for it (none recorded: no charge).
+            BigDecimal total = asset.getTotalUnits();
+            if (total == null || total.signum() <= 0) {
+                return cost.subtract(depreciated(asset.getId())).max(salvage);
+            }
+            for (BigDecimal units : depreciatedUnits(asset.getId())) {
+                DepreciationCalculator.Result r = DepreciationCalculator.calculate(method,
+                        new DepreciationCalculator.Input(cost, salvage, life, book, acc), factor,
+                        new DepreciationCalculator.Usage(units, total, null));
+                book = r.bookValue();
+                acc = r.accumulatedDepreciation();
+            }
+            return book;
+        }
         int n = depreciationCount(asset.getId());
         for (int i = 0; i < n; i++) {
             DepreciationCalculator.Result r = DepreciationCalculator.calculate(method,
-                    new DepreciationCalculator.Input(cost, salvage, life, book, acc));
+                    new DepreciationCalculator.Input(cost, salvage, life, book, acc), factor, null);
             book = r.bookValue();
             acc = r.accumulatedDepreciation();
         }
         return book;
+    }
+
+    /** Units recorded for each depreciated month of the asset, oldest first (0 where none were recorded). */
+    private List<BigDecimal> depreciatedUnits(String assetId) {
+        return jdbc.sql("SELECT coalesce(u.units, 0) FROM \"AssetDepreciation\" d LEFT JOIN \"AssetUsage\" u ON"
+                + " u.\"organizationId\" = d.\"organizationId\" AND u.\"assetId\" = d.\"assetId\" AND u.period ="
+                + " left(d.period, 7) WHERE d.\"assetId\" = ? ORDER BY d.period").param(assetId)
+                .query(BigDecimal.class).list();
+    }
+
+    /** Depreciation charged so far (every entry, posted or not). */
+    private BigDecimal depreciated(String assetId) {
+        return jdbc.sql("SELECT coalesce(sum(\"depreciationAmount\"), 0) FROM \"AssetDepreciation\" WHERE"
+                + " \"assetId\" = ?").param(assetId).query(BigDecimal.class).single();
     }
 
     private int depreciationCount(String assetId) {

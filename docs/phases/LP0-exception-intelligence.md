@@ -25,7 +25,7 @@ A customer with no cameras can switch on the module and get:
 
 ## 3. Data model
 
-One migration per work package (WP1: `V520`, `LpEvent` only). Table and column names follow the baseline style
+One migration per work package (WP1: `V520`, `LpEvent` only; renumbered V560–V562 at merge). Table and column names follow the baseline style
 (`"LpEvent"`, `"organizationId"`). Services use `JdbcClient` and maps, like the other extension modules; there are no
 JPA entities. All tables have `organizationId`; all except rules and
 settings have a nullable `branchId`.

@@ -259,10 +259,12 @@ public class CrushingProfileService {
             co.add(new CoProductInput(str(l, "productId"), str(l, "role"), op, dec(l, "expectedPct"), null,
                     str(l, "valuation"), decOrNull(l, "nrvUnitValue"), decOrNull(l, "marketValue"),
                     weight ? BigDecimal.ONE : null, decOrNull(l, "fixedPct"), stocked,
-                    stocked ? str(l, "locationId") : null, l.get("sizeLabel") == null ? null : str(l, "sizeLabel")));
+                    stocked ? str(l, "locationId") : null, l.get("sizeLabel") == null ? null : str(l, "sizeLabel"),
+                    null));
         }
         stageSetup.saveBomSetup(bomId, new BomStageSetup(co, new AllocationRuleInput(str(g, "allocationMethod"),
-                weight ? BigDecimal.ONE : null, decOrNull(main, "marketValue"), "Crushing profile " + g.get("code"))));
+                weight ? BigDecimal.ONE : null, decOrNull(main, "marketValue"), "Crushing profile " + g.get("code"),
+                null)));
         // System-managed: active without the approval gate and without archiving other BOMs of the same output.
         db.update(Bom.class, bomId, Obj.of("status", "active", "isDefault", false, "updatedBy", TenantContext.userId()));
         db.update(CrushingGradingProfile.class, id, Obj.of("status", "active", "bomId", bomId, "routingId", routingId,

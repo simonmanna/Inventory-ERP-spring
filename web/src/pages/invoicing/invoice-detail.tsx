@@ -6,6 +6,7 @@ import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -82,6 +83,7 @@ export function InvoiceDetailPage() {
   const [activeTab, setActiveTab] = useState<'lines' | 'delivery' | 'journal' | 'info' | 'payments' | 'attachments'>('lines');
   const [payOpen, setPayOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailTo, setEmailTo] = useState('');
   const [emailMessage, setEmailMessage] = useState('');
@@ -518,11 +520,30 @@ export function InvoiceDetailPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{tx('Cancel Invoice')}</DialogTitle>
-            <DialogDescription>{tx('This will cancel')} {inv.documentNumber} {tx('and prevent further changes or payments.')}</DialogDescription>
+            <DialogDescription>
+              {tx('This will cancel')} {inv.documentNumber} {tx('and prevent further changes or payments.')}{' '}
+              {tx('Its journal entry is reversed. An invoice with payments, deposits or debit notes applied cannot be cancelled until those are voided or reversed.')}
+            </DialogDescription>
           </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="invoice-cancel-reason">{tx('Reason')}</Label>
+            <Textarea
+              id="invoice-cancel-reason"
+              value={cancelReason}
+              maxLength={2000}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder={tx('Why is this invoice being cancelled?')}
+            />
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCancelOpen(false)}>{tx('Keep')}</Button>
-            <Button variant="destructive" disabled={cancelInvoice.isPending} onClick={() => cancelInvoice.mutate(inv.id, { onSuccess: () => setCancelOpen(false) })}>
+            <Button
+              variant="destructive"
+              disabled={cancelInvoice.isPending || !cancelReason.trim()}
+              onClick={() => cancelInvoice.mutate({ id: inv.id, reason: cancelReason.trim() }, {
+                onSuccess: () => { setCancelOpen(false); setCancelReason(''); },
+              })}
+            >
               {cancelInvoice.isPending ? tx('Cancelling...') : tx('Cancel Invoice')}
             </Button>
           </DialogFooter>

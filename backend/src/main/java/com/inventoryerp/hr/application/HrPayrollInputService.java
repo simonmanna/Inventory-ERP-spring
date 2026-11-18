@@ -105,7 +105,8 @@ public class HrPayrollInputService {
     /**
      * Queue a deduction from {@code employeeId}'s net pay (e.g. a traffic fine charged to the driver). Idempotent per
      * ({@code source}, {@code sourceId}) like {@link #addEarning}. The approved payroll journal credits
-     * {@code creditAccountId} (null: the "other deductions" contra of salaries expense).
+     * {@code creditAccountId}; a run holding a deduction without one is refused at approval (R12: salaries expense is
+     * never the fallback).
      */
     @Transactional
     public Map<String, Object> addDeduction(String employeeId, String name, BigDecimal amount, LocalDate effectiveOn,
@@ -200,33 +201,68 @@ public class HrPayrollInputService {
                 + " WHERE \"runId\" = ? AND \"organizationId\" = ? AND status = 'pending'").params(runId, org()).update();
     }
 
-    /** Debit accounts and amounts of the run's inputs that the payroll journal debits instead of salaries expense. */
-    List<Map<String, Object>> redirectedDebits(String runId) {
-        return SqlRows.list(jdbc.sql("SELECT \"debitAccountId\", sum(amount) AS amount FROM \"HrPayrollInput\" WHERE"
+    /**
+     * Debit accounts and amounts of the run's inputs that the payroll journal debits instead of salaries expense.
+     * Currency-aware payroll rounding: each input counts at its payroll line's amount (the input rounded once to the
+     * pay {@code scale}, {@link HrPayMoney}), so the journal moves exactly what the payslips carry.
+     */
+    List<Map<String, Object>> redirectedDebits(String runId, int scale) {
+        return grouped(SqlRows.list(jdbc.sql("SELECT \"debitAccountId\" AS key, amount FROM \"HrPayrollInput\" WHERE"
                 + " \"runId\" = ? AND \"organizationId\" = ? AND status = 'pending' AND \"debitAccountId\" IS NOT NULL"
-                + " AND kind = 'earning' GROUP BY \"debitAccountId\" ORDER BY \"debitAccountId\"").params(runId, org()));
+                + " AND kind = 'earning' ORDER BY \"debitAccountId\", id").params(runId, org())), "debitAccountId",
+                scale);
     }
 
-    /** What the run's redirected earnings take from each employee's salary debit (HR-5 cost allocation). */
-    Map<String, BigDecimal> redirectedByEmployee(String runId) {
+    /** What the run's redirected earnings take from each employee's salary debit (HR-5), at the pay scale. */
+    Map<String, BigDecimal> redirectedByEmployee(String runId, int scale) {
         Map<String, BigDecimal> out = new LinkedHashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"employeeId\", sum(amount) AS amount FROM"
-                + " \"HrPayrollInput\" WHERE \"runId\" = ? AND \"organizationId\" = ? AND status = 'pending' AND"
-                + " \"debitAccountId\" IS NOT NULL AND kind = 'earning' GROUP BY \"employeeId\"")
-                .params(runId, org()))) {
-            out.put((String) r.get("employeeId"), SqlRows.dec(r, "amount"));
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"employeeId\", amount FROM \"HrPayrollInput\""
+                + " WHERE \"runId\" = ? AND \"organizationId\" = ? AND status = 'pending' AND \"debitAccountId\" IS NOT"
+                + " NULL AND kind = 'earning' ORDER BY id").params(runId, org()))) {
+            out.merge((String) r.get("employeeId"), HrPayMoney.round(SqlRows.dec(r, "amount"), scale), BigDecimal::add);
+        }
+        return out;
+    }
+
+    /** Σ per key of each input rounded to the pay scale (the amount its payroll line carries), keys in query order. */
+    private static List<Map<String, Object>> grouped(List<Map<String, Object>> inputs, String keyName, int scale) {
+        Map<String, BigDecimal> sums = new LinkedHashMap<>();
+        for (Map<String, Object> r : inputs) {
+            sums.merge(String.valueOf(r.get("key")), HrPayMoney.round(SqlRows.dec(r, "amount"), scale),
+                    BigDecimal::add);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : inputs) {
+            String key = String.valueOf(r.get("key"));
+            if (sums.containsKey(key)) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put(keyName, r.get("key"));
+                row.put("amount", sums.remove(key));
+                out.add(row);
+            }
         }
         return out;
     }
 
     /**
-     * Credit accounts and amounts of the run's deduction inputs (credited by the payroll journal; a null account is
-     * the "other deductions" contra of salaries expense). Empty without deductions.
+     * Names of the run's deduction inputs that have no credit account (R12): the run refuses to post them rather than
+     * crediting salaries expense. Empty when every deduction input names its account.
      */
-    List<Map<String, Object>> deductionCredits(String runId) {
-        return SqlRows.list(jdbc.sql("SELECT \"creditAccountId\", sum(amount) AS amount FROM \"HrPayrollInput\" WHERE"
+    List<String> unmappedDeductions(String runId) {
+        return jdbc.sql("SELECT DISTINCT name FROM \"HrPayrollInput\" WHERE \"runId\" = ? AND \"organizationId\" = ?"
+                + " AND status = 'pending' AND kind = 'deduction' AND \"creditAccountId\" IS NULL AND amount > 0"
+                + " ORDER BY name").params(runId, org()).query(String.class).list();
+    }
+
+    /**
+     * Credit accounts and amounts of the run's deduction inputs (credited by the payroll journal; a run with a null
+     * account is refused before it posts, see {@link #unmappedDeductions}), each input at its payroll line's amount
+     * (rounded once to the pay {@code scale}). Empty without deductions.
+     */
+    List<Map<String, Object>> deductionCredits(String runId, int scale) {
+        return grouped(SqlRows.list(jdbc.sql("SELECT \"creditAccountId\" AS key, amount FROM \"HrPayrollInput\" WHERE"
                 + " \"runId\" = ? AND \"organizationId\" = ? AND status = 'pending' AND kind = 'deduction'"
-                + " GROUP BY \"creditAccountId\" ORDER BY \"creditAccountId\" NULLS LAST").params(runId, org()));
+                + " ORDER BY \"creditAccountId\" NULLS LAST, id").params(runId, org())), "creditAccountId", scale);
     }
 
     /** The run was approved: its inputs are paid through payroll. */

@@ -176,10 +176,24 @@ public class PurchaseRequestsService {
         }
         List<Map<String, Object>> rows = SqlRows.list(PurchaseRequest.class, jdbc.sql("SELECT * FROM \"PurchaseRequest\""
                 + " WHERE" + where + " ORDER BY \"createdAt\" DESC LIMIT 200").params(params));
+        // Gap fix h03-F10: lines and order counts load once for the page (two queries per request before).
+        Map<String, List<Map<String, Object>>> linesByRequest = new java.util.HashMap<>();
+        Map<String, Long> orders = new java.util.HashMap<>();
+        if (!rows.isEmpty()) {
+            String[] ids = rows.stream().map(r -> (String) r.get("id")).toArray(String[]::new);
+            for (Map<String, Object> l : SqlRows.list(PurchaseRequestLine.class, jdbc.sql("SELECT * FROM"
+                    + " \"PurchaseRequestLine\" WHERE \"purchaseRequestId\" = ANY(?::text[]) ORDER BY"
+                    + " \"purchaseRequestId\", \"lineNumber\", id").param(ids))) {
+                linesByRequest.computeIfAbsent((String) l.get("purchaseRequestId"), k -> new ArrayList<>()).add(l);
+            }
+            for (Map<String, Object> c : jdbc.sql("SELECT \"requestId\", count(*) AS n FROM \"PurchaseOrder\" WHERE"
+                    + " \"requestId\" = ANY(?::text[]) GROUP BY \"requestId\"").param(ids).query().listOfRows()) {
+                orders.put((String) c.get("requestId"), ((Number) c.get("n")).longValue());
+            }
+        }
         for (Map<String, Object> r : rows) {
-            r.put("lines", lines(r.get("id")));
-            r.put("_count", Obj.of("orders", jdbc.sql("SELECT count(*) FROM \"PurchaseOrder\" WHERE \"requestId\" = ?")
-                    .param(r.get("id")).query(Long.class).single()));
+            r.put("lines", linesByRequest.getOrDefault((String) r.get("id"), new ArrayList<>()));
+            r.put("_count", Obj.of("orders", orders.getOrDefault((String) r.get("id"), 0L)));
         }
         return rows;
     }
@@ -276,7 +290,14 @@ public class PurchaseRequestsService {
         return tx.execute(st -> {
             Map<String, Object> request = latestRequest(id);
             if (request == null) {
-                return markApproved(id, user());
+                // Gap fix h03-F6 (Nest deviation, owner-approved 2026-11-17): without a workflow the approve route is
+                // the only check, so whoever raised the request cannot approve it themselves.
+                String me = user();
+                if (me != null && (me.equals(pr.get("requestedById")) || me.equals(pr.get("createdBy")))) {
+                    throw ApiException.forbidden("You cannot approve a purchase request you raised — another approver"
+                            + " must decide");
+                }
+                return markApproved(id, me);
             }
             String status = (String) request.get("status");
             if ("pending".equals(status)) {

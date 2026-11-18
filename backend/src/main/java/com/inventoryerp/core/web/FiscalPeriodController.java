@@ -34,7 +34,11 @@ public class FiscalPeriodController {
             @NotNull(message = "must be a valid ISO 8601 date string") @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String startDate,
             @NotNull(message = "must be a valid ISO 8601 date string") @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String endDate) {}
 
-    /** Update body (all optional). */
+    /**
+     * Update body (all optional). {@code status} keeps the Nest DTO shape but is refused with 400: a period is closed,
+     * reopened and locked only through {@code POST /fiscal-periods/:id/close|reopen|lock} (owner-approved deviation).
+     * Dates change only on an open period with no posted entries in its old or new range.
+     */
     public record UpdateRequest(
             String name,
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String startDate,

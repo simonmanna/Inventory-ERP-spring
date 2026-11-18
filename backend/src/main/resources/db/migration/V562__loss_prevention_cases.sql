@@ -1,4 +1,4 @@
--- V522: loss prevention, work package 6 (ADR-S077 §6): cases. A case states a variance and its review; it has no
+-- V562 (was V522): loss prevention, work package 6 (ADR-S077 §6): cases. A case states a variance and its review; it has no
 -- outcome that records misconduct. Its timeline is append-only.
 
 CREATE TABLE "LpCase" (

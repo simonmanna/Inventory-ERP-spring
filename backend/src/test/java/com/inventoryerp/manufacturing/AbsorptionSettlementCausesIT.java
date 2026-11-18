@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.costing.application.AbsorptionSettlementService;
 import com.inventoryerp.costing.web.AbsorptionSettlementController;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.math.BigDecimal;
@@ -37,6 +38,9 @@ class AbsorptionSettlementCausesIT extends MfgTestSupport {
 
     @Autowired
     PostingService posting;
+
+    @Autowired
+    AbsorptionSettlementService settlements;
 
     String checkerToken;
     String expense;
@@ -300,5 +304,40 @@ class AbsorptionSettlementCausesIT extends MfgTestSupport {
         return jdbc.sql("SELECT coalesce(sum(\"baseDebit\" - \"baseCredit\"), 0) FROM \"JournalLine\" WHERE"
                 + " \"journalEntryId\" = ? AND \"accountId\" = ?").params(journalEntryId, accountId)
                 .query(BigDecimal.class).single();
+    }
+
+    @Test
+    @DisplayName("review 2026-11-17 (ACR-12): an order cancelled before completion never put its absorption in the books"
+            + " and no longer blocks the work centre's settlement")
+    void cancelledOrderDoesNotBlock() {
+        Plant p = plant(false);
+        capacity(p, 120, 3000, null);
+        Res absorbed = call("POST", MFG + "/orders/" + p.orderId() + "/absorb", null, keyed(adminToken));
+        assertThat(absorbed.status()).as(absorbed.raw().body()).isEqualTo(200);
+        assertThat(preview(period(p)).get("blockers").toString()).contains("absorbed cost that is not posted yet");
+        ok(201, "POST", "/manufacturing/production-orders/" + p.orderId() + "/cancel", Map.of("reason",
+                "Wrong recipe"));
+        assertThat(preview(period(p)).get("blockers").toString()).doesNotContain("absorbed cost that is not posted yet");
+    }
+
+    @Test
+    @DisplayName("review 2026-11-17 (ACR-16): the cost close lists every work centre still to settle, not just any one")
+    void everyCentreMustSettle() {
+        Plant settled = plant(true);
+        capacity(settled, 120, 3000, null);
+        spend(expense, settled.cc(), 150);
+        Map<String, Object> body = period(settled);
+        body.put("classification", "abnormal");
+        Res posted = call("POST", C + "/absorption-settlements", body, keyed(adminToken));
+        assertThat(posted.status()).as(posted.raw().body()).isIn(200, 201);
+        Plant open = plant(true);
+        capacity(open, 120, 3000, null);
+        List<String> unsettled = TenantContext.run(TenantContext.TenantStore.user(demoOrg, adminId),
+                () -> settlements.unsettled(LocalDate.parse(today), LocalDate.parse(today)));
+        assertThat(unsettled).contains(centreCode(open.wc())).doesNotContain(centreCode(settled.wc()));
+    }
+
+    String centreCode(String id) {
+        return jdbc.sql("SELECT code FROM \"WorkCenter\" WHERE id = ?").param(id).query(String.class).single();
     }
 }

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, RefreshCw } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,9 +11,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
+import { useProductSearch } from '@/features/products/product-search';
 import { api } from '@/lib/api';
 import { formatMoney, dateTime } from '@/lib/format';
 import { referenceLabel } from '@/lib/ledger-links';
+import { useAuthStore } from '@/stores/auth.store';
 import { DirectStockActions } from './DirectStockActions';
 import { tx } from '@/lib/i18n/tx';
 
@@ -65,22 +70,23 @@ function MoveBadge({ type }: { type: string }) {
 export function StockLedgerPage() {
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
-  const [productSearch, setProductSearch] = useState('');
+  const [productId, setProductId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [refTypeFilter, setRefTypeFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const locations = useQuery<{ id: string; code: string; name: string }[]>({
-    queryKey: ['inventory-locations'],
-    queryFn: async () => (await api.get<{ data: { id: string; code: string; name: string }[] }>('/inventory/locations')).data.data ?? [],
-  });
+  const locations = useStockLocations();
+  // A product picker searched on the server, instead of a typed product id that refetched the ledger per keystroke.
+  // It lists products (product:read), which the ledger itself does not need: without it the filter is not offered.
+  const canPickProduct = useAuthStore((s) => s.hasPermission)(PERMISSIONS.product.read);
+  const products = useProductSearch<{ id: string; code: string; name: string }>({ enabled: canPickProduct });
 
   const params = new URLSearchParams();
   params.set('page', String(page));
   params.set('pageSize', '25');
-  if (productSearch) params.set('productId', productSearch);
+  if (productId) params.set('productId', productId);
   if (locationId) params.set('locationId', locationId);
   if (typeFilter) params.set('type', typeFilter);
   if (refTypeFilter) params.set('referenceType', refTypeFilter);
@@ -88,7 +94,7 @@ export function StockLedgerPage() {
   if (dateTo) params.set('dateTo', dateTo);
 
   const ledger = useQuery<{ data: LedgerEntry[]; meta: LedgerMeta }>({
-    queryKey: ['inventory-ledger', page, productSearch, locationId, typeFilter, refTypeFilter, dateFrom, dateTo],
+    queryKey: ['inventory-ledger', page, productId, locationId, typeFilter, refTypeFilter, dateFrom, dateTo],
     queryFn: async () => (await api.get(`/inventory/ledger?${params.toString()}`)).data,
   });
 
@@ -106,21 +112,35 @@ export function StockLedgerPage() {
 
       <Card className="p-3">
         <div className="flex flex-wrap items-end gap-2">
-          <div className="flex-1 min-w-[160px]">
-            <label className="mb-1 block text-xs text-muted-foreground">{tx('Product ID')}</label>
-            <Input placeholder={tx('Filter by product ID…')} value={productSearch} onChange={(e) => { setProductSearch(e.target.value); setPage(1); }} />
-          </div>
+          {canPickProduct && <div className="flex-1 min-w-[200px]">
+            <label className="mb-1 block text-xs text-muted-foreground">{tx('Product')}</label>
+            <SearchableSelect
+              value={productId}
+              onValueChange={(v) => { setProductId(v); setPage(1); }}
+              options={products.options}
+              onQueryChange={products.onQueryChange}
+              loading={products.loading}
+              footer={products.footer}
+              selectedLabel={products.labelOf(productId)}
+              placeholder={tx('All products')}
+              clearLabel={tx('All products')}
+              searchPlaceholder={tx('Search by code or name…')}
+              contentClassName={PRODUCT_PICKER_PANEL}
+              wrap
+            />
+          </div>}
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">{tx('Location')}</label>
-            <Select value={locationId} onValueChange={(v) => { setLocationId(v); setPage(1); }}>
-              <SelectTrigger className="w-40"><SelectValue placeholder={tx('All')} /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">{tx('All locations')}</SelectItem>
-                {locations.data?.map((l) => (
-                  <SelectItem key={l.id} value={l.id}>{l.code}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              className="w-44"
+              value={locationId}
+              onValueChange={(v) => { setLocationId(v); setPage(1); }}
+              options={(locations.locations ?? []).map(locationOption)}
+              footer={locations.footer}
+              placeholder={tx('All locations')}
+              clearLabel={tx('All locations')}
+              searchPlaceholder={tx('Search locations…')}
+            />
           </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">{tx('Type')}</label>

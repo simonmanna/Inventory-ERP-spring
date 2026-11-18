@@ -3,7 +3,22 @@ import * as SelectPrimitive from '@radix-ui/react-select';
 import { Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const Select = SelectPrimitive.Root;
+/**
+ * UB2 (2026-11-17): Radix Select 2.x throws on `<Select.Item value="">` (the empty string is reserved for "no
+ * value"), which crashed every screen offering a "None" / "All" option that way (Stock Ledger, product edit, ~20
+ * more). The wrappers map an empty item value to this sentinel and the sentinel back to '' in onValueChange, so those
+ * items work again; a '' value still shows the placeholder.
+ */
+const EMPTY_ITEM_VALUE = '__select_empty__';
+
+function Select({ onValueChange, ...props }: React.ComponentPropsWithoutRef<typeof SelectPrimitive.Root>) {
+  return (
+    <SelectPrimitive.Root
+      {...props}
+      onValueChange={onValueChange ? (v) => onValueChange(v === EMPTY_ITEM_VALUE ? '' : v) : undefined}
+    />
+  );
+}
 const SelectGroup = SelectPrimitive.Group;
 const SelectValue = SelectPrimitive.Value;
 
@@ -100,13 +115,14 @@ SelectLabel.displayName = SelectPrimitive.Label.displayName;
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, value, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
       'relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className,
     )}
+    value={value === '' ? EMPTY_ITEM_VALUE : value}
     {...props}
   >
     <span className="absolute right-2 flex h-3.5 w-3.5 items-center justify-center">

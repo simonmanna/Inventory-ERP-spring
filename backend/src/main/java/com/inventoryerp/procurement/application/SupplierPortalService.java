@@ -149,7 +149,7 @@ public class SupplierPortalService {
                         + " \"createdAt\" AS \"submittedAt\" FROM \"SupplierQuotation\" WHERE \"rfqId\" = ? AND \"partnerId\" = ? ORDER BY"
                         + " revision DESC LIMIT 1").params(link.documentId(), link.partnerId()));
                 return Obj.of("documentType", "rfq", "buyer", org.get("name"), "supplier", supplier, "rfq", rfq,
-                        "lines", lines, "lastQuotation", mine, "canQuote", "sent".equals(rfq.get("status")));
+                        "lines", lines, "lastQuotation", mine, "canQuote", rfqs.acceptsQuotes(link.documentId()));
             }
             Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT id, \"orderNumber\", status::text AS status,"
                     + " \"orderDate\", \"expectedDeliveryDate\", \"currencyCode\", subtotal::text AS subtotal,"
@@ -187,10 +187,20 @@ public class SupplierPortalService {
         });
     }
 
-    /** Confirm the order with the supplier's reference and promised delivery date. */
+    /**
+     * Confirm the order with the supplier's reference and promised delivery date. A supplier confirms once (h04-F7):
+     * moving the promised date later goes through the buyer, who records it on the order (and it is audited).
+     */
     public Map<String, Object> confirm(String token, String supplierReference, String promisedDate) {
         return within(token, "confirm", link -> {
             requireType(link, "purchase_order");
+            boolean confirmed = jdbc.sql("SELECT count(*) FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " AND \"acknowledgedAt\" IS NOT NULL").params(link.documentId(), link.organizationId())
+                    .query(Long.class).single() > 0;
+            if (confirmed) {
+                throw ApiException.badRequest("This order is already confirmed; ask the buyer to record a new delivery"
+                        + " date");
+            }
             orders.acknowledge(link.documentId(), supplierReference, promisedDate);
             return Obj.of("ok", true, "message", "Thank you — the order is confirmed");
         });

@@ -172,6 +172,11 @@ class PlanningIT extends ApiTestSupport {
         Res quote = call("POST", "/supplier-portal/" + token + "/quotation", Map.of("supplierReference", "Q-77",
                 "currencyCode", "UGX", "lines", List.of(Map.of("rfqLineId", line, "unitPrice", 52000))), Map.of());
         assertThat(quote.status()).as(quote.raw().body()).isEqualTo(200);
+        // h04-F6: bids stay sealed while the RFQ takes quotations; closing it opens the comparison.
+        JsonNode sealed = ok(200, "GET", "/procurement/rfqs/" + rfqId + "/comparison", null);
+        assertThat(sealed.get("sealed").asBoolean()).isTrue();
+        assertThat(sealed.get("suppliers")).isEmpty();
+        ok(200, "POST", "/procurement/rfqs/" + rfqId + "/close", null);
         JsonNode cmp = ok(200, "GET", "/procurement/rfqs/" + rfqId + "/comparison", null);
         assertThat(cmp.get("suppliers")).hasSize(1);
         Res wrongAction = call("POST", "/supplier-portal/" + token + "/confirm", Map.of("supplierReference", "x"),

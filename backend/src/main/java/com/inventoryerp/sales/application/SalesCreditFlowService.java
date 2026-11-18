@@ -6,6 +6,7 @@ import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 
+import com.inventoryerp.accounting.application.ControlAccountGuards;
 import com.inventoryerp.invoicing.application.CreditNoteService;
 import com.inventoryerp.invoicing.application.CreditNoteService.CreditNoteInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
@@ -164,6 +165,11 @@ public class SalesCreditFlowService {
         if (blank(account)) {
             throw ApiException.badRequest("Set the bad debt account in Sales Settings first");
         }
+        // Control-account policy (V518, "close now"): the write-off is a customer sub-ledger adjustment (a credit note
+        // against the invoice: Cr AR for the customer, lowering the invoice residual); its other side is the bad debt
+        // expense (or an allowance for doubtful debts), never a designated AR / AP control account (Dr AR / Cr AR, or
+        // AR moved onto AP), and an existing, postable, active account.
+        ControlAccountGuards.assertWriteOffAccount(db.jdbc(), org(), "Write-off account", account, true);
         LineInput line = new LineInput(null, null, null, null, account, "Write-off of " + inv.get("documentNumber") + ": " + reason,
                 BigDecimal.ONE, amount, BigDecimal.ZERO, null, null, null, "manual", null, null, false);
         return post(str(inv.get("partnerId")), invoiceId, "write_off", reason, List.of(line));

@@ -74,6 +74,14 @@ public class SupplierService {
         }
     }
 
+    /**
+     * h04-F6: leaves out prices of quotations on an RFQ whose bids are still sealed (open for quotes and before its
+     * deadline), so price history cannot reveal a running tender. Expects the price row aliased {@code sp}.
+     */
+    static final String NOT_SEALED = " AND NOT (sp.source = 'quotation' AND EXISTS (SELECT 1 FROM \"SupplierQuotation\""
+            + " sq JOIN \"Rfq\" sr ON sr.id = sq.\"rfqId\" WHERE sq.id = sp.\"sourceId\" AND sr.status = 'sent' AND"
+            + " (sr.deadline IS NULL OR sr.deadline > " + NOW + ")))";
+
     private static final List<String> RISK = List.of("low", "medium", "high");
     private static final Map<String, List<String>> TRANSITIONS = Map.of(
             "approve", List.of("prospect", "provisional", "suspended"),
@@ -211,11 +219,12 @@ public class SupplierService {
             if (before == null) {
                 jdbc.sql("INSERT INTO \"SupplierProfile\" (id, \"organizationId\", \"partnerId\", \"riskClass\", categories,"
                         + " \"currencyCode\", \"leadTimeDays\", \"registrationNumber\", \"tradingName\", notes, \"createdBy\","
-                        + " \"updatedBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, COALESCE(?::text[], '{}'), ?, ?,"
-                        + " ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ")")
+                        + " \"updatedBy\", \"lastEditedBy\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?,"
+                        + " COALESCE(?::text[], '{}'), ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ")")
                         .params(UUID.randomUUID().toString(), org(), partnerId,
                                 in.riskClass() == null ? "medium" : in.riskClass(), cats, in.currencyCode(),
-                                in.leadTimeDays(), in.registrationNumber(), in.tradingName(), in.notes(), user(), user())
+                                in.leadTimeDays(), in.registrationNumber(), in.tradingName(), in.notes(), user(), user(),
+                                user())
                         .update();
                 audit.recordInTx(AuditInput.of("SupplierProfile", partnerId, "create", null,
                         Obj.of("lifecycleStatus", "prospect")));
@@ -224,10 +233,10 @@ public class SupplierService {
                         + " COALESCE(?::text[], categories), \"currencyCode\" = COALESCE(?, \"currencyCode\"),"
                         + " \"leadTimeDays\" = COALESCE(?, \"leadTimeDays\"), \"registrationNumber\" = COALESCE(?,"
                         + " \"registrationNumber\"), \"tradingName\" = COALESCE(?, \"tradingName\"), notes = COALESCE(?,"
-                        + " notes), \"updatedBy\" = ?, version = version + 1, \"updatedAt\" = " + NOW
+                        + " notes), \"updatedBy\" = ?, \"lastEditedBy\" = ?, version = version + 1, \"updatedAt\" = " + NOW
                         + " WHERE id = ? AND \"organizationId\" = ?")
                         .params(in.riskClass(), cats, in.currencyCode(), in.leadTimeDays(), in.registrationNumber(),
-                                in.tradingName(), in.notes(), user(), before.get("id"), org()).update();
+                                in.tradingName(), in.notes(), user(), user(), before.get("id"), org()).update();
                 audit.recordInTx(AuditInput.of("SupplierProfile", partnerId, "update", Obj.of("riskClass",
                         before.get("riskClass")), Obj.of("riskClass", in.riskClass())));
             }
@@ -249,7 +258,11 @@ public class SupplierService {
         if (("suspend".equals(action) || "blacklist".equals(action)) && why == null) {
             throw ApiException.badRequest("A reason is required to " + action + " a supplier");
         }
-        if (profile(partnerId) == null) {
+        Map<String, Object> existing = profile(partnerId);
+        if ("approve".equals(action)) {
+            requireChecker(partnerId, existing);
+        }
+        if (existing == null) {
             upsertProfile(partnerId, new ProfileInput(null, null, null, null, null, null, null));
         }
         String to = TARGET.get(action);
@@ -271,6 +284,32 @@ public class SupplierService {
         events.publish("supplier.status_changed", Obj.of("organizationId", org(), "partnerId", partnerId, "from",
                 before.get("lifecycleStatus"), "to", to, "reason", why == null ? "" : why));
         return get(partnerId);
+    }
+
+    /**
+     * h04-F11: approving a supplier is maker-checker. The approver must be a signed-in user other than whoever created
+     * the supplier, set up its profile or last edited it. A profile created by this approval itself does not count.
+     */
+    private void requireChecker(String partnerId, Map<String, Object> existing) {
+        String me = user();
+        if (me == null) {
+            throw ApiException.forbidden("A supplier cannot be approved without a signed-in user; approve it from a user"
+                    + " account");
+        }
+        java.util.Set<Object> makers = new java.util.HashSet<>();
+        if (existing != null) {
+            makers.add(existing.get("createdBy"));
+            makers.add(existing.get("lastEditedBy"));
+        }
+        makers.add(jdbc.sql("SELECT \"createdBy\" FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(partnerId, org()).query(String.class).optional().orElse(null));
+        // The partner API does not stamp createdBy; its audit trail names who created the supplier.
+        makers.addAll(jdbc.sql("SELECT \"actorId\" FROM \"AuditLog\" WHERE \"organizationId\" = ? AND entity = 'Partner'"
+                + " AND \"entityId\" = ? AND action::text = 'create'").params(org(), partnerId).query(String.class).list());
+        if (makers.contains(me)) {
+            throw ApiException.forbidden("A supplier must be approved by someone other than the person who set it up"
+                    + " or last edited it");
+        }
     }
 
     // ── bank accounts (dual control) ───────────────────────────────────────────────────────────────────────────
@@ -306,7 +345,12 @@ public class SupplierService {
     /** Second-person verification; the person who entered the account cannot verify it. */
     public Map<String, Object> verifyBankAccount(String id) {
         Map<String, Object> acc = bankAccount(id);
-        if (user() != null && user().equals(acc.get("createdBy"))) {
+        if (user() == null) {
+            // h04-F4/F11: a token without a user cannot prove it is not the person who entered the account.
+            throw ApiException.forbidden("A bank account cannot be verified without a signed-in user; verify it from a"
+                    + " user account");
+        }
+        if (user().equals(acc.get("createdBy"))) {
             throw ApiException.forbidden("A bank account must be verified by someone other than the person who entered"
                     + " it");
         }
@@ -468,9 +512,9 @@ public class SupplierService {
             throw ApiException.badRequest("productId is required");
         }
         List<Object> params = new ArrayList<>(List.of(org(), productId));
-        String extra = "";
+        String extra = NOT_SEALED;
         if (partnerId != null && !partnerId.isBlank()) {
-            extra = " AND sp.\"partnerId\" = ?";
+            extra += " AND sp.\"partnerId\" = ?";
             params.add(partnerId);
         }
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT sp.*, p.name AS \"partnerName\" FROM"

@@ -6,23 +6,35 @@ import static com.inventoryerp.inventory.application.WarehouseStore.key;
 import static com.inventoryerp.inventory.application.WarehouseStore.org;
 import static com.inventoryerp.inventory.application.WarehouseStore.user;
 
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.inventory.application.WarehouseStore.NewTask;
+import com.inventoryerp.inventory.application.WarehouseStore.SourceDoc;
+import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.JsNumbers;
+import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.security.PermissionService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Outbound warehouse flow (roadmap 2.1, ADR-S026): pick orders in one to three steps (pick + ship, pick → ship,
@@ -33,6 +45,18 @@ import org.springframework.transaction.annotation.Transactional;
  * source document (sale, delivery, stock-out, transfer) the ledger issue stays with that document. A {@code manual}
  * order has no document behind it, so shipping it issues the shipped quantities itself ({@link StockService#issue},
  * stock-out GL) in the same transaction.
+ *
+ * <p>Readiness gaps 2026-11-17 (h-01 F2, F3):
+ * <ul>
+ *   <li>A sourced order names an existing document and ships only once that document has taken the picked goods out
+ *       of the stock ledger at the location, so bins and ledger never drift apart in the window between the two
+ *       ({@link WarehouseStore#documentShortfall}). A one-step sourced order ships itself on the last pick only when
+ *       the document has already posted; otherwise it waits in {@code picked}.</li>
+ *   <li>Shipping a manual order is a stock-out: it needs {@code inventory_doc:approve}, goes through the approvals
+ *       engine as entity {@code stock_out} with the picked value as its amount, and the person who created the order
+ *       cannot ship it unless someone else approved it in the engine. The ledger records the creator as responsible
+ *       and the shipper as approver. A one-step manual order therefore stops at {@code picked}.</li>
+ * </ul>
  */
 @Service
 public class WarehouseOutboundService {
@@ -48,16 +72,32 @@ public class WarehouseOutboundService {
     /** Source type of a pick order without a source document: shipping it posts the stock issue. */
     static final String MANUAL = "manual";
 
+    /** Approval entity of a manual ship: the same as a stock-out document, so stock-out workflows apply to it. */
+    static final String APPROVAL_ENTITY = "stock_out";
+
     private final JdbcClient jdbc;
     private final WarehouseStore store;
     private final StockService stock;
     private final AuditService audit;
+    private final ApprovalsService approvals;
+    private final SegregationOfDutiesService sod;
+    private final PermissionService permissions;
+    private final InventoryValuationService valuation;
+    private final TransactionTemplate newTx;
 
-    public WarehouseOutboundService(WarehouseStore store, StockService stock, AuditService audit) {
+    public WarehouseOutboundService(WarehouseStore store, StockService stock, AuditService audit,
+            ApprovalsService approvals, SegregationOfDutiesService sod, PermissionService permissions,
+            InventoryValuationService valuation, PlatformTransactionManager txm) {
         this.jdbc = store.jdbc();
         this.store = store;
         this.stock = stock;
         this.audit = audit;
+        this.approvals = approvals;
+        this.sod = sod;
+        this.permissions = permissions;
+        this.valuation = valuation;
+        this.newTx = new TransactionTemplate(txm);
+        this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     // ---------------------------------------------------------------- reads
@@ -144,6 +184,17 @@ public class WarehouseOutboundService {
         if (in.lines() == null || in.lines().isEmpty()) {
             throw ApiException.badRequest("A pick order needs at least one line");
         }
+        String sourceType = in.sourceType() == null || in.sourceType().isBlank() ? MANUAL : in.sourceType();
+        String sourceId = in.sourceId();
+        String sourceRef = in.sourceRef();
+        if (MANUAL.equals(sourceType)) {
+            refuseDocumentReference(in.sourceRef());
+        } else {
+            // h-01 F2: a sourced order is matched with its document's stock issue, so the document must exist.
+            SourceDoc doc = store.sourceDocument(sourceType, in.sourceId(), in.sourceRef(), in.locationId());
+            sourceId = doc.id();
+            sourceRef = doc.number();
+        }
         int steps = in.steps() != null ? in.steps() : store.settings(in.locationId()).outboundSteps();
         String id = id();
         String code = store.nextCode("wms_pick", "PK-");
@@ -151,8 +202,8 @@ public class WarehouseOutboundService {
                         + " \"sourceId\", \"sourceRef\", steps, status, priority, \"scheduledDate\", notes, \"createdBy\","
                         + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, " + NOW + ", "
                         + NOW + ")")
-                .params(id, org(), in.locationId(), code, in.sourceType() == null ? MANUAL : in.sourceType(),
-                        in.sourceId(), in.sourceRef(), steps, in.priority() == null ? 0 : in.priority(),
+                .params(id, org(), in.locationId(), code, sourceType,
+                        sourceId, sourceRef, steps, in.priority() == null ? 0 : in.priority(),
                         in.scheduledDate() == null ? null : Date.valueOf(in.scheduledDate()), in.notes(), user())
                 .update();
         for (LineInput l : in.lines()) {
@@ -163,6 +214,34 @@ public class WarehouseOutboundService {
         }
         audit.recordInTx(AuditInput.of("WarehousePickOrder", id, "create", null, Obj.of("code", code, "steps", steps)));
         return view(id);
+    }
+
+    /**
+     * Blocker fix 2026-11-17 (B3): shipping a {@code manual} pick order issues the stock itself. When its reference is
+     * the number of a document that issues the same goods when it posts (a sales order, sales invoice, delivery order,
+     * stock-out or transfer), shipping would take the goods out a second time. Such an order must name the document
+     * as its source instead.
+     */
+    private void refuseDocumentReference(String sourceRef) {
+        if (sourceRef == null || sourceRef.isBlank()) {
+            return;
+        }
+        String ref = sourceRef.trim();
+        String kind = jdbc.sql("SELECT kind FROM ("
+                        + "SELECT 'sales order' AS kind FROM \"SalesOrder\" WHERE \"organizationId\" = :org AND number = :ref"
+                        + " UNION ALL SELECT 'sales invoice' FROM \"Document\" WHERE \"organizationId\" = :org"
+                        + " AND \"documentNumber\" = :ref AND \"documentType\"::text = 'sales_invoice'"
+                        + " UNION ALL SELECT 'delivery order' FROM \"FleetDeliveryOrder\" WHERE \"organizationId\" = :org"
+                        + " AND code = :ref"
+                        + " UNION ALL SELECT 'stock-out' FROM \"StockOut\" WHERE \"organizationId\" = :org AND \"outCode\" = :ref"
+                        + " UNION ALL SELECT 'transfer' FROM \"StockTransfer\" WHERE \"organizationId\" = :org"
+                        + " AND \"transferCode\" = :ref) x LIMIT 1")
+                .param("org", org()).param("ref", ref).query(String.class).optional().orElse(null);
+        if (kind != null) {
+            throw ApiException.badRequest("Reference " + ref + " is a " + kind + ", which takes the stock out itself when"
+                    + " it is posted. Create the pick order with that " + kind + " as its source (not a manual pick), or"
+                    + " clear the reference");
+        }
     }
 
     /** Allocate bin stock and create the pick tasks (400 when a line cannot be covered from the bins). */
@@ -188,6 +267,7 @@ public class WarehouseOutboundService {
             BigDecimal need = SqlRows.dec(line, "quantity");
             List<Map<String, Object>> binRows = SqlRows.list(jdbc.sql("SELECT s.\"binId\", s.\"batchKey\", b.\"pickSequence\","
                     + " s.quantity - coalesce((SELECT sum(t.quantity) FROM \"WarehouseTask\" t WHERE t.\"fromBinId\" = s.\"binId\""
+                    + "   AND t.\"organizationId\" = s.\"organizationId\""
                     + "   AND t.\"productId\" = s.\"productId\" AND t.\"variantKey\" = s.\"variantKey\""
                     + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type IN ('pick', 'move')), 0)"
                     + " AS free FROM \"WarehouseBinStock\" s JOIN \"WarehouseBin\" b ON b.id = s.\"binId\""
@@ -206,14 +286,18 @@ public class WarehouseOutboundService {
             }
             // Bins are a sub-ledger and can hold more than the ledger (stock issued without a pick order): never
             // allocate more than the location really has, net of what is staged and already allocated to open picks.
-            BigDecimal onHand = store.locationQty(locationId, productId, variantKey)
+            // h-01 F2: goods a posted source document already took out of the ledger are still in the bins for their
+            // pick order, so they count as on hand here.
+            BigDecimal onHand = store.physicalQty(locationId, productId, variantKey)
                     .subtract(store.stagedQty(locationId, productId, variantKey))
                     .subtract(store.openPickQty(locationId, productId, variantKey)).max(BigDecimal.ZERO);
             if (onHand.compareTo(need) < 0) {
                 throw ApiException.badRequest("Not enough stock on hand to pick " + line.get("productName") + ": need "
                         + need.stripTrailingZeros().toPlainString() + ", on hand "
-                        + onHand.stripTrailingZeros().toPlainString() + " (the bins hold more than the stock ledger;"
-                        + " reconcile the bins)");
+                        + onHand.stripTrailingZeros().toPlainString() + ". The bins hold more than the stock ledger,"
+                        + " so some stock left this location without a pick order. If a posted sale, delivery,"
+                        + " stock-out or transfer took these goods out, pick them on a pick order with that document as"
+                        + " its source; otherwise count the bins before adjusting them");
             }
             for (Map<String, Object> r : binRows) {
                 if (need.signum() <= 0) {
@@ -238,9 +322,10 @@ public class WarehouseOutboundService {
 
     /**
      * Called by the task service after a pick task is done or cancelled: moves the order to {@code picking} or
-     * {@code picked}; a one-step order ships itself once nothing is left to pick. When every task ended without
-     * anything picked (all cancelled or done with 0), the order goes back to {@code draft}: it can be released again
-     * or cancelled, and is never shipped empty.
+     * {@code picked}; a one-step sourced order ships itself once nothing is left to pick, if its document has already
+     * taken the goods out of stock (h-01 F2). A one-step manual order waits in {@code picked} for someone allowed to
+     * approve the stock-out (h-01 F3). When every task ended without anything picked (all cancelled or done with 0),
+     * the order goes back to {@code draft}: it can be released again or cancelled, and is never shipped empty.
      */
     void refreshAfterPick(String orderId) {
         Map<String, Object> o = order(orderId, true);
@@ -261,7 +346,8 @@ public class WarehouseOutboundService {
         }
         jdbc.sql("UPDATE \"WarehousePickOrder\" SET status = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(next, orderId).update();
-        if ("picked".equals(next) && ((Number) o.get("steps")).intValue() == 1) {
+        if ("picked".equals(next) && ((Number) o.get("steps")).intValue() == 1 && !MANUAL.equals(o.get("sourceType"))
+                && store.documentShortfall(o).isEmpty()) {
             shipLocked(order(orderId, true), null, null);
         }
     }
@@ -350,6 +436,11 @@ public class WarehouseOutboundService {
         if (pickedTotal(id).signum() <= 0) {
             throw ApiException.badRequest("Nothing was picked on this pick order; release it again or cancel it");
         }
+        if (MANUAL.equals(o.get("sourceType"))) {
+            assertManualShipAllowed(o);
+        } else {
+            assertDocumentIssued(o);
+        }
         shipLocked(o, carrier, trackingRef);
         audit.recordInTx(AuditInput.of("WarehousePickOrder", id, "update", Obj.of("status", status), Obj.of("status",
                 "shipped", "carrier", carrier, "trackingRef", trackingRef)));
@@ -359,6 +450,115 @@ public class WarehouseOutboundService {
     private BigDecimal pickedTotal(String orderId) {
         return jdbc.sql("SELECT coalesce(sum(\"pickedQty\"), 0) FROM \"WarehousePickLine\" WHERE \"pickOrderId\" = ?")
                 .param(orderId).query(BigDecimal.class).single();
+    }
+
+    private static String plain(Object v) {
+        return Money.dec(v).stripTrailingZeros().toPlainString();
+    }
+
+    /**
+     * h-01 F2: a sourced order ships only after its document took the picked goods out of the stock ledger here.
+     * Shipping first would empty the bins while the ledger still counts the goods, and they would show as waiting for
+     * putaway until the document posts.
+     */
+    private void assertDocumentIssued(Map<String, Object> o) {
+        List<Map<String, Object>> shortfall = store.documentShortfall(o);
+        if (shortfall.isEmpty()) {
+            return;
+        }
+        String kind = switch (SqlRows.str(o, "sourceType")) {
+            case "sales_order" -> "sales order";
+            case "delivery_order" -> "delivery order";
+            case "stock_out" -> "stock-out";
+            default -> "transfer";
+        };
+        List<String> lines = new ArrayList<>();
+        for (Map<String, Object> s : shortfall) {
+            lines.add(s.get("productName") + ": picked " + plain(s.get("picked")) + ", taken out " + plain(s.get(
+                    "issued")));
+        }
+        throw ApiException.badRequest("Post " + kind + " " + o.get("sourceRef") + " before shipping pick order "
+                + o.get("code") + ": it has not yet taken the picked goods out of stock at this location ("
+                + String.join("; ", lines) + "). Shipping a pick order for a document only records the shipment");
+    }
+
+    /**
+     * h-01 F3: shipping a manual order issues stock without any document, so it gets the controls of a stock-out:
+     * the {@code inventory_doc:approve} permission, the approvals engine (entity {@code stock_out}, amount = picked
+     * value) and a second person. The creator is the responsible person; whoever ships approves the issue. The creator
+     * may ship only when someone else approved the request in the engine.
+     */
+    private void assertManualShipAllowed(Map<String, Object> o) {
+        String id = SqlRows.str(o, "id");
+        String code = SqlRows.str(o, "code");
+        if (!permissions.current().contains(Permissions.INVENTORY_DOC__APPROVE)) {
+            throw ApiException.forbidden("Shipping manual pick order " + code + " takes its stock out of inventory;"
+                    + " only a user who may approve stock-outs (inventory_doc:approve) can ship it");
+        }
+        String locationId = SqlRows.str(o, "locationId");
+        List<Map<String, Object>> picked = SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantKey\","
+                + " sum(\"pickedQty\") AS qty FROM \"WarehousePickLine\" WHERE \"pickOrderId\" = ? AND \"pickedQty\" > 0"
+                + " GROUP BY 1, 2").param(id));
+        String creator = SqlRows.str(o, "createdBy");
+        String branchId = jdbc.sql("SELECT \"branchId\" FROM \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(locationId, org()).query(String.class).optional().orElse(null);
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("amount", JsNumbers.js(Money.round(pickedValue(locationId, picked), 2)));
+        snapshot.put("lines", picked.size());
+        snapshot.put("category", "warehouse_pick");
+        snapshot.put("reference", code);
+        snapshot.put("title", "Manual pick order " + code + " (stock leaves without a document)");
+        snapshot.put("locationId", locationId);
+        snapshot.put("branchId", branchId);
+        snapshot.put("makerIds", creator);
+        Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval(APPROVAL_ENTITY, id, snapshot));
+        if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
+            throw ApiException.badRequest("Approval required before shipping pick order " + code
+                    + ". Pending approval request " + gate.get("requestId") + ".");
+        }
+        String shipper = user();
+        if (creator != null && creator.equals(shipper) && !approvedBySomeoneElse(id, creator)) {
+            sod.recordBlocked(APPROVAL_ENTITY, "WarehousePickOrder", id, shipper, List.of(creator));
+            throw ApiException.forbidden("Separation of duties: the person who created pick order " + code
+                    + " cannot also ship it (a manual pick takes the stock out of inventory); ask a colleague who may"
+                    + " approve stock-outs to ship it");
+        }
+    }
+
+    /** An approved {@code stock_out} request for the order, decided by someone other than its creator. */
+    private boolean approvedBySomeoneElse(String orderId, String creator) {
+        return jdbc.sql("SELECT count(*) FROM \"ApprovalRequest\" r JOIN \"ApprovalDecision\" d ON d.\"requestId\" = r.id"
+                        + " WHERE r.\"organizationId\" = ? AND r.\"entityType\" = ? AND r.\"entityId\" = ?"
+                        + " AND r.status = 'approved' AND d.status = 'approved' AND d.\"approverId\" <> ?")
+                .params(org(), APPROVAL_ENTITY, orderId, creator).query(Long.class).single() > 0;
+    }
+
+    /**
+     * Value of the picked quantities at the location's current value by costing method (value / quantity per product
+     * and variant from the accounting valuation; the product's cost price where the location holds none).
+     */
+    private BigDecimal pickedValue(String locationId, List<Map<String, Object>> picked) {
+        if (picked.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        LinkedHashSet<String> productIds = new LinkedHashSet<>();
+        picked.forEach(p -> productIds.add(SqlRows.str(p, "productId")));
+        Map<String, BigDecimal[]> byKey = new HashMap<>();
+        for (Map<String, Object> r : valuation.currentValueByQuant(locationId, productIds)) {
+            BigDecimal[] qv = byKey.computeIfAbsent(r.get("product_id") + "|" + r.get("variant_key"),
+                    k -> new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
+            qv[0] = qv[0].add(SqlRows.dec(r, "qty"));
+            qv[1] = qv[1].add(SqlRows.dec(r, "value"));
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        for (Map<String, Object> p : picked) {
+            BigDecimal[] qv = byKey.get(p.get("productId") + "|" + p.get("variantKey"));
+            BigDecimal unit = qv != null && qv[0].signum() > 0 ? Money.div(qv[1], qv[0])
+                    : jdbc.sql("SELECT coalesce(\"costPrice\", 0) FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                            .params(p.get("productId"), org()).query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+            total = total.add(SqlRows.dec(p, "qty").multiply(unit));
+        }
+        return total;
     }
 
     /** Caller holds the order row lock and has checked the status: this runs once per order. */
@@ -388,6 +588,8 @@ public class WarehouseOutboundService {
         String id = SqlRows.str(o, "id");
         String code = SqlRows.str(o, "code");
         String locationId = SqlRows.str(o, "locationId");
+        // h-01 F3: the creator asked for the issue (responsible), the shipper approved it.
+        String responsible = SqlRows.str(o, "createdBy") != null ? SqlRows.str(o, "createdBy") : user();
         List<Map<String, Object>> picked = SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantKey\", \"batchKey\","
                 + " sum(\"doneQty\") AS qty FROM \"WarehouseTask\" WHERE \"pickOrderId\" = ? AND \"organizationId\" = ?"
                 + " AND type = 'pick' AND status = 'done' AND \"doneQty\" > 0 GROUP BY 1, 2, 3"
@@ -399,7 +601,7 @@ public class WarehouseOutboundService {
             StockMove m = StockMove.of(SqlRows.str(p, "productId"), locationId, SqlRows.dec(p, "qty"))
                     .variant(variantKey == null || variantKey.isEmpty() ? null : variantKey).moveType("issue")
                     .source("WarehousePickOrder", code).notes("Pick order " + code + " shipped")
-                    .people(user(), user()).requireAvailable(true);
+                    .people(responsible, user()).requireAvailable(true);
             if (batchKey != null && !batchKey.isEmpty()) {
                 m.pin(List.of(batchKey), null, null);
             }

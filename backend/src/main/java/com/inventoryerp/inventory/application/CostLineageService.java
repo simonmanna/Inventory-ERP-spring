@@ -2,6 +2,7 @@ package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -62,15 +63,18 @@ public class CostLineageService {
     private final AccountDeterminationService determination;
     private final AccountResolverService accounts;
     private final AuditService audit;
+    private final InventoryValuationService valuation;
 
     public CostLineageService(JdbcClient jdbc, SequenceService seq, PostingService posting,
-            AccountDeterminationService determination, AccountResolverService accounts, AuditService audit) {
+            AccountDeterminationService determination, AccountResolverService accounts, AuditService audit,
+            InventoryValuationService valuation) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
         this.determination = determination;
         this.accounts = accounts;
         this.audit = audit;
+        this.valuation = valuation;
     }
 
     private static String org() {
@@ -112,6 +116,47 @@ public class CostLineageService {
     /** P&amp;L offset of a manual inventory revaluation (5968). */
     public String revaluationAccount() {
         return accounts.ensureByCode("5968", "Inventory Revaluation", "cost_of_goods_sold", "inventory_revaluation");
+    }
+
+    /**
+     * Readiness gaps h-02 F5: an account a user chooses to offset a stock value change (a revaluation or NRV review, a
+     * lineage write-off) follows the manual-journal control-account policy (V518: postable, active, not deprecated, no
+     * designated AR / AP control account, no account closed to manual posting) — the change itself posts in system
+     * context, which would accept them — and is never a cash-equivalent account or one that carries inventory value
+     * (the stock, adjunct and allowance accounts of the GL tie-out, any inventory or WIP account): the offset must leave
+     * the bank and the stock sub-ledgers reconciled. The caller has checked that the account exists.
+     */
+    public void assertOffsetAccount(String accountId) {
+        posting.assertManualPostingAllowed(List.of(accountId));
+        Map<String, Object> a = SqlRows.one(jdbc.sql("SELECT a.code, a.name, coalesce(c.\"isCashEquivalent\", false) AS"
+                + " cash, c.key AS category FROM \"Account\" a LEFT JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
+                + " WHERE a.id = ? AND a.\"organizationId\" = ?").params(accountId, org()));
+        if (a == null) {
+            return;
+        }
+        boolean cash = Boolean.TRUE.equals(a.get("cash"));
+        boolean stock = List.of("inventory", "work_in_progress").contains(a.get("category"))
+                || valuation.inventoryAccountIds().contains(accountId);
+        if (cash || stock) {
+            throw ApiException.badRequest("Account " + a.get("code") + " " + a.get("name") + " cannot offset a stock"
+                    + " value change: it is " + (cash ? "a cash or bank account" : "an account that carries inventory"
+                            + " value") + ". Choose an expense, income or other account outside cash and stock.");
+        }
+    }
+
+    /**
+     * Record where part of an adjustment went outside the automatic release (readiness gaps h-02 F10): a lineage
+     * exception written off to an account, or assigned to its goods ({@code target = 'assigned'}, the 1396 adjunct
+     * handed on to the child adjustments of the destination; an accrual clearing follows those children, not this row).
+     */
+    public void recordRelease(String adjustmentId, String target, String targetRef, String accountId, BigDecimal amount,
+            String sourceType, String sourceId) {
+        jdbc.sql("INSERT INTO \"CostValueAdjustmentRelease\" (id, \"organizationId\", \"adjustmentId\", target,"
+                        + " \"targetRef\", \"accountId\", amount, \"sourceType\", \"sourceId\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                        + " ?, ?)")
+                .params(UUID.randomUUID().toString(), org(), adjustmentId, target, targetRef, accountId, amount,
+                        sourceType, sourceId)
+                .update();
     }
 
     // ---- value-only rows ------------------------------------------------------------------------------------------
@@ -431,6 +476,30 @@ public class CostLineageService {
                 if (!account.equals(adjunctAccount)) {
                     byAccountDebit.merge(account, t.getValue(), BigDecimal::add);
                     byAccountDebit.merge(adjunctAccount, t.getValue().negate(), BigDecimal::add);
+                }
+            }
+            // Review 2026-11-17 (ACR-14): where each part went, per target (and per order for WIP) — an accrual clearing
+            // takes the released part of its estimate back out of these accounts, and the cost adjustment run carries a
+            // share released into an order's WIP on to the order's output once it completes.
+            Map<List<String>, BigDecimal> releases = new LinkedHashMap<>();
+            if (poolQty.signum() <= 0) {
+                releases.put(java.util.Arrays.asList("cogs", null), openAmount);
+            } else {
+                for (Share s : d.consumed()) {
+                    String t = target(s);
+                    if (!"transfer".equals(t) && s.amount().signum() != 0) {
+                        releases.merge(java.util.Arrays.asList(t, "wip".equals(t) ? wipRef(t, s.referenceId()) : null),
+                                s.amount(), BigDecimal::add);
+                    }
+                }
+            }
+            for (Map.Entry<List<String>, BigDecimal> r : releases.entrySet()) {
+                String account = consumptionAccount(r.getKey().get(0));
+                if (r.getValue().signum() != 0 && !account.equals(adjunctAccount)) {
+                    jdbc.sql("INSERT INTO \"CostValueAdjustmentRelease\" (id, \"organizationId\", \"adjustmentId\", target,"
+                            + " \"targetRef\", \"accountId\", amount, \"sourceType\", \"sourceId\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " 'cost_release', ?)").params(UUID.randomUUID().toString(), org(), a.get("id"),
+                            r.getKey().get(0), r.getKey().get(1), account, r.getValue(), number).update();
                 }
             }
             BigDecimal transferred = targets.getOrDefault("transfer", BigDecimal.ZERO);

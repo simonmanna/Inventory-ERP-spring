@@ -1,29 +1,40 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, Truck } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
-import { idempotentPatch } from '@/lib/idempotent-request';
+import { idempotentPatch, idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
-import { apiErrorMessage } from '@/lib/api-error';
+import { describeApiError, notifyApiError } from '@/lib/api-error';
+import { roundQty, subtractQty } from '@/lib/quantity';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { tx } from '@/lib/i18n/tx';
 import { UnitSelect } from '@/components/unit-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultUnitId, type UnitAwareProduct } from '@/features/products/units';
 import { VariantSelect } from '@/features/products/variant-select';
+import { useProductSearch } from '@/features/products/product-search';
+import { useSupplierPicker } from '@/features/procurement/supplier-picker';
+import { useAuthStore } from '@/stores/auth.store';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
+import { useUomCode } from '@/features/uom/api';
 
-interface Warehouse { id: string; code: string; name: string; type: string }
 interface Product extends UnitAwareProduct { id: string; name: string; code: string }
 interface POLine {
   id: string; productId: string | null; description: string; quantity: number; receivedQuantity: number;
   unitPrice: number; unitOfMeasureId?: string | null; variantId?: string | null;
   variant?: { id: string; name: string; sku?: string | null } | null;
 }
-interface PO { id: string; orderNumber: string; lines: POLine[] }
+interface PO { id: string; orderNumber: string; partner?: { id: string; name: string } | null; lines: POLine[] }
+interface POOption { id: string; orderNumber: string; status: string; partner?: { id: string; name: string } | null }
 
 interface Line {
+  /** Stable row identity: React keys must survive removing a line above. */
+  uid: string;
   purchaseOrderLineId?: string;
   productId?: string;
   description: string;
@@ -39,69 +50,128 @@ interface Line {
   variantName?: string;
 }
 
+let lineSeq = 0;
+const lineId = () => `line-${++lineSeq}`;
+
+/** Purchase orders that can still be received. */
+const RECEIVABLE_STATUSES = ['active', 'partially_received'];
+
+/**
+ * Receivable purchase orders searched on the server by number, supplier or notes (the list takes one status at a
+ * time, so both receivable statuses are asked for). Replaces the raw PO-id box.
+ */
+function useReceivablePurchaseOrders(enabled: boolean) {
+  const [query, setQuery] = useState('');
+  const search = useDebouncedValue(query.trim(), 250);
+  const result = useQuery({
+    queryKey: ['purchase-orders', 'receivable-options', search],
+    enabled,
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const pages = await Promise.all(RECEIVABLE_STATUSES.map(async (status) => (await api.get<{
+        data: POOption[]; meta?: { total?: number };
+      }>('/procurement/purchase-orders', { params: { status, search: search || undefined, pageSize: 25 } })).data));
+      return {
+        rows: pages.flatMap((p) => p.data ?? []),
+        total: pages.reduce((n, p) => n + (p.meta?.total ?? p.data?.length ?? 0), 0),
+      };
+    },
+  });
+  const rows = result.data?.rows ?? [];
+  const total = result.data?.total ?? 0;
+  return {
+    options: rows.map((o) => ({ value: o.id, label: o.partner?.name ?? '—', code: o.orderNumber })),
+    onQueryChange: setQuery,
+    loading: result.isFetching,
+    footer: total > rows.length
+      ? tx('Showing {{shown}} of {{total}}: keep typing to narrow the list.', { shown: rows.length, total })
+      : undefined,
+  };
+}
+
 export function GoodsReceiptCreatePage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const uomCode = useUomCode();
   const [params] = useSearchParams();
   const poId = params.get('poId') ?? '';
   const [warehouseId, setWarehouseId] = useState('');
   const [notes, setNotes] = useState('');
-  const [lines, setLines] = useState<Line[]>([{ description: '', quantity: 1, unitCost: 0 }]);
+  const [lines, setLines] = useState<Line[]>(() => [{ uid: lineId(), description: '', quantity: 1, unitCost: 0 }]);
+  // Blocker fix B1: a receipt names its supplier (from the PO, else picked here). Supplier bills are matched only to
+  // that supplier's receipts, so a receipt without one was received a second time by the bill.
+  const [partnerId, setPartnerId] = useState('');
+  // Searched on the server as the user types (debounced); a full page of 50 says to keep typing.
+  const suppliers = useSupplierPicker();
+  // The order picker lists purchase orders, which needs purchase_order:read; without it the field is not offered.
+  const canReadOrders = useAuthStore((s) => s.hasPermission)(PERMISSIONS.procurement.purchaseOrder.read);
+  const purchaseOrders = useReceivablePurchaseOrders(canReadOrders);
 
-  const warehouses = useQuery<Warehouse[]>({
-    queryKey: ['warehouses'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Warehouse[] }>('/inventory/locations?type=warehouse');
-      return res.data.data ?? [];
-    },
-  });
+  // Every warehouse: the default page held only the 25 newest locations.
+  const warehouses = useStockLocations({ type: 'warehouse' });
   const po = useQuery<PO>({
     queryKey: ['po-for-grn', poId],
     queryFn: async () => (await api.get<PO>(`/procurement/purchase-orders/${poId}`)).data,
     enabled: !!poId,
   });
-  const products = useQuery<Product[]>({
-    queryKey: ['products'],
-    queryFn: async () => (await api.get<{ data: Product[] }>('/products?pageSize=200')).data.data ?? [],
-  });
+  // Searched on the server: one page of 200 products left the rest unpickable.
+  const products = useProductSearch<Product>();
 
-  // When PO loads, prefill lines from PO lines.
+  // When PO loads, prefill lines from PO lines; without a PO, PO-backed lines no longer apply.
   useEffect(() => {
     if (po.data) {
       setLines(
         po.data.lines.map((ln) => ({
+          uid: lineId(),
           purchaseOrderLineId: ln.id,
           productId: ln.productId ?? undefined,
           description: ln.description,
           uomId: ln.unitOfMeasureId ?? undefined,
           variantId: ln.variantId ?? undefined,
           variantName: ln.variant?.name ?? undefined,
-          quantity: Math.max(0, Number(ln.quantity) - Number(ln.receivedQuantity)),
+          // Exact to 6 decimals: plain subtraction sent 0.20000000000000107 and was refused as over-receiving.
+          quantity: Math.max(0, subtractQty(ln.quantity, ln.receivedQuantity)),
           unitCost: Number(ln.unitPrice) || 0,
         })).filter((l) => l.quantity > 0),
       );
+    } else if (!poId) {
+      setLines((cur) => (cur.some((l) => l.purchaseOrderLineId)
+        ? [{ uid: lineId(), description: '', quantity: 1, unitCost: 0 }]
+        : cur));
     }
-  }, [po.data]);
+  }, [po.data, poId]);
+
+  const updateLine = (uid: string, patch: Partial<Line>) =>
+    setLines((cur) => cur.map((l) => (l.uid === uid ? { ...l, ...patch } : l)));
 
   const create = useMutation({
     mutationFn: async () => {
-      const data = (await api.post<{ id: string; receiptNumber: string }>('/procurement/goods-receipts', {
+      // A stable key per payload: a retry after a lost answer reuses it (see idempotent-request.ts).
+      const data = await idempotentPost<{ id: string; receiptNumber: string }>('/procurement/goods-receipts', {
         purchaseOrderId: poId || undefined,
+        // With a PO the server takes the PO's supplier.
+        partnerId: poId ? undefined : partnerId || undefined,
         warehouseId,
         notes,
         lines: lines.filter((l) => l.description && l.quantity > 0).map((l) => ({
-          ...l,
+          purchaseOrderLineId: l.purchaseOrderLineId,
+          productId: l.productId,
+          description: l.description,
+          quantity: roundQty(l.quantity),
+          unitCost: l.unitCost,
+          uomId: l.uomId,
           variantId: l.variantId || undefined,
           batchNumber: l.batchNumber || undefined,
           expiryDate: l.expiryDate || undefined,
         })),
-      })).data;
+      });
       // Immediately post it (commits the stock-in). The draft already exists, so a failed post is reported with it.
       try {
         await idempotentPatch(`/procurement/goods-receipts/${data.id}/post`);
         return { data, postError: null };
       } catch (e) {
-        return { data, postError: apiErrorMessage(e, tx('Posting failed')) };
+        return { data, postError: describeApiError(e, tx('Posting failed')) };
       }
     },
     onSuccess: ({ data, postError }) => {
@@ -115,7 +185,7 @@ export function GoodsReceiptCreatePage() {
       notify.success(tx('GRN {{receiptNumber}} posted', { receiptNumber: data.receiptNumber }));
       navigate('/procurement/goods-receipts');
     },
-    onError: (e) => notify.error(apiErrorMessage(e, tx('Could not create the goods receipt'))),
+    onError: (e) => notifyApiError(e, tx('Could not create the goods receipt')),
   });
 
   return (
@@ -128,31 +198,61 @@ export function GoodsReceiptCreatePage() {
           <CardDescription>{tx('Receipts post stock-in moves automatically.')}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
-          <div>
+          {canReadOrders && (<div>
             <label className="text-sm font-medium">{tx('PO (optional)')}</label>
-            <Input
+            <SearchableSelect
               className="mt-1"
               value={poId}
-              onChange={(e) => {
-                const newId = e.target.value;
-                navigate(`/procurement/goods-receipts/new?poId=${newId}`, { replace: true });
-              }}
-              placeholder={tx('PO id (auto-fills lines)')}
+              onValueChange={(v) => navigate(
+                v ? `/procurement/goods-receipts/new?poId=${encodeURIComponent(v)}` : '/procurement/goods-receipts/new',
+                { replace: true },
+              )}
+              options={purchaseOrders.options}
+              onQueryChange={purchaseOrders.onQueryChange}
+              loading={purchaseOrders.loading}
+              footer={purchaseOrders.footer}
+              selectedLabel={po.data ? `${po.data.orderNumber} — ${po.data.partner?.name ?? '—'}` : null}
+              placeholder={tx('Select a purchase order (auto-fills lines)…')}
+              searchPlaceholder={tx('Search by PO number or supplier…')}
+              emptyText={tx('No open purchase orders match')}
+              clearLabel={tx('No purchase order')}
             />
-            {po.data && <p className="mt-1 text-xs text-muted-foreground">{po.data.orderNumber}</p>}
+          </div>)}
+          <div>
+            <label className="text-sm font-medium">{tx('Supplier')}</label>
+            {poId ? (
+              <p className="mt-2 text-sm">{po.data?.partner?.name ?? (po.isLoading ? tx('Loading…') : '—')}</p>
+            ) : (
+              <SearchableSelect
+                className="mt-1"
+                value={partnerId}
+                onValueChange={setPartnerId}
+                options={suppliers.options}
+                onQueryChange={suppliers.onQueryChange}
+                selectedLabel={suppliers.labelOf(partnerId)}
+                loading={suppliers.loading}
+                footer={suppliers.footer}
+                placeholder={tx('Select supplier…')}
+                searchPlaceholder={tx('Search suppliers…')}
+              />
+            )}
+            {!poId && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {tx("The supplier's bills are matched to this receipt, so the goods are not received twice.")}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-sm font-medium">{tx('Warehouse')}</label>
-            <select
+            <SearchableSelect
+              className="mt-1"
               value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm"
-            >
-              <option value="">{tx('Select warehouse…')}</option>
-              {warehouses.data?.map((w) => (
-                <option key={w.id} value={w.id}>{w.code} — {w.name}</option>
-              ))}
-            </select>
+              onValueChange={setWarehouseId}
+              options={(warehouses.locations ?? []).map(locationOption)}
+              footer={warehouses.footer}
+              placeholder={tx('Select warehouse…')}
+              searchPlaceholder={tx('Search warehouses…')}
+            />
           </div>
           <div className="md:col-span-2">
             <label className="text-sm font-medium">{tx('Notes')}</label>
@@ -165,36 +265,36 @@ export function GoodsReceiptCreatePage() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>{tx('Lines')}</CardTitle>
-            <Button size="sm" variant="outline" onClick={() => setLines([...lines, { description: '', quantity: 1 }])}>
+            <Button size="sm" variant="outline" onClick={() => setLines([...lines, { uid: lineId(), description: '', quantity: 1 }])}>
               <Plus className="mr-2 h-3 w-3" />{tx('Add line')}
             </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {lines.map((ln, idx) => (
-            <div key={idx} className="grid gap-2 md:grid-cols-12 items-center">
+          {lines.map((ln) => (
+            <div key={ln.uid} className="grid gap-2 md:grid-cols-12 items-center">
               <div className="md:col-span-3">
-                <select
-                  className="w-full rounded border bg-background px-2 py-1 text-sm"
-                  onChange={(e) => {
-                    const product = products.data?.find((p) => p.id === e.target.value);
-                    const next = [...lines];
-                    next[idx] = {
-                      ...next[idx],
-                      productId: e.target.value,
-                      variantId: null,
-                      description: product?.name ?? next[idx].description,
-                      uomId: defaultUnitId(product, 'purchase'),
-                    };
-                    setLines(next);
-                  }}
+                <SearchableSelect
                   value={ln.productId ?? ''}
-                >
-                  <option value="">{tx('Pick product…')}</option>
-                  {products.data?.map((p) => (
-                    <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                  ))}
-                </select>
+                  onValueChange={(v) => {
+                    const product = products.get(v);
+                    updateLine(ln.uid, {
+                      productId: v,
+                      variantId: null,
+                      description: product?.name ?? ln.description,
+                      uomId: defaultUnitId(product, 'purchase'),
+                    });
+                  }}
+                  options={products.options}
+                  onQueryChange={products.onQueryChange}
+                  loading={products.loading}
+                  footer={products.footer}
+                  selectedLabel={products.labelOf(ln.productId) ?? (ln.productId ? ln.description : null)}
+                  placeholder={tx('Pick product…')}
+                  searchPlaceholder={tx('Search by code or name…')}
+                  contentClassName={PRODUCT_PICKER_PANEL}
+                  wrap
+                />
                 {ln.purchaseOrderLineId && ln.variantName && (
                   <span className="mt-0.5 block text-xs text-muted-foreground">{ln.variantName}</span>
                 )}
@@ -202,11 +302,7 @@ export function GoodsReceiptCreatePage() {
                   <VariantSelect
                     productId={ln.productId}
                     value={ln.variantId}
-                    onChange={(variantId, opt) => {
-                      const next = [...lines];
-                      next[idx] = { ...next[idx], variantId, ...(opt ? { description: opt.displayName } : {}) };
-                      setLines(next);
-                    }}
+                    onChange={(variantId, opt) => updateLine(ln.uid, { variantId, ...(opt ? { description: opt.displayName } : {}) })}
                   />
                 )}
               </div>
@@ -214,72 +310,52 @@ export function GoodsReceiptCreatePage() {
                 <Input
                   placeholder={tx('Description')}
                   value={ln.description}
-                  onChange={(e) => {
-                    const next = [...lines];
-                    next[idx] = { ...next[idx], description: e.target.value };
-                    setLines(next);
-                  }}
+                  onChange={(e) => updateLine(ln.uid, { description: e.target.value })}
                 />
               </div>
               <div className="md:col-span-1">
                 <Input
                   type="number" step="0.01" min="0"
                   value={ln.quantity}
-                  onChange={(e) => {
-                    const next = [...lines];
-                    next[idx] = { ...next[idx], quantity: Number(e.target.value) };
-                    setLines(next);
-                  }}
+                  onChange={(e) => updateLine(ln.uid, { quantity: Number(e.target.value) })}
                 />
               </div>
               <div className="md:col-span-1">
-                <UnitSelect
-                  product={products.data?.find((p) => p.id === ln.productId)}
-                  role="purchase"
-                  value={ln.uomId}
-                  disabled={!!ln.purchaseOrderLineId}
-                  onChange={(uomId) => {
-                    const next = [...lines];
-                    next[idx] = { ...next[idx], uomId };
-                    setLines(next);
-                  }}
-                />
+                {ln.purchaseOrderLineId ? (
+                  // A PO-backed line is received in the PO line's unit.
+                  <span className="text-sm">{uomCode(ln.uomId) || '—'}</span>
+                ) : (
+                  <UnitSelect
+                    product={products.get(ln.productId)}
+                    role="purchase"
+                    value={ln.uomId}
+                    onChange={(uomId) => updateLine(ln.uid, { uomId })}
+                  />
+                )}
               </div>
               <div className="md:col-span-1">
                 <Input
                   type="number" step="0.01" min="0"
                   placeholder={tx('Cost')}
                   value={ln.unitCost ?? 0}
-                  onChange={(e) => {
-                    const next = [...lines];
-                    next[idx] = { ...next[idx], unitCost: Number(e.target.value) };
-                    setLines(next);
-                  }}
+                  onChange={(e) => updateLine(ln.uid, { unitCost: Number(e.target.value) })}
                 />
               </div>
               <div className="md:col-span-1">
                 <Input
                   placeholder={tx('Batch #')}
                   value={ln.batchNumber ?? ''}
-                  onChange={(e) => {
-                    const next = [...lines];
-                    next[idx] = { ...next[idx], batchNumber: e.target.value };
-                    setLines(next);
-                  }}
+                  onChange={(e) => updateLine(ln.uid, { batchNumber: e.target.value })}
                 />
               </div>
               <div className="md:col-span-1">
                 <Input
                   type="date"
                   value={ln.expiryDate ?? ''}
-                  onChange={(e) => {
-                    const next = [...lines];
-                    next[idx] = { ...next[idx], expiryDate: e.target.value };
-                    setLines(next);
-                  }}
+                  onChange={(e) => updateLine(ln.uid, { expiryDate: e.target.value })}
                 />
               </div>
-              <Button size="icon" variant="ghost" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>
+              <Button size="icon" variant="ghost" onClick={() => setLines(lines.filter((l) => l.uid !== ln.uid))}>
                 <Trash2 className="h-3 w-3 text-destructive" />
               </Button>
             </div>
@@ -289,7 +365,10 @@ export function GoodsReceiptCreatePage() {
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => navigate(-1)}>{tx('Cancel')}</Button>
-        <Button onClick={() => create.mutate()} disabled={!warehouseId || lines.length === 0 || create.isPending}>
+        <Button
+          onClick={() => create.mutate()}
+          disabled={!warehouseId || (!poId && !partnerId) || lines.length === 0 || create.isPending}
+        >
           <Truck className="mr-2 h-4 w-4" />{tx('Save & post')}
         </Button>
       </div>

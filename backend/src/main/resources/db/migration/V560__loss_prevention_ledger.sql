@@ -1,4 +1,4 @@
--- V520: loss prevention, work package 1 (ADR-S077 §3–§4): the event ledger. One append-only table holds what was
+-- V560 (was V520): loss prevention, work package 1 (ADR-S077 §3–§4): the event ledger. One append-only table holds what was
 -- recorded (POS, kitchen, cash, stock counts) and, later, what was observed (cameras, sensors). A sender may deliver an
 -- event more than once and in any order: (organization, source, sourceEventId) is the key that stores it once.
 

@@ -42,7 +42,11 @@ public class ProcurementReplenishmentService {
         }
     }
 
-    /** One draft purchase request per supplier for the lines still waiting; all or nothing. */
+    /**
+     * One draft purchase request per supplier for the lines still waiting; all or nothing. h-01 F12: the waiting alerts
+     * stay locked until this transaction commits, so a second delivery of the same event raises nothing, and a request
+     * is kept only when every one of its alerts was still waiting.
+     */
     @Transactional
     public void raise(List<Line> lines) {
         List<String> waiting = replenishment.stillRequested(lines.stream().map(Line::alertId).toList());
@@ -63,8 +67,9 @@ public class ProcurementReplenishmentService {
             Map<String, Object> created = requests.create(new CreateInput(
                     NO_SUPPLIER.equals(group.getKey()) ? null : group.getKey(), null,
                     "Replenishment: " + own.size() + " product(s) below minimum", neededBy, inputs, null));
-            replenishment.markRequisitioned(own.stream().map(Line::alertId).toList(), (String) created.get("id"),
-                    (String) created.get("requestNumber"));
+            List<String> alertIds = own.stream().map(Line::alertId).toList();
+            ReplenishmentService.assertAllMarked(replenishment.markRequisitioned(alertIds, (String) created.get("id"),
+                    (String) created.get("requestNumber")), alertIds);
             log.info("Purchase request {} raised for {} replenishment alert(s)", created.get("requestNumber"),
                     own.size());
         }

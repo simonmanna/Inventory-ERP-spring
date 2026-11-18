@@ -67,6 +67,21 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   A payment in another currency, or in functional currency, through such an account is refused. PO pay still refuses
   foreign accounts.
 
+- **Review 2026-11-17** (owner-approved 2026-11-17;
+  [audit](../audits/2026-11-17-accounting-costing-review.md)):
+  - **ACR-2, V530: PO payments follow the receipt to its bill.** A PO receipt raises AP (receipt voucher), and the bill
+    matched to that receipt becomes its open item. Unapplied payments made on the purchase order are applied to the
+    bill, up to the receipt-priced share it takes over (`PurchaseOrderBillApplication`). Voiding the bill releases them
+    back to the PO. AP ageing, open items and the AP snapshot count a billed receipt once, on the bill. Nest counted it
+    on both, so the supplier could be paid twice.
+  - **ACR-3: bill price and tax true-up.** A bill priced or taxed differently from the receipt posts the difference
+    either way (PPV, input VAT, AP), so the ledger's AP equals the bill's residual. Before, a lower bill price posted
+    nothing, and a higher one posted only the net difference.
+  - **ACR-4: three-way match option.** Setting `procurement.billWithoutReceipt`. `auto_receive` (default) keeps the
+    Nest behaviour: the bill receives unreceived stock itself. `block` refuses the bill with 400
+    `Bill line <product>: <qty> not received yet — post the goods receipt first (Purchasing settings: a supplier bill
+    needs a goods receipt)`.
+
 Pending owner approval:
 
 1. **Line units (ADR-S003, V5).** Invoice, vendor-bill and credit-note lines accept `uomId` and snapshot

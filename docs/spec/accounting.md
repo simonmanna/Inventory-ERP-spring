@@ -346,6 +346,116 @@ Where Nest behaves the same, the change is a deliberate deviation from the refer
 - **P-8.** Asset capitalisation credits asset clearing (`suspense`, tagged with the vendor) instead of AP; the supplier's
   bill clears it.
 
+## Accounting controls deviations (2026-11-17, owner-approved: "fix all the above issues")
+
+Findings: the ERP capability assessment of 2026-11-17 (risks R1–R15). Nothing here edits posted history; settled claims
+and closed periods from before this change are corrected, if at all, by approved entries.
+
+**GL integrity and periods**
+
+- **R1 (Nest same).** `PATCH /fiscal-periods/:id` refuses `status` (400; use the close / reopen / lock routes). Dates
+  change, and `DELETE` works, only on an open period with no posted or reversed entry in its old or new range. Periods
+  of one org cannot overlap or end before they start (service + V512 trigger). `FiscalPeriodControl` takes the most
+  restrictive covering period, and a soft-deleted closed / locked period still blocks postings.
+- **R2.** V513: lines cannot be inserted into an entry posted by an earlier transaction (`JournalEntry."postedTxn"`
+  stamp), and a deferred constraint trigger refuses, at commit, any posted / reversed entry whose base debits and
+  credits differ. A historical unbalanced entry can no longer be reversed until corrected.
+- **R7.** The evidence-purge bypass needs a superuser or the `erp_evidence_purger` role (`docs/DATABASE.md` §6).
+- **R6 (partial; owner decision 2026-11-17).** Account and mapping queries carry explicit `organizationId`
+  predicates. FORCE ROW LEVEL SECURITY and fail-closed policies are a separate infrastructure phase with its own
+  reviewed migration plan (roles, worker context, policy normalisation, then FORCE), not part of this branch.
+- **R3.** Recurring templates and deferral schedules refuse accounts that disallow manual posting and designated AR/AP
+  control accounts (on save, approval and every run), and need approval by a second user holding `journal_entry:post`
+  (`POST /recurring-entries/:id/approve`, `POST /deferrals/:id/approve`, V514). An unapproved post-mode template
+  stages drafts; an unapproved schedule releases nothing. Existing rows start unapproved.
+- **Control accounts (owner decision 2026-11-17, V518).** An account is an AR / AP control account only when
+  `Account.controlAccountType` is `ar` / `ap` (seeded on 1300 / 2100; V518 backfills the accounts mapped as
+  `accounts_receivable` / `accounts_payable` or used as partner receivable / payable accounts; never by name). Manual
+  journal entries, recurring templates, deferral schedules, treasury deposit / withdrawal counterparts, cash-drawer
+  movements and `post_entry` bank rules cannot post to them; sub-ledger postings (system context) and reversals can.
+  The exception is a control-account adjustment: a manual entry with `controlAdjustment` and a mandatory reason, a
+  partner on every AR/AP line, staged by a holder of `journal_entry:control_adjust` and posted by a different user
+  holding `journal_entry:post` and `journal_entry:control_adjust`; both steps are audited, and reversing one also needs
+  `journal_entry:control_adjust`. Setting or changing an account's designation is audited; mapping
+  `accounts_receivable` / `accounts_payable` to an account designated another control type is refused.
+- **Control accounts in sub-ledger documents (owner decision 2026-11-17, round 2).** A designated AR / AP account
+  cannot be a user-chosen account anywhere a sub-ledger service posts: invoice, credit-note and bill lines (refused on
+  create / update and again at posting, which also catches a product category or `sales_revenue` /
+  `default_expense` mapping pointing at AR / AP), debit notes, expense allocations, categories and accruals, every
+  payment / refund / deposit tender account, the deposit-application account, the customer write-off account and the
+  Sales Settings bad-debt / returns accounts (`ControlAccountGuards`). The documents' own receivable / payable lines
+  still post to the configured AR / AP, partner-tagged.
+- **Write-offs through the sub-ledger.** Customer: `POST /sales/invoices/:id/write-off` (a credit note against the
+  invoice, Dr a non-control write-off account / Cr AR). Supplier: `POST /vendor-bills/:id/write-off`
+  (`expense:write_off`, Idempotency-Key, reason; Dr AP partner-tagged / Cr a non-control account, default
+  `purchase_discount`; lowers the bill's residual; `sourceType vendor_bill_writeoff`), reversed only by
+  `POST /vendor-bills/:id/write-offs/:entryId/reverse` (same permission, reason, the `document_reversal` SoD pair,
+  idempotent; the amount goes back on the bill). A bill's `amountPaid` includes write-offs; the bill page shows them
+  separately.
+- **Document-level reversals (owner decision 2026-11-17).** `POST /journal-entries/:id/reverse` refuses an entry a
+  sub-ledger document posted (`SubledgerSources`: invoices, POS sales, bills, credit and debit notes, payments,
+  deposits and their applications, write-offs, claims, opening balances, goods receipts, expenses, and reversals of
+  those) and names the document action. The document workflows reverse the GL and the sub-ledger in one transaction:
+  invoice cancel, bill void, `POST /credit-notes/:id/reverse` (`credit_note:reverse`, unwinds credit allocations),
+  `PATCH /procurement/debit-notes/:id/reverse` (`debit_note:reverse`, restores the adjusted document's residual by the
+  stored `documentAdjustment`), payment void (refused while bank-matched) and
+  `POST /customer-deposits/:id/applications/:paymentId/reverse`. Each needs a reason and its permission, passes the
+  action's approval gate when the tenant configures one and the opt-in `document_reversal` segregation-of-duties pair,
+  and writes one `DocumentReversal` row (V520, unique per document: original and reversal entries, released
+  allocations, who / when / why) plus an audit row; a replay returns the first result. Invoices and bills with
+  payments, write-offs, posted notes or settled claims are refused with the list of what to undo first.
+- **R8.** Posting a draft re-runs the full line validation on its stored lines.
+
+**Sub-ledgers**
+
+- **R11 (owner decision 2026-11-17, V515, V519).** A settled supplier claim posts its own supplier credit
+  (`supplier_claim:<id>`, Dr AP partner-tagged) and reduces the bill's residual, with a settlement classification:
+  `price_variance` (Cr PPV on stock lines, the expense account on others, + input VAT), `expense_correction` (Cr the
+  non-stock lines' expense accounts + VAT), `vat_adjustment` (Cr input VAT only, capped at the bill's unreversed VAT) or
+  `stock_adjustment` (quantity lines verified by a second user; the goods leave stock through the return-to-supplier
+  stock movement, Cr the stock account at issued cost, difference to PPV; Dr GRNI instead of AP for unbilled ad-hoc
+  receipts; an agreed amount above the verified goods' receipt cost is credited to PPV as a price concession, so the
+  whole agreed amount is credited). A claim without verified quantities never credits stock or GRNI. The bill's
+  residual is lowered in the bill's own currency. No debit note is created; claims return
+  `journalEntryId`. Settling against a draft or cancelled bill is refused. Legacy settlements:
+  `docs/runbooks/supplier-claims-legacy-settlement.md`.
+- **R12 (owner decision 2026-11-17).** A payroll run with a deduction that maps to no liability / receivable account is
+  refused (400 listing the components); nothing falls back to salary expense, and a manual one-off deduction names its
+  credit account when it is queued. Payroll keeps full BigDecimal precision
+  internally and rounds each line once, to the currency's minor unit, when the run is calculated; gross, deductions and
+  net are sums of the rounded lines, and payslips, bank files and the journal read the same stored values
+  (`docs/spec/hr.md` Deviation 4).
+- **R13.** Inclusive / exclusive is decided per tax, and inclusive compound taxes are backed out in compounding order.
+- **R14.** Units of production depreciates by recorded usage (`/fixed-assets/:assetId/depreciation/usage`,
+  `Asset.totalUnits`, V517) and never falls back to straight line; declining balance uses `AssetCategory
+  .decliningFactor` (default 2.0). Each asset's register change and journal entry commit together.
+- **R15.** FA-to-GL reconciliation compares register cost + revaluation and accumulated depreciation + impairment
+  with the accounts fixed-asset postings use only (no CIP or intangibles).
+
+**Treasury, FX and reporting**
+
+- **R4.** Consolidation average rates read the parent's own then global rates only, time-weighted over the period.
+- **R5.** Bank reconciliation also matches unreconciled GL lines on the bank account (`matchedJournalLineId`, V516),
+  and a `post_entry` rule matches an existing payment or GL line instead of posting a duplicate.
+- **R9.** Bank matching compares payments in the bank account's currency; the statement uses one org-local cut-off.
+- **R10.** The direct cash-flow statement spreads cash only over opposite-side lines and reports revaluation in a new
+  `effectOfExchangeRateChanges` field (IAS 7). Payments, treasury transfers and cash deposits / withdrawals honour an
+  explicitly stated rate of 1 (`CurrencyService.resolveStated`; internal callers pass no rate); stored documents still
+  treat 1 as "not stated" (`exchangeRate` column default).
+
+## Accounting and costing review deviations (2026-11-17)
+
+Owner-approved 2026-11-17 ("code & develop the above fixes & enhancements"). Audit and outcome per finding:
+[`docs/audits/2026-11-17-accounting-costing-review.md`](../audits/2026-11-17-accounting-costing-review.md). The costing
+items are in [costing](costing.md#review-2026-11-17--accounting-and-costing-fixes); the purchasing and bill items in
+[procurement](procurement.md#deviations) and [invoicing](invoicing.md#deviations); the POS abandon route in
+[pos](pos.md#deviations).
+
+| # | Where | Before (Nest / earlier Spring) | Now |
+|---|---|---|---|
+| ACR-1 | `POST /fiscal-periods/:id/reopen` | took the latest `period_close` entry by date with no status filter, so a second reopen could pick the already-reversed one | the period's own posted closing entry (`sourceId`); the date window is a fallback for old entries |
+| ACR-17 | period close (gate and checklist) | every pending stock document of the organisation blocked the close | only those raised up to the period end. A failed POS stock-posting job can be abandoned (`POST /pos/posting-monitor/jobs/:id/abandon`, see pos), so it no longer blocks the close for ever |
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

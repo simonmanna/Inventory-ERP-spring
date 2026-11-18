@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Check, X, Send } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
@@ -53,6 +53,14 @@ export function PurchaseRequestsPage() {
     queryKey: ['purchase-requests'],
     queryFn: async () => (await api.get<PurchaseRequest[]>('/procurement/purchase-requests')).data,
   });
+  // Requests have no detail page: a link from a purchase order opens this list with ?highlight=<request id>.
+  const [searchParams] = useSearchParams();
+  const highlight = searchParams.get('highlight');
+  const highlightMissing = !!highlight && !!list.data && !list.data.some((pr) => pr.id === highlight);
+  useEffect(() => {
+    if (!highlight || !list.data) return;
+    document.getElementById(`purchase-request-${highlight}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlight, list.data]);
   const act = useMutation({
     mutationFn: async (vars: { id: string; action: 'submit' | 'approve' }) =>
       (await api.patch(`/procurement/purchase-requests/${vars.id}/${vars.action}`)).data,
@@ -86,6 +94,11 @@ export function PurchaseRequestsPage() {
         </Button>
       </div>
 
+      {highlightMissing && (
+        <p role="status" className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          {tx('The linked purchase request is not among the requests listed here.')}
+        </p>
+      )}
       {list.isLoading && <Skeleton className="h-32 w-full" />}
       {list.data && list.data.length === 0 && (
         <Card>
@@ -97,7 +110,12 @@ export function PurchaseRequestsPage() {
 
       <div className="grid gap-3 md:grid-cols-2">
         {list.data?.map((pr) => (
-          <Card key={pr.id}>
+          <Card
+            key={pr.id}
+            id={`purchase-request-${pr.id}`}
+            className={pr.id === highlight ? 'ring-2 ring-primary' : undefined}
+            aria-current={pr.id === highlight ? 'true' : undefined}
+          >
             <CardHeader>
               <div className="flex items-start justify-between">
                 <div>

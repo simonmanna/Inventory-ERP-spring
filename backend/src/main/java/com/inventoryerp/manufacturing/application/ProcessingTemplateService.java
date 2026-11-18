@@ -289,10 +289,11 @@ public class ProcessingTemplateService {
             boolean stocked = !Boolean.FALSE.equals(o.get("stocked"));
             co.add(new CoProductInput(str(o, "productId"), role, null, dec(o, "expectedPct"), null, str(o, "valuation"),
                     decOrNull(o, "nrvUnitValue"), decOrNull(o, "marketValue"), weight ? BigDecimal.ONE : null,
-                    null, stocked, stocked ? str(o, "locationId") : null, null));
+                    null, stocked, stocked ? str(o, "locationId") : null, null, null));
         }
         stageSetup.saveBomSetup(bomId, new BomStageSetup(co, new AllocationRuleInput(str(t, "allocationMethod"),
-                weight ? BigDecimal.ONE : null, decOrNull(main, "marketValue"), "Processing template " + label)));
+                weight ? BigDecimal.ONE : null, decOrNull(main, "marketValue"), "Processing template " + label,
+                null)));
         db.update(Bom.class, bomId, Obj.of("status", "active", "isDefault", false, "updatedBy", TenantContext.userId()));
         db.update(ProcessingTemplate.class, id, Obj.of("status", "active", "bomId", bomId, "routingId", routing.get("id"),
                 "activatedAt", Instant.now(), "activatedBy", TenantContext.userId(), "updatedBy", TenantContext.userId()));

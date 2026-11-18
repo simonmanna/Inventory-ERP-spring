@@ -87,6 +87,20 @@ class ManufacturingCostingIT extends MfgTestSupport {
         assertThat(num(v.get("overhead"))).isEqualByComparingTo("5");
         assertThat(num(v.get("materialUsage"))).isEqualByComparingTo("0");
         assertThat(num(v.get("yield"))).isEqualByComparingTo("0");
+        // Review 2026-11-17: the full split — machine 2 h against 1 h at 20, overhead on machine hours — reconciles:
+        // actual 80 (10 + 20 + 40 + 10) less the standard 45 of the good unit = 35
+        assertThat(num(v.get("labourRate"))).isEqualByComparingTo("0");
+        assertThat(num(v.get("machineEfficiency"))).isEqualByComparingTo("20");
+        assertThat(num(v.get("machineSpending"))).isEqualByComparingTo("0");
+        assertThat(num(v.get("overheadEfficiency"))).isEqualByComparingTo("5");
+        assertThat(num(v.get("overheadSpending"))).isEqualByComparingTo("0");
+        assertThat(num(v.get("standardUnitCost"))).isEqualByComparingTo("45");
+        assertThat(num(v.get("total"))).isEqualByComparingTo("35");
+        assertThat(num(v.get("reconciliation").get("actualCost"))).isEqualByComparingTo("80");
+        assertThat(num(v.get("reconciliation").get("standardCost"))).isEqualByComparingTo("45");
+        assertThat(num(v.get("reconciliation").get("unexplained"))).isZero();
+        assertThat(v.get("materialMix").isNull()).isTrue();
+        assertThat(v.get("mixNote").asString()).isEqualTo("A mix variance needs two or more materials.");
 
         // Rates raised after the output posted: nothing can be absorbed any more.
         ok(200, "PUT", C + "/rates/" + f.wc(), Map.of("labourRatePerHour", 50));
@@ -124,6 +138,73 @@ class ManufacturingCostingIT extends MfgTestSupport {
         ok(201, "POST", "/manufacturing/work-orders/" + wo + "/complete", Map.of("labourMins", 60));
         JsonNode out = absorb(orderId, UUID.randomUUID().toString());
         assertThat(num(out.get("total"))).isEqualByComparingTo("5"); // overhead only
+        // Review 2026-11-17: the operator costs 30 an hour against the centre's standard 10 — a labour rate variance of
+        // 20 on the standard hour, no efficiency variance
+        ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/complete", Map.of("qtyProduced", 1));
+        JsonNode v = ok(200, "GET", C + "/orders/" + orderId + "/variances", null);
+        assertThat(num(v.get("labourRate"))).isEqualByComparingTo("20");
+        assertThat(num(v.get("labourEfficiency"))).isEqualByComparingTo("0");
+        assertThat(num(v.get("total"))).isEqualByComparingTo("20");
+        assertThat(num(v.get("reconciliation").get("unexplained"))).isZero();
+    }
+
+    @Test
+    @DisplayName("mix and input yield: 9 kg A + 2 kg B instead of 6 + 4 — usage −3 = mix −4.8 + input yield 1.8")
+    void mixAndYield() {
+        String kg = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", code, name, category, factor, ratio,"
+                + " \"roundingPrecision\", \"updatedAt\") VALUES (?, ?, ?, 'Kilogram', 'weight', 1, 1, 0.001, now())")
+                .params(kg, demoOrg, "KG-" + suffix()).update();
+        String a = product("MIXA");
+        String b = product("MIXB");
+        String out = product("MIXOUT");
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ? WHERE id IN (?, ?)").params(kg, a, b).update();
+        stockIn(bakery, a, 20, 1);
+        stockIn(bakery, b, 20, 3);
+        String bomId = ok(201, "POST", "/manufacturing/boms", Map.of("name", "Blend " + suffix(), "outputProductId",
+                out, "outputQuantity", 10, "lines", List.of(Map.of("componentProductId", a, "quantity", 6),
+                        Map.of("componentProductId", b, "quantity", 4)))).get("id").asString();
+        ok(201, "POST", "/manufacturing/boms/" + bomId + "/activate", null);
+        String id = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "runs", 1,
+                "locationId", bakery, "outputLocationId", warehouse)).get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/confirm", null);
+        Map<String, String> line = new LinkedHashMap<>();
+        for (JsonNode m : ok(200, "GET", "/manufacturing/production-orders/" + id, null).get("materials")) {
+            line.put(m.get("productId").asString(), m.get("id").asString());
+        }
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/start", Map.of("materials", List.of(Map.of(
+                "lineId", line.get(a), "qtyConsumed", 9), Map.of("lineId", line.get(b), "qtyConsumed", 2))));
+        ok(201, "POST", "/manufacturing/production-orders/" + id + "/complete", Map.of("qtyProduced", 10));
+
+        JsonNode v = ok(200, "GET", C + "/orders/" + id + "/variances", null);
+        assertThat(num(v.get("materialPrice"))).isEqualByComparingTo("0");
+        assertThat(num(v.get("materialUsage"))).isEqualByComparingTo("-3");
+        // standard mix of 11 kg: 6.6 A + 4.4 B; the cheaper blend saves 2.4 − 7.2 = −4.8; 1 kg more in total at the
+        // recipe's average 1.8 a kg costs 1.8
+        assertThat(num(v.get("materialMix"))).isEqualByComparingTo("-4.8");
+        assertThat(num(v.get("materialInputYield"))).isEqualByComparingTo("1.8");
+        assertThat(num(v.get("materialUsageNotSplit"))).isZero();
+        assertThat(v.get("mixNote").isNull()).isTrue();
+        JsonNode lineA = v.get("materials").get(0).get("productId").asString().equals(a) ? v.get("materials").get(0)
+                : v.get("materials").get(1);
+        assertThat(num(lineA.get("mixVariance"))).isEqualByComparingTo("2.4");
+        assertThat(num(lineA.get("inputYieldVariance"))).isEqualByComparingTo("0.6");
+        assertThat(num(v.get("reconciliation").get("actualCost"))).isEqualByComparingTo("15");
+        assertThat(num(v.get("reconciliation").get("standardCost"))).isEqualByComparingTo("18");
+        assertThat(num(v.get("reconciliation").get("unexplained"))).isZero();
+        JsonNode mix = null;
+        for (JsonNode l : v.get("lines")) {
+            if ("materialMix".equals(l.get("key").asString())) {
+                mix = l;
+            }
+        }
+        assertThat(mix).isNotNull();
+        assertThat(mix.get("parent").asString()).isEqualTo("materialUsage");
+        assertThat(mix.get("label").asString()).isEqualTo("Mix");
+
+        JsonNode period = ok(200, "GET", C + "/variances?productId=" + out, null);
+        assertThat(num(period.get("totals").get("materialMix"))).isEqualByComparingTo("-4.8");
+        assertThat(num(period.get("totals").get("materialInputYield"))).isEqualByComparingTo("1.8");
     }
 
     @Test

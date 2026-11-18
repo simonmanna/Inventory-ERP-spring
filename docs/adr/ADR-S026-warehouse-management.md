@@ -86,6 +86,19 @@ their Nest-parity behaviour.
 Still open: automatic bin decrement on ledger issues (POS, stock-outs, transfers, production, counts) — drift is now
 visible and fixable with reconcile / adjust; release allocation is capped per product, not per lot.
 
+## Amendment — readiness blocker B3 (2026-11-17, owner-approved)
+
+- **The purpose of a pick order is explicit.** The web form asks what the pick is for: a sales order, delivery order,
+  stock-out, transfer, or "Manual issue (no document)". It sends that choice as `sourceType`, needs the document
+  number for a document, and explains which side takes the stock out. Before this it always created `manual` orders,
+  so a pick for a sale issued the goods on shipping and again when the sale posted.
+- **A manual order cannot carry a document's number.**
+  - `POST /warehouse/pick-orders` refuses a `manual` order whose `sourceRef` is the number of a sales order, sales
+    invoice, fleet delivery order, stock-out or transfer, with 400
+    `Reference X is a <kind>, which takes the stock out itself when it is posted. …`.
+  - An omitted `sourceType` is still `manual`.
+- Audit: [2026-11-17 readiness](../audits/2026-11-17-inventory-procurement-readiness.md).
+
 ## Consequences
 
 - WMS is optional per location; a location without bins behaves exactly as before.

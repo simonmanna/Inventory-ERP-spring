@@ -252,7 +252,9 @@ public class CashFlowService {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT a.id, a.code, a.name, c.classification::text AS cls,"
                 + " coalesce(c.\"isCashEquivalent\", false) AS cash_eq FROM \"Account\" a LEFT JOIN \"AccountCategory\" c"
                 + " ON c.id = a.\"categoryId\" WHERE a.\"organizationId\" = ? AND a.\"isActive\" = true AND a.\"deletedAt\" IS NULL"
-                + " AND a.\"isPostable\" = true ORDER BY a.code ASC").param(TenantContext.organizationId()));
+                + " AND a.\"isPostable\" = true AND (a.\"controlAccountType\" IS NULL"
+                + " OR a.\"controlAccountType\"::text NOT IN ('ar', 'ap')) ORDER BY a.code ASC")
+                .param(TenantContext.organizationId()));
         java.util.function.Function<Operation, List<Map<String, Object>>> eligible = op -> rows.stream()
                 .filter(a -> !Boolean.TRUE.equals(a.get("cash_eq")) && op.classifications().contains(String.valueOf(a.get("cls"))))
                 .map(a -> body("id", a.get("id"), "code", a.get("code"), "name", a.get("name"), "classification", a.get("cls")))
@@ -300,6 +302,9 @@ public class CashFlowService {
         TreasuryGuards.assertNotDrawerAccount(jdbc, orgId, account.id(), "deposit".equals(direction) ? "A deposit" : "A withdrawal");
         TreasuryGuards.AccountRow counterpart = TreasuryGuards.requireAccount(jdbc, orgId, dto.counterpartAccountId(),
                 "Counterpart account");
+        // Control-account policy (V518): money to / from a customer or supplier goes through a payment, never a
+        // treasury deposit / withdrawal straight on the AR / AP control account.
+        posting.assertNotReceivablePayableControl(List.of(counterpart.id()));
         if (counterpart.isCashEquivalent()) {
             throw ApiException.badRequest("Moving money between payment accounts is a transfer, not a deposit or withdrawal");
         }
@@ -346,7 +351,7 @@ public class CashFlowService {
         String ccy = foreign.currency();
         ForeignCash.assertDecimals(jdbc, ccy, amount);
         String functional = ForeignCash.functional(jdbc, orgId);
-        CurrencyService.Resolution rate = currency.resolve(ccy, functional, dto.exchangeRate(), postingDate);
+        CurrencyService.Resolution rate = currency.resolveStated(ccy, functional, dto.exchangeRate(), postingDate);
         BigDecimal valued = amount.multiply(rate.rate()).setScale(6, RoundingMode.HALF_UP);
         boolean deposit = "deposit".equals(direction);
         BigDecimal cashBase = valued;

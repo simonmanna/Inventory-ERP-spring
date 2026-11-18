@@ -90,6 +90,32 @@ public final class VarianceCalculator {
         return new Mix(roundedMix, round(usage).subtract(roundedMix));
     }
 
+    /**
+     * Review 2026-11-17: {@link #mix} per component, for the drill-down. Each line's mix is rounded and its input yield
+     * is its rounded usage less that mix, so lines add up exactly to the usage of each component; {@code null} when
+     * there is no standard quantity to share by.
+     */
+    public static java.util.List<Mix> mixByLine(java.util.List<MixLine> lines) {
+        BigDecimal totalActual = BigDecimal.ZERO;
+        BigDecimal totalStandard = BigDecimal.ZERO;
+        for (MixLine l : lines) {
+            totalActual = totalActual.add(l.actualQty());
+            totalStandard = totalStandard.add(l.standardQty());
+        }
+        if (totalStandard.signum() == 0) {
+            return null;
+        }
+        java.util.List<Mix> out = new java.util.ArrayList<>();
+        for (MixLine l : lines) {
+            BigDecimal inStandardMix = totalActual.multiply(l.standardQty()).divide(totalStandard, 12,
+                    RoundingMode.HALF_UP);
+            BigDecimal mix = round(l.actualQty().subtract(inStandardMix).multiply(l.standardUnit()));
+            BigDecimal usage = round(l.actualQty().subtract(l.standardQty()).multiply(l.standardUnit()));
+            out.add(new Mix(mix, usage.subtract(mix)));
+        }
+        return out;
+    }
+
     public static BigDecimal round(BigDecimal v) {
         return v.setScale(SCALE, RoundingMode.HALF_UP);
     }

@@ -1,4 +1,4 @@
--- V521: loss prevention, work packages 2–5 (ADR-S077 §4–§5): projection cursors, rules and their history, settings,
+-- V561 (was V521): loss prevention, work packages 2–5 (ADR-S077 §4–§5): projection cursors, rules and their history, settings,
 -- reconciliation windows, runs and findings. A run is never overwritten: a newer run supersedes it and both are kept.
 
 CREATE FUNCTION lp_append_only() RETURNS trigger AS $$

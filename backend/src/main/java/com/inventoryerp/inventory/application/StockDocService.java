@@ -25,6 +25,7 @@ import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -105,6 +106,9 @@ public class StockDocService {
         this.staff = staff;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // Only re-run-safe work goes through newTx (the approval request the gate reuses, finding or creating the org's
+        // transit location), so it never keeps a failed request's Idempotency-Key pending (gaps h-06 F7).
+        this.newTx.setName(BusinessOutcome.RETRY_SAFE_TX);
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -136,6 +140,41 @@ public class StockDocService {
         return lookups.productNames(ids);
     }
 
+    /**
+     * Gaps h-00 F2: what the lines are worth for an amount-banded approval: {@code qtyField} (absolute when
+     * {@code abs}) at the location's running average, the (variant's) cost price while it has none — how waste is
+     * valued. Posting re-values each line from its real cost layers.
+     */
+    private BigDecimal estimatedValue(String locationId, List<Map<String, Object>> items, String qtyField,
+            boolean abs) {
+        BigDecimal total = Money.ZERO;
+        for (Map<String, Object> item : items) {
+            BigDecimal qty = item.get(qtyField) == null ? Money.ZERO : dec(item, qtyField);
+            total = total.add((abs ? qty.abs() : qty).multiply(unitCostAt(locationId, str(item, "productId"),
+                    str(item, "variantId"))));
+        }
+        return total;
+    }
+
+    private BigDecimal unitCostAt(String locationId, String productId, String variantId) {
+        return jdbc.sql("SELECT CASE WHEN s.\"runningAverageCost\" > 0 THEN s.\"runningAverageCost\""
+                        + " ELSE COALESCE(v.\"costPrice\", p.\"costPrice\", 0) END FROM \"Product\" p"
+                        + " LEFT JOIN \"ProductVariant\" v ON v.id = ? AND v.\"productId\" = p.id"
+                        + " LEFT JOIN \"StockItem\" s ON s.\"organizationId\" = p.\"organizationId\""
+                        + " AND s.\"productId\" = p.id AND s.\"variantKey\" = ? AND s.\"locationId\" = ?"
+                        + " WHERE p.id = ? AND p.\"organizationId\" = ?")
+                .params(variantId, variantId == null ? "" : variantId, locationId, productId, org())
+                .query(BigDecimal.class).optional().orElse(Money.ZERO);
+    }
+
+    /** Who made a stock document (separation of duties): its performer / reporter and its creator. */
+    private static List<String> makers(Map<String, Object> doc, String performerField) {
+        List<String> makers = new ArrayList<>();
+        makers.add(str(doc, performerField));
+        makers.add(str(doc, "createdBy"));
+        return makers;
+    }
+
     // ================================================================== StockOut
 
     /** Create a pending stock-out (internal use / testing / sample / comp). */
@@ -145,15 +184,20 @@ public class StockDocService {
         lookups.requireLocation(dto.locationId());
         staff.assertActiveStaff(org(), StaffAttribution.people(dto.responsibleById(), dto.approvedById()));
         Map<String, String> names = names(dto.items());
+        // Gaps h-00 F2: a pending stock-out carries its estimated value, as a waste record does, so amount-banded
+        // approval workflows see it (it stayed 0 until posting).
+        BigDecimal estimate = estimatedValue(dto.locationId(), dto.items().stream()
+                .map(i -> Obj.of("productId", i.productId(), "variantId", i.variantId(), "qty", i.qty())).toList(),
+                "qty", false);
         String outCode = seq.next("stock_out", "SO-", 5);
         String id = UUID.randomUUID().toString();
         String user = TenantContext.userId();
         jdbc.sql("INSERT INTO \"StockOut\" (id, \"organizationId\", \"outCode\", \"locationId\", category, status, reason,"
-                        + " notes, \"performedById\", \"responsibleById\", \"approvedById\", \"createdBy\", \"createdAt\","
-                        + " \"updatedAt\") VALUES (?, ?, ?, ?, ?::\"StockOutCategory\", 'pending', ?, ?, ?, ?, ?, ?, " + NOW
-                        + ", " + NOW + ")")
+                        + " notes, \"performedById\", \"responsibleById\", \"approvedById\", \"createdBy\", \"totalValue\","
+                        + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?::\"StockOutCategory\", 'pending', ?, ?, ?, ?, ?,"
+                        + " ?, ?, " + NOW + ", " + NOW + ")")
                 .params(id, org(), outCode, dto.locationId(), dto.category() != null ? dto.category() : "general_use",
-                        dto.reason(), dto.notes(), user, dto.responsibleById(), dto.approvedById(), user)
+                        dto.reason(), dto.notes(), user, dto.responsibleById(), dto.approvedById(), user, estimate)
                 .update();
         for (DocLine i : dto.items()) {
             jdbc.sql("INSERT INTO \"StockOutItem\" (id, \"organizationId\", \"stockOutId\", \"productId\", \"variantId\","
@@ -176,8 +220,12 @@ public class StockDocService {
         scope.assertAllowed(str(doc, "locationId"));
         List<Map<String, Object>> items = items("StockOutItem", StockOutItem.class, "stockOutId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
-        gateApproval("stock_out", id, Obj.of("amount", JsNumbers.js(dec(doc, "totalValue")), "lines", items.size(),
+        // Gaps h-00 F2: the value estimated at create; one created before that carries 0, so estimate it now.
+        BigDecimal amount = dec(doc, "totalValue").signum() > 0 ? dec(doc, "totalValue")
+                : estimatedValue(str(doc, "locationId"), items, "qty", false);
+        gateApproval("stock_out", id, Obj.of("amount", JsNumbers.js(amount), "lines", items.size(),
                 "category", doc.get("category")), "stock-out");
+        sod.assertSeparated(SegregationOfDutiesService.STOCK_WRITE_OFF, "StockOut", id, makers(doc, "performedById"));
         if (claim("StockOut", id, "approved") == 0) {
             throw ApiException.badRequest("Stock-out was posted or cancelled concurrently");
         }
@@ -277,6 +325,7 @@ public class StockDocService {
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         gateApproval("waste", id, Obj.of("amount", JsNumbers.js(dec(doc, "totalValue")), "lines", items.size(),
                 "category", doc.get("category")), "waste " + doc.get("wasteCode"));
+        sod.assertSeparated(SegregationOfDutiesService.STOCK_WRITE_OFF, "WasteRecord", id, makers(doc, "reportedById"));
         if (claim("WasteRecord", id, "approved") == 0) {
             throw ApiException.badRequest("Waste record was posted or cancelled concurrently");
         }
@@ -326,9 +375,12 @@ public class StockDocService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
             if (scope.permits(str(r, "locationId"))) {
-                out.add(withLocation(withItems(r), false));
+                out.add(r);
             }
         }
+        // Gaps h-00 F11: items and locations in one query each, not per record.
+        withItems(out, "WasteItem", WasteItem.class, "wasteId");
+        withLocations(out, false);
         return out;
     }
 
@@ -544,13 +596,17 @@ public class StockDocService {
                 throw ApiException.notFound("Adjustment not found");
             }
             BigDecimal magnitude = BigDecimal.ZERO;
-            for (Map<String, Object> it : items("StockAdjustmentItem", StockAdjustmentItem.class, "adjId", id)) {
+            List<Map<String, Object>> preItems = items("StockAdjustmentItem", StockAdjustmentItem.class, "adjId", id);
+            for (Map<String, Object> it : preItems) {
                 magnitude = magnitude.add(dec(it, "qtyDiff").abs());
             }
             List<String> makers = new ArrayList<>();
             makers.add(str(pre, "performedById"));
             makers.add(str(pre, "createdBy"));
-            gateApproval("stock_adjustment", id, Obj.of("amount", JsNumbers.js(magnitude), "adjCode", pre.get("adjCode"),
+            // Gaps h-00 F2: the amount is the variance value (it was the unit count); the units stay in "quantity".
+            BigDecimal value = estimatedValue(str(pre, "locationId"), preItems, "qtyDiff", true);
+            gateApproval("stock_adjustment", id, Obj.of("amount", JsNumbers.js(value), "quantity",
+                    JsNumbers.js(magnitude), "adjCode", pre.get("adjCode"),
                     "reason", pre.get("reason"), "makerIds", String.join(",", makers.stream()
                             .filter(java.util.Objects::nonNull).distinct().toList())),
                     "adjustment " + pre.get("adjCode"));
@@ -574,12 +630,17 @@ public class StockDocService {
         if (claim("StockAdjustment", id, "approved") == 0) {
             throw ApiException.badRequest("Adjustment was posted or cancelled concurrently");
         }
+        // Gaps h-00 F6: the on-hand each line's count is measured against (the snapshot, or what the drift check read
+        // when forcing over drift); the line then posts qtyActual minus it as a delta on the on-hand read under the
+        // quant lock, so a movement committing after that read is kept instead of overwritten.
+        Map<Object, BigDecimal> basis = new HashMap<>();
         if (!embedded) {
             List<String> drifted = new ArrayList<>();
             for (Map<String, Object> item : items) {
                 Map<String, Object> si = lookups.stockItem(str(item, "productId"), str(item, "variantId"),
                         str(doc, "locationId"));
                 BigDecimal nowQty = si == null ? Money.ZERO : dec(si, "quantity");
+                basis.put(item.get("id"), nowQty);
                 if (nowQty.compareTo(dec(item, "qtySystem")) != 0) {
                     drifted.add(item.get("productName") + " (counted against " + JsNumbers.dec(dec(item, "qtySystem"))
                             + ", now " + JsNumbers.dec(nowQty) + ")");
@@ -612,7 +673,7 @@ public class StockDocService {
                     .variant(str(item, "variantId")).notes(doc.get("adjCode") + " · " + doc.get("reason"))
                     .batch(str(item, "batchNumber")).source("stock_adjustment", str(doc, "adjCode"))
                     .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
-            m.countedQuantity = dec(item, "qtyActual");
+            m.deltaQuantity = dec(item, "qtyActual").subtract(basis.getOrDefault(item.get("id"), dec(item, "qtySystem")));
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
@@ -758,15 +819,17 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
+        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
         List<Map<String, Object>> items = items("StockTransferItem", StockTransferItem.class, "transferId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         BigDecimal magnitude = BigDecimal.ZERO;
         for (Map<String, Object> it : items) {
             magnitude = magnitude.add(dec(it, "qtyRequested"));
         }
-        gateApproval("stock_transfer", id, Obj.of("amount", JsNumbers.js(magnitude), "transferCode",
-                doc.get("transferCode")), "transfer " + doc.get("transferCode"));
+        // Gaps h-00 F2: the amount is the value moved, at the source's cost (it was the unit count, now "quantity").
+        BigDecimal value = estimatedValue(str(doc, "fromLocId"), items, "qtyRequested", false);
+        gateApproval("stock_transfer", id, Obj.of("amount", JsNumbers.js(value), "quantity", JsNumbers.js(magnitude),
+                "transferCode", doc.get("transferCode")), "transfer " + doc.get("transferCode"));
         String user = TenantContext.userId();
         if ("transit".equals(str(doc, "mode"))) {
             int claimed = jdbc.sql("UPDATE \"StockTransfer\" SET status = 'approved', \"approvedById\" = ?, \"approvedAt\" = "
@@ -786,8 +849,9 @@ public class StockDocService {
             throw ApiException.badRequest("Transfer was posted or cancelled concurrently");
         }
         for (Map<String, Object> item : lockOrder(items)) {
+            // Gaps h-00 F10: a line that names a lot moves that lot only (ADR-S013 engine rule), not the oldest ones.
             StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), str(doc, "toLocId"),
-                            dec(item, "qtyRequested")).variant(str(item, "variantId"))
+                            dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                     .source("stock_transfer", str(doc, "transferCode")).notes(str(doc, "notes"))
                     .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
             stock.transfer(m);
@@ -808,13 +872,13 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
+        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
         return withReceipts(withItems(doc), true);
     }
 
     /** The org's transit location, created on first use (outside the movement transaction). */
     private String ensureTransitLocation() {
-        String found = tx.execute(s -> findTransit());
+        String found = newTx.execute(s -> findTransit());
         if (found != null) {
             return found;
         }
@@ -827,7 +891,7 @@ public class StockDocService {
                         .params(id, org(), code, TenantContext.userId()).update());
                 return id;
             } catch (org.springframework.dao.DataIntegrityViolationException err) {
-                String raced = tx.execute(s -> findTransit());
+                String raced = newTx.execute(s -> findTransit());
                 if (raced != null) {
                     return raced;
                 }
@@ -851,7 +915,7 @@ public class StockDocService {
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocationId"), str(doc, "toLocationId"));
+        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
         if (!"transit".equals(str(doc, "mode"))) {
             throw ApiException.badRequest(doc.get("transferCode")
                     + " is an immediate transfer; it has no dispatch or receipt stages");
@@ -878,7 +942,7 @@ public class StockDocService {
             List<Map<String, Object>> items = lockOrder((List<Map<String, Object>>) doc.get("items"));
             for (Map<String, Object> item : items) {
                 StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), transit,
-                                dec(item, "qtyRequested")).variant(str(item, "variantId"))
+                                dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                         .source("stock_transfer_dispatch", str(doc, "transferCode")).notes(str(doc, "notes"))
                         .people(str(doc, "responsibleById"), str(doc, "approvedById"));
                 recordTransitLayers(id, str(item, "id"), dec(item, "qtyRequested"), stock.transfer(m));
@@ -1150,24 +1214,77 @@ public class StockDocService {
                         .param(org());
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(type, spec)) {
-            if (!reachable(kind, row)) {
-                continue;
+            if (reachable(kind, row)) {
+                out.add(row);
             }
-            Map<String, Object> r = withItems(row);
-            if ("adjustment".equals(kind)) {
-                r = withLocation(r, true);
-            }
-            if ("transfer".equals(kind)) {
-                r = withReceipts(r, true);
-            }
-            out.add(r);
+        }
+        // Gaps h-00 F11: the includes load for the whole list at once (one query each), not per document.
+        switch (kind) {
+            case "out" -> withItems(out, "StockOutItem", StockOutItem.class, "stockOutId");
+            case "waste" -> withItems(out, "WasteItem", WasteItem.class, "wasteId");
+            case "adjustment" -> withItems(out, "StockAdjustmentItem", StockAdjustmentItem.class, "adjId");
+            default -> withItems(out, "StockTransferItem", StockTransferItem.class, "transferId");
+        }
+        if ("adjustment".equals(kind)) {
+            withLocations(out, true);
+        }
+        if ("transfer".equals(kind)) {
+            withReceipts(out);
         }
         return out;
     }
 
     private boolean reachable(String kind, Map<String, Object> row) {
-        return "transfer".equals(kind) ? scope.permits(str(row, "fromLocationId")) || scope.permits(str(row, "toLocationId"))
+        // A transfer row names its ends fromLocId / toLocId (there is no fromLocationId column).
+        return "transfer".equals(kind) ? scope.permits(str(row, "fromLocId")) || scope.permits(str(row, "toLocId"))
                 : scope.permits(str(row, "locationId"));
+    }
+
+    private static String[] ids(List<Map<String, Object>> docs) {
+        return docs.stream().map(d -> str(d, "id")).toArray(String[]::new);
+    }
+
+    /** {@link #withItems(Map)} for a list of documents of one kind, in one query. */
+    private void withItems(List<Map<String, Object>> docs, String table, Class<?> type, String fk) {
+        Map<Object, List<Map<String, Object>>> byDoc = new HashMap<>();
+        if (!docs.isEmpty()) {
+            for (Map<String, Object> item : SqlRows.list(type, jdbc.sql("SELECT * FROM \"" + table + "\" WHERE \"" + fk
+                    + "\" = ANY(?::text[]) AND \"organizationId\" = ?").params(ids(docs), org()))) {
+                byDoc.computeIfAbsent(item.get(fk), k -> new ArrayList<>()).add(item);
+            }
+        }
+        docs.forEach(d -> d.put("items", byDoc.getOrDefault(d.get("id"), new ArrayList<>())));
+    }
+
+    /** {@link #withLocation} for a list of documents, in one query. */
+    private void withLocations(List<Map<String, Object>> docs, boolean full) {
+        Map<Object, Map<String, Object>> byId = new HashMap<>();
+        String[] locIds = docs.stream().map(d -> str(d, "locationId")).filter(java.util.Objects::nonNull).distinct()
+                .toArray(String[]::new);
+        if (locIds.length > 0) {
+            for (Map<String, Object> loc : SqlRows.list(InventoryLocation.class, jdbc.sql("SELECT * FROM"
+                    + " \"InventoryLocation\" WHERE id = ANY(?::text[]) AND \"organizationId\" = ?").params(locIds, org()))) {
+                byId.put(loc.get("id"), loc);
+            }
+        }
+        for (Map<String, Object> d : docs) {
+            Map<String, Object> loc = byId.get(d.get("locationId"));
+            d.put("location", full ? (loc == null ? null : new LinkedHashMap<>(loc))
+                    : InventoryLookups.locSelect(loc, "id", "code", "name"));
+        }
+    }
+
+    /** {@link #withReceipts(Map, boolean)} (ordered) for a list of transfers, in one query. */
+    private void withReceipts(List<Map<String, Object>> docs) {
+        Map<Object, List<Map<String, Object>>> byDoc = new HashMap<>();
+        if (!docs.isEmpty()) {
+            for (Map<String, Object> r : SqlRows.list(StockTransferReceipt.class, jdbc.sql("SELECT * FROM"
+                    + " \"StockTransferReceipt\" WHERE \"transferId\" = ANY(?::text[]) AND \"organizationId\" = ?"
+                    + " ORDER BY \"createdAt\" ASC").params(ids(docs), org()))) {
+                byDoc.computeIfAbsent(r.get("transferId"), k -> new ArrayList<>()).add(r);
+            }
+        }
+        docs.forEach(d -> d.put("receipts", byDoc.getOrDefault(d.get("id"), new ArrayList<>())));
     }
 
     private int claim(String table, String id, String status) {

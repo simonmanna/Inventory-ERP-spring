@@ -81,7 +81,8 @@ class ValuationIntegrityIT extends ApiTestSupport {
     }
 
     String receive(String productId, int qty, int unitCost) {
-        return ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", location, "receivedAt",
+        return ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, org), "warehouseId", location, "receivedAt",
                 Instant.now().toString(), "lines", List.of(Map.of("productId", productId, "description", "Goods",
                         "quantity", qty, "unitCost", unitCost)))).get("id").asString();
     }

@@ -306,6 +306,13 @@ public class InventoryController {
         return queries.listProductStockLevels(query);
     }
 
+    /** UB1 (post-parity): active staff (id + name) for the stock forms' responsible / approver pickers. */
+    @GetMapping("/staff-options")
+    @RequirePermissions(Permissions.INVENTORY__READ)
+    public List<Map<String, Object>> staffOptions() {
+        return queries.staffOptions();
+    }
+
     @GetMapping("/ledger")
     @RequirePermissions(Permissions.INVENTORY__READ)
     public PageResult<Map<String, Object>> ledger(@RequestParam Map<String, String> query) {
@@ -531,8 +538,12 @@ public class InventoryController {
         return stockDocs.dispatchTransfer(id);
     }
 
+    /**
+     * Gaps h-00 F4: a receipt is not claim-guarded (a transfer takes several), so a resubmitted one booked the goods
+     * twice; the key is required and a retry with it replays the first answer.
+     */
     @PostMapping("/transfers/{id}/receive")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY_DOC__UPDATE)
     public Map<String, Object> receiveTransfer(@PathVariable String id, @Valid @RequestBody ReceiveTransferRequest dto) {
         return stockDocs.receiveTransfer(id, dto.lines().stream().map(l -> new ReceiveLine(l.itemId(), l.received(),

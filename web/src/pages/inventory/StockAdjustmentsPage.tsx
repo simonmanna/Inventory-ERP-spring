@@ -15,9 +15,16 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
+import { PERMISSIONS } from '@erp/shared';
+import { DataTablePagination } from '@/components/list/data-table-pagination';
 import { api } from '@/lib/api';
+import { describeApiError, notifyApiError } from '@/lib/api-error';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { dateTime } from '@/lib/format';
+import { useClientPage } from '@/lib/use-client-page';
+import { useAuthStore } from '@/stores/auth.store';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
 
 import {
   type StockLevel, fetchAllStockLevels, fmtQty, apiErrorMessage as errMsg,
@@ -25,8 +32,6 @@ import {
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
 import { fetchVariantOptions } from '@/features/products/variants-api';
-
-interface Location { id: string; code: string; name: string }
 
 interface AdjustmentItem {
   id: string; productId: string; productName: string; unit: string | null;
@@ -79,6 +84,10 @@ const blankLine = (): DraftLine => ({ key: ++lineSeq, productId: '', actual: '' 
 
 export function StockAdjustmentsPage() {
   const qc = useQueryClient();
+  // Same permissions the API enforces: create, and approve for approve / cancel / reverse.
+  const has = useAuthStore((s) => s.hasPermission);
+  const canCreate = has(PERMISSIONS.inventoryDoc.create);
+  const canApprove = has(PERMISSIONS.inventoryDoc.approve);
   const [showForm, setShowForm] = useState(false);
   const [viewing, setViewing] = useState<AdjustmentRow | null>(null);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -103,10 +112,10 @@ export function StockAdjustmentsPage() {
     },
   });
 
-  const locations = useQuery<Location[]>({
-    queryKey: ['inventory-locations'],
-    queryFn: async () => (await api.get<{ data: Location[] }>('/inventory/locations')).data.data ?? [],
-  });
+  const paged = useClientPage(adjustments.data, 25, statusFilter);
+
+  const locations = useStockLocations();
+  const locationOptions = useMemo(() => (locations.locations ?? []).map(locationOption), [locations.locations]);
 
   const stockLevels = useQuery<StockLevel[]>({
     queryKey: ['inventory-product-stock-levels', 'adjustment', locationId],
@@ -156,7 +165,8 @@ export function StockAdjustmentsPage() {
 
   const create = useMutation({
     mutationFn: async (post: boolean) => {
-      const res = await api.post<AdjustmentRow>('/inventory/adjustments', {
+      // Stable keys: a retry after a lost answer replays instead of creating (and posting) a second adjustment.
+      const doc = await idempotentPost<AdjustmentRow>('/inventory/adjustments', {
         locationId,
         responsibleById: responsibleId,
         approvedById: approvedId,
@@ -169,14 +179,12 @@ export function StockAdjustmentsPage() {
           unit: levelById.get(l.productId)?.uom ?? undefined,
         })),
       });
-      const doc = res.data;
       if (!post) return { doc, posted: false as const };
       try {
-        const approved = await api.post<AdjustmentRow>(`/inventory/adjustments/${doc.id}/approve`);
-        return { doc: approved.data, posted: true as const };
+        return { doc: await idempotentPost<AdjustmentRow>(`/inventory/adjustments/${doc.id}/approve`, {}), posted: true as const };
       } catch (e) {
         // Document exists; it just could not post yet (approval policy / permission).
-        return { doc, posted: false as const, postError: errMsg(e, tx('Posting failed')) };
+        return { doc, posted: false as const, postError: describeApiError(e, tx('Posting failed')) };
       }
     },
     onSuccess: (r) => {
@@ -187,15 +195,15 @@ export function StockAdjustmentsPage() {
       resetForm();
       invalidateStock();
     },
-    onError: (e: any) => notify.error(errMsg(e, tx('Could not save adjustment'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Could not save adjustment')),
   });
 
   const approve = useMutation({
-    mutationFn: async (v: { id: string; forceReason?: string }) =>
-      (await api.post<AdjustmentRow>(
+    mutationFn: (v: { id: string; forceReason?: string }) =>
+      idempotentPost<AdjustmentRow>(
         `/inventory/adjustments/${v.id}/approve`,
         v.forceReason ? { force: true, forceReason: v.forceReason } : {},
-      )).data,
+      ),
     onSuccess: (d) => { notify.success(tx('{{adjCode}} posted — stock updated', { adjCode: d.adjCode })); setViewing(null); setDrift(null); invalidateStock(); },
     onError: (e: any, v) => {
       if (isStockDriftError(e)) {
@@ -203,21 +211,21 @@ export function StockAdjustmentsPage() {
         setDrift({ id: v.id, code: row?.adjCode ?? '', lines: e.response.data.drifted ?? [] });
         return;
       }
-      notify.error(errMsg(e, tx('Posting failed')));
+      notifyApiError(e, tx('Posting failed'));
     },
   });
 
   const reverse = useMutation({
-    mutationFn: async (v: { id: string; reason: string }) =>
-      (await api.post<AdjustmentRow>(`/inventory/adjustments/${v.id}/reverse`, { reason: v.reason })).data,
+    mutationFn: (v: { id: string; reason: string }) =>
+      idempotentPost<AdjustmentRow>(`/inventory/adjustments/${v.id}/reverse`, { reason: v.reason }),
     onSuccess: (d) => { notify.success(tx('{{adjCode}} reversed — stock and journals restored', { adjCode: d.adjCode })); setReversing(null); setViewing(null); invalidateStock(); },
-    onError: (e: any) => notify.error(errMsg(e, tx('Reversal failed'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Reversal failed')),
   });
 
   const cancel = useMutation({
-    mutationFn: async (id: string) => (await api.post<AdjustmentRow>(`/inventory/adjustments/${id}/cancel`)).data,
+    mutationFn: (id: string) => idempotentPost<AdjustmentRow>(`/inventory/adjustments/${id}/cancel`),
     onSuccess: (d) => { notify.success(`${d.adjCode} cancelled`); setViewing(null); qc.invalidateQueries({ queryKey: ['stock-adjustments'] }); },
-    onError: (e: any) => notify.error(errMsg(e, tx('Cancel failed'))),
+    onError: (e: unknown) => notifyApiError(e, tx('Cancel failed')),
   });
 
   const updateLine = (key: number, patch: Partial<DraftLine>) =>
@@ -258,9 +266,11 @@ export function StockAdjustmentsPage() {
               <SelectItem value="reversed">{tx('Reversed')}</SelectItem>
             </SelectContent>
           </Select>
-          <Button onClick={() => { resetForm(); setShowForm(true); }}>
-            <Plus className="mr-2 h-4 w-4" />{tx('New Adjustment')}
-          </Button>
+          {canCreate && (
+            <Button onClick={() => { resetForm(); setShowForm(true); }}>
+              <Plus className="mr-2 h-4 w-4" />{tx('New Adjustment')}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -269,7 +279,14 @@ export function StockAdjustmentsPage() {
         <Card><CardContent className="p-8 text-center text-destructive">{errMsg(adjustments.error, tx('Failed to load adjustments'))}</CardContent></Card>
       )}
       {adjustments.data && adjustments.data.length === 0 && (
-        <Card><CardContent className="p-8 text-center text-muted-foreground">{tx('No adjustments yet. Click "New Adjustment" to create one.')}</CardContent></Card>
+        <Card><CardContent className="p-8 text-center text-muted-foreground">
+          {statusFilter !== 'all' ? tx('No adjustments with this status.') : tx('No adjustments yet. Click "New Adjustment" to create one.')}
+        </CardContent></Card>
+      )}
+      {paged.totalPages > 1 && (
+        <p className="text-xs text-muted-foreground">
+          {tx('All {{count}} adjustments are loaded at once. Filter by status to narrow the list.', { count: paged.total.toLocaleString() })}
+        </p>
       )}
       {adjustments.data && adjustments.data.length > 0 && (
         <div className="overflow-x-auto rounded-md border">
@@ -288,7 +305,7 @@ export function StockAdjustmentsPage() {
               </tr>
             </thead>
             <tbody>
-              {adjustments.data.map((adj) => {
+              {paged.pageRows.map((adj) => {
                 const net = adj.items.reduce((s, i) => s + Number(i.qtyDiff), 0);
                 return (
                   <tr key={adj.id} className="border-b hover:bg-muted/30">
@@ -311,7 +328,7 @@ export function StockAdjustmentsPage() {
                         <Button size="icon" variant="ghost" className="h-7 w-7" title={tx('View')} onClick={() => setViewing(adj)}>
                           <Eye className="h-4 w-4" />
                         </Button>
-                        {isPending(adj.status) && (
+                        {canApprove && isPending(adj.status) && (
                           <>
                             <Button size="icon" variant="ghost" className="h-7 w-7" title={tx('Approve & post')}
                               disabled={approve.isPending} onClick={() => approve.mutate({ id: adj.id })}>
@@ -324,7 +341,7 @@ export function StockAdjustmentsPage() {
                             </Button>
                           </>
                         )}
-                        {adj.status === 'completed' && (
+                        {canApprove && adj.status === 'completed' && (
                           <Button size="icon" variant="ghost" className="h-7 w-7" title={tx('Reverse posted adjustment')}
                             disabled={reverse.isPending} onClick={() => setReversing(adj)}>
                             <Undo2 className="h-4 w-4 text-slate-600" />
@@ -337,6 +354,13 @@ export function StockAdjustmentsPage() {
               })}
             </tbody>
           </table>
+          {paged.totalPages > 1 && (
+            <DataTablePagination
+              page={paged.page} pageSize={paged.pageSize} total={paged.total} totalPages={paged.totalPages}
+              onPageChange={paged.setPage} onPageSizeChange={paged.setPageSize} pageSizeOptions={[25, 50, 100]}
+              noun={tx('adjustment')}
+            />
+          )}
         </div>
       )}
 
@@ -348,14 +372,14 @@ export function StockAdjustmentsPage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-sm font-medium">{tx('Location')} <span className="text-destructive">*</span></label>
-                <Select value={locationId} onValueChange={setLocationId}>
-                  <SelectTrigger><SelectValue placeholder={tx('Select location')} /></SelectTrigger>
-                  <SelectContent>
-                    {locations.data?.map((l) => (
-                      <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={locationId}
+                  onValueChange={setLocationId}
+                  options={locationOptions}
+                  footer={locations.footer}
+                  placeholder={tx('Select location')}
+                  searchPlaceholder={tx('Search locations…')}
+                />
               </div>
               <div>
                 <label className="text-sm font-medium">{tx('Reason')}</label>
@@ -501,9 +525,11 @@ export function StockAdjustmentsPage() {
             <Button variant="secondary" disabled={!canSubmit || create.isPending} onClick={() => create.mutate(false)}>
               <Save className="mr-2 h-4 w-4" />{tx('Save as Pending')}
             </Button>
-            <Button disabled={!canSubmit || create.isPending} onClick={() => create.mutate(true)}>
-              <CheckCircle2 className="mr-2 h-4 w-4" />{create.isPending ? tx('Saving…') : tx('Post Adjustment')}
-            </Button>
+            {canApprove && (
+              <Button disabled={!canSubmit || create.isPending} onClick={() => create.mutate(true)}>
+                <CheckCircle2 className="mr-2 h-4 w-4" />{create.isPending ? tx('Saving…') : tx('Post Adjustment')}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -558,7 +584,7 @@ export function StockAdjustmentsPage() {
                 </p>
               )}
               <DialogFooter className="gap-2">
-                {isPending(viewing.status) && (
+                {canApprove && isPending(viewing.status) && (
                   <>
                     <Button variant="outline" disabled={cancel.isPending}
                       onClick={() => { if (window.confirm(tx('Cancel {{adjCode}}?', { adjCode: viewing.adjCode }))) cancel.mutate(viewing.id); }}>
@@ -569,7 +595,7 @@ export function StockAdjustmentsPage() {
                     </Button>
                   </>
                 )}
-                {viewing.status === 'completed' && (
+                {canApprove && viewing.status === 'completed' && (
                   <Button variant="outline" onClick={() => setReversing(viewing)}>
                     <Undo2 className="mr-2 h-4 w-4" />{tx('Reverse')}
                   </Button>

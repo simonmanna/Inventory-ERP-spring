@@ -206,9 +206,26 @@ public class ProfitabilityService {
             bySeg.computeIfAbsent(r.get("segment") == null ? "" : r.get("segment"), k -> new LinkedHashMap<>())
                     .merge(measure, SqlRows.dec(r, "amount"), BigDecimal::add);
         }
+        // Review 2026-11-17 (ease of use): the segment's name next to its id, so screens never show raw ids
+        String names = switch (g) {
+            case "product" -> "SELECT id, name FROM \"Product\" WHERE \"organizationId\" = ?";
+            case "project" -> "SELECT id, code || ' · ' || name AS name FROM \"Project\" WHERE \"organizationId\" = ?";
+            case "branch" -> "SELECT id, name FROM \"Branch\" WHERE \"organizationId\" = ?";
+            case "costCenter" -> "SELECT id, code || ' · ' || name AS name FROM \"CostCenter\" WHERE \"organizationId\" = ?";
+            case "channel" -> null;
+            default -> "SELECT id, name FROM \"Partner\" WHERE \"organizationId\" = ?";
+        };
+        Map<String, String> nameOf = new java.util.HashMap<>();
+        if (names != null && bySeg.keySet().stream().anyMatch(k -> !"".equals(k))) {
+            for (Map<String, Object> n : SqlRows.list(jdbc.sql(names + " AND id = ANY(?::text[])").params(org(),
+                    bySeg.keySet().stream().filter(k -> !"".equals(k)).map(Object::toString).toArray(String[]::new)))) {
+                nameOf.put((String) n.get("id"), (String) n.get("name"));
+            }
+        }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map.Entry<Object, Map<String, BigDecimal>> e : bySeg.entrySet()) {
             Map<String, BigDecimal> m = e.getValue();
+            String segment = "".equals(e.getKey()) ? null : e.getKey().toString();
             BigDecimal cm1 = v(m, "revenue").subtract(v(m, "cogs"));
             BigDecimal cm2 = cm1.subtract(v(m, "variances")).subtract(v(m, "distribution"));
             BigDecimal cm3 = cm2.subtract(v(m, "overhead"));
@@ -216,7 +233,8 @@ public class ProfitabilityService {
                     "revenue")), "cogs", JsNumbers.dec(v(m, "cogs")), "variances", JsNumbers.dec(v(m, "variances")),
                     "distribution", JsNumbers.dec(v(m, "distribution")), "overhead", JsNumbers.dec(v(m, "overhead")),
                     "cm1", JsNumbers.dec(cm1), "cm2", JsNumbers.dec(cm2), "cm3", JsNumbers.dec(cm3),
-                    "statisticalOverhead", JsNumbers.dec(v(m, "statistical_overhead"))));
+                    "statisticalOverhead", JsNumbers.dec(v(m, "statistical_overhead")), "segmentName", segment == null
+                            ? null : nameOf.getOrDefault(segment, segment)));
         }
         return Obj.of("runId", runId, "layer", layer, "groupBy", g, "rows", rows);
     }

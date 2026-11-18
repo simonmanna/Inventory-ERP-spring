@@ -8,6 +8,8 @@ import com.inventoryerp.invoicing.application.SupplierPaymentScheduleService;
 import com.inventoryerp.invoicing.application.SupplierPaymentScheduleService.PlanInput;
 import com.inventoryerp.invoicing.application.VendorBillService;
 import com.inventoryerp.invoicing.application.VendorBillService.BillInput;
+import com.inventoryerp.invoicing.application.VendorBillWriteOffService;
+import com.inventoryerp.invoicing.application.VendorBillWriteOffService.WriteOffInput;
 import com.inventoryerp.invoicing.web.InvoicingDtos.InvoiceLine;
 import com.inventoryerp.kernel.crud.QueryParams;
 import com.inventoryerp.kernel.idempotency.Idempotent;
@@ -67,12 +69,25 @@ public class VendorBillController {
             Boolean onHold,
             String notes) {}
 
+    /**
+     * Supplier write-off of a posted bill's open balance (control-account policy, owner decision 2026-11-17):
+     * {@code amount} defaults to the whole open balance, {@code accountId} to the {@code purchase_discount} mapping;
+     * a reason is required.
+     */
+    public record WriteOffRequest(
+            @DecimalMin(value = "0.01", message = "must not be less than 0.01") BigDecimal amount,
+            String accountId,
+            String reason) {}
+
     private final VendorBillService bills;
     private final SupplierPaymentScheduleService schedule;
+    private final VendorBillWriteOffService writeOffs;
 
-    public VendorBillController(VendorBillService bills, SupplierPaymentScheduleService schedule) {
+    public VendorBillController(VendorBillService bills, SupplierPaymentScheduleService schedule,
+            VendorBillWriteOffService writeOffs) {
         this.bills = bills;
         this.schedule = schedule;
+        this.writeOffs = writeOffs;
     }
 
     @GetMapping
@@ -85,7 +100,15 @@ public class VendorBillController {
     @GetMapping("/{id}")
     @RequirePermissions(Permissions.EXPENSE__READ)
     public Map<String, Object> findOne(@PathVariable String id) {
-        return bills.findOne(id);
+        Map<String, Object> bill = bills.findOne(id);
+        if (bill != null) {
+            // Only on a bill that was written off, so every other bill reads exactly as before.
+            BigDecimal writtenOff = writeOffs.writtenOff(id);
+            if (writtenOff.signum() > 0) {
+                bill.put("writtenOff", com.inventoryerp.kernel.common.JsNumbers.dec(writtenOff));
+            }
+        }
+        return bill;
     }
 
     @PostMapping
@@ -109,11 +132,42 @@ public class VendorBillController {
         return bills.post(id, body == null ? null : body.override3WM(), body == null ? null : body.overrideApproval());
     }
 
+    /** Document reversal request (owner decision 2026-11-17): the reason is mandatory. */
+    public record ReversalRequest(
+            @jakarta.validation.constraints.Size(max = 2000, message = "must be shorter than or equal to 2000 characters")
+            String reason) {}
+
+    /** Supplier-bill document reversal (void); see {@link VendorBillService#cancel(String, String)}. */
     @PostMapping("/{id}/cancel")
     @Idempotent
     @RequirePermissions(Permissions.EXPENSE__CANCEL)
-    public Map<String, Object> cancel(@PathVariable String id) {
-        return bills.cancel(id);
+    public Map<String, Object> cancel(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReversalRequest dto) {
+        return bills.cancel(id, dto == null ? null : dto.reason());
+    }
+
+    /**
+     * Write off (part of) a posted bill's open balance through the supplier sub-ledger: Dr the supplier's payable
+     * (partner-tagged) / Cr a non-control income account, lowering the bill's residual in the same transaction. A
+     * settlement of what is owed, under its own permission {@code expense:write_off} (bills sit in the expense group).
+     */
+    @PostMapping("/{id}/write-off")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.EXPENSE__WRITE_OFF)
+    public Map<String, Object> writeOff(@PathVariable String id, @Valid @RequestBody WriteOffRequest dto) {
+        return writeOffs.writeOff(id, new WriteOffInput(dto.amount(), dto.accountId(), dto.reason()));
+    }
+
+    /**
+     * Document-level reversal of one supplier write-off (its journal entry id): the GL entry is mirrored and the
+     * amount goes back on the bill's open balance; see {@link VendorBillWriteOffService#reverseWriteOff}.
+     */
+    @PostMapping("/{id}/write-offs/{entryId}/reverse")
+    @Idempotent
+    @RequirePermissions(Permissions.EXPENSE__WRITE_OFF)
+    public Map<String, Object> reverseWriteOff(@PathVariable String id, @PathVariable String entryId,
+            @Valid @RequestBody(required = false) ReversalRequest dto) {
+        return writeOffs.reverseWriteOff(id, entryId, dto == null ? null : dto.reason());
     }
 
     /** Open bills by planned or due date (PROC-4). */

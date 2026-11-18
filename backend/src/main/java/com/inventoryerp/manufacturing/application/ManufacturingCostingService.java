@@ -171,19 +171,55 @@ public class ManufacturingCostingService {
 
     // ================================================================== variances
 
-    /** Material price and usage per line, labour efficiency, overhead and yield of one order. */
+    /** Plain-language name and meaning of each variance, in report order; children split their parent. */
+    private static final List<String[]> VARIANCE_LINES = List.of(
+            new String[] {"materialPrice", null, "Material price", "Materials cost more (+) or less (-) than their"
+                    + " standard unit cost."},
+            new String[] {"materialUsage", null, "Material usage", "More (+) or less (-) material was used than"
+                    + " planned for the run, at standard cost."},
+            new String[] {"materialMix", "materialUsage", "Mix", "The materials went in in other proportions than"
+                    + " the recipe's; at standard costs the blend cost more (+) or less (-)."},
+            new String[] {"materialInputYield", "materialUsage", "Input yield", "More (+) or less (-) material in"
+                    + " total went in than the recipe needs, in the recipe's proportions."},
+            new String[] {"labourRate", null, "Labour rate", "The hours cost more (+) or less (-) than the work"
+                    + " centre's standard labour rate."},
+            new String[] {"labourEfficiency", null, "Labour efficiency", "More (+) or fewer (-) labour hours than the"
+                    + " routing's standard time, at the standard rate."},
+            new String[] {"machineSpending", null, "Machine spending", "Machine time cost more (+) or less (-) than"
+                    + " the work centre's standard machine rate."},
+            new String[] {"machineEfficiency", null, "Machine efficiency", "The machines ran longer (+) or shorter (-)"
+                    + " than the routing's standard time, at the standard rate."},
+            new String[] {"energy", null, "Energy", "Energy has no standard, so all of it shows here."},
+            new String[] {"overheadSpending", null, "Overhead spending", "Overhead was charged at another rate (or"
+                    + " directly) than the standard rate for the hours worked."},
+            new String[] {"overheadEfficiency", null, "Overhead efficiency", "Overhead follows hours: more (+) or"
+                    + " fewer (-) hours than standard absorb more or less of it."},
+            new String[] {"yield", null, "Output yield", "Fewer (+) or more (-) good units came out than the run should"
+                    + " yield, at the standard unit cost."});
+
+    /**
+     * The variances of one order (ADR-S018; positive is unfavourable). Review 2026-11-17 (costing review, Tier 3): a
+     * complete set that reconciles — material price and usage (usage split into mix and input yield when the materials
+     * share one unit), labour rate and efficiency, machine spending and efficiency, energy (it has no standard, so all of
+     * it), overhead spending and efficiency on the work centre's absorption basis, and output yield. The standard now
+     * includes machine time. {@code reconciliation} shows that actual cost less the standard cost of the good output
+     * (of the planned run while the order is open) equals their total.
+     */
     public Map<String, Object> orderVariances(String orderId) {
         Map<String, Object> order = requireOrder(orderId);
         Map<String, BigDecimal> standard = standardUnits(order);
         List<Map<String, Object>> materials = new ArrayList<>();
+        List<VarianceCalculator.MixLine> mixLines = new ArrayList<>();
+        java.util.Set<String> units = new java.util.HashSet<>();
         BigDecimal price = BigDecimal.ZERO;
         BigDecimal usage = BigDecimal.ZERO;
         BigDecimal stdMaterial = BigDecimal.ZERO;
         for (Map<String, Object> m : SqlRows.list(db.jdbc().sql("SELECT m.\"productId\", p.name AS \"productName\","
-                + " p.\"costPrice\", sum(m.\"qtyPlanned\") AS planned, sum(m.\"qtyConsumed\") AS actual,"
+                + " p.\"costPrice\", p.\"uomId\", sum(m.\"qtyPlanned\") AS planned, sum(m.\"qtyConsumed\") AS actual,"
                 + " sum(m.\"totalCost\") AS cost FROM \"ProductionMaterial\" m LEFT JOIN \"Product\" p ON p.id ="
                 + " m.\"productId\" WHERE m.\"organizationId\" = ? AND m.\"orderId\" = ?"
-                + " GROUP BY m.\"productId\", p.name, p.\"costPrice\" ORDER BY p.name").params(MfgDb.org(), orderId))) {
+                + " GROUP BY m.\"productId\", p.name, p.\"costPrice\", p.\"uomId\" ORDER BY p.name")
+                .params(MfgDb.org(), orderId))) {
             BigDecimal planned = dec(m, "planned");
             BigDecimal actual = dec(m, "actual");
             BigDecimal actualCost = dec(m, "cost");
@@ -206,9 +242,37 @@ public class ManufacturingCostingService {
             row.put("priceVariance", v.price());
             row.put("usageVariance", v.usage());
             materials.add(row);
+            mixLines.add(new VarianceCalculator.MixLine(actual, planned, stdUnit));
+            units.add(m.get("uomId") == null ? "" : str(m, "uomId"));
         }
-        BigDecimal efficiency = BigDecimal.ZERO;
+        // mix and input yield: only when the materials are measured in one unit — kilograms and pieces do not add up
+        boolean oneUnit = units.size() == 1 && !units.contains("");
+        List<VarianceCalculator.Mix> byLine = materials.size() >= 2 && oneUnit ? VarianceCalculator.mixByLine(mixLines)
+                : null;
+        BigDecimal materialMix = null;
+        BigDecimal materialInputYield = null;
+        String mixNote = null;
+        if (byLine != null) {
+            materialMix = BigDecimal.ZERO;
+            materialInputYield = BigDecimal.ZERO;
+            for (int i = 0; i < byLine.size(); i++) {
+                materials.get(i).put("mixVariance", byLine.get(i).mix());
+                materials.get(i).put("inputYieldVariance", byLine.get(i).yield());
+                materialMix = materialMix.add(byLine.get(i).mix());
+                materialInputYield = materialInputYield.add(byLine.get(i).yield());
+            }
+        } else {
+            mixNote = materials.size() < 2 ? "A mix variance needs two or more materials."
+                    : !oneUnit ? "The materials are measured in different units, so their quantities cannot be added"
+                            + " up into a mix."
+                    : "There are no planned quantities to compare the mix with.";
+        }
+
+        BigDecimal labourEfficiency = BigDecimal.ZERO;
+        BigDecimal machineEfficiency = BigDecimal.ZERO;
+        BigDecimal overheadEfficiency = BigDecimal.ZERO;
         BigDecimal stdLabour = BigDecimal.ZERO;
+        BigDecimal stdMachine = BigDecimal.ZERO;
         BigDecimal stdOverhead = BigDecimal.ZERO;
         BigDecimal actualHours = BigDecimal.ZERO;
         BigDecimal stdHoursTotal = BigDecimal.ZERO;
@@ -218,6 +282,7 @@ public class ManufacturingCostingService {
             BigDecimal stdHours = wo.get("plannedDurationMins") instanceof Number n
                     ? BigDecimal.valueOf(n.longValue()).divide(SIXTY, SCALE, RoundingMode.HALF_UP) : BigDecimal.ZERO;
             BigDecimal hours = absorption.labourHours(wo);
+            BigDecimal runHours = absorption.runHours(wo);
             stdHoursTotal = stdHoursTotal.add(stdHours);
             actualHours = actualHours.add(hours);
             List<Map<String, Object>> rates = db.list(WorkCenterCostRate.class, " AND \"workCenterId\" = ?",
@@ -226,19 +291,35 @@ public class ManufacturingCostingService {
                 continue;
             }
             Map<String, Object> rate = rates.getFirst();
-            efficiency = efficiency.add(VarianceCalculator.efficiency(hours, stdHours, dec(rate, "labourRatePerHour")));
-            stdLabour = stdLabour.add(stdHours.multiply(dec(rate, "labourRatePerHour")));
-            stdOverhead = stdOverhead.add(stdHours.multiply(dec(rate, "overheadRatePerHour")));
+            BigDecimal labourRate = dec(rate, "labourRatePerHour");
+            BigDecimal machineRate = dec(rate, "machineRatePerHour");
+            BigDecimal overheadRate = dec(rate, "overheadRatePerHour");
+            // the absorption basis of the centre's overhead: labour hours, else machine (run) hours
+            BigDecimal basisHours = "labour_hours".equals(rate.get("overheadBasis")) ? hours : runHours;
+            labourEfficiency = labourEfficiency.add(VarianceCalculator.efficiency(hours, stdHours, labourRate));
+            machineEfficiency = machineEfficiency.add(VarianceCalculator.efficiency(runHours, stdHours, machineRate));
+            overheadEfficiency = overheadEfficiency.add(VarianceCalculator.efficiency(basisHours, stdHours,
+                    overheadRate));
+            stdLabour = stdLabour.add(stdHours.multiply(labourRate));
+            stdMachine = stdMachine.add(stdHours.multiply(machineRate));
+            stdOverhead = stdOverhead.add(stdHours.multiply(overheadRate));
         }
         Map<String, BigDecimal> cost = buckets(orderId, order);
+        BigDecimal labourRate = VarianceCalculator.round(cost.get("labour").subtract(stdLabour)).subtract(
+                labourEfficiency);
+        BigDecimal machine = VarianceCalculator.round(cost.get("machine").subtract(stdMachine));
+        BigDecimal energy = VarianceCalculator.round(cost.get("utility"));
         BigDecimal overhead = VarianceCalculator.round(cost.get("overhead").subtract(stdOverhead));
         BigDecimal expected = expectedOutput(order);
-        BigDecimal stdTotal = stdMaterial.add(stdLabour).add(stdOverhead);
+        BigDecimal stdTotal = stdMaterial.add(stdLabour).add(stdMachine).add(stdOverhead);
         BigDecimal stdUnitCost = expected.signum() > 0 ? stdTotal.divide(expected, SCALE, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
-        BigDecimal yieldVariance = "completed".equals(order.get("status"))
+        boolean completed = "completed".equals(order.get("status"));
+        BigDecimal yieldVariance = completed
                 ? VarianceCalculator.yield(expected, dec(order, "producedQty"), stdUnitCost)
                 : BigDecimal.ZERO.setScale(2);
+        BigDecimal total = price.add(usage).add(labourRate).add(labourEfficiency).add(machine).add(energy)
+                .add(overhead).add(yieldVariance);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("orderId", orderId);
         out.put("orderCode", order.get("orderCode"));
@@ -250,10 +331,34 @@ public class ManufacturingCostingService {
         out.put("materials", materials);
         out.put("materialPrice", price);
         out.put("materialUsage", usage);
-        out.put("labourEfficiency", efficiency);
+        out.put("materialMix", materialMix);
+        out.put("materialInputYield", materialInputYield);
+        out.put("materialUsageNotSplit", byLine == null ? usage : BigDecimal.ZERO.setScale(2));
+        out.put("mixNote", mixNote);
+        out.put("labourRate", labourRate);
+        out.put("labourEfficiency", labourEfficiency);
+        out.put("machine", machine);
+        out.put("machineSpending", machine.subtract(machineEfficiency));
+        out.put("machineEfficiency", machineEfficiency);
+        out.put("energy", energy);
         out.put("overhead", overhead);
+        out.put("overheadSpending", overhead.subtract(overheadEfficiency));
+        out.put("overheadEfficiency", overheadEfficiency);
         out.put("yield", yieldVariance);
-        out.put("total", price.add(usage).add(efficiency).add(overhead).add(yieldVariance));
+        out.put("total", total);
+        List<Map<String, Object>> lines = new ArrayList<>();
+        for (String[] l : VARIANCE_LINES) {
+            lines.add(Obj.of("key", l[0], "parent", l[1], "label", l[2], "explanation", l[3], "amount",
+                    out.get(l[0])));
+        }
+        out.put("lines", lines);
+        BigDecimal actualCost = VarianceCalculator.round(cost.values().stream().reduce(BigDecimal.ZERO,
+                BigDecimal::add));
+        BigDecimal standardCost = VarianceCalculator.round(completed ? dec(order, "producedQty").multiply(
+                stdUnitCost) : stdTotal);
+        out.put("reconciliation", Obj.of("actualCost", actualCost, "standardCost", standardCost, "standardBasis",
+                completed ? "good output" : "planned run", "variances", total, "unexplained", actualCost.subtract(
+                        standardCost).subtract(total)));
         return out;
     }
 
@@ -287,8 +392,9 @@ public class ManufacturingCostingService {
             extra = " AND o.\"outputProductId\" = ?";
             params.add(productId);
         }
-        List<String> kinds = List.of("materialPrice", "materialUsage", "labourEfficiency", "overhead", "yield",
-                "total");
+        List<String> kinds = List.of("materialPrice", "materialUsage", "materialMix", "materialInputYield",
+                "materialUsageNotSplit", "labourRate", "labourEfficiency", "machine", "machineSpending",
+                "machineEfficiency", "energy", "overhead", "overheadSpending", "overheadEfficiency", "yield", "total");
         Map<String, Object> totals = new LinkedHashMap<>();
         kinds.forEach(k -> totals.put(k, BigDecimal.ZERO));
         Map<String, Map<String, Object>> products = new LinkedHashMap<>();
@@ -308,9 +414,10 @@ public class ManufacturingCostingService {
                     o.get("productName"));
             for (String k : kinds) {
                 BigDecimal value = (BigDecimal) v.get(k);
-                row.put(k, value);
-                totals.put(k, ((BigDecimal) totals.get(k)).add(value));
-                product.put(k, ((BigDecimal) product.get(k)).add(value));
+                row.put(k, value); // null: the mix split does not apply to this order (see materialUsageNotSplit)
+                BigDecimal add = value == null ? BigDecimal.ZERO : value;
+                totals.put(k, ((BigDecimal) totals.get(k)).add(add));
+                product.put(k, ((BigDecimal) product.get(k)).add(add));
             }
             orders.add(row);
         }

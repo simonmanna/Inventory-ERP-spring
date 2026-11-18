@@ -68,6 +68,49 @@ same points as Nest. No subscribers in this module.
 
 ## Deviations
 
+Approved by the owner 2026-11-17 (accounting and costing review,
+[audit](../audits/2026-11-17-accounting-costing-review.md)):
+
+- **ACR-2: `POST /procurement/purchase-orders/:id/pay`.**
+  - Once the PO's receipts have been billed, paying the PO is refused with 400
+    `The goods received on this purchase order have been billed — pay the supplier bill instead`.
+  - The PO's open amount counts only unbilled receipts, less PO payments not yet applied to a bill (V530).
+  - Bill side: [invoicing](invoicing.md#deviations).
+- **GRNI reconciliation screen** (`/procurement/grni`, web only). It shows goods received but not invoiced, from the
+  existing API.
+
+Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
+[audit](../audits/2026-11-17-inventory-procurement-readiness.md); tests `ReadinessBlockersIT`):
+
+- **B1: a receipt of a purchase order belongs to the order's supplier.**
+  - `POST /procurement/goods-receipts` (and `/adhoc`) take an omitted `partnerId` from the order.
+  - A different supplier is refused with 400 `The supplier must be the purchase order's supplier`.
+  - Posting a draft saved without a supplier gives it the order's supplier.
+  - V535 sets the order's supplier on existing receipts that have none.
+  - Why: the bill matcher pairs bill lines only with receipts of the bill's supplier. A receipt from the "New goods
+    receipt" screen had no supplier, so the bill received and charged the goods a second time.
+  - Web: that screen shows the order's supplier and asks for one on a receipt without an order.
+- **B2: `POST /procurement/purchase-orders/:id/pay` pays only what is still owed.**
+  - The received amount counts only the lines a receipt vouchered (stocked products). Service lines are paid on their
+    bill.
+  - Settled supplier claims on the order or its receipts (not on a bill) reduce the open amount.
+  - A payment is refused when it would take more than the AP ledger owes the supplier (the supplier-ledger
+    measure, which includes returns to the vendor) with 400
+    `Payment of X would overpay the supplier: the ledger shows Y still owed to them …`.
+  - A payment without an amount is capped at that figure. With nothing owed:
+    `Nothing is owed to this supplier in the ledger — …`.
+- **B5: currency and exchange rate of purchase orders and quotations.**
+  - An order without `currencyCode` is in the organization's functional currency (Nest: `USD`).
+  - An order or RFQ quotation in another currency takes the stated `exchangeRate`, else the rate table at today's
+    date. With neither it is refused with 400
+    `No exchange rate for XXX→YYY on <date>: state the document's rate or add one to the rate table`.
+  - Before this, RFQ awards, agreement releases and portal quotations booked foreign orders at rate 1.
+  - Award orders treat a stored rate of 1 on a foreign quotation as unstated.
+  - The approval request of a foreign order carries its functional amount.
+- **B6 (web only): debit-note lines default to the right price.** A supplier (inbound) note defaults a line to the
+  purchase price and purchase unit; a customer (outbound) note to the sales price and sales unit. Supplier notes used
+  to default to the sales price.
+
 Pending owner approval:
 
 0. **Landed cost LC-1 (ADR-S053, V292; extension).** Vouchers and accruals distribute a charge over the receipt's

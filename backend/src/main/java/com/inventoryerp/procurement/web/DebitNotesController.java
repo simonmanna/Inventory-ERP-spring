@@ -16,6 +16,7 @@ import com.inventoryerp.procurement.application.DebitNotesService.CreateInput;
 import com.inventoryerp.procurement.application.DebitNotesService.LineInput;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import java.math.BigDecimal;
@@ -41,8 +42,10 @@ public class DebitNotesController {
     public record DebitNoteLineRequest(
             String productId,
             @NotNull(message = STR) String description,
-            @NotNull(message = NUM) BigDecimal quantity,
-            @NotNull(message = NUM) BigDecimal unitPrice,
+            // Gap fix h03-F9: bounded (a negative return or price used to post).
+            @NotNull(message = NUM) @DecimalMin(value = "0", inclusive = false, message = "must be greater than 0")
+            BigDecimal quantity,
+            @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal unitPrice,
             String taxId,
             String notes,
             String uomId,
@@ -106,5 +109,19 @@ public class DebitNotesController {
     @RequirePermissions(Permissions.DEBIT_NOTE__CANCEL)
     public Map<String, Object> cancel(@PathVariable String id) {
         return svc.cancel(id);
+    }
+
+    /** {@code PATCH /procurement/debit-notes/:id/reverse} body (document reversals, owner decision 2026-11-17). */
+    public record ReverseDebitNoteRequest(
+            @jakarta.validation.constraints.Size(max = 2000, message = "must be shorter than or equal to 2000 characters")
+            String reason) {}
+
+    /** Posted debit-note document reversal; see {@link DebitNotesService#reverse}. */
+    @PatchMapping("/{id}/reverse")
+    @Idempotent
+    @RequirePermissions(Permissions.DEBIT_NOTE__REVERSE)
+    public Map<String, Object> reverse(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReverseDebitNoteRequest dto) {
+        return svc.reverse(id, dto == null ? null : dto.reason());
     }
 }

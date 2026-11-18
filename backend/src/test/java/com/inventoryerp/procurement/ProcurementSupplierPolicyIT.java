@@ -256,7 +256,9 @@ class ProcurementSupplierPolicyIT extends ApiTestSupport {
                 "Cement", "quantity", 10)))).get("id").asString();
         assertThat(po(partner, product, 10, 50, pr).status()).as("draft request does not count").isEqualTo(400);
         ok(200, "PATCH", "/procurement/purchase-requests/" + pr + "/submit", null);
-        ok(200, "PATCH", "/procurement/purchase-requests/" + pr + "/approve", null);
+        // Gap fix h03-F6: a second administrator approves the request the first one raised.
+        assertThat(call("PATCH", "/procurement/purchase-requests/" + pr + "/approve", null,
+                com.inventoryerp.TestApprovers.secondAdmin(this)).status()).isEqualTo(200);
         Res fromPr = po(partner, product, 10, 50, pr);
         assertThat(fromPr.status()).isEqualTo(201);
 

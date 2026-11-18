@@ -20,7 +20,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useSupplierPayments, useCreateSupplierPayment, type Payment } from '@/features/invoicing/api';
 import { usePartners } from '@/features/partners/api';
-import { useAccounts } from '@/features/accounting/api';
+import { isReceivablePayableControl, useAccounts } from '@/features/accounting/api';
 import { useAuthStore } from '@/stores/auth.store';
 import { PERMISSIONS } from '@erp/shared';
 import { notify } from '@/lib/notify';
@@ -57,7 +57,11 @@ export function SupplierPaymentsPage() {
   const { data: accountsData } = useAccounts();
 
   const supplierList = useMemo(() => (partnersData?.data ?? []).filter((p) => p.isSupplier), [partnersData]);
-  const accountList = useMemo(() => accountsData?.data ?? [], [accountsData]);
+  // Control-account policy: a payment's tender account is never the AR / AP control account (refused server-side).
+  const accountList = useMemo(
+    () => (accountsData?.data ?? []).filter((a) => !isReceivablePayableControl(a)),
+    [accountsData],
+  );
 
   const form = useForm<FormValues>({
     defaultValues: {

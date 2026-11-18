@@ -10,8 +10,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DataTable, type Column } from '@/components/data-table';
 import { ListCard, ListPageHeader } from '@/components/list';
-import { useAccounts } from '@/features/accounting/api';
+import { isReceivablePayableControl, useAccounts } from '@/features/accounting/api';
 import {
+  useApproveDeferral,
   useCancelDeferral,
   useCreateDeferral,
   useDeferral,
@@ -35,11 +36,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 export default function DeferralsPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const canManage = has(PERMISSIONS.deferral.manage);
+  // R3 maker-checker: approving needs the journal-entry post permission and a user other than the schedule's author.
+  const canApprove = has(PERMISSIONS.journalEntry.post);
+  const me = useAuthStore((s) => s.user);
   const schedules = useDeferrals();
   const { data: accounts } = useAccounts();
   const create = useCreateDeferral();
   const release = useReleaseDeferral();
   const cancel = useCancelDeferral();
+  const approve = useApproveDeferral();
   const [asOf, setAsOf] = useState(today());
   const report = useDeferralReport(asOf);
   const [selectedId, setSelectedId] = useState<string>();
@@ -80,7 +85,8 @@ export default function DeferralsPage() {
     <Select value={form[key]} onValueChange={(v) => set(key, v)}>
       <SelectTrigger><SelectValue placeholder={placeholder} /></SelectTrigger>
       <SelectContent>
-        {(accounts?.data ?? []).map((a) => <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>)}
+        {/* AR / AP control accounts are refused for schedules (control-account policy). */}
+        {(accounts?.data ?? []).filter((a) => !isReceivablePayableControl(a)).map((a) => <SelectItem key={a.id} value={a.id}>{a.code} {a.name}</SelectItem>)}
       </SelectContent>
     </Select>
   );
@@ -94,12 +100,22 @@ export default function DeferralsPage() {
     { key: 'period', header: tx('Period'), render: (s) => tx('{{m}} months from {{d}} ({{method}})', { m: s.months, d: s.startDate, method: s.method }) },
     { key: 'status', header: tx('Status'), render: (s) => <Badge variant={s.status === 'active' ? 'default' : 'secondary'}>{s.status}</Badge> },
     {
+      key: 'approval',
+      header: tx('Approval'),
+      render: (s) => (s.approvedAt
+        ? <Badge variant="secondary">{tx('Approved')}</Badge>
+        : <Badge variant="outline" title={tx('Nothing is posted until a second user approves this schedule.')}>{tx('Awaiting approval')}</Badge>),
+    },
+    {
       key: 'actions',
       header: '',
-      render: (s) => canManage && s.status === 'active' && (
+      render: (s) => s.status === 'active' && (canManage || canApprove) && (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => void act(() => release.mutateAsync({ id: s.id }), tx('Due slices released'))}>{tx('Release due')}</Button>
-          <Button variant="ghost" size="sm" onClick={() => void act(() => cancel.mutateAsync({ id: s.id }), tx('Schedule cancelled'))}>{tx('Cancel')}</Button>
+          {canApprove && !s.approvedAt && me?.id !== s.createdBy && (
+            <Button variant="ghost" size="sm" onClick={() => void act(() => approve.mutateAsync(s.id), tx('Schedule approved'))}>{tx('Approve')}</Button>
+          )}
+          {canManage && s.approvedAt && <Button variant="ghost" size="sm" onClick={() => void act(() => release.mutateAsync({ id: s.id }), tx('Due slices released'))}>{tx('Release due')}</Button>}
+          {canManage && <Button variant="ghost" size="sm" onClick={() => void act(() => cancel.mutateAsync({ id: s.id }), tx('Schedule cancelled'))}>{tx('Cancel')}</Button>}
         </div>
       ),
     },

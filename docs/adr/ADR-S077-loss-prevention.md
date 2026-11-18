@@ -7,7 +7,7 @@
 - Related: ADR-S002 (licensing), ADR-S004 (beverage controls), ADR-S017 (user data scope), ADR-S065 (notification
   routing), ADR-S070 (org-local accounting day).
 - Extension: no NestJS counterpart. Every route is new and additive, under `/loss-prevention/*`.
-- Migration: `V520__loss_prevention_ledger.sql` (WP1); one migration per later work package. Other worktrees reach
+- Migration: `V560__loss_prevention_ledger.sql` (WP1; written as V520 and renumbered at merge, 2026-11-18); one migration per later work package. Other worktrees reach
   V519, so renumber at merge if one of them has taken V520.
 
 ## Context

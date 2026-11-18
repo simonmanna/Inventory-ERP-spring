@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronRight, ArrowLeft, ScrollText, FileText, RotateCcw, ExternalLink, CheckCircle2, Trash2 } from 'lucide-react';
+import { ChevronRight, ArrowLeft, ScrollText, FileText, RotateCcw, ExternalLink, CheckCircle2, Trash2, ShieldAlert } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -49,6 +49,9 @@ function getSourceLink(sourceType: string, sourceId: string): { path: string; la
   switch (sourceType) {
     case 'invoice': return { path: `/invoices/${sourceId}`, label: tx('Invoice') };
     case 'payment': return { path: `/payments/${sourceId}`, label: tx('Payment') };
+    case 'credit_note': return { path: `/credit-notes/${sourceId}`, label: tx('Credit Note') };
+    case 'vendor_bill': return { path: `/vendor-bills/${sourceId}`, label: tx('Vendor Bill') };
+    case 'debit_note': return { path: `/procurement/debit-notes`, label: tx('Debit Note') };
     case 'receipt': return { path: `/pos/receipts/${sourceId}`, label: tx('POS Receipt') };
     case 'stock_transfer': return { path: `/inventory/transfers`, label: tx('Stock Transfer') };
     case 'stock_adjustment': return { path: `/inventory/adjustments`, label: tx('Stock Adjustment') };
@@ -115,9 +118,19 @@ export function JournalEntryDetailPage() {
     } catch { /* toasted by useDiscardJournalEntry */ }
   };
 
-  const sourceLink = entry.sourceType && entry.sourceId
-    ? getSourceLink(entry.sourceType, entry.sourceId)
-    : null;
+  // Document reversals (owner decision 2026-11-17): an entry posted by a customer / supplier document is reversed by
+  // that document's own workflow; the server refuses the generic reverse, so the button gives way to a link.
+  const sourceDocument = entry.sourceDocument ?? null;
+  const sourceLink = sourceDocument?.path
+    ? { path: sourceDocument.path, label: sourceDocument.label }
+    : entry.sourceType && entry.sourceId
+      ? getSourceLink(entry.sourceType, entry.sourceId)
+      : null;
+  // A control-account adjustment is posted by a second user holding both journal_entry:post and
+  // journal_entry:control_adjust (the server enforces it; the button is hidden otherwise).
+  const isAdjustment = entry.controlAdjustment === true;
+  const canPost = has(PERMISSIONS.journalEntry.post)
+    && (!isAdjustment || has(PERMISSIONS.journalEntry.controlAdjust));
 
   return (
     <div className="flex flex-col h-full">
@@ -140,6 +153,11 @@ export function JournalEntryDetailPage() {
                 <h1 className="text-lg font-bold">{entry.entryNumber}</h1>
                 <Badge variant={statusVariant[entry.status] ?? 'secondary'} className="text-xs font-semibold">{entry.status.toUpperCase()}</Badge>
                 {!balanced && <Badge variant="destructive" className="text-[10px]">{tx('UNBALANCED')}</Badge>}
+                {isAdjustment && (
+                  <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 gap-1">
+                    <ShieldAlert className="h-3 w-3" /> {tx('CONTROL-ACCOUNT ADJUSTMENT')}
+                  </Badge>
+                )}
               </div>
               <p className="text-sm text-muted-foreground mt-0.5">
                 {entry.journal?.name} ({entry.journal?.code}) · {date(entry.postingDate)}
@@ -158,13 +176,27 @@ export function JournalEntryDetailPage() {
                 {tx('Discard draft')}
               </Button>
             )}
-            {entry.status === 'draft' && has(PERMISSIONS.journalEntry.post) && (
+            {entry.status === 'draft' && canPost && (
               <Button size="sm" className="gap-1.5" onClick={onPost} disabled={postEntry.isPending || discard.isPending || !balanced}>
                 <CheckCircle2 className="h-4 w-4" />
                 {postEntry.isPending ? tx('Posting…') : tx('Post')}
               </Button>
             )}
-            {entry.status === 'posted' && has(PERMISSIONS.journalEntry.reverse) && (
+            {entry.status === 'posted' && sourceDocument && sourceDocument.path && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => navigate(sourceDocument.path!)}
+                title={sourceDocument.action
+                  ? `${tx('Reversed from the document')}: ${sourceDocument.action}`
+                  : tx('Reversed from the document')}
+              >
+                <ExternalLink className="h-4 w-4" />
+                {tx('Open')} {sourceDocument.label} {sourceDocument.number ?? ''}
+              </Button>
+            )}
+            {entry.status === 'posted' && !sourceDocument && has(PERMISSIONS.journalEntry.reverse) && (
               <Button variant="outline" size="sm" className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5" onClick={() => setReverseConfirm(true)} disabled={reverse.isPending}>
                 <RotateCcw className="h-4 w-4" />
                 {reverse.isPending ? tx('Reversing…') : tx('Reverse')}
@@ -176,6 +208,15 @@ export function JournalEntryDetailPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-6 space-y-6">
+        {entry.status === 'posted' && sourceDocument && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {sourceDocument.viaReversal
+              ? tx('This entry reverses an entry posted by a sub-ledger document and cannot be reversed itself.')
+              : tx('This entry was posted by a sub-ledger document and cannot be reversed here.')}{' '}
+            <span className="font-medium">{sourceDocument.label} {sourceDocument.number ?? ''}</span>
+            {sourceDocument.action && !sourceDocument.viaReversal ? ` · ${tx('Use')}: ${sourceDocument.action}` : ''}
+          </div>
+        )}
         {/* Entry Info cards */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card>
@@ -227,6 +268,16 @@ export function JournalEntryDetailPage() {
             <dl className="divide-y">
               <InfoRow label={tx('Description')} value={entry.description ?? <span className="italic text-muted-foreground">{tx('No description')}</span>} />
               <InfoRow label={tx('Status')} value={<Badge variant={statusVariant[entry.status] ?? 'secondary'} className="text-xs">{entry.status}</Badge>} />
+              {isAdjustment && (
+                <InfoRow label={tx('Control adjustment')} value={
+                  <div className="space-y-1">
+                    <p className="whitespace-pre-wrap">{entry.controlAdjustmentReason}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {tx('Posts to a receivable / payable control account. Audited; posted by a second user holding the control-adjustment permission.')}
+                    </p>
+                  </div>
+                } />
+              )}
               {entry.postedBy && <InfoRow label={tx('Posted By')} value={entry.postedBy} />}
               {entry.createdBy && <InfoRow label={tx('Created By')} value={entry.createdBy} />}
               {sourceLink && (
@@ -270,6 +321,7 @@ export function JournalEntryDetailPage() {
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase w-12">#</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase">{tx('Account')}</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase">{tx('Description')}</TableHead>
+                  <TableHead className="text-xs font-bold text-muted-foreground uppercase">{tx('Partner')}</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase text-right">{tx('Debit')}</TableHead>
                   <TableHead className="text-xs font-bold text-muted-foreground uppercase text-right">{tx('Credit')}</TableHead>
                 </TableRow>
@@ -285,12 +337,15 @@ export function JournalEntryDetailPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{l.description ?? '-'}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {l.partner ? `${l.partner.code ? `${l.partner.code} — ` : ''}${l.partner.name}` : (l.partnerId ?? '-')}
+                    </TableCell>
                     <TableCell className="text-right font-semibold text-sm text-emerald-600">{Number(l.debit) ? money(l.debit) : ''}</TableCell>
                     <TableCell className="text-right font-semibold text-sm">{Number(l.credit) ? money(l.credit) : ''}</TableCell>
                   </TableRow>
                 ))}
                 <TableRow className="font-bold bg-muted/10 border-t-2">
-                  <TableCell colSpan={3} className="text-sm">{tx('Total')}</TableCell>
+                  <TableCell colSpan={4} className="text-sm">{tx('Total')}</TableCell>
                   <TableCell className="text-right text-sm text-emerald-600">{money(totalDebit)}</TableCell>
                   <TableCell className="text-right text-sm">{money(totalCredit)}</TableCell>
                 </TableRow>

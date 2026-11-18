@@ -19,7 +19,8 @@ import tools.jackson.databind.JsonNode;
 /**
  * ADR-PROCUREMENT-001 wave 5: budget commitments and budget control, purchase-order change requests with revisions
  * and maker-checker re-approval, per-branch matching tolerances (quantity, two-way), duplicate-bill detection and
- * supplier claims settled by debit note. Every policy is branch-scoped so other suites in the DEMO org are untouched.
+ * supplier claims settled by a supplier credit (R11). Every policy is branch-scoped so other suites in the DEMO org
+ * are untouched.
  */
 class ProcurementControlsIT extends ApiTestSupport {
 
@@ -281,7 +282,7 @@ class ProcurementControlsIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("claims: raise → submit → accept (agreed amount) → settle by draft debit note, idempotent; tenancy")
+    @DisplayName("claims: raise → submit → accept (agreed amount) → settle by supplier credit, idempotent; tenancy")
     void supplierClaims() {
         newBranch();
         String sand = product();
@@ -303,12 +304,24 @@ class ProcurementControlsIT extends ApiTestSupport {
         JsonNode settled = call("POST", "/procurement/claims/" + id + "/settle", null, h).body();
         assertThat(settled.get("status").asString()).isEqualTo("settled");
         assertThat(settled.get("settledAmount").asString()).isEqualTo("250");
-        assertThat(settled.get("debitNoteStatus").asString()).isEqualTo("draft");
+        assertThat(settled.get("classification").asString()).isEqualTo("price_variance");
+        // R11: settled by a posted supplier credit, not a draft outbound debit note. No quantity lines, so the default
+        // classification is a price variance (Dr AP / Cr PPV): a claim without verified quantities never credits stock.
+        assertThat(settled.path("debitNoteId").asString(null)).isNull();
+        String entryId = settled.get("journalEntryId").asString();
         JsonNode replay = call("POST", "/procurement/claims/" + id + "/settle", null, h).body();
-        assertThat(replay.get("debitNoteId").asString()).isEqualTo(settled.get("debitNoteId").asString());
+        assertThat(replay.get("journalEntryId").asString()).isEqualTo(entryId);
         assertThat(jdbc.sql("SELECT count(*) FROM \"DebitNote\" WHERE \"organizationId\" = ? AND \"reasonNote\" = ?")
                 .params(demoOrg, "Claim " + claim.get("claimNumber").asString()).query(Long.class).single())
-                .isEqualTo(1L);
+                .isZero();
+        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"postingKey\" = ?")
+                .params(demoOrg, "supplier_claim:" + id).query(Long.class).single()).isEqualTo(1L);
+        assertThat(jdbc.sql("SELECT coalesce(sum(l.debit - l.credit), 0) FROM \"JournalLine\" l JOIN \"AccountMapping\""
+                + " m ON m.\"accountId\" = l.\"accountId\" AND m.\"organizationId\" = l.\"organizationId\" AND m.key ="
+                + " 'accounts_payable' AND m.\"deletedAt\" IS NULL WHERE l.\"journalEntryId\" = ? AND"
+                + " l.\"partnerId\" = ?")
+                .params(entryId, supplier).query(BigDecimal.class).single()).as("AP debited for the supplier")
+                .isEqualByComparingTo("250");
         assertThat(as("POST", "/procurement/claims/" + id + "/cancel", null).status()).isEqualTo(400);
         assertThat(call("GET", "/procurement/claims/" + id, null, otherToken).status()).isEqualTo(404);
         assertThat(ok(200, "GET", "/procurement/claims?purchaseOrderId=" + poId, null).get("data")).hasSize(1);
@@ -317,6 +330,6 @@ class ProcurementControlsIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: every controls route refuses a token without its permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix(ProcurementControlsController.class)).isEqualTo(16);
+        assertThat(assertAuthorizationMatrix(ProcurementControlsController.class)).isEqualTo(20);
     }
 }

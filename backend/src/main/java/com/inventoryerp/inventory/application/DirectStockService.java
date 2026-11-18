@@ -100,6 +100,11 @@ public class DirectStockService {
                 throw ApiException.badRequest("Expiry date required for expiry-tracked product \"" + prod.get("name")
                         + "\"");
             }
+            // Gaps h-00 F5: a negative cost drove the average (or the lot) below its value and posted no journal.
+            if (item.unitCost() != null && item.unitCost().signum() < 0) {
+                throw ApiException.badRequest("Unit cost of \"" + prod.get("name") + "\" cannot be negative; enter 0 or"
+                        + " more");
+            }
         }
         String code = seq.next("direct_stock_in", "DSI-", 5);
         BigDecimal total = Money.ZERO;

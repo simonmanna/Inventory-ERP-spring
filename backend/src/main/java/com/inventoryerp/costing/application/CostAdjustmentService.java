@@ -3,8 +3,8 @@ package com.inventoryerp.costing.application;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
-import com.inventoryerp.costing.application.LineageCapitalisation.Layer;
 import com.inventoryerp.costing.application.LineageCapitalisation.Part;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -52,15 +52,17 @@ public class CostAdjustmentService {
     private final JdbcClient jdbc;
     private final SequenceService seq;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final LineageCapitalisation capitalisation;
     private final AuditService audit;
 
     public CostAdjustmentService(JdbcClient jdbc, SequenceService seq, PostingService posting,
-            AccountDeterminationService determination, LineageCapitalisation capitalisation, AuditService audit) {
+            AccountDeterminationService determination, LineageCapitalisation capitalisation, AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.capitalisation = capitalisation;
         this.audit = audit;
@@ -70,17 +72,28 @@ public class CostAdjustmentService {
         return TenantContext.organizationId();
     }
 
-    /** WIP shares of completed orders not cascaded yet. */
+    /**
+     * WIP shares of completed orders not cascaded yet: lineage lines of late costs, and (review 2026-11-17, ACR-14)
+     * adjunct released into the order's WIP. Each carries what is still in WIP — its amount less what an accrual
+     * clearing already took back out ({@code clearedAmount}).
+     */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> pending() {
-        return SqlRows.list(jdbc.sql("SELECT l.id, l.\"adjustmentId\", l.amount, o.\"orderCode\", o.status::text AS"
-                + " \"orderStatus\", a.\"adjustmentType\", a.\"sourceType\", a.\"sourceId\" FROM \"CostValueAdjustmentLine\""
-                + " l JOIN \"CostValueAdjustment\" a ON a.id = l.\"adjustmentId\" JOIN \"ProductionOrder\" o ON"
-                + " o.\"organizationId\" = l.\"organizationId\" AND (o.id = l.\"targetRef\" OR o.\"orderCode\" ="
-                + " l.\"targetRef\") WHERE l.\"organizationId\" = ? AND l.target = 'wip' AND l.amount <> 0 AND"
-                + " a.\"reversedAt\" IS NULL AND o.status::text IN ('completed', 'closed') AND NOT EXISTS (SELECT 1 FROM"
-                + " \"CostAdjustmentRunLine\" r WHERE r.\"adjustmentLineId\" = l.id AND r.status = 'posted') ORDER BY"
-                + " o.\"orderCode\", l.\"createdAt\"").param(org()));
+        String order = " JOIN \"ProductionOrder\" o ON o.\"organizationId\" = x.\"organizationId\" AND (o.id = x.\"targetRef\""
+                + " OR o.\"orderCode\" = x.\"targetRef\")";
+        return SqlRows.list(jdbc.sql("SELECT * FROM (SELECT x.id, x.\"adjustmentId\", x.amount - x.\"clearedAmount\" AS"
+                + " amount, o.\"orderCode\", o.status::text AS \"orderStatus\", a.\"adjustmentType\", a.\"sourceType\","
+                + " a.\"sourceId\", 'line' AS kind, x.\"createdAt\" FROM \"CostValueAdjustmentLine\" x JOIN"
+                + " \"CostValueAdjustment\" a ON a.id = x.\"adjustmentId\"" + order + " WHERE x.\"organizationId\" = ? AND"
+                + " x.target = 'wip' AND a.\"reversedAt\" IS NULL AND o.status::text IN ('completed', 'closed') AND NOT"
+                + " EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"adjustmentLineId\" = x.id AND r.status ="
+                + " 'posted') UNION ALL SELECT x.id, x.\"adjustmentId\", x.amount - x.\"clearedAmount\", o.\"orderCode\","
+                + " o.status::text, a.\"adjustmentType\", 'cost_release', x.\"sourceId\", 'release', x.\"createdAt\" FROM"
+                + " \"CostValueAdjustmentRelease\" x JOIN \"CostValueAdjustment\" a ON a.id = x.\"adjustmentId\"" + order
+                + " WHERE x.\"organizationId\" = ? AND x.target = 'wip' AND a.\"reversedAt\" IS NULL AND o.status::text IN"
+                + " ('completed', 'closed') AND NOT EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"releaseId\" ="
+                + " x.id AND r.status = 'posted')) p WHERE amount <> 0 ORDER BY \"orderCode\", \"createdAt\"")
+                .params(org(), org()));
     }
 
     /** What a run would post (nothing is written). */
@@ -120,9 +133,7 @@ public class CostAdjustmentService {
             if (amount.signum() == 0) {
                 continue;
             }
-            List<Layer> layers = new ArrayList<>(capitalisation.receipts("production_order", List.of(e.getKey())));
-            layers.addAll(capitalisation.receipts("production_stage", stagePostings(e.getKey())));
-            List<Part> parts = capitalisation.spread(amount, layers);
+            List<Part> parts = capitalisation.spread(amount, capitalisation.orderOutputs(e.getKey()));
             allParts.addAll(parts);
             Map<String, Object> dims = Obj.of("productionOrderCode", e.getKey(), "costAdjustmentRunId", id);
             for (Map.Entry<String, BigDecimal> d : capitalisation.debits(parts).entrySet()) {
@@ -144,9 +155,11 @@ public class CostAdjustmentService {
                 + " \"journalEntryId\", \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)").params(id, org(), number,
                 Date.valueOf(from), Date.valueOf(to), total, je, TenantContext.userId()).update();
         for (Map<String, Object> r : rows) {
+            boolean release = "release".equals(r.get("kind"));
             jdbc.sql("INSERT INTO \"CostAdjustmentRunLine\" (id, \"organizationId\", \"runId\", \"adjustmentLineId\","
-                    + " \"orderCode\", amount) VALUES (?, ?, ?, ?, ?, ?)").params(UUID.randomUUID().toString(), org(), id,
-                    r.get("id"), r.get("orderCode"), SqlRows.dec(r, "amount")).update();
+                    + " \"releaseId\", \"orderCode\", amount) VALUES (?, ?, ?, ?, ?, ?, ?)").params(UUID.randomUUID()
+                    .toString(), org(), id, release ? null : r.get("id"), release ? r.get("id") : null,
+                    r.get("orderCode"), SqlRows.dec(r, "amount")).update();
         }
         if (!allParts.isEmpty()) {
             capitalisation.record(allParts, "cost_adjustment", SOURCE, id, je, text);
@@ -160,13 +173,6 @@ public class CostAdjustmentService {
         return get(id);
     }
 
-    /** Output postings of a stage order: its receipts are referenced by posting (ADR-S060). */
-    private List<String> stagePostings(String orderCode) {
-        return jdbc.sql("SELECT p.id FROM \"ProductionStagePosting\" p JOIN \"ProductionOrder\" o ON o.id = p.\"orderId\""
-                + " WHERE p.\"organizationId\" = ? AND o.\"orderCode\" = ? AND p.\"reversedAt\" IS NULL")
-                .params(org(), orderCode).query(String.class).list();
-    }
-
     @Transactional
     public Map<String, Object> reverse(String id) {
         Map<String, Object> r = SqlRows.one(jdbc.sql("SELECT * FROM \"CostAdjustmentRun\" WHERE id = ? AND"
@@ -178,8 +184,18 @@ public class CostAdjustmentService {
             throw ApiException.badRequest("Only a posted run can be reversed");
         }
         capitalisation.assertUnreleased(SOURCE, id);
-        String reversal = r.get("journalEntryId") == null ? null : (String) posting.reverse((String) r.get(
-                "journalEntryId"), Instant.now(), "Reversal of " + r.get("number")).get("id");
+        // Review 2026-11-17 (ACR-8): an accrual clearing since took part of a carried share back out of the output;
+        // putting the whole share back into WIP would leave WIP holding cost that is no longer there.
+        String cleared = jdbc.sql("SELECT rl.\"orderCode\" FROM \"CostAdjustmentRunLine\" rl LEFT JOIN"
+                + " \"CostValueAdjustmentLine\" l ON l.id = rl.\"adjustmentLineId\" LEFT JOIN \"CostValueAdjustmentRelease\" x"
+                + " ON x.id = rl.\"releaseId\" WHERE rl.\"runId\" = ? AND rl.status = 'posted' AND rl.amount <>"
+                + " coalesce(l.amount - l.\"clearedAmount\", x.amount - x.\"clearedAmount\") LIMIT 1").param(id)
+                .query(String.class).optional().orElse(null);
+        if (cleared != null) {
+            throw ApiException.badRequest("A landed-cost accrual clearing has since taken part of the cost carried to "
+                    + cleared + " back out; post a correcting document instead");
+        }
+        String reversal = reversals.reverseId((String) r.get("journalEntryId"), "Reversal of " + r.get("number"));
         capitalisation.reverse(SOURCE, id, (String) r.get("journalEntryId"), "Reversal of " + r.get("number"));
         jdbc.sql("UPDATE \"CostAdjustmentRunLine\" SET status = 'reversed' WHERE \"runId\" = ?").param(id).update();
         jdbc.sql("UPDATE \"CostAdjustmentRun\" SET status = 'reversed', \"reversalEntryId\" = ?, \"reversedAt\" = now()"

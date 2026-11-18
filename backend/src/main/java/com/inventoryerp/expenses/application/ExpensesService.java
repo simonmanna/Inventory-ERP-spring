@@ -1,6 +1,7 @@
 package com.inventoryerp.expenses.application;
 
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.ControlAccountGuards;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -1415,6 +1416,8 @@ public class ExpensesService {
                     .params(a.accountId(), org()).query(Long.class).single() == 0) {
                 throw ApiException.badRequest("Allocation line " + n + ": account must be a postable, active account");
             }
+            // Control-account policy (V518, "close now"): an expense line never debits a designated AR / AP account.
+            ControlAccountGuards.assertNotControl(jdbc, org(), "Expense allocation line " + n, blankToNull(a.accountId()));
             jdbc.sql("INSERT INTO \"ExpenseAllocation\" (id, \"organizationId\", \"expenseId\", \"lineNo\", amount,"
                             + " percent, \"accountId\", \"costCenterId\", \"costAllocationRuleId\", \"branchId\","
                             + " \"departmentId\", \"projectId\", description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
@@ -1536,6 +1539,7 @@ public class ExpensesService {
         String title = (String) exp.get("title");
         if (tags != null) {
             String acc = tags.expenseAccountId() != null ? tags.expenseAccountId() : baseDebitAccount(exp, category);
+            assertDebitAccounts(java.util.Collections.singletonList(acc));
             return List.of(new Line(acc, JsNumbers.dec(gross), null, null, title, tags.branchId(), tags.costCenterId(),
                     tags.dimensions()));
         }
@@ -1574,10 +1578,21 @@ public class ExpensesService {
                                 either(a.get("projectId"), exp.get("projectId")), a.get("costAllocationRuleId"))));
             }
         }
+        assertDebitAccounts(lines.stream().map(Line::accountId).toList());
         if (tax.signum() > 0) {
             lines.add(Line.debit(accounts.byMapping("tax_receivable"), JsNumbers.dec(tax), "Input tax: " + title));
         }
         return lines;
+    }
+
+    /**
+     * Control-account policy (V518, "close now"), at posting: the expense side of an expense posts in system context,
+     * so an allocation account saved before the policy, a category ledger / asset account or a source module's account
+     * on a designated AR / AP control account would move AR / AP outside the sub-ledger. Refused.
+     */
+    private void assertDebitAccounts(List<String> accountIds) {
+        ControlAccountGuards.assertNotControl(jdbc, org(), "Expense debit account (allocation line, category ledger"
+                + " or asset account, or the source module's account)", accountIds);
     }
 
     /** The first tagger claiming the expense, or null (no tagger registered / none owns it). */

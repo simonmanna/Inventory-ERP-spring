@@ -9,7 +9,7 @@
 | Feature flag | `ENABLE_LOSS_PREVENTION` → `app.modules.lossprevention`; `VITE_ENABLE_LOSS_PREVENTION` shows the menu entry |
 | Module name | `loss-prevention` (`@RequiresModule`); licence feature `lossPrevention` |
 | Java package | `com.inventoryerp.lossprevention` |
-| Migrations | `V520` ledger, `V521` rules, settings, windows, runs, findings, `V522` cases |
+| Migrations | `V560` ledger, `V561` rules, settings, windows, runs, findings, `V562` cases |
 | Permissions | `lp:view`, `lp:investigate`, `lp:configure`, `lp:ingest` |
 | Screen | `/loss-prevention`: overview, cases, reports, reconciliation runs, rules |
 | Schedule | `app.lossprevention.cron` (default every 2 minutes): sweep, then run due windows |

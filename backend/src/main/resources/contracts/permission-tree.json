@@ -203,7 +203,8 @@
     "read": "journal_entry:read",
     "create": "journal_entry:create",
     "post": "journal_entry:post",
-    "reverse": "journal_entry:reverse"
+    "reverse": "journal_entry:reverse",
+    "controlAdjust": "journal_entry:control_adjust"
   },
   "recurringEntry": {
     "read": "recurring_entry:read",
@@ -248,7 +249,8 @@
   "creditNote": {
     "read": "credit_note:read",
     "create": "credit_note:create",
-    "post": "credit_note:post"
+    "post": "credit_note:post",
+    "reverse": "credit_note:reverse"
   },
   "expense": {
     "read": "expense:read",
@@ -256,7 +258,8 @@
     "update": "expense:update",
     "post": "expense:post",
     "cancel": "expense:cancel",
-    "approve": "expense:approve"
+    "approve": "expense:approve",
+    "writeOff": "expense:write_off"
   },
   "payment": {
     "read": "payment:read",
@@ -548,7 +551,8 @@
     "read": "debit_note:read",
     "post": "debit_note:post",
     "cancel": "debit_note:cancel",
-    "approve": "debit_note:approve"
+    "approve": "debit_note:approve",
+    "reverse": "debit_note:reverse"
   },
   "files": {
     "read": "files:read",

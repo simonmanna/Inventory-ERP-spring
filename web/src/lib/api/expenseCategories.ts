@@ -51,6 +51,7 @@ export interface LedgerAccountOption {
   name: string;
   isPostable?: boolean;
   isActive?: boolean;
+  controlAccountType?: string | null;
 }
 
 /**
@@ -61,7 +62,8 @@ export function listLinkableLedgerAccounts(): Promise<LedgerAccountOption[]> {
   return api.get('/accounts', { params: { pageSize: 1000 } }).then((r) => {
     const rows: LedgerAccountOption[] = r.data?.data ?? r.data ?? [];
     return rows
-      .filter((a) => a.isPostable && a.isActive !== false)
+      // Control-account policy: never the AR / AP control accounts (the API refuses them too).
+      .filter((a) => a.isPostable && a.isActive !== false && a.controlAccountType !== 'ar' && a.controlAccountType !== 'ap')
       .sort((a, b) => String(a.code).localeCompare(String(b.code), undefined, { numeric: true }));
   });
 }

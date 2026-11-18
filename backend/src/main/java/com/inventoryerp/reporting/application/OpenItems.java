@@ -158,20 +158,23 @@ public class OpenItems {
     }
 
     /** Payables raised by purchase-order receipts (same measure as the AP aging); two organization parameters. */
-    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.id AS po, po.\"orderNumber\", po.\"partnerId\","
-            + " p.name AS \"partnerName\", v.at AS \"dueDate\", v.at AS \"issueDate\", NULL::text AS currency,"
-            + " NULL::text AS \"branchId\", LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
-            + " COALESCE(po.\"totalPaid\", 0)) AS \"amountResidual\" FROM (SELECT g.\"purchaseOrderId\" AS po,"
-            + " MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100))"
-            + " AS amt FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\""
-            + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ?"
-            + " AND g.status::text = 'posted' AND g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL"
-            + " AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY g.\"purchaseOrderId\") v"
-            + " JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id = po.\"partnerId\""
-            + " LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\" WHERE"
-            + " \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id"
-            + " WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - GREATEST(COALESCE(pp.paid, 0),"
-            + " COALESCE(po.\"totalPaid\", 0)) > 0.005";
+    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.id AS po, po.\"orderNumber\", po.\"partnerId\", p.name AS \"partnerName\", v.at AS"
+            + " \"dueDate\", v.at AS \"issueDate\", NULL::text AS currency, NULL::text AS \"branchId\","
+            + " LEAST(po.\"totalAmount\", v.amt) - v.billed - (GREATEST(COALESCE(pp.paid, 0),"
+            + " COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) AS \"amountResidual\" FROM (SELECT"
+            + " g.\"purchaseOrderId\" AS po, MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 +"
+            + " COALESCE(pl.\"taxRate\", 0) / 100)) AS amt, SUM(LEAST(l.\"billedQuantity\", l.quantity) *"
+            + " l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS billed FROM \"GoodsReceiptLine\" l JOIN"
+            + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id ="
+            + " l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ? AND g.status::text = 'posted' AND"
+            + " g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY"
+            + " g.\"purchaseOrderId\") v JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id ="
+            + " po.\"partnerId\" LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\""
+            + " WHERE \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id LEFT"
+            + " JOIN LATERAL (SELECT SUM(a.amount) AS applied FROM \"PurchaseOrderBillApplication\" a WHERE"
+            + " a.\"organizationId\" = po.\"organizationId\" AND a.\"purchaseOrderId\" = po.id AND a.\"releasedAt\" IS"
+            + " NULL) ap ON true WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - v.billed -"
+            + " (GREATEST(COALESCE(pp.paid, 0), COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) > 0.005";
 
     /** partnerId → payments not yet allocated at the date ({@code inbound} for customers), in base currency. */
     public Map<String, BigDecimal> unapplied(ReportContext ctx, String direction, LocalDate asOf) {

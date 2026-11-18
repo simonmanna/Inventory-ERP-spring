@@ -5,7 +5,9 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -26,8 +28,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -53,9 +53,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class StandardCostService {
 
-    private static final Logger log = LoggerFactory.getLogger(StandardCostService.class);
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
-    private static final BigDecimal CENT = new BigDecimal("0.01");
 
     /** Create body. */
     public record StandardInput(String productId, String effectiveFrom, BigDecimal materialCost,
@@ -75,21 +73,30 @@ public class StandardCostService {
 
     private final JdbcClient jdbc;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final AccountResolverService accounts;
     private final AuditService audit;
     private final TransactionTemplate tx;
     private final CostLineageService lineage;
+    private final StockPostingService stockPosting;
+    private final SegregationOfDutiesService sod;
+    private final CostActivationFailures failures;
 
     public StandardCostService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            AccountResolverService accounts, AuditService audit, PlatformTransactionManager txm, CostLineageService lineage) {
+            AccountResolverService accounts, AuditService audit, PlatformTransactionManager txm, CostLineageService lineage, CostingReversals reversals,
+            StockPostingService stockPosting, SegregationOfDutiesService sod, CostActivationFailures failures) {
         this.lineage = lineage;
         this.jdbc = jdbc;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.accounts = accounts;
         this.audit = audit;
         this.tx = new TransactionTemplate(txm);
+        this.stockPosting = stockPosting;
+        this.sod = sod;
+        this.failures = failures;
     }
 
     private static String org() {
@@ -227,9 +234,19 @@ public class StandardCostService {
         return jeId;
     }
 
-    /** Reverse a variance entry (production order reversed). */
+    /**
+     * Reverse a variance entry (production order reversed). Review 2026-11-17 (ACR-13; deviation): the variance rows the
+     * entry carried are offset by negative rows on the reversal, so the material ledger and the variance reports never
+     * pool (or capitalise) a variance that is no longer in the GL.
+     */
     public void reverseJournal(String journalEntryId, String description) {
-        posting.reverse(journalEntryId, Instant.now(), description);
+        Map<String, Object> rev = reversals.reverseAt(journalEntryId, Instant.now(), description);
+        jdbc.sql("INSERT INTO \"StandardCostVariance\" (id, \"organizationId\", \"productId\", kind, \"sourceType\","
+                        + " \"sourceId\", quantity, \"standardCost\", \"actualCost\", amount, \"journalEntryId\") SELECT"
+                        + " gen_random_uuid()::text, \"organizationId\", \"productId\", kind, \"sourceType\", \"sourceId\","
+                        + " -quantity, -\"standardCost\", -\"actualCost\", -amount, ? FROM \"StandardCostVariance\" WHERE"
+                        + " \"organizationId\" = ? AND \"journalEntryId\" = ?")
+                .params(rev == null ? null : rev.get("id"), TenantContext.organizationId(), journalEntryId).update();
     }
 
     private void recordVariance(String productId, String kind, String sourceType, String sourceId, BigDecimal qty,
@@ -344,8 +361,26 @@ public class StandardCostService {
         return get(id);
     }
 
+    /**
+     * Approve a draft. Readiness gaps h-02: its creator cannot approve it while the {@code inventory_valuation}
+     * separation-of-duties pair is on (F5), and a standard that could never activate — an AVCO / FIFO item without
+     * {@code convertMethod} — is refused now rather than failing every hour at activation (F7).
+     */
     @Transactional
     public Map<String, Object> approve(String id) {
+        Map<String, Object> s = SqlRows.one(jdbc.sql("SELECT s.status, s.\"createdBy\", s.\"convertMethod\", p.name,"
+                + " p.\"costingMethod\"::text AS method FROM \"ProductStandardCost\" s JOIN \"Product\" p ON p.id ="
+                + " s.\"productId\" WHERE s.id = ? AND s.\"organizationId\" = ?").params(id, org()));
+        if (s != null && "draft".equals(s.get("status"))) {
+            List<String> makers = new ArrayList<>();
+            makers.add((String) s.get("createdBy"));
+            sod.assertSeparated(SegregationOfDutiesService.INVENTORY_VALUATION, "ProductStandardCost", id, makers);
+            String method = (String) s.get("method");
+            if (!"STANDARD".equals(method) && !Boolean.TRUE.equals(s.get("convertMethod"))) {
+                throw ApiException.badRequest(s.get("name") + " is costed at " + method + "; set convertMethod to"
+                        + " switch it to standard cost");
+            }
+        }
         int n = jdbc.sql("UPDATE \"ProductStandardCost\" SET status = 'approved', \"approvedBy\" = ?, \"approvedAt\" = "
                 + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft'")
                 .params(TenantContext.userId(), id, org()).update();
@@ -365,6 +400,7 @@ public class StandardCostService {
             get(id);
             throw ApiException.badRequest("Only a draft or approved standard cost can be cancelled");
         }
+        failures.resolved(id, "Standard cost cancelled");
         return get(id);
     }
 
@@ -387,9 +423,14 @@ public class StandardCostService {
                 throw ApiException.badRequest("The standard takes effect on " + from + "; it cannot be activated earlier");
             }
             String productId = (String) s.get("productId");
+            // Readiness gaps h-02 F2: no stock move of the product runs while it is re-costed — its costing key is taken
+            // exclusively (every move holds it shared from before it reads the method until it commits), then the
+            // product row (FOR NO KEY UPDATE: compatible with the key-share locks of rows that reference the product)
+            // and the quants in the engine's order.
+            CostingLocks.lockProduct(jdbc, org(), productId);
             Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, name, \"costingMethod\"::text AS method,"
                     + " \"costPrice\", \"batchTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?"
-                    + " FOR UPDATE").params(productId, org()));
+                    + " FOR NO KEY UPDATE").params(productId, org()));
             String method = (String) product.get("method");
             if (!"STANDARD".equals(method) && !Boolean.TRUE.equals(s.get("convertMethod"))) {
                 throw ApiException.badRequest(product.get("name") + " is costed at " + method + "; set convertMethod to"
@@ -418,6 +459,7 @@ public class StandardCostService {
             audit.recordInTx(AuditInput.of("ProductStandardCost", id, "update", null, Obj.of("kind",
                     "standard_cost_activated", "productId", productId, "standard", JsNumbers.dec(std), "revaluation",
                     JsNumbers.dec(diff))));
+            failures.resolved(id, "Standard cost activated");
         });
         return get(id);
     }
@@ -426,19 +468,20 @@ public class StandardCostService {
     public record Revaluation(BigDecimal quantity, BigDecimal before, BigDecimal difference, String journalEntryId) {}
 
     /**
-     * Revalue every quant of a product to {@code unit} (caller holds the product row lock, inside its transaction):
-     * quant averages and open lots take the new cost; the difference to the method-correct value before is posted
-     * (Dr / Cr stock valuation against standard cost revaluation 5960, when ≥ 0.01) and carried in value-only ledger
-     * rows per quant ({@code sourceType} / {@code sourceId}), so the stock ledger, the valuation and the GL agree.
+     * Revalue every quant of a product to {@code unit} (caller holds the product's costing key exclusively and its row,
+     * inside its transaction): quant averages and open lots take the new cost; the difference to the method-correct
+     * value before is posted (Dr / Cr the product's stock account against standard cost revaluation 5960) and carried
+     * in value-only ledger rows per quant ({@code sourceType} / {@code sourceId}), so the stock ledger, the valuation
+     * and the GL agree. Readiness gaps h-02: the stock side is the item's STOCK_IN account like every other movement of
+     * it (F6); every quant whose value changed gets its ledger row, also when the changes net to nothing, and the entry
+     * is posted at the ledger's 6-decimal precision (F9); the quants are locked in the engine's order (F2).
      */
     Revaluation revalueOnHand(String productId, String method, boolean lots, BigDecimal costPrice, BigDecimal unit,
             String sourceType, String sourceId, String postingKey, String description, String ledgerNote) {
         BigDecimal qty = BigDecimal.ZERO;
         BigDecimal before = BigDecimal.ZERO;
         List<Object[]> quantDeltas = new java.util.ArrayList<>();
-        for (Map<String, Object> q : jdbc.sql("SELECT id, \"variantKey\", \"locationId\", quantity,"
-                + " \"runningAverageCost\" FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
-                + " ORDER BY \"locationId\", \"variantKey\" FOR UPDATE").params(org(), productId).query().listOfRows()) {
+        for (Map<String, Object> q : CostingLocks.lockQuants(jdbc, org(), productId, false, true)) {
             BigDecimal qq = Money.dec(q.get("quantity"));
             qty = qty.add(qq);
             BigDecimal qv = quantValue(productId, q, method, lots, costPrice);
@@ -453,8 +496,8 @@ public class StandardCostService {
         BigDecimal after = qty.multiply(unit).setScale(6, RoundingMode.HALF_UP);
         BigDecimal diff = after.subtract(before).setScale(6, RoundingMode.HALF_UP);
         String je = null;
-        if (diff.abs().compareTo(CENT) >= 0) {
-            String sv = determination.mapped("stock_valuation");
+        if (diff.signum() != 0) {
+            String sv = stockPosting.stockAccount(productId, diff.abs());
             String reval = varianceAccount("revaluation");
             String v = JsNumbers.dec(diff.abs());
             List<Line> lines = diff.signum() > 0
@@ -463,14 +506,18 @@ public class StandardCostService {
             Map<String, Object> posted = posting.post(PostingRequest.of("INV", Instant.now(), description, sourceType,
                     sourceId, postingKey, lines));
             je = posted == null ? null : (String) posted.get("id");
-            // CM-1: the stock ledger carries the revaluation per quant (value-only rows).
-            for (Object[] qd : quantDeltas) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> q = (Map<String, Object>) qd[0];
-                String variant = (String) q.get("variantKey");
-                lineage.recordValueOnly(productId, variant == null || variant.isEmpty() ? null : variant,
-                        (String) q.get("locationId"), null, (BigDecimal) qd[1], sourceType, sourceId, null, ledgerNote);
+        }
+        // CM-1: the stock ledger carries the revaluation per quant (value-only rows) — every quant whose value moved.
+        for (Object[] qd : quantDeltas) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> q = (Map<String, Object>) qd[0];
+            BigDecimal delta = ((BigDecimal) qd[1]).setScale(6, RoundingMode.HALF_UP);
+            if (delta.signum() == 0) {
+                continue;
             }
+            String variant = (String) q.get("variantKey");
+            lineage.recordValueOnly(productId, variant == null || variant.isEmpty() ? null : variant,
+                    (String) q.get("locationId"), null, delta, sourceType, sourceId, null, ledgerNote);
         }
         return new Revaluation(qty, before, diff, je);
     }
@@ -483,8 +530,10 @@ public class StandardCostService {
      */
     @Transactional
     public String revalueCostPriceChange(String productId, BigDecimal oldCost, BigDecimal newCost) {
+        // Readiness gaps h-02 F2: serialised with the product's stock moves like a standard activation.
+        CostingLocks.lockProduct(jdbc, org(), productId);
         Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, name, \"costingMethod\"::text AS method,"
-                + " \"batchTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                + " \"batchTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? FOR NO KEY UPDATE")
                 .params(productId, org()));
         if (product == null) {
             throw ApiException.notFound("Product not found");
@@ -509,8 +558,9 @@ public class StandardCostService {
     @Scheduled(cron = "0 20 * * * *", zone = "UTC")
     @SchedulerLock(name = "standard-cost-activation", lockAtMostFor = "PT50M")
     public void activateDue() {
-        for (Map<String, Object> d : jdbc.sql("SELECT id, \"organizationId\", \"effectiveFrom\" FROM \"ProductStandardCost\""
-                + " WHERE status = 'approved' AND \"effectiveFrom\" <= ? ORDER BY \"effectiveFrom\"")
+        for (Map<String, Object> d : jdbc.sql("SELECT s.id, s.\"organizationId\", s.\"effectiveFrom\", s.\"productId\","
+                + " s.version, p.name FROM \"ProductStandardCost\" s JOIN \"Product\" p ON p.id = s.\"productId\""
+                + " WHERE s.status = 'approved' AND s.\"effectiveFrom\" <= ? ORDER BY s.\"effectiveFrom\"")
                 .param(LocalDate.now(ZoneOffset.UTC).plusDays(1)).query().listOfRows()) {
             String orgId = (String) d.get("organizationId");
             try {
@@ -523,7 +573,9 @@ public class StandardCostService {
                     activate((String) d.get("id"));
                 });
             } catch (RuntimeException e) {
-                log.warn("[standard-cost] activation of {} failed: {}", d.get("id"), e.getMessage());
+                // Readiness gaps h-02 F7: counted (erp_job_failures_total) and kept visible until it activates.
+                failures.failed("standard-cost-activation", orgId, "Standard cost", (String) d.get("id"),
+                        d.get("name") + " v" + d.get("version"), (String) d.get("productId"), e);
             }
         }
     }

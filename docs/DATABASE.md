@@ -101,6 +101,29 @@ CREATE ROLE erp_app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
 -- then start the API with FLYWAY_USER=<owner> DB_USER=erp_app; the callback grants the rest.
 ```
 
+### Evidence guards and the purge bypass
+
+Posted journals, the stock ledger, cash movements, payments and other evidence tables are guarded by triggers (V1,
+V470, V513): posted rows cannot be updated or deleted, no line can be added to a journal entry posted by an earlier
+transaction, and a posted entry must balance exactly in base currency at commit (deferred constraint trigger). The
+guards are switched off for one transaction by `SET LOCAL app.evidence_purge = 'on'`, which `evidence_purge_enabled()`
+honours only for a superuser or a login holding the privileges of the NOLOGIN role `erp_evidence_purger` (V513; never
+the API role). V513 creates the role when the migration role has `CREATEROLE`; otherwise the migration still succeeds
+and a superuser creates it. Nobody is a member by default. A purge (data retention, cleaning up a broken import) is a
+DBA action:
+
+```sql
+-- once, as a superuser or CREATEROLE role
+CREATE ROLE erp_evidence_purger NOLOGIN;      -- only if V513 could not create it
+GRANT erp_evidence_purger TO dba_alice;       -- a named DBA login, never DB_USER (the API role)
+-- the purge itself, logged in as dba_alice, in one transaction
+BEGIN;
+SET LOCAL app.evidence_purge = 'on';
+-- DELETE ... ;
+COMMIT;
+REVOKE erp_evidence_purger FROM dba_alice;
+```
+
 ## 7. Seed
 
 `SeedRunner` (profile `seed`) ports `reference/nest-api/prisma/seed.ts` exactly: currencies (USD,

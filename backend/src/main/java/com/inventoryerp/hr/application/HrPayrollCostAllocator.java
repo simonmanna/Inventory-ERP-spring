@@ -37,9 +37,19 @@ public final class HrPayrollCostAllocator {
     /** One salary debit of the journal. */
     public record Debit(String costCenterId, String branchId, BigDecimal amount) {}
 
-    /** The employee's own rules, else the department's, else one unallocated share. */
+    /** The employee's own rules, else the department's, else one unallocated share (shares at the ledger scale). */
     public static List<Share> split(List<Cost> costs, Map<String, List<Rule>> byEmployee,
             Map<String, List<Rule>> byDepartment, BigDecimal total) {
+        return split(costs, byEmployee, byDepartment, total, SCALE);
+    }
+
+    /**
+     * As {@link #split(List, Map, Map, BigDecimal)} with each percentage share rounded {@code HALF_UP} to
+     * {@code scale} (the payroll pay scale: a UGX organisation's cost-centre debits are whole shillings); the last
+     * rule of an employee takes the remainder, so the shares still sum exactly.
+     */
+    public static List<Share> split(List<Cost> costs, Map<String, List<Rule>> byEmployee,
+            Map<String, List<Rule>> byDepartment, BigDecimal total, int scale) {
         List<Share> shares = new ArrayList<>();
         for (Cost c : costs) {
             List<Rule> rules = byEmployee.get(c.employeeId());
@@ -57,7 +67,7 @@ public final class HrPayrollCostAllocator {
             for (int i = 0; i < rules.size(); i++) {
                 Rule r = rules.get(i);
                 BigDecimal part = i == rules.size() - 1 ? left
-                        : c.amount().multiply(r.percent()).divide(HUNDRED, SCALE, RoundingMode.HALF_UP);
+                        : c.amount().multiply(r.percent()).divide(HUNDRED, scale, RoundingMode.HALF_UP);
                 left = left.subtract(part);
                 shares.add(new Share(c.employeeId(), c.departmentId(), c.branchId(), r.costCenterId(), part));
             }

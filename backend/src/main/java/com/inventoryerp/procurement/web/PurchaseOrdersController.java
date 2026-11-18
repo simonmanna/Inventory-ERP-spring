@@ -135,6 +135,13 @@ public class PurchaseOrdersController {
         return svc.findOne(id);
     }
 
+    /** Gap fix h06-F6 (additive): the server's payable figures for the Pay screen. */
+    @GetMapping("/{id}/payable")
+    @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_ORDER__READ)
+    public Map<String, Object> payable(@PathVariable String id) {
+        return svc.payable(id);
+    }
+
     /** Step 1: register a purchase order. */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

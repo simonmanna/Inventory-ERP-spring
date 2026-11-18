@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox, RefreshCw, ListChecks, UserPlus, ExternalLink } from 'lucide-react';
+import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox, RefreshCw, ListChecks, UserPlus, ExternalLink, Ban } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { apiErrorMessage } from '@/lib/api-error';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
@@ -35,7 +37,7 @@ interface InventoryException {
   payload: Record<string, unknown> | string | null;
 }
 
-type JobFilter = 'all' | 'pending' | 'processing' | 'failed' | 'done';
+type JobFilter = 'all' | 'pending' | 'processing' | 'failed' | 'done' | 'abandoned';
 type ExceptionFilter = 'open' | 'resolved' | 'discarded' | 'all';
 
 /** Exception kinds the posting paths record (PosInvoiceService, KitchenWaste); unknown kinds still list. */
@@ -113,7 +115,8 @@ interface Counts {
  * replaced the old silent `stock_reconcile_needed` audit marker. A sale is never
  * blocked by stock, but every deduction that could not post is now visible and
  * actionable: retry a failed job (safe — it deducted nothing) or bring a pending one forward, or resolve an
- * exception once the drift has been corrected with a manual stock adjustment.
+ * exception once the drift has been corrected with a manual stock adjustment. A failed job that can never post is
+ * abandoned with a note of how the stock was corrected by hand (review 2026-11-17, ACR-17).
  */
 export function PostingMonitorPage() {
   const qc = useQueryClient();
@@ -125,6 +128,8 @@ export function PostingMonitorPage() {
   const [note, setNote] = useState('');
   const [assigning, setAssigning] = useState<InventoryException | null>(null);
   const [assignee, setAssignee] = useState('');
+  const [abandoning, setAbandoning] = useState<StockPostingJob | null>(null);
+  const [abandonNote, setAbandonNote] = useState('');
   // Retry / assign / resolve are pos:override on the server; viewing is pos:reports (route guard).
   const canOverride = useAuthStore((s) => s.permissions.includes(PERMISSIONS.pos.override));
   const canOpenReceipt = useAuthStore((s) => s.permissions.includes(PERMISSIONS.pos.read));
@@ -194,6 +199,20 @@ export function PostingMonitorPage() {
     onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed')),
   });
 
+  const abandon = useMutation({
+    mutationFn: async () => {
+      if (!abandoning) return null;
+      return (await api.post(`/pos/posting-monitor/jobs/${abandoning.id}/abandon`, { note: abandonNote.trim() })).data;
+    },
+    onSuccess: () => {
+      notify.success(tx('Job abandoned'));
+      setAbandoning(null);
+      setAbandonNote('');
+      qc.invalidateQueries({ queryKey: ['posting-monitor'] });
+    },
+    onError: (e: unknown) => notify.error(apiErrorMessage(e, tx('Failed'))),
+  });
+
   const counts = countsQ.data;
   const openEx = counts?.exceptions.open ?? 0;
   const failedJobs = counts?.jobs.failed ?? 0;
@@ -211,6 +230,7 @@ export function PostingMonitorPage() {
     { value: 'processing', label: tx('In progress') },
     { value: 'failed', label: tx('Failed') },
     { value: 'done', label: tx('Done') },
+    { value: 'abandoned', label: tx('Abandoned') },
   ];
   const exFilters: Array<{ value: ExceptionFilter; label: string }> = [
     { value: 'open', label: tx('Open') },
@@ -371,10 +391,21 @@ export function PostingMonitorPage() {
                   </CardHeader>
                   {/* ADR-S072: a failed job restarts; a pending job waiting for its next attempt runs on the next drain. */}
                   {(job.status === 'failed' || job.status === 'pending') && canOverride && (
-                    <CardContent className="flex justify-end">
+                    <CardContent className="flex justify-end gap-2">
+                      {/* Review 2026-11-17 (ACR-17): a failed job that can never post is abandoned, with a note. */}
+                      {job.status === 'failed' && (
+                        <Button size="sm" variant="ghost" className="text-rose-400" onClick={() => { setAbandoning(job); setAbandonNote(''); }}>
+                          <Ban className="h-3.5 w-3.5" /> {tx('Abandon')}
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" disabled={retry.isPending} onClick={() => retry.mutate(job.id)}>
                         {retry.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} {tx('Retry')}
                       </Button>
+                    </CardContent>
+                  )}
+                  {job.status === 'abandoned' && (
+                    <CardContent className="pt-0 text-xs text-muted-foreground">
+                      {tx('Abandoned: the stock and cost of sales for this sale were corrected by hand (see the audit log for the note).')}
                     </CardContent>
                   )}
                 </Card>
@@ -404,6 +435,34 @@ export function PostingMonitorPage() {
             <Button disabled={!assignee || assign.isPending} onClick={() => assign.mutate()}>
               {assign.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               {tx('Assign')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!abandoning} onOpenChange={(open) => !open && setAbandoning(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{tx('Abandon posting job {{invoice}}?', { invoice: abandoning?.invoiceNumber ?? '' })}</DialogTitle>
+            <DialogDescription>
+              {tx('Only for a job that can never post — for example its item or recipe no longer exists. The system will not deduct this sale’s stock or post its cost of sales: correct them by hand first (usually a stock adjustment), then record here how you did it. The job keeps its error and history and is never retried; its open exceptions are closed with your note.')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="abandon-note">{tx('How were the stock and cost of sales corrected? (at least 10 characters, kept in the audit log)')}</Label>
+            <Textarea
+              id="abandon-note"
+              rows={3}
+              value={abandonNote}
+              onChange={(e) => setAbandonNote(e.target.value)}
+              placeholder={tx('Posted stock adjustment ADJ-2026-000045')}
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setAbandoning(null)}>{tx('Cancel')}</Button>
+            <Button variant="destructive" disabled={abandonNote.trim().length < 10 || abandon.isPending} onClick={() => abandon.mutate()}>
+              {abandon.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {tx('Abandon')}
             </Button>
           </div>
         </DialogContent>
@@ -471,6 +530,7 @@ function StatusDot({ status }: { status: string }) {
     status === 'failed' ? 'text-rose-500'
     : status === 'done' ? 'text-emerald-500'
     : status === 'processing' ? 'text-sky-500'
+    : status === 'abandoned' ? 'text-muted-foreground'
     : 'text-amber-500';
   return <Inbox className={`h-4 w-4 ${cls}`} />;
 }

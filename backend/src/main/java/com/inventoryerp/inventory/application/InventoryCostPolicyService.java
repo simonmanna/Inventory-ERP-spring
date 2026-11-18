@@ -1,11 +1,14 @@
 package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.CostingDimensionGuard;
+import com.inventoryerp.accounting.application.FiscalPeriodControl;
 import com.inventoryerp.accounting.application.OrgDates;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.core.application.ProductCostingPolicy;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -22,14 +25,14 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -50,15 +53,20 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       re-costed to the average.</li>
  * </ul>
  * STANDARD and SPECIFIC products are never touched. Each re-costed quant is recorded in
- * {@code InventoryCostMigrationLine}; a rounding difference ≥ 0.01 is posted to stock valuation.
+ * {@code InventoryCostMigrationLine}; a rounding difference is posted to the products' stock accounts.
+ *
+ * <p>Readiness gaps (h-02): activation holds the organisation's costing key exclusively, so no stock move runs while
+ * the methods change and every move after it reads the new method (F2); the creator cannot approve while the
+ * {@code inventory_valuation} separation-of-duties pair is on, and a draft is edited only while it is a draft (F5); the
+ * rounding posts per product to its STOCK_IN account (F6) with a ledger row for every quant whose value changed (F9);
+ * the effective date must lie in an open period, the rounding entry is never dated into a closed one, and a failed
+ * scheduled activation is counted and listed until it succeeds (F7).
  */
 @Service
 public class InventoryCostPolicyService implements ProductCostingPolicy {
 
-    private static final Logger log = LoggerFactory.getLogger(InventoryCostPolicyService.class);
     private static final Set<String> METHODS = Set.of("AVCO", "FIFO", "SPECIFIC", "STANDARD");
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
-    private static final BigDecimal CENT = new BigDecimal("0.01");
 
     /** Create / update body. */
     public record PolicyInput(String scopeType, String categoryId, String method, String effectiveFrom, String notes) {}
@@ -70,9 +78,16 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
     private final AccountDeterminationService determination;
     private final TransactionTemplate tx;
     private final CostLineageService lineage;
+    private final StockPostingService stockPosting;
+    private final SegregationOfDutiesService sod;
+    private final CostActivationFailures failures;
+    private final FiscalPeriodControl fiscal;
+    private final CostingDimensionGuard costingGuard;
 
     public InventoryCostPolicyService(JdbcClient jdbc, SequenceService seq, AuditService audit, PostingService posting,
-            AccountDeterminationService determination, PlatformTransactionManager txm, CostLineageService lineage) {
+            AccountDeterminationService determination, PlatformTransactionManager txm, CostLineageService lineage,
+            StockPostingService stockPosting, SegregationOfDutiesService sod, CostActivationFailures failures,
+            FiscalPeriodControl fiscal, CostingDimensionGuard costingGuard) {
         this.lineage = lineage;
         this.jdbc = jdbc;
         this.seq = seq;
@@ -80,6 +95,11 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         this.posting = posting;
         this.determination = determination;
         this.tx = new TransactionTemplate(txm);
+        this.stockPosting = stockPosting;
+        this.sod = sod;
+        this.failures = failures;
+        this.fiscal = fiscal;
+        this.costingGuard = costingGuard;
     }
 
     private static String org() {
@@ -193,16 +213,33 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                 in.effectiveFrom() != null ? in.effectiveFrom() : p.get("effectiveFrom").toString(),
                 in.notes() != null ? in.notes() : (String) p.get("notes"));
         validate(merged);
-        jdbc.sql("UPDATE \"InventoryCostPolicy\" SET \"scopeType\" = ?, \"categoryId\" = ?, method = ?, \"effectiveFrom\""
-                        + " = ?::date, notes = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+        // Readiness gaps h-02 F5: only while it is still a draft (an approval in between wins).
+        int n = jdbc.sql("UPDATE \"InventoryCostPolicy\" SET \"scopeType\" = ?, \"categoryId\" = ?, method = ?,"
+                        + " \"effectiveFrom\" = ?::date, notes = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                        + " \"organizationId\" = ? AND status = 'draft'")
                 .params(merged.scopeType(), blank(merged.categoryId()), merged.method(), merged.effectiveFrom(),
                         merged.notes(), id, org())
                 .update();
+        if (n == 0) {
+            throw ApiException.badRequest("Only a draft cost policy can be edited");
+        }
         return get(id);
     }
 
-    /** Approve a draft (accounting sign-off); activation follows on the effective date. */
+    /**
+     * Approve a draft (accounting sign-off); activation follows on the effective date. Readiness gaps h-02: not by its
+     * creator while the {@code inventory_valuation} separation-of-duties pair is on (F5), and only with an effective
+     * date still in an open period (F7).
+     */
     public Map<String, Object> approve(String id) {
+        Map<String, Object> draft = SqlRows.one(jdbc.sql("SELECT status, \"createdBy\", \"effectiveFrom\" FROM"
+                + " \"InventoryCostPolicy\" WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
+        if (draft != null && "draft".equals(draft.get("status"))) {
+            List<String> makers = new ArrayList<>();
+            makers.add((String) draft.get("createdBy"));
+            sod.assertSeparated(SegregationOfDutiesService.INVENTORY_VALUATION, "InventoryCostPolicy", id, makers);
+            assertEffectiveOpen((LocalDate) toDate(draft.get("effectiveFrom")));
+        }
         int n = jdbc.sql("UPDATE \"InventoryCostPolicy\" SET status = 'approved', \"approvedBy\" = ?, \"approvedAt\" = "
                 + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft'")
                 .params(TenantContext.userId(), id, org()).update();
@@ -220,6 +257,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         if (n == 0) {
             throw ApiException.badRequest("Only a draft or approved cost policy can be cancelled");
         }
+        failures.resolved(id, "Cost policy cancelled");
         return get(id);
     }
 
@@ -243,6 +281,9 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
             }
             jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("cost-policy:" + org()).query()
                     .listOfRows();
+            // Readiness gaps h-02 F2: no stock move of the organisation runs while the methods change — every move
+            // holds this key shared from before it reads its product's method until it commits.
+            CostingLocks.lockOrganisation(jdbc, org());
             jdbc.sql("UPDATE \"InventoryCostPolicy\" SET status = 'superseded', \"updatedAt\" = " + NOW
                     + " WHERE \"organizationId\" = ? AND status = 'active' AND \"scopeType\" = ?"
                     + " AND \"categoryId\" IS NOT DISTINCT FROM ?").params(org(), p.get("scopeType"), p.get("categoryId"))
@@ -253,6 +294,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                     .params(EntityJson.toJson(summary), id).update();
             audit.recordInTx(AuditInput.of("InventoryCostPolicy", id, "update", null, Obj.of("kind",
                     "cost_policy_activated", "method", p.get("method"), "summary", summary)));
+            failures.resolved(id, "Cost policy activated");
         });
         return get(id);
     }
@@ -265,7 +307,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
     @Scheduled(cron = "0 15 * * * *", zone = "UTC")
     @SchedulerLock(name = "inventory-cost-policy-activation", lockAtMostFor = "PT50M")
     public void activateDue() {
-        List<Map<String, Object>> due = jdbc.sql("SELECT id, \"organizationId\", \"effectiveFrom\" FROM"
+        List<Map<String, Object>> due = jdbc.sql("SELECT id, \"organizationId\", \"effectiveFrom\", code FROM"
                 + " \"InventoryCostPolicy\" WHERE status = 'approved' AND \"effectiveFrom\" <= ? ORDER BY \"effectiveFrom\"")
                 .param(LocalDate.now(ZoneOffset.UTC).plusDays(1)).query().listOfRows();
         for (Map<String, Object> d : due) {
@@ -278,7 +320,9 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                     activate((String) d.get("id"));
                 });
             } catch (RuntimeException e) {
-                log.warn("[cost-policy] activation of {} failed: {}", d.get("id"), e.getMessage());
+                // Readiness gaps h-02 F7: counted (erp_job_failures_total) and kept visible until it activates.
+                failures.failed("inventory-cost-policy-activation", orgId, "Cost policy", (String) d.get("id"),
+                        (String) d.get("code"), null, e);
             }
         }
     }
@@ -313,9 +357,14 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
     }
 
     private List<Map<String, Object>> quants(String productId, boolean lock) {
+        if (lock) {
+            // h-02 F2: rows only, in the engine's order — the organisation's costing key already keeps every move out
+            // (one advisory key per quant of a whole catalogue would not fit the lock table).
+            return CostingLocks.lockQuants(jdbc, org(), productId, true, false);
+        }
         return jdbc.sql("SELECT id, \"variantId\", \"variantKey\", \"locationId\", quantity, \"runningAverageCost\""
-                + " FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND quantity <> 0"
-                + (lock ? " FOR UPDATE" : "")).params(org(), productId).query().listOfRows();
+                + " FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND quantity <> 0")
+                .params(org(), productId).query().listOfRows();
     }
 
     private BigDecimal[] quantValue(String productId, Map<String, Object> q, String method, boolean lots) {
@@ -343,11 +392,16 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         BigDecimal before = Money.ZERO;
         BigDecimal after = Money.ZERO;
         List<Object[]> quantDeltas = new java.util.ArrayList<>();
+        Map<String, BigDecimal> byAccount = new LinkedHashMap<>();
         if (!"AVCO".equals(to) && !"FIFO".equals(to)) {
             return Obj.of("products", 0, "quants", 0, "valueBefore", 0, "valueAfter", 0, "difference", 0);
         }
-        for (Map<String, Object> prod : productsInScope(p)) {
+        // Products in id order, each product's quants in the engine's order: a fixed lock order (h-02 F2).
+        List<Map<String, Object>> scope = new ArrayList<>(productsInScope(p));
+        scope.sort(Comparator.comparing((Map<String, Object> m) -> (String) m.get("id")));
+        for (Map<String, Object> prod : scope) {
             String productId = (String) prod.get("id");
+            BigDecimal productDelta = Money.ZERO;
             String from = (String) prod.get("costingMethod");
             boolean lots = Boolean.TRUE.equals(prod.get("batchTracking"));
             boolean keepLots = Boolean.TRUE.equals(prod.get("expiryTracking"))
@@ -366,6 +420,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                 quants++;
                 before = before.add(valueBefore);
                 after = after.add(valueAfter);
+                productDelta = productDelta.add(valueAfter.subtract(valueBefore));
                 quantDeltas.add(new Object[] {productId, q, valueAfter.subtract(valueBefore)});
                 jdbc.sql("INSERT INTO \"InventoryCostMigrationLine\" (id, \"organizationId\", \"policyId\", \"productId\","
                                 + " \"locationId\", \"methodFrom\", \"methodTo\", quantity, \"valueBefore\", \"valueAfter\")"
@@ -378,17 +433,22 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
             jdbc.sql("UPDATE \"Product\" SET \"costingMethod\" = ?::\"CostingMethod\", \"batchTracking\" = ?,"
                     + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
                     .params(to, batchTracking, productId, org()).update();
+            if (productDelta.signum() != 0) {
+                // h-02 F6: each product's rounding on the stock account its movements post to.
+                byAccount.merge(stockPosting.stockAccount(productId, productDelta.abs()), productDelta, BigDecimal::add);
+            }
         }
         BigDecimal diff = after.subtract(before).setScale(6, RoundingMode.HALF_UP);
-        String je = null;
-        if (diff.abs().compareTo(CENT) >= 0) {
-            je = postRounding(diff, policyCode, effectiveInstant(p));
-            // CM-1: the stock ledger carries the re-costing per quant (value-only rows, source cost_policy).
-            for (Object[] qd : quantDeltas) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> q = (Map<String, Object>) qd[1];
+        String je = postRounding(byAccount, policyCode, postingInstant(p));
+        // CM-1: the stock ledger carries the re-costing per quant (value-only rows, source cost_policy) — h-02 F9: every
+        // quant whose value changed, also when the changes net to nothing.
+        for (Object[] qd : quantDeltas) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> q = (Map<String, Object>) qd[1];
+            BigDecimal delta = ((BigDecimal) qd[2]).setScale(6, RoundingMode.HALF_UP);
+            if (delta.signum() != 0) {
                 lineage.recordValueOnly((String) qd[0], (String) q.get("variantId"), (String) q.get("locationId"), null,
-                        (BigDecimal) qd[2], "cost_policy", policyCode, null, "Costing method change " + policyCode);
+                        delta, "cost_policy", policyCode, null, "Costing method change " + policyCode);
             }
         }
         return Obj.of("products", products, "quants", quants, "valueBefore", JsNumbers.dec(before), "valueAfter",
@@ -437,7 +497,7 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         return qty.multiply(avg);
     }
 
-    /** Posting date of a method change: its effective date (start of day, UTC), never earlier than today's lock. */
+    /** The effective date's posting instant (start of day, UTC). */
     private static Instant effectiveInstant(Map<String, Object> p) {
         Object from = p.get("effectiveFrom");
         LocalDate day = from instanceof LocalDate d ? d : from instanceof java.sql.Date sd ? sd.toLocalDate()
@@ -445,15 +505,64 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         return day == null ? Instant.now() : day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
     }
 
-    private String postRounding(BigDecimal diff, String policyCode, Instant date) {
-        String sv = determination.mapped("stock_valuation");
-        String amount = JsNumbers.dec(diff.abs());
+    /**
+     * Posting date of a method change (readiness gaps h-02 F7): its effective date while that is open for posting
+     * (books lock, fiscal period, costing lock), otherwise now — never earlier than the lock.
+     */
+    private Instant postingInstant(Map<String, Object> p) {
+        Instant at = effectiveInstant(p);
+        return fiscal.isOpen(at) && costingGuard.lockedPeriod(at) == null ? at : Instant.now();
+    }
+
+    /**
+     * Readiness gaps h-02 F7: a policy taking effect today or earlier must take effect in an open period — after the
+     * books lock date, outside closed / locked fiscal periods and locked costing periods — since its rounding entry is
+     * dated at it. A later date is checked again when the policy is approved.
+     */
+    private void assertEffectiveOpen(LocalDate day) {
+        if (day == null || day.isAfter(today())) {
+            return;
+        }
+        Instant at = day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        try {
+            fiscal.assertOpen(at);
+        } catch (ApiException e) {
+            throw ApiException.badRequest("The cost policy cannot take effect on " + day + ": " + e.getMessage()
+                    + ". Choose an effective date in an open period");
+        }
+        String locked = costingGuard.lockedPeriod(at);
+        if (locked != null) {
+            throw ApiException.badRequest("The cost policy cannot take effect on " + day + ": the costing period "
+                    + locked + " is locked. Choose an effective date in an open period");
+        }
+    }
+
+    /**
+     * The rounding of a method change (h-02 F6): each stock account's net difference against stock adjustment income /
+     * expense — a pure reclass when the accounts' differences net to nothing. Null when nothing moved.
+     */
+    private String postRounding(Map<String, BigDecimal> byAccount, String policyCode, Instant date) {
         String description = "Costing method change " + policyCode + " · rounding";
-        List<Line> lines = diff.signum() > 0
-                ? List.of(Line.debit(sv, amount, description),
-                        Line.credit(determination.mapped("stock_adjustment_income"), amount, description))
-                : List.of(Line.debit(determination.mapped("stock_adjustment_expense"), amount, description),
-                        Line.credit(sv, amount, description));
+        List<Line> lines = new ArrayList<>();
+        BigDecimal total = Money.ZERO;
+        for (Map.Entry<String, BigDecimal> e : byAccount.entrySet()) {
+            BigDecimal v = e.getValue().setScale(6, RoundingMode.HALF_UP);
+            if (v.signum() == 0) {
+                continue;
+            }
+            lines.add(v.signum() > 0 ? Line.debit(e.getKey(), JsNumbers.dec(v), description)
+                    : Line.credit(e.getKey(), JsNumbers.dec(v.negate()), description));
+            total = total.add(v);
+        }
+        if (total.signum() > 0) {
+            lines.add(Line.credit(determination.mapped("stock_adjustment_income"), JsNumbers.dec(total), description));
+        } else if (total.signum() < 0) {
+            lines.add(Line.debit(determination.mapped("stock_adjustment_expense"), JsNumbers.dec(total.negate()),
+                    description));
+        }
+        if (lines.size() < 2) {
+            return null;
+        }
         Map<String, Object> je = posting.post(PostingRequest.of("INV", date, description, "cost_policy",
                 policyCode, "inventory:cost_policy:" + org() + ":" + policyCode, lines));
         return je == null ? null : (String) je.get("id");
@@ -483,6 +592,14 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
         if (in.effectiveFrom() == null) {
             throw ApiException.badRequest("effectiveFrom is required");
         }
+        LocalDate day;
+        try {
+            day = LocalDate.parse(in.effectiveFrom().trim().length() > 10 ? in.effectiveFrom().trim().substring(0, 10)
+                    : in.effectiveFrom().trim());
+        } catch (java.time.format.DateTimeParseException e) {
+            throw ApiException.badRequest("effectiveFrom must be a date (YYYY-MM-DD)");
+        }
+        assertEffectiveOpen(day);
     }
 
     private Map<String, Object> require(String id) {

@@ -54,6 +54,10 @@ public class BomCoProduct {
     @Column(name = "marketValue", precision = 20, scale = 6)
     private BigDecimal marketValue;
 
+    /** Review 2026-11-17 (V533): costs per unit after the split-off — further processing, selling (NRV method). */
+    @Column(name = "separableCostPerUnit", precision = 20, scale = 6)
+    private BigDecimal separableCostPerUnit;
+
     @Column(name = "weightPerUnit", precision = 20, scale = 6)
     private BigDecimal weightPerUnit;
 

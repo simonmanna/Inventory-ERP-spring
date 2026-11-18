@@ -23,5 +23,14 @@
   {"scenario": "procurement-", "path": "$.body.*.thresholdExceeded", "reason": "ADR-PROCUREMENT-001 P1-1: as above."},
   {"scenario": "invoicing-", "path": "$.body.transactions", "reason": "ADR-PROCUREMENT-001 B2: supplier ledger is the AP sub-ledger (Nest dropped paid bills)."},
   {"scenario": "invoicing-", "path": "$.body.closingBalance", "reason": "ADR-PROCUREMENT-001 B2: supplier ledger closing balance equals the GL."},
-  {"scenario": "invoicing-", "path": "$.body.amountResidual", "reason": "ADR-PROCUREMENT-001 P1-7: a bill priced above a vouchered receipt carries the price difference."}
+  {"scenario": "invoicing-", "path": "$.body.amountResidual", "reason": "ADR-PROCUREMENT-001 P1-7: a bill priced above a vouchered receipt carries the price difference."},
+  {"scenario": "core-master-data", "step": "fiscal period: bad dates", "path": "$.status", "reason": "Accounting controls R1 (owner-approved): a fiscal period ending before it starts is refused with 400 (Nest creates it)."},
+  {"scenario": "core-master-data", "step": "fiscal period: bad dates", "path": "$.body", "reason": "Accounting controls R1 (owner-approved): 400 error body instead of the created period."},
+  {"path": "$.body.controlAdjustment", "reason": "Control-account policy (owner decision, V518): additive JournalEntry.controlAdjustment flag."},
+  {"path": "$.body.controlAdjustmentReason", "reason": "Control-account policy (owner decision, V518): additive JournalEntry.controlAdjustmentReason."},
+  {"path": "$.body.data.*.controlAdjustment", "reason": "Control-account policy (owner decision, V518): additive JournalEntry.controlAdjustment flag."},
+  {"path": "$.body.data.*.controlAdjustmentReason", "reason": "Control-account policy (owner decision, V518): additive JournalEntry.controlAdjustmentReason."},
+  {"path": "$.body.lines.*.partner", "reason": "Accounting controls 2026-11-17 (owner-approved): additive journal-entry line field naming the partner of a control-account line."},
+  {"path": "$.body.sourceDocument", "reason": "Document reversals 2026-11-17 (owner-approved, V520): additive journal-entry field naming the sub-ledger document that posted it and its document-level reversal action."},
+  {"path": "$.body.reversal", "reason": "Document reversals 2026-11-17 (owner-approved, V520): additive DocumentReversal record on a cancelled / reversed invoice, bill, credit note or debit note."}
 ]

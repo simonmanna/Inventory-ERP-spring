@@ -24,6 +24,12 @@ public final class BusinessOutcome {
     public record Operation(String organizationId, String key, String path, String approvedById, String approvedKind,
             JsonNode recovery) {}
 
+    /**
+     * Gaps h-06 F7: name of a REQUIRES_NEW transaction whose writes are safe to run again (a find-or-create row, the
+     * approval request a gate reuses). Its commit does not stop a failed operation from releasing its key.
+     */
+    public static final String RETRY_SAFE_TX = "erp.idempotency.retry-safe";
+
     private static final ThreadLocal<Operation> CURRENT = new ThreadLocal<>();
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 

@@ -167,6 +167,8 @@ stock events only after commit, cost policy / standard activation hourly on the 
 | ACC-8 | Web: TB (range, pre/post closing, export, drill-down), P&L (other income/expense, net, export), AR aging (as-of, filter, export), Period-end page, 32 route guards | done — typecheck + lint + browser walk-through |
 | REV-1 | 2026-11-15 accounting review fixes: report end-day inclusive, closing filter in budget / commitment / consolidated / dashboard / cost-centre / analytic, snapshot staleness, VAT settlement measure + lock on drafts / reversals, FX settlement lines in document currency, period / year reopen rules, foreign-currency balance + V499 line checks, bill-cancel stock return, RTV VAT + bill residual, POS tax-group split, credit-note currency, asset clearing, ageing in base; web: account form, draft post / discard, drill-down, server filters, local dates, bank-rec sign-off; group accounts created directly ([review](audits/2026-11-15-accounting-review.md)) | done, merged to main 2026-11-16 — full build not run |
 | R-8 | Foreign-currency treasury (ADR-S076, V510–V511): functional / account currency locks, legacy designation, foreign deposits / withdrawals / transfers with realised FX, payments through foreign accounts, reconciliation in the account currency, revaluation per currency, `/fx-treasury/*` | built — `FxTreasuryIT`, `FxPaymentsIT`, `ForeignCashTest`; **R-8 open until independently verified**; full `./gradlew build` green on main 2026-11-17 (2234 tests) |
+| REV-2 | 2026-11-17 accounting and costing review fixes ([audit](audits/2026-11-17-accounting-costing-review.md), [deviations](spec/costing.md#review-2026-11-17--accounting-and-costing-fixes); branch `phase/acr-costing-integrity`, V530–V534). Purchasing: PO payments applied to the bill (no double AP), bill price / VAT true-up, optional three-way match. Period close: second reopen, abandon a failed POS posting job, close counts only documents up to the period end. Costing: reversals dated in their period and under the costing lock, overlapping cycle runs refused, exact reciprocal allocation, no double WIP credit, late cost follows transferred goods, unit-consistent variances, yield in the roll-up, process-costing guards, quarry double-posting guards, every-item close gates, optional materials-on-hand rule. New: mix / input yield, labour rate, machine and overhead spending / efficiency, energy, variance reconciliation; joint cost by NRV; normal / abnormal rework; cost explanation (`GET /inventory/cost-explanation`); screens for cost explanation, cost close, profitability + simulation, GRNI | merged into `main` 2026-11-17 (not pushed) — new `PeriodReopenIT`, `PoBillApplicationIT`, `PostingMonitorAbandonIT`, `CostingReversalIT`, `LateCostWipCascadeIT`, `ProductionReversalOverheadIT`, `StandardUnitsYieldIT`, `ProcessCostingGuardsIT`, `ProductionMaterialsOnHandIT`, `CostExplanationIT`, plus additions to 12 existing classes. fastTest on a fresh private Postgres: 599 tests, 598 pass; `InventoryHardeningIT.ledgerGuardBypass` fails only because the external-DB setup gives no owner connection. `ModularityTests` and `ArchitectureTests` green. Web typecheck, lint and i18n clean; not exercised in a browser. Full `./gradlew build` not run. Fiscal-period edits, sub-ledger reversals, the recurring approver and AR / AP control accounts came with REV-3; debit notes on unbilled receipts and in foreign currency (A5) are still open |
+| REV-3 | 2026-11-17 accounting controls, ERP capability assessment R1–R15 ([deviations](spec/accounting.md#accounting-controls-deviations-2026-11-17-owner-approved-fix-all-the-above-issues), [deploy checks](runbooks/acc-erp-controls-deployment.md); branch `phase/acc-erp-controls`, V512–V520). Fiscal-period edits limited, no overlapping periods; commit-time journal balance; recurring / deferral second approver; AR / AP control accounts with maker-checker adjustments; document-level reversals (invoice cancel, bill void, payment void, credit / debit note, deposit application) recorded in `DocumentReversal`; supplier bill write-off; supplier claims post their own credit with verified quantities; payroll deductions need an account, minor-unit rounding; inclusive / compound tax per tax; units-of-production and declining-balance depreciation; FA-to-GL reconciliation; consolidation average rates; bank matching to GL lines; cash-flow FX effect | merged into `main` 2026-11-17 (not pushed) — written by another session that could not compile. At merge: compiles; its 28 new / changed test classes ran on a private Postgres; 12 failures fixed (V519 tenant policy: a claim's quantity lines were invisible outside a tenant transaction; four test expectations: credit note on a product the invoice did not sell, payment void without an Idempotency-Key, 201 for an idempotent route, refusal wording); re-run green except `InventoryHardeningIT.ledgerGuardBypass` (external-DB setup). The combined run of both branches on merged `main` (191 classes + `ModularityTests` / `ArchitectureTests`) was stopped by low memory on the box after 15 min, with no failures so far: **not completed**. Full `./gradlew build` not run. Open owner decisions: separation of duties on by default for document reversals; reversals for supplier claims, opening balances, POS write-offs and PO entries; the bill page listing write-offs |
 | later | Integrity dashboard, accounting-policy engine, posting-rule versioning, recurring / deferred entries, tax groups, impairment / CIP, bank matching rules | open |
 
 ## kernel
@@ -1774,12 +1776,33 @@ channels per event. The actor is never told.
 
 [Spec](spec/projects.md). 26 routes: `ProjectBondController` (10), `SubcontractComplianceController` (11), `CapitalProjectController` (5); compliance gates on subcontract valuations and supplier payments; `ProjectBondJob`; expiry alerts. Migrations V504–V506. Tests: `ConstructionControlsIT`, `ProjectAuthorizationIT` (142 routes).
 
+## Inventory and procurement readiness blockers (2026-11-17, owner-approved deviations)
+
+[Audit](audits/2026-11-17-inventory-procurement-readiness.md); deviations in [procurement](spec/procurement.md#deviations),
+[inventory](spec/inventory.md#deviations), [core](spec/core.md#deviations) and
+[ADR-S026](adr/ADR-S026-warehouse-management.md).
+
+- [x] B1 goods receipts of a PO take the PO's supplier (V535 backfills posted receipts)
+- [x] B2 PO pay is capped by stocked receipts, net of claims, and by the supplier's AP ledger
+- [x] B3 manual pick orders cannot reference a stock document; the web form asks for the pick's purpose
+- [x] B4 batch / expiry / serial tracking is locked while stock is on hand
+- [x] B5 PO and RFQ quotation exchange rates: stated, else the table, else refused; PO currency defaults to functional
+- [x] B6 (web) debit-note lines default to the purchase price for supplier notes
+- [x] UB1 `GET /api/v1/inventory/staff-options` (`inventory:read`) feeds the stock forms' staff pickers
+- [x] UB2 (web) the shared `Select` accepts an empty item value (Radix 2.x)
+- [x] Tests: `ReadinessBlockersIT` (10), `WarehouseIT#manualPickWithDocumentReferenceRefused`; `PoBillApplicationIT` voids
+  with a reason
+- [x] P1 / P2 gaps listed in the audit ([handoff](audits/readiness-gaps/HANDOFF.md),
+  [integration notes](audits/readiness-gaps/integration-2026-11-18.md)).
+  - [x] Web screens (stream gW; [notes](audits/readiness-gaps/gW-web.md)).
+  - [x] Six backend streams gA–gF, merged 2026-11-18 (`d7442438`, CI green).
+
 ## Loss prevention (ADR-S077, extension: no Nest counterpart)
 
 [Spec](spec/loss-prevention.md) · [LP0 brief](phases/LP0-exception-intelligence.md). Behind `ENABLE_LOSS_PREVENTION`.
 
 27 routes: `LossPreventionEventController` (3), `LossPreventionRuleController` (6), `LossPreventionRunController` (6),
-`LossPreventionCaseController` (8), `LossPreventionReportController` (4). Migrations V520–V522. Permissions `lp:*`,
+`LossPreventionCaseController` (8), `LossPreventionReportController` (4). Migrations V560–V562 (renumbered from V520–V522 at merge). Permissions `lp:*`,
 licence feature `lossPrevention`, event `lp.case.opened`. Web: `/loss-prevention`.
 Tests: `LpEventValidatorTest`, `LpEnginesTest`, `LpLedgerIT`, `LpReconIT`.
 

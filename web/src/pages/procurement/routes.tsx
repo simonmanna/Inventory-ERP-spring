@@ -9,6 +9,7 @@ const LandedCostVoucherDetailPage = lazy(() => import('@/pages/costing/LandedCos
 const LandedCostVoucherEditPage = lazy(() => import('@/pages/costing/LandedCostVouchersPage').then((m) => ({ default: m.LandedCostVoucherEditPage })));
 const LandedCostVouchersPage = lazy(() => import('@/pages/costing/LandedCostVouchersPage').then((m) => ({ default: m.LandedCostVouchersPage })));
 const ShipmentsPage = lazy(() => import('@/pages/costing/ShipmentsPage').then((m) => ({ default: m.ShipmentsPage })));
+const GrniReconciliationPage = lazy(() => import('./grni-reconciliation').then((m) => ({ default: m.GrniReconciliationPage })));
 const PurchaseRequestsPage = lazy(() => import('./purchase-requests').then((m) => ({ default: m.PurchaseRequestsPage })));
 const PurchaseOrdersPage = lazy(() => import('./purchase-orders').then((m) => ({ default: m.PurchaseOrdersPage })));
 const PurchaseOrderCreatePage = lazy(() => import('./purchase-order-create').then((m) => ({ default: m.PurchaseOrderCreatePage })));
@@ -53,6 +54,7 @@ export const procurementRoutes = (
     <Route path="/procurement/purchase-requests/new" element={<RequirePermission permission={P.purchaseRequest.create}><PurchaseRequestCreatePage /></RequirePermission>} />
     <Route path="/procurement/sourcing" element={<RequirePermission permission={P.purchaseOrder.create}><SourcingWorkbenchPage /></RequirePermission>} />
     <Route path="/procurement/reports/open-orders" element={<RequirePermission permission={P.purchaseOrder.read}><OpenOrdersPage /></RequirePermission>} />
+    <Route path="/procurement/grni" element={<RequirePermission permission={P.goodsReceipt.read}><GrniReconciliationPage /></RequirePermission>} />
     <Route path="/procurement/purchase-orders" element={<RequirePermission permission={P.purchaseOrder.read}><PurchaseOrdersPage /></RequirePermission>} />
     <Route path="/procurement/purchase-orders/new" element={<RequirePermission permission={P.purchaseOrder.create}><PurchaseOrderCreatePage /></RequirePermission>} />
     <Route path="/procurement/purchase-orders/:id/receive" element={<RequirePermission permission={P.purchaseOrder.receive}><PurchaseOrderReceivePage /></RequirePermission>} />

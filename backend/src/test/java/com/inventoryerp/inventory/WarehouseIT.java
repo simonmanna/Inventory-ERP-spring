@@ -20,11 +20,18 @@ class WarehouseIT extends ApiTestSupport {
     String adminId;
     String category;
     String uom;
+    /** A second DEMO administrator: a manual pick order is shipped by someone other than its creator (h-01 F3). */
+    String shipperToken;
 
     @BeforeAll
     void fixtures() {
         adminId = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = 'admin@demo.test'")
                 .param(demoOrg).query(String.class).single();
+        String adminRole = jdbc.sql("SELECT \"A\" FROM \"_UserRoles\" WHERE \"B\" = ? LIMIT 1").param(adminId)
+                .query(String.class).single();
+        String shipper = "shipper-" + suffix() + "@demo.test";
+        createUser(demoOrg, shipper, "Shipper@12345", adminRole);
+        shipperToken = login("DEMO", shipper, "Shipper@12345");
         category = jdbc.sql("SELECT id FROM \"ProductCategory\" WHERE \"organizationId\" = ? ORDER BY \"createdAt\" LIMIT 1")
                 .param(demoOrg).query(String.class).optional().orElse(null);
         uom = jdbc.sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND code = 'UNIT'").param(demoOrg)
@@ -66,6 +73,26 @@ class WarehouseIT extends ApiTestSupport {
         }
         body.putAll(extra);
         return ok(201, "POST", "/warehouse/bins", body).get("id").asString();
+    }
+
+    /** Ship as the second administrator (a manual order cannot be shipped by its creator). */
+    JsonNode ship(String orderId, Map<String, Object> body) {
+        Res r = call("POST", "/warehouse/pick-orders/" + orderId + "/ship", body, shipperToken);
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        return r.body();
+    }
+
+    /** A pending stock-out document of the location (its approve posts the issue). */
+    JsonNode stockOutDoc(String product, String location, int qty) {
+        return ok(200, "POST", "/inventory/stock-outs", Map.of("locationId", location, "responsibleById", adminId,
+                "approvedById", adminId, "category", "sample", "items", List.of(Map.of("productId", product, "qty",
+                        qty))));
+    }
+
+    /** Bin adjustments move bin stock: they need an Idempotency-Key (h-01 F11). */
+    Res adjust(String binId, Map<String, Object> body, String token) {
+        return call("POST", "/warehouse/bins/" + binId + "/adjust", body, Map.of("Authorization", "Bearer " + token,
+                "Idempotency-Key", UUID.randomUUID().toString()));
     }
 
     BigDecimal binQty(String binId, String productId) {
@@ -155,7 +182,7 @@ class WarehouseIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("three-step pick → pack → ship stages stock, two-step ships, one-step ships itself, cancel returns stock")
+    @DisplayName("three-step pick → pack → ship stages stock, two-step ships, one-step manual waits, cancel returns stock")
     void outbound() {
         String loc = location();
         String b1 = bin(loc, "P1", null, Map.of("pickSequence", 1));
@@ -176,9 +203,11 @@ class WarehouseIT extends ApiTestSupport {
         assertThat(short1.body().get("message").asString()).contains("Not enough binned stock").contains("available 20");
         ok(200, "POST", "/warehouse/pick-orders/" + big.get("id").asString() + "/cancel", Map.of());
 
-        // three steps
+        // three steps, for a stock-out document (h-01 F2: a sourced order names an existing document)
+        JsonNode doc = stockOutDoc(cement, loc, 10);
+        String outCode = doc.get("outCode").asString();
         JsonNode po = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 3, "sourceType",
-                "sales_order", "sourceRef", "SO-1", "lines", List.of(Map.of("productId", cement, "quantity", 10))));
+                "stock_out", "sourceRef", outCode, "lines", List.of(Map.of("productId", cement, "quantity", 10))));
         String id = po.get("id").asString();
         JsonNode released = ok(200, "POST", "/warehouse/pick-orders/" + id + "/release", null);
         assertThat(released.get("status").asString()).isEqualTo("released");
@@ -203,22 +232,33 @@ class WarehouseIT extends ApiTestSupport {
         JsonNode packed2 = ok(200, "POST", "/warehouse/pick-orders/" + id + "/pack", Map.of("packageType", "pallet"));
         assertThat(packed2.get("status").asString()).isEqualTo("packed");
         assertThat(packed2.get("packages")).hasSize(2);
+        // the stock-out has not taken the goods out of the ledger yet: shipping would leave them counted twice
+        Res unposted = call("POST", "/warehouse/pick-orders/" + id + "/ship", Map.of(), adminToken);
+        assertThat(unposted.status()).isEqualTo(400);
+        assertThat(unposted.body().get("message").asString())
+                .startsWith("Post stock-out " + outCode + " before shipping pick order " + po.get("code").asString());
+        // the source document issues the ledger stock; the goods wait in staging, no drift, nothing to put away
+        ok(200, "POST", "/inventory/stock-outs/" + doc.get("id").asString() + "/approve", null);
+        row = productRow(ok(200, "GET", "/warehouse/locations/" + loc + "/overview", null), cement);
+        assertThat(new BigDecimal(row.get("awaitingShipQty").asString())).isEqualByComparingTo("10");
+        assertThat(new BigDecimal(row.get("unbinnedQty").asString())).isEqualByComparingTo("0");
+        assertThat(row.get("mismatch").asBoolean()).isFalse();
         JsonNode shipped = ok(200, "POST", "/warehouse/pick-orders/" + id + "/ship", Map.of("carrier", "Own fleet",
                 "trackingRef", "TRK-1"));
         assertThat(shipped.get("status").asString()).isEqualTo("shipped");
         assertThat(shipped.get("packages").get(0).get("status").asString()).isEqualTo("shipped");
-        // the source document issues the ledger stock: staged drops once it is shipped
-        stockOut(cement, loc, 10);
         row = productRow(ok(200, "GET", "/warehouse/locations/" + loc + "/overview", null), cement);
         assertThat(new BigDecimal(row.get("stagedQty").asString())).isEqualByComparingTo("0");
         assertThat(new BigDecimal(row.get("unbinnedQty").asString())).isEqualByComparingTo("0");
+        assertThat(new BigDecimal(row.get("awaitingShipQty").asString())).isEqualByComparingTo("0");
 
-        // one step ships itself on the last pick
+        // one step: a manual order waits in picked for someone allowed to approve the stock-out (h-01 F3)
         JsonNode one = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 1, "lines",
                 List.of(Map.of("productId", cement, "quantity", 3))));
         completeAll(ok(200, "POST", "/warehouse/pick-orders/" + one.get("id").asString() + "/release", null).get("tasks"));
         assertThat(ok(200, "GET", "/warehouse/pick-orders/" + one.get("id").asString(), null).get("status").asString())
-                .isEqualTo("shipped");
+                .isEqualTo("picked");
+        assertThat(ship(one.get("id").asString(), Map.of()).get("status").asString()).isEqualTo("shipped");
 
         // cancel after picking needs a return bin and puts the stock back
         JsonNode two = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2, "lines",
@@ -267,7 +307,7 @@ class WarehouseIT extends ApiTestSupport {
         assertThat(released.get("tasks")).hasSize(6);
         completeAll(ok(200, "GET", "/warehouse/tasks?locationId=" + loc + "&type=pick&waveId=" + waveId, null));
         for (String o : orders) {
-            ok(200, "POST", "/warehouse/pick-orders/" + o + "/ship", Map.of());
+            ship(o, Map.of());
         }
         assertThat(ok(200, "GET", "/warehouse/waves/" + waveId, null).get("status").asString()).isEqualTo("done");
         assertThat(ok(200, "GET", "/warehouse/waves?locationId=" + loc, null)).hasSize(1);
@@ -412,7 +452,7 @@ class WarehouseIT extends ApiTestSupport {
         // a short pick (1 of 2) still finishes picking
         ok(200, "POST", "/warehouse/tasks/" + pickTask + "/complete", Map.of("quantity", 1));
         assertThat(ok(200, "GET", "/warehouse/pick-orders?locationId=" + loc + "&status=picked", null)).hasSize(1);
-        ok(200, "POST", "/warehouse/pick-orders/" + poId + "/ship", null);
+        ship(poId, null);
         assertThat(call("POST", "/warehouse/pick-orders/" + poId + "/ship", null, adminToken).status()).isEqualTo(400);
         assertThat(call("POST", "/warehouse/pick-orders/" + poId + "/cancel", null, adminToken).status())
                 .isEqualTo(400);
@@ -451,7 +491,7 @@ class WarehouseIT extends ApiTestSupport {
         completeAll(ok(200, "POST", "/warehouse/pick-orders/" + id + "/release", null).get("tasks"));
         assertThat(onHand(bolts, loc)).isEqualByComparingTo("10");
         String code = manual.get("code").asString();
-        ok(200, "POST", "/warehouse/pick-orders/" + id + "/ship", Map.of("carrier", "Van"));
+        ship(id, Map.of("carrier", "Van"));
         assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
         long rows = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
                 + " AND \"referenceType\" = 'WarehousePickOrder' AND \"referenceId\" = ? AND \"quantityChange\" = -4")
@@ -467,14 +507,17 @@ class WarehouseIT extends ApiTestSupport {
         assertThat(row.get("mismatch").asBoolean()).isFalse();
         assertThat(new BigDecimal(row.get("binnedQty").asString())).isEqualByComparingTo("6");
 
-        // a sales-order pick order: the sales document posts the issue, shipping leaves the ledger alone
+        // a stock-out pick order: the document posts the issue (here first), shipping leaves the ledger alone
+        JsonNode doc = stockOutDoc(bolts, loc, 1);
+        ok(200, "POST", "/inventory/stock-outs/" + doc.get("id").asString() + "/approve", null);
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("5");
         JsonNode sourced = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2,
-                "sourceType", "sales_order", "sourceRef", "SO-9", "lines", List.of(Map.of("productId", bolts,
-                        "quantity", 1))));
+                "sourceType", "stock_out", "sourceRef", doc.get("outCode").asString(), "lines",
+                List.of(Map.of("productId", bolts, "quantity", 1))));
         completeAll(ok(200, "POST", "/warehouse/pick-orders/" + sourced.get("id").asString() + "/release", null)
                 .get("tasks"));
         ok(200, "POST", "/warehouse/pick-orders/" + sourced.get("id").asString() + "/ship", Map.of());
-        assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("5");
 
         // one step, every pick task cancelled: back to draft, not shipped, nothing issued
         JsonNode one = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 1, "lines",
@@ -485,12 +528,14 @@ class WarehouseIT extends ApiTestSupport {
         }
         assertThat(ok(200, "GET", "/warehouse/pick-orders/" + oneId, null).get("status").asString())
                 .isEqualTo("draft");
-        assertThat(onHand(bolts, loc)).isEqualByComparingTo("6");
-        // released again and picked, it ships and issues once
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("5");
+        // released again and picked, it waits for an approver (h-01 F3), then ships and issues once
         completeAll(ok(200, "POST", "/warehouse/pick-orders/" + oneId + "/release", null).get("tasks"));
         assertThat(ok(200, "GET", "/warehouse/pick-orders/" + oneId, null).get("status").asString())
-                .isEqualTo("shipped");
-        assertThat(onHand(bolts, loc)).isEqualByComparingTo("4");
+                .isEqualTo("picked");
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("5");
+        assertThat(ship(oneId, Map.of()).get("status").asString()).isEqualTo("shipped");
+        assertThat(onHand(bolts, loc)).isEqualByComparingTo("3");
     }
 
     @Test
@@ -529,22 +574,19 @@ class WarehouseIT extends ApiTestSupport {
                 .isZero();
 
         // adjust: never more than the ledger holds, a reason is required, decreases are free
-        Res over = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 5,
-                "reason", "found"), adminToken);
+        Res over = adjust(pick, Map.of("productId", rope, "newQty", 5, "reason", "found"), adminToken);
         assertThat(over.status()).isEqualTo(400);
         assertThat(over.body().get("message").asString()).startsWith("Only 0 of");
-        Res noReason = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -1),
-                adminToken);
+        Res noReason = adjust(pick, Map.of("productId", rope, "delta", -1), adminToken);
         assertThat(noReason.status()).isEqualTo(400);
-        Res both = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -1,
-                "newQty", 1, "reason", "x"), adminToken);
+        Res both = adjust(pick, Map.of("productId", rope, "delta", -1, "newQty", 1, "reason", "x"), adminToken);
         assertThat(both.body().get("message").asString()).isEqualTo("Give either newQty or delta");
-        JsonNode down = ok(200, "POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -3,
-                "reason", "damaged shelf count"));
-        assertThat(new BigDecimal(down.get("change").asString())).isEqualByComparingTo("-3");
+        Res down = adjust(pick, Map.of("productId", rope, "delta", -3, "reason", "damaged shelf count"), adminToken);
+        assertThat(down.status()).as(down.raw().body()).isEqualTo(200);
+        assertThat(new BigDecimal(down.body().get("change").asString())).isEqualByComparingTo("-3");
         assertThat(binQty(pick, rope)).isEqualByComparingTo("1");
-        ok(200, "POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 4,
-                "reason", "recounted"));
+        assertThat(adjust(pick, Map.of("productId", rope, "newQty", 4, "reason", "recounted"), adminToken).status())
+                .isEqualTo(200);
         assertThat(binQty(pick, rope)).isEqualByComparingTo("4");
         assertThat(jdbc.sql("SELECT count(*) FROM \"AuditLog\" WHERE entity = 'WarehouseBinStock' AND \"entityId\" = ?"
                 + " AND action = 'adjust'").param(pick).query(Long.class).single()).isEqualTo(2);
@@ -555,11 +597,14 @@ class WarehouseIT extends ApiTestSupport {
                 List.of(Map.of("productId", rope, "quantity", 4))));
         ok(200, "POST", "/warehouse/pick-orders/" + po2.get("id").asString() + "/release", null);
         // a held quantity cannot be adjusted away
-        Res held = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 0,
-                "reason", "x"), adminToken);
+        Res held = adjust(pick, Map.of("productId", rope, "newQty", 0, "reason", "x"), adminToken);
         assertThat(held.body().get("message").asString()).contains("is held by open pick / move tasks");
-        assertThat(call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "newQty", 1,
-                "reason", "x"), weakToken()).status()).isEqualTo(403);
+        assertThat(adjust(pick, Map.of("productId", rope, "newQty", 1, "reason", "x"), weakToken()).status())
+                .isEqualTo(403);
+        // without an Idempotency-Key a retried adjustment could apply twice: refused (h-01 F11)
+        Res noKey = call("POST", "/warehouse/bins/" + pick + "/adjust", Map.of("productId", rope, "delta", -1,
+                "reason", "x"), adminToken);
+        assertThat(noKey.status()).isEqualTo(400);
     }
 
     @Test
@@ -603,5 +648,26 @@ class WarehouseIT extends ApiTestSupport {
         assertThat(call("GET", "/warehouse/bins/" + binId, null, otherToken).status()).isEqualTo(404);
         Res bad = call("PUT", "/warehouse/locations/" + loc + "/settings", Map.of("outboundSteps", 4), adminToken);
         assertThat(bad.status()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName("B3 (readiness 2026-11-17): a manual pick referencing a stock-out is refused; with it as source it is not")
+    void manualPickWithDocumentReferenceRefused() {
+        String loc = location();
+        String bolts = product("Bolts");
+        String code = "OUT-B3-" + suffix();
+        jdbc.sql("INSERT INTO \"StockOut\" (id, \"organizationId\", \"outCode\", \"locationId\", \"updatedAt\")"
+                + " VALUES (?, ?, ?, ?, now())").params(UUID.randomUUID().toString(), demoOrg, code, loc).update();
+        Res manual = call("POST", "/warehouse/pick-orders", Map.of("locationId", loc, "sourceRef", code, "lines",
+                List.of(Map.of("productId", bolts, "quantity", 1))), adminToken);
+        assertThat(manual.status()).as(manual.raw().body()).isEqualTo(400);
+        assertThat(manual.body().get("message").asString()).startsWith("Reference " + code + " is a stock-out");
+        JsonNode sourced = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "sourceType", "stock_out",
+                "sourceRef", code, "lines", List.of(Map.of("productId", bolts, "quantity", 1))));
+        assertThat(sourced.get("sourceType").asString()).isEqualTo("stock_out");
+        // A free reference that is no document stays a manual pick.
+        JsonNode free = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "sourceRef", "Van 3",
+                "lines", List.of(Map.of("productId", bolts, "quantity", 1))));
+        assertThat(free.get("sourceType").asString()).isEqualTo("manual");
     }
 }

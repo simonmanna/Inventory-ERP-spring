@@ -8,6 +8,7 @@ import static com.inventoryerp.projects.application.ProjectService.org;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.fixedasset.application.AssetCapitalisationService;
 import com.inventoryerp.fixedasset.application.AssetCapitalisationService.ConstructedAssetInput;
@@ -52,6 +53,7 @@ public class CapitalProjectService {
     private final ProjectService projects;
     private final ProjectCostService costs;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountDeterminationService determination;
     private final AssetCapitalisationService assets;
     private final SequenceService seq;
@@ -59,11 +61,12 @@ public class CapitalProjectService {
 
     public CapitalProjectService(JdbcClient jdbc, ProjectService projects, ProjectCostService costs,
             PostingService posting, AccountDeterminationService determination, AssetCapitalisationService assets,
-            SequenceService seq, AuditService audit) {
+            SequenceService seq, AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.projects = projects;
         this.costs = costs;
         this.posting = posting;
+        this.reversals = reversals;
         this.determination = determination;
         this.assets = assets;
         this.seq = seq;
@@ -242,7 +245,7 @@ public class CapitalProjectService {
         }
         String reversal = null;
         if (c.get("journalEntryId") != null) {
-            reversal = (String) posting.reverse((String) c.get("journalEntryId"), Instant.now(), "Reversal of"
+            reversal = (String) reversals.reverseAt((String) c.get("journalEntryId"), Instant.now(), "Reversal of"
                     + " capitalisation " + c.get("number")).get("id");
         }
         for (String a : assetIds) {

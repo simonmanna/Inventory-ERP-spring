@@ -600,6 +600,22 @@ public class StockPostingService {
                         Line.credit(determination.mapped("wip"), v, label))));
     }
 
+    /**
+     * Review 2026-11-17 (rework costing): takes back a {@link #postProductionScrap} loss when its order is reversed —
+     * Dr WIP / Cr Stock Adjustment Expense.
+     */
+    public void postProductionScrapReversal(BigDecimal totalValue, Instant date, String sourceType, String sourceId,
+            String description) {
+        if (totalValue.signum() <= 0) {
+            return;
+        }
+        String label = description != null ? description : "Production scrap reversed";
+        String v = JsNumbers.dec(totalValue);
+        posting.post(PostingRequest.of("INV", date, label, sourceType, sourceId, null,
+                List.of(Line.debit(determination.mapped("wip"), v, label),
+                        Line.credit(determination.mapped("stock_adjustment_expense"), v, label))));
+    }
+
     /** Overhead absorption: Dr WIP / Cr Overhead Absorbed. */
     public void postOverheadAbsorption(BigDecimal totalValue, Instant date, String sourceType, String sourceId,
             String description) {
@@ -611,6 +627,22 @@ public class StockPostingService {
         posting.post(PostingRequest.of("INV", date, label, sourceType, sourceId, null,
                 List.of(Line.debit(determination.mapped("wip"), v, label),
                         Line.credit(determination.mapped("overhead_absorbed"), v, label))));
+    }
+
+    /**
+     * Overhead absorption undone (production order reversed, review 2026-11-17 ACR-5): Dr Overhead Absorbed / Cr WIP,
+     * the mirror of {@link #postOverheadAbsorption}.
+     */
+    public void postOverheadAbsorptionReversal(BigDecimal totalValue, Instant date, String sourceType, String sourceId,
+            String description) {
+        if (totalValue.signum() <= 0) {
+            return;
+        }
+        String label = description != null ? description : "Overhead absorption reversed";
+        String v = JsNumbers.dec(totalValue);
+        posting.post(PostingRequest.of("INV", date, label, sourceType, sourceId, null,
+                List.of(Line.debit(determination.mapped("overhead_absorbed"), v, label),
+                        Line.credit(determination.mapped("wip"), v, label))));
     }
 
     // ------------------------------------------------------------------ helpers
@@ -688,6 +720,36 @@ public class StockPostingService {
     private String productName(String productId) {
         Map<String, Object> p = product(productId);
         return p == null ? productId : (String) p.get("name");
+    }
+
+    /** The payable accounts a supplier's AP lines can sit on: the default payable and the supplier's own, if any. */
+    public List<String> supplierPayableAccounts(String partnerId) {
+        List<String> accounts = new ArrayList<>();
+        accounts.add(determination.payableAccount(null));
+        String own = partnerPayable(partnerId);
+        if (own != null && !accounts.contains(own)) {
+            accounts.add(own);
+        }
+        return accounts;
+    }
+
+    /**
+     * What the AP ledger says is still owed to a supplier, in functional currency: the credits less the debits of every
+     * posted journal line tagged with the supplier on its {@linkplain #supplierPayableAccounts payable accounts}. This
+     * is the supplier ledger's measure ({@code GET /vendor-bills/suppliers/:id/ledger}), so it counts receipts, bills,
+     * payments, returns to the vendor and claim credits.
+     */
+    public BigDecimal supplierOpenPayable(String partnerId) {
+        if (partnerId == null) {
+            return Money.ZERO;
+        }
+        return Money.dec(jdbc.sql("SELECT COALESCE(SUM(l.\"baseCredit\" - l.\"baseDebit\"), 0) FROM \"JournalLine\" l"
+                        + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
+                        + " AND l.\"partnerId\" = ? AND l.\"accountId\" = ANY(?::text[])"
+                        + " AND e.status IN ('posted', 'reversed')")
+                .params(TenantContext.organizationId(), partnerId,
+                        supplierPayableAccounts(partnerId).toArray(String[]::new))
+                .query(BigDecimal.class).single());
     }
 
     private String partnerPayable(String partnerId) {

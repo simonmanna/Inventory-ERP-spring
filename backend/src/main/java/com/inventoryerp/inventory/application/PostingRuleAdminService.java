@@ -137,6 +137,8 @@ public class PostingRuleAdminService {
     public Map<String, Object> create(Map<String, Object> dto) {
         String source = dto.get("accountSource") == null ? "account_mapping" : (String) dto.get("accountSource");
         assertLiteralAccount(source, (String) dto.get("literalAccountId"));
+        assertResolvable(source, (String) dto.get("accountMappingKey"), (String) dto.get("productId"),
+                (String) dto.get("categoryId"));
         return SqlRows.one(InventoryPostingRule.class, jdbc.sql("INSERT INTO \"InventoryPostingRule\" (id,"
                         + " \"organizationId\", \"movementType\", \"lineIndex\", \"debitOrCredit\", \"accountSource\","
                         + " \"accountMappingKey\", \"literalAccountId\", \"productId\", \"categoryId\", \"createdAt\","
@@ -167,6 +169,20 @@ public class PostingRuleAdminService {
             String literal = (String) (dto.containsKey("literalAccountId") ? dto.get("literalAccountId")
                     : row.get("literalAccountId"));
             assertLiteralAccount(source, literal);
+        }
+        if (dto.containsKey("accountSource") || dto.containsKey("accountMappingKey") || dto.containsKey("isActive")) {
+            // Gaps h-00 F3 / h-02 F8: the rule as saved must still resolve an account while it is active.
+            Map<String, Object> row = jdbc.sql("SELECT \"accountSource\", \"accountMappingKey\", \"isActive\","
+                    + " \"productId\", \"categoryId\" FROM \"InventoryPostingRule\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(id, org()).query().singleRow();
+            boolean active = Boolean.TRUE.equals(dto.containsKey("isActive") ? dto.get("isActive") : row.get("isActive"));
+            if (active) {
+                assertResolvable((String) (dto.containsKey("accountSource") ? dto.get("accountSource")
+                                : row.get("accountSource")),
+                        (String) (dto.containsKey("accountMappingKey") ? dto.get("accountMappingKey")
+                                : row.get("accountMappingKey")),
+                        (String) row.get("productId"), (String) row.get("categoryId"));
+            }
         }
         List<Object> params = new ArrayList<>();
         StringBuilder set = new StringBuilder("\"updatedAt\" = " + NOW);
@@ -211,6 +227,25 @@ public class PostingRuleAdminService {
         }
         if (account.get("deprecatedAt") != null) {
             throw ApiException.badRequest("Account " + account.get("code") + " is deprecated and cannot be posted to");
+        }
+    }
+
+    /**
+     * Gaps h-00 F3 / h-02 F8: refuse a rule that cannot resolve an account. Such a rule shadowed the default line of its
+     * side, so moves of its type posted a one-sided entry (refused) or, when no line resolved, no journal at all.
+     */
+    private void assertResolvable(String accountSource, String key, String productId, String categoryId) {
+        if ("literal".equals(accountSource)) {
+            return; // assertLiteralAccount
+        }
+        if (key == null || key.isBlank()) {
+            throw ApiException.badRequest("accountMappingKey is required for a " + accountSource + " posting rule");
+        }
+        if (rules.accountForScope(accountSource, key, productId, categoryId) == null) {
+            throw ApiException.badRequest("account_mapping".equals(accountSource)
+                    ? "Account mapping '" + key + "' is not configured; map it under Accounting > Account Mapping first"
+                    : "Posting rule key '" + key + "' resolves no account for the products it covers; set that account"
+                            + " on the product or category, or map '" + key + "' under Accounting > Account Mapping");
         }
     }
 

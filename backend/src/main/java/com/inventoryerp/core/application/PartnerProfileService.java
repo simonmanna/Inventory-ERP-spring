@@ -72,8 +72,103 @@ public class PartnerProfileService {
             throw ApiException.notFound("Partner " + partnerId + " not found");
         }
         Map<String, Object> out = new LinkedHashMap<>(rows.getFirst());
-        out.put("bankAccounts", parseList((String) out.get("bankAccounts")));
+        // h04-F4: account numbers and IBANs leave the server masked, like the verified supplier bank accounts.
+        List<Map<String, Object>> masked = new ArrayList<>();
+        for (Map<String, Object> b : rows(parseList((String) out.get("bankAccounts")))) {
+            Map<String, Object> m = new LinkedHashMap<>(b);
+            m.put("accountNumber", mask(b.get("accountNumber")));
+            m.put("iban", mask(b.get("iban")));
+            masked.add(m);
+        }
+        out.put("bankAccounts", masked);
         return out;
+    }
+
+    private static final String MASK = "••••";
+
+    /** {@code •••• 1234}: the last 4 characters of an account number or IBAN (all hidden when shorter). */
+    static String mask(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String s = value.toString();
+        if (s.startsWith(MASK)) {
+            return s;
+        }
+        return s.length() <= 4 ? MASK : MASK + " " + s.substring(s.length() - 4);
+    }
+
+    private static boolean masked(Object value) {
+        return value instanceof String s && s.startsWith(MASK);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> rows(List<?> list) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (o instanceof Map<?, ?> m) {
+                out.add((Map<String, Object>) m);
+            }
+        }
+        return out;
+    }
+
+    /** A bank row reduced to the profile's keys, blanks as null: what two rows are compared on. */
+    private static Map<String, Object> project(Map<String, Object> row) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String k : BANK_KEYS) {
+            Object v = row.get(k);
+            out.put(k, v == null || v.toString().isBlank() ? null : v.toString().trim());
+        }
+        return out;
+    }
+
+    /**
+     * h04-F4: the saved bank list. Masked numbers sent back unchanged (the page shows only masked values) are resolved to
+     * the stored ones. A supplier's list may only keep or drop stored accounts: a new or changed supplier account goes
+     * through the supplier page, where a second person verifies it before anyone pays to it.
+     */
+    private String resolveBanks(String partnerId, String cleanJson) {
+        String storedJson = jdbc.sql("SELECT \"bankAccounts\"::text FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(partnerId, org()).query(String.class).optional().orElse(null);
+        List<Map<String, Object>> stored = rows(parseList(storedJson)).stream().map(PartnerProfileService::project)
+                .toList();
+        List<Map<String, Object>> unused = new ArrayList<>(stored);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows(parseList(cleanJson))) {
+            Map<String, Object> r = project(row);
+            Object number = r.get("accountNumber");
+            if (masked(number)) {
+                Map<String, Object> match = unused.stream().filter(s -> number.equals(mask(s.get("accountNumber"))))
+                        .findFirst().orElseThrow(() -> ApiException.badRequest("Bank account " + number + " is not on"
+                                + " this partner; enter the full account number"));
+                unused.remove(match);
+                r.put("accountNumber", match.get("accountNumber"));
+                if (masked(r.get("iban"))) {
+                    if (!r.get("iban").equals(mask(match.get("iban")))) {
+                        throw ApiException.badRequest("IBAN " + r.get("iban") + " is not on this partner; enter the full"
+                                + " IBAN");
+                    }
+                    r.put("iban", match.get("iban"));
+                }
+            } else if (masked(r.get("iban"))) {
+                throw ApiException.badRequest("IBAN " + r.get("iban") + " cannot be kept for a new account number; enter"
+                        + " the full IBAN");
+            }
+            out.add(r);
+        }
+        boolean supplier = Boolean.TRUE.equals(jdbc.sql("SELECT \"isSupplier\" FROM \"Partner\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(partnerId, org()).query(Boolean.class).optional().orElse(false));
+        if (supplier) {
+            List<Map<String, Object>> left = new ArrayList<>(stored);
+            for (Map<String, Object> r : out) {
+                if (!left.remove(r)) {
+                    throw ApiException.badRequest("Supplier bank accounts cannot be added or changed here; add them on"
+                            + " the supplier page, where a second person verifies them");
+                }
+            }
+        }
+        return JSON.writeValueAsString(out);
     }
 
     /** Patch the configuration; unknown keys are rejected like any whitelisted DTO. */
@@ -92,6 +187,7 @@ public class PartnerProfileService {
             String key = e.getKey();
             Object value = normalize(key, e.getValue());
             if ("bankAccounts".equals(key)) {
+                value = resolveBanks(partnerId, (String) value);
                 sets.add("\"bankAccounts\" = ?::jsonb");
             } else {
                 sets.add("\"" + COLUMNS.get(key) + "\" = ?");

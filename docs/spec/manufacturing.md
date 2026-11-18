@@ -142,6 +142,22 @@ Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-
 | I5 S-4 | `POST /production-orders/:id/reverse` | stock issued at the current cost, GL credits stock with the output's cost (ledger and GL drift when the cost moved) | GL credits stock with the issued value, WIP takes back the output's value, the difference is a stock adjustment gain / loss (`StockPostingService.postProductionReversal`; test `CostingAuditIT.reversalAfterTheCostMoved`, failed before the fix) |
 | A9 | list routes (BOMs, orders, requests, plans) | unbounded | optional `limit` (1–1000) / `offset`; still a bare array, unbounded when absent |
 
+Approved by the owner 2026-11-17 (accounting and costing review,
+[audit](../audits/2026-11-17-accounting-costing-review.md); `V533`, `V534`; code markers `Review 2026-11-17`):
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| ACR-5 | `POST /production-orders/:id/reverse` | the overhead the completion absorbed into WIP stayed there (Nest) | taken back out: Dr Overhead Absorbed / Cr WIP |
+| ACR-10 | standard-cost variance split (completion) | BOM-unit quantities compared with base-unit actuals, so price and usage were split wrongly | both in base units |
+| ACR-11 | `/manufacturing/process-costing` (extension) | a period with cost but no completed / closing units closed with the cost stranded; a carried-forward opening could be edited; cost without a credit account was taken on trust | close refused (`Process <code> has <amount> of cost in the period but no completed or closing units to carry it: …`). The carried opening is locked (`The opening work in process was carried forward from the previous closed period and cannot be edited`). Recorded-only cost needs `journalEntryId`, a posted entry not raised by process costing, and only up to what it debited to WIP |
+| ACR-13 | `POST /production-orders/:id/reverse` (standard-costed output) | the variance journal was reversed but its `StandardCostVariance` rows stayed | offset by negative rows, so the material ledger and variance reports drop them |
+| ACR-18 | standard cost roll-up | ignored the BOM's expected yield | the standard is per good unit (quantities ÷ yield) |
+| ACR-19 | `POST /production-orders/:id/start` | consumed stock that was not on hand at a stale cost (when the stock policy allowed it) | setting `costing.production.requireMaterialsOnHand` (default off). When on, the order cannot consume more than is on hand. Multi-stage backflush issues follow it too (manual stage issues were already strict) |
+| Variances | `GET /manufacturing/costing/orders/:id/variances`, `/variances` (extension, ADR-S018) | price, usage, labour efficiency, overhead, yield | adds material **mix** and **input yield** (two or more materials in one unit; `mixNote` otherwise), labour **rate**, machine **spending** / **efficiency**, **energy**, overhead **spending** / **efficiency**, `lines` (key, parent, label, explanation, amount) and `reconciliation` (actual − standard = variances, unexplained). **The total now includes labour rate, machine and energy, and the standard includes machine time** |
+| NRV | `PUT /manufacturing/boms/:id/stage-setup`, `PUT /manufacturing/cost-allocation-rules/default` (extension, ADR-S011) | methods quantity, weight, market value, fixed % | adds `net_realisable_value`: quantity × (sales value − costs after the split-off, floored at 0). Co-products take `separableCostPerUnit` and the rule takes `mainSeparableCostPerUnit` (V533) |
+| Rework | `POST /production-orders/:id/rework` (extension, ADR-S006 C) | the rework's cost always stayed in the units | `treatment`: `normal` (default, unchanged) or `abnormal`. Abnormal: at completion the units come back at the cost they carried and the extra cost is expensed (Dr Stock Adjustment Expense / Cr WIP). Orders carry `reworkTreatment` and `reworkLoss`; a reversal takes the loss back (V534) |
+
+
 ## Status
 
 Done. Parity: 61/61 Nest routes (42 in the generated table + 19 phase-4 routes). ADR-S006: packages A–D complete

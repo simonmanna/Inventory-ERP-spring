@@ -36,10 +36,17 @@ public class BillControls implements VendorBillPostGuard, MatchToleranceProvider
 
     @Override
     public List<String> beforePost(String billId, Map<String, Object> bill) {
-        // W6: goods still under incoming inspection are not billed yet (only when an inspection exists).
+        // W6: goods still under incoming inspection are not billed yet (only when an inspection exists). h04-F5: the
+        // hold finds them by the bill's orders and also by its lines: a line of the bill's supplier for a product (and
+        // variant) still unbilled on a receipt under inspection, so a bill without purchaseOrderIds is held too.
         String pending = jdbc.sql("SELECT string_agg(DISTINCT i.\"inspectionNumber\", ', ') FROM \"IncomingInspection\" i"
-                + " JOIN \"VendorBillLink\" k ON k.\"purchaseOrderId\" = i.\"purchaseOrderId\" WHERE k.\"vendorBillId\" = ?"
-                + " AND i.\"organizationId\" = ? AND i.status = 'pending'").params(billId, org()).query(String.class)
+                + " WHERE i.\"organizationId\" = ? AND i.status = 'pending' AND (EXISTS (SELECT 1 FROM \"VendorBillLink\" k"
+                + " WHERE k.\"vendorBillId\" = ? AND k.\"purchaseOrderId\" = i.\"purchaseOrderId\") OR EXISTS (SELECT 1 FROM"
+                + " \"Document\" b JOIN \"DocumentLine\" bl ON bl.\"documentId\" = b.id JOIN \"IncomingInspectionLine\" il ON"
+                + " il.\"inspectionId\" = i.id JOIN \"GoodsReceiptLine\" gl ON gl.id = il.\"goodsReceiptLineId\" WHERE"
+                + " b.id = ? AND b.\"partnerId\" = i.\"partnerId\" AND bl.\"productId\" = gl.\"productId\" AND"
+                + " bl.\"variantId\" IS NOT DISTINCT FROM gl.\"variantId\" AND gl.quantity > gl.\"billedQuantity\"))")
+                .params(org(), billId, billId).query(String.class)
                 .list().stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
         if (pending != null) {
             throw ApiException.badRequest("Incoming inspection " + pending + " is still open for goods on this bill —"

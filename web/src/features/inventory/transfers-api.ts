@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { notifyApiError } from '@/lib/api-error';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 
@@ -58,14 +60,14 @@ export function useCreateTransfer() {
       notes?: string;
       items: { productId: string; qtyRequested: number; distStrategy?: string }[];
     }) => {
-      const res = await api.post('/inventory/transfers', data);
-      return res.data;
+      // A stable key per payload: a retry after a lost answer replays instead of creating a second transfer.
+      return idempotentPost<StockTransfer>('/inventory/transfers', data);
     },
     onSuccess: () => {
       notify.success(tx('Transfer created'));
       qc.invalidateQueries({ queryKey: ['inventory-transfers'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed to create transfer')),
+    onError: (e: unknown) => notifyApiError(e, tx('Failed to create transfer')),
   });
 }
 
@@ -73,8 +75,7 @@ export function useApproveTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const res = await api.post<StockTransfer>(`/inventory/transfers/${id}/approve`);
-      return res.data;
+      return idempotentPost<StockTransfer>(`/inventory/transfers/${id}/approve`);
     },
     onSuccess: (d: StockTransfer) => {
       notify.success(d?.mode === 'transit' ? tx('Transfer approved — dispatch it when the goods leave') : tx('Transfer approved'));
@@ -83,7 +84,7 @@ export function useApproveTransfer() {
       qc.invalidateQueries({ queryKey: ['inventory-stats'] });
       qc.invalidateQueries({ queryKey: ['inventory-ledger'] });
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed to approve transfer')),
+    onError: (e: unknown) => notifyApiError(e, tx('Failed to approve transfer')),
   });
 }
 
@@ -91,14 +92,14 @@ export function useReverseTransfer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (v: { id: string; reason: string }) =>
-      (await api.post<StockTransfer>(`/inventory/transfers/${v.id}/reverse`, { reason: v.reason })).data,
+      idempotentPost<StockTransfer>(`/inventory/transfers/${v.id}/reverse`, { reason: v.reason }),
     onSuccess: (d) => {
       notify.success(tx('{{transferCode}} reversed — stock moved back', { transferCode: d.transferCode }));
       for (const key of ['inventory-transfers', 'inventory-product-stock-levels', 'inventory-stats', 'inventory-ledger']) {
         qc.invalidateQueries({ queryKey: [key] });
       }
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Failed to reverse transfer')),
+    onError: (e: unknown) => notifyApiError(e, tx('Failed to reverse transfer')),
   });
 }
 
@@ -126,6 +127,10 @@ function invalidateTransferViews(qc: ReturnType<typeof useQueryClient>) {
   }
 }
 
+/**
+ * A transfer state change. Every action goes through `idempotentPost`: the key stays the same until the server answers
+ * definitively, so a receipt retried after a lost answer is replayed, never booked twice.
+ */
 function useTransferAction<V>(fn: (v: V) => Promise<StockTransfer>, success: (d: StockTransfer) => string, failure: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -134,13 +139,13 @@ function useTransferAction<V>(fn: (v: V) => Promise<StockTransfer>, success: (d:
       notify.success(success(d));
       invalidateTransferViews(qc);
     },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? failure),
+    onError: (e: unknown) => notifyApiError(e, failure),
   });
 }
 
 export function useDispatchTransfer() {
   return useTransferAction(
-    async (id: string) => (await api.post<StockTransfer>(`/inventory/transfers/${id}/dispatch`)).data,
+    (id: string) => idempotentPost<StockTransfer>(`/inventory/transfers/${id}/dispatch`),
     (d) => `${d.transferCode} dispatched — stock is now in transit`,
     tx('Failed to dispatch transfer'),
   );
@@ -148,8 +153,8 @@ export function useDispatchTransfer() {
 
 export function useReceiveTransfer() {
   return useTransferAction(
-    async (v: { id: string; lines: ReceiveTransferLine[]; notes?: string }) =>
-      (await api.post<StockTransfer>(`/inventory/transfers/${v.id}/receive`, { lines: v.lines, notes: v.notes })).data,
+    (v: { id: string; lines: ReceiveTransferLine[]; notes?: string }) =>
+      idempotentPost<StockTransfer>(`/inventory/transfers/${v.id}/receive`, { lines: v.lines, notes: v.notes }),
     (d) => (d.status === 'completed' ? `${d.transferCode} fully received` : `${d.transferCode} partially received`),
     tx('Failed to receive transfer'),
   );
@@ -157,8 +162,8 @@ export function useReceiveTransfer() {
 
 export function useRecallTransfer() {
   return useTransferAction(
-    async (v: { id: string; reason: string }) =>
-      (await api.post<StockTransfer>(`/inventory/transfers/${v.id}/recall`, { reason: v.reason })).data,
+    (v: { id: string; reason: string }) =>
+      idempotentPost<StockTransfer>(`/inventory/transfers/${v.id}/recall`, { reason: v.reason }),
     (d) => `${d.transferCode} recalled — in-transit stock returned to source`,
     tx('Failed to recall transfer'),
   );
@@ -166,7 +171,7 @@ export function useRecallTransfer() {
 
 export function useCancelTransfer() {
   return useTransferAction(
-    async (id: string) => (await api.post<StockTransfer>(`/inventory/transfers/${id}/cancel`)).data,
+    (id: string) => idempotentPost<StockTransfer>(`/inventory/transfers/${id}/cancel`),
     (d) => `${d.transferCode} cancelled`,
     tx('Failed to cancel transfer'),
   );

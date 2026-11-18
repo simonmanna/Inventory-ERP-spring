@@ -108,17 +108,31 @@ public class CurrencyService {
     }
 
     /**
-     * Rate of a foreign-currency amount (owner decision D-PC1): an explicit document rate wins, else the rate table,
-     * else it is refused. A table rate never overrides a stated document rate. A rate of exactly 1 on a foreign currency
-     * is the legacy "not stated" default of documents and is treated as absent; a genuine 1:1 rate goes in the table.
+     * Rate of a foreign-currency amount carried on a stored document (owner decision D-PC1): an explicit document rate
+     * wins, else the rate table, else it is refused. A table rate never overrides a stated document rate. Documents
+     * store 1 when no rate was stated (column default), so here a rate of exactly 1 on a foreign currency is treated as
+     * absent. A rate the caller's own request states (where {@code null} means "not stated") goes through
+     * {@link #resolveStated}, which honours 1.
      */
     public Resolution resolve(String fromCode, String toCode, Object explicitRate, Instant date) {
+        return resolve(fromCode, toCode, explicitRate, date, false);
+    }
+
+    /**
+     * As {@link #resolve} for a rate stated on the request itself: {@code null} = not stated (table, else refused); any
+     * positive stated rate wins over the table, an explicit 1 (a pegged or 1:1 rate) included.
+     */
+    public Resolution resolveStated(String fromCode, String toCode, Object statedRate, Instant date) {
+        return resolve(fromCode, toCode, statedRate, date, true);
+    }
+
+    private Resolution resolve(String fromCode, String toCode, Object explicitRate, Instant date, boolean oneIsStated) {
         if (explicitRate != null) {
             BigDecimal stated = Money.dec(explicitRate);
             if (stated.signum() <= 0) {
                 throw ApiException.badRequest("exchangeRate must be greater than zero");
             }
-            if (stated.compareTo(BigDecimal.ONE) != 0) {
+            if (oneIsStated || stated.compareTo(BigDecimal.ONE) != 0) {
                 return new Resolution(fromCode, toCode, stated, "document", date);
             }
         }

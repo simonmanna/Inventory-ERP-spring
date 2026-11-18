@@ -384,6 +384,42 @@ public class CustomerDepositService {
         return get(depositId);
     }
 
+    /**
+     * Reverse one application of a deposit to an invoice (document reversals, owner decision 2026-11-17: a payment
+     * that is a deposit application cannot be voided directly, and only a cash sale could unapply one). With a reason,
+     * under the deposit's row lock, in one transaction: the application's payment is voided through the payment workflow
+     * (its journal entry mirrored — Dr AR / Cr customer deposits — and the invoice's residual and status restored), the
+     * application is stamped {@code reversedAt} (kept, never deleted) and the amount returns to the deposit, which
+     * re-opens. A replay of a reversed application returns the deposit unchanged. Cash-sale deposits stay with their
+     * cash sale.
+     */
+    @Transactional
+    public Map<String, Object> reverseApplication(String depositId, String paymentId, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw ApiException.badRequest("A reason is required to reverse a deposit application");
+        }
+        Map<String, Object> d = lock(depositId);
+        assertNotCashSale(d);
+        Map<String, Object> a = SqlRows.one(jdbc.sql("SELECT * FROM \"DepositApplication\" WHERE \"organizationId\" = ? AND"
+                + " \"depositId\" = ? AND \"paymentId\" = ? AND kind = 'application'").params(org(), depositId, paymentId));
+        if (a == null) {
+            throw ApiException.notFound("Deposit application not found");
+        }
+        if (a.get("reversedAt") != null) {
+            return get(depositId);
+        }
+        workflow.transition("payment", paymentId, "void", Map.of("reason", "Deposit application reversed: "
+                + reason.strip()), null);
+        BigDecimal amount = SqlRows.dec(a, "amount");
+        jdbc.sql("UPDATE \"DepositApplication\" SET \"reversedAt\" = " + NOW + " WHERE id = ?").param(a.get("id"))
+                .update();
+        jdbc.sql("UPDATE \"CustomerDeposit\" SET \"appliedAmount\" = \"appliedAmount\" - ?, status = 'open',"
+                + " \"updatedAt\" = " + NOW + " WHERE id = ?").params(amount, depositId).update();
+        audit.recordInTx(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("unapplied", amount,
+                "documentId", a.get("documentId"), "paymentId", paymentId, "reason", reason.strip())));
+        return get(depositId);
+    }
+
     private void settle(String depositId, BigDecimal applied, BigDecimal refunded) {
         jdbc.sql("UPDATE \"CustomerDeposit\" SET \"appliedAmount\" = \"appliedAmount\" + ?, \"refundedAmount\" ="
                 + " \"refundedAmount\" + ?, status = CASE WHEN amount - \"appliedAmount\" - ? - \"refundedAmount\" - ? <= 0"

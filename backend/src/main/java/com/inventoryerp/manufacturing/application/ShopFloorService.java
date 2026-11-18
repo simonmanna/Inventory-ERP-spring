@@ -292,7 +292,8 @@ public class ShopFloorService {
                 str(parent, "batchNumber"), null, null, dto != null && dto.notes() != null ? dto.notes()
                         : "Rework of " + parent.get("orderCode"), materials, null));
         Map<String, Object> updated = db.update(ProductionOrder.class, str(order, "id"), Obj.of("parentOrderId",
-                orderId, "orderKind", "rework", "qcRequired", true));
+                orderId, "orderKind", "rework", "qcRequired", true, "reworkTreatment", dto != null
+                        && dto.treatment() != null ? dto.treatment() : "normal"));
         db.update(ProductionOrder.class, orderId, Obj.of("status", "completed", "completedAt", Instant.now(),
                 "updatedBy", TenantContext.userId()));
         return production.withLines(updated, true, true);

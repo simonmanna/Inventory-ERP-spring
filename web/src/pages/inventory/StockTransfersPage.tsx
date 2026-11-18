@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Plus, Trash2, Save, Undo2, Truck, PackageCheck, CornerUpLeft, X } from 'lucide-react';
 import { ReasonDialog } from '@/features/inventory/reason-dialog';
@@ -13,10 +13,16 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { SearchableSelect } from '@/components/ui/searchable-select';
+import { PRODUCT_PICKER_PANEL, SearchableSelect } from '@/components/ui/searchable-select';
+import { ConfirmDialog } from '@/components/confirm-dialog';
+import { DataTablePagination } from '@/components/list/data-table-pagination';
 import { useStaffOptions } from '@/features/inventory/staff-options';
-import { api } from '@/lib/api';
+import { locationOption, useStockLocations } from '@/features/inventory/locations';
+import { useProductSearch } from '@/features/products/product-search';
+import { describeApiError } from '@/lib/api-error';
 import { dateTime } from '@/lib/format';
+import { subtractQty } from '@/lib/quantity';
+import { useClientPage } from '@/lib/use-client-page';
 import {
   useTransfers, useCreateTransfer, useApproveTransfer, useReverseTransfer,
   useDispatchTransfer, useReceiveTransfer, useRecallTransfer, useCancelTransfer,
@@ -26,10 +32,11 @@ import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
 
-interface Location { id: string; code: string; name: string; type?: string }
 interface Product { id: string; code: string; name: string }
 
 interface TransferLine {
+  /** Stable row identity: React keys must survive removing a line above. */
+  uid: string;
   productId: string;
   /** ADR-S058: variant of a product with variants. */
   variantId?: string | null;
@@ -55,10 +62,16 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const num = (v: unknown) => Number(v ?? 0);
+/** Still in transit, exact to the server's 6 decimals (plain float subtraction prefilled 0.20000000000000107). */
 const outstanding = (it: StockTransfer['items'][number]) =>
-  num(it.qtyDispatched) - num(it.qtyReceived) - num(it.qtyDamaged) - num(it.qtyShort) - num(it.qtyRecalled);
+  subtractQty(it.qtyDispatched, it.qtyReceived, it.qtyDamaged, it.qtyShort, it.qtyRecalled);
 
 type ReceiveRow = { itemId: string; productName: string; open: number; received: string; damaged: string; short: string };
+
+let lineSeq = 0;
+const newLine = (): TransferLine => ({ uid: `line-${++lineSeq}`, productId: '', productName: '', quantity: 1, distStrategy: 'FEFO' });
+
+const STATUS_FILTERS = ['pending', 'approved', 'in_transit', 'partially_received', 'completed', 'cancelled', 'reversed'];
 
 export function StockTransfersPage() {
   const qc = useQueryClient();
@@ -69,11 +82,12 @@ export function StockTransfersPage() {
   const [mode, setMode] = useState<'immediate' | 'transit'>('immediate');
   const [responsibleId, setResponsibleId] = useState('');
   const [approvedId, setApprovedId] = useState('');
-  const [lines, setLines] = useState<TransferLine[]>([
-    { productId: '', productName: '', quantity: 1, distStrategy: 'FEFO' },
-  ]);
+  const [lines, setLines] = useState<TransferLine[]>(() => [newLine()]);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [confirming, setConfirming] = useState<{ action: 'approve' | 'cancel'; transfer: StockTransfer } | null>(null);
 
-  const { data: transfers, isLoading } = useTransfers();
+  const { data: transfers, isLoading } = useTransfers(statusFilter || undefined);
+  const paged = useClientPage(transfers, 25, statusFilter);
   const createTransfer = useCreateTransfer();
   const approveTransfer = useApproveTransfer();
   const reverseTransfer = useReverseTransfer();
@@ -92,6 +106,7 @@ export function StockTransfersPage() {
 
   const openReceive = (tr: StockTransfer) => {
     setReceiveNotes('');
+    receiveTransfer.reset();
     setReceiving({
       id: tr.id,
       code: tr.transferCode,
@@ -110,32 +125,28 @@ export function StockTransfersPage() {
   const staffOptionsQuery = useStaffOptions();
   const staffOptions = staffOptionsQuery.data ?? [];
 
-  const products = useQuery<Product[]>({
-    queryKey: ['products'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Product[] }>('/products?pageSize=200');
-      return res.data.data ?? [];
-    },
-  });
+  // Searched on the server: a single page of 200 products left the rest unpickable.
+  const products = useProductSearch<Product>({ enabled: showForm });
+  const locations = useStockLocations();
 
-  const locations = useQuery<Location[]>({
-    queryKey: ['inventory-locations'],
-    queryFn: async () => {
-      const res = await api.get<{ data: Location[] }>('/inventory/locations');
-      return res.data.data ?? [];
-    },
-  });
-
-  const locMap = new Map(locations.data?.map((l) => [l.id, l]));
+  const locMap = new Map(locations.locations?.map((l) => [l.id, l]));
   // The transit location is system-managed: never a pickable source or destination.
-  const pickableLocations = (locations.data ?? []).filter((l) => l.type !== 'transit');
+  const locationOptions = (locations.locations ?? []).filter((l) => l.type !== 'transit').map(locationOption);
 
-  const pickProduct = (idx: number, productId: string) => {
-    const p = products.data?.find((x) => x.id === productId);
+  const updateLine = (uid: string, patch: Partial<TransferLine>) =>
+    setLines((cur) => cur.map((x) => (x.uid === uid ? { ...x, ...patch } : x)));
+
+  const pickProduct = (uid: string, productId: string) => {
+    const p = products.get(productId);
     if (!p) return;
-    const next = [...lines];
-    next[idx] = { ...next[idx], productId, variantId: null, productName: p.name };
-    setLines(next);
+    updateLine(uid, { productId, variantId: null, productName: p.name });
+  };
+
+  const confirmTransfer = () => {
+    if (!confirming) return;
+    const done = { onSuccess: () => setConfirming(null) };
+    if (confirming.action === 'approve') approveTransfer.mutate(confirming.transfer.id, done);
+    else cancelTransfer.mutate(confirming.transfer.id, done);
   };
 
   const handleSubmit = () => {
@@ -158,7 +169,7 @@ export function StockTransfersPage() {
           setMode('immediate');
           setResponsibleId('');
           setApprovedId('');
-          setLines([{ productId: '', productName: '', quantity: 1, distStrategy: 'FEFO' }]);
+          setLines([newLine()]);
           qc.invalidateQueries({ queryKey: ['inventory-product-stock-levels'] });
           qc.invalidateQueries({ queryKey: ['inventory-stats'] });
         },
@@ -176,15 +187,32 @@ export function StockTransfersPage() {
           <p className="text-sm text-muted-foreground">{tx('Move stock between locations — immediately on the same premises, or via dispatch and receipt between branches')}</p>
         </div>
         {canCreate && (
-          <Button onClick={() => setShowForm(true)}>
+          <Button onClick={() => { createTransfer.reset(); setShowForm(true); }}>
             <Plus className="mr-2 h-4 w-4" />{tx('New Transfer')}
           </Button>
         )}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="h-9 w-48" aria-label={tx('Status')}><SelectValue placeholder={tx('All statuses')} /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">{tx('All statuses')}</SelectItem>
+            {STATUS_FILTERS.map((s) => <SelectItem key={s} value={s}>{STATUS_LABEL[s] ?? s}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        {paged.totalPages > 1 && (
+          <p className="text-xs text-muted-foreground">
+            {tx('All {{count}} transfers are loaded at once. Filter by status to narrow the list.', { count: paged.total.toLocaleString() })}
+          </p>
+        )}
+      </div>
+
       {isLoading && <Skeleton className="h-48 w-full" />}
       {transfers && transfers.length === 0 && (
-        <Card><CardContent className="p-8 text-center text-muted-foreground">{tx('No transfers yet. Click "New Transfer" to create one.')}</CardContent></Card>
+        <Card><CardContent className="p-8 text-center text-muted-foreground">
+          {statusFilter ? tx('No transfers with this status.') : tx('No transfers yet. Click "New Transfer" to create one.')}
+        </CardContent></Card>
       )}
       {transfers && transfers.length > 0 && (
         <div className="rounded-md border overflow-x-auto">
@@ -202,7 +230,7 @@ export function StockTransfersPage() {
               </tr>
             </thead>
             <tbody>
-              {transfers.map((tr) => {
+              {paged.pageRows.map((tr) => {
                 const fromLoc = locMap.get(tr.fromLocId);
                 const toLoc = locMap.get(tr.toLocId);
                 return (
@@ -223,8 +251,8 @@ export function StockTransfersPage() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap justify-end gap-1">
                       {tr.status === 'pending' && canApprove && (
-                        <Button size="sm" variant="outline" onClick={() => approveTransfer.mutate(tr.id)} disabled={approveTransfer.isPending}>
-                          {approveTransfer.isPending ? '…' : tx('Approve')}
+                        <Button size="sm" variant="outline" onClick={() => setConfirming({ action: 'approve', transfer: tr })} disabled={approveTransfer.isPending}>
+                          {tx('Approve')}
                         </Button>
                       )}
                       {tr.status === 'approved' && tr.mode === 'transit' && canMove && (
@@ -233,7 +261,7 @@ export function StockTransfersPage() {
                         </Button>
                       )}
                       {(tr.status === 'pending' || (tr.status === 'approved' && tr.mode === 'transit')) && canApprove && (
-                        <Button size="sm" variant="ghost" aria-label={tx('Cancel {{transferCode}}', { transferCode: tr.transferCode })} onClick={() => cancelTransfer.mutate(tr.id)} disabled={cancelTransfer.isPending}>
+                        <Button size="sm" variant="ghost" aria-label={tx('Cancel {{transferCode}}', { transferCode: tr.transferCode })} onClick={() => setConfirming({ action: 'cancel', transfer: tr })} disabled={cancelTransfer.isPending}>
                           <X className="mr-1 h-3.5 w-3.5" />{tx('Cancel')}
                         </Button>
                       )}
@@ -260,6 +288,13 @@ export function StockTransfersPage() {
               })}
             </tbody>
           </table>
+          {paged.totalPages > 1 && (
+            <DataTablePagination
+              page={paged.page} pageSize={paged.pageSize} total={paged.total} totalPages={paged.totalPages}
+              onPageChange={paged.setPage} onPageSizeChange={paged.setPageSize} pageSizeOptions={[25, 50, 100]}
+              noun={tx('transfer')}
+            />
+          )}
         </div>
       )}
 
@@ -284,25 +319,25 @@ export function StockTransfersPage() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-sm font-medium">{tx('From Location')}</label>
-                <Select value={fromLocId} onValueChange={setFromLocId}>
-                  <SelectTrigger><SelectValue placeholder={tx('Select source')} /></SelectTrigger>
-                  <SelectContent>
-                    {pickableLocations.map((l) => (
-                      <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={fromLocId}
+                  onValueChange={setFromLocId}
+                  options={locationOptions}
+                  footer={locations.footer}
+                  placeholder={tx('Select source')}
+                  searchPlaceholder={tx('Search locations…')}
+                />
               </div>
               <div>
                 <label className="text-sm font-medium">{tx('To Location')}</label>
-                <Select value={toLocId} onValueChange={setToLocId}>
-                  <SelectTrigger><SelectValue placeholder={tx('Select destination')} /></SelectTrigger>
-                  <SelectContent>
-                    {pickableLocations.map((l) => (
-                      <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={toLocId}
+                  onValueChange={setToLocId}
+                  options={locationOptions}
+                  footer={locations.footer}
+                  placeholder={tx('Select destination')}
+                  searchPlaceholder={tx('Search locations…')}
+                />
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -336,7 +371,7 @@ export function StockTransfersPage() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium">{tx('Items')}</label>
-                <Button size="sm" variant="outline" onClick={() => setLines([...lines, { productId: '', productName: '', quantity: 1, distStrategy: 'FEFO' }])}>
+                <Button size="sm" variant="outline" onClick={() => setLines([...lines, newLine()])}>
                   <Plus className="mr-1 h-3 w-3" />{tx('Add Item')}
                 </Button>
               </div>
@@ -351,42 +386,38 @@ export function StockTransfersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {lines.map((ln, idx) => (
-                      <tr key={idx} className="border-b">
+                    {lines.map((ln) => (
+                      <tr key={ln.uid} className="border-b">
                         <td className="px-2 py-1">
-                          <select
-                            className="w-full rounded border bg-background px-1 py-0.5 text-sm"
+                          <SearchableSelect
+                            className="h-7 py-0.5"
                             value={ln.productId}
-                            onChange={(e) => pickProduct(idx, e.target.value)}
-                          >
-                            <option value="">{tx('Select product…')}</option>
-                            {products.data?.map((p) => (
-                              <option key={p.id} value={p.id}>{p.code} — {p.name}</option>
-                            ))}
-                          </select>
+                            onValueChange={(v) => pickProduct(ln.uid, v)}
+                            options={products.options}
+                            onQueryChange={products.onQueryChange}
+                            loading={products.loading}
+                            footer={products.footer}
+                            selectedLabel={products.labelOf(ln.productId) ?? ln.productName}
+                            placeholder={tx('Select product…')}
+                            searchPlaceholder={tx('Search by code or name…')}
+                            contentClassName={PRODUCT_PICKER_PANEL}
+                            wrap
+                          />
                           <VariantSelect
                             productId={ln.productId || null}
                             value={ln.variantId}
-                            onChange={(v) => setLines((cur) => cur.map((x, j) => (j === idx ? { ...x, variantId: v } : x)))}
+                            onChange={(v) => updateLine(ln.uid, { variantId: v })}
                           />
                         </td>
                         <td className="px-2 py-1">
                           <Input
                             type="number" min="1" className="h-7 w-24 text-right"
                             value={ln.quantity}
-                            onChange={(e) => {
-                              const next = [...lines];
-                              next[idx] = { ...next[idx], quantity: Number(e.target.value) };
-                              setLines(next);
-                            }}
+                            onChange={(e) => updateLine(ln.uid, { quantity: Number(e.target.value) })}
                           />
                         </td>
                         <td className="px-2 py-1">
-                          <Select value={ln.distStrategy} onValueChange={(v) => {
-                            const next = [...lines];
-                            next[idx] = { ...next[idx], distStrategy: v };
-                            setLines(next);
-                          }}>
+                          <Select value={ln.distStrategy} onValueChange={(v) => updateLine(ln.uid, { distStrategy: v })}>
                             <SelectTrigger className="h-7 w-24"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="FEFO">{tx('FEFO')}</SelectItem>
@@ -396,7 +427,7 @@ export function StockTransfersPage() {
                           </Select>
                         </td>
                         <td className="px-2 py-1">
-                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setLines(lines.filter((_, i) => i !== idx))}>
+                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => setLines(lines.filter((x) => x.uid !== ln.uid))}>
                             <Trash2 className="h-3 w-3 text-destructive" />
                           </Button>
                         </td>
@@ -411,6 +442,9 @@ export function StockTransfersPage() {
               <label className="text-sm font-medium">{tx('Notes')}</label>
               <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={tx('Optional transfer notes')} rows={2} />
             </div>
+            {createTransfer.isError && (
+              <p role="alert" className="text-sm text-destructive">{describeApiError(createTransfer.error, tx('Failed to create transfer'))}</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>{tx('Cancel')}</Button>
@@ -420,6 +454,27 @@ export function StockTransfersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!confirming}
+        onOpenChange={(o) => { if (!o) setConfirming(null); }}
+        title={confirming?.action === 'cancel'
+          ? tx('Cancel {{transferCode}}?', { transferCode: confirming.transfer.transferCode })
+          : tx('Approve {{transferCode}}?', { transferCode: confirming?.transfer.transferCode ?? '' })}
+        description={<p>{confirming?.action === 'cancel'
+          ? tx('The transfer is closed without moving any stock. A cancelled transfer cannot be reopened.')
+          : confirming?.transfer.mode === 'transit'
+            ? tx('The transfer can then be dispatched. Stock leaves the source location when it is dispatched.')
+            : tx('Stock moves from {{from}} to {{to}} as soon as it is approved. Undoing it later needs a reversal.', {
+              from: locMap.get(confirming?.transfer.fromLocId ?? '')?.code ?? '—',
+              to: locMap.get(confirming?.transfer.toLocId ?? '')?.code ?? '—',
+            })}</p>}
+        confirmLabel={confirming?.action === 'cancel' ? tx('Cancel transfer') : tx('Approve transfer')}
+        pendingLabel={confirming?.action === 'cancel' ? tx('Cancelling…') : tx('Approving…')}
+        destructive={confirming?.action === 'cancel'}
+        pending={approveTransfer.isPending || cancelTransfer.isPending}
+        onConfirm={confirmTransfer}
+      />
 
       <ReasonDialog
         open={!!reversing}
@@ -496,6 +551,9 @@ export function StockTransfersPage() {
             <label className="text-sm font-medium" htmlFor="receive-notes">{tx('Notes')}</label>
             <Textarea id="receive-notes" value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} placeholder={tx('Delivery note, driver, condition…')} rows={2} />
           </div>
+          {receiveTransfer.isError && (
+            <p role="alert" className="text-sm text-destructive">{describeApiError(receiveTransfer.error, tx('Failed to receive transfer'))}</p>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setReceiving(null)}>{tx('Cancel')}</Button>
             <Button

@@ -5,6 +5,7 @@ import com.inventoryerp.accounting.application.AccountingDay;
 import com.inventoryerp.accounting.application.AccountingPolicyService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.costing.application.LineageCapitalisation.Layer;
 import com.inventoryerp.costing.application.LineageCapitalisation.Part;
@@ -89,15 +90,17 @@ public class QuarryCostingService {
 
     private final JdbcClient jdbc;
     private final PostingService posting;
+    private final CostingReversals reversals;
     private final AccountResolverService accounts;
     private final AccountingPolicyService policies;
     private final LineageCapitalisation capitalisation;
     private final AuditService audit;
 
     public QuarryCostingService(JdbcClient jdbc, PostingService posting, AccountResolverService accounts,
-            AccountingPolicyService policies, LineageCapitalisation capitalisation, AuditService audit) {
+            AccountingPolicyService policies, LineageCapitalisation capitalisation, AuditService audit, CostingReversals reversals) {
         this.jdbc = jdbc;
         this.posting = posting;
+        this.reversals = reversals;
         this.accounts = accounts;
         this.policies = policies;
         this.capitalisation = capitalisation;
@@ -325,6 +328,15 @@ public class QuarryCostingService {
         requireApproved(a);
         LocalDate from = day(fromText, "from");
         LocalDate to = period(from, toText);
+        // Review 2026-11-17 (ACR-15; deviation): the ore of a period amortises the asset once.
+        Map<String, Object> done = SqlRows.one(jdbc.sql("SELECT \"periodFrom\"::text AS f, \"periodTo\"::text AS t FROM"
+                + " \"QuarryStrippingMovement\" WHERE \"organizationId\" = ? AND \"assetId\" = ? AND type = 'amortise' AND"
+                + " status <> 'reversed' AND \"periodFrom\" <= ? AND \"periodTo\" >= ? ORDER BY \"periodFrom\" LIMIT 1")
+                .params(org(), assetId, Date.valueOf(to), Date.valueOf(from)));
+        if (done != null) {
+            throw ApiException.conflict("Stripping asset " + a.get("code") + " is already amortised for " + done.get("f")
+                    + " – " + done.get("t") + "; reverse that amortisation first");
+        }
         List<Map<String, Object>> logs = logs((String) a.get("zoneId"), from, to);
         BigDecimal ore = tonnes(logs);
         BigDecimal carrying = SqlRows.dec(a, "capitalised").subtract(SqlRows.dec(a, "amortised"));
@@ -514,6 +526,17 @@ public class QuarryCostingService {
                 if (from.isAfter(date)) {
                     throw ApiException.badRequest("from must not be after date");
                 }
+                // Review 2026-11-17 (ACR-15; deviation): each day of the provision unwinds once.
+                Map<String, Object> unwound = SqlRows.one(jdbc.sql("SELECT \"periodFrom\"::text AS f, \"movementDate\"::text"
+                        + " AS t FROM \"QuarryRehabMovement\" WHERE \"organizationId\" = ? AND \"obligationId\" = ? AND type ="
+                        + " 'unwind' AND status <> 'reversed' AND coalesce(\"periodFrom\", \"movementDate\") <= ? AND"
+                        + " \"movementDate\" >= ? ORDER BY \"movementDate\" LIMIT 1").params(org(), obligationId,
+                                Date.valueOf(date), Date.valueOf(from)));
+                if (unwound != null) {
+                    throw ApiException.conflict("The provision " + o.get("code") + " is already unwound for "
+                            + (unwound.get("f") != null ? unwound.get("f") : unwound.get("t")) + " – " + unwound.get("t")
+                            + "; reverse that unwinding first");
+                }
                 long days = ChronoUnit.DAYS.between(from, date) + 1;
                 amount = balance(obligationId, date).multiply(SqlRows.dec(o, "discountRatePct"))
                         .multiply(BigDecimal.valueOf(days)).divide(BigDecimal.valueOf(36500), 2, RoundingMode.HALF_UP);
@@ -680,6 +703,48 @@ public class QuarryCostingService {
         return Obj.of("from", from.toString(), "to", to.toString(), "rows", rows);
     }
 
+    /**
+     * Review 2026-11-17 (ACR-16; deviation): open provisions that carried a balance at a positive discount rate in the
+     * period but have no posted unwinding in it. The cost close gate passes only when this is empty.
+     */
+    @Transactional(readOnly = true)
+    public List<String> unwindingDue(LocalDate from, LocalDate to) {
+        LocalDate end = to.isAfter(today()) ? today() : to;
+        List<String> out = new ArrayList<>();
+        if (end.isBefore(from)) {
+            return out;
+        }
+        for (Map<String, Object> o : SqlRows.list(jdbc.sql("SELECT o.id, o.code FROM \"QuarryRehabObligation\" o WHERE"
+                + " o.\"organizationId\" = ? AND o.status = 'open' AND o.\"discountRatePct\" > 0 AND NOT EXISTS (SELECT 1"
+                + " FROM \"QuarryRehabMovement\" m WHERE m.\"obligationId\" = o.id AND m.type = 'unwind' AND m.status ="
+                + " 'posted' AND coalesce(m.\"periodFrom\", m.\"movementDate\") <= ? AND m.\"movementDate\" >= ?) ORDER BY"
+                + " o.code").params(org(), Date.valueOf(to), Date.valueOf(from)))) {
+            if (balance((String) o.get("id"), end).signum() > 0) {
+                out.add((String) o.get("code"));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Review 2026-11-17 (ACR-16; deviation): approved stripping assets with a carrying amount whose component yielded
+     * ore in the period but that have no posted amortisation in it. The cost close gate passes only when this is empty.
+     */
+    @Transactional(readOnly = true)
+    public List<String> amortisationDue(LocalDate from, LocalDate to) {
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.id, a.code, a.\"zoneId\" FROM"
+                + " \"QuarryStrippingAsset\" a WHERE a.\"organizationId\" = ? AND a.status = 'approved' AND a.capitalised -"
+                + " a.amortised > 0 AND NOT EXISTS (SELECT 1 FROM \"QuarryStrippingMovement\" m WHERE m.\"assetId\" = a.id"
+                + " AND m.type = 'amortise' AND m.status = 'posted' AND m.\"periodFrom\" <= ? AND m.\"periodTo\" >= ?)"
+                + " ORDER BY a.code").params(org(), Date.valueOf(to), Date.valueOf(from)))) {
+            if (tonnes(logs((String) a.get("zoneId"), from, to)).signum() > 0) {
+                out.add((String) a.get("code"));
+            }
+        }
+        return out;
+    }
+
     private BigDecimal balance(String obligationId, LocalDate upTo) {
         return upTo == null
                 ? jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"QuarryRehabMovement\" WHERE \"obligationId\" = ? AND"
@@ -825,7 +890,7 @@ public class QuarryCostingService {
         if (journalEntryId == null) {
             return null;
         }
-        return (String) posting.reverse(journalEntryId, Instant.now(), text).get("id");
+        return reversals.reverseId(journalEntryId, text);
     }
 
     private String expenseAccount(String id) {

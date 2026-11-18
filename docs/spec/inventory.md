@@ -64,6 +64,23 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
+[audit](../audits/2026-11-17-inventory-procurement-readiness.md)):
+
+- **B3: manual WMS pick orders cannot reference a stock document.**
+  - `POST /warehouse/pick-orders` refuses a `manual` order (the default) whose `sourceRef` is the number of a sales
+    order, sales invoice, delivery order, stock-out or transfer, with
+    `Reference X is a <kind>, which takes the stock out itself when it is posted. …`.
+  - Why: shipping a manual order issues the stock itself, so the document would take the goods out a second time.
+  - The web form asks what the pick is for (a document type or "Manual issue") and explains which side issues the
+    stock.
+  - Spring-only feature ([ADR-S026](../adr/ADR-S026-warehouse-management.md)); test `WarehouseIT`.
+- **UB1: `GET /inventory/staff-options`** (new, `inventory:read`).
+  - Returns the organization's active users, with `id`, `firstName` and `lastName` only, for the stock forms'
+    responsible and approver pickers.
+  - Those forms called `GET /users`, which needs `user:read`.
+  - Test `ReadinessBlockersIT`.
+
 Pending owner approval:
 
 1. **`GET /inventory/items?lowStock=true`**: Nest passes a `Prisma.sql` fragment as a `where` field value,
@@ -186,7 +203,8 @@ has the same gaps:
 25. **Ledger hygiene (V470).** Dropped the duplicate `InventoryLedger_pool_idx` and the prefix index
     `InventoryLedger_organizationId_idx`. `evidence_purge_enabled()` (the `app.evidence_purge` bypass of every
     evidence guard: stock ledger, cash movements, posted journals, …) now also requires the session user to be a member
-    of the schema owner, so the API role (`DB_USER` ≠ `FLYWAY_USER`) cannot switch the guards off.
+    of the schema owner, so the API role (`DB_USER` ≠ `FLYWAY_USER`) cannot switch the guards off. Superseded by V513:
+    only a superuser or a member of the NOLOGIN role `erp_evidence_purger` may (docs/DATABASE.md section 6).
 26. **Stock events only for committed moves.** `stock.received|issued|adjusted|transferred` are published with
     `EventBus.publishOnCommit`: dropped when the transaction rolls back or the `Savepoints` block they were raised in
     rolls back (a failed POS drain line). Other events keep the Nest fire-and-forget semantics (published on commit and
@@ -208,6 +226,15 @@ has the same gaps:
     credit-note restock, goods receipt, fleet dispatch and POS recipe / combo components also feed the engine in
     (productId, variantId) order (`StockMove.inLockOrder`), extending item 3. Landed cost takes the same quant locks
     before re-costing lots, serials or averages (`LayerCostWriter`, S-3).
+
+Approved by the owner — accounting and costing review 2026-11-17
+([audit](../audits/2026-11-17-accounting-costing-review.md)); an extension, Nest has no such route:
+
+30. **Cost explanation.** `GET /inventory/cost-explanation?productId&locationId&limit` (`inventory_valuation:read`;
+    limit 1–500, default 100): a read-only explanation of an item's carrying cost from the stock sub-ledger (method,
+    value per location, price-difference and NRV adjuncts, value-only changes, every movement with running quantity,
+    value and unit cost). Messages: `productId should not be empty`, `limit must not be less than 1`, `limit must be
+    an integer number`, 404 `Product not found` / `Location not found`. Test: `CostExplanationIT`.
 
 Same as Nest, kept on purpose:
 

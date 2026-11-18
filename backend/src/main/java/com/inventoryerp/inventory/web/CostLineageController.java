@@ -1,6 +1,7 @@
 package com.inventoryerp.inventory.web;
 
 import com.inventoryerp.inventory.application.AvcoLineageCalculator.Distribution;
+import com.inventoryerp.inventory.application.CostExplanationService;
 import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.inventory.application.InventoryRevaluationService;
 import com.inventoryerp.inventory.application.InventoryRevaluationService.LineInput;
@@ -52,10 +53,22 @@ public class CostLineageController {
 
     private final CostLineageService lineage;
     private final InventoryRevaluationService revaluations;
+    private final CostExplanationService explanation;
 
-    public CostLineageController(CostLineageService lineage, InventoryRevaluationService revaluations) {
+    public CostLineageController(CostLineageService lineage, InventoryRevaluationService revaluations,
+            CostExplanationService explanation) {
         this.lineage = lineage;
         this.revaluations = revaluations;
+        this.explanation = explanation;
+    }
+
+    // ---- why does this item cost X (review 2026-11-17) --------------------------------------------------------------
+
+    @GetMapping("/cost-explanation")
+    @RequirePermissions(Permissions.INVENTORY_VALUATION__READ)
+    public Map<String, Object> explanation(@RequestParam(required = false) String productId,
+            @RequestParam(required = false) String locationId, @RequestParam(required = false) String limit) {
+        return explanation.explain(productId, locationId, limit);
     }
 
     // ---- lineage ----------------------------------------------------------------------------------------------------

@@ -86,14 +86,22 @@ public class ManufacturingReplenishmentService {
         TenantContext.run(store, () -> raise(lines));
     }
 
-    /** One submitted production request for the lines still waiting; all or nothing. */
+    /**
+     * One submitted production request for the lines still waiting; all or nothing. h-01 F12: the event handler calls
+     * this without a transaction of its own, so the whole answer runs inside
+     * {@link ReplenishmentService#answerRequested}: one transaction that keeps the waiting alerts locked until it
+     * commits. A second delivery of the same event waits for it and then raises nothing, and the request is kept only
+     * when every one of its alerts was still waiting.
+     */
     @Transactional
     public Map<String, Object> raise(List<Line> lines) {
-        List<String> waiting = replenishment.stillRequested(lines.stream().map(Line::alertId).toList());
-        List<Line> own = lines.stream().filter(l -> waiting.contains(l.alertId())).toList();
-        if (own.isEmpty()) {
-            return null;
-        }
+        return replenishment.answerRequested(lines.stream().map(Line::alertId).toList(), waiting -> {
+            List<Line> own = lines.stream().filter(l -> waiting.contains(l.alertId())).toList();
+            return own.isEmpty() ? null : raiseFor(own);
+        });
+    }
+
+    private Map<String, Object> raiseFor(List<Line> own) {
         List<RaisedLine> raised = new ArrayList<>();
         Instant neededBy = null;
         for (Line l : own) {
@@ -113,8 +121,9 @@ public class ManufacturingReplenishmentService {
                             MfgDb.org())
                     .update();
         }
-        replenishment.markDocumented(own.stream().map(Line::alertId).toList(), "production_request", requestId,
-                (String) request.get("requestNumber"));
+        List<String> alertIds = own.stream().map(Line::alertId).toList();
+        ReplenishmentService.assertAllMarked(replenishment.markDocumented(alertIds, "production_request", requestId,
+                (String) request.get("requestNumber")), alertIds);
         log.info("Production request {} raised for {} replenishment alert(s)", request.get("requestNumber"),
                 own.size());
         return request;

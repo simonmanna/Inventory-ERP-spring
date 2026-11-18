@@ -3,7 +3,11 @@ package com.inventoryerp.quarry;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.BooksGuard;
+import com.inventoryerp.costing.application.QuarryCostingService;
 import com.inventoryerp.costing.web.QuarryCostingController;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -12,12 +16,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.JsonNode;
 import org.junit.jupiter.api.extension.ExtendWith;
-import com.inventoryerp.BooksGuard;
+import org.springframework.beans.factory.annotation.Autowired;
+import tools.jackson.databind.JsonNode;
 
 /**
  * Cost Management CM-5 (ADR-S035, R3-3): quarry areas, IAS 37 rehabilitation — initial / unwind / production /
@@ -54,6 +59,29 @@ class QuarryRehabMovementsIT extends ApiTestSupport {
         checkerToken = login("DEMO", email, "Checker@12345");
         cash = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '1100'").param(demoOrg)
                 .query(String.class).single();
+    }
+
+    @Autowired
+    QuarryCostingService quarryCosting;
+
+    String adminUser;
+
+    <T> T asAdmin(Supplier<T> body) {
+        if (adminUser == null) {
+            adminUser = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = 'admin@demo.test'")
+                    .param(demoOrg).query(String.class).single();
+        }
+        return TenantContext.run(TenantStore.user(demoOrg, adminUser), body);
+    }
+
+    /** Gate 5 of the cost close for today. */
+    JsonNode quarryGate() {
+        for (JsonNode g : ok(200, "GET", "/costing/close/gates?from=" + today + "&to=" + today, null).get("gates")) {
+            if ("quarry".equals(g.get("key").asString())) {
+                return g;
+            }
+        }
+        throw new AssertionError("no quarry gate");
     }
 
     record Site(String id, String zoneId, String benchId, String materialId) {}
@@ -151,6 +179,11 @@ class QuarryRehabMovementsIT extends ApiTestSupport {
         je = lastMovement(o).get("journalEntryId").asString();
         assertThat(line(je, "7150")).isEqualByComparingTo("0.30"); // 1100 × 10 % / 365
         assertThat(line(je, "1396")).as("unwinding never reaches inventory").isEqualByComparingTo("0");
+        // Review 2026-11-17 (ACR-15): a day of the provision unwinds once
+        Res again = refused(path, Map.of("type", "unwind", "from", today, "date", today));
+        assertThat(again.status()).isEqualTo(409);
+        assertThat(again.body().get("message").asString()).startsWith("The provision ").endsWith(" is already unwound"
+                + " for " + today + " – " + today + "; reverse that unwinding first");
 
         o = money("POST", path, Map.of("type", "remeasurement", "layerId", initialLayer, "amount", -1050));
         je = lastMovement(o).get("journalEntryId").asString();
@@ -235,11 +268,21 @@ class QuarryRehabMovementsIT extends ApiTestSupport {
         assertThat(num(capMove.get("inventoryShare"))).isEqualByComparingTo("250");
         assertThat(line(capMove.get("journalEntryId").asString(), "1660")).isEqualByComparingTo("250");
 
+        // Review 2026-11-17 (ACR-16): the close waits for this asset — ore came out of its component today
+        String code = a.get("code").asString();
+        LocalDate day = LocalDate.parse(today);
+        assertThat(asAdmin(() -> quarryCosting.amortisationDue(day, day))).contains(code);
         a = money("POST", "/quarry/stripping-assets/" + id + "/amortise", Map.of("from", today, "to", today));
         assertThat(num(a.get("amortised"))).isEqualByComparingTo("25"); // 250 × 100 / 1000
+        assertThat(asAdmin(() -> quarryCosting.amortisationDue(day, day))).doesNotContain(code);
         JsonNode amort = a.get("movements").get(1);
         assertThat(line(amort.get("journalEntryId").asString(), "1661")).isEqualByComparingTo("-25");
         assertThat(line(amort.get("journalEntryId").asString(), "1396")).isEqualByComparingTo("25");
+        // Review 2026-11-17 (ACR-15): the period's ore amortises the asset once
+        Res twice = refused("/quarry/stripping-assets/" + id + "/amortise", Map.of("from", today, "to", today));
+        assertThat(twice.status()).isEqualTo(409);
+        assertThat(twice.body().get("message").asString()).endsWith(" is already amortised for " + today + " – " + today
+                + "; reverse that amortisation first");
 
         JsonNode kpi = ok(200, "GET", "/quarry/cost-kpis?from=" + today + "&to=" + today + "&siteId=" + s.id(), null);
         assertThat(num(kpi.get("rows").get(0).get("strippingAmortisation"))).isEqualByComparingTo("25");
@@ -250,6 +293,41 @@ class QuarryRehabMovementsIT extends ApiTestSupport {
         a = money("POST", "/quarry/stripping-movements/" + amort.get("id").asString() + "/reverse", null);
         assertThat(num(a.get("amortised"))).isEqualByComparingTo("0");
         assertThat(num(a.get("carrying"))).isEqualByComparingTo("250");
+    }
+
+    @Test
+    @DisplayName("cost close: the quarry gate waits for every provision with a balance, not just one (ACR-16)")
+    void closeGateNeedsEveryProvision() {
+        Site s = site();
+        LocalDate day = LocalDate.parse(today);
+        List<String> ids = new java.util.ArrayList<>();
+        List<String> codes = List.of("0RG" + sfx + "A", "0RG" + sfx + "B");
+        try {
+            for (String code : codes) {
+                String ob = ok(201, "POST", "/quarry/rehab-obligations", Map.of("code", code, "siteId", s.id(),
+                        "zoneId", s.zoneId(), "discountRatePct", 10, "description", "Gate provision " + code))
+                        .get("id").asString();
+                ids.add(ob);
+                money("POST", "/quarry/rehab-obligations/" + ob + "/movements", Map.of("type", "initial", "amount",
+                        1000));
+            }
+            assertThat(asAdmin(() -> quarryCosting.unwindingDue(day, day))).containsAll(codes);
+            money("POST", "/quarry/rehab-obligations/" + ids.get(0) + "/movements", Map.of("type", "unwind", "from",
+                    today, "date", today));
+            assertThat(asAdmin(() -> quarryCosting.unwindingDue(day, day))).contains(codes.get(1))
+                    .doesNotContain(codes.get(0));
+            JsonNode gate = quarryGate();
+            assertThat(gate.get("status").asString()).as("one of two unwound is not done").isEqualTo("fail");
+            assertThat(gate.get("detail").asString()).contains("not unwound: ").contains(codes.get(1));
+
+            money("POST", "/quarry/rehab-obligations/" + ids.get(1) + "/movements", Map.of("type", "unwind", "from",
+                    today, "date", today));
+            assertThat(asAdmin(() -> quarryCosting.unwindingDue(day, day))).doesNotContainAnyElementsOf(codes);
+        } finally {
+            // closed: they never hold up another day's gate in a reused database
+            ids.forEach(ob -> jdbc.sql("UPDATE \"QuarryRehabObligation\" SET status = 'closed' WHERE id = ?").param(ob)
+                    .update());
+        }
     }
 
     @Test

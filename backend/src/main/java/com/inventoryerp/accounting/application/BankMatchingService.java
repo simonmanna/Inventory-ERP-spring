@@ -38,8 +38,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  *       contains or regex, absolute amount range, direction. {@code match_payment} pairs the line with the closest
  *       posted payment of the same size and direction (D-B5) not yet matched anywhere; {@code post_entry} books the
  *       line against the rule's account (bank charges, interest, fees) with an optional tax included in the amount,
- *       posting key {@code bank_rule:<lineId>}. Rules run after every import (after commit, one transaction per line)
- *       and on demand.</li>
+ *       posting key {@code bank_rule:<lineId>} — unless the movement is already in the books (review R5): a payment or
+ *       an unreconciled GL line on the bank account of the same size and direction inside the rule's date window is
+ *       matched instead of posting a second entry. Rules run after every import (after commit, one transaction per
+ *       line) and on demand.</li>
  *   <li><b>Allocations</b> ({@code BankStatementMatch}): one line to several payments and several lines to one
  *       payment, partial on either side, direction-aware. A line stays {@code partial} until its allocations cover
  *       it.</li>
@@ -169,6 +171,9 @@ public class BankMatchingService {
                     + " NULL").params(counter, org).query(Long.class).single() == 0) {
                 throw ApiException.badRequest("One or more accounts do not exist in this organization");
             }
+            // Control-account policy (V518): a statement line is matched to the customer / supplier payment
+            // (match_payment), never booked by a rule straight to an AR / AP control account.
+            posting.assertNotReceivablePayableControl(List.of(counter));
         }
         if (r.get("taxId") != null && jdbc.sql("SELECT count(*) FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ?"
                 + " AND \"deletedAt\" IS NULL").params(r.get("taxId"), org).query(Long.class).single() == 0) {
@@ -306,31 +311,35 @@ public class BankMatchingService {
         }
         BigDecimal amount = SqlRows.dec(line, "amount");
         Instant at = (Instant) line.get("postedAt");
+        long tolMs = ((Number) rule.get("dateToleranceDays")).longValue() * 24 * 60 * 60 * 1000;
         if ("match_payment".equals(rule.get("action"))) {
-            long tolMs = ((Number) rule.get("dateToleranceDays")).longValue() * 24 * 60 * 60 * 1000;
-            List<Object> params = new ArrayList<>(List.of(org, bankAccountId, amount.signum() < 0 ? "outbound" : "inbound",
-                    amount.abs(), FiscalPeriodControl.ts(at.minus(Duration.ofMillis(tolMs))),
-                    FiscalPeriodControl.ts(at.plus(Duration.ofMillis(tolMs)))));
-            String partnerFilter = "";
-            if (rule.get("partnerId") != null) {
-                partnerFilter = " AND p.\"partnerId\" = ?";
-                params.add(rule.get("partnerId"));
-            }
-            params.add(FiscalPeriodControl.ts(at));
-            String payment = jdbc.sql("SELECT p.id FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ?"
-                            + " AND p.status = 'posted' AND p.direction::text = ? AND p.amount = ? AND p.\"paymentDate\" >= ?"
-                            + " AND p.\"paymentDate\" <= ?" + partnerFilter + " AND " + UNMATCHED_PAYMENT
-                            + " ORDER BY abs(extract(epoch FROM p.\"paymentDate\" - ?::timestamp)), p.id LIMIT 1 FOR UPDATE")
-                    .params(params).query(String.class).optional().orElse(null);
+            String payment = paymentCandidate(org, bankAccountId, amount, at, tolMs, (String) rule.get("partnerId"));
             if (payment == null) {
                 return "skipped";
             }
-            jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?, \"matchedRuleId\" = ?,"
-                    + " note = ? WHERE id = ?").params(payment, rule.get("id"), "Rule: " + rule.get("name"), lineId)
-                    .update();
-            audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, Map.of("matchedPaymentId",
-                    payment, "matchedRuleId", rule.get("id"))));
+            matchRulePayment(lineId, rule, payment, "Rule: " + rule.get("name"));
             return "matched";
+        }
+        // Review R5: a movement already in the books (a payment, or a transfer / expense / petty-cash top-up / payroll
+        // line journalled on the bank account) is matched, never booked a second time by the rule.
+        String payment = paymentCandidate(org, bankAccountId, amount, at, tolMs, (String) rule.get("partnerId"));
+        if (payment != null) {
+            matchRulePayment(lineId, rule, payment, "Rule: " + rule.get("name") + " · already booked by a payment");
+            return "matched";
+        }
+        String journalLine = journalLineCandidate(jdbc, org, bankAccountId, ForeignCash.of(jdbc, org, bankAccountId),
+                amount, at, tolMs);
+        if (journalLine != null) {
+            jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedJournalLineId\" = ?,"
+                    + " \"matchedRuleId\" = ?, note = ? WHERE id = ?").params(journalLine, rule.get("id"), "Rule: "
+                    + rule.get("name") + " · already in the ledger", lineId).update();
+            audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, Map.of("matchedJournalLineId",
+                    journalLine, "matchedRuleId", rule.get("id"))));
+            return "matched";
+        }
+        if (receivablePayableControl(org, (String) rule.get("counterAccountId"))) {
+            // The counter account was designated AR / AP after the rule was saved: leave the line for a payment match.
+            return "skipped";
         }
         String entryId = postRuleEntry(org, bankAccountId, rule, line);
         jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"journalEntryId\" = ?, \"matchedRuleId\" = ?,"
@@ -338,6 +347,39 @@ public class BankMatchingService {
         audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, Map.of("journalEntryId", entryId,
                 "matchedRuleId", rule.get("id"))));
         return "posted";
+    }
+
+    /** Whether {@code accountId} is a designated AR / AP control account (control-account policy, V518). */
+    private boolean receivablePayableControl(String org, String accountId) {
+        return accountId != null && jdbc.sql("SELECT count(*) FROM \"Account\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"controlAccountType\"::text IN ('ar', 'ap')").params(accountId, org).query(Long.class).single() > 0;
+    }
+
+    /** Closest unmatched posted payment of the line's size (in the account's currency) and direction in the window. */
+    private String paymentCandidate(String org, String bankAccountId, BigDecimal amount, Instant at, long tolMs,
+            String partnerId) {
+        List<Object> params = new ArrayList<>(List.of(org, bankAccountId, amount.signum() < 0 ? "outbound" : "inbound",
+                amount.abs(), FiscalPeriodControl.ts(at.minus(Duration.ofMillis(tolMs))),
+                FiscalPeriodControl.ts(at.plus(Duration.ofMillis(tolMs)))));
+        String partnerFilter = "";
+        if (partnerId != null) {
+            partnerFilter = " AND p.\"partnerId\" = ?";
+            params.add(partnerId);
+        }
+        params.add(FiscalPeriodControl.ts(at));
+        return jdbc.sql("SELECT p.id FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ?"
+                        + " AND p.status = 'posted' AND p.direction::text = ? AND " + accountAmountSql("p") + " = ?"
+                        + " AND p.\"paymentDate\" >= ? AND p.\"paymentDate\" <= ?" + partnerFilter + " AND "
+                        + UNMATCHED_PAYMENT + " ORDER BY abs(extract(epoch FROM p.\"paymentDate\" - ?::timestamp)), p.id"
+                        + " LIMIT 1 FOR UPDATE")
+                .params(params).query(String.class).optional().orElse(null);
+    }
+
+    private void matchRulePayment(String lineId, Map<String, Object> rule, String payment, String note) {
+        jdbc.sql("UPDATE \"BankStatementLine\" SET status = 'matched', \"matchedPaymentId\" = ?, \"matchedRuleId\" = ?,"
+                + " note = ? WHERE id = ?").params(payment, rule.get("id"), note, lineId).update();
+        audit.recordInTx(AuditInput.of("BankStatementLine", lineId, "update", null, Map.of("matchedPaymentId",
+                payment, "matchedRuleId", rule.get("id"))));
     }
 
     /**
@@ -456,6 +498,61 @@ public class BankMatchingService {
             + " = p.\"organizationId\" AND b.\"matchedPaymentId\" = p.id) AND NOT EXISTS (SELECT 1 FROM"
             + " \"BankStatementMatch\" m WHERE m.\"organizationId\" = p.\"organizationId\" AND m.\"paymentId\" = p.id)";
 
+    /**
+     * Payment {@code alias}'s cash movement in its bank account's currency (review R9), the figure a statement line
+     * shows: the amount net of withholding for a functional-currency payment (its cash line), the amount itself for a
+     * foreign payment through an account held in that currency, and amount × payment rate (its functional cash line)
+     * for a foreign payment through a functional account.
+     */
+    static String accountAmountSql(String alias) {
+        return "(CASE WHEN " + alias + ".\"currencyId\" IS NULL THEN " + alias + ".amount - " + alias
+                + ".\"withholdingAmount\" WHEN EXISTS (SELECT 1 FROM \"Account\" pxa WHERE pxa.id = " + alias
+                + ".\"accountId\" AND upper(pxa.\"currencyId\") = upper(" + alias + ".\"currencyId\")) THEN " + alias
+                + ".amount ELSE round(" + alias + ".amount * " + alias + ".\"exchangeRate\", 6) END)";
+    }
+
+    /**
+     * A GL line counts as unreconciled (review R5) when no statement line is matched to it and its entry is neither a
+     * payment's (those reconcile through the payment), a statement line's rule posting, a revaluation or designation
+     * (base-only adjustments, not bank movements). Callers alias the line {@code l} and its entry {@code e}.
+     */
+    static final String UNMATCHED_JOURNAL_LINE = "NOT EXISTS (SELECT 1 FROM \"BankStatementLine\" b WHERE"
+            + " b.\"organizationId\" = l.\"organizationId\" AND b.\"matchedJournalLineId\" = l.id) AND NOT EXISTS (SELECT 1"
+            + " FROM \"BankStatementLine\" b WHERE b.\"organizationId\" = l.\"organizationId\" AND b.\"journalEntryId\" ="
+            + " e.id) AND NOT EXISTS (SELECT 1 FROM \"Payment\" p WHERE p.\"organizationId\" = l.\"organizationId\" AND"
+            + " p.\"journalEntryId\" = e.id) AND coalesce(e.\"sourceType\", '') NOT IN ('payment', 'bank_statement_line',"
+            + " 'fx_revaluation', 'fx_designation')";
+
+    /**
+     * Closest unreconciled posted GL line on the bank account for a statement line (review R5): money in pairs with a
+     * debit, money out with a credit, of the line's size in the account's currency (the line's own amount on a
+     * designated foreign account, else the functional amount) and posted within {@code tolMs} of {@code at}. Reversed
+     * entries and reversals are never candidates. Null when there is none.
+     */
+    static String journalLineCandidate(JdbcClient jdbc, String org, String bankAccountId, ForeignCash.Denomination fx,
+            BigDecimal amount, Instant at, long tolMs) {
+        boolean in = amount.signum() > 0;
+        boolean own = fx != null && fx.designated();
+        List<Object> params = new ArrayList<>(List.of(org, bankAccountId));
+        String size;
+        if (own) {
+            size = "upper(l.\"currencyId\") = ? AND l." + (in ? "debit" : "credit") + " = ?";
+            params.add(fx.currency());
+        } else {
+            size = "l.\"" + (in ? "baseDebit" : "baseCredit") + "\" = ?";
+        }
+        params.add(amount.abs());
+        params.add(FiscalPeriodControl.ts(at.minus(Duration.ofMillis(tolMs))));
+        params.add(FiscalPeriodControl.ts(at.plus(Duration.ofMillis(tolMs))));
+        params.add(FiscalPeriodControl.ts(at));
+        return jdbc.sql("SELECT l.id FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE"
+                        + " l.\"organizationId\" = ? AND l.\"accountId\" = ? AND " + size + " AND e.status::text = 'posted'"
+                        + " AND e.\"reversalOfId\" IS NULL AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ? AND "
+                        + UNMATCHED_JOURNAL_LINE + " ORDER BY abs(extract(epoch FROM e.\"postingDate\" - ?::timestamp)),"
+                        + " l.id LIMIT 1")
+                .params(params).query(String.class).optional().orElse(null);
+    }
+
     /** Payments of the line's account and direction with an open amount (for grouped / partial matching). */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> openPayments(String lineId) {
@@ -464,7 +561,8 @@ public class BankMatchingService {
         BigDecimal amount = SqlRows.dec(line, "amount");
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT * FROM (SELECT p.id, p.\"paymentNumber\","
                 + " p.\"paymentDate\", p.amount, p.direction::text AS direction, p.reference, pa.name AS \"partnerName\","
-                + " p.amount - " + allocatedSql("p") + " AS \"openAmount\" FROM \"Payment\" p LEFT JOIN \"Partner\" pa ON"
+                + " " + accountAmountSql("p") + " - " + allocatedSql("p") + " AS \"openAmount\" FROM \"Payment\" p LEFT"
+                + " JOIN \"Partner\" pa ON"
                 + " pa.id = p.\"partnerId\" WHERE p.\"organizationId\" = ? AND p.\"accountId\" = ? AND p.status = 'posted'"
                 + " AND p.direction::text = ?) x WHERE \"openAmount\" > 0 ORDER BY abs(extract(epoch FROM"
                 + " \"paymentDate\" - ?::timestamp)), id LIMIT 50")
@@ -502,7 +600,7 @@ public class BankMatchingService {
         List<Object[]> rows = new ArrayList<>();
         for (Allocation a : allocations) {
             Map<String, Object> p = requirePayment(org, a.paymentId(), line);
-            BigDecimal open = SqlRows.dec(p, "amount").subtract(allocated(org, a.paymentId()));
+            BigDecimal open = SqlRows.dec(p, "accountAmount").subtract(allocated(org, a.paymentId()));
             if (open.signum() <= 0) {
                 throw ApiException.conflict("Payment is already matched to another statement line");
             }
@@ -538,13 +636,14 @@ public class BankMatchingService {
         jdbc.sql("SELECT \"accountId\" FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?").params(paymentId, org)
                 .query(String.class).optional()
                 .ifPresent(account -> BankReconciliationService.lockBankAccount(jdbc, org, account));
-        Map<String, Object> payment = SqlRows.one(jdbc.sql("SELECT id, \"paymentNumber\", amount, direction::text AS"
-                + " direction, status::text AS status, \"accountId\" FROM \"Payment\" WHERE id = ? AND"
-                + " \"organizationId\" = ? FOR UPDATE").params(paymentId, org));
+        Map<String, Object> payment = SqlRows.one(jdbc.sql("SELECT p.id, p.\"paymentNumber\", p.amount, "
+                + accountAmountSql("p") + " AS \"accountAmount\", p.direction::text AS direction, p.status::text AS"
+                + " status, p.\"accountId\" FROM \"Payment\" p WHERE p.id = ? AND p.\"organizationId\" = ? FOR UPDATE OF p")
+                .params(paymentId, org));
         if (payment == null) {
             throw ApiException.notFound("Payment not found");
         }
-        BigDecimal open = SqlRows.dec(payment, "amount").subtract(allocated(org, paymentId));
+        BigDecimal open = SqlRows.dec(payment, "accountAmount").subtract(allocated(org, paymentId));
         String groupId = UUID.randomUUID().toString();
         BigDecimal total = BigDecimal.ZERO;
         List<Object[]> rows = new ArrayList<>();
@@ -651,9 +750,9 @@ public class BankMatchingService {
     }
 
     private Map<String, Object> requirePayment(String org, String paymentId, Map<String, Object> line) {
-        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT id, \"paymentNumber\", amount, direction::text AS direction,"
-                + " status::text AS status, \"accountId\" FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?"
-                + " FOR UPDATE").params(paymentId, org));
+        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT p.id, p.\"paymentNumber\", p.amount, " + accountAmountSql("p")
+                + " AS \"accountAmount\", p.direction::text AS direction, p.status::text AS status, p.\"accountId\" FROM"
+                + " \"Payment\" p WHERE p.id = ? AND p.\"organizationId\" = ? FOR UPDATE OF p").params(paymentId, org));
         if (p == null) {
             throw ApiException.notFound("Payment not found");
         }

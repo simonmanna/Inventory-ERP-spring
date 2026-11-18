@@ -129,6 +129,10 @@ public class StockReversalService {
 
     private record Cell(String productId, String variantId, String locationId) {}
 
+    private static Cell cell(Map<String, Object> ledgerRow) {
+        return new Cell(str(ledgerRow, "productId"), str(ledgerRow, "variantId"), str(ledgerRow, "locationId"));
+    }
+
     private static final java.util.Comparator<Cell> CELL_ORDER = java.util.Comparator.comparing(Cell::productId)
             .thenComparing(c -> c.variantId() == null ? "" : c.variantId()).thenComparing(Cell::locationId);
 
@@ -170,9 +174,27 @@ public class StockReversalService {
         if (!losses.isEmpty()) {
             reverseLedgerSource(new LedgerSource("stock_transfer_loss", code, "stock_transfer_reversal", code,
                     List.of("stock_transfer_loss"), notes, null));
-            sum(losses, true).forEach((c, qty) -> stock.transfer(StockMove.transfer(c.productId(), c.locationId(),
-                            str(doc, "fromLocId"), qty).variant(c.variantId()).source("stock_transfer_reversal", code)
-                    .notes(notes).people(null, TenantContext.userId())));
+            // Gaps h-00 F9: move back the units the reversal just restored in transit (their lots and serials, at the
+            // cost they were written off at), not the oldest lots there, which can be another transfer's in transit.
+            List<Map<String, Object>> restored = ledgerRows("stock_transfer_reversal", code, "reversal_in");
+            sum(losses, true).forEach((c, qty) -> {
+                List<String> lots = new ArrayList<>();
+                restored.stream().filter(r -> c.equals(cell(r)) && r.get("batchId") != null)
+                        .forEach(r -> lots.add(str(r, "batchId")));
+                List<String> serials = new ArrayList<>();
+                BigDecimal value = Money.ZERO;
+                for (Map<String, Object> r : losses) {
+                    if (c.equals(cell(r))) {
+                        value = value.add(dec(r, "totalValue").abs());
+                        if (r.get("serialId") != null) {
+                            serials.add(str(r, "serialId"));
+                        }
+                    }
+                }
+                stock.transfer(StockMove.transfer(c.productId(), c.locationId(), str(doc, "fromLocId"), qty)
+                        .variant(c.variantId()).source("stock_transfer_reversal", code).notes(notes)
+                        .people(null, TenantContext.userId()).pin(lots, serials, Money.div(value, qty)));
+            });
         }
         if (received.isEmpty() && losses.isEmpty()) {
             throw ApiException.badRequest("Transfer " + code + " has no received or written-off quantities to reverse");
@@ -256,19 +278,15 @@ public class StockReversalService {
             }
         }
 
+        String baseCurrency = journals.isEmpty() ? null : posting.baseCurrency();
         for (Map<String, Object> je : journals) {
             List<PostingRequest.Line> lines = new ArrayList<>();
             for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"JournalLine\" WHERE \"journalEntryId\" = ?")
                     .param(je.get("id")))) {
-                BigDecimal debit = dec(l, "debit");
-                BigDecimal credit = dec(l, "credit");
-                if (debit.signum() <= 0 && credit.signum() <= 0) {
-                    continue;
+                PostingRequest.Line mirrored = mirrorLine(l, baseCurrency);
+                if (mirrored != null) {
+                    lines.add(mirrored);
                 }
-                String desc = ("Reversal: " + (l.get("description") == null ? "" : l.get("description"))).trim();
-                lines.add(new PostingRequest.Line(str(l, "accountId"),
-                        credit.signum() > 0 ? JsNumbers.dec(credit) : null,
-                        debit.signum() > 0 ? JsNumbers.dec(debit) : null, str(l, "partnerId"), desc, null, null, null));
             }
             posting.post(new PostingRequest(str(je, "_journalCode"), Instant.now(),
                     "Reversal of " + je.get("entryNumber") + " · " + p.notes(), null, null, p.reversalSourceType(),
@@ -288,5 +306,37 @@ public class StockReversalService {
             }
         }
         return Obj.of("rows", rows.size(), "journals", journals.size());
+    }
+
+    /**
+     * The inverse of one journal line, or {@code null} for an empty line. Gap fix h03-F3: amounts are the line's
+     * functional (base) amounts; a line carried in a foreign currency stores its debit/credit in that currency, so
+     * re-posting those as base left the reversal unbalanced (a foreign GRN could not be reversed). Such a line keeps
+     * its currency and foreign amount, so a reversed foreign payable also leaves the currency open item and FX
+     * revaluation. Legacy lines without base amounts fall back to debit/credit.
+     */
+    static PostingRequest.Line mirrorLine(Map<String, Object> l, String baseCurrency) {
+        BigDecimal debit = dec(l, "debit");
+        BigDecimal credit = dec(l, "credit");
+        BigDecimal baseDebit = dec(l, "baseDebit");
+        BigDecimal baseCredit = dec(l, "baseCredit");
+        if (baseDebit.signum() <= 0 && baseCredit.signum() <= 0) {
+            baseDebit = debit;
+            baseCredit = credit;
+        }
+        if (baseDebit.signum() <= 0 && baseCredit.signum() <= 0) {
+            return null;
+        }
+        String desc = ("Reversal: " + (l.get("description") == null ? "" : l.get("description"))).trim();
+        PostingRequest.Line line = new PostingRequest.Line(str(l, "accountId"),
+                baseCredit.signum() > 0 ? JsNumbers.dec(baseCredit) : null,
+                baseDebit.signum() > 0 ? JsNumbers.dec(baseDebit) : null, str(l, "partnerId"), desc, null, null, null);
+        String currency = str(l, "currencyId");
+        BigDecimal foreign = debit.signum() > 0 ? debit : credit;
+        if (currency != null && !currency.isBlank() && !currency.equalsIgnoreCase(baseCurrency)
+                && foreign.signum() > 0) {
+            line = line.inCurrency(currency, JsNumbers.dec(foreign));
+        }
+        return line;
     }
 }

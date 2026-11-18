@@ -85,4 +85,18 @@ public class CreditNoteController {
     public Map<String, Object> allocate(@PathVariable String id, @Valid @RequestBody AllocateCreditRequest dto) {
         return creditNotes.allocate(id, dto.documentId(), dto.amount());
     }
+
+    /** {@code POST /credit-notes/:id/reverse} body (document reversals, owner decision 2026-11-17). */
+    public record ReverseCreditNoteRequest(
+            @jakarta.validation.constraints.Size(max = 2000, message = "must be shorter than or equal to 2000 characters")
+            String reason) {}
+
+    /** Credit-note document reversal; see {@link CreditNoteService#reverse}. */
+    @PostMapping("/{id}/reverse")
+    @Idempotent
+    @RequirePermissions(Permissions.CREDIT_NOTE__REVERSE)
+    public Map<String, Object> reverse(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReverseCreditNoteRequest dto) {
+        return creditNotes.reverse(id, dto == null ? null : dto.reason());
+    }
 }

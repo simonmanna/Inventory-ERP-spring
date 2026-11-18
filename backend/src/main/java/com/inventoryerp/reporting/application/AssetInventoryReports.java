@@ -103,8 +103,8 @@ public class AssetInventoryReports implements ReportProvider {
                 ReportDefinition.of("fa.impairment", fa, "Asset Impairment Report", "Downward revaluations"
                         + " (impairment losses).", "FINANCIAL", Permissions.FIXED_ASSET__READ, PERIOD_BRANCH),
                 ReportDefinition.of("fa.reconciliation", fa, "Fixed Asset Reconciliation", "Register cost and"
-                        + " accumulated depreciation against the fixed asset accounts.", "FINANCIAL", ACC,
-                        List.of(FilterKey.AS_OF)));
+                        + " accumulated depreciation and impairment against the fixed asset accounts.", "FINANCIAL",
+                        ACC, List.of(FilterKey.AS_OF)));
     }
 
     @Override
@@ -513,47 +513,91 @@ public class AssetInventoryReports implements ReportProvider {
         return t.build();
     }
 
+    /** Entry sources of fixed-asset postings whose lines identify the register's GL accounts (R15). */
+    private static final List<String> FA_SOURCES = List.of("asset_acquisition", "asset_revaluation", "asset_disposal",
+            "asset_depreciation", "asset_impairment", "project_capitalisation");
+
+    /**
+     * Register against the GL (R15). The register's cost is the capitalised cost as the acquisition posts it plus the
+     * revaluation adjustments; its accumulated figure is the posted depreciation plus the impairment still on the
+     * books. The GL side reads only the accounts fixed-asset postings use: the mapped {@code fixed_asset_valuation}
+     * (cost), {@code accumulated_depreciation} and {@code accumulated_impairment} accounts, plus any other account of
+     * the same kind those postings hit (a mapping changed over time). Construction in progress (credited by a
+     * capitalisation) and other non-current assets such as intangibles stay out unless fixed-asset postings use them.
+     */
     ReportBody assetReconciliation(ReportContext ctx) {
         LocalDate asOf = ctx.asOf();
-        Map<String, Object> reg = SqlRows.one(jdbc.sql("SELECT coalesce(sum(coalesce(a.\"capitalizedCost\","
-                + " a.\"purchaseCost\", 0)), 0) AS cost, coalesce(sum((SELECT sum(d.\"depreciationAmount\") FROM"
-                + " \"AssetDepreciation\" d WHERE d.\"assetId\" = a.id AND d.\"isPosted\" AND d.period <= ?)), 0) AS acc"
-                + " FROM \"Asset\" a WHERE a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL AND (a.\"purchaseDate\" IS"
-                + " NULL OR a.\"purchaseDate\" < ?) AND NOT EXISTS (SELECT 1 FROM \"AssetDisposal\" x WHERE x.\"assetId\" ="
-                + " a.id AND x.\"disposalDate\" < ?)").params(BudgetFigures.YM.format(asOf), ctx.organizationId(),
-                SqlRows.ts(ctx.endExclusive(asOf)), SqlRows.ts(ctx.endExclusive(asOf))));
+        Timestamp end = SqlRows.ts(ctx.endExclusive(asOf));
+        Map<String, Object> reg = SqlRows.one(jdbc.sql("SELECT coalesce(sum(CASE WHEN q.\"capitalizedCost\" > 0 THEN"
+                + " q.\"capitalizedCost\" WHEN a.\"capitalizedCost\" > 0 THEN a.\"capitalizedCost\" ELSE"
+                + " coalesce(a.\"purchaseCost\", 0) + coalesce(q.freight, 0) + coalesce(q.\"installationCost\", 0)"
+                + " + coalesce(q.\"otherCosts\", 0) END), 0) AS cost,"
+                + " coalesce(sum((SELECT sum(r.\"newValue\" - r.\"previousValue\") FROM \"AssetRevaluation\" r WHERE"
+                + " r.\"assetId\" = a.id AND r.\"revaluationDate\" < ?)), 0) AS reval,"
+                + " coalesce(sum((SELECT sum(d.\"depreciationAmount\") FROM \"AssetDepreciation\" d WHERE"
+                + " d.\"assetId\" = a.id AND d.\"isPosted\" AND d.period <= ?)), 0) AS acc,"
+                + " coalesce(sum((SELECT sum(CASE WHEN i.kind = 'impairment' THEN i.amount ELSE -i.amount END) FROM"
+                + " \"AssetImpairment\" i WHERE i.\"assetId\" = a.id AND i.\"impairmentDate\" < ?)), 0) AS imp"
+                + " FROM \"Asset\" a LEFT JOIN \"AssetAcquisition\" q ON q.\"assetId\" = a.id"
+                + " WHERE a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL AND (a.\"purchaseDate\" IS NULL OR"
+                + " a.\"purchaseDate\" < ?) AND NOT EXISTS (SELECT 1 FROM \"AssetDisposal\" x WHERE x.\"assetId\" ="
+                + " a.id AND x.\"disposalDate\" < ?)").params(end, BudgetFigures.YM.format(asOf), end,
+                ctx.organizationId(), end, end));
         Map<String, AccountInfo> accounts = ledger.accounts(ctx.organizationId());
-        BigDecimal glCost = BigDecimal.ZERO;
-        BigDecimal glAcc = BigDecimal.ZERO;
-        List<String> costIds = new ArrayList<>();
-        List<String> accIds = new ArrayList<>();
-        for (Map.Entry<String, BigDecimal[]> e : ledger.balances(ctx, new ReportPeriod("C", "", null, asOf))
-                .entrySet()) {
-            AccountInfo a = accounts.get(e.getKey());
+        java.util.Set<String> costIds = new java.util.LinkedHashSet<>();
+        java.util.Set<String> accIds = new java.util.LinkedHashSet<>();
+        for (Map<String, Object> m : SqlRows.list(jdbc.sql("SELECT key, \"accountId\" FROM \"AccountMapping\" WHERE"
+                + " \"organizationId\" = ? AND key IN ('fixed_asset_valuation', 'accumulated_depreciation',"
+                + " 'accumulated_impairment') AND \"deletedAt\" IS NULL").params(ctx.organizationId()))) {
+            (("fixed_asset_valuation".equals(m.get("key"))) ? costIds : accIds).add((String) m.get("accountId"));
+        }
+        for (Map<String, Object> u : SqlRows.list(jdbc.sql("SELECT DISTINCT l.\"accountId\", e.\"sourceType\","
+                + " l.\"baseDebit\" > 0 AS debit FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id ="
+                + " l.\"journalEntryId\" WHERE e.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed')"
+                + " AND e.\"sourceType\" = ANY(?::text[])")
+                .params(ctx.organizationId(), FA_SOURCES.toArray(String[]::new)))) {
+            AccountInfo a = accounts.get((String) u.get("accountId"));
             if (a == null) {
                 continue;
             }
-            if ("non_current_asset".equals(a.category())) {
-                glCost = glCost.add(e.getValue()[0]).subtract(e.getValue()[1]);
+            String source = (String) u.get("sourceType");
+            boolean debit = Boolean.TRUE.equals(u.get("debit"));
+            if ("non_current_asset".equals(a.category()) && ("asset_revaluation".equals(source)
+                    || debit && List.of("asset_acquisition", "project_capitalisation").contains(source)
+                    || !debit && "asset_disposal".equals(source))) {
                 costIds.add(a.id());
-            } else if (List.of("contra_asset", "accumulated_depreciation").contains(a.category())) {
-                glAcc = glAcc.add(e.getValue()[1]).subtract(e.getValue()[0]);
+            } else if (List.of("contra_asset", "accumulated_depreciation").contains(a.category())
+                    && List.of("asset_depreciation", "asset_impairment", "asset_disposal").contains(source)) {
                 accIds.add(a.id());
             }
         }
-        BigDecimal regCost = dec(reg == null ? null : reg.get("cost"));
-        BigDecimal regAcc = dec(reg == null ? null : reg.get("acc"));
+        accIds.removeAll(costIds);
+        BigDecimal glCost = BigDecimal.ZERO;
+        BigDecimal glAcc = BigDecimal.ZERO;
+        for (Map.Entry<String, BigDecimal[]> e : ledger.balances(ctx, new ReportPeriod("C", "", null, asOf))
+                .entrySet()) {
+            if (costIds.contains(e.getKey())) {
+                glCost = glCost.add(e.getValue()[0]).subtract(e.getValue()[1]);
+            } else if (accIds.contains(e.getKey())) {
+                glAcc = glAcc.add(e.getValue()[1]).subtract(e.getValue()[0]);
+            }
+        }
+        BigDecimal regCost = dec(reg == null ? null : reg.get("cost")).add(dec(reg == null ? null : reg.get("reval")));
+        BigDecimal regAcc = dec(reg == null ? null : reg.get("acc")).add(dec(reg == null ? null : reg.get("imp")));
         Tables.Builder t = new Tables.Builder(ctx.zone(), text("label", "Item"), money("register", "Asset register"),
                 money("gl", "General ledger"), money("difference", "Difference"));
-        t.line(Obj.of("_id", "COST", "label", "Cost", "register", regCost, "gl", glCost, "difference",
-                regCost.subtract(glCost)), Map.of("gl", GlReports.lines(ctx, null, asOf, costIds)));
-        t.line(Obj.of("_id", "ACC", "label", "Accumulated depreciation", "register", regAcc, "gl", glAcc,
-                "difference", regAcc.subtract(glAcc)), Map.of("gl", GlReports.lines(ctx, null, asOf, accIds)));
+        t.line(Obj.of("_id", "COST", "label", "Cost (incl. revaluations)", "register", regCost, "gl", glCost,
+                "difference", regCost.subtract(glCost)), Map.of("gl", GlReports.lines(ctx, null, asOf,
+                new ArrayList<>(costIds))));
+        t.line(Obj.of("_id", "ACC", "label", "Accumulated depreciation and impairment", "register", regAcc, "gl",
+                glAcc, "difference", regAcc.subtract(glAcc)), Map.of("gl", GlReports.lines(ctx, null, asOf,
+                new ArrayList<>(accIds))));
         t.line(Obj.of("_id", "NBV", "label", "Net book value", "register", regCost.subtract(regAcc), "gl", glCost
                 .subtract(glAcc), "difference", regCost.subtract(regAcc).subtract(glCost.subtract(glAcc))));
-        t.tie("COST_RECONCILES", "Register cost equals the fixed asset cost accounts", regCost, glCost);
-        t.tie("DEPRECIATION_RECONCILES", "Register depreciation equals the accumulated depreciation accounts", regAcc,
-                glAcc);
+        t.tie("COST_RECONCILES", "Register cost (with revaluations) equals the fixed asset cost accounts", regCost,
+                glCost);
+        t.tie("DEPRECIATION_RECONCILES", "Register depreciation and impairment equal the accumulated depreciation and"
+                + " impairment accounts", regAcc, glAcc);
         return t.build(false);
     }
 }

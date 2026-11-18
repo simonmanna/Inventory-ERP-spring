@@ -10,6 +10,7 @@ import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.CurrencyService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -82,12 +83,14 @@ public class DebitNotesService {
     private final StockService stock;
     private final TransactionTemplate tx;
     private final ProductVariantService variants;
+    private final CurrencyService currencies;
 
     public DebitNotesService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, PostingService posting, AccountDeterminationService determination,
             StockService stock, PlatformTransactionManager txm, UomConversionService units,
-            ProductVariantService variants) {
+            ProductVariantService variants, CurrencyService currencies) {
         this.jdbc = jdbc;
+        this.currencies = currencies;
         this.variants = variants;
         this.units = units;
         this.sequence = sequence;
@@ -111,6 +114,38 @@ public class DebitNotesService {
         if (partner == 0) {
             throw ApiException.notFound("Partner not found");
         }
+        // Gap fix h03-F9: quantities above zero, prices not negative (the DTO checks the same; internal callers too).
+        for (LineInput ln : input.lines()) {
+            if (ln.quantity() == null || ln.quantity().signum() <= 0) {
+                throw ApiException.badRequest("Debit note line \"" + ln.description() + "\": quantity must be greater"
+                        + " than zero");
+            }
+            if (ln.unitPrice() == null || ln.unitPrice().signum() < 0) {
+                throw ApiException.badRequest("Debit note line \"" + ln.description() + "\": unit price must not be"
+                        + " negative");
+            }
+        }
+        boolean outboundNote = "outbound".equals(input.direction());
+        String documentId = input.documentId() == null || input.documentId().isBlank() ? null : input.documentId();
+        String functional = posting.baseCurrency();
+        String documentCurrency = documentId == null ? null
+                : referencedDocumentCurrency(documentId, input.partnerId(), outboundNote, functional, orgId);
+        // Gap fix h03-F4 / h03-F9 (Nest deviation, owner-approved 2026-11-17): a note without a currency is in its
+        // document's currency, else the functional one (Nest stored 'USD'); a note in another currency carries a real
+        // rate (stated, else the rate table); a rate of zero or less is refused instead of becoming 1.
+        String currency = input.currencyCode() != null && !input.currencyCode().isBlank() ? input.currencyCode()
+                : documentCurrency != null ? documentCurrency : functional;
+        if (documentCurrency != null && !documentCurrency.equalsIgnoreCase(currency)) {
+            throw ApiException.badRequest("A debit note against " + (outboundNote ? "an invoice" : "a bill")
+                    + " must be in the document's currency (" + documentCurrency + ")");
+        }
+        if (input.exchangeRate() != null && input.exchangeRate().signum() <= 0) {
+            throw ApiException.badRequest("exchangeRate must be greater than zero");
+        }
+        Instant rateDate = ProcurementSql.date(input.issueDate());
+        BigDecimal rate = currency.equalsIgnoreCase(functional) ? BigDecimal.ONE
+                : currencies.resolveStated(currency, functional, input.exchangeRate(),
+                        rateDate != null ? rateDate : Instant.now()).rate();
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String prefix = "outbound".equals(input.direction()) ? "DBN-OUT-" + year + "-" : "DBN-IN-" + year + "-";
         String noteNumber = sequence.next("debitnote:" + year, prefix, 5);
@@ -132,14 +167,14 @@ public class DebitNotesService {
             String id = UUID.randomUUID().toString();
             Instant issueDate = ProcurementSql.date(input.issueDate());
             List<Object> params = new ArrayList<>(List.of(id, orgId, noteNumber, input.direction(), input.partnerId()));
-            params.add(input.documentId());
+            params.add(documentId);
             params.add(input.reason());
             params.add(input.reasonNote());
             if (issueDate != null) {
                 params.add(SqlRows.ts(issueDate));
             }
-            params.add(input.currencyCode() != null ? input.currencyCode() : "USD");
-            params.add(input.exchangeRate() != null ? input.exchangeRate() : BigDecimal.ONE);
+            params.add(currency);
+            params.add(rate);
             params.add(sub);
             params.add(sub);
             params.add(input.notes());
@@ -175,6 +210,45 @@ public class DebitNotesService {
         events.publish("debit_note.created", Obj.of("organizationId", orgId, "noteId", note.get("id"), "noteNumber",
                 noteNumber, "direction", input.direction()));
         return note;
+    }
+
+    /**
+     * Gap fix h03-F4: a note may name only a posted (or paid) bill of its supplier (inbound) or invoice of its customer
+     * (outbound) — one partner's note used to lower another's bill. Returns that document's currency.
+     */
+    private String referencedDocumentCurrency(String documentId, String partnerId, boolean outbound, String functional,
+            String orgId) {
+        Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT \"partnerId\", \"documentType\"::text AS type,"
+                + " status::text AS status, \"currencyId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(documentId, orgId));
+        boolean fits = doc != null && (outbound ? "sales_invoice" : "vendor_bill").equals(doc.get("type"))
+                && partnerId.equals(doc.get("partnerId"))
+                && ("posted".equals(doc.get("status")) || "paid".equals(doc.get("status")));
+        if (!fits) {
+            throw ApiException.badRequest(outbound ? "The referenced document must be a posted sales invoice of this"
+                    + " customer" : "The referenced document must be a posted vendor bill of this supplier");
+        }
+        String currency = (String) doc.get("currencyId");
+        return currency == null || currency.isBlank() ? functional : currency;
+    }
+
+    /**
+     * Gap fix h03-F4: the note's rate to the functional currency. A note in the functional currency, or one stored at a
+     * rate of 1 (a draft saved before the fix defaulted to 'USD' at 1), posts in the functional currency as before.
+     */
+    private BigDecimal noteRate(Map<String, Object> note) {
+        Object code = note.get("currencyCode");
+        BigDecimal rate = Money.dec(note.get("exchangeRate"));
+        if (code == null || String.valueOf(code).equalsIgnoreCase(posting.baseCurrency()) || rate.signum() <= 0) {
+            return BigDecimal.ONE;
+        }
+        return rate;
+    }
+
+    /** {@code amount} (note currency) in the functional currency, to the cent. */
+    private static BigDecimal functional(BigDecimal amount, BigDecimal rate) {
+        return rate.compareTo(BigDecimal.ONE) == 0 ? amount
+                : amount.multiply(rate).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     /** Tiny JSON object writer for the {@code customFields} stash. */
@@ -279,18 +353,30 @@ public class DebitNotesService {
             // debit note raises what we owe: Dr expense / Cr AP.
             Number amt = JsNumbers.js(Money.dec(ln.get("subtotal")));
             postingLines.add(outbound ? Line.credit(accountId, amt, null) : Line.debit(accountId, amt, null));
+            // Control-account policy (V518, "close now"): the income / expense side is configuration (product category,
+            // mapping); on a designated AR / AP account it would move AR / AP with no open item behind it.
+            com.inventoryerp.accounting.application.ControlAccountGuards.assertNotControl(jdbc, orgId,
+                    "Debit note line account (product category or default mapping)", accountId);
         }
+        // Gap fix h03-F4: a note in another currency posts in that currency at its rate (it posted the foreign amounts
+        // as functional ones).
+        BigDecimal rate = noteRate(note);
+        String text = (outbound ? "Debit note to customer" : "Debit note from supplier") + " " + note.get("noteNumber");
+        PostingRequest request = rate.compareTo(BigDecimal.ONE) == 0
+                ? PostingRequest.of(journalCode, (Instant) note.get("issueDate"), text, "debit_note", id,
+                        "debit_note:" + id, postingLines)
+                : new PostingRequest(journalCode, (Instant) note.get("issueDate"), text, (String) note.get("currencyCode"),
+                        rate, "debit_note", id, null, "debit_note:" + id, null, null, null, postingLines);
         // The status claim, the journal and the flip land together; the claim serialises concurrent posts (P0-3).
         Map<String, Object> updated = tx.execute(st -> {
             Map<String, Object> row = markPosted(id, orgId);
-            posting.post(PostingRequest.of(journalCode, (Instant) note.get("issueDate"),
-                    (outbound ? "Debit note to customer" : "Debit note from supplier") + " " + note.get("noteNumber"),
-                    "debit_note", id, "debit_note:" + id, postingLines));
+            posting.post(request);
             jdbc.sql("UPDATE \"DebitNote\" SET \"taxAmount\" = ?, \"totalAmount\" = ? WHERE id = ?")
                     .params(taxTotal, noteTotal, id).update();
             row.put("taxAmount", taxTotal);
             row.put("totalAmount", noteTotal);
-            raiseReferencedDocument((String) note.get("documentId"), outbound, noteTotal);
+            BigDecimal raised = raiseReferencedDocument((String) note.get("documentId"), outbound, noteTotal);
+            recordDocumentAdjustment(id, raised);
             audit.recordInTx(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted")));
             return row;
         });
@@ -348,22 +434,40 @@ public class DebitNotesService {
      * ACC-4 (B8): a note raised against a posted bill (from the supplier) or invoice (to the customer) adds to that
      * document's open amount, so it is settled with it and the sub-ledger matches the GL.
      */
-    private void raiseReferencedDocument(String documentId, boolean outbound, BigDecimal amount) {
+    private BigDecimal raiseReferencedDocument(String documentId, boolean outbound, BigDecimal amount) {
         if (documentId == null || amount.signum() <= 0) {
-            return;
+            return Money.ZERO;
         }
-        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = \"amountResidual\" + ?, status = CASE WHEN status::text ="
+        int raised = jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = \"amountResidual\" + ?, status = CASE WHEN status::text ="
                         + " 'paid' THEN 'posted'::\"DocumentStatus\" ELSE status END, \"paymentStatus\" = CASE WHEN"
                         + " \"amountPaid\" > 0 THEN 'partial'::\"PaymentStatus\" ELSE 'not_paid'::\"PaymentStatus\" END,"
                         + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text"
                         + " = ? AND status::text IN ('posted', 'paid')")
                 .params(amount, documentId, org(), outbound ? "sales_invoice" : "vendor_bill").update();
+        return raised > 0 ? amount : Money.ZERO;
     }
 
-    /** A returned-goods note settles that much of the referenced bill's open amount (never below zero). */
-    private void lowerReferencedBill(String documentId, BigDecimal amount) {
+    /**
+     * Document reversals (V520): what the note moved its referenced document's residual by (+ raised, − lowered), so a
+     * reversal gives back exactly that.
+     */
+    private void recordDocumentAdjustment(String noteId, BigDecimal adjustment) {
+        jdbc.sql("UPDATE \"DebitNote\" SET \"documentAdjustment\" = ? WHERE id = ?").params(adjustment, noteId).update();
+    }
+
+    /**
+     * A returned-goods note settles that much of the referenced bill's open amount (never below zero); returns what it
+     * actually took off the residual.
+     */
+    private BigDecimal lowerReferencedBill(String documentId, BigDecimal amount) {
         if (documentId == null || amount.signum() <= 0) {
-            return;
+            return Money.ZERO;
+        }
+        BigDecimal residual = jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " AND \"documentType\"::text = 'vendor_bill' AND status::text = 'posted' FOR UPDATE")
+                .params(documentId, org()).query(BigDecimal.class).optional().orElse(null);
+        if (residual == null) {
+            return Money.ZERO;
         }
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = GREATEST(\"amountResidual\" - ?, 0),"
                         + " status = CASE WHEN \"amountResidual\" - ? <= 0.005 THEN 'paid'::\"DocumentStatus\" ELSE status END,"
@@ -372,6 +476,7 @@ public class DebitNotesService {
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text = 'vendor_bill'"
                         + " AND status::text = 'posted'")
                 .params(amount, amount, amount, documentId, org()).update();
+        return residual.signum() <= 0 ? Money.ZERO : residual.min(amount);
     }
 
     /** Purchase price variance, the stock adjustment expense account when no PPV account is mapped. */
@@ -406,21 +511,27 @@ public class DebitNotesService {
     private Map<String, Object> postSupplierReturn(Map<String, Object> note) {
         String orgId = org();
         String id = (String) note.get("id");
+        String documentId = (String) note.get("documentId");
+        BigDecimal rate = noteRate(note);
+        String foreignCurrency = rate.compareTo(BigDecimal.ONE) == 0 ? null : (String) note.get("currencyCode");
         Map<String, Object> updated = tx.execute(st -> {
             Map<String, Object> claimed = markPosted(id, orgId);
-            Map<String, Object> location = resolveReturnLocation(note, orgId);
+            Map<String, Object> chosen = chosenReturnLocation(note, orgId);
             String apAccount = determination.payableAccount(partnerCol(note, "payableAccountId"));
             String stockValAccount = determination.mapped("stock_valuation");
             List<Line> postingLines = new ArrayList<>();
-            BigDecimal totalAp = Money.ZERO;
+            // The supplier's credit (AP part) in the note currency and in the functional one; GRNI cleared.
+            BigDecimal apForeign = Money.ZERO;
+            BigDecimal apFunctional = Money.ZERO;
+            BigDecimal grniCleared = Money.ZERO;
             Map<String, BigDecimal> taxByAccount = new java.util.LinkedHashMap<>();
             BigDecimal noteTax = Money.ZERO;
+            BigDecimal noteSubtotal = Money.ZERO;
             String variance = returnVarianceAccount();
             for (Map<String, Object> ln : (List<Map<String, Object>>) note.get("lines")) {
                 BigDecimal price = Money.dec(ln.get("subtotal"));
-                BigDecimal tax = lineTax(ln, false, taxByAccount);
-                noteTax = noteTax.add(tax);
-                totalAp = totalAp.add(tax);
+                noteSubtotal = noteSubtotal.add(price);
+                noteTax = noteTax.add(lineTax(ln, false, new java.util.LinkedHashMap<>()));
                 BigDecimal qty = Money.dec(ln.get("quantity"));
                 Map<String, Object> product = ln.get("productId") == null ? null : SqlRows.one(jdbc.sql("SELECT"
                         + " \"trackInventory\", \"productType\"::text AS \"productType\" FROM \"Product\" WHERE id = ?"
@@ -428,7 +539,33 @@ public class DebitNotesService {
                 boolean isStock = product != null && Boolean.TRUE.equals(product.get("trackInventory"))
                         && ("stockable".equals(product.get("productType"))
                                 || "consumable".equals(product.get("productType")));
-                totalAp = totalAp.add(price);
+                // Gap fix h03-F4: a return that names no bill takes the supplier's open (unbilled) receipt quantity, as
+                // a bill would. Goods of a receipt without an order clear its GRNI at the receipt cost and carry no
+                // supplier credit (they were never billed); goods of a purchase-order receipt reduce the payable its
+                // voucher raised. Either way the receipt keeps that much less open to bill.
+                List<Consumed> consumed = documentId == null && isStock && qty.signum() > 0
+                        ? consumeOpenReceipts(note, ln, orgId) : List.of();
+                BigDecimal grniQty = Money.ZERO;
+                BigDecimal grniValue = Money.ZERO;
+                for (Consumed c : consumed) {
+                    if (!c.vouchered()) {
+                        grniQty = grniQty.add(c.noteQuantity());
+                        grniValue = grniValue.add(Money.round(c.receiptQuantity().multiply(c.unitCost())));
+                    }
+                }
+                BigDecimal apPrice = grniQty.signum() == 0 ? price
+                        : Money.round(Money.div(price.multiply(qty.subtract(grniQty).max(Money.ZERO)), qty));
+                Map<String, Object> apLine = new java.util.HashMap<>(ln);
+                apLine.put("subtotal", apPrice);
+                BigDecimal apTax = lineTax(apLine, false, taxByAccount);
+                apForeign = apForeign.add(apPrice).add(apTax);
+                BigDecimal apPriceFunctional = functional(apPrice, rate);
+                apFunctional = apFunctional.add(apPriceFunctional);
+                grniCleared = grniCleared.add(grniValue);
+                Map<String, Object> location = chosen != null ? chosen
+                        : consumed.isEmpty() || consumed.getFirst().warehouseId() == null ? defaultReturnLocation(orgId)
+                                : SqlRows.one(jdbc.sql("SELECT * FROM \"InventoryLocation\" WHERE id = ? AND"
+                                        + " \"organizationId\" = ?").params(consumed.getFirst().warehouseId(), orgId));
                 if (isStock && qty.signum() > 0 && location != null) {
                     StockMove move = StockMove.of((String) ln.get("productId"), (String) location.get("id"), qty)
                             .variant((String) ln.get("variantId"))
@@ -441,30 +578,45 @@ public class DebitNotesService {
                     if (cost.signum() > 0) {
                         postingLines.add(Line.credit(stockValAccount, JsNumbers.dec(cost), null));
                     }
-                    // Return variance: supplier credit (price) vs the stock cost removed.
-                    BigDecimal diff = price.subtract(cost);
+                    // Return variance: supplier credit (price) plus GRNI cleared vs the stock cost removed.
+                    BigDecimal diff = apPriceFunctional.add(grniValue).subtract(cost);
                     if (diff.signum() > 0) {
                         postingLines.add(Line.credit(variance, JsNumbers.dec(diff), "Return price variance"));
                     } else if (diff.signum() < 0) {
                         postingLines.add(Line.debit(variance, JsNumbers.dec(diff.negate()), "Return price variance"));
                     }
-                } else if (price.signum() > 0) {
+                } else if (apPriceFunctional.signum() > 0) {
                     // Non-stock line on an RTV (e.g. a credited service/fee): reduce expense.
-                    postingLines.add(Line.credit(determination.mapped("default_expense"), JsNumbers.dec(price), null));
+                    postingLines.add(Line.credit(determination.mapped("default_expense"),
+                            JsNumbers.dec(apPriceFunctional), null));
                 }
             }
-            taxByAccount.forEach((acc, amt) -> postingLines.add(Line.credit(acc, JsNumbers.dec(amt), "Input tax reversal")));
-            if (totalAp.signum() > 0) {
-                postingLines.addFirst(new Line(apAccount, JsNumbers.dec(totalAp), null, (String) note.get("partnerId"),
-                        null, null, null, null));
+            for (Map.Entry<String, BigDecimal> t : taxByAccount.entrySet()) {
+                BigDecimal taxFunctional = functional(t.getValue(), rate);
+                apFunctional = apFunctional.add(taxFunctional);
+                postingLines.add(Line.credit(t.getKey(), JsNumbers.dec(taxFunctional), "Input tax reversal"));
             }
-            posting.post(PostingRequest.of("PURCH", (Instant) note.get("issueDate"), "Return to vendor "
-                    + note.get("noteNumber"), "debit_note", id, "debit_note_rtv:" + id, postingLines));
+            if (grniCleared.signum() > 0) {
+                postingLines.addFirst(Line.debit(determination.mapped("grni_accrued"), JsNumbers.dec(grniCleared),
+                        "GRNI cleared by return"));
+            }
+            if (apFunctional.signum() > 0) {
+                Line ap = new Line(apAccount, JsNumbers.dec(apFunctional), null, (String) note.get("partnerId"), null,
+                        null, null, null);
+                postingLines.addFirst(foreignCurrency == null ? ap : ap.inCurrency(foreignCurrency,
+                        JsNumbers.dec(apForeign)));
+            }
+            if (!postingLines.isEmpty()) {
+                posting.post(PostingRequest.of("PURCH", (Instant) note.get("issueDate"), "Return to vendor "
+                        + note.get("noteNumber"), "debit_note", id, "debit_note_rtv:" + id, postingLines));
+            }
+            BigDecimal noteTotal = noteSubtotal.add(noteTax);
             jdbc.sql("UPDATE \"DebitNote\" SET \"taxAmount\" = ?, \"totalAmount\" = ? WHERE id = ?")
-                    .params(noteTax, totalAp, id).update();
+                    .params(noteTax, noteTotal, id).update();
             claimed.put("taxAmount", noteTax);
-            claimed.put("totalAmount", totalAp);
-            lowerReferencedBill((String) note.get("documentId"), totalAp);
+            claimed.put("totalAmount", noteTotal);
+            BigDecimal lowered = lowerReferencedBill(documentId, apForeign);
+            recordDocumentAdjustment(id, lowered.negate());
             return claimed;
         });
         audit.record(AuditInput.of("DebitNote", id, "update", null, Obj.of("status", "posted", "kind",
@@ -474,8 +626,8 @@ public class DebitNotesService {
         return updated;
     }
 
-    /** RTV source warehouse: the stashed {@code customFields.locationId}, else the org's active warehouse. */
-    private Map<String, Object> resolveReturnLocation(Map<String, Object> note, String orgId) {
+    /** RTV source warehouse the note names (the stashed {@code customFields.locationId}), else {@code null}. */
+    private Map<String, Object> chosenReturnLocation(Map<String, Object> note, String orgId) {
         Object custom = note.get("customFields");
         String stashed = null;
         if (custom instanceof JsonNode node && node.has("locationId") && !node.get("locationId").isNull()) {
@@ -484,17 +636,103 @@ public class DebitNotesService {
             stashed = String.valueOf(m.get("locationId"));
         }
         if (stashed != null && !stashed.isEmpty()) {
-            Map<String, Object> loc = SqlRows.one(jdbc.sql("SELECT * FROM \"InventoryLocation\" WHERE id = ?"
+            return SqlRows.one(jdbc.sql("SELECT * FROM \"InventoryLocation\" WHERE id = ?"
                     + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(stashed, orgId));
-            if (loc != null) {
-                return loc;
-            }
         }
-        return SqlRows.one(jdbc.sql("SELECT * FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type = 'warehouse'"
-                + " AND \"isActive\" = true AND \"deletedAt\" IS NULL LIMIT 1").param(orgId));
+        return null;
     }
 
-    /** Cancel a draft (posted notes are reversed with a credit note). */
+    /**
+     * Gap fix h03-F4: the warehouse a return without a named location (and without a receipt to return from) ships
+     * from — the organisation's first active warehouse, by creation, not an arbitrary one.
+     */
+    private Map<String, Object> defaultReturnLocation(String orgId) {
+        return SqlRows.one(jdbc.sql("SELECT * FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type ="
+                + " 'warehouse' AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY \"createdAt\", id LIMIT 1")
+                .param(orgId));
+    }
+
+    /** Open receipt quantity a return took: in the note line's unit and the receipt line's, at the receipt cost. */
+    private record Consumed(String receiptLineId, BigDecimal noteQuantity, BigDecimal receiptQuantity,
+            boolean vouchered, BigDecimal unitCost, String warehouseId) {}
+
+    /**
+     * Gap fix h03-F4: take a returned line's quantity off the supplier's open (unbilled) posted receipt lines of the
+     * product and variant, oldest first, locked in the bill matcher's order so a bill and a return cannot both take the
+     * same quantity. Each take is recorded ({@code DebitNoteReceiptMatch}) so a reversal of the note gives it back.
+     */
+    private List<Consumed> consumeOpenReceipts(Map<String, Object> note, Map<String, Object> ln, String orgId) {
+        String productId = (String) ln.get("productId");
+        BigDecimal remaining = Money.dec(ln.get("quantity"));
+        BigDecimal noteFactor = ln.get("uomFactor") != null && Money.dec(ln.get("uomFactor")).signum() > 0
+                ? Money.dec(ln.get("uomFactor")) : units.factorToBase(productId, (String) ln.get("uomId"));
+        List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT l.id, l.quantity, l.\"billedQuantity\","
+                        + " l.\"unitCost\", l.\"uomFactor\", l.\"uomId\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM"
+                        + " \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE"
+                        + " l.\"organizationId\" = ? AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
+                        + " AND l.quantity > l.\"billedQuantity\""
+                        + " ORDER BY r.\"receivedAt\" ASC, l.\"lineNumber\" ASC, l.id ASC FOR UPDATE OF l")
+                .params(orgId, productId, ln.get("variantId"), orgId, note.get("partnerId")));
+        if (!open.isEmpty()) {
+            // The row lock may have waited for a receipt reversal; the joined status above is from before the wait,
+            // so a fresh read decides which receipts are still posted.
+            java.util.Set<String> posted = new java.util.HashSet<>(jdbc.sql("SELECT l.id FROM \"GoodsReceiptLine\" l"
+                    + " JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE l.id = ANY(?::text[]) AND"
+                    + " l.\"organizationId\" = ? AND r.status = 'posted'").params(open.stream()
+                    .map(l -> (String) l.get("id")).toArray(String[]::new), orgId).query(String.class).list());
+            open = open.stream().filter(l -> posted.contains((String) l.get("id"))).toList();
+        }
+        List<Consumed> out = new ArrayList<>();
+        for (Map<String, Object> l : open) {
+            if (remaining.signum() <= 0) {
+                break;
+            }
+            BigDecimal openQty = Money.dec(l.get("quantity")).subtract(Money.dec(l.get("billedQuantity")));
+            if (openQty.signum() <= 0) {
+                continue;
+            }
+            BigDecimal receiptFactor = l.get("uomFactor") != null && Money.dec(l.get("uomFactor")).signum() > 0
+                    ? Money.dec(l.get("uomFactor")) : units.factorToBase(productId, (String) l.get("uomId"));
+            // Multiply before dividing so whole units stay exact (24 Piece of a Box-24 line is exactly 1 Box).
+            BigDecimal openInNote = Money.div(openQty.multiply(receiptFactor), noteFactor);
+            BigDecimal take = Money.min(openInNote, remaining);
+            BigDecimal takeInReceipt = take.compareTo(openInNote) == 0 ? openQty
+                    : Money.div(take.multiply(noteFactor), receiptFactor).setScale(6, java.math.RoundingMode.HALF_UP);
+            jdbc.sql("UPDATE \"GoodsReceiptLine\" SET \"billedQuantity\" = \"billedQuantity\" + ? WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(takeInReceipt, l.get("id"), orgId).update();
+            jdbc.sql("INSERT INTO \"DebitNoteReceiptMatch\" (id, \"organizationId\", \"debitNoteId\", \"debitNoteLineId\","
+                            + " \"goodsReceiptLineId\", quantity, vouchered, \"unitCost\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                    .params(UUID.randomUUID().toString(), orgId, note.get("id"), ln.get("id"), l.get("id"), takeInReceipt,
+                            l.get("purchaseOrderId") != null, Money.dec(l.get("unitCost")))
+                    .update();
+            out.add(new Consumed((String) l.get("id"), take, takeInReceipt, l.get("purchaseOrderId") != null,
+                    Money.dec(l.get("unitCost")), (String) l.get("warehouseId")));
+            remaining = remaining.subtract(take);
+        }
+        return out;
+    }
+
+    /**
+     * Gap fix h03-F4: a reversed return gives the receipt quantity it took back to its receipt lines (open to bill
+     * again; the mirrored journal restores their GRNI or payable).
+     */
+    private void releaseReceiptMatches(String noteId, String orgId) {
+        List<Map<String, Object>> matches = SqlRows.list(jdbc.sql("SELECT m.\"goodsReceiptLineId\", m.quantity FROM"
+                + " \"DebitNoteReceiptMatch\" m JOIN \"GoodsReceiptLine\" l ON l.id = m.\"goodsReceiptLineId\" JOIN"
+                + " \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE m.\"organizationId\" = ? AND"
+                + " m.\"debitNoteId\" = ? AND m.\"releasedAt\" IS NULL ORDER BY r.\"receivedAt\", l.\"lineNumber\", l.id"
+                + " FOR UPDATE OF l").params(orgId, noteId));
+        for (Map<String, Object> m : matches) {
+            jdbc.sql("UPDATE \"GoodsReceiptLine\" SET \"billedQuantity\" = GREATEST(0, \"billedQuantity\" - ?) WHERE"
+                    + " id = ? AND \"organizationId\" = ?").params(m.get("quantity"), m.get("goodsReceiptLineId"), orgId)
+                    .update();
+        }
+        jdbc.sql("UPDATE \"DebitNoteReceiptMatch\" SET \"releasedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND"
+                + " \"debitNoteId\" = ? AND \"releasedAt\" IS NULL").params(orgId, noteId).update();
+    }
+
+    /** Cancel a draft (a posted note is reversed with {@link #reverse}). */
     public Map<String, Object> cancel(String id) {
         String orgId = org();
         Map<String, Object> note = SqlRows.one(DebitNote.class, jdbc.sql("SELECT * FROM \"DebitNote\" WHERE id = ?"
@@ -503,7 +741,11 @@ public class DebitNotesService {
             throw ApiException.notFound("Debit note not found");
         }
         if ("posted".equals(note.get("status"))) {
-            throw ApiException.badRequest("Cannot cancel a posted debit note; reverse with a credit note");
+            throw ApiException.badRequest("Cannot cancel a posted debit note; reverse it instead"
+                    + " (PATCH /procurement/debit-notes/" + id + "/reverse)");
+        }
+        if ("reversed".equals(note.get("status"))) {
+            throw ApiException.badRequest("Debit note " + note.get("noteNumber") + " is already reversed");
         }
         Map<String, Object> row = SqlRows.one(DebitNote.class, jdbc.sql("UPDATE \"DebitNote\" SET status = 'cancelled',"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
@@ -512,6 +754,175 @@ public class DebitNotesService {
             throw new IllegalStateException("No record was found for an update.");
         }
         return row;
+    }
+
+    // ------------------------------------------------------------------ reversal
+
+    private com.inventoryerp.accounting.application.DocumentReversalService reversals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(com.inventoryerp.accounting.application.DocumentReversalService reversals) {
+        this.reversals = reversals;
+    }
+
+    private static final BigDecimal CENT = new BigDecimal("0.005");
+
+    /**
+     * Debit-note document reversal (owner decision 2026-11-17; a posted note could not be cancelled and its only undo
+     * was the generic journal reversal). With a reason, behind the {@code debit_note_reverse} approval gate, the
+     * {@code debit_note:reverse} permission and the {@code document_reversal} separation-of-duties pair, in one
+     * transaction under row locks on the referenced invoice / bill and the note:
+     * <ul>
+     *   <li>sub-ledger: what the note did to its referenced document is given back — a note that raised the open amount
+     *       ({@code documentAdjustment} &gt; 0) lowers it again, refused when that part was already paid (void the
+     *       payments first); a return-to-vendor that lowered the bill raises it again. A note posted before V520 has no
+     *       recorded adjustment: a raise is taken as its total, a lowering as min(total, payable − paid − residual). A
+     *       referenced document that is cancelled is left alone;</li>
+     *   <li>GL: its {@code debit_note} entries (note and return-to-vendor) are mirrored by {@link PostingService#reverse};</li>
+     *   <li>stock: goods a return-to-vendor shipped back come back in at the cost they left at ({@code reversal_in},
+     *       no separate GL: the mirrored entry restores the stock valuation);</li>
+     *   <li>the note becomes {@code reversed} and a {@code DocumentReversal} row keeps reason, who, when and the entries.</li>
+     * </ul>
+     * A replay on a reversed note returns it unchanged.
+     */
+    public Map<String, Object> reverse(String id, String reasonIn) {
+        String orgId = org();
+        Map<String, Object> note = SqlRows.one(DebitNote.class, jdbc.sql("SELECT * FROM \"DebitNote\" WHERE id = ?"
+                + " AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, orgId));
+        if (note == null) {
+            throw ApiException.notFound("Debit note not found");
+        }
+        if ("reversed".equals(note.get("status"))) {
+            return reversedView(id);
+        }
+        String reason = reversals.requireReason(reasonIn, "reverse a debit note");
+        String number = (String) note.get("noteNumber");
+        if (!"posted".equals(note.get("status"))) {
+            throw ApiException.badRequest("Only a posted debit note can be reversed (debit note " + number + " is "
+                    + note.get("status") + "; cancel a draft instead)");
+        }
+        reversals.requireApproval("debit_note_reverse", id, "debit note " + number, Money.dec(note.get("totalAmount")));
+        reversals.assertSeparated("DebitNote", id, java.util.Arrays.asList((String) note.get("createdBy"),
+                (String) note.get("postedById")));
+        tx.executeWithoutResult(st -> {
+            String documentId = (String) note.get("documentId");
+            if (documentId != null) {
+                jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(documentId, orgId).query().listOfRows();
+            }
+            Map<String, Object> locked = SqlRows.one(jdbc.sql("SELECT status, \"totalAmount\", \"documentAdjustment\","
+                    + " direction, reason::text AS reason FROM \"DebitNote\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " FOR UPDATE").params(id, orgId));
+            if ("reversed".equals(locked.get("status"))) {
+                return; // a concurrent reversal won the lock: replay
+            }
+            if (!"posted".equals(locked.get("status"))) {
+                throw ApiException.badRequest("Only a posted debit note can be reversed");
+            }
+            boolean rtv = "inbound".equals(locked.get("direction")) && "returned_goods".equals(locked.get("reason"));
+            BigDecimal total = Money.dec(locked.get("totalAmount"));
+            List<Map<String, Object>> unwound = new ArrayList<>();
+            if (documentId != null) {
+                unwound.addAll(restoreReferencedDocument(documentId, number, rtv, total,
+                        locked.get("documentAdjustment") == null ? null : Money.dec(locked.get("documentAdjustment"))));
+            }
+            String text = "Reversal of debit note " + number + ": " + reason;
+            for (String entryId : jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND"
+                    + " \"sourceType\" = 'debit_note' AND \"sourceId\" = ? AND status = 'posted' ORDER BY \"postedAt\", id")
+                    .params(orgId, id).query(String.class).list()) {
+                posting.reverse(entryId, null, text);
+            }
+            if (rtv) {
+                bringBackReturnedStock(id, number);
+                releaseReceiptMatches(id, orgId);
+            }
+            jdbc.sql("UPDATE \"DebitNote\" SET status = 'reversed', \"updatedAt\" = " + NOW + ", \"updatedBy\" = ?"
+                    + " WHERE id = ?").params(user(), id).update();
+            reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("debit_note",
+                    id, number, (String) note.get("partnerId"), reason, "DebitNote", List.of("debit_note"),
+                    List.of("debit_note_reversal"), unwound));
+        });
+        return reversedView(id);
+    }
+
+    /** Undo the note's effect on its referenced invoice / bill; the unwound adjustment for the reversal record. */
+    private List<Map<String, Object>> restoreReferencedDocument(String documentId, String number, boolean rtv,
+            BigDecimal total, BigDecimal recorded) {
+        Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", \"documentType\"::text AS type,"
+                + " status::text AS status, \"totalAmount\", \"withholdingAmount\", \"amountPaid\", \"amountResidual\""
+                + " FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(documentId, org()));
+        if (doc == null || !("posted".equals(doc.get("status")) || "paid".equals(doc.get("status")))) {
+            return List.of();
+        }
+        BigDecimal residual = Money.dec(doc.get("amountResidual"));
+        BigDecimal payable = Money.dec(doc.get("totalAmount")).subtract(Money.dec(doc.get("withholdingAmount")));
+        BigDecimal paid = Money.dec(doc.get("amountPaid"));
+        BigDecimal delta;
+        if (!rtv) {
+            BigDecimal raised = recorded != null ? recorded : total;
+            if (raised.signum() <= 0) {
+                return List.of();
+            }
+            if (residual.add(CENT).compareTo(raised) < 0) {
+                List<Map<String, Object>> payments = reversals.appliedPayments(documentId);
+                throw ApiException.badRequest("Debit note " + number + " cannot be reversed: the " + JsNumbers.dec(raised)
+                        + " it added to " + doc.get("documentNumber") + " is already settled (open " + JsNumbers.dec(residual)
+                        + ")" + (payments.isEmpty() ? "" : "; void " + com.inventoryerp.accounting.application
+                                .DocumentReversalService.describePayments(payments) + " first") + ".");
+            }
+            delta = raised.negate();
+        } else {
+            BigDecimal lowered = recorded != null ? recorded.negate()
+                    : total.min(payable.subtract(paid).subtract(residual).max(Money.ZERO));
+            if (lowered.signum() <= 0) {
+                return List.of();
+            }
+            delta = lowered;
+        }
+        BigDecimal newResidual = residual.add(delta).max(Money.ZERO);
+        String paymentStatus = newResidual.compareTo(CENT) <= 0 ? "paid" : paid.signum() > 0
+                || newResidual.compareTo(payable) < 0 ? "partial" : "not_paid";
+        String status = newResidual.compareTo(CENT) <= 0 ? "paid" : "posted";
+        jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\", status ="
+                        + " ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(newResidual, paymentStatus, status, documentId).update();
+        return List.of(Obj.of("kind", rtv ? "bill_residual_restored" : "document_residual_lowered", "documentId",
+                documentId, "documentNumber", doc.get("documentNumber"), "amount", JsNumbers.dec(delta.abs()),
+                "residualBefore", JsNumbers.dec(residual), "residualAfter", JsNumbers.dec(newResidual)));
+    }
+
+    /** Receive back what a return-to-vendor shipped out, at the cost it left at (once per note; no GL of its own). */
+    private void bringBackReturnedStock(String id, String number) {
+        long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note_reversal'"
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ?").params(id, org()).query(Long.class).single();
+        if (done > 0) {
+            return;
+        }
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
+                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note' AND"
+                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0 ORDER BY \"productId\","
+                + " \"variantId\" NULLS FIRST, \"createdAt\", id").params(id, org()))) {
+            try {
+                stock.receive(StockMove.of((String) r.get("productId"), (String) r.get("locationId"),
+                        Money.dec(r.get("quantityChange")).negate()).variant((String) r.get("variantId"))
+                        .unitCost(Money.dec(r.get("unitCost"))).moveType("reversal_in")
+                        .source("debit_note_reversal", id).reference(number)
+                        .notes("Goods back from supplier on reversal of debit note " + number));
+            } catch (ApiException e) {
+                throw ApiException.badRequest("Cannot reverse debit note " + number + ": the returned goods cannot be"
+                        + " taken back into stock (" + e.getMessage() + ")");
+            }
+        }
+    }
+
+    /** The note with lines and partner, plus its {@code reversal} record once reversed. */
+    private Map<String, Object> reversedView(String id) {
+        Map<String, Object> out = loadForPost(id, org());
+        Map<String, Object> r = reversals.find("debit_note", id);
+        if (out != null && r != null) {
+            out.put("reversal", r);
+        }
+        return out;
     }
 
     /** Latest 200 notes (by issue date) with lines and the partner name. */
@@ -529,10 +940,31 @@ public class DebitNotesService {
         }
         List<Map<String, Object>> rows = SqlRows.list(DebitNote.class, jdbc.sql("SELECT * FROM \"DebitNote\" WHERE"
                 + where + " ORDER BY \"issueDate\" DESC LIMIT 200").params(params));
+        // Gap fix h03-F10: lines and partner names load once for the page (two queries per note before).
+        Map<String, List<Map<String, Object>>> linesByNote = new java.util.HashMap<>();
+        Map<String, String> partnerNames = new java.util.HashMap<>();
+        if (!rows.isEmpty()) {
+            String[] noteIds = rows.stream().map(r -> (String) r.get("id")).toArray(String[]::new);
+            for (Map<String, Object> l : SqlRows.list(DebitNoteLine.class, jdbc.sql("SELECT * FROM \"DebitNoteLine\""
+                    + " WHERE \"debitNoteId\" = ANY(?::text[]) AND \"organizationId\" = ? ORDER BY \"debitNoteId\","
+                    + " \"lineNumber\", id").params(noteIds, org()))) {
+                linesByNote.computeIfAbsent((String) l.get("debitNoteId"), k -> new ArrayList<>()).add(l);
+            }
+            String[] partnerIds = rows.stream().map(r -> (String) r.get("partnerId")).distinct().toArray(String[]::new);
+            for (Map<String, Object> p : SqlRows.list(jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id ="
+                    + " ANY(?::text[]) AND \"organizationId\" = ?").params(partnerIds, org()))) {
+                partnerNames.put((String) p.get("id"), (String) p.get("name"));
+            }
+        }
         for (Map<String, Object> r : rows) {
-            r.put("lines", lines(r.get("id")));
-            r.put("partner", SqlRows.one(jdbc.sql("SELECT name FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")
-                    .params(r.get("partnerId"), org())));
+            r.put("lines", linesByNote.getOrDefault((String) r.get("id"), new ArrayList<>()));
+            Object partnerId = r.get("partnerId");
+            Map<String, Object> partner = null;
+            if (partnerNames.containsKey(partnerId)) {
+                partner = new java.util.LinkedHashMap<>();
+                partner.put("name", partnerNames.get(partnerId));
+            }
+            r.put("partner", partner);
         }
         return rows;
     }

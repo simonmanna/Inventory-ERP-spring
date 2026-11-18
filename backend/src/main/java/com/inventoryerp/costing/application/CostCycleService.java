@@ -1,6 +1,7 @@
 package com.inventoryerp.costing.application;
 
 import com.inventoryerp.accounting.application.AccountingDay;
+import com.inventoryerp.accounting.application.CostingReversals;
 import com.inventoryerp.shared.costing.AllocationCalculator;
 
 import com.inventoryerp.accounting.application.PostingRequest;
@@ -90,12 +91,15 @@ public class CostCycleService {
     private final SequenceService seq;
     private final PostingService posting;
     private final AuditService audit;
+    private final CostingReversals reversals;
 
-    public CostCycleService(JdbcClient jdbc, SequenceService seq, PostingService posting, AuditService audit) {
+    public CostCycleService(JdbcClient jdbc, SequenceService seq, PostingService posting, AuditService audit,
+            CostingReversals reversals) {
         this.jdbc = jdbc;
         this.seq = seq;
         this.posting = posting;
         this.audit = audit;
+        this.reversals = reversals;
     }
 
     private static String org() {
@@ -328,11 +332,21 @@ public class CostCycleService {
         LocalDate f = day(from, "from");
         LocalDate t = day(to, "to");
         period(f, t);
-        if (jdbc.sql("SELECT count(*) FROM \"AllocationRun\" WHERE \"cycleId\" = ? AND \"periodFrom\" = ? AND"
-                + " \"periodTo\" = ? AND status = 'posted'").params(cycleId, Date.valueOf(f), Date.valueOf(t))
-                .query(Long.class).single() > 0) {
-            throw ApiException.conflict("This cycle already has a posted run for " + f + " – " + t
-                    + "; reverse it first");
+        // Review 2026-11-17 (ACR-7): any posted run of the cycle whose period overlaps this one blocks it, not only the
+        // exact same dates — a month run after a run for its first half allocated the first half twice.
+        Map<String, Object> overlap = SqlRows.one(jdbc.sql("SELECT number, \"periodFrom\", \"periodTo\" FROM"
+                + " \"AllocationRun\" WHERE \"organizationId\" = ? AND \"cycleId\" = ? AND status = 'posted' AND"
+                + " \"periodFrom\" <= ? AND \"periodTo\" >= ? ORDER BY \"periodFrom\" LIMIT 1").params(org(), cycleId,
+                Date.valueOf(t), Date.valueOf(f)));
+        if (overlap != null) {
+            String of = String.valueOf(overlap.get("periodFrom")).substring(0, 10);
+            String ot = String.valueOf(overlap.get("periodTo")).substring(0, 10);
+            if (of.equals(f.toString()) && ot.equals(t.toString())) {
+                throw ApiException.conflict("This cycle already has a posted run for " + f + " – " + t
+                        + "; reverse it first");
+            }
+            throw ApiException.conflict("This cycle's posted run " + overlap.get("number") + " (" + of + " – " + ot
+                    + ") overlaps " + f + " – " + t + "; reverse it first");
         }
         List<Computed> lines = compute(c, f, t);
         if (lines.isEmpty()) {
@@ -407,9 +421,8 @@ public class CostCycleService {
         }
         String reversal = null;
         if (r.get("journalEntryId") != null) {
-            Map<String, Object> rev = posting.reverse((String) r.get("journalEntryId"), java.time.Instant.now(),
-                    "Reversal of allocation " + r.get("number"));
-            reversal = (String) rev.get("id");
+            reversal = reversals.reverseId((String) r.get("journalEntryId"), "Reversal of allocation "
+                    + r.get("number"));
         }
         jdbc.sql("UPDATE \"AllocationRun\" SET status = 'reversed', \"reversalEntryId\" = ?, \"reversedAt\" = now() WHERE"
                 + " id = ?").params(reversal, runId).update();

@@ -14,7 +14,7 @@
     {"name": "AP account lookup", "method": "GET", "path": "/api/v1/accounts?search=2100&pageSize=1", "capture": {"ap": "$.data.0.id"}},
 
     {"name": "ad-hoc receipt", "method": "POST", "path": "/api/v1/procurement/goods-receipts/adhoc", "headers": {"Idempotency-Key": "{{k1}}"}, "body": {"partnerId": "{{supplier}}", "warehouseId": "{{wh}}", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 10, "unitCost": 100}]}, "capture": {"grn": "$.id"}},
-    {"name": "draft receipt", "method": "POST", "path": "/api/v1/procurement/goods-receipts", "body": {"warehouseId": "{{wh}}", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 1, "unitCost": 1}]}, "capture": {"draftGrn": "$.id"}},
+    {"name": "draft receipt", "method": "POST", "path": "/api/v1/procurement/goods-receipts", "body": {"partnerId": "{{supplier}}", "warehouseId": "{{wh}}", "lines": [{"productId": "{{product}}", "description": "Beans", "quantity": 1, "unitCost": 1}]}, "capture": {"draftGrn": "$.id"}},
     {"name": "LC: on a draft receipt", "method": "POST", "path": "/api/v1/procurement/landed-costs", "headers": {"Idempotency-Key": "{{k2}}"}, "body": {"goodsReceiptId": "{{draftGrn}}", "creditAccountId": "{{ap}}", "charges": [{"kind": "freight", "amount": 1}]}},
     {"name": "LC: bad charge kind", "method": "POST", "path": "/api/v1/procurement/landed-costs", "body": {"goodsReceiptId": "{{grn}}", "creditAccountId": "{{ap}}", "charges": [{"kind": "tip", "amount": 1}]}},
     {"name": "LC: unknown credit account", "method": "POST", "path": "/api/v1/procurement/landed-costs", "body": {"goodsReceiptId": "{{grn}}", "creditAccountId": "00000000-0000-0000-0000-000000000000", "charges": [{"kind": "freight", "amount": 1}]}},

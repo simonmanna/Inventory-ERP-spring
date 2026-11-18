@@ -155,6 +155,11 @@ function OverviewTab({ loc }: { loc: string }) {
               <TableCell>
                 {p.productName}
                 {p.mismatch && <Badge variant="destructive" className="ml-2">{tx('Bins exceed stock by {{qty}}', { qty: q(p.excessBinnedQty ?? 0) })}</Badge>}
+                {Number(p.awaitingShipQty ?? 0) > 0 && (
+                  <Badge variant="outline" className="ml-2" title={tx('A posted document already took these goods out of stock; they leave the bins when their pick order is picked and shipped.')}>
+                    {tx('{{qty}} issued, waiting to ship', { qty: q(p.awaitingShipQty) })}
+                  </Badge>
+                )}
               </TableCell>
               <TableCell className="text-right">{q(p.locationQty)}</TableCell>
               <TableCell className="text-right">{q(p.binnedQty)}</TableCell>
@@ -412,45 +417,77 @@ function PicksTab({ loc }: { loc: string }) {
   const [productId, setProductId] = useState('');
   const [qty, setQty] = useState('');
   const [ref, setRef] = useState('');
+  // Blocker fix B3: the purpose is an explicit choice. A manual pick takes the stock out when it ships; a pick for a
+  // document leaves that to the document, so choosing "manual" for a sale would take the goods out twice.
+  const [purpose, setPurpose] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState<string>();
+  const sourced = !!purpose && purpose !== 'manual';
   return (
     <div className="space-y-4">
       {canOperate && (
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1">
-            <Label>{tx('Product')}</Label>
-            <ProductPicker value={productId} onChange={setProductId} />
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1">
+              <Label>{tx('Product')}</Label>
+              <ProductPicker value={productId} onChange={setProductId} />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pk-qty">{tx('Quantity')}</Label>
+              <Input id="pk-qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} className="w-24" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pk-purpose">{tx('Picking for')}</Label>
+              <select id="pk-purpose" className={SELECT} value={purpose} onChange={(e) => setPurpose(e.target.value)}>
+                <option value="">{tx('Choose…')}</option>
+                <option value="sales_order">{tx('Sales order')}</option>
+                <option value="delivery_order">{tx('Delivery order')}</option>
+                <option value="stock_out">{tx('Stock-out')}</option>
+                <option value="transfer">{tx('Transfer')}</option>
+                <option value="manual">{tx('Manual issue (no document)')}</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="pk-ref">{sourced ? tx('Document number') : tx('Reference')}</Label>
+              <Input id="pk-ref" value={ref} onChange={(e) => setRef(e.target.value)} className="w-32" />
+            </div>
+            <Button
+              disabled={!productId || !(Number(qty) > 0) || !purpose || (sourced && !ref.trim()) || pending}
+              onClick={async () => {
+                const ok = await run('post', '/warehouse/pick-orders', {
+                  locationId: loc, sourceType: purpose, sourceRef: ref.trim() || undefined,
+                  lines: [{ productId, quantity: Number(qty) }],
+                }, tx('Pick order created'));
+                if (ok) { setQty(''); setRef(''); }
+              }}
+            >
+              {tx('New pick order')}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!selected.length || pending}
+              onClick={async () => {
+                const ok = await run('post', '/warehouse/waves', { locationId: loc, pickOrderIds: selected }, tx('Wave created'));
+                if (ok) setSelected([]);
+              }}
+            >
+              {tx('Group into wave')} ({selected.length})
+            </Button>
           </div>
-          <div className="space-y-1">
-            <Label htmlFor="pk-qty">{tx('Quantity')}</Label>
-            <Input id="pk-qty" type="number" value={qty} onChange={(e) => setQty(e.target.value)} className="w-24" />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="pk-ref">{tx('Reference')}</Label>
-            <Input id="pk-ref" value={ref} onChange={(e) => setRef(e.target.value)} className="w-32" />
-          </div>
-          <Button
-            disabled={!productId || !(Number(qty) > 0) || pending}
-            onClick={async () => {
-              const ok = await run('post', '/warehouse/pick-orders', {
-                locationId: loc, sourceRef: ref || undefined, lines: [{ productId, quantity: Number(qty) }],
-              }, tx('Pick order created'));
-              if (ok) { setQty(''); setRef(''); }
-            }}
-          >
-            {tx('New pick order')}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!selected.length || pending}
-            onClick={async () => {
-              const ok = await run('post', '/warehouse/waves', { locationId: loc, pickOrderIds: selected }, tx('Wave created'));
-              if (ok) setSelected([]);
-            }}
-          >
-            {tx('Group into wave')} ({selected.length})
-          </Button>
+          {purpose === 'manual' && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {tx('Shipping a manual pick takes the stock out of inventory. Use it only when no sales order, delivery, stock-out or transfer will take out the same goods.')}
+              {' '}
+              {tx('Someone other than its creator, who may approve stock-outs, ships it, through the stock-out approval workflow when one applies.')}
+            </p>
+          )}
+          {sourced && (
+            <p className="text-xs text-muted-foreground">
+              {tx('The document takes the stock out when it is posted; shipping this pick only records the shipment.')}
+              {' '}
+              {tx('Post the document before shipping: the pick order ships only once the document has taken the goods out.')}
+            </p>
+          )}
         </div>
       )}
       <Table>

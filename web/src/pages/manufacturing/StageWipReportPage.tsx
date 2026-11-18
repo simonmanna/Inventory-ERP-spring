@@ -51,6 +51,7 @@ export function StageWipReportPage() {
     { value: 'weight', label: tx('By weight') },
     { value: 'market_value', label: tx('By market value') },
     { value: 'fixed_pct', label: tx('By fixed %') },
+    { value: 'net_realisable_value', label: tx('By net realisable value') },
   ];
 
   return (

@@ -351,7 +351,12 @@ public final class MfgCommands {
     public record ReworkInput(
             @Positive(message = POS) BigDecimal quantity,
             List<@Valid @NotNull MaterialInput> materials,
-            String notes) {}
+            String notes,
+            /**
+             * Review 2026-11-17: {@code normal} (default) keeps the rework's cost in the units; {@code abnormal}
+             * expenses it (IAS 2.16(a)) and the units come back at the cost they carried.
+             */
+            @OneOf({"normal", "abnormal"}) String treatment) {}
 
     // ------------------------------------------------------------------ ADR-S006 D: costing & engineering
 

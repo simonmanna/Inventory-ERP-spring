@@ -82,7 +82,8 @@ class InventoryHardeningIT extends ApiTestSupport {
         line.put("description", "goods");
         line.put("quantity", qty);
         line.put("unitCost", cost);
-        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", warehouse, "receivedAt",
+        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, demoOrg), "warehouseId", warehouse, "receivedAt",
                 receivedAt.toString(), "lines", List.of(line)));
     }
 
@@ -231,7 +232,7 @@ class InventoryHardeningIT extends ApiTestSupport {
     // ------------------------------------------------------------------ defect 8
 
     @Test
-    @DisplayName("the API role cannot switch the evidence guard off; the schema owner still can")
+    @DisplayName("the API role cannot switch the evidence guard off; a superuser (the test Flyway owner) still can")
     void ledgerGuardBypass() throws Exception {
         String p = product("AVCO", null);
         receive(p, 2, 3, Instant.now());

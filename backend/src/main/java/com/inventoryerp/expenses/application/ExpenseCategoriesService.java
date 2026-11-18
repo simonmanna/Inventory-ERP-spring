@@ -250,5 +250,8 @@ public class ExpenseCategoriesService {
         if (!Boolean.TRUE.equals(acc.get("isPostable")) || !Boolean.TRUE.equals(acc.get("isActive"))) {
             throw ApiException.badRequest("Ledger account must be a postable (non-group, active) account");
         }
+        // Control-account policy (V518, "close now"): expenses of the category would debit it in system context.
+        com.inventoryerp.accounting.application.ControlAccountGuards.assertNotControl(jdbc, org(),
+                "Expense category account", ledgerAccountId);
     }
 }

@@ -3,6 +3,7 @@ package com.inventoryerp.manufacturing;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.kernel.events.OutboxWorker;
+import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.manufacturing.web.MultiStageController;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -31,6 +32,9 @@ import com.inventoryerp.BooksGuard;
  */
 @ExtendWith(BooksGuard.class)
 class MultiStageProductionIT extends MfgTestSupport {
+
+    @Autowired
+    SettingResolverService settingResolver;
 
     @Autowired
     OutboxWorker outbox;
@@ -656,6 +660,90 @@ class MultiStageProductionIT extends MfgTestSupport {
         JsonNode after = stages(orderId);
         assertThat(num(after.get("stages").get(0).get("materialCost"))).isEqualByComparingTo("32");
         assertThat(after.get("stages").get(0).get("postings")).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("review 2026-11-17 (ACR-19): with materials required on hand, a backflushing stage cannot consume stock"
+            + " that is not there")
+    void stageMaterialsMustBeOnHand() {
+        String ore = product("OHORE");
+        String out = product("OHOUT");
+        stockIn(bakery, ore, 2, 10);
+        String routingId = routing("On hand", "Crush");
+        List<String> ops = opIds(routingId);
+        ok(200, "PUT", "/manufacturing/routings/" + routingId + "/stage-setup", Map.of("stages", List.of(stage(ops.get(
+                0), "issueMode", "backflush", "materialProductIds", List.of(ore)))));
+        String bomId = activeBom(out, 10, List.of(line(ore, 4)), routingId);
+        JsonNode created = ok(201, "POST", "/manufacturing/multistage-orders", Map.of("order", Map.of("bomId", bomId,
+                "plannedQty", 10, "locationId", bakery, "outputLocationId", warehouse)));
+        ok(201, "POST", "/manufacturing/production-orders/" + created.get("id").asString() + "/confirm", null);
+        String s1 = stageId(created, 0);
+        String setting = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Setting\" (id, \"organizationId\", key, value, \"scopeType\", \"updatedAt\") VALUES"
+                + " (?, ?, 'costing.production.requireMaterialsOnHand', 'true'::jsonb, 'organization', now())")
+                .params(setting, demoOrg).update();
+        settingResolver.invalidate(demoOrg);
+        try {
+            Res refused = keyedRes("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 10,
+                    "complete", true));
+            assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+            assertThat(refused.body().get("message").asString()).startsWith("Insufficient stock for ")
+                    .endsWith(": on hand 2, requested 4.");
+            assertThat(onHand(ore, bakery)).isEqualByComparingTo("2");
+        } finally {
+            jdbc.sql("DELETE FROM \"Setting\" WHERE id = ?").param(setting).update();
+            settingResolver.invalidate(demoOrg);
+        }
+        Res posted = keyedRes("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 10, "complete",
+                true));
+        assertThat(posted.status()).as(posted.raw().body()).isIn(200, 201);
+    }
+
+    @Test
+    @DisplayName("review 2026-11-17: joint cost by net realisable value — sales value less the costs after split-off")
+    void jointCostByNrv() {
+        String ore = product("NRVORE");
+        String main = product("NRVMAIN");
+        String co = product("NRVCO");
+        stockIn(bakery, ore, 100, 10);
+        String routingId = routing("Split", "Split");
+        List<String> ops = opIds(routingId);
+        ok(200, "PUT", "/manufacturing/routings/" + routingId + "/stage-setup", Map.of("stages", List.of(stage(ops.get(
+                0), "issueMode", "backflush", "materialProductIds", List.of(ore)))));
+        String bomId = activeBom(main, 100, List.of(line(ore, 100)), routingId);
+        Res negative = call("PUT", "/manufacturing/boms/" + bomId + "/stage-setup", Map.of("coProducts", List.of(),
+                "allocationRule", Map.of("method", "net_realisable_value", "mainSeparableCostPerUnit", -1)),
+                adminToken);
+        assertThat(negative.status()).isEqualTo(400);
+        JsonNode setup = ok(200, "PUT", "/manufacturing/boms/" + bomId + "/stage-setup", Map.of("coProducts", List.of(
+                Map.of("productId", co, "role", "co_product", "quantity", 50, "marketValue", 12, "separableCostPerUnit",
+                        2)), "allocationRule", Map.of("method", "net_realisable_value", "mainMarketValue", 10,
+                                "mainSeparableCostPerUnit", 4)));
+        assertThat(setup.get("effectiveRule").get("method").asString()).isEqualTo("net_realisable_value");
+        assertThat(num(setup.get("effectiveRule").get("mainSeparableCostPerUnit"))).isEqualByComparingTo("4");
+        assertThat(num(setup.get("coProducts").get(0).get("separableCostPerUnit"))).isEqualByComparingTo("2");
+
+        JsonNode created = ok(201, "POST", "/manufacturing/multistage-orders", Map.of("order", Map.of("bomId", bomId,
+                "plannedQty", 100, "locationId", bakery, "outputLocationId", warehouse)));
+        String orderId = created.get("id").asString();
+        ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/confirm", null);
+        String s1 = stageId(created, 0);
+        String coOut = outputId(created.get("stages").get(0), co);
+        JsonNode done = keyed("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 100, "complete",
+                true, "outputs", List.of(Map.of("outputId", coOut, "quantity", 50))));
+        // joint cost 1,000 (100 t ore at 10): main 100 × (10 − 4) = 600, co-product 50 × (12 − 2) = 500
+        BigDecimal mainValue = null;
+        BigDecimal coValue = null;
+        for (JsonNode o : done.get("outputs")) {
+            if (main.equals(o.get("productId").asString())) {
+                mainValue = num(o.get("totalCost"));
+            } else if (co.equals(o.get("productId").asString())) {
+                coValue = num(o.get("totalCost"));
+            }
+        }
+        assertThat(mainValue).isEqualByComparingTo(new BigDecimal("545.454545"));
+        assertThat(coValue).isEqualByComparingTo(new BigDecimal("454.545455"));
+        assertThat(mainValue.add(coValue)).isEqualByComparingTo("1000");
     }
 
     @Test

@@ -15,8 +15,8 @@ import tools.jackson.databind.JsonNode;
 /**
  * ADR-PROCUREMENT-001 wave 8 — the cement scenario end to end: a block plant requests cement → RFQ to two suppliers
  * (one answers through the supplier portal) → comparison and award → order → change request → supplier confirms
- * through the portal → receipt → inspection rejects part of it → quality claim settled by debit note → bill held until
- * inspection, then posted and matched. Commitments follow the order and close when it is fully received.
+ * through the portal → receipt → inspection rejects part of it → quality claim settled by supplier credit → bill held
+ * until inspection, then posted and matched. Commitments follow the order and close when it is fully received.
  */
 class SourceToPayEndToEndIT extends ApiTestSupport {
 
@@ -61,7 +61,9 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
                 "lines", List.of(Map.of("productId", cement, "description", "Cement 42.5 (50 kg)", "quantity", 200,
                         "requiredDate", LocalDate.now().plusDays(7).toString())))).get("id").asString();
         ok(200, "PATCH", "/procurement/purchase-requests/" + prId + "/submit", null);
-        ok(200, "PATCH", "/procurement/purchase-requests/" + prId + "/approve", null);
+        // Gap fix h03-F6: a second administrator approves the request the first one raised.
+        assertThat(call("PATCH", "/procurement/purchase-requests/" + prId + "/approve", null,
+                com.inventoryerp.TestApprovers.secondAdmin(this)).status()).isEqualTo(200);
         String reqLine = ok(200, "GET", "/procurement/purchase-requests/" + prId, null).get("lines").get(0).get("id")
                 .asString();
 
@@ -80,7 +82,9 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
                 "leadTimeDays", 5, "freightAmount", 600000, "lines", List.of(Map.of("rfqLineId", rfqLine, "unitPrice",
                         33000))));
 
-        // 3. Comparison: Tororo is cheaper per bag but its freight makes Hima the lowest delivered cost.
+        // 3. Comparison: Tororo is cheaper per bag but its freight makes Hima the lowest delivered cost. Bids are
+        // sealed until the RFQ is closed (h04-F6).
+        ok(200, "POST", "/procurement/rfqs/" + rfqId + "/close", null);
         JsonNode cmp = ok(200, "GET", "/procurement/rfqs/" + rfqId + "/comparison", null);
         assertThat(cmp.get("suppliers")).hasSize(2);
         ok(200, "POST", "/procurement/rfqs/" + rfqId + "/award", Map.of("lines", List.of(Map.of("rfqLineId", rfqLine,
@@ -127,14 +131,20 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
         JsonNode done = money("POST", "/procurement/inspections/" + inspId + "/complete", null);
         assertThat(done.get("status").asString()).isEqualTo("partial");
 
-        // 9. The quality claim (6 × 34 000) is accepted and settled by a debit note.
+        // 9. The quality claim (6 × 34 000) carries the 6 wet bags as a quantity line (h04-F5): verified by a second
+        // user it would settle as a stock adjustment that takes them out of stock. Here the plant keeps the bags at a
+        // discount, so the credit is settled explicitly as a price variance (Dr AP / Cr PPV): stock and GRNI untouched.
         String claimId = done.get("claimId").asString();
-        assertThat(ok(200, "GET", "/procurement/claims/" + claimId, null).get("amount").asString()).isEqualTo("204000");
+        JsonNode claim = ok(200, "GET", "/procurement/claims/" + claimId, null);
+        assertThat(claim.get("amount").asString()).isEqualTo("204000");
+        assertThat(claim.get("quantityLines")).hasSize(1);
         ok(200, "POST", "/procurement/claims/" + claimId + "/submit", null);
         ok(200, "POST", "/procurement/claims/" + claimId + "/accept", Map.of("response", "credit agreed"));
-        JsonNode settled = money("POST", "/procurement/claims/" + claimId + "/settle", null);
+        JsonNode settled = money("POST", "/procurement/claims/" + claimId + "/settle",
+                Map.of("classification", "price_variance"));
         assertThat(settled.get("status").asString()).isEqualTo("settled");
-        assertThat(settled.get("debitNoteId").isNull()).isFalse();
+        assertThat(settled.path("journalEntryId").asString(null)).isNotNull();
+        assertThat(settled.get("classification").asString()).isEqualTo("price_variance");
 
         // 10. Bill posts and matches the receipt exactly.
         JsonNode posted = ok(200, "POST", "/vendor-bills/" + bill + "/post", Map.of());

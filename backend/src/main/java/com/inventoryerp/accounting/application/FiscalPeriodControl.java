@@ -75,8 +75,14 @@ public class FiscalPeriodControl {
                         + " FOR SHARE")
                 .params(orgId, ts(local), ts(local)).query(String.class).list();
         record Period(String name, String status) {}
+        // The most restrictive covering period decides (overlaps are refused since V512, but may predate it). A closed
+        // or locked period keeps its dates closed even when soft-deleted: deleting one is refused since V512, so such a
+        // row predates the control and must not reopen its range.
         Period period = jdbc.sql("SELECT name, status::text AS status FROM \"FiscalPeriod\" WHERE \"organizationId\" = ?"
-                        + " AND \"startDate\" <= ? AND \"endDate\" >= ? AND \"deletedAt\" IS NULL LIMIT 1")
+                        + " AND \"startDate\" <= ? AND \"endDate\" >= ?"
+                        + " AND (\"deletedAt\" IS NULL OR status::text <> 'open')"
+                        + " ORDER BY CASE status::text WHEN 'locked' THEN 0 WHEN 'closed' THEN 1 ELSE 2 END,"
+                        + " \"startDate\" LIMIT 1")
                 .params(orgId, ts(local), ts(local))
                 .query((rs, n) -> new Period(rs.getString("name"), rs.getString("status")))
                 .optional().orElse(null);
