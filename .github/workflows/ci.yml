@@ -276,3 +276,17 @@ jobs:
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: '1'
+
+  edge:
+    name: Edge agent (tests + image)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: edge/pyproject.toml
+      - run: pip install -e "edge[test]"
+      - run: pytest edge/tests
+      - run: docker build -t lp-edge:ci edge

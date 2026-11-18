@@ -1,14 +1,20 @@
 # ADR-S077 — Loss prevention: exception intelligence, vision security, operations intelligence
 
-- Status: accepted by the owner (2026-11-17). LP0 work package 1 (ledger and ingest) is built; later packages stop
-  for review one at a time.
-- Briefs: [`LP0-exception-intelligence.md`](../phases/LP0-exception-intelligence.md). The LP1 brief (camera platform)
-  is written alongside LP0 and reviewed separately.
+- Status: accepted by the owner (2026-11-17). LP0 is built. LP1 (camera platform) and LP2 (cashier vision) are
+  coded on the owner's request of 2026-11-17, before a pilot site (see §9); the owner builds and tests them later.
+- Briefs: [`LP0-exception-intelligence.md`](../phases/LP0-exception-intelligence.md),
+  [`LP1-camera-platform.md`](../phases/LP1-camera-platform.md), [`LP2-cashier-vision.md`](../phases/LP2-cashier-vision.md),
+  [`LP3-bar-intelligence.md`](../phases/LP3-bar-intelligence.md), [`LP4-restaurant-cafe.md`](../phases/LP4-restaurant-cafe.md),
+  [`LP5-retail-checkout.md`](../phases/LP5-retail-checkout.md), [`LP6a-camera-free-metrics.md`](../phases/LP6a-camera-free-metrics.md),
+  [`LP6b-camera-metrics.md`](../phases/LP6b-camera-metrics.md), [`LP7-activity-research.md`](../phases/LP7-activity-research.md).
 - Related: ADR-S002 (licensing), ADR-S004 (beverage controls), ADR-S017 (user data scope), ADR-S065 (notification
   routing), ADR-S070 (org-local accounting day).
 - Extension: no NestJS counterpart. Every route is new and additive, under `/loss-prevention/*`.
-- Migration: `V560__loss_prevention_ledger.sql` (WP1; written as V520 and renumbered at merge, 2026-11-18); one migration per later work package. Other worktrees reach
-  V519, so renumber at merge if one of them has taken V520.
+- Migrations: `V560`–`V562` (LP0; written as V520–V522 and renumbered at merge, 2026-11-18),
+  `V572__loss_prevention_camera_platform.sql` (LP1), `V573__loss_prevention_cashier_vision.sql` (LP2; written as
+  V523–V524 and renumbered with them), `V574` (LP6a), `V575__loss_prevention_bar_and_service.sql` (LP3 and LP4),
+  `V576__loss_prevention_retail_and_research.sql` (LP5, LP6b and LP7). LP1–LP7 were written as V563–V567 and renumbered
+  to V572–V576 at merge (2026-11-18), because ADR-S078 took V570–V571.
 
 ## Context
 
@@ -213,6 +219,35 @@ events and configuration.
 8. LP6, LP7 — operations intelligence, activity recognition research.
 
 No vision code starts before a pilot site with real footage and POS data is named.
+
+**Owner decision, 2026-11-17:** LP1 and then LP2 are coded now, ahead of LP3 and LP4 and before a pilot site.
+This overrides the rule above for the code only. Detection accuracy stays unmeasured until a pilot site's footage
+is reviewed (LP1 brief §10, LP2 brief §6); no detector model ships; the vision rules run only where zones are
+drawn, and every vision case is confirmed by an investigator on its clip.
+
+**Owner decision, 2026-11-18:** LP6a (the eight operations metrics that need no camera) is coded next, then the
+detector evaluation harness. LP6a reads only the ledger; its figures are summaries, never cases. The harness
+(`lp-edge-eval`, brief `docs/phases/LP-detector-evaluation.md`) gives a candidate the verdict "eligible" only with
+passing scores on representative footage and a licence register cleared by a named person.
+
+**Owner decision, 2026-11-18 (later):** LP3 (bar intelligence) and LP4 (restaurant and cafe) are coded next, before a
+pilot site, like LP1 and LP2. Design choices made while coding, pending the owner's approval: pour meters belong
+to the core area, not the camera feature, so they need no new licence key; meters report volume only and weighing
+stays in the beverage module. Nothing is measured on a real bar,
+kitchen pass or counter; every threshold is a design value until a pilot (LP3 brief §7, LP4 brief §6).
+
+**Owner decision, 2026-11-18 (LP5–LP7):** LP5 (retail checkout and store room), LP6b (operations insights from
+cameras) and LP7 (activity recognition research) are coded next, before a pilot site, like the earlier phases. Design
+choices made while coding, pending the owner's approval (each brief's "Open items"):
+
+- No new licence key: LP5 and LP7 run under `lpVision`, LP6b under `lpInsights`.
+- The checkout rules V-R1 and V-R2 ship off until a pilot measures the count error per transaction batch (target at
+  most 5 %).
+- Camera figures count people and never identify them.
+- Activities run in shadow mode: no rule reads them.
+- A fix to LP6a: an empty day writes no summary rows.
+
+Nothing is measured at a real checkout, door, queue or table (LP5 brief §6, LP6b brief §6, LP7 brief §6).
 
 ## Consequences
 

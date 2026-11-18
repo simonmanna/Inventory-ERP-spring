@@ -87,8 +87,24 @@ public final class LpCommands {
             String causeCode,
             @Size(max = 4000) String note) {}
 
+    /** {@code POST /loss-prevention/insights/recompute}: the days to compute again (LP6a). */
+    public record InsightsRecomputeInput(
+            @NotNull(message = "from is required") @Size(max = 10) String from,
+            @NotNull(message = "to is required") @Size(max = 10) String to,
+            @Size(max = 100) String branchId) {}
+
+    /** Filters of the insights (LP6a). {@code groupBy} is used by the staff view only. */
+    public record InsightsQuery(String from, String to, String branchId, String groupBy) {}
+
     /** Filters of the reports. */
     public record ReportQuery(String from, String to, String branchId) {}
+
+    /** {@code GET /loss-prevention/research/activities} (LP7). {@code verdict}: of the latest review, or unreviewed. */
+    public record ActivityQuery(String from, String to, String branchId, String zoneId, String activity,
+            String recognizer, String verdict, Integer page, Integer pageSize) {}
+
+    /** {@code POST /loss-prevention/research/activities/:eventId/review} (LP7). Checked by the service. */
+    public record ActivityReviewInput(String verdict, String label, String note) {}
 
     /** Filters of the ledger list. */
     public record EventQuery(String type, String source, String branchId, String deviceId, String actorId,

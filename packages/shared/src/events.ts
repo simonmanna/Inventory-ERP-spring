@@ -248,6 +248,9 @@ export const EVENTS = {
   FleetTelematicsAlertRaised: 'fleet.telematics.alert_raised',
   // Loss prevention (ADR-S077): a reconciliation run found a variance nobody has reviewed yet.
   LpCaseOpened: 'lp.case.opened',
+  // Loss prevention vision (ADR-S077, LP1): an edge agent went online, degraded (lost stream, low disk, clock drift) or
+  // offline (no heartbeat).
+  LpAgentHealthChanged: 'lp.agent.health_changed',
   // Fleet 1.3 — dispatch: a trip left the yard (stock issued once), was delivered (POD), closed or returned; a delivery
   // discrepancy was decided (an approved shortage on invoiced goods carries the draft credit note id).
   FleetTripDispatched: 'fleet.trip.dispatched',

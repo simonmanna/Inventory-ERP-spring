@@ -45,12 +45,17 @@ public class LpLedgerService {
     private final JdbcClient jdbc;
     private final BranchScopeService branches;
     private final LpReconService recon;
+    private final LpVisionDirectory directory;
+    private final LpInsightsService insights;
     private final Clock clock = Clock.systemUTC();
 
-    public LpLedgerService(JdbcClient jdbc, BranchScopeService branches, LpReconService recon) {
+    public LpLedgerService(JdbcClient jdbc, BranchScopeService branches, LpReconService recon,
+            LpVisionDirectory directory, LpInsightsService insights) {
         this.jdbc = jdbc;
         this.branches = branches;
         this.recon = recon;
+        this.directory = directory;
+        this.insights = insights;
     }
 
     private static String org() {
@@ -71,19 +76,44 @@ public class LpLedgerService {
      */
     @Transactional
     public Map<String, Object> ingest(List<EventInput> events, boolean external) {
+        return ingest(events, external, null);
+    }
+
+    /**
+     * {@link #ingest(List, boolean)} for an API client. When the client is an edge agent (LP1) its events must be for
+     * its own branch, and an observation must be about one of its own zones.
+     *
+     * @param apiClientId the caller's API client, or {@code null} for a user or this ERP's projection
+     */
+    @Transactional
+    public Map<String, Object> ingest(List<EventInput> events, boolean external, String apiClientId) {
         String org = org();
         Instant now = clock.instant();
         Set<String> known = new HashSet<>(jdbc.sql("SELECT id FROM \"Branch\" WHERE \"organizationId\" = ? AND"
                 + " \"deletedAt\" IS NULL").param(org).query(String.class).list());
+        LpVisionDirectory.AgentRef agent = directory.agentOfClient(apiClientId);
+        Map<String, LpVisionDirectory.ZoneRef> zones = directory.zones(events.stream()
+                .filter(e -> LpEventTypes.isVision(e.type()) && e.deviceId() != null).map(EventInput::deviceId)
+                .toList());
+        Map<String, LpVisionDirectory.DeviceRef> devices = directory.devices(events.stream()
+                .filter(e -> LpEventTypes.isMeasurement(e.type()) && e.deviceId() != null).map(EventInput::deviceId)
+                .toList());
         List<Map<String, Object>> results = new ArrayList<>();
         int accepted = 0;
         int duplicates = 0;
         int rejected = 0;
         Set<LpReconService.WindowKey> touched = new HashSet<>();
+        Set<LpInsightsService.DayKey> days = new HashSet<>();
         for (EventInput e : events) {
             String reason = LpEventValidator.reject(e, now);
             if (reason == null) {
                 reason = branchReason(e, known, external);
+            }
+            if (reason == null) {
+                reason = senderReason(e, agent, zones);
+            }
+            if (reason == null) {
+                reason = deviceReason(e, agent, devices);
             }
             Long seq = null;
             String status;
@@ -94,11 +124,10 @@ public class LpLedgerService {
                 if (stored.isPresent()) {
                     status = ACCEPTED;
                     seq = stored.get();
-                    String engine = recon.engineOf(e.type());
-                    if (engine != null) {
-                        touched.add(new LpReconService.WindowKey(engine, e.branchId() == null ? "" : e.branchId(),
-                                businessDate(e), e.type()));
-                    }
+                    touched.addAll(recon.keysFor(e.type(), e.branchId(), businessDate(e),
+                            LpEventValidator.instant(e.occurredAt())));
+                    days.addAll(LpInsightsService.keysFor(e.type(), e.branchId(), businessDate(e),
+                            LpEventValidator.instant(e.occurredAt())));
                 } else if (exists(org, e)) {
                     status = DUPLICATE;
                 } else {
@@ -116,7 +145,47 @@ public class LpLedgerService {
         }
         // A stored event makes its window due again, whenever it arrives (ADR-S077 §5).
         recon.markDirty(touched);
+        // And its day of operations metrics (LP6a).
+        insights.markDirty(days);
         return Obj.of("accepted", accepted, "duplicates", duplicates, "rejected", rejected, "results", results);
+    }
+
+    /** An edge agent writes for its own branch; an observation is about a zone of the sender's own cameras. */
+    private static String senderReason(EventInput e, LpVisionDirectory.AgentRef agent,
+            Map<String, LpVisionDirectory.ZoneRef> zones) {
+        if (agent != null && !agent.branchId().equals(e.branchId())) {
+            return "An edge agent sends events for its own branch only";
+        }
+        if (!LpEventTypes.isVision(e.type())) {
+            return null;
+        }
+        LpVisionDirectory.ZoneRef zone = zones.get(e.deviceId());
+        if (zone == null || !zone.branchId().equals(e.branchId())) {
+            return "Zone not found";
+        }
+        if (agent != null && !agent.id().equals(zone.agentId())) {
+            return "Zone not found for this agent";
+        }
+        return zone.cameraId().equals(e.payload().get("cameraId").asString()) ? null
+                : "payload.cameraId is not the camera of the zone";
+    }
+
+    /** A meter reading (LP3) is about a device of its branch; an edge agent sends only for the devices it reads. */
+    private static String deviceReason(EventInput e, LpVisionDirectory.AgentRef agent,
+            Map<String, LpVisionDirectory.DeviceRef> devices) {
+        if (!LpEventTypes.isMeasurement(e.type())) {
+            return null;
+        }
+        LpVisionDirectory.DeviceRef device = devices.get(e.deviceId());
+        if (device == null || !device.branchId().equals(e.branchId())) {
+            return "Measurement device not found";
+        }
+        if (agent != null && !agent.id().equals(device.agentId())) {
+            return "Measurement device not found for this agent";
+        }
+        Instant at = LpEventValidator.instant(e.occurredAt());
+        return device.retiredAt() != null && at.isAfter(device.retiredAt())
+                ? "The measurement device was retired before this event" : null;
     }
 
     private static String branchReason(EventInput e, Set<String> known, boolean external) {

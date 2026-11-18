@@ -25,6 +25,7 @@
 | `credit_limit_breach` | daily | % of limit (100) | weekly | in-app, e-mail | `CreditLimitAlertSource` |
 | `budget_overrun` | daily | % of budget (100) | weekly | in-app, e-mail | `BudgetAlertSource`, `ProcurementBudgetAlertSource` |
 | `capa_overdue` | daily | none | weekly | in-app, e-mail | `CapaOverdueAlertSource` |
+| `lp_agent_health` | hourly | hours offline or degraded (0) | daily | in-app, e-mail | `LpAgentHealthAlertSource`: active loss-prevention edge agents that are `offline` (critical) or `degraded` (warning) |
 
 Stock starts on e-mail alone because the replenishment scan already rings the bell when an alert opens.
 

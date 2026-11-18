@@ -124,6 +124,8 @@ export interface Run {
   findingCount: number;
   supersedesRunId: string | null;
   createdAt: string;
+  /** LP2: a camera window was not fully observed (a vision gap, or past the agent's watermark). */
+  observationGap?: boolean;
 }
 
 export interface RunComparison {

@@ -12,8 +12,8 @@ import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
- * Cashier and kitchen rules C01–C10 on recorded facts only: voids, cancellations, refunds, overrides, discounts, cash
- * sessions and kitchen tickets of one branch on one business day.
+ * Cashier and kitchen rules C01–C11 on recorded facts only: voids, cancellations, refunds, overrides, discounts, cash
+ * sessions, kitchen tickets and no-sale drawer openings of one branch on one business day.
  */
 @Component
 public class LpCashierEngine implements LpEngine {
@@ -27,14 +27,15 @@ public class LpCashierEngine implements LpEngine {
 
     @Override
     public String version() {
-        return "1";
+        // 2: C11 and the drawer-opened event (LP2).
+        return "2";
     }
 
     @Override
     public Set<String> eventTypes() {
         return Set.of(LpEventTypes.SALE_COMPLETED, LpEventTypes.SALE_LINE_VOIDED, LpEventTypes.ORDER_CANCELLED,
                 LpEventTypes.REFUND_ISSUED, LpEventTypes.OVERRIDE_APPROVED, LpEventTypes.CASH_SESSION_CLOSED,
-                LpEventTypes.KITCHEN_STAGE);
+                LpEventTypes.KITCHEN_STAGE, LpEventTypes.CASH_DRAWER_OPENED);
     }
 
     @Override
@@ -52,7 +53,26 @@ public class LpCashierEngine implements LpEngine {
         discounts(in, day, out);
         cashSessions(in, day, out);
         kitchen(in, day, out);
+        noSaleOpenings(in, day, out);
         return out;
+    }
+
+    // ---------------------------------------------------------------- C11
+
+    /**
+     * No-sale drawer openings per cashier against the branch, like C04 for refunds. The population is everyone who
+     * worked a till that day, so a cashier who opened the drawer without selling anything is compared too.
+     */
+    private static void noSaleOpenings(Input in, List<LedgerEvent> day, List<Finding> out) {
+        RuleConfig rule = in.active("C11");
+        if (rule == null) {
+            return;
+        }
+        List<LedgerEvent> openings = ofType(day, LpEventTypes.CASH_DRAWER_OPENED);
+        Set<String> cashiers = activeCashiers(day);
+        openings.stream().filter(e -> e.actorId() != null).forEach(e -> cashiers.add(e.actorId()));
+        aboveBranch(rule, "C11", "No-sale drawer opens by one cashier well above the branch",
+                openings.stream().filter(e -> "no_sale".equals(e.text("reason"))).toList(), cashiers, out);
     }
 
     private static List<LedgerEvent> ofType(List<LedgerEvent> events, String type) {

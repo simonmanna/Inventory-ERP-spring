@@ -25,7 +25,7 @@ public record Entitlements(Set<String> features, Integer maxDevices, Integer max
             // sidebar sections, gated by OrganizationModule / FeatureFlag on the install
             "crm", "rental", "manufacturing", "repair", "communication", "assets", "taskBoard",
             "accounting", "expense", "hr", "beverage", "fleet", "salesAgreements", "customerPortal",
-            "quarry", "lossPrevention",
+            "quarry", "lossPrevention", "lpVision", "lpInsights",
             // add-ons that are not sidebar sections
             "multiOrg", "androidPos", "apiAccess", "webhooks", "advancedReports", "backupOffsite");
 

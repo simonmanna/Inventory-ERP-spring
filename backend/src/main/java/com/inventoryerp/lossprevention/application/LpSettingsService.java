@@ -25,6 +25,14 @@ public class LpSettingsService {
     public static final String DAILY_SETTLE = "dailySettleMinutes";
     public static final String RETENTION_MONTHS = "retentionMonths";
     public static final String BACKFILL_DAYS = "backfillDays";
+    // Vision (LP1, LP2).
+    public static final String VISION_SETTLE = "visionSettleMinutes";
+    public static final String AGENT_SILENT = "agentSilentMinutes";
+    public static final String MAX_CLOCK_DRIFT = "maxClockDriftMs";
+    public static final String EVIDENCE_BUFFER_DAYS = "evidenceBufferDays";
+    public static final String EVIDENCE_CASE_DAYS = "evidenceCaseDays";
+    public static final String EVIDENCE_CLOSED_CASE_DAYS = "evidenceClosedCaseDays";
+    public static final String HEARTBEAT_RETENTION_DAYS = "heartbeatRetentionDays";
 
     /** Minutes after the last change before an engine runs; minutes after the day ends before it is final. */
     public static final Map<String, Integer> DEFAULTS = defaults();
@@ -36,6 +44,13 @@ public class LpSettingsService {
         d.put(DAILY_SETTLE, 120);
         d.put(RETENTION_MONTHS, 24);
         d.put(BACKFILL_DAYS, 30);
+        d.put(VISION_SETTLE, 15);
+        d.put(AGENT_SILENT, 5);
+        d.put(MAX_CLOCK_DRIFT, 2000);
+        d.put(EVIDENCE_BUFFER_DAYS, 7);
+        d.put(EVIDENCE_CASE_DAYS, 365);
+        d.put(EVIDENCE_CLOSED_CASE_DAYS, 90);
+        d.put(HEARTBEAT_RETENTION_DAYS, 14);
         return java.util.Collections.unmodifiableMap(d);
     }
 

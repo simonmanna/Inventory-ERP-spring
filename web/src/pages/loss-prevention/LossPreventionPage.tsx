@@ -13,14 +13,22 @@ import {
 import { DataTable, type Column } from '@/components/data-table';
 import { DataTablePagination, DateRangeFilter, FilterSelect, ListCard, ListPageHeader, ListToolbar } from '@/components/list';
 import { useAuthStore } from '@/stores/auth.store';
+import { useLicense } from '@/features/license/api';
+import { featureAvailable } from '@/lib/features';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
+import { useOrgFeatures } from '@/lib/use-org-features';
 import {
   CAUSE_CODES, OUTCOMES, useLpBarVariance, useLpByCashier, useLpCase, useLpCaseAction, useLpCases, useLpDashboard,
   useLpPerformance, useLpReplay, useLpRules, useLpRunComparison, useLpRuns, useLpSync, useSaveLpRule,
   type BarRow, type CashierRow, type Finding, type LpCase, type Rule, type Run, type Severity, type Summary,
 } from '@/features/loss-prevention/api';
+import { CamerasTab } from './CamerasTab';
+import { CaseEvidence, EvidenceTab } from './EvidenceTab';
+import { InsightsTab } from './InsightsTab';
+import { MetersTab } from './MetersTab';
+import { ResearchTab } from './ResearchTab';
 
 const SEVERITY: Record<Severity, 'destructive' | 'default' | 'secondary'> = {
   critical: 'destructive',
@@ -38,7 +46,19 @@ const OUTCOME_LABELS: Record<string, string> = {
   explained: tx('Explained'), confirmed_variance: tx('Confirmed variance'), false_alarm: tx('False alarm'),
   inconclusive: tx('Inconclusive'),
 };
-const ENGINE_LABELS: Record<string, string> = { cashier: tx('Cashier & kitchen'), bar: tx('Bar') };
+const ENGINE_LABELS: Record<string, string> = {
+  cashier: tx('Cashier & kitchen'), bar: tx('Bar'), cashier_vision: tx('Cashier, cameras'),
+  bar_pour: tx('Bar, meters and cameras'), kitchen_flow: tx('Kitchen flow'), service_vision: tx('Service, cameras'),
+  retail_vision: tx('Retail checkout and store room, cameras'),
+};
+/** Areas that need cameras: offered as filters only when the licence includes them. */
+const CAMERA_ENGINES = new Set(['cashier_vision', 'service_vision', 'retail_vision']);
+/** Areas to filter by; the camera areas only when the licence includes cameras. */
+const engineOptions = (vision: boolean) => Object.entries(ENGINE_LABELS)
+  .filter(([value]) => vision || !CAMERA_ENGINES.has(value))
+  .map(([value, label]) => ({ value, label }));
+/** Rules that ship off until a pilot has measured how well the camera counts (LP5). */
+const PILOT_FIRST = new Set(['V-R1', 'V-R2']);
 const TIMELINE_LABELS: Record<string, string> = {
   opened: tx('Case opened'), viewed: tx('Viewed'), assigned: tx('Assigned'), note: tx('Note'),
   review_started: tx('Review started'), escalated: tx('Escalated'), finding_changed: tx('Figures changed'),
@@ -53,6 +73,14 @@ export function LossPreventionPage() {
   const can = useAuthStore((s) => s.hasPermission);
   const canConfigure = can(PERMISSIONS.lossPrevention.configure);
   const canInvestigate = can(PERMISSIONS.lossPrevention.investigate);
+  const canEvidence = can(PERMISSIONS.lossPrevention.evidence);
+  // Cameras (LP1, LP2) are a licence feature of their own. A route the licence refuses answers 402 and opens the
+  // licence dialog, so the camera screens are offered only once the licence is known to include them.
+  const { data: license } = useLicense();
+  const { data: orgFeatures } = useOrgFeatures();
+  const vision = !!license && featureAvailable(orgFeatures, license.features, 'lpVision');
+  // Operations insights (LP6a) are a licence feature of their own too.
+  const insights = !!license && featureAvailable(orgFeatures, license.features, 'lpInsights');
   const sync = useLpSync();
   const onSync = () => sync.mutate(undefined, {
     onSuccess: (r) => notify.success(`${tx('Records read')}. ${r.windowsReconciled} ${tx('day(s) reconciled')}`),
@@ -72,14 +100,40 @@ export function LossPreventionPage() {
           <TabsTrigger value="overview">{tx('Overview')}</TabsTrigger>
           <TabsTrigger value="cases">{tx('Cases')}</TabsTrigger>
           <TabsTrigger value="reports">{tx('Reports')}</TabsTrigger>
+          {insights && <TabsTrigger value="insights">{tx('Insights')}</TabsTrigger>}
           <TabsTrigger value="runs">{tx('Reconciliation runs')}</TabsTrigger>
           <TabsTrigger value="rules">{tx('Rules')}</TabsTrigger>
+          {vision && canConfigure && <TabsTrigger value="cameras">{tx('Cameras')}</TabsTrigger>}
+          {canConfigure && <TabsTrigger value="meters">{tx('Pour meters')}</TabsTrigger>}
+          {vision && canEvidence && <TabsTrigger value="evidence">{tx('Evidence')}</TabsTrigger>}
+          {vision && canInvestigate && <TabsTrigger value="research">{tx('Research')}</TabsTrigger>}
         </TabsList>
         <TabsContent value="overview" className="mt-4 space-y-4"><OverviewTab /></TabsContent>
-        <TabsContent value="cases" className="mt-4 space-y-4"><CasesTab canInvestigate={canInvestigate} canConfigure={canConfigure} /></TabsContent>
+        <TabsContent value="cases" className="mt-4 space-y-4">
+          <CasesTab canInvestigate={canInvestigate} canConfigure={canConfigure} vision={vision} canEvidence={canEvidence} />
+        </TabsContent>
         <TabsContent value="reports" className="mt-4 space-y-4"><ReportsTab /></TabsContent>
-        <TabsContent value="runs" className="mt-4 space-y-4"><RunsTab canConfigure={canConfigure} /></TabsContent>
+        {insights && (
+          <TabsContent value="insights" className="mt-4 space-y-4">
+            <InsightsTab canConfigure={canConfigure} canInvestigate={canInvestigate} vision={vision} />
+          </TabsContent>
+        )}
+        <TabsContent value="runs" className="mt-4 space-y-4"><RunsTab canConfigure={canConfigure} vision={vision} /></TabsContent>
         <TabsContent value="rules" className="mt-4 space-y-4"><RulesTab canConfigure={canConfigure} /></TabsContent>
+        {vision && canConfigure && (
+          <TabsContent value="cameras" className="mt-4 space-y-4"><CamerasTab canEvidence={canEvidence} /></TabsContent>
+        )}
+        {canConfigure && (
+          <TabsContent value="meters" className="mt-4 space-y-4"><MetersTab vision={vision} /></TabsContent>
+        )}
+        {vision && canEvidence && (
+          <TabsContent value="evidence" className="mt-4 space-y-4"><EvidenceTab canConfigure={canConfigure} /></TabsContent>
+        )}
+        {vision && canInvestigate && (
+          <TabsContent value="research" className="mt-4 space-y-4">
+            <ResearchTab canEvidence={canEvidence} canConfigure={canConfigure} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -143,7 +197,9 @@ function OverviewTab() {
   );
 }
 
-function CasesTab({ canInvestigate, canConfigure }: { canInvestigate: boolean; canConfigure: boolean }) {
+function CasesTab({ canInvestigate, canConfigure, vision, canEvidence }: {
+  canInvestigate: boolean; canConfigure: boolean; vision: boolean; canEvidence: boolean;
+}) {
   const [state, setState] = useState('');
   const [engine, setEngine] = useState('');
   const [severity, setSeverity] = useState('');
@@ -183,7 +239,7 @@ function CasesTab({ canInvestigate, canConfigure }: { canInvestigate: boolean; c
         <FilterSelect value={state} onChange={(v) => { setState(v); setPage(1); }} allLabel={tx('All statuses')}
           options={Object.entries(STATE_LABELS).map(([value, label]) => ({ value, label }))} />
         <FilterSelect value={engine} onChange={(v) => { setEngine(v); setPage(1); }} allLabel={tx('All areas')}
-          options={Object.entries(ENGINE_LABELS).map(([value, label]) => ({ value, label }))} />
+          options={engineOptions(vision)} />
         <FilterSelect value={severity} onChange={(v) => { setSeverity(v); setPage(1); }} allLabel={tx('All severities')}
           options={['critical', 'warning', 'info'].map((s) => ({ value: s, label: severityLabel(s) }))} />
         <DateRangeFilter from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); setPage(1); }} />
@@ -199,7 +255,8 @@ function CasesTab({ canInvestigate, canConfigure }: { canInvestigate: boolean; c
           onPageChange={setPage} onPageSizeChange={setPageSize} noun="case" />
       )}
       {openId && (
-        <CaseDialog id={openId} canInvestigate={canInvestigate} canConfigure={canConfigure} onClose={() => setOpenId(null)} />
+        <CaseDialog id={openId} canInvestigate={canInvestigate} canConfigure={canConfigure}
+          showEvidence={vision && canEvidence} onClose={() => setOpenId(null)} />
       )}
     </>
   );
@@ -215,8 +272,8 @@ function FindingFigures({ f }: { f: Finding }) {
   );
 }
 
-function CaseDialog({ id, canInvestigate, canConfigure, onClose }: {
-  id: string; canInvestigate: boolean; canConfigure: boolean; onClose: () => void;
+function CaseDialog({ id, canInvestigate, canConfigure, showEvidence, onClose }: {
+  id: string; canInvestigate: boolean; canConfigure: boolean; showEvidence: boolean; onClose: () => void;
 }) {
   const { data: c, isLoading, isError } = useLpCase(id);
   const action = useLpCaseAction();
@@ -280,6 +337,7 @@ function CaseDialog({ id, canInvestigate, canConfigure, onClose }: {
                 ))}
               </div>
             </div>
+            {showEvidence && <CaseEvidence caseId={c.id} events={c.events} canConfigure={canConfigure} />}
             <div>
               <p className="mb-1 text-sm font-medium">{tx('History')}</p>
               <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 text-xs">
@@ -435,7 +493,7 @@ function ReportsTab() {
   );
 }
 
-function RunsTab({ canConfigure }: { canConfigure: boolean }) {
+function RunsTab({ canConfigure, vision }: { canConfigure: boolean; vision: boolean }) {
   const [engine, setEngine] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -453,7 +511,19 @@ function RunsTab({ canConfigure }: { canConfigure: boolean }) {
     { key: 'createdAt', header: tx('Run at'), render: (r) => dateTime(r.createdAt) },
     { key: 'businessDate', header: tx('Business day'), render: (r) => r.businessDate },
     { key: 'engine', header: tx('Area'), render: (r) => ENGINE_LABELS[r.engine] ?? r.engine },
-    { key: 'trigger', header: tx('Why'), render: (r) => `${words(r.trigger)}${r.isFinal ? '' : ` · ${tx('day not finished')}`}` },
+    {
+      key: 'trigger', header: tx('Why'), render: (r) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <span>{`${words(r.trigger)}${r.isFinal ? '' : ` · ${tx('day not finished')}`}`}</span>
+          {r.observationGap && (
+            <Badge variant="outline"
+              title={tx('A camera had no usable picture for part of the day, or the agent has not reported that far yet. Nothing is found in those periods.')}>
+              {tx('Not fully observed')}
+            </Badge>
+          )}
+        </div>
+      ),
+    },
     { key: 'inputCount', header: tx('Records read'), className: 'text-right', render: (r) => r.inputCount },
     { key: 'findingCount', header: tx('Findings'), className: 'text-right', render: (r) => r.findingCount },
     {
@@ -466,7 +536,7 @@ function RunsTab({ canConfigure }: { canConfigure: boolean }) {
     <>
       <ListToolbar>
         <FilterSelect value={engine} onChange={(v) => { setEngine(v); setPage(1); }} allLabel={tx('All areas')}
-          options={Object.entries(ENGINE_LABELS).map(([value, label]) => ({ value, label }))} />
+          options={engineOptions(vision)} />
         <DateRangeFilter from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); setPage(1); }} />
         {canConfigure && (
           <Button size="sm" variant="outline" disabled={!canReplay || replay.isPending} onClick={onReplay}
@@ -529,6 +599,13 @@ function CompareDialog({ run, onClose }: { run: Run; onClose: () => void }) {
   );
 }
 
+const CAMERA_HINTS: Record<string, string> = {
+  cashier_vision: tx('Runs only at branches with a cash drawer or checkout zone on a camera.'),
+  bar_pour: tx('Runs only at branches with a bar counter zone on a camera.'),
+  service_vision: tx('Runs only at branches with a kitchen pass or cafe counter zone on a camera.'),
+  retail_vision: tx('Runs only at branches with a scanner or storage zone on a camera.'),
+};
+
 function RulesTab({ canConfigure }: { canConfigure: boolean }) {
   const { data, isLoading, isError } = useLpRules();
   const [editing, setEditing] = useState<Rule | null>(null);
@@ -541,9 +618,21 @@ function RulesTab({ canConfigure }: { canConfigure: boolean }) {
           <CardContent className="space-y-2 p-4">
             <div className="flex items-center justify-between gap-2">
               <p className="font-medium"><span className="mr-2 font-mono text-xs text-muted-foreground">{r.code}</span>{r.title}</p>
-              <Badge variant={r.enabled && r.configured ? 'default' : 'secondary'}>
-                {!r.enabled ? tx('Off') : r.configured ? tx('On') : tx('Needs a threshold')}
-              </Badge>
+              <div className="flex shrink-0 items-center gap-1">
+                {r.code.startsWith('V-') && (
+                  <Badge variant="outline" title={CAMERA_HINTS[r.engine] ?? tx('Runs only at branches with a camera zone of its kind.')}>
+                    {tx('Needs cameras')}
+                  </Badge>
+                )}
+                {(r.code === 'B04' || r.code === 'B05') && (
+                  <Badge variant="outline" title={tx('Runs only at branches with a pour meter.')}>
+                    {tx('Needs pour meters')}
+                  </Badge>
+                )}
+                <Badge variant={r.enabled && r.configured ? 'default' : 'secondary'}>
+                  {!r.enabled ? tx('Off') : r.configured ? tx('On') : tx('Needs a threshold')}
+                </Badge>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground">
               {ENGINE_LABELS[r.engine] ?? r.engine} · {severityLabel(r.severity)}
@@ -553,6 +642,11 @@ function RulesTab({ canConfigure }: { canConfigure: boolean }) {
             <p className="text-sm">
               {Object.entries(r.params).map(([k, v]) => `${k}: ${v === null ? tx('not set') : Number(v)}`).join(' · ') || tx('No parameters')}
             </p>
+            {PILOT_FIRST.has(r.code) && (
+              <p className="text-xs text-muted-foreground">
+                {tx('Ships off: turn it on once a pilot has measured how accurately the camera counts the items of a sale (target: at most 5 % error).')}
+              </p>
+            )}
             {canConfigure && <Button size="sm" variant="outline" onClick={() => setEditing(r)}>{tx('Edit')}</Button>}
           </CardContent>
         </Card>
@@ -604,7 +698,7 @@ function RuleDialog({ rule, onClose }: { rule: Rule; onClose: () => void }) {
           {Object.keys(params).map((k) => (
             <div key={k} className="space-y-1">
               <Label>{k}{rule.defaults.params[k] === null ? ` (${tx('the rule does not run until this is set')})` : ''}</Label>
-              <Input type="number" min={0} value={params[k]} onChange={(e) => setParams((p) => ({ ...p, [k]: e.target.value }))} />
+              <Input type="number" min={0} step="any" value={params[k]} onChange={(e) => setParams((p) => ({ ...p, [k]: e.target.value }))} />
             </div>
           ))}
         </div>

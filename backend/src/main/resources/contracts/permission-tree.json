@@ -285,7 +285,8 @@
     "view": "lp:view",
     "investigate": "lp:investigate",
     "configure": "lp:configure",
-    "ingest": "lp:ingest"
+    "ingest": "lp:ingest",
+    "evidence": "lp:evidence"
   },
   "notificationRouting": {
     "read": "notification_routing:read",

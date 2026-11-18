@@ -1,0 +1,49 @@
+# Candidates for lp-edge-eval. Copy this file next to the models (paths are relative to it). No model ships with the
+# repository: download or export each one yourself, from the source named in the licence register.
+#
+# A candidate is either
+#   - a model the agent can load: detector (a built-in kind such as yolox / yolox-decoded, or one installed through the
+#     lp_edge.detectors entry point), model (ONNX file), inputSize, classes in the model's output order; or
+#   - predictions: a JSON-lines file of detections made elsewhere (see edge/evaluation/README.md). Accuracy is measured;
+#     speed only when the file gives latencyMs, and then on the hardware that made it.
+# licences: the licence-register keys of everything the shipped candidate would depend on.
+# sha256 and sourceUrl pin the exact weight file: the run refuses a file with another hash, the report is not
+# eligible without them, and the licence counts only if the register lists this SHA-256 under the weights entry.
+
+coco80: &coco80 [person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, traffic light, fire hydrant,
+  stop sign, parking meter, bench, bird, cat, dog, horse, sheep, cow, elephant, bear, zebra, giraffe, backpack,
+  umbrella, handbag, tie, suitcase, frisbee, skis, snowboard, sports ball, kite, baseball bat, baseball glove,
+  skateboard, surfboard, tennis racket, bottle, wine glass, cup, fork, knife, spoon, bowl, banana, apple, sandwich,
+  orange, broccoli, carrot, hot dog, pizza, donut, cake, chair, couch, potted plant, bed, dining table, toilet, tv,
+  laptop, mouse, remote, keyboard, cell phone, microwave, oven, toaster, sink, refrigerator, book, clock, vase,
+  scissors, teddy bear, hair drier, toothbrush]
+
+candidates:
+  - name: yolox-s
+    detector: yolox
+    model: models/yolox_s.onnx
+    version: yolox-s-coco
+    # sha256: <64 hex characters of the downloaded file>
+    # sourceUrl: <the exact release asset the file came from>
+    inputSize: [640, 640]
+    classes: *coco80
+    providers: [CPUExecutionProvider]
+    licences: [yolox-code, yolox-coco-weights, coco-2017-images, coco-2017-annotations, onnxruntime,
+               opencv-python-headless, numpy]
+
+  - name: yolox-nano
+    detector: yolox
+    model: models/yolox_nano.onnx
+    version: yolox-nano-coco
+    inputSize: [416, 416]
+    classes: *coco80
+    providers: [CPUExecutionProvider]
+    licences: [yolox-code, yolox-coco-weights, coco-2017-images, coco-2017-annotations, onnxruntime,
+               opencv-python-headless, numpy]
+
+  - name: rt-detr-r18
+    predictions: predictions/rtdetr_r18.jsonl
+    version: rtdetr-r18-coco
+    classes: *coco80
+    licences: [rtdetr-code, rtdetr-coco-weights, coco-2017-images, coco-2017-annotations]
+    notes: Detections exported with RT-DETR's own tooling; the agent cannot run this model yet.

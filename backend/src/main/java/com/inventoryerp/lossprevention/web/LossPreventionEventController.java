@@ -1,6 +1,7 @@
 package com.inventoryerp.lossprevention.web;
 
 import com.inventoryerp.kernel.modules.RequiresModule;
+import com.inventoryerp.kernel.security.AuthUser;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.lossprevention.application.LpCommands.EventQuery;
@@ -36,8 +37,8 @@ public class LossPreventionEventController {
     @PostMapping("/events")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.LOSS_PREVENTION__INGEST)
-    public Map<String, Object> ingest(@Valid @RequestBody IngestRequest dto) {
-        return ledger.ingest(dto.events(), true);
+    public Map<String, Object> ingest(@Valid @RequestBody IngestRequest dto, AuthUser auth) {
+        return ledger.ingest(dto.events(), true, auth == null ? null : auth.clientId());
     }
 
     @GetMapping("/events")

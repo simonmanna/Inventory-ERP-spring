@@ -32,9 +32,11 @@ public class LpReportService {
         this.scope = scope;
     }
 
-    private record Period(LocalDate from, LocalDate to) {}
+    /** A period of business dates, both ends included. */
+    record Period(LocalDate from, LocalDate to) {}
 
-    private static Period period(ReportQuery q) {
+    /** The period of a query: the last 30 days unless from and to say otherwise. */
+    static Period period(ReportQuery q) {
         LocalDate today = LocalDate.now(BusinessZone.get());
         LocalDate to = LpScope.has(q.to()) ? day(q.to(), "to") : today;
         LocalDate from = LpScope.has(q.from()) ? day(q.from(), "from") : to.minusDays(29);

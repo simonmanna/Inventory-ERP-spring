@@ -39,6 +39,10 @@ public final class LicenseFeatures {
 
     /** Loss prevention: exception intelligence from POS, kitchen, cash and stock-count records (ADR-S077). */
     public static final String LOSS_PREVENTION = "lossPrevention";
+    /** Loss prevention vision security: edge agents, cameras, zones, evidence clips and vision rules (ADR-S077, LP1+). */
+    public static final String LP_VISION = "lpVision";
+    /** Loss prevention operations insights: kitchen, sales, table, cash and pour metrics from the ledger (LP6). */
+    public static final String LP_INSIGHTS = "lpInsights";
 
     // Add-ons that are not sidebar sections.
     public static final String MULTI_ORG = "multiOrg";
@@ -51,8 +55,8 @@ public final class LicenseFeatures {
     /** Everything, which is what a trial grants. */
     public static final Set<String> ALL = Set.of(
             CRM, RENTAL, MANUFACTURING, REPAIR, COMMUNICATION, ASSETS, TASK_BOARD, ACCOUNTING, EXPENSE, HR,
-            BEVERAGE, FLEET, SALES_AGREEMENTS, CUSTOMER_PORTAL, QUARRY, LOSS_PREVENTION, MULTI_ORG, ANDROID_POS, API_ACCESS, WEBHOOKS,
-            ADVANCED_REPORTS, BACKUP_OFFSITE);
+            BEVERAGE, FLEET, SALES_AGREEMENTS, CUSTOMER_PORTAL, QUARRY, LOSS_PREVENTION, LP_VISION, LP_INSIGHTS,
+            MULTI_ORG, ANDROID_POS, API_ACCESS, WEBHOOKS, ADVANCED_REPORTS, BACKUP_OFFSITE);
 
     /**
      * Feature key for each {@code @RequiresModule} manifest name, where the two spellings differ.

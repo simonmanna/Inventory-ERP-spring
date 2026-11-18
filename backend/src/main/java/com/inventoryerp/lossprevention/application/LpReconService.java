@@ -21,6 +21,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -74,14 +75,52 @@ public class LpReconService {
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    /** The engine that reads {@code type}, or {@code null}. */
-    public String engineOf(String type) {
+    /**
+     * The windows an accepted event belongs to: one per engine that reads its type. A business-day engine takes the
+     * event's business date; a vision engine the calendar day it happened on, and the neighbouring day too when it
+     * happened within the engine's margin of midnight.
+     */
+    public Set<WindowKey> keysFor(String type, String branchId, LocalDate businessDate, Instant occurredAt) {
+        Set<WindowKey> out = new HashSet<>();
+        String branch = branchId == null ? "" : branchId;
         for (LpEngine e : engines.values()) {
-            if (e.eventTypes().contains(type)) {
-                return e.code();
+            if (!e.eventTypes().contains(type)) {
+                continue;
+            }
+            if (e.timeMarginSeconds() <= 0) {
+                out.add(new WindowKey(e.code(), branch, businessDate, type));
+                continue;
+            }
+            ZoneId zone = BusinessZone.get();
+            LocalDate day = occurredAt.atZone(zone).toLocalDate();
+            out.add(new WindowKey(e.code(), branch, day, type));
+            Duration margin = Duration.ofSeconds(e.timeMarginSeconds());
+            if (occurredAt.isBefore(day.atStartOfDay(zone).toInstant().plus(margin))) {
+                out.add(new WindowKey(e.code(), branch, day.minusDays(1), type));
+            }
+            if (!occurredAt.isBefore(day.plusDays(1).atStartOfDay(zone).toInstant().minus(margin))) {
+                out.add(new WindowKey(e.code(), branch, day.plusDays(1), type));
             }
         }
-        return null;
+        return out;
+    }
+
+    /** Whether a branch has (or recently had) a zone an engine needs; engines that need none: always. */
+    private boolean zoned(LpEngine engine, String branchId, Map<String, Boolean> cache) {
+        if (engine.zoneTypes().isEmpty() && !engine.usesMeasurementDevices()) {
+            return true;
+        }
+        return cache.computeIfAbsent(engine.code() + "|" + branchId, k -> {
+            boolean zones = !engine.zoneTypes().isEmpty() && jdbc.sql("SELECT count(*) FROM \"LpZone\""
+                    + " WHERE \"organizationId\" = ? AND \"branchId\" = ? AND \"zoneType\" = ANY(?::text[]) AND"
+                    + " (\"retiredAt\" IS NULL OR \"retiredAt\" > CURRENT_TIMESTAMP - INTERVAL '35 days')")
+                    .params(LpScope.org(), branchId, engine.zoneTypes().toArray(String[]::new)).query(Long.class)
+                    .single() > 0;
+            return zones || engine.usesMeasurementDevices() && jdbc.sql("SELECT count(*) FROM"
+                    + " \"LpMeasurementDevice\" WHERE \"organizationId\" = ? AND \"branchId\" = ? AND"
+                    + " (\"retiredAt\" IS NULL OR \"retiredAt\" > CURRENT_TIMESTAMP - INTERVAL '35 days')")
+                    .params(LpScope.org(), branchId).query(Long.class).single() > 0;
+        });
     }
 
     // ------------------------------------------------------------------ dirty marking (called by ingest)
@@ -93,7 +132,12 @@ public class LpReconService {
     public void markDirty(Set<WindowKey> keys) {
         String org = LpScope.org();
         Set<String> done = new HashSet<>();
+        Map<String, Boolean> zoned = new HashMap<>();
         for (WindowKey k : keys) {
+            // A vision engine has nothing to do where no zone is drawn: no window, no run.
+            if (!zoned(engines.get(k.engine()), k.branchId(), zoned)) {
+                continue;
+            }
             if (done.add(k.engine() + "|" + k.branchId() + "|" + k.businessDate())) {
                 jdbc.sql("INSERT INTO \"LpWindow\" (id, \"organizationId\", engine, \"branchId\", \"businessDate\")"
                         + " VALUES (?, ?, ?, ?, ?) ON CONFLICT (\"organizationId\", engine, \"branchId\","
@@ -116,6 +160,17 @@ public class LpReconService {
                                 java.sql.Date.valueOf(k.businessDate().plusDays(lookback)))
                         .update();
             }
+            // A late event read forward by earlier windows (a tab paid the next day) re-runs them.
+            Integer lookahead = engines.get(k.engine()).lookaheadDays().get(k.type());
+            if (lookahead != null && done.add("back|" + k.engine() + "|" + k.branchId() + "|" + k.businessDate())) {
+                jdbc.sql("UPDATE \"LpWindow\" SET state = 'dirty', \"dirtyAt\" = CURRENT_TIMESTAMP, \"pendingTrigger\""
+                        + " = 'late_event', \"updatedAt\" = CURRENT_TIMESTAMP WHERE \"organizationId\" = ? AND engine"
+                        + " = ? AND \"branchId\" = ? AND \"businessDate\" < ? AND \"businessDate\" >= ? AND state ="
+                        + " 'reconciled'")
+                        .params(org, k.engine(), k.branchId(), java.sql.Date.valueOf(k.businessDate()),
+                                java.sql.Date.valueOf(k.businessDate().minusDays(lookahead)))
+                        .update();
+            }
         }
     }
 
@@ -128,8 +183,26 @@ public class LpReconService {
     }
 
     private static int settleMinutes(String engine, Map<String, Integer> s) {
-        return s.get(LpRuleCatalog.BAR.equals(engine) ? LpSettingsService.BAR_SETTLE
-                : LpSettingsService.CASHIER_SETTLE);
+        return s.get(switch (engine) {
+            case LpRuleCatalog.BAR -> LpSettingsService.BAR_SETTLE;
+            case LpRuleCatalog.CASHIER_VISION, LpRuleCatalog.BAR_POUR, LpRuleCatalog.SERVICE_VISION,
+                    LpRuleCatalog.RETAIL_VISION -> LpSettingsService.VISION_SETTLE;
+            default -> LpSettingsService.CASHIER_SETTLE;
+        });
+    }
+
+    /**
+     * An agent reported that its cameras have been observed further: the vision windows of its branch that skipped
+     * something because it was not yet observed, and are now observed past it, become due again. Called from the
+     * heartbeat, in its transaction.
+     */
+    public int observationAdvanced(String branchId, Instant observedThrough) {
+        return jdbc.sql("UPDATE \"LpWindow\" w SET state = 'dirty', \"dirtyAt\" = CURRENT_TIMESTAMP, \"pendingTrigger\" ="
+                + " 'late_event', \"updatedAt\" = CURRENT_TIMESTAMP FROM \"LpReconRun\" r WHERE r.id = w.\"latestRunId\""
+                + " AND w.\"organizationId\" = ? AND w.\"branchId\" = ? AND w.state = 'reconciled' AND"
+                + " r.\"observationGap\" AND (r.config -> 'coverage' ->> 'pendingUntil') IS NOT NULL AND"
+                + " (r.config -> 'coverage' ->> 'pendingUntil')::timestamptz <= ?::timestamptz")
+                .params(LpScope.org(), branchId, observedThrough.toString()).update();
     }
 
     /**
@@ -189,9 +262,12 @@ public class LpReconService {
                 .param(windowId).update();
         long maxSeq = jdbc.sql("SELECT coalesce(max(seq), 0) FROM \"LpEvent\" WHERE \"organizationId\" = ?")
                 .param(org).query(Long.class).single();
-        List<LedgerEvent> events = load(engine, branch, date, maxSeq);
+        Map<String, Object> context = context(engine, branch);
+        List<LedgerEvent> events = load(engine, branch, date, maxSeq, zoneOf(context));
         Map<String, RuleConfig> config = engineRules(engine.code(), rules.effective());
-        List<Finding> findings = engine.evaluate(new Input(branch, date, dayFinal, events, config));
+        Input input = new Input(branch, date, dayFinal, events, config, context);
+        List<Finding> findings = engine.evaluate(input);
+        LpEngine.Coverage coverage = engine.coverage(input);
 
         List<String> previous = jdbc.sql("SELECT fingerprint FROM \"LpDiscrepancy\" WHERE \"windowId\" = ? AND status ="
                 + " 'active'").param(windowId).query(String.class).list();
@@ -212,14 +288,20 @@ public class LpReconService {
                     engine.code(), branch, date, config.get(f.ruleCode()).severity(), f));
         }
         String runId = UUID.randomUUID().toString();
+        Map<String, Object> runConfig = Obj.of("rules", ruleConfig, "settings", s, "dayFinal", dayFinal);
+        if (!context.isEmpty()) {
+            runConfig.put("context", context);
+            runConfig.put("coverage", Obj.of("gap", coverage.gap(), "pendingUntil",
+                    coverage.pendingUntil() == null ? null : coverage.pendingUntil().toString()));
+        }
         jdbc.sql("INSERT INTO \"LpReconRun\" (id, \"organizationId\", \"windowId\", engine, \"engineVersion\","
                 + " \"branchId\", \"businessDate\", trigger, \"isFinal\", \"ruleVersions\", config, \"inputMaxSeq\","
-                + " \"inputCount\", \"inputHash\", \"findingCount\", \"supersedesRunId\", \"createdBy\") VALUES (?, ?,"
-                + " ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?)")
+                + " \"inputCount\", \"inputHash\", \"findingCount\", \"supersedesRunId\", \"createdBy\","
+                + " \"observationGap\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)")
                 .params(java.util.Arrays.asList(runId, org, windowId, engine.code(), engine.version(), branch,
                         java.sql.Date.valueOf(date), trigger, dayFinal, scope.json(ruleVersions),
-                        scope.json(Obj.of("rules", ruleConfig, "settings", s, "dayFinal", dayFinal)), maxSeq,
-                        events.size(), hash(events), stored.size(), w.get("latestRunId"), TenantContext.userId()))
+                        scope.json(runConfig), maxSeq, events.size(), hash(events), stored.size(),
+                        w.get("latestRunId"), TenantContext.userId(), coverage.incomplete()))
                 .update();
         for (StoredFinding sf : stored.values()) {
             Finding f = sf.finding();
@@ -243,7 +325,70 @@ public class LpReconService {
         cases.sync(runId, new ArrayList<>(stored.values()), withdrawn);
         return Obj.of("runId", runId, "windowId", windowId, "engine", engine.code(), "branchId", branch,
                 "businessDate", date, "trigger", trigger, "isFinal", dayFinal, "findingCount", stored.size(),
-                "withdrawn", withdrawn.size());
+                "withdrawn", withdrawn.size(), "observationGap", coverage.incomplete());
+    }
+
+    /**
+     * What a vision engine reads besides the ledger, recorded with the run so it repeats: the organization's time
+     * zone, the branch's zones (retired ones too, with when), and how far each camera and agent has been observed.
+     * Empty for an engine that needs no camera.
+     */
+    private Map<String, Object> context(LpEngine engine, String branch) {
+        if (engine.zoneTypes().isEmpty() && engine.timeMarginSeconds() <= 0 && !engine.usesMeasurementDevices()) {
+            return Map.of();
+        }
+        String org = LpScope.org();
+        List<Map<String, Object>> zones = new ArrayList<>();
+        for (Map<String, Object> z : SqlRows.list(jdbc.sql("SELECT z.id, z.\"cameraId\", c.\"agentId\","
+                + " z.\"zoneType\", z.\"linkedType\", z.\"linkedId\", z.enabled AND c.enabled AND c.analysed AS"
+                + " enabled, z.\"createdAt\", z.\"retiredAt\" FROM \"LpZone\" z JOIN \"LpCamera\" c ON c.id ="
+                + " z.\"cameraId\" WHERE z.\"organizationId\" = ? AND z.\"branchId\" = ? ORDER BY z.id")
+                .params(org, branch))) {
+            zones.add(Obj.of("id", z.get("id"), "cameraId", z.get("cameraId"), "agentId", z.get("agentId"),
+                    "zoneType", z.get("zoneType"), "linkedType", z.get("linkedType"), "linkedId", z.get("linkedId"),
+                    "enabled", z.get("enabled"), "createdAt", iso(z.get("createdAt")), "retiredAt",
+                    iso(z.get("retiredAt"))));
+        }
+        List<Map<String, Object>> cameras = new ArrayList<>();
+        for (Map<String, Object> c : SqlRows.list(jdbc.sql("SELECT id, \"agentId\", \"observedThrough\" FROM"
+                + " \"LpCamera\" WHERE \"organizationId\" = ? AND \"branchId\" = ? ORDER BY id").params(org, branch))) {
+            cameras.add(Obj.of("id", c.get("id"), "agentId", c.get("agentId"), "observedThrough",
+                    iso(c.get("observedThrough"))));
+        }
+        List<Map<String, Object>> agents = new ArrayList<>();
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT id, status, \"observedThrough\" FROM \"LpAgent\""
+                + " WHERE \"organizationId\" = ? AND \"branchId\" = ? ORDER BY id").params(org, branch))) {
+            agents.add(Obj.of("id", a.get("id"), "status", a.get("status"), "observedThrough",
+                    iso(a.get("observedThrough"))));
+        }
+        Map<String, Object> out = Obj.of("timeZone", BusinessZone.get().getId(), "zones", zones, "cameras", cameras,
+                "agents", agents);
+        if (engine.usesMeasurementDevices()) {
+            List<Map<String, Object>> devices = new ArrayList<>();
+            for (Map<String, Object> d : SqlRows.list(jdbc.sql("SELECT id, \"agentId\", kind, \"productId\", station,"
+                    + " \"standardPourMl\", enabled, \"createdAt\", \"retiredAt\" FROM \"LpMeasurementDevice\" WHERE"
+                    + " \"organizationId\" = ? AND \"branchId\" = ? ORDER BY id").params(org, branch))) {
+                devices.add(Obj.of("id", d.get("id"), "agentId", d.get("agentId"), "kind", d.get("kind"), "productId",
+                        d.get("productId"), "station", d.get("station"), "standardPourMl", d.get("standardPourMl"),
+                        "enabled", d.get("enabled"), "createdAt", iso(d.get("createdAt")), "retiredAt",
+                        iso(d.get("retiredAt"))));
+            }
+            out.put("devices", devices);
+        }
+        return out;
+    }
+
+    private static String iso(Object v) {
+        return v instanceof Instant i ? i.toString() : v == null ? null : String.valueOf(v);
+    }
+
+    private static ZoneId zoneOf(Map<String, Object> context) {
+        Object tz = context.get("timeZone");
+        try {
+            return tz == null ? BusinessZone.get() : ZoneId.of(String.valueOf(tz));
+        } catch (java.time.DateTimeException e) {
+            return BusinessZone.get();
+        }
     }
 
     private static Map<String, RuleConfig> engineRules(String engine, Map<String, RuleConfig> all) {
@@ -257,11 +402,12 @@ public class LpReconService {
     }
 
     /** The window's events and the engine's look-back, up to a ledger position, in ledger order. */
-    private List<LedgerEvent> load(LpEngine engine, String branch, LocalDate date, long maxSeq) {
+    private List<LedgerEvent> load(LpEngine engine, String branch, LocalDate date, long maxSeq, ZoneId zone) {
+        if (engine.timeMarginSeconds() > 0) {
+            return loadByTime(engine, branch, date, maxSeq, zone);
+        }
         List<Object> params = new ArrayList<>();
-        StringBuilder sql = new StringBuilder("SELECT id, seq, type, \"actorId\", \"transactionId\", \"orderId\","
-                + " \"ticketId\", \"lineId\", \"sessionId\", \"businessDate\", \"occurredAt\", \"evidenceLevel\","
-                + " \"observationStatus\", payload FROM \"LpEvent\" WHERE \"organizationId\" = ? AND"
+        StringBuilder sql = new StringBuilder(SELECT_EVENT + " FROM \"LpEvent\" WHERE \"organizationId\" = ? AND"
                 + " coalesce(\"branchId\", '') = ? AND seq <= ? AND ((\"businessDate\" = ? AND type = ANY(?::text[]))");
         params.add(LpScope.org());
         params.add(branch);
@@ -274,6 +420,12 @@ public class LpReconService {
             params.add(java.sql.Date.valueOf(date.minusDays(days)));
             params.add(java.sql.Date.valueOf(date));
         });
+        engine.lookaheadDays().forEach((type, days) -> {
+            sql.append(" OR (type = ? AND \"businessDate\" > ? AND \"businessDate\" <= ?)");
+            params.add(type);
+            params.add(java.sql.Date.valueOf(date));
+            params.add(java.sql.Date.valueOf(date.plusDays(days)));
+        });
         sql.append(") ORDER BY seq");
         List<LedgerEvent> out = new ArrayList<>();
         for (Map<String, Object> r : SqlRows.list(jdbc.sql(sql.toString()).params(params))) {
@@ -282,13 +434,50 @@ public class LpReconService {
         return out;
     }
 
+    /**
+     * A vision window: the events that happened on the calendar day, with the engine's margin on both sides, and the
+     * look-back types from that many days before. The day is the organization's, in the zone recorded with the run.
+     */
+    private List<LedgerEvent> loadByTime(LpEngine engine, String branch, LocalDate date, long maxSeq, ZoneId zone) {
+        Duration margin = Duration.ofSeconds(engine.timeMarginSeconds());
+        Instant start = date.atStartOfDay(zone).toInstant();
+        Instant end = date.plusDays(1).atStartOfDay(zone).toInstant();
+        List<Object> params = new ArrayList<>();
+        StringBuilder sql = new StringBuilder(SELECT_EVENT + " FROM \"LpEvent\" WHERE \"organizationId\" = ? AND"
+                + " coalesce(\"branchId\", '') = ? AND seq <= ? AND ((type = ANY(?::text[]) AND \"occurredAt\" >= ? AND"
+                + " \"occurredAt\" < ?)");
+        params.add(LpScope.org());
+        params.add(branch);
+        params.add(maxSeq);
+        params.add(engine.eventTypes().toArray(String[]::new));
+        params.add(SqlRows.ts(start.minus(margin)));
+        params.add(SqlRows.ts(end.plus(margin)));
+        engine.lookbackDays().forEach((type, days) -> {
+            sql.append(" OR (type = ? AND \"occurredAt\" >= ? AND \"occurredAt\" < ?)");
+            params.add(type);
+            params.add(SqlRows.ts(start.minus(Duration.ofDays(days))));
+            params.add(SqlRows.ts(start.minus(margin)));
+        });
+        sql.append(") ORDER BY seq");
+        List<LedgerEvent> out = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql(sql.toString()).params(params))) {
+            out.add(event(r));
+        }
+        return out;
+    }
+
+    private static final String SELECT_EVENT = "SELECT id, seq, type, \"actorId\", \"transactionId\", \"orderId\","
+            + " \"ticketId\", \"lineId\", \"sessionId\", \"businessDate\", \"occurredAt\", \"evidenceLevel\","
+            + " \"observationStatus\", payload, \"deviceId\", confidence";
+
     private static LedgerEvent event(Map<String, Object> r) {
         Map<String, Object> payload = LpJson.map(r.get("payload"));
         return new LedgerEvent((String) r.get("id"), ((Number) r.get("seq")).longValue(), (String) r.get("type"),
                 (String) r.get("actorId"), (String) r.get("transactionId"), (String) r.get("orderId"),
                 (String) r.get("ticketId"), (String) r.get("lineId"), (String) r.get("sessionId"),
                 (LocalDate) r.get("businessDate"), (Instant) r.get("occurredAt"), (String) r.get("evidenceLevel"),
-                (String) r.get("observationStatus"), payload);
+                (String) r.get("observationStatus"), payload, (String) r.get("deviceId"),
+                LpNumbers.decimal(r.get("confidence")));
     }
 
     private static String sha(String text) {
@@ -482,8 +671,10 @@ public class LpReconService {
         LpEngine engine = engines.get((String) run.get("engine"));
         String branch = (String) run.get("branchId");
         LocalDate date = (LocalDate) run.get("businessDate");
-        List<LedgerEvent> events = load(engine, branch, date, ((Number) run.get("inputMaxSeq")).longValue());
         Map<String, Object> config = LpJson.map(run.get("config"));
+        Map<String, Object> context = LpJson.map(config.get("context"));
+        List<LedgerEvent> events = load(engine, branch, date, ((Number) run.get("inputMaxSeq")).longValue(),
+                zoneOf(context));
         Map<String, RuleConfig> ruleConfig = new LinkedHashMap<>();
         ((Map<String, Object>) config.get("rules")).forEach((code, v) -> {
             Map<String, Object> r = (Map<String, Object>) v;
@@ -491,7 +682,7 @@ public class LpReconService {
                     (Boolean) r.get("enabled"), (String) r.get("severity"), (Map<String, Object>) r.get("params")));
         });
         List<Finding> findings = engine.evaluate(new Input(branch, date, Boolean.TRUE.equals(config.get("dayFinal")),
-                events, ruleConfig));
+                events, ruleConfig, context));
         Set<String> reproduced = new HashSet<>();
         findings.forEach(f -> reproduced.add(fingerprint(engine.code(), f.ruleCode(), branch, date, f.key())
                 + "|" + (f.delta() == null ? "" : f.delta().stripTrailingZeros().toPlainString())));

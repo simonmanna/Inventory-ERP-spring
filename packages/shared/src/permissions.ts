@@ -315,12 +315,14 @@ export const PERMISSIONS = {
   },
   /// Loss prevention (ADR-S077). `view` reads the dashboard, cases and reports; `investigate` works a case and reads
   /// the event ledger; `configure` changes rules and settings and replays reconciliation; `ingest` posts events
-  /// (meant for API clients of a POS or an edge agent).
+  /// (meant for API clients of a POS or an edge agent); `evidence` views, downloads and exports camera clips and opens
+  /// live view (LP1). Configuring agents, cameras and zones is `configure`.
   lossPrevention: {
     view: 'lp:view',
     investigate: 'lp:investigate',
     configure: 'lp:configure',
     ingest: 'lp:ingest',
+    evidence: 'lp:evidence',
   },
   /// Who is told when something happens (ADR-S065): per event, the record's responsible people, extra roles/users and
   /// channels. `read` lists the routing; `manage` changes it.

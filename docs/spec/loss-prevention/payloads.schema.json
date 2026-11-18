@@ -2,14 +2,26 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "loss-prevention/payloads/1",
   "title": "Payload of each canonical event type, schema version 1",
-  "description": "Amounts and quantities are decimal numbers or decimal strings. A field not listed is kept and ignored. Only kitchen.stage.stage is enforced at ingest; a rule skips an event that lacks a field it needs.",
+  "description": "Amounts and quantities are decimal numbers or decimal strings. A field not listed is kept and ignored. Enforced at ingest: kitchen.stage.stage, cash_drawer.opened, the vision.* observations (LP1, LP2, LP5, LP7), the measurement events (LP3) and stock.movement (LP5). Otherwise a rule skips an event that lacks a field it needs.",
   "$defs": {
     "decimal": { "type": ["number", "string"] },
+    "tillId": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The till (a CashRegister id in this ERP). The cashier vision rules match POS events to the cameras of a till with it; an event without it takes the till of its cash session, else its deviceId." },
+    "instant": { "type": "string", "format": "date-time" },
+    "observation": {
+      "description": "Fields every vision.* payload carries. The envelope of an observation has evidenceLevel zone, evidenceSource camera or sensor, the zone id as deviceId and a confidence.",
+      "type": "object",
+      "required": ["cameraId"],
+      "properties": {
+        "cameraId": { "type": "string", "description": "Must be the camera of the zone named by deviceId." },
+        "clipId": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The clip the agent kept for this observation, registered with POST /agents/clips." }
+      }
+    },
     "sale.completed": {
       "type": "object",
       "required": ["total"],
       "properties": {
-        "invoiceNumber": { "type": "string" },
+        "invoiceNumber": { "type": "string" }, "tillId": { "$ref": "#/$defs/tillId" },
+        "tableId": { "type": ["string", "null"], "description": "The dining table of the order, if any. Read by the table-turnover metric (LP6a)." },
         "subtotal": { "$ref": "#/$defs/decimal" },
         "discountTotal": { "$ref": "#/$defs/decimal", "description": "All discount given on the sale. Read by C07." },
         "taxAmount": { "$ref": "#/$defs/decimal" },
@@ -21,7 +33,19 @@
             "properties": {
               "lineId": { "type": "string" }, "productId": { "type": "string" }, "description": { "type": "string" },
               "quantity": { "$ref": "#/$defs/decimal" }, "unitPrice": { "$ref": "#/$defs/decimal" },
-              "discountAmount": { "$ref": "#/$defs/decimal" }, "total": { "$ref": "#/$defs/decimal" }
+              "discountAmount": { "$ref": "#/$defs/decimal" }, "total": { "$ref": "#/$defs/decimal" },
+              "ingredients": {
+                "type": "array",
+                "description": "What the line drew through its recipe, from the snapshot taken at the sale (LP3). quantity is in the product's base unit. Read by B04 and V-B1; a line without this key leaves B04 off for the day.",
+                "items": {
+                  "type": "object",
+                  "required": ["productId", "quantity"],
+                  "properties": {
+                    "productId": { "type": "string" }, "quantity": { "$ref": "#/$defs/decimal" },
+                    "totalValue": { "$ref": "#/$defs/decimal" }
+                  }
+                }
+              }
             }
           }
         }
@@ -33,7 +57,7 @@
       "properties": {
         "quantity": { "$ref": "#/$defs/decimal", "description": "Quantity voided so far on this line. Send lineId; the largest quantity per line counts." },
         "firedQuantity": { "$ref": "#/$defs/decimal", "description": "Quantity already sent to the kitchen. Above 0 raises C01." },
-        "whole": { "type": "boolean" }, "reason": { "type": ["string", "null"] },
+        "whole": { "type": "boolean" }, "reason": { "type": ["string", "null"] }, "tillId": { "$ref": "#/$defs/tillId" },
         "approvedById": { "type": ["string", "null"] }, "description": { "type": "string" },
         "amount": { "$ref": "#/$defs/decimal", "description": "Voided quantity × unit price; the exposure of C01." }
       }
@@ -48,7 +72,7 @@
             "description": { "type": "string" }, "quantity": { "$ref": "#/$defs/decimal" },
             "firedQuantity": { "$ref": "#/$defs/decimal" } } }
         },
-        "firedAmount": { "$ref": "#/$defs/decimal" }
+        "firedAmount": { "$ref": "#/$defs/decimal" }, "tillId": { "$ref": "#/$defs/tillId" }
       }
     },
     "refund.issued": {
@@ -57,7 +81,8 @@
       "properties": {
         "amount": { "$ref": "#/$defs/decimal" }, "reason": { "type": ["string", "null"] },
         "stockDisposition": { "type": ["string", "null"] }, "approvedById": { "type": ["string", "null"] },
-        "originalActorId": { "type": ["string", "null"], "description": "Who made the sale being refunded." }
+        "originalActorId": { "type": ["string", "null"], "description": "Who made the sale being refunded." },
+        "tillId": { "$ref": "#/$defs/tillId" }
       }
     },
     "override.approved": {
@@ -66,7 +91,7 @@
       "description": "actorId is the cashier the override was given to.",
       "properties": { "kind": { "type": "string" }, "approverId": { "type": "string" }, "endpoint": { "type": "string" } }
     },
-    "cash_session.opened": { "type": "object", "properties": { "openingFloat": { "$ref": "#/$defs/decimal" } } },
+    "cash_session.opened": { "type": "object", "properties": { "openingFloat": { "$ref": "#/$defs/decimal" }, "tillId": { "$ref": "#/$defs/tillId" } } },
     "cash_session.closed": {
       "type": "object",
       "required": ["difference"],
@@ -74,18 +99,28 @@
       "properties": {
         "expected": { "$ref": "#/$defs/decimal" }, "counted": { "$ref": "#/$defs/decimal" },
         "difference": { "$ref": "#/$defs/decimal", "description": "counted − expected. Negative is short." },
-        "varianceReason": { "type": ["string", "null"] }, "varianceStatus": { "type": ["string", "null"] }
+        "varianceReason": { "type": ["string", "null"] }, "varianceStatus": { "type": ["string", "null"] },
+        "tillId": { "$ref": "#/$defs/tillId" }
       }
     },
     "cash_session.reconciled": { "type": "object", "properties": { "difference": { "$ref": "#/$defs/decimal" } } },
-    "cash.movement": { "type": "object", "properties": { "kind": { "type": "string" }, "amount": { "$ref": "#/$defs/decimal" }, "reason": { "type": ["string", "null"] } } },
-    "kitchen.ticket_created": { "type": "object", "properties": { "station": { "type": ["string", "null"] }, "ticketNo": { "type": ["string", "null"] } } },
+    "cash.movement": { "type": "object", "properties": { "kind": { "type": "string" }, "amount": { "$ref": "#/$defs/decimal" }, "reason": { "type": ["string", "null"] }, "tillId": { "$ref": "#/$defs/tillId" } } },
+    "kitchen.ticket_created": {
+      "type": "object",
+      "properties": {
+        "station": { "type": ["string", "null"] }, "ticketNo": { "type": ["string", "null"] },
+        "itemCount": { "$ref": "#/$defs/decimal", "description": "Quantities on the ticket not cancelled (LP4). Read by V-K1; a period with a ticket without it is skipped." },
+        "orderType": { "type": ["string", "null"] },
+        "tableId": { "type": ["string", "null"], "description": "The order's POS table (LP6b): the wait from a seating to the first order. Tickets projected before LP6b carry none." }
+      }
+    },
     "kitchen.stage": {
       "type": "object",
       "required": ["stage"],
       "properties": {
         "stage": { "enum": ["preparation_started", "prepared", "dispatched", "delivered", "remade", "wasted", "cancelled"] },
         "station": { "type": ["string", "null"] },
+        "itemCount": { "$ref": "#/$defs/decimal", "description": "As on kitchen.ticket_created, when the stage was read (LP4)." },
         "recallCount": { "type": "integer" }, "recallReason": { "type": ["string", "null"] },
         "afterReady": { "type": "boolean", "description": "The ticket had been marked ready. With remade or cancelled it raises C10." }
       }
@@ -107,6 +142,112 @@
         "soldMl": { "type": ["number", "string", "null"], "description": "Drawn by sales through their recipes, as recorded at each sale." }
       }
     },
-    "staff.session": { "type": "object", "properties": { "kind": { "enum": ["login", "logoff"] } } }
+    "staff.session": { "type": "object", "properties": { "kind": { "enum": ["login", "logoff"] } } },
+    "cash_drawer.opened": {
+      "type": "object",
+      "description": "evidenceLevel session. A POS that records drawer openings sends one per opening; no_sale feeds C11 and every reason explains a V-C1 opening.",
+      "properties": {
+        "reason": { "enum": ["sale", "refund", "cash_movement", "no_sale", "float", "other"] },
+        "tillId": { "$ref": "#/$defs/tillId" }
+      }
+    },
+    "vision.line_crossed": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["class", "direction", "count"],
+      "properties": {
+        "class": { "type": "string" }, "direction": { "enum": ["in", "out"] },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "vision.dwell": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["class", "startedAt", "endedAt"],
+      "description": "Sent when a presence in the zone ends; endedAt is not before startedAt.",
+      "properties": {
+        "class": { "type": "string" }, "startedAt": { "$ref": "#/$defs/instant" },
+        "endedAt": { "$ref": "#/$defs/instant" }, "durationSeconds": { "type": "number", "minimum": 0 },
+        "maxCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "vision.state_changed": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["object", "to"],
+      "description": "A drawer opening is object cash_drawer, to open; it feeds V-C1.",
+      "properties": {
+        "object": { "type": "string" }, "from": { "type": "string" }, "to": { "type": "string" },
+        "secondsInPreviousState": { "type": "number", "minimum": 0 }
+      }
+    },
+    "vision.handling": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["object", "action"],
+      "description": "On a scan_area zone (LP5), action bypassed: an item carried from the input side to the bagging side without passing over the scanner; it feeds V-R2.",
+      "properties": {
+        "object": { "type": "string" }, "action": { "type": "string" },
+        "durationSeconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "vision.occupancy": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["count"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 }, "class": { "type": "string" },
+        "periodSeconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "vision.gap": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["from", "to", "reason"],
+      "description": "The camera had no usable picture from..to. observationStatus must be unavailable. No vision rule finds anything inside a gap.",
+      "properties": {
+        "from": { "$ref": "#/$defs/instant" }, "to": { "$ref": "#/$defs/instant" },
+        "reason": { "enum": ["stream_lost", "agent_down", "clock_drift", "disabled"] }
+      }
+    },
+    "vision.activity": {
+      "allOf": [{ "$ref": "#/$defs/observation" }],
+      "required": ["activity", "startedAt", "endedAt", "recognizer"],
+      "description": "LP7, research in shadow mode: what a recognizer reports about objects in a zone whose params.activityResearch is true. No rule reads it.",
+      "properties": {
+        "activity": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+        "startedAt": { "$ref": "#/$defs/instant" }, "endedAt": { "$ref": "#/$defs/instant" },
+        "recognizer": { "type": "string", "minLength": 1, "maxLength": 200, "description": "name@version" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "trackIds": { "type": "array", "items": { "type": ["integer", "string"] } }
+      }
+    },
+    "stock.movement": {
+      "type": "object",
+      "required": ["locationId", "direction", "quantity"],
+      "description": "LP5: a stock ledger line at one location, projected from InventoryLedger for the locations linked to a storage zone. evidenceLevel item, evidenceSource stock. It explains goods leaving a store room (V-S1).",
+      "properties": {
+        "locationId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "direction": { "enum": ["in", "out"] },
+        "quantity": { "$ref": "#/$defs/decimal", "description": "Above 0: a number, or a decimal string as this ERP's projection writes it." },
+        "kind": { "type": "string", "description": "The ledger's movement type, e.g. transfer_out." },
+        "productId": { "type": "string" }, "variantId": { "type": ["string", "null"] },
+        "referenceType": { "type": ["string", "null"] }, "referenceId": { "type": ["string", "null"] }
+      }
+    },
+    "pour.measured": {
+      "type": "object",
+      "required": ["volumeMl"],
+      "description": "One pour reported by a meter (LP3). deviceId is the measurement device id; evidenceLevel item, evidenceSource sensor, observationStatus observed.",
+      "properties": {
+        "volumeMl": { "type": "number", "exclusiveMinimum": 0, "maximum": 5000 },
+        "productId": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Else the device's product." },
+        "startedAt": { "$ref": "#/$defs/instant" }, "endedAt": { "$ref": "#/$defs/instant" },
+        "vendorEventId": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "measurement.gap": {
+      "type": "object",
+      "required": ["from", "to", "reason"],
+      "description": "A meter reported nothing from..to (LP3). observationStatus must be unavailable. V-B2 finds nothing inside a gap.",
+      "properties": {
+        "from": { "$ref": "#/$defs/instant" }, "to": { "$ref": "#/$defs/instant" },
+        "reason": { "enum": ["device_offline", "adapter_down", "clock_drift", "disabled"] }
+      }
+    }
   }
 }

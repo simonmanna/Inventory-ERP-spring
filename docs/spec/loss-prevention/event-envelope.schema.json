@@ -33,7 +33,9 @@
         "type": {
           "enum": ["sale.completed", "sale.line_voided", "order.cancelled", "refund.issued", "override.approved",
             "cash_session.opened", "cash_session.closed", "cash_session.reconciled", "cash.movement",
-            "kitchen.ticket_created", "kitchen.stage", "stock_count.line", "staff.session"]
+            "kitchen.ticket_created", "kitchen.stage", "stock_count.line", "staff.session", "cash_drawer.opened",
+            "vision.line_crossed", "vision.dwell", "vision.state_changed", "vision.handling", "vision.occupancy",
+            "vision.gap", "vision.activity", "pour.measured", "measurement.gap", "stock.movement"]
         },
         "evidenceLevel": { "enum": ["item", "ticket", "order", "session", "zone"] },
         "evidenceSource": { "enum": ["pos", "kds", "stock", "camera", "sensor", "manual"] },

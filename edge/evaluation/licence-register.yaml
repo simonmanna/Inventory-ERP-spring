@@ -1,0 +1,157 @@
+# Licence register for detector candidates (ADR-S077, "Detector and tracker selection").
+#
+# One entry per thing a shipped model depends on: its code, its pretrained weights, the data the weights were trained
+# on, and the runtime that executes it. A candidate is eligible only when every entry it names is "cleared", and an
+# entry can only be "cleared" with the name of whoever checked it at the source (checkedBy) and the date (checkedOn).
+#
+# Status on 2026-11-18: no entry has been checked by a person. The licences below were written down from the projects'
+# published licence files as known when this register was drafted; each must be confirmed at its source (including
+# the licence of the exact release or weight file used) before it is marked cleared.
+#
+# status: cleared | review | excluded          component: code | weights | data | runtime
+#
+# Weights entries also carry, before they can be cleared:
+#   checkpoints: the exact files the clearance covers, each with file, version, downloadUrl, sha256 (of the file as
+#                downloaded) and trainedOn (register keys of its training data). A candidate's licence is cleared only
+#                for a weight file whose SHA-256 is listed here.
+#   assessment:  the legal view, one answer per question (the licence of the code does not settle the weights, and
+#                annotation rights do not settle image rights):
+#                  codeLicence          model architecture and source code
+#                  weightDistribution   the licence under which the pretrained weights are distributed
+#                  trainingImages       rights in the images the weights were trained on
+#                  annotations          rights in the annotations
+#                  closedRedistribution may the weights ship inside a closed commercial product, and on what terms
+#                Runtime licences have their own entries below.
+
+entries:
+  # ------------------------------------------------------------------ detector and tracker code
+  - key: yolox-code
+    name: YOLOX (Megvii-BaseDetection/YOLOX)
+    component: code
+    licence: Apache-2.0
+    source: https://github.com/Megvii-BaseDetection/YOLOX
+    status: review
+    notes: >
+      The agent's own YOLOX adapter (lp_edge/detectors/yolox.py) only runs an exported ONNX file; no YOLOX code ships
+      in the agent. The export tooling is YOLOX's own.
+  - key: rtdetr-code
+    name: RT-DETR (lyuwenyu/RT-DETR)
+    component: code
+    licence: Apache-2.0
+    source: https://github.com/lyuwenyu/RT-DETR
+    status: review
+    notes: >
+      Not runnable by the agent today: no rt-detr detector kind is built in. Evaluate it from a predictions file, or
+      add a detector kind through the lp_edge.detectors entry point after the licence is cleared.
+  - key: bytetrack-code
+    name: ByteTrack (ifzhang/ByteTrack)
+    component: code
+    licence: MIT
+    source: https://github.com/ifzhang/ByteTrack
+    status: review
+    notes: >
+      The agent's tracker (lp_edge/tracker.py) is an independent implementation of the ByteTrack method and contains
+      no ByteTrack code. This entry matters only if the reference implementation is used.
+  - key: ultralytics-code
+    name: Ultralytics YOLO (v5, v8, 11)
+    component: code
+    licence: AGPL-3.0
+    source: https://github.com/ultralytics/ultralytics
+    status: excluded
+    notes: >
+      Excluded by the design: AGPL-3.0 does not suit a closed product. Reconsider only with a purchased Ultralytics
+      Enterprise licence, recorded here.
+
+  # ------------------------------------------------------------------ pretrained weights
+  - key: yolox-coco-weights
+    name: YOLOX pretrained weights (COCO), from the YOLOX releases
+    component: weights
+    licence: Apache-2.0 (repository); training data has its own terms
+    source: https://github.com/Megvii-BaseDetection/YOLOX/releases
+    status: review
+    checkpoints: []   # fill from the actual download: file, version, downloadUrl, sha256, trainedOn
+    assessment: {}
+    notes: >
+      Weights trained on COCO. The repository's Apache-2.0 licence does not by itself establish the right to ship
+      weights trained on COCO images in a closed product: that needs a legal view (see coco-2017-images). Keep this
+      entry in review until it is given.
+  - key: rtdetr-coco-weights
+    name: RT-DETR pretrained weights (COCO or Objects365 + COCO)
+    component: weights
+    licence: Apache-2.0 (repository); training data has its own terms
+    source: https://github.com/lyuwenyu/RT-DETR
+    status: review
+    checkpoints: []   # fill from the actual download: file, version, downloadUrl, sha256, trainedOn
+    assessment: {}
+    notes: >
+      Check which datasets the exact checkpoint was trained on (objects365 has its own terms). Third-party
+      checkpoints (other hosts, conversions) need their own entry: the repository's licence does not cover them.
+  - key: own-weights
+    name: Weights trained or fine-tuned by us on pilot footage
+    component: weights
+    licence: ours
+    source: internal
+    status: review
+    checkpoints: []
+    assessment: {}
+    notes: >
+      The alternative to COCO-pretrained weights: trained only on footage with documented commercial-use rights.
+      Clear only once the base weights and the footage used are cleared (pilot-footage).
+
+  # ------------------------------------------------------------------ training and evaluation data
+  - key: coco-2017-images
+    name: COCO 2017 images
+    component: data
+    licence: the Flickr terms and licences of each image's owner
+    source: https://cocodataset.org/#termsofuse
+    status: review
+    notes: >
+      The COCO consortium does not own the images; their use is subject to the Flickr terms and each image's
+      licence. Do not assume that weights trained on them inherit CC BY 4.0. This is the first question for legal.
+  - key: coco-2017-annotations
+    name: COCO 2017 annotations
+    component: data
+    licence: CC BY 4.0
+    source: https://cocodataset.org/#termsofuse
+    status: review
+    notes: >
+      CC BY 4.0 covers the annotations only, not the images (coco-2017-images).
+  - key: objects365
+    name: Objects365
+    component: data
+    licence: to be confirmed at source
+    source: https://www.objects365.org
+    status: review
+    notes: >
+      Used by some RT-DETR checkpoints for pretraining. Its terms must be checked before any such checkpoint.
+  - key: pilot-footage
+    name: Footage from pilot sites
+    component: data
+    licence: customer consent and data processing agreement
+    source: per customer
+    status: review
+    notes: >
+      Using a customer's footage for evaluation or training needs that organization's written consent (ADR-S077
+      "Model lifecycle": a false-alarm clip enters the labelling queue only with the organization's consent).
+
+  # ------------------------------------------------------------------ runtime dependencies (already in the agent)
+  - key: onnxruntime
+    name: ONNX Runtime
+    component: runtime
+    licence: MIT
+    source: https://github.com/microsoft/onnxruntime
+    status: review
+  - key: opencv-python-headless
+    name: OpenCV (opencv-python-headless wheel)
+    component: runtime
+    licence: Apache-2.0 (OpenCV 4.5+); the wheel bundles FFmpeg under LGPL
+    source: https://github.com/opencv/opencv-python
+    status: review
+    notes: >
+      LGPL obligations of the bundled FFmpeg apply to the agent image (dynamic linking, notice, source offer).
+  - key: numpy
+    name: NumPy
+    component: runtime
+    licence: BSD-3-Clause
+    source: https://github.com/numpy/numpy
+    status: review

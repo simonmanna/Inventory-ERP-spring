@@ -1,0 +1,22 @@
+# One check for a new signed lp-edge release (see lp_edge/updater.py). Started by lp-edge-updater.timer.
+#
+# The updater runs on the host because only the host can replace the container. Install it in a small venv without
+# the agent's video dependencies:
+#   python3 -m venv /opt/lp-edge/updater
+#   /opt/lp-edge/updater/bin/pip install "cryptography>=41"
+#   /opt/lp-edge/updater/bin/pip install --no-deps ./edge        # or the lp-edge wheel
+[Unit]
+Description=lp-edge release updater
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/lp-edge/.env
+ExecStart=/opt/lp-edge/updater/bin/lp-edge-updater --compose-file /opt/lp-edge/compose.yml --env-file /opt/lp-edge/.env
+TimeoutStartSec=20min
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true

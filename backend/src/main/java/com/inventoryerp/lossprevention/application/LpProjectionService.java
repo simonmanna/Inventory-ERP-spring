@@ -45,8 +45,14 @@ public class LpProjectionService {
     public static final String CASH_SESSIONS = "cash_sessions";
     public static final String KITCHEN = "kitchen";
     public static final String STOCK_COUNTS = "stock_counts";
+    /** Drawer movements a person made: pay-ins, pay-outs, supplier payments and adjustments (LP2). */
+    public static final String CASH_MOVEMENTS = "cash_movements";
+    /** Stock ledger lines at the locations a {@code storage} zone watches (LP5): what V-S1 compares with. */
+    public static final String STOCK_MOVEMENTS = "stock_movements";
     public static final List<String> SOURCES = List.of(SALES, VOIDS, CANCELLATIONS, REFUNDS, OVERRIDES,
-            CASH_SESSIONS, KITCHEN, STOCK_COUNTS);
+            CASH_SESSIONS, KITCHEN, STOCK_COUNTS, CASH_MOVEMENTS, STOCK_MOVEMENTS);
+    /** The till of a cash session is its {@code CashRegister}; it is sent as {@code payload.tillId} (LP2). */
+    private static final String TILL_JOIN = " LEFT JOIN \"CashSession\" cs ON cs.id = %s.\"cashSessionId\"";
 
     private final JdbcClient jdbc;
     private final LpLedgerService ledger;
@@ -89,6 +95,11 @@ public class LpProjectionService {
                 Instant last = (Instant) rows.getLast().get("ts");
                 // A full page continues from its last row; otherwise re-read the overlap next time.
                 Instant candidate = rows.size() >= PAGE ? last : last.minus(OVERLAP);
+                next = candidate.isAfter(start) ? candidate : start;
+            } else if (STOCK_MOVEMENTS.equals(source)) {
+                // The stock ledger is large and most of it is not read: nothing found means nothing to read again
+                // before the overlap, so the next sweep does not scan the same lines.
+                Instant candidate = clock.instant().minus(OVERLAP);
                 next = candidate.isAfter(start) ? candidate : start;
             }
             jdbc.sql("INSERT INTO \"LpProjectionCursor\" (\"organizationId\", source, \"cursorAt\") VALUES (?, ?, ?)"
@@ -133,27 +144,35 @@ public class LpProjectionService {
     // ------------------------------------------------------------------ source rows
 
     private List<Map<String, Object>> rows(String source, String org, Instant start) {
+        if (STOCK_MOVEMENTS.equals(source)) {
+            return stockMovementRows(org, start);
+        }
         String sql = switch (source) {
             case SALES -> "SELECT i.id, i.\"invoiceNumber\", i.\"deviceId\", i.\"orderId\", i.\"branchId\","
                     + " i.\"cashSessionId\", i.\"businessDate\", i.subtotal, i.\"discountTotal\", i.\"taxAmount\","
-                    + " i.\"totalAmount\", coalesce(i.\"postedBy\", i.\"createdBy\") AS actor, i.\"postedAt\" AS ts"
-                    + " FROM \"Invoice\" i WHERE i.\"organizationId\" = ? AND i.\"cashSessionId\" IS NOT NULL AND"
+                    + " i.\"totalAmount\", coalesce(i.\"postedBy\", i.\"createdBy\") AS actor, i.\"postedAt\" AS ts,"
+                    + " cs.\"cashRegisterId\" AS \"tillId\", (SELECT o.\"tableId\" FROM \"Order\" o WHERE o.id ="
+                    + " i.\"orderId\") AS \"tableId\" FROM \"Invoice\" i" + TILL_JOIN.formatted("i")
+                    + " WHERE i.\"organizationId\" = ? AND i.\"cashSessionId\" IS NOT NULL AND"
                     + " i.\"postedAt\" IS NOT NULL AND i.\"postedAt\" >= ? ORDER BY i.\"postedAt\", i.id";
             case VOIDS -> "SELECT oi.id, oi.\"orderId\", oi.description, oi.quantity, oi.\"unitPrice\", oi.cancelled,"
                     + " oi.\"cancelReason\", oi.\"voidedBy\", oi.\"voidApprovedBy\", oi.\"voidedQty\","
                     + " oi.\"kitchenPrintedQty\", coalesce(oi.\"cancelledAt\", oi.\"updatedAt\") AS at, oi.\"updatedAt\""
-                    + " AS ts, o.\"branchId\", o.\"cashSessionId\", o.\"deviceId\" FROM \"OrderItem\" oi JOIN \"Order\" o"
-                    + " ON o.id = oi.\"orderId\" WHERE oi.\"organizationId\" = ? AND (oi.cancelled = true OR"
+                    + " AS ts, o.\"branchId\", o.\"cashSessionId\", o.\"deviceId\", cs.\"cashRegisterId\" AS \"tillId\""
+                    + " FROM \"OrderItem\" oi JOIN \"Order\" o ON o.id = oi.\"orderId\"" + TILL_JOIN.formatted("o")
+                    + " WHERE oi.\"organizationId\" = ? AND (oi.cancelled = true OR"
                     + " coalesce(oi.\"voidedQty\", 0) > 0) AND oi.\"updatedAt\" >= ? ORDER BY oi.\"updatedAt\", oi.id";
             case CANCELLATIONS -> "SELECT o.id, o.\"branchId\", o.\"cashSessionId\", o.\"deviceId\", o.\"cancelReason\","
-                    + " o.\"cancelledBy\", o.\"cancelledAt\" AS ts FROM \"Order\" o WHERE o.\"organizationId\" = ? AND"
+                    + " o.\"cancelledBy\", o.\"cancelledAt\" AS ts, cs.\"cashRegisterId\" AS \"tillId\" FROM \"Order\" o"
+                    + TILL_JOIN.formatted("o") + " WHERE o.\"organizationId\" = ? AND"
                     + " o.status::text = 'cancelled' AND o.\"cancelledAt\" IS NOT NULL AND o.\"cancelledAt\" >= ?"
                     + " ORDER BY o.\"cancelledAt\", o.id";
             case REFUNDS -> "SELECT r.id, r.\"invoiceId\", r.\"cashSessionId\", r.amount, r.reason,"
                     + " r.\"stockDisposition\", r.\"approvedById\", r.\"createdBy\", r.\"createdAt\" AS ts,"
                     + " i.\"branchId\", i.\"orderId\", i.\"deviceId\", coalesce(i.\"postedBy\", i.\"createdBy\") AS"
-                    + " \"originalActor\" FROM \"PosRefund\" r LEFT JOIN \"Invoice\" i ON i.id = r.\"invoiceId\" WHERE"
-                    + " r.\"organizationId\" = ? AND r.\"createdAt\" >= ? ORDER BY r.\"createdAt\", r.id";
+                    + " \"originalActor\", cs.\"cashRegisterId\" AS \"tillId\" FROM \"PosRefund\" r LEFT JOIN \"Invoice\" i"
+                    + " ON i.id = r.\"invoiceId\"" + TILL_JOIN.formatted("r") + " WHERE r.\"organizationId\" = ? AND"
+                    + " r.\"createdAt\" >= ? ORDER BY r.\"createdAt\", r.id";
             case OVERRIDES -> "SELECT g.id, g.\"cashierId\", g.\"managerId\", g.\"overrideKind\", g.endpoint,"
                     + " g.\"createdAt\" AS ts, u.\"defaultBranchId\" AS \"branchId\" FROM \"PosApprovalGrant\" g LEFT"
                     + " JOIN \"User\" u ON u.id = g.\"cashierId\" WHERE g.\"organizationId\" = ? AND g.\"createdAt\" >= ?"
@@ -161,11 +180,16 @@ public class LpProjectionService {
             case CASH_SESSIONS -> "SELECT s.id, s.\"branchId\", s.\"userId\", s.status::text AS status, s.\"deviceId\","
                     + " s.\"openedAt\", s.\"businessDate\", s.\"closedAt\", s.\"openingFloat\", s.\"closingCounted\","
                     + " s.\"closingExpected\", s.\"closingDifference\", s.\"varianceReason\", s.\"varianceStatus\","
-                    + " s.\"updatedAt\" AS ts FROM \"CashSession\" s WHERE s.\"organizationId\" = ? AND s.\"updatedAt\""
-                    + " >= ? ORDER BY s.\"updatedAt\", s.id";
+                    + " s.\"cashRegisterId\" AS \"tillId\", s.\"updatedAt\" AS ts FROM \"CashSession\" s WHERE"
+                    + " s.\"organizationId\" = ? AND s.\"updatedAt\" >= ? ORDER BY s.\"updatedAt\", s.id";
             case KITCHEN -> "SELECT k.id, k.\"orderId\", k.\"invoiceId\", k.\"ticketNo\", k.station, k.status::text AS"
                     + " status, k.\"startedAt\", k.\"readyAt\", k.\"servedAt\", k.\"startedBy\", k.\"readyBy\","
-                    + " k.\"recallCount\", k.\"recallReason\", k.\"createdAt\", k.\"updatedAt\" AS ts, o.\"branchId\" FROM"
+                    + " k.\"recallCount\", k.\"recallReason\", k.\"createdAt\", k.\"updatedAt\" AS ts, o.\"branchId\","
+                    + " k.\"orderType\", o.\"tableId\", (SELECT sum(CASE WHEN (it ->> 'quantity')"
+                    + " ~ '^[0-9]+(\\.[0-9]+){0,1}$' THEN"
+                    + " (it ->> 'quantity')::numeric ELSE 1 END) FROM"
+                    + " jsonb_array_elements(CASE WHEN jsonb_typeof(k.items::jsonb) = 'array' THEN k.items::jsonb ELSE"
+                    + " '[]'::jsonb END) it WHERE coalesce(it ->> 'cancelled', 'false') <> 'true') AS \"itemCount\" FROM"
                     + " \"KitchenTicket\" k LEFT JOIN \"Order\" o ON o.id = k.\"orderId\" WHERE k.\"organizationId\" = ?"
                     + " AND k.\"updatedAt\" >= ? ORDER BY k.\"updatedAt\", k.id";
             case STOCK_COUNTS -> "SELECT s.id, s.\"countCode\", s.\"locationId\", s.\"startedAt\", s.\"submittedById\","
@@ -173,6 +197,12 @@ public class LpProjectionService {
                     + " \"InventoryLocation\" l ON l.id = s.\"locationId\" WHERE s.\"organizationId\" = ? AND"
                     + " s.\"deletedAt\" IS NULL AND s.status IN ('submitted', 'approved') AND s.\"submittedAt\" IS NOT"
                     + " NULL AND s.\"submittedAt\" >= ? ORDER BY s.\"submittedAt\", s.id";
+            case CASH_MOVEMENTS -> "SELECT m.id, m.\"cashSessionId\", m.\"movementType\"::text AS kind, m.amount,"
+                    + " m.reason, m.\"reversalOfMovementId\", m.\"performedBy\", m.\"createdAt\" AS ts, cs.\"branchId\","
+                    + " cs.\"deviceId\", cs.\"businessDate\", cs.\"cashRegisterId\" AS \"tillId\" FROM \"CashMovement\" m"
+                    + TILL_JOIN.formatted("m") + " WHERE m.\"organizationId\" = ? AND m.\"movementType\"::text IN"
+                    + " ('pay_in', 'pay_out', 'supplier_payment', 'adjustment') AND m.\"createdAt\" >= ? ORDER BY"
+                    + " m.\"createdAt\", m.id";
             default -> throw new IllegalArgumentException("Unknown projection source " + source);
         };
         return SqlRows.list(jdbc.sql(sql + " LIMIT " + PAGE).params(org, SqlRows.ts(start)));
@@ -190,6 +220,8 @@ public class LpProjectionService {
             case OVERRIDES -> map(rows, this::override);
             case CASH_SESSIONS -> flat(rows, this::cashSession);
             case KITCHEN -> flat(rows, this::kitchen);
+            case CASH_MOVEMENTS -> map(rows, this::cashMovement);
+            case STOCK_MOVEMENTS -> map(rows, this::stockMovement);
             default -> stockCounts(org, rows);
         };
     }
@@ -237,6 +269,16 @@ public class LpProjectionService {
     }
 
     private List<EventInput> sales(String org, List<Map<String, Object>> rows) {
+        // LP3: what each line drew through its recipe, from the snapshot taken at the sale.
+        Map<String, List<Map<String, Object>>> ingredients = new LinkedHashMap<>();
+        for (Map<String, Object> g : SqlRows.list(jdbc.sql("SELECT \"invoiceItemId\", \"productId\","
+                + " coalesce(\"baseQuantity\", quantity) AS quantity, \"totalValue\" FROM"
+                + " \"InvoiceItemRecipeIngredient\" WHERE \"organizationId\" = ? AND \"invoiceId\" = ANY(?::text[])"
+                + " ORDER BY \"invoiceItemId\", id").params(org, ids(rows)))) {
+            ingredients.computeIfAbsent((String) g.get("invoiceItemId"), k -> new ArrayList<>()).add(Obj.of(
+                    "productId", g.get("productId"), "quantity", g.get("quantity"), "totalValue",
+                    g.get("totalValue")));
+        }
         Map<String, List<Map<String, Object>>> lines = new LinkedHashMap<>();
         for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT id, \"invoiceId\", \"productId\", description,"
                 + " quantity, \"unitPrice\", \"discountAmount\", total FROM \"InvoiceItem\" WHERE \"organizationId\" = ?"
@@ -244,7 +286,8 @@ public class LpProjectionService {
             lines.computeIfAbsent((String) l.get("invoiceId"), k -> new ArrayList<>()).add(Obj.of("lineId",
                     l.get("id"), "productId", l.get("productId"), "description", l.get("description"), "quantity",
                     l.get("quantity"), "unitPrice", l.get("unitPrice"), "discountAmount", l.get("discountAmount"),
-                    "total", l.get("total")));
+                    "total", l.get("total"), "ingredients", ingredients.getOrDefault((String) l.get("id"),
+                            List.of())));
         }
         List<EventInput> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
@@ -255,7 +298,8 @@ public class LpProjectionService {
                     (LocalDate) r.get("businessDate"), "order", "pos", "observed",
                     Obj.of("invoiceNumber", r.get("invoiceNumber"), "subtotal", n(r, "subtotal"), "discountTotal",
                             n(r, "discountTotal"), "taxAmount", n(r, "taxAmount"), "total", n(r, "totalAmount"),
-                            "lines", lines.getOrDefault(id, List.of()))));
+                            "lines", lines.getOrDefault(id, List.of()), "tillId", s(r, "tillId"), "tableId",
+                            s(r, "tableId"))));
         }
         return out;
     }
@@ -270,7 +314,7 @@ public class LpProjectionService {
                 Obj.of("quantity", quantity, "firedQuantity", n(r, "kitchenPrintedQty"), "whole",
                         Boolean.TRUE.equals(r.get("cancelled")), "reason", r.get("cancelReason"), "approvedById",
                         r.get("voidApprovedBy"), "description", r.get("description"), "amount",
-                        LpNumbers.round(quantity.multiply(n(r, "unitPrice")))));
+                        LpNumbers.round(quantity.multiply(n(r, "unitPrice"))), "tillId", s(r, "tillId")));
     }
 
     private List<EventInput> cancellations(String org, List<Map<String, Object>> rows) {
@@ -292,7 +336,8 @@ public class LpProjectionService {
                     "deviceId", s(r, "deviceId"), "actorId", s(r, "cancelledBy"), "orderId", id, "sessionId",
                     s(r, "cashSessionId")), (Instant) r.get("ts"), null, "order", "pos", "observed",
                     Obj.of("reason", r.get("cancelReason"), "firedLines", fired.getOrDefault(id, List.of()),
-                            "firedAmount", amounts.containsKey(id) ? LpNumbers.round(amounts.get(id)) : null)));
+                            "firedAmount", amounts.containsKey(id) ? LpNumbers.round(amounts.get(id)) : null,
+                            "tillId", s(r, "tillId"))));
         }
         return out;
     }
@@ -303,7 +348,7 @@ public class LpProjectionService {
                 "orderId", s(r, "orderId"), "sessionId", s(r, "cashSessionId")), (Instant) r.get("ts"), null,
                 "order", "pos", "observed", Obj.of("amount", n(r, "amount"), "reason", r.get("reason"),
                         "stockDisposition", r.get("stockDisposition"), "approvedById", r.get("approvedById"),
-                        "originalActorId", r.get("originalActor")));
+                        "originalActorId", r.get("originalActor"), "tillId", s(r, "tillId")));
     }
 
     private EventInput override(Map<String, Object> r) {
@@ -311,6 +356,15 @@ public class LpProjectionService {
                 s(r, "branchId"), "actorId", s(r, "cashierId")), (Instant) r.get("ts"), null, "order", "pos",
                 "observed", Obj.of("kind", r.get("overrideKind"), "approverId", r.get("managerId"), "endpoint",
                         r.get("endpoint")));
+    }
+
+    /** A pay-in, pay-out, supplier payment or adjustment at a till: the drawer was opened for it (LP2). */
+    private EventInput cashMovement(Map<String, Object> r) {
+        return event(LpEventTypes.CASH_MOVEMENT, "cash-movement:" + s(r, "id"), Obj.of("branchId", s(r, "branchId"),
+                "deviceId", s(r, "deviceId"), "actorId", s(r, "performedBy"), "sessionId", s(r, "cashSessionId")),
+                (Instant) r.get("ts"), (LocalDate) r.get("businessDate"), "session", "pos", "observed",
+                Obj.of("kind", r.get("kind"), "amount", n(r, "amount"), "reason", r.get("reason"), "tillId",
+                        s(r, "tillId"), "reversalOfMovementId", r.get("reversalOfMovementId")));
     }
 
     private List<EventInput> cashSession(Map<String, Object> r) {
@@ -322,7 +376,7 @@ public class LpProjectionService {
         if (r.get("openedAt") != null) {
             out.add(event(LpEventTypes.CASH_SESSION_OPENED, "cash-session:" + id + ":opened", ids,
                     (Instant) r.get("openedAt"), day, "session", "pos", "observed", Obj.of("openingFloat",
-                            n(r, "openingFloat"))));
+                            n(r, "openingFloat"), "tillId", s(r, "tillId"))));
         }
         Instant closedAt = (Instant) r.get("closedAt");
         if (closedAt != null) {
@@ -331,7 +385,7 @@ public class LpProjectionService {
                     + closedAt.toEpochMilli(), ids, closedAt, day, "session", "pos", "observed",
                     Obj.of("expected", n(r, "closingExpected"), "counted", n(r, "closingCounted"), "difference",
                             n(r, "closingDifference"), "varianceReason", r.get("varianceReason"), "varianceStatus",
-                            r.get("varianceStatus"))));
+                            r.get("varianceStatus"), "tillId", s(r, "tillId"))));
             if ("reconciled".equals(r.get("status"))) {
                 out.add(event(LpEventTypes.CASH_SESSION_RECONCILED, "cash-session:" + id + ":reconciled:"
                         + closedAt.toEpochMilli(), ids, (Instant) r.get("ts"), day, "session", "pos", "observed",
@@ -354,7 +408,8 @@ public class LpProjectionService {
                 "transactionId", s(r, "invoiceId"), "orderId", s(r, "orderId"), "ticketId", id);
         out.add(event(LpEventTypes.KITCHEN_TICKET_CREATED, "kitchen-ticket:" + id + ":created", ids.apply(null),
                 (Instant) r.get("createdAt"), null, "ticket", "kds", "observed", Obj.of("station", r.get("station"),
-                        "ticketNo", r.get("ticketNo"))));
+                        "ticketNo", r.get("ticketNo"), "itemCount", n(r, "itemCount"), "orderType",
+                        r.get("orderType"), "tableId", s(r, "tableId"))));
         String[][] stages = {{"startedAt", "preparation_started", "startedBy"}, {"readyAt", "prepared", "readyBy"},
             {"servedAt", "dispatched", null}};
         for (String[] st : stages) {
@@ -362,15 +417,16 @@ public class LpProjectionService {
             if (at != null) {
                 out.add(event(LpEventTypes.KITCHEN_STAGE, "kitchen-ticket:" + id + ":" + st[1] + ":"
                         + at.toEpochMilli(), ids.apply(st[2] == null ? null : s(r, st[2])), at, null, "ticket", "kds",
-                        "inferred", Obj.of("stage", st[1], "station", r.get("station"))));
+                        "inferred", Obj.of("stage", st[1], "station", r.get("station"), "itemCount",
+                        n(r, "itemCount"))));
             }
         }
         int recalls = r.get("recallCount") == null ? 0 : ((Number) r.get("recallCount")).intValue();
         if (recalls > 0) {
             out.add(event(LpEventTypes.KITCHEN_STAGE, "kitchen-ticket:" + id + ":recall:" + recalls, ids.apply(null),
                     (Instant) r.get("ts"), null, "ticket", "kds", "inferred", Obj.of("stage", "remade", "station",
-                            r.get("station"), "recallCount", recalls, "recallReason", r.get("recallReason"),
-                            "afterReady", wasReady)));
+                            r.get("station"), "itemCount", n(r, "itemCount"), "recallCount", recalls, "recallReason",
+                            r.get("recallReason"), "afterReady", wasReady)));
         }
         if ("cancelled".equals(r.get("status"))) {
             out.add(event(LpEventTypes.KITCHEN_STAGE, "kitchen-ticket:" + id + ":cancelled", ids.apply(null),
@@ -378,6 +434,49 @@ public class LpProjectionService {
                             r.get("station"), "recallCount", recalls, "afterReady", wasReady)));
         }
         return out;
+    }
+
+    /**
+     * Stock ledger lines (LP5) at the locations linked to a live {@code storage} zone, not cost adjustments, with a
+     * quantity change. Only those: the stock ledger grows with every sale, and only a watched store room needs it.
+     */
+    private List<Map<String, Object>> stockMovementRows(String org, Instant start) {
+        Map<String, String> branches = new LinkedHashMap<>();
+        for (Map<String, Object> z : SqlRows.list(jdbc.sql("SELECT z.\"linkedId\" AS location, min(z.\"branchId\") AS"
+                + " branch FROM \"LpZone\" z WHERE z.\"organizationId\" = ? AND z.\"zoneType\" = 'storage' AND"
+                + " z.\"linkedType\" = 'location' AND z.\"linkedId\" IS NOT NULL AND z.\"retiredAt\" IS NULL GROUP BY"
+                + " z.\"linkedId\"").param(org))) {
+            branches.put((String) z.get("location"), (String) z.get("branch"));
+        }
+        if (branches.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.id, l.\"locationId\", l.\"productId\","
+                + " l.\"variantId\", l.type::text AS kind, l.\"quantityChange\", l.\"referenceType\","
+                + " l.\"referenceId\", l.\"performedBy\", l.\"createdAt\" AS ts, loc.\"branchId\" AS"
+                + " \"locationBranchId\" FROM \"InventoryLedger\" l LEFT JOIN \"InventoryLocation\" loc ON loc.id ="
+                + " l.\"locationId\" WHERE l.\"organizationId\" = ? AND l.\"locationId\" = ANY(?::text[]) AND"
+                + " l.\"createdAt\" >= ? AND l.type::text <> 'cost_adjustment' AND l.\"quantityChange\" <> 0 ORDER BY"
+                + " l.\"createdAt\", l.id LIMIT " + PAGE)
+                .params(org, branches.keySet().toArray(String[]::new), SqlRows.ts(start)))) {
+            Map<String, Object> row = new LinkedHashMap<>(r);
+            String branch = s(r, "locationBranchId");
+            row.put("branchId", branch != null ? branch : branches.get(s(r, "locationId")));
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /** A stock ledger line at a watched store room: its location, direction and size, and the document it is of. */
+    private EventInput stockMovement(Map<String, Object> r) {
+        BigDecimal change = n(r, "quantityChange");
+        return event(LpEventTypes.STOCK_MOVEMENT, "inventory-ledger:" + s(r, "id"), Obj.of("branchId",
+                s(r, "branchId"), "actorId", s(r, "performedBy"), "lineId", s(r, "id")), (Instant) r.get("ts"), null,
+                "item", "stock", "observed", Obj.of("locationId", s(r, "locationId"), "direction",
+                        change.signum() < 0 ? "out" : "in", "quantity", change.abs(), "kind", r.get("kind"),
+                        "productId", r.get("productId"), "variantId", r.get("variantId"), "referenceType",
+                        r.get("referenceType"), "referenceId", r.get("referenceId")));
     }
 
     /**

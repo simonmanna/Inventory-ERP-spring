@@ -108,7 +108,8 @@ public class SecurityConfig {
         cfg.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         cfg.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-Request-Id", "Idempotency-Key",
                 "X-Device-Label", "X-Pos-User", "X-Device-Token"));
-        cfg.setExposedHeaders(List.of("X-Request-Id", "X-Total-Count", PosSessionCheck.POS_SESSION_HEADER));
+        cfg.setExposedHeaders(List.of("X-Request-Id", "X-Total-Count", PosSessionCheck.POS_SESSION_HEADER,
+                "X-Snapshot-Taken-At"));
         cfg.setMaxAge(86_400L);
         return (HttpServletRequest request) -> cfg;
     }

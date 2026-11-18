@@ -18,6 +18,12 @@ public final class LpJson {
         return plain instanceof Map<?, ?> m ? (Map<String, Object>) m : new LinkedHashMap<>();
     }
 
+    /** The array as a list; anything that is not a JSON array is an empty list. */
+    public static List<Object> list(Object value) {
+        Object plain = plain(value);
+        return plain instanceof List<?> l ? new ArrayList<>(l) : new ArrayList<>();
+    }
+
     private static Object plain(Object value) {
         if (!(value instanceof JsonNode node)) {
             return value;

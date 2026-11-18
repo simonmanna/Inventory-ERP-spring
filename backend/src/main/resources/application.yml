@@ -137,6 +137,18 @@ app:
   alerts:
     hourly-cron: ${ALERTS_HOURLY_CRON:0 10 * * * *}
     daily-cron: ${ALERTS_DAILY_CRON:0 30 6 * * *}
+  # Loss prevention (ADR-S077): the sweep-and-reconcile schedule, and the camera platform (LP1). Detector models and
+  # edge agent releases are JSON arrays of vendor-signed entries (docs/spec/loss-prevention.md); empty offers none.
+  lossprevention:
+    cron: ${LP_CRON:0 */2 * * * *}
+    # Operations metrics (LP6a): computes the summary days that new events made dirty.
+    insights-cron: ${LP_INSIGHTS_CRON:40 */5 * * * *}
+    vision-cron: ${LP_VISION_CRON:20 * * * * *}
+    vision-housekeeping-cron: ${LP_VISION_HOUSEKEEPING_CRON:0 17 3 * * *}
+    vision:
+      models: "${LP_VISION_MODELS:[]}"
+      releases: "${LP_EDGE_RELEASES:[]}"
+      default-model: "${LP_VISION_DEFAULT_MODEL:}"
   # Fleet 1.6: daily preventive-maintenance run (raises work orders for due service schedules; ShedLock).
   fleet:
     maintenance-due-cron: ${FLEET_MAINTENANCE_DUE_CRON:0 30 5 * * *}

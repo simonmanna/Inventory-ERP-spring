@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+# Local runtime data: credentials, stream addresses, the video buffer. Never commit it.
+var/
+data/
+streams.yaml

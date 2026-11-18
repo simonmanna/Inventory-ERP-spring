@@ -1,0 +1,50 @@
+# lp-edge on a site box.
+#
+#   install -d -m 0700 /opt/lp-edge && cp compose.yml /opt/lp-edge/ && cp .env.example /opt/lp-edge/.env
+#   chmod 600 /opt/lp-edge/.env            # then fill it in
+#   install -d -m 0700 -o 10001 -g 10001 /var/lib/lp-edge
+#   docker compose -f /opt/lp-edge/compose.yml --env-file /opt/lp-edge/.env up -d
+#
+# The host's updater (lp-edge-updater.timer) rewrites LP_EDGE_IMAGE in the env file and recreates this service.
+name: lp-edge
+
+services:
+  lp-edge:
+    image: ${LP_EDGE_IMAGE:?set LP_EDGE_IMAGE in the env file}
+    restart: unless-stopped
+    # Host networking: the cameras are on the site's network, and the health endpoint (127.0.0.1 only) must be
+    # reachable by the host's updater. The agent listens on nothing else.
+    network_mode: host
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      LP_EDGE_SERVER: ${LP_EDGE_SERVER:-}
+      LP_EDGE_TRUST_KEY: ${LP_EDGE_TRUST_KEY:-}
+      LP_EDGE_NTP_SERVER: ${LP_EDGE_NTP_SERVER:-}
+      LP_EDGE_CA_BUNDLE: ${LP_EDGE_CA_BUNDLE:-}
+      LP_EDGE_HEALTH_PORT: ${LP_EDGE_HEALTH_PORT:-8765}
+      LP_EDGE_BUFFER_FPS: ${LP_EDGE_BUFFER_FPS:-2}
+      LP_EDGE_BUFFER_MAX_WIDTH: ${LP_EDGE_BUFFER_MAX_WIDTH:-640}
+      LP_EDGE_BUFFER_JPEG_QUALITY: ${LP_EDGE_BUFFER_JPEG_QUALITY:-60}
+      LP_EDGE_ANALYSIS_FPS: ${LP_EDGE_ANALYSIS_FPS:-5}
+      LP_EDGE_LOG_LEVEL: ${LP_EDGE_LOG_LEVEL:-INFO}
+      LP_EDGE_LOG_FORMAT: ${LP_EDGE_LOG_FORMAT:-text}
+      # Pour meters (LP3): a JSON file of adapters, e.g. /var/lib/lp-edge/meters.json. Directories they read must be
+      # mounted writable (read files are moved to done/).
+      LP_MEASUREMENT_ADAPTERS: ${LP_MEASUREMENT_ADAPTERS:-}
+    volumes:
+      # Credentials, stream addresses, outbox and the encrypted video buffer: put it on the large disk.
+      - ${LP_EDGE_DATA:-/var/lib/lp-edge}:/var/lib/lp-edge
+    tmpfs:
+      # Clips are encoded here before they are sealed; plain video never reaches a disk.
+      - /run/lp-edge:size=512m,mode=0700,uid=10001,gid=10001
+      - /tmp:size=64m,mode=1777
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"

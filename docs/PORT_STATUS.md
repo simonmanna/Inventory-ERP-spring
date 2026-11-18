@@ -1817,3 +1817,120 @@ Tests: `LpEventValidatorTest`, `LpEnginesTest`, `LpLedgerIT`, `LpReconIT`.
 
 Not verified against live POS traffic: the projection has only run against the demo seed. See the spec, "Assumptions
 to check on real data".
+
+### LP1 camera platform and LP2 cashier vision (coded 2026-11-17, owner build pending)
+
+[LP1 brief](phases/LP1-camera-platform.md) · [LP2 brief](phases/LP2-cashier-vision.md). Licence feature `lpVision`.
+
+38 more routes: `LossPreventionAgentController` (7), `LossPreventionAgentApiController` (10, the edge agent's own),
+`LossPreventionCameraController` (15), `LossPreventionEvidenceController` (6). Migrations V572–V573 (renumbered from V523–V524 at merge). Permission
+`lp:evidence`, event `lp.agent.health_changed`, alert type `lp_agent_health`. Edge agent: `edge/` (Python).
+Tests: `LpVisionIT`, `LpVisionOpsIT`, `LpVisionEngineTest`, `LpEvidenceCipherTest`, vision cases in
+`LpEventValidatorTest`; `LpReconIT` updated. All loss-prevention classes pass on `fastTest`; the full build (with its
+coverage gate) has not been run. `edge/tests`: 99 pass with a stand-in for pytest; the OpenCV tests and the edge
+`docker build` first run in CI (new `edge` job).
+
+- [x] LP1 agents, enrolment, heartbeats, health, commands (`LpAgentService`, `LpAgentCommandService`)
+- [x] LP1 cameras and zones (`LpCameraService`), stills and live view (`LpLiveService`)
+- [x] LP1 evidence: registration, chunked upload, encryption, integrity, access trail, retention (`LpEvidenceService`)
+- [x] LP1 vision observations in the ledger; clips linked to new cases (`LpVisionCaseSubscriber`)
+- [x] LP1 web: Cameras and Evidence tabs
+- [x] LP1 edge agent (`edge/lp_edge`)
+- [x] LP2 engine `cashier_vision`, rules V-C1–V-C3 (`LpCashierVisionEngine`); C11 and `cash_drawer.opened`
+- [x] LP2 projection: `tillId` on POS events, cash movements as `cash.movement`
+
+Detection accuracy not measured: no pilot footage, no detector model shipped.
+
+### LP3 bar intelligence and LP4 restaurant and cafe (coded 2026-11-18, owner build pending)
+
+[LP3 brief](phases/LP3-bar-intelligence.md) · [LP4 brief](phases/LP4-restaurant-cafe.md). No new licence key: pour
+meters need the module only; the camera rules need `lpVision` zones.
+
+5 more routes: `LossPreventionMeasurementController` (pour meters). Migration V575 (`LpMeasurementDevice`, engines
+`bar_pour`, `kitchen_flow`, `service_vision`). Event types `pour.measured`, `measurement.gap`. Tests:
+`LpBarPourEngineTest`, `LpRestaurantEnginesTest`, `LpBarRestaurantIT`, new cases in `LpEventValidatorTest`;
+`LpReconIT` updated (rule count). All loss-prevention classes pass on `fastTest`; the full build has not been run.
+`edge/tests`: 150 pass with the pytest stand-in.
+
+- [x] LP3 pour meters: routes, agent configuration `measurementDevices`, ingest checks (`LpMeasurementService`)
+- [x] LP3 engine `bar_pour`, rules B04, B05, V-B1, V-B2 (`LpBarPourEngine`)
+- [x] LP3 projection: `ingredients` on `sale.completed` lines
+- [x] LP3 edge meter adapters `jsonl_dir`, `csv_dir`, `http_poll` (`edge/lp_edge/measurements`)
+- [x] LP4 engine `kitchen_flow`, rules K01, K02 (`LpKitchenFlowEngine`); `LpEngine.lookaheadDays()`
+- [x] LP4 engine `service_vision`, rules V-K1, V-F1 (`LpServiceVisionEngine`)
+- [x] LP4 projection: `itemCount`, `orderType` on kitchen events
+- [x] Web: Pour meters tab, engine and rule labels
+- [ ] Translations of the new phrases (English fallback now); web tests; owner's full build and coverage gate
+
+Nothing measured on a real bar, kitchen pass or counter; every threshold is a design value.
+
+### LP6a operations insights without cameras (coded 2026-11-18, owner build pending)
+
+[LP6a brief](phases/LP6a-camera-free-metrics.md). Licence feature `lpInsights`. 7 routes in
+`LossPreventionInsightsController`; migration V574; job `LpInsightsJob`. Tests: `LpInsightsIT`, `LpInsightsKeysTest`
+green on `fastTest`; the full build has not been run.
+
+- [x] Dirty days at ingest, per-day computation, late-event recompute (`LpInsightsService`, `LpInsightsJob`)
+- [x] The eight camera-free metrics: summary, hourly, kitchen, staff (role / person), tables, pour (`LpInsightsReportService`)
+- [x] `POST /insights/recompute`
+- [x] Projection: `tableId` on `sale.completed`
+- [x] Web: Insights tab
+- [x] Review checks 2026-11-18: `coverage` in the summary (table turnover marked partial, not historical), Insights
+      phrases translated (ti, lg, sw; native-speaker check pending)
+- [ ] Web tests; owner's full build and the 80 % coverage gate; deviations 4-6 approval
+
+### LP5 retail checkout, LP6b camera insights, LP7 activity research (coded 2026-11-18, owner build pending)
+
+[LP5 brief](phases/LP5-retail-checkout.md) · [LP6b brief](phases/LP6b-camera-metrics.md) ·
+[LP7 brief](phases/LP7-activity-research.md). No new licence key: LP5 and LP7 run under `lpVision`, LP6b under
+`lpInsights`.
+
+6 more routes: `LossPreventionInsightsController` gains footfall, queues and occupancy (10 routes now), and
+`LossPreventionResearchController` has 3. Migration V576: engine `retail_vision`, zone types `scan_area` and `queue`,
+the `table` link, and `LpActivityReview`. Event types `stock.movement` and `vision.activity`; projection source
+`stock_movements`.
+
+Tests:
+- New: `LpRetailVisionEngineTest`, `LpRetailResearchIT`, and new cases in `LpEventValidatorTest` and
+  `LpInsightsKeysTest`.
+- Updated: `LpReconIT` (rule and source counts) and `LpInsightsIT` (route count).
+- `fastTest --tests 'com.inventoryerp.lossprevention.*'` (2026-11-18): 125 tests, all pass. They ran on a dedicated
+  Postgres (`IT_EXTERNAL_DB`) because the shared reuse container carries other worktrees' migrations. The first run
+  found two faults, both fixed: `stock.movement` refused the projection's own quantity (a decimal string), and two
+  `LpReconIT` counts were stale.
+- `ModularityTests`, `ArchitectureTests`: not run. The first try was killed by the out-of-memory killer (the host is
+  shared with the live app and other sessions), and a retry waited 15 minutes for free memory without starting. The
+  new routes were checked by hand against each `ArchitectureTests` rule: access declared, no repository, not
+  transactional, no entity returned.
+- Web: `tsc`, `eslint` and `i18n:check` pass. The new phrases fall back to English.
+- `edge/tests`: 174 pass with the pytest stand-in; the OpenCV test is skipped (no numpy).
+
+- [x] LP5 engine `retail_vision`, rules V-R1 and V-R2 (shipped off) and V-S1 (`LpRetailVisionEngine`)
+- [x] LP5 `scan_area` zones, `stock.movement`, the `stock_movements` projection
+- [x] LP5 edge profile `scan_area`; harness scoring per transaction batch
+- [x] LP6b ten camera metrics, 3 routes, summary `metrics.camera` and `coverage.camera`
+- [x] LP6b `queue` zones, `dining` linked to a `table`, `tableId` on kitchen tickets; edge profile `queue`
+- [x] LP6a fix: an empty day writes no summary rows (`HAVING count(*) > 0`)
+- [x] LP7 `vision.activity`, reviews and precision (`LpResearchService`), edge `lp_edge/activities`, harness activity
+      scoring
+- [x] Web: scanner and queue zones, the table link, the research switch, the camera section in Insights, the Research
+      tab
+- [ ] Translations of the new phrases; web tests; owner's full build and coverage gate; approval of each brief's open
+      items
+
+Nothing measured at a real checkout, door, queue or table.
+
+### Detector evaluation harness (coded 2026-11-18, nothing measured)
+
+[Brief](phases/LP-detector-evaluation.md) · [user guide](../edge/evaluation/README.md). `lp-edge-eval` in
+`edge/lp_edge/evaluation/`, licence register `edge/evaluation/licence-register.yaml`. `edge/tests/test_evaluation.py`
+(29) passes with the pytest stand-in. No footage, no model, no licence checked yet.
+
+- [x] Dataset format, validation, coverage check
+- [x] Pipeline run through the agent's tracker and zone profiles; models or predictions files
+- [x] Accuracy against the proposed thresholds, speed, memory, licence eligibility; JSON and Markdown report
+- [x] Review requirements 2026-11-18: reproducibility (hashes, tracker and profile versions, fingerprint), accuracy by
+      level with V-C1 transaction correlation, sustained multi-camera hardware run, weights cleared per file with a
+      five-question legal assessment, COCO images and annotations as separate entries
+- [ ] Real pytest/OpenCV/ONNX Runtime run in CI
+- [ ] Labelled pilot footage, a run on the edge hardware, a legal check of the register
