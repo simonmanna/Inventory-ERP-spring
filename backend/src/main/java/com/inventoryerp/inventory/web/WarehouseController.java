@@ -11,6 +11,7 @@ import com.inventoryerp.inventory.application.WarehouseSetupService.BinInput;
 import com.inventoryerp.inventory.application.WarehouseSetupService.RuleInput;
 import com.inventoryerp.inventory.application.WarehouseSetupService.SettingsInput;
 import com.inventoryerp.inventory.application.WarehouseTaskService;
+import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.validation.OneOf;
@@ -205,6 +206,7 @@ public class WarehouseController {
         return setup.overview(locationId);
     }
 
+    @Idempotent
     @PostMapping("/locations/{locationId}/reconcile")
     @RequirePermissions(Permissions.WAREHOUSE__MANAGE)
     public Map<String, Object> reconcile(@PathVariable String locationId,
@@ -268,6 +270,7 @@ public class WarehouseController {
         return setup.deleteBin(id);
     }
 
+    @Idempotent(required = true)
     @PostMapping("/bins/{id}/adjust")
     @RequirePermissions(Permissions.WAREHOUSE__MANAGE)
     public Map<String, Object> adjustBin(@PathVariable String id, @Valid @RequestBody AdjustBinRequest dto) {
@@ -342,6 +345,7 @@ public class WarehouseController {
                 dto.quantity(), dto.fromBinId(), dto.toBinId());
     }
 
+    @Idempotent
     @PostMapping("/tasks/{id}/complete")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> completeTask(@PathVariable String id,
@@ -349,6 +353,7 @@ public class WarehouseController {
         return tasks.complete(id, dto == null ? null : dto.quantity(), dto == null ? null : dto.toBinId());
     }
 
+    @Idempotent
     @PostMapping("/tasks/{id}/cancel")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> cancelTask(@PathVariable String id) {
@@ -380,12 +385,14 @@ public class WarehouseController {
         return outbound.get(id);
     }
 
+    @Idempotent
     @PostMapping("/pick-orders/{id}/release")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> release(@PathVariable String id) {
         return outbound.release(id);
     }
 
+    @Idempotent
     @PostMapping("/pick-orders/{id}/pack")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> pack(@PathVariable String id, @Valid @RequestBody(required = false) PackRequest dto) {
@@ -394,12 +401,14 @@ public class WarehouseController {
                         : dto.items().stream().map(i -> new PackItem(i.lineId(), i.quantity())).toList());
     }
 
+    @Idempotent
     @PostMapping("/pick-orders/{id}/ship")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> ship(@PathVariable String id, @Valid @RequestBody(required = false) ShipRequest dto) {
         return outbound.ship(id, dto == null ? null : dto.carrier(), dto == null ? null : dto.trackingRef());
     }
 
+    @Idempotent
     @PostMapping("/pick-orders/{id}/cancel")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> cancel(@PathVariable String id,
@@ -428,6 +437,7 @@ public class WarehouseController {
         return outbound.getWave(id);
     }
 
+    @Idempotent
     @PostMapping("/waves/{id}/release")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> releaseWave(@PathVariable String id) {

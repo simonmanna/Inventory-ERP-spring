@@ -84,13 +84,15 @@ public class WarehouseTaskService {
 
     private List<Map<String, Object>> binsWhere(String filter, String root, String locationId, String productId,
             String variantKey) {
+        // h-01 F7: the bin stock and open tasks of this location only, not of every location of every organisation.
         var spec = jdbc.sql("SELECT b.*, coalesce(s.qty, 0) AS held, coalesce(s.mine, 0) AS mine,"
                         + " coalesce(t.incoming, 0) AS incoming FROM \"WarehouseBin\" b"
                         + " LEFT JOIN (SELECT \"binId\", sum(quantity) AS qty, sum(CASE WHEN \"productId\" = :prod"
                         + "   AND \"variantKey\" = :var THEN quantity ELSE 0 END) AS mine FROM \"WarehouseBinStock\""
-                        + "   GROUP BY \"binId\") s ON s.\"binId\" = b.id"
+                        + "   WHERE \"organizationId\" = :org AND \"locationId\" = :loc GROUP BY \"binId\") s ON s.\"binId\" = b.id"
                         + " LEFT JOIN (SELECT \"toBinId\", sum(quantity) AS incoming FROM \"WarehouseTask\""
-                        + "   WHERE status = 'open' AND type IN ('putaway', 'move') GROUP BY \"toBinId\") t ON t.\"toBinId\" = b.id"
+                        + "   WHERE \"organizationId\" = :org AND \"locationId\" = :loc AND status = 'open'"
+                        + "   AND type IN ('putaway', 'move') GROUP BY \"toBinId\") t ON t.\"toBinId\" = b.id"
                         + " WHERE b.\"organizationId\" = :org AND b.\"locationId\" = :loc AND b.kind = 'bin'"
                         + " AND b.\"isActive\" = true AND b.usage = 'storage' AND " + filter
                         + " ORDER BY (coalesce(s.mine, 0) > 0) DESC, (coalesce(s.qty, 0) = 0) DESC, b.\"pickSequence\", b.code")
@@ -254,6 +256,13 @@ public class WarehouseTaskService {
         store.lock(locationId, productId);
         String id;
         if ("putaway".equals(type)) {
+            // Minor (h-01): a lot named on a putaway must be a lot of this product in this location.
+            if (!batch.isEmpty() && jdbc.sql("SELECT count(*) FROM \"InventoryBatch\" WHERE id = ?"
+                    + " AND \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ?")
+                    .params(batch, org(), productId, locationId).query(Long.class).single() == 0) {
+                throw ApiException.badRequest("Lot " + batch + " is not a lot of this product at this location; name"
+                        + " one of its lots or leave the lot empty");
+            }
             BigDecimal waiting = store.unbinnedQty(locationId, productId, variant)
                     .subtract(store.openPutawayQty(locationId, productId, variant, null));
             if (waiting.compareTo(quantity) < 0) {

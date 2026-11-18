@@ -154,7 +154,7 @@ public abstract class ApiTestSupport {
      */
     private static final java.util.regex.Pattern KEY_REQUIRED = java.util.regex.Pattern.compile(
             "^/(inventory/(direct-stock/(in|out)|counts/[^/]+/submit|transfers/[^/]+/receive)"
-                    + "|procurement/goods-receipts/adhoc)(\?.*)?$");
+                    + "|procurement/goods-receipts/adhoc)(\?(\?.*)?$");
 
     /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
     protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";

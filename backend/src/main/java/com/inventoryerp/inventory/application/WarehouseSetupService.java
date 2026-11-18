@@ -115,9 +115,10 @@ public class WarehouseSetupService {
                 + " JOIN tree t ON c.\"parentId\" = t.id)"
                 + " SELECT t.*, coalesce(s.qty, 0) AS quantity, coalesce(s.products, 0) AS products FROM tree t"
                 + " LEFT JOIN (SELECT \"binId\", sum(quantity) AS qty, count(DISTINCT \"productId\") AS products"
-                + " FROM \"WarehouseBinStock\" GROUP BY \"binId\") s ON s.\"binId\" = t.id"
+                + " FROM \"WarehouseBinStock\" WHERE \"organizationId\" = ? AND \"locationId\" = ? GROUP BY \"binId\") s"
+                + " ON s.\"binId\" = t.id"
                 + (includeInactive ? "" : " WHERE t.\"isActive\" = true") + " ORDER BY t.path")
-                .params(org(), locationId));
+                .params(org(), locationId, org(), locationId));
         return rows;
     }
 
@@ -183,6 +184,9 @@ public class WarehouseSetupService {
             }
         }
         String kind = in.kind() != null ? in.kind() : SqlRows.str(bin, "kind");
+        // Minor (h-01): read the quantity under the bin lock a put into the bin takes, so a concurrent putaway cannot
+        // land between this check and the update.
+        store.lockBin(id);
         BigDecimal qty = store.binQty(id);
         if (!"bin".equals(kind) && qty.signum() > 0) {
             throw ApiException.badRequest("Bin " + bin.get("code") + " holds stock; empty it first");
@@ -222,6 +226,7 @@ public class WarehouseSetupService {
     public Map<String, Object> deleteBin(String id) {
         Map<String, Object> bin = store.bin(id);
         store.operable(SqlRows.str(bin, "locationId"));
+        store.lockBin(id);
         if (store.binQty(id).signum() > 0) {
             throw ApiException.badRequest("Bin " + bin.get("code") + " holds stock; empty it first");
         }
@@ -375,7 +380,9 @@ public class WarehouseSetupService {
 
     /**
      * Per product of a location: ledger quantity, binned, staged (picked, not shipped), in open putaway tasks, and
-     * unbinned (waiting for putaway). Only products with stock or bin activity are listed.
+     * unbinned (waiting for putaway). Only products with stock or bin activity are listed. {@code awaitingShipQty}
+     * (h-01 F2) is what posted source documents already took out of the ledger while it waits in the bins or staging
+     * for its pick order: it is still in the location, so it is not drift.
      */
     @Transactional(readOnly = true)
     public Map<String, Object> overview(String locationId) {
@@ -394,20 +401,24 @@ public class WarehouseSetupService {
                 + "   AND bs.\"variantKey\" = k.\"variantKey\"), 0) AS \"binnedQty\","
                 + " coalesce((SELECT sum(l.\"pickedQty\" - l.\"shippedQty\") FROM \"WarehousePickLine\" l"
                 + "   JOIN \"WarehousePickOrder\" o ON o.id = l.\"pickOrderId\" WHERE o.\"organizationId\" = :org"
-                + "   AND o.\"locationId\" = :loc AND o.status <> 'cancelled' AND l.\"productId\" = k.\"productId\""
-                + "   AND l.\"variantKey\" = k.\"variantKey\"), 0) AS \"stagedQty\","
+                + "   AND o.\"locationId\" = :loc AND o.status IN " + WarehouseStore.IN_PROGRESS
+                + "   AND l.\"productId\" = k.\"productId\" AND l.\"variantKey\" = k.\"variantKey\"), 0) AS \"stagedQty\","
                 + " coalesce((SELECT sum(quantity) FROM \"WarehouseTask\" t WHERE t.\"organizationId\" = :org"
                 + "   AND t.\"locationId\" = :loc AND t.type = 'putaway' AND t.status = 'open'"
                 + "   AND t.\"productId\" = k.\"productId\" AND t.\"variantKey\" = k.\"variantKey\"), 0) AS \"putawayQty\""
                 + " FROM keys k JOIN \"Product\" p ON p.id = k.\"productId\" ORDER BY p.name")
                 .param("org", org()).param("loc", locationId));
+        Map<String, BigDecimal> awaiting = store.issuedAwaitingShip(locationId, null, null);
         BigDecimal totalUnbinned = BigDecimal.ZERO;
         int mismatches = 0;
         List<Map<String, Object>> products = new ArrayList<>();
         for (Map<String, Object> r : rows) {
-            BigDecimal unbinned = SqlRows.dec(r, "locationQty").subtract(SqlRows.dec(r, "binnedQty"))
+            BigDecimal awaitingShip = awaiting.getOrDefault(r.get("productId") + "|" + r.get("variantKey"),
+                    BigDecimal.ZERO);
+            BigDecimal unbinned = SqlRows.dec(r, "locationQty").add(awaitingShip).subtract(SqlRows.dec(r, "binnedQty"))
                     .subtract(SqlRows.dec(r, "stagedQty"));
             Map<String, Object> out = new LinkedHashMap<>(r);
+            out.put("awaitingShipQty", awaitingShip);
             out.put("unbinnedQty", unbinned.max(BigDecimal.ZERO));
             out.put("mismatch", unbinned.signum() < 0);
             // Bins (plus staging) holding more than the ledger: what POST .../reconcile would take out of the bins.
@@ -504,9 +515,10 @@ public class WarehouseSetupService {
 
     /**
      * Take bin stock that exceeds the stock ledger out of the bins (per product and variant: binned + staged −
-     * location on-hand, capped at what is binned). Bins are emptied in a fixed order: pickable bins (storage, then
-     * receiving) before output / quarantine, each by pick sequence and code, lots expiring first, and quantity not
-     * held by open tasks before held quantity. Nothing is posted to the ledger.
+     * location on-hand, capped at what is binned). Goods a posted source document already took out of the ledger while
+     * they wait for their pick order are not excess (h-01 F2): they stay. Bins are emptied in a fixed order: pickable
+     * bins (storage, then receiving) before output / quarantine, each by pick sequence and code, lots expiring first,
+     * and quantity not held by open tasks before held quantity. Nothing is posted to the ledger.
      */
     @Transactional
     public Map<String, Object> reconcile(String locationId, String productId) {
@@ -522,12 +534,13 @@ public class WarehouseSetupService {
             store.lock(locationId, prod);
             BigDecimal binned = store.binnedQty(locationId, prod, variant);
             BigDecimal excess = binned.add(store.stagedQty(locationId, prod, variant))
-                    .subtract(store.locationQty(locationId, prod, variant)).min(binned);
+                    .subtract(store.physicalQty(locationId, prod, variant)).min(binned);
             if (excess.signum() <= 0) {
                 continue;
             }
             List<Map<String, Object>> cells = SqlRows.list(jdbc.sql("SELECT s.\"binId\", b.code, s.\"batchKey\","
                     + " s.quantity, coalesce((SELECT sum(t.quantity) FROM \"WarehouseTask\" t WHERE t.\"fromBinId\" = s.\"binId\""
+                    + "   AND t.\"organizationId\" = s.\"organizationId\""
                     + "   AND t.\"productId\" = s.\"productId\" AND t.\"variantKey\" = s.\"variantKey\""
                     + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type IN ('pick', 'move')), 0) AS held"
                     + " FROM \"WarehouseBinStock\" s JOIN \"WarehouseBin\" b ON b.id = s.\"binId\""

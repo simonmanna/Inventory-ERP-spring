@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { idempotentPatch, idempotentPost } from '@/lib/idempotent-request';
 
 /* ── Warehouse management (roadmap 2.1, ADR-S026) ──────────────── */
 
@@ -31,6 +32,8 @@ export interface WarehouseOverviewRow {
   mismatch: boolean;
   /** Bins (plus staging) above the ledger: what reconcile takes out of the bins. */
   excessBinnedQty?: Num;
+  /** Taken out of the ledger by a posted document, still in the bins or staging for its pick order (h-01 F2). */
+  awaitingShipQty?: Num;
 }
 
 export interface WarehouseOverview {
@@ -212,12 +215,19 @@ export function useAbc(locationId?: string) {
   });
 }
 
-/** Any warehouse write; every warehouse query is refreshed afterwards. */
+/**
+ * Any warehouse write; every warehouse query is refreshed afterwards. Posts and patches carry an Idempotency-Key
+ * that stays the same until the server answers (h-01 F11), so a retried pick, ship or bin adjustment is replayed,
+ * never applied twice.
+ */
 export function useWarehouseAction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ method, path, body }: { method: 'post' | 'put' | 'patch' | 'delete'; path: string; body?: unknown }) =>
-      (method === 'delete' ? await api.delete(path) : await api[method](path, body ?? {})).data,
+    mutationFn: async ({ method, path, body }: { method: 'post' | 'put' | 'patch' | 'delete'; path: string; body?: unknown }) => {
+      if (method === 'post') return idempotentPost(path, body ?? {});
+      if (method === 'patch') return idempotentPatch(path, body ?? {});
+      return (method === 'delete' ? await api.delete(path) : await api.put(path, body ?? {})).data;
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
