@@ -52,7 +52,7 @@ class AlertsIT extends ApiTestSupport {
     @DisplayName("every type is listed with its defaults until an organization changes it")
     void catalog() {
         JsonNode rules = ok(200, "GET", "/alerts/rules", null);
-        assertThat(rules.size()).isEqualTo(9);
+        assertThat(rules.size()).as("AlertTypes.ALL, incl. lp_agent_health (ADR-S077)").isEqualTo(10);
         JsonNode updated = ok(200, "PUT", "/alerts/rules/credit_limit_breach", rule(true, 85, List.of("in_app")));
         assertThat(updated.get("threshold").asDouble()).isEqualTo(85d);
         assertThat(updated.get("customized").asBoolean()).isTrue();
