@@ -171,4 +171,41 @@ class VariantPricingIT extends ApiTestSupport {
                     before.get("quoteMaxDiscountPercent").asDouble(), "creditCheck", before.get("creditCheck").asBoolean()));
         }
     }
+
+    @Test
+    @DisplayName("I4: a variant's agreement line is drawn on by that variant's releases only")
+    void agreementReleasePerVariant() {
+        String p = ok(201, "POST", "/products", Map.of("code", "VA-" + sfx(), "name", "Agreed paint " + sfx(),
+                "productType", "service", "salesPrice", 300, "costPrice", 0)).get("id").asString();
+        Map<String, String> v = variants(p);
+        String id = ok(201, "POST", "/sales/agreements", Map.of("partnerId", customer, "name", "Paint deal " + sfx(),
+                "kind", "contract", "startDate", java.time.LocalDate.now().minusDays(1).toString(), "endDate",
+                java.time.LocalDate.now().plusMonths(3).toString(), "lines", List.of(Map.of("productId", p,
+                        "variantId", v.get("Red"), "contractQty", 100, "unitPrice", 200)))).get("id").asString();
+        ok(200, "POST", "/sales/agreements/" + id + "/activate", null);
+
+        JsonNode so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "agreementId", id, "lines", List.of(
+                Map.of("productId", p, "variantId", v.get("Red"), "quantity", 30),
+                Map.of("productId", p, "variantId", v.get("Blue"), "quantity", 10))));
+        Map<String, String> source = new LinkedHashMap<>();
+        so.get("lines").forEach(l -> source.put(l.get("variantId").asString(), l.get("priceSource").asString()));
+        assertThat(source.get(v.get("Red"))).isEqualTo("agreement");
+        assertThat(source.get(v.get("Blue"))).as("the Red line does not price Blue").isNotEqualTo("agreement");
+        assertThat(ok(200, "POST", "/sales/orders/" + so.get("id").asString() + "/confirm", null).get("status")
+                .asString()).isEqualTo("confirmed");
+
+        JsonNode line = ok(200, "GET", "/sales/agreements/" + id, null).get("lines").get(0);
+        assertThat(line.get("releasedQty").asDouble()).as("Red's 30 only, not Blue's 10").isEqualTo(30);
+        assertThat(line.get("balanceQty").asDouble()).isEqualTo(70);
+
+        String blue = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "agreementId", id, "lines",
+                List.of(Map.of("productId", p, "variantId", v.get("Blue"), "quantity", 500)))).get("id").asString();
+        assertThat(ok(200, "POST", "/sales/orders/" + blue + "/confirm", null).get("approvalReasons").toString())
+                .as("Blue does not draw on Red's balance").doesNotContain("agreement balance");
+        String over = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "agreementId", id, "lines",
+                List.of(Map.of("productId", p, "variantId", v.get("Red"), "quantity", 75)))).get("id").asString();
+        JsonNode pending = ok(200, "POST", "/sales/orders/" + over + "/confirm", null);
+        assertThat(pending.get("status").asString()).isEqualTo("pending_approval");
+        assertThat(pending.get("approvalReasons").toString()).contains("exceeds the agreement balance of 70");
+    }
 }

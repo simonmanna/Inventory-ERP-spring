@@ -88,7 +88,7 @@ public class SalesAgreementService {
         BigDecimal value = BigDecimal.ZERO;
         BigDecimal releasedValue = BigDecimal.ZERO;
         for (Map<String, Object> l : lines) {
-            BigDecimal r = released.getOrDefault(str(l.get("productId")), BigDecimal.ZERO);
+            BigDecimal r = released.getOrDefault(str(l.get("id")), BigDecimal.ZERO);
             BigDecimal contract = dec(l.get("contractQty"));
             l.put("releasedQty", JsNumbers.js(r));
             l.put("balanceQty", JsNumbers.js(contract.subtract(r)));
@@ -106,17 +106,47 @@ public class SalesAgreementService {
         return a;
     }
 
-    /** Released base quantity per product of confirmed releases. */
+    /**
+     * SQL condition matching release line {@code l} ({@code SalesOrderLine}) to agreement line {@code al}: the line for
+     * the release's variant, else the product's line without a variant when no line covers that variant. Since V488 a
+     * line can name a variant, and the pricing engine applies it to that variant only; matching by product alone
+     * counted a release of another variant of the product against the line's balance.
+     */
+    static final String RELEASE_MATCH = """
+            l."productId" = al."productId" AND (l."variantId" = al."variantId" OR (al."variantId" IS NULL
+             AND (l."variantId" IS NULL OR NOT EXISTS (SELECT 1 FROM "SalesAgreementLine" x
+              WHERE x."agreementId" = al."agreementId" AND x."productId" = l."productId"
+                AND x."variantId" = l."variantId"))))""";
+
+    /** Released base quantity per agreement line ({@code id}) of confirmed releases. */
     Map<String, BigDecimal> released(String agreementId) {
         Map<String, BigDecimal> out = new HashMap<>();
-        for (Map<String, Object> r : db.rows("SELECT l.\"productId\", sum((l.quantity - l.\"qtyCancelled\") *"
-                + " l.\"uomFactor\") AS qty FROM \"SalesOrderLine\" l JOIN \"SalesOrder\" o ON o.id = l.\"orderId\" WHERE"
-                + " o.\"agreementId\" = ? AND o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL AND o.status IN"
-                + " ('confirmed', 'in_fulfilment', 'done') AND l.\"productId\" IS NOT NULL GROUP BY l.\"productId\"",
-                agreementId, org())) {
-            out.put(str(r.get("productId")), dec(r.get("qty")));
+        for (Map<String, Object> r : db.rows("SELECT al.id, sum((l.quantity - l.\"qtyCancelled\") * l.\"uomFactor\")"
+                + " AS qty FROM \"SalesAgreementLine\" al JOIN \"SalesOrder\" o ON o.\"agreementId\" = al.\"agreementId\""
+                + " JOIN \"SalesOrderLine\" l ON l.\"orderId\" = o.id AND " + RELEASE_MATCH + " WHERE al.\"agreementId\" = ?"
+                + " AND o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL AND o.status IN ('confirmed', 'in_fulfilment',"
+                + " 'done') GROUP BY al.id", agreementId, org())) {
+            out.put(str(r.get("id")), dec(r.get("qty")));
         }
         return out;
+    }
+
+    /** The agreement line a release line draws on, by {@link #RELEASE_MATCH}; null when none. */
+    static String matchLine(List<Map<String, Object>> agreementLines, String productId, String variantId) {
+        String productLine = null;
+        for (Map<String, Object> al : agreementLines) {
+            if (!java.util.Objects.equals(productId, str(al.get("productId")))) {
+                continue;
+            }
+            String v = str(al.get("variantId"));
+            if (v != null && v.equals(variantId)) {
+                return str(al.get("id"));
+            }
+            if (v == null && productLine == null) {
+                productLine = str(al.get("id"));
+            }
+        }
+        return productLine;
     }
 
     // ------------------------------------------------------------------ write
@@ -353,32 +383,35 @@ public class SalesAgreementService {
             return out;
         }
         Map<String, BigDecimal> released = released(agreementId);
+        List<Map<String, Object>> agreementLines = db.rows("SELECT * FROM \"SalesAgreementLine\" WHERE"
+                + " \"agreementId\" = ?", agreementId);
         Map<String, BigDecimal> thisOrder = new HashMap<>();
         Map<String, String> names = new HashMap<>();
         for (Map<String, Object> l : lines) {
-            if (l.get("productId") != null) {
+            String lineId = l.get("productId") == null ? null
+                    : matchLine(agreementLines, str(l.get("productId")), str(l.get("variantId")));
+            if (lineId != null) {
                 BigDecimal base = dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled"))).multiply(
                         l.get("uomFactor") == null ? BigDecimal.ONE : dec(l.get("uomFactor")));
-                thisOrder.merge(str(l.get("productId")), base, BigDecimal::add);
-                names.putIfAbsent(str(l.get("productId")), str(l.get("description")));
+                thisOrder.merge(lineId, base, BigDecimal::add);
+                names.putIfAbsent(lineId, str(l.get("description")));
             }
         }
-        for (Map<String, Object> al : db.rows("SELECT * FROM \"SalesAgreementLine\" WHERE \"agreementId\" = ?",
-                agreementId)) {
-            String product = str(al.get("productId"));
-            BigDecimal qty = thisOrder.get(product);
+        for (Map<String, Object> al : agreementLines) {
+            String lineId = str(al.get("id"));
+            BigDecimal qty = thisOrder.get(lineId);
             if (qty == null) {
                 continue;
             }
-            BigDecimal balance = dec(al.get("contractQty")).subtract(released.getOrDefault(product, BigDecimal.ZERO));
+            BigDecimal balance = dec(al.get("contractQty")).subtract(released.getOrDefault(lineId, BigDecimal.ZERO));
             if (!Boolean.TRUE.equals(a.get("allowOverRelease")) && qty.compareTo(balance) > 0) {
-                out.add("Release of " + names.get(product) + " (" + qty.stripTrailingZeros().toPlainString()
+                out.add("Release of " + names.get(lineId) + " (" + qty.stripTrailingZeros().toPlainString()
                         + ") exceeds the agreement balance of " + balance.max(BigDecimal.ZERO).stripTrailingZeros()
                                 .toPlainString());
             }
             BigDecimal min = dec(al.get("minReleaseQty"));
             if (min.signum() > 0 && qty.compareTo(min) < 0) {
-                out.add("Release of " + names.get(product) + " is below the minimum release quantity of "
+                out.add("Release of " + names.get(lineId) + " is below the minimum release quantity of "
                         + min.stripTrailingZeros().toPlainString());
             }
         }

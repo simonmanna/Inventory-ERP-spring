@@ -335,17 +335,18 @@ public class SalesAnalyticsService {
         }
     }
 
-    /** Unreleased value of an agreement (balance × agreed net price). */
+    /** Unreleased value of an agreement (balance × agreed net price); releases matched per line, variant first. */
     private BigDecimal agreementBalance(String agreementId) {
         Map<String, Object> r = db.row("""
                 SELECT COALESCE(sum(GREATEST(al."contractQty" - COALESCE(rel.qty, 0), 0) * al."unitPrice"
                            * (1 - al."discountPercent" / 100)), 0) AS balance
                   FROM "SalesAgreementLine" al
-                  LEFT JOIN (SELECT l."productId", sum((l.quantity - l."qtyCancelled") * l."uomFactor") AS qty
+                  LEFT JOIN LATERAL (SELECT sum((l.quantity - l."qtyCancelled") * l."uomFactor") AS qty
                                FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId"
                               WHERE o."agreementId" = ? AND o."deletedAt" IS NULL
-                                AND o.status IN ('confirmed', 'in_fulfilment', 'done')
-                              GROUP BY l."productId") rel ON rel."productId" = al."productId"
+                                AND o.status IN ('confirmed', 'in_fulfilment', 'done') AND\s"""
+                + SalesAgreementService.RELEASE_MATCH + """
+                            ) rel ON true
                  WHERE al."agreementId" = ?""", agreementId, agreementId);
         return dec(r.get("balance"));
     }
