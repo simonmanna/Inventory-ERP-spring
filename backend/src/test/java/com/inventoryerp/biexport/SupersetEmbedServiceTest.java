@@ -121,7 +121,7 @@ class SupersetEmbedServiceTest {
     }
 
     @Test
-    @DisplayName("missing permission is 403, an unknown or unconfigured module 404, Superset down or disabled 503")
+    @DisplayName("missing permission is 403, an unknown or unconfigured module or Superset off 404, Superset down 503")
     void errors() {
         SupersetEmbedService s = service(url());
         assertThatThrownBy(() -> s.guestToken("finance")).isInstanceOf(ApiException.class)
@@ -141,7 +141,7 @@ class SupersetEmbedServiceTest {
                 new SupersetProperties("", null, null, null, null, null), null, permissions);
         assertThat(off.dashboards()).isEmpty();
         assertThatThrownBy(() -> off.guestToken("sales")).extracting(e -> ((ApiException) e).status().value())
-                .isEqualTo(503);
+                .isEqualTo(404);
     }
 
     @Test

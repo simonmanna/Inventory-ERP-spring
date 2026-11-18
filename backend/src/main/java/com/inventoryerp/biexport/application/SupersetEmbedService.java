@@ -74,10 +74,12 @@ public class SupersetEmbedService {
         return out;
     }
 
-    /** A guest token for the module's dashboard, limited to the caller's organization. */
+    /** A guest token for the module's dashboard, limited to the caller's organization; 404 while Superset is off. */
     public GuestToken guestToken(String module) {
+        // Superset off means no module has a dashboard: the same 404 as an unconfigured module. 503 is kept for a
+        // configured Superset that cannot be reached.
         if (!properties.enabled()) {
-            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Embedded dashboards are not configured");
+            throw ApiException.notFound("Dashboard not found");
         }
         BiModule m = MODULES.stream().filter(x -> x.key().equals(module)).findFirst()
                 .orElseThrow(() -> ApiException.notFound("Dashboard not found"));

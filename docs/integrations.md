@@ -198,7 +198,7 @@ shared database.
 | Route | Permission | Returns |
 |---|---|---|
 | `GET /bi/dashboards` | `analytics:view` | `[{module, label}]` the caller may open; `[]` when Superset is off |
-| `GET /bi/dashboards/{module}/guest-token` | `analytics:view` + `analytics:<module>` | `{module, dashboardId, supersetDomain, token, expiresAt}`; 404 unknown or unconfigured module, 503 Superset off or unreachable |
+| `GET /bi/dashboards/{module}/guest-token` | `analytics:view` + `analytics:<module>` | `{module, dashboardId, supersetDomain, token, expiresAt}`; 404 unknown or unconfigured module or Superset off, 503 Superset configured but unreachable |
 
 **Data.** Migration V570 creates the `bi` schema: `sales_lines`, `sales_invoices` (with aging), `purchase_lines`,
 `vendor_bills` (with aging), `stock_on_hand`, `stock_movements`, `journal_lines` and `payments`. Unlike `reporting`,

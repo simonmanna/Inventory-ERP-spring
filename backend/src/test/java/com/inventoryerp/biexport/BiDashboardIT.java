@@ -71,10 +71,10 @@ class BiDashboardIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("without Superset configured the list is empty and a token is 503")
+    @DisplayName("without Superset configured the list is empty and no dashboard is found")
     void disabled() {
         assertThat(ok(200, "GET", "/bi/dashboards", null).size()).isZero();
-        assertThat(call("GET", "/bi/dashboards/sales/guest-token", null, adminToken).status()).isEqualTo(503);
+        assertThat(call("GET", "/bi/dashboards/sales/guest-token", null, adminToken).status()).isEqualTo(404);
     }
 
     @Test
