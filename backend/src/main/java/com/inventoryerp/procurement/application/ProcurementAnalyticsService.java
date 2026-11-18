@@ -73,8 +73,9 @@ public class ProcurementAnalyticsService {
     private static final String SCORE_SQL = "SELECT p.id AS \"partnerId\", p.name AS \"partnerName\","
             + " count(DISTINCT o.id) AS orders, COALESCE(SUM(o.\"totalAmount\"), 0) AS spend,"
             + " count(DISTINCT o.id) FILTER (WHERE g.first IS NOT NULL) AS delivered,"
-            + " count(DISTINCT o.id) FILTER (WHERE g.first IS NOT NULL AND g.first::date <= COALESCE(o.\"promisedDate\","
-            + " o.\"expectedDeliveryDate\"::date, g.first::date)) AS \"onTime\","
+            // h04-F7: measured against the first promised date, so a re-confirmed later date does not hide lateness.
+            + " count(DISTINCT o.id) FILTER (WHERE g.first IS NOT NULL AND g.first::date <= COALESCE(o.\"firstPromisedDate\","
+            + " o.\"promisedDate\", o.\"expectedDeliveryDate\"::date, g.first::date)) AS \"onTime\","
             + " count(DISTINCT o.id) FILTER (WHERE o.status::text IN ('received', 'closed', 'billed')"
             + " AND NOT EXISTS (SELECT 1 FROM \"PurchaseOrderLine\" x WHERE x.\"purchaseOrderId\" = o.id AND"
             + " x.\"receivedQuantity\" < x.quantity)) AS \"inFull\","
@@ -170,9 +171,10 @@ public class ProcurementAnalyticsService {
     }
 
     private List<BigDecimal> history(String orgId, String productId, String partnerId) {
-        return jdbc.sql("SELECT \"unitPrice\" FROM \"SupplierPrice\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
-                        + " AND (?::text IS NULL OR \"partnerId\" = ?) AND \"validFrom\" >= current_date - 365 ORDER BY"
-                        + " \"validFrom\" DESC LIMIT 200")
+        // h04-F6: prices of a still-sealed tender stay out of the anomaly average.
+        return jdbc.sql("SELECT \"unitPrice\" FROM \"SupplierPrice\" sp WHERE \"organizationId\" = ? AND \"productId\" = ?"
+                        + " AND (?::text IS NULL OR \"partnerId\" = ?) AND \"validFrom\" >= current_date - 365"
+                        + SupplierService.NOT_SEALED + " ORDER BY \"validFrom\" DESC LIMIT 200")
                 .params(orgId, productId, partnerId, partnerId).query(BigDecimal.class).list();
     }
 

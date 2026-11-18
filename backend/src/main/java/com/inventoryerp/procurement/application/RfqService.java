@@ -63,6 +63,9 @@ public class RfqService {
 
     private static final List<String> CRITERIA = List.of("price", "quality", "delivery", "terms", "performance");
 
+    /** h04-F7: an order's due date for on-time measures: the first promise, else the latest, else the expected date. */
+    static final String DUE = "COALESCE(o.\"firstPromisedDate\", o.\"promisedDate\", o.\"expectedDeliveryDate\"::date)";
+
     private final JdbcClient jdbc;
     private final SequenceService seq;
     private final AuditService audit;
@@ -147,7 +150,8 @@ public class RfqService {
                 jdbc.sql("INSERT INTO \"RfqLine\" (id, \"organizationId\", \"rfqId\", \"lineNumber\", \"productId\","
                         + " description, quantity, \"uomId\", \"requiredDate\", notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::date, ?)")
                         .params(UUID.randomUUID().toString(), orgId, id, ++n, blank(l.productId()), l.description().trim(),
-                                l.quantity(), blank(l.uomId()), blank(l.requiredDate()), l.notes()).update();
+                                l.quantity(), blank(l.uomId()), RequisitionToOrderService.day(l.requiredDate(),
+                                        "requiredDate"), l.notes()).update();
             }
             for (String partner : in.supplierIds() == null ? List.<String>of() : in.supplierIds()) {
                 invite(id, partner);
@@ -213,6 +217,14 @@ public class RfqService {
     }
 
     public Map<String, Object> cancel(String rfqId) {
+        // h04-F8: an RFQ that the old order flow left awarded without a single award can still be cancelled.
+        int stranded = jdbc.sql("UPDATE \"Rfq\" r SET status = 'cancelled', version = version + 1, \"updatedAt\" = " + NOW
+                + " WHERE r.id = ? AND r.\"organizationId\" = ? AND r.status = 'awarded' AND NOT EXISTS (SELECT 1 FROM"
+                + " \"RfqAward\" a WHERE a.\"rfqId\" = r.id)").params(rfqId, org()).update();
+        if (stranded > 0) {
+            audit.record(AuditInput.of("Rfq", rfqId, "update", null, Obj.of("status", "cancelled")));
+            return get(rfqId);
+        }
         transition(rfqId, List.of("draft", "sent", "closed"), "cancelled", null, "This RFQ can no longer be cancelled");
         return get(rfqId);
     }
@@ -228,6 +240,12 @@ public class RfqService {
         if (!"sent".equals(rfq.get("status"))) {
             throw ApiException.badRequest("Quotations can only be recorded while the RFQ is open (sent)");
         }
+        // h04-F6: the deadline closes the tender, so no supplier can quote or re-quote once prices may be known.
+        if (!acceptsQuotes(rfqId)) {
+            throw ApiException.badRequest("Quotations cannot be recorded after the RFQ deadline; the tender no longer"
+                    + " accepts new or revised prices");
+        }
+        LocalDate validUntil = RequisitionToOrderService.day(in.validUntil(), "validUntil");
         long invited = jdbc.sql("SELECT count(*) FROM \"RfqSupplier\" WHERE \"rfqId\" = ? AND \"partnerId\" = ? AND"
                 + " \"organizationId\" = ?").params(rfqId, in.partnerId(), org()).query(Long.class).single();
         if (invited == 0) {
@@ -258,7 +276,7 @@ public class RfqService {
                     + " \"paymentTermsDays\", \"freightAmount\", \"qualityScore\", notes, \"submittedVia\", \"createdBy\","
                     + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?::date, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ", "
                     + NOW + ")").params(id, org(), rfqId, in.partnerId(), prev + 1,
-                    in.supplierReference(), blank(in.validUntil()), currency, rate, in.leadTimeDays(),
+                    in.supplierReference(), validUntil, currency, rate, in.leadTimeDays(),
                     in.paymentTermsDays(), in.freightAmount() == null ? Money.ZERO : in.freightAmount(),
                     in.qualityScore(), in.notes(), via, user()).update();
             for (QuoteLine q : in.lines()) {
@@ -269,6 +287,11 @@ public class RfqService {
                 if (q.unitPrice() == null || q.unitPrice().signum() < 0) {
                     throw ApiException.badRequest("Unit price must not be negative");
                 }
+                if (q.quantity() != null && q.quantity().signum() <= 0) {
+                    // h04-F6: a line quoted for nothing would rank as the cheapest offer.
+                    throw ApiException.badRequest("Quoted quantity for \"" + rl.get("description") + "\" must be"
+                            + " positive; leave it out to quote the full quantity");
+                }
                 jdbc.sql("INSERT INTO \"SupplierQuotationLine\" (id, \"organizationId\", \"quotationId\", \"rfqLineId\","
                         + " \"unitPrice\", quantity, \"leadTimeDays\", \"taxRate\", alternative, notes) VALUES (?, ?, ?, ?, ?, ?,"
                         + " ?, ?, ?, ?)").params(UUID.randomUUID().toString(), org(), id, q.rfqLineId(), q.unitPrice(),
@@ -276,8 +299,7 @@ public class RfqService {
                         q.notes()).update();
                 suppliers.recordPrice(in.partnerId(), (String) rl.get("productId"), (String) rl.get("uomId"), currency,
                         q.unitPrice(), q.quantity() != null ? q.quantity() : Money.dec(rl.get("quantity")), LocalDate.now(),
-                        in.validUntil() == null || in.validUntil().isBlank() ? null
-                                : LocalDate.parse(in.validUntil().substring(0, 10)), "quotation", id);
+                        validUntil, "quotation", id);
             }
             jdbc.sql("UPDATE \"RfqSupplier\" SET status = 'responded', \"respondedAt\" = " + NOW + " WHERE \"rfqId\" = ?"
                     + " AND \"partnerId\" = ?").params(rfqId, in.partnerId()).update();
@@ -311,6 +333,9 @@ public class RfqService {
         Map<String, Object> rfq = require(rfqId);
         Map<String, Integer> weights = weights(rfq.get("weights"));
         List<Map<String, Object>> rfqLines = lines(rfqId);
+        if (sealed(rfqId)) {
+            return sealedComparison(rfq, weights, rfqLines);
+        }
         List<Map<String, Object>> quotes = SqlRows.list(jdbc.sql("SELECT q.*, p.name AS \"partnerName\","
                 + " sp.\"riskClass\" FROM \"SupplierQuotation\" q JOIN \"Partner\" p ON p.id = q.\"partnerId\" LEFT JOIN"
                 + " \"SupplierProfile\" sp ON sp.\"partnerId\" = q.\"partnerId\" AND sp.\"organizationId\" = q.\"organizationId\""
@@ -329,6 +354,9 @@ public class RfqService {
                 Map<String, Object> rl = rfqLines.stream().filter(l -> l.get("id").equals(ql.get("rfqLineId"))).findFirst()
                         .orElseThrow();
                 BigDecimal qty = ql.get("quantity") != null ? Money.dec(ql.get("quantity")) : Money.dec(rl.get("quantity"));
+                if (qty.signum() <= 0) {
+                    continue; // h04-F6: a line quoted for no quantity is no offer, so it never ranks as the cheapest
+                }
                 qtyOf.put((String) ql.get("rfqLineId"), qty);
                 goods = goods.add(Money.dec(ql.get("unitPrice")).multiply(qty));
             }
@@ -336,6 +364,9 @@ public class RfqService {
             Map<String, Map<String, Object>> byLine = new LinkedHashMap<>();
             for (Map<String, Object> ql : qLines) {
                 BigDecimal qty = qtyOf.get((String) ql.get("rfqLineId"));
+                if (qty == null) {
+                    continue;
+                }
                 BigDecimal unit = Money.dec(ql.get("unitPrice"));
                 BigDecimal share = goods.signum() > 0 ? freight.multiply(unit.multiply(qty)).divide(goods, 6,
                         RoundingMode.HALF_UP) : Money.ZERO;
@@ -455,22 +486,60 @@ public class RfqService {
             }
         }
         return Obj.of("rfq", rfq, "weights", weights, "functionalCurrency", functional, "lines", lineRows,
-                "suppliers", supplierRows, "recommendedPartnerId", bestOverall == null ? null : bestOverall.get("partnerId"));
+                "suppliers", supplierRows, "recommendedPartnerId", bestOverall == null ? null : bestOverall.get("partnerId"),
+                "sealed", false);
+    }
+
+    /**
+     * h04-F6: bids are sealed while the RFQ is open for quotations and before its deadline (an RFQ without a deadline
+     * stays sealed until it is closed). Nobody sees prices or a ranking then, so nobody can tip off a supplier.
+     */
+    private boolean sealed(String rfqId) {
+        return Boolean.TRUE.equals(jdbc.sql("SELECT status = 'sent' AND (deadline IS NULL OR deadline > " + NOW + ")"
+                + " FROM \"Rfq\" WHERE id = ? AND \"organizationId\" = ?").params(rfqId, org()).query(Boolean.class)
+                .single());
+    }
+
+    /** h04-F6: an RFQ takes quotations while it is sent and its deadline (if any) has not passed. */
+    boolean acceptsQuotes(String rfqId) {
+        return Boolean.TRUE.equals(jdbc.sql("SELECT status = 'sent' AND (deadline IS NULL OR deadline > " + NOW + ")"
+                + " FROM \"Rfq\" WHERE id = ? AND \"organizationId\" = ?").params(rfqId, org()).query(Boolean.class)
+                .optional().orElse(false));
+    }
+
+    /** The comparison of a sealed RFQ: the same shape, without any price, ranking or recommendation. */
+    private Map<String, Object> sealedComparison(Map<String, Object> rfq, Map<String, Integer> weights,
+            List<Map<String, Object>> rfqLines) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map<String, Object> rl : rfqLines) {
+            Map<String, Object> row = new LinkedHashMap<>(rl);
+            row.put("offers", List.of());
+            row.put("bestPartnerId", null);
+            rows.add(row);
+        }
+        long received = jdbc.sql("SELECT count(*) FROM \"SupplierQuotation\" WHERE \"rfqId\" = ? AND \"organizationId\""
+                + " = ? AND status = 'received'").params(rfq.get("id"), org()).query(Long.class).single();
+        return Obj.of("rfq", rfq, "weights", weights, "functionalCurrency", functionalCurrency(), "lines", rows,
+                "suppliers", List.of(), "recommendedPartnerId", null, "sealed", true, "sealedUntil", rfq.get("deadline"),
+                "quotationsReceived", received);
     }
 
     private int leadOf(Map<String, Object> q) {
         return q.get("leadTimeDays") == null ? 0 : ((Number) q.get("leadTimeDays")).intValue();
     }
 
-    /** Share of the supplier's order lines (last 12 months) received in full by their due date; 70 without history. */
+    /**
+     * Share of the supplier's order lines (last 12 months) received in full by their due date; 70 without history. The
+     * due date is the first date the supplier promised (h04-F7), so re-confirming a later date does not hide lateness.
+     */
     private double onTimeRate(String partnerId) {
         Map<String, Object> r = SqlRows.one(jdbc.sql("SELECT count(*) AS total, count(*) FILTER (WHERE l.\"receivedQuantity\""
                 + " >= l.quantity AND (SELECT MAX(g.\"receivedAt\") FROM \"GoodsReceiptLine\" gl JOIN \"GoodsReceiptNote\" g ON"
                 + " g.id = gl.\"goodsReceiptId\" WHERE gl.\"purchaseOrderLineId\" = l.id AND g.status = 'posted')::date <="
-                + " COALESCE(o.\"promisedDate\", o.\"expectedDeliveryDate\"::date)) AS \"onTime\" FROM \"PurchaseOrderLine\" l"
+                + " " + DUE + ") AS \"onTime\" FROM \"PurchaseOrderLine\" l"
                 + " JOIN \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\" WHERE o.\"organizationId\" = ? AND o.\"partnerId\""
-                + " = ? AND COALESCE(o.\"promisedDate\", o.\"expectedDeliveryDate\"::date) IS NOT NULL AND"
-                + " COALESCE(o.\"promisedDate\", o.\"expectedDeliveryDate\"::date) < CURRENT_DATE AND o.\"orderDate\" >="
+                + " = ? AND " + DUE + " IS NOT NULL AND"
+                + " " + DUE + " < CURRENT_DATE AND o.\"orderDate\" >="
                 + " CURRENT_DATE - 365 AND o.status <> 'cancelled'").params(org(), partnerId));
         long total = ((Number) r.get("total")).longValue();
         return total == 0 ? 70 : 100.0 * ((Number) r.get("onTime")).longValue() / total;
@@ -491,12 +560,23 @@ public class RfqService {
         if (!List.of("sent", "closed").contains(rfq.get("status"))) {
             throw ApiException.badRequest("Only a sent or closed RFQ can be awarded");
         }
+        if (sealed(rfqId)) {
+            throw ApiException.badRequest("An RFQ cannot be awarded while its bids are sealed; close it or wait for the"
+                    + " deadline");
+        }
         if (awards == null || awards.isEmpty()) {
             throw ApiException.badRequest("Award at least one line");
         }
         Map<String, Object> cmp = comparison(rfqId);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> lines = (List<Map<String, Object>>) cmp.get("lines");
+        // h04-F3: the amount an approver sees is the award's value in functional currency, at each quotation's rate.
+        String functional = (String) cmp.get("functionalCurrency");
+        Map<String, BigDecimal> rates = new LinkedHashMap<>();
+        for (Map<String, Object> q : SqlRows.list(jdbc.sql("SELECT id, \"currencyCode\", \"exchangeRate\", \"createdAt\""
+                + " FROM \"SupplierQuotation\" WHERE \"rfqId\" = ? AND \"organizationId\" = ?").params(rfqId, org()))) {
+            rates.put((String) q.get("id"), quoteRate(q, functional));
+        }
         BigDecimal total = Money.ZERO;
         List<Object[]> rows = new ArrayList<>();
         for (AwardLine a : awards) {
@@ -517,7 +597,8 @@ public class RfqService {
                 throw ApiException.badRequest("Award quantity for \"" + line.get("description") + "\" must be between 0"
                         + " and " + JsNumbers.dec(Money.dec(line.get("quantity"))));
             }
-            total = total.add(Money.dec(chosen.get("unitPrice")).multiply(qty));
+            total = total.add(Money.dec(chosen.get("unitPrice")).multiply(qty)
+                    .multiply(rates.getOrDefault((String) chosen.get("quotationId"), BigDecimal.ONE)));
             rows.add(new Object[] {a.rfqLineId(), chosen.get("quotationLineId"), a.partnerId(), qty,
                     chosen.get("unitPrice"), lowest, a.justification()});
         }
@@ -532,11 +613,17 @@ public class RfqService {
                 throw ApiException.badRequest("Awards for \"" + line.get("description") + "\" exceed the RFQ quantity");
             }
         }
-        BigDecimal amount = total;
-        Map<String, Object> gate = approvals.checkOrRequestApproval("rfq_award", rfqId, Obj.of("amount",
-                JsNumbers.js(amount), "rfqNumber", rfq.get("rfqNumber"), "createdBy", user()));
-        boolean pending = gate != null && Boolean.TRUE.equals(gate.get("needsApproval"));
-        tx.executeWithoutResult(st -> {
+        BigDecimal amount = total.setScale(2, RoundingMode.HALF_UP);
+        String hash = awardHash(rows.stream().map(r -> new Object[] {r[0], r[1], r[3], r[4]}).toList());
+        String[] requestId = new String[1];
+        boolean pending = Boolean.TRUE.equals(tx.execute(st -> {
+            // h04-F8: the RFQ row is locked, so an award cannot change while orders are being created from it.
+            String status = lockRfq(rfqId);
+            if (!List.of("sent", "closed").contains(status)) {
+                throw ApiException.badRequest("Only a sent or closed RFQ can be awarded");
+            }
+            requestId[0] = awardRequest(rfq, amount, hash, functional);
+            boolean waiting = requestId[0] != null;
             jdbc.sql("DELETE FROM \"RfqAward\" WHERE \"rfqId\" = ? AND \"organizationId\" = ? AND \"purchaseOrderId\" IS NULL")
                     .params(rfqId, org()).update();
             for (Object[] r : rows) {
@@ -547,74 +634,186 @@ public class RfqService {
             }
             jdbc.sql("UPDATE \"Rfq\" SET status = ?, \"awardedAt\" = " + NOW + ", \"awardedBy\" = ?, \"closedAt\" ="
                     + " COALESCE(\"closedAt\", " + NOW + "), version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ?"
-                    + " AND \"organizationId\" = ?").params(pending ? "closed" : "awarded", user(), rfqId, org()).update();
+                    + " AND \"organizationId\" = ?").params(waiting ? "closed" : "awarded", user(), rfqId, org()).update();
             List<String> winners = rows.stream().map(r -> (String) r[2]).distinct().toList();
             jdbc.sql("UPDATE \"SupplierQuotation\" SET status = CASE WHEN \"partnerId\" = ANY(?::text[]) THEN 'accepted' ELSE"
                     + " 'rejected' END, \"updatedAt\" = " + NOW + " WHERE \"rfqId\" = ? AND status = 'received'")
                     .params(winners.toArray(String[]::new), rfqId).update();
             audit.recordInTx(AuditInput.of("Rfq", rfqId, "update", null, Obj.of("awarded", rows.size(), "amount",
-                    JsNumbers.js(amount), "pendingApproval", pending)));
-        });
+                    JsNumbers.js(amount), "pendingApproval", waiting)));
+            return waiting;
+        }));
         if (!pending) {
             events.publish("rfq.awarded", Obj.of("organizationId", org(), "rfqId", rfqId));
         }
         Map<String, Object> out = get(rfqId);
         out.put("approvalRequired", pending);
-        out.put("approvalRequestId", pending ? gate.get("requestId") : null);
+        out.put("approvalRequestId", requestId[0]);
         return out;
     }
 
-    /** One purchase order per awarded supplier (request lines stay linked; nothing is ordered twice). */
+    /**
+     * One purchase order per awarded supplier (request lines stay linked; nothing is ordered twice). Everything runs in
+     * one transaction under a lock on the RFQ (h04-F8): two buyers cannot both order the same awards, and a failure
+     * leaves the RFQ as it was. A closed RFQ (its award waited for approval) is ordered only when the latest
+     * {@code rfq_award} decision approved exactly the current award (h04-F3).
+     */
     public Map<String, Object> createOrders(String rfqId, String warehouseId, String paymentType, String expectedDate) {
         Map<String, Object> rfq = require(rfqId);
-        if ("closed".equals(rfq.get("status"))) {
-            Map<String, Object> gate = approvals.checkOrRequestApproval("rfq_award", rfqId, Obj.of("amount", 0));
-            if (gate == null || !Boolean.TRUE.equals(gate.get("needsApproval"))) {
-                transition(rfqId, List.of("closed"), "awarded", null, "RFQ is not awarded");
-            } else {
-                throw ApiException.badRequest("The award is awaiting approval (request " + gate.get("requestId") + ")");
-            }
-        } else if (!"awarded".equals(require(rfqId).get("status"))) {
-            throw ApiException.badRequest("Award the RFQ before creating orders");
-        }
-        if (warehouseId == null || warehouseId.isBlank()) {
-            throw ApiException.badRequest("warehouseId is required");
-        }
-        List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT a.*, l.\"requestLineId\", l.\"productId\","
-                + " l.description, l.\"uomId\", ql.\"taxRate\", q.\"currencyCode\", q.\"exchangeRate\" FROM \"RfqAward\" a JOIN"
-                + " \"RfqLine\" l ON l.id = a.\"rfqLineId\" JOIN \"SupplierQuotationLine\" ql ON ql.id = a.\"quotationLineId\""
-                + " JOIN \"SupplierQuotation\" q ON q.id = ql.\"quotationId\" WHERE a.\"rfqId\" = ? AND a.\"organizationId\" = ?"
-                + " AND a.\"purchaseOrderId\" IS NULL ORDER BY a.\"partnerId\", l.\"lineNumber\"").params(rfqId, org()));
-        if (open.isEmpty()) {
-            throw ApiException.badRequest("Every award already has a purchase order");
-        }
-        Map<String, List<Map<String, Object>>> bySupplier = new LinkedHashMap<>();
-        for (Map<String, Object> a : open) {
-            bySupplier.computeIfAbsent((String) a.get("partnerId"), k -> new ArrayList<>()).add(a);
-        }
-        List<Map<String, Object>> created = new ArrayList<>();
         String functional = functionalCurrency();
-        for (Map.Entry<String, List<Map<String, Object>>> e : bySupplier.entrySet()) {
-            Map<String, Object> first = e.getValue().getFirst();
-            BigDecimal orderRate = functional.equalsIgnoreCase(String.valueOf(first.get("currencyCode")))
-                    ? BigDecimal.ONE
-                    : currencies.resolve((String) first.get("currencyCode"), functional, first.get("exchangeRate"),
-                            Instant.now()).rate();
-            List<OrderLine> lines = e.getValue().stream().map(a -> new OrderLine((String) a.get("requestLineId"),
-                    Money.dec(a.get("quantity")), Money.dec(a.get("unitPrice")), Money.dec(a.get("taxRate")), null,
-                    (String) a.get("productId"), (String) a.get("description"), (String) a.get("uomId"))).toList();
-            Map<String, Object> po = tx.execute(st -> {
-                Map<String, Object> order = orders.createOrder(new OrderInput(e.getKey(), warehouseId,
+        Object result = tx.execute(st -> {
+            String status = lockRfq(rfqId);
+            if (!List.of("closed", "awarded").contains(status)) {
+                throw ApiException.badRequest("Award the RFQ before creating orders");
+            }
+            List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT a.*, l.\"requestLineId\", l.\"productId\","
+                    + " l.description, l.\"uomId\", ql.\"taxRate\", q.\"currencyCode\", q.\"exchangeRate\", q.\"createdAt\""
+                    + " AS \"quotedAt\" FROM \"RfqAward\" a JOIN \"RfqLine\" l ON l.id = a.\"rfqLineId\" JOIN"
+                    + " \"SupplierQuotationLine\" ql ON ql.id = a.\"quotationLineId\" JOIN \"SupplierQuotation\" q ON q.id ="
+                    + " ql.\"quotationId\" WHERE a.\"rfqId\" = ? AND a.\"organizationId\" = ? AND a.\"purchaseOrderId\" IS"
+                    + " NULL ORDER BY a.\"partnerId\", l.\"lineNumber\"").params(rfqId, org()));
+            if (open.isEmpty()) {
+                // h04-F8: checked before any status change, so a closed RFQ without awards is never left "awarded".
+                throw ApiException.badRequest("closed".equals(status) ? "Award the RFQ before creating orders"
+                        : "Every award already has a purchase order");
+            }
+            if ("closed".equals(status)) {
+                String waiting = approvedForOrders(rfq, open, functional);
+                if (waiting != null) {
+                    return waiting;
+                }
+                jdbc.sql("UPDATE \"Rfq\" SET status = 'awarded', version = version + 1, \"updatedAt\" = " + NOW
+                        + " WHERE id = ? AND \"organizationId\" = ?").params(rfqId, org()).update();
+                audit.recordInTx(AuditInput.of("Rfq", rfqId, "update", null, Obj.of("status", "awarded")));
+            }
+            if (warehouseId == null || warehouseId.isBlank()) {
+                throw ApiException.badRequest("warehouseId is required");
+            }
+            Map<String, List<Map<String, Object>>> bySupplier = new LinkedHashMap<>();
+            for (Map<String, Object> a : open) {
+                bySupplier.computeIfAbsent((String) a.get("partnerId"), k -> new ArrayList<>()).add(a);
+            }
+            List<Map<String, Object>> created = new ArrayList<>();
+            for (Map.Entry<String, List<Map<String, Object>>> e : bySupplier.entrySet()) {
+                Map<String, Object> first = e.getValue().getFirst();
+                BigDecimal orderRate = functional.equalsIgnoreCase(String.valueOf(first.get("currencyCode")))
+                        ? BigDecimal.ONE
+                        : currencies.resolve((String) first.get("currencyCode"), functional, first.get("exchangeRate"),
+                                Instant.now()).rate();
+                List<OrderLine> lines = e.getValue().stream().map(a -> new OrderLine((String) a.get("requestLineId"),
+                        Money.dec(a.get("quantity")), Money.dec(a.get("unitPrice")), Money.dec(a.get("taxRate")), null,
+                        (String) a.get("productId"), (String) a.get("description"), (String) a.get("uomId"))).toList();
+                Map<String, Object> po = orders.createOrder(new OrderInput(e.getKey(), warehouseId,
                         (String) rfq.get("branchId"), paymentType, (String) first.get("currencyCode"),
                         orderRate, expectedDate, "From " + rfq.get("rfqNumber"), null, lines));
-                jdbc.sql("UPDATE \"RfqAward\" SET \"purchaseOrderId\" = ? WHERE id = ANY(?::text[])").params(order.get("id"),
-                        e.getValue().stream().map(a -> a.get("id")).toArray(String[]::new)).update();
-                return order;
-            });
-            created.add(Obj.of("id", po.get("id"), "orderNumber", po.get("orderNumber"), "partnerId", e.getKey(),
-                    "status", po.get("status")));
+                String[] ids = e.getValue().stream().map(a -> (String) a.get("id")).toArray(String[]::new);
+                int linked = jdbc.sql("UPDATE \"RfqAward\" SET \"purchaseOrderId\" = ? WHERE id = ANY(?::text[]) AND"
+                        + " \"organizationId\" = ? AND \"purchaseOrderId\" IS NULL").params(po.get("id"), ids, org())
+                        .update();
+                if (linked != ids.length) {
+                    throw ApiException.conflict("The awards changed while the orders were being created; reload the RFQ"
+                            + " and try again");
+                }
+                created.add(Obj.of("id", po.get("id"), "orderNumber", po.get("orderNumber"), "partnerId", e.getKey(),
+                        "status", po.get("status")));
+            }
+            return created;
+        });
+        if (result instanceof String requestId) {
+            throw ApiException.badRequest("The award is awaiting approval (request " + requestId + ")");
         }
-        return Obj.of("rfqId", rfqId, "orders", created);
+        return Obj.of("rfqId", rfqId, "orders", result);
+    }
+
+    /** Lock the RFQ row and return its status. */
+    private String lockRfq(String rfqId) {
+        return jdbc.sql("SELECT status FROM \"Rfq\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(rfqId, org()).query(String.class).optional()
+                .orElseThrow(() -> ApiException.notFound("RFQ not found"));
+    }
+
+    /**
+     * h04-F3: ask for (or reuse) the approval of an award. Returns the id of the request it now waits for, or
+     * {@code null} when it may be ordered: the same award was already approved, or no workflow applies. The same award
+     * keeps its pending request; a changed award withdraws the pending request and asks again with the new amount.
+     */
+    private String awardRequest(Map<String, Object> rfq, BigDecimal amount, String hash, String functional) {
+        String rfqId = (String) rfq.get("id");
+        Map<String, Object> latest = latestAwardRequest(rfqId);
+        String was = latest == null ? null : (String) latest.get("status");
+        boolean same = latest != null && hash.equals(latest.get("awardHash"));
+        if (same && "pending".equals(was)) {
+            return (String) latest.get("id");
+        }
+        if (same && "approved".equals(was)) {
+            return null;
+        }
+        if ("pending".equals(was)) {
+            approvals.withdraw((String) latest.get("id"), "The award was changed before it was decided");
+        }
+        Map<String, Object> req = approvals.requestApproval("rfq_award", rfqId, awardSnapshot(rfq, amount, hash,
+                functional), null);
+        return req == null ? null : (String) req.get("id");
+    }
+
+    /**
+     * h04-F3: may the open awards of a closed RFQ be ordered? {@code null} when the latest decision approved exactly
+     * these awards (or no workflow applies); else the id of the request they wait for. A rejected award is refused.
+     */
+    private String approvedForOrders(Map<String, Object> rfq, List<Map<String, Object>> open, String functional) {
+        String hash = awardHash(open.stream().map(a -> new Object[] {a.get("rfqLineId"), a.get("quotationLineId"),
+                a.get("quantity"), a.get("unitPrice")}).toList());
+        Map<String, Object> latest = latestAwardRequest((String) rfq.get("id"));
+        String was = latest == null ? null : (String) latest.get("status");
+        if ("pending".equals(was)) {
+            return (String) latest.get("id");
+        }
+        if ("rejected".equals(was)) {
+            throw ApiException.badRequest("Orders cannot be created for a rejected award; change the award to ask for a"
+                    + " new approval");
+        }
+        if ("approved".equals(was) && hash.equals(latest.get("awardHash"))) {
+            return null;
+        }
+        BigDecimal amount = Money.ZERO;
+        for (Map<String, Object> a : open) {
+            BigDecimal rate = quoteRate(Obj.of("currencyCode", a.get("currencyCode"), "exchangeRate",
+                    a.get("exchangeRate"), "createdAt", a.get("quotedAt")), functional);
+            amount = amount.add(Money.dec(a.get("quantity")).multiply(Money.dec(a.get("unitPrice"))).multiply(rate));
+        }
+        Map<String, Object> req = approvals.requestApproval("rfq_award", (String) rfq.get("id"), awardSnapshot(rfq,
+                amount.setScale(2, RoundingMode.HALF_UP), hash, functional), null);
+        return req == null ? null : (String) req.get("id");
+    }
+
+    /** The latest {@code rfq_award} request of an RFQ: id, status and the award fingerprint it was asked for. */
+    private Map<String, Object> latestAwardRequest(String rfqId) {
+        return SqlRows.one(jdbc.sql("SELECT id, status::text AS status, snapshot->>'awardHash' AS \"awardHash\" FROM"
+                + " \"ApprovalRequest\" WHERE \"organizationId\" = ? AND \"entityType\" = 'rfq_award' AND \"entityId\" = ?"
+                + " ORDER BY \"createdAt\" DESC LIMIT 1").params(org(), rfqId));
+    }
+
+    private Map<String, Object> awardSnapshot(Map<String, Object> rfq, BigDecimal amount, String hash,
+            String functional) {
+        return Obj.of("amount", JsNumbers.js(amount), "currencyCode", functional, "rfqNumber", rfq.get("rfqNumber"),
+                "branchId", rfq.get("branchId"), "createdBy", user(), "awardHash", hash);
+    }
+
+    /** h04-F3: fingerprint of an award (line, offer, quantity, price per row), so an approval covers what it saw. */
+    static String awardHash(List<Object[]> rows) {
+        List<String> parts = rows.stream().map(r -> r[0] + "|" + r[1] + "|" + plain(r[2]) + "|" + plain(r[3])).sorted()
+                .toList();
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(String.join("\n", parts).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String plain(Object v) {
+        BigDecimal d = Money.dec(v);
+        return d.signum() == 0 ? "0" : d.stripTrailingZeros().toPlainString();
     }
 
     // ── reads ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -736,8 +935,15 @@ public class RfqService {
     }
 
     private static Object ts(String iso) {
-        return iso == null || iso.isBlank() ? null : SqlRows.ts(Instant.parse(iso.length() == 10 ? iso + "T23:59:59Z"
-                : iso));
+        if (iso == null || iso.isBlank()) {
+            return null;
+        }
+        try {
+            return SqlRows.ts(Instant.parse(iso.length() == 10 ? iso + "T23:59:59Z" : iso));
+        } catch (java.time.format.DateTimeParseException e) {
+            // h04-F7: a malformed date is the client's mistake (400), not a server error.
+            throw ApiException.badRequest("deadline must be a valid ISO 8601 date string");
+        }
     }
 
     private static String blank(String s) {

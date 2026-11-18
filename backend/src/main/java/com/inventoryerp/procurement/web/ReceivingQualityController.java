@@ -83,10 +83,11 @@ public class ReceivingQualityController {
         return inspections.complete(id);
     }
 
+    /** h04-F5: cancelling lifts the bill hold, so it takes a reason ({@code {reason}}; required by the service). */
     @PostMapping("/inspections/{id}/cancel")
     @RequirePermissions(Permissions.INSPECTION__MANAGE)
-    public Map<String, Object> cancel(@PathVariable String id) {
-        return inspections.cancel(id);
+    public Map<String, Object> cancel(@PathVariable String id, @RequestBody(required = false) ReasonRequest dto) {
+        return inspections.cancel(id, dto == null ? null : dto.reason());
     }
 
     @PostMapping("/purchase-orders/{id}/emergency")
