@@ -18,12 +18,34 @@ interface PO {
   currencyCode: string; paymentType: string; paymentStatus: string | null;
 }
 
+/** The server's payable figures (GET /procurement/purchase-orders/:id/payable), in the order currency. */
+interface Payable {
+  currencyCode: string;
+  received: number | string;
+  billed: number | string;
+  claimed: number | string;
+  paid: number | string;
+  appliedToBills: number | string;
+  remaining: number | string;
+  supplierOwed: number | string;
+  payableNow: number | string;
+  canPay: boolean;
+  message: string | null;
+}
+
+interface Register { id: string; code?: string; name: string; isActive?: boolean }
+
+const today = () => new Date().toISOString().slice(0, 10);
+
 export function PurchaseOrderPayPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
+  const [method, setMethod] = useState<'bank' | 'cash'>('bank');
+  const [cashRegisterId, setCashRegisterId] = useState('');
+  const [paidAt, setPaidAt] = useState(today());
 
   const po = useQuery<PO>({
     queryKey: ['purchase-order', id],
@@ -31,11 +53,29 @@ export function PurchaseOrderPayPage() {
     enabled: !!id,
   });
 
+  // What the server will accept: receipts vouchered, less bills, claims and payments, capped by the supplier ledger.
+  const payable = useQuery<Payable>({
+    queryKey: ['purchase-order', id, 'payable'],
+    queryFn: async () => (await api.get<Payable>(`/procurement/purchase-orders/${id}/payable`)).data,
+    enabled: !!id,
+  });
+
+  const registers = useQuery<Register[]>({
+    queryKey: ['cash-registers', 'pay-po'],
+    queryFn: async () =>
+      (await api.get<{ data: Register[] }>('/cash-registers', { params: { pageSize: 100 } })).data?.data ?? [],
+    enabled: method === 'cash',
+    retry: false,
+  });
+
   const payMut = useMutation({
     mutationFn: async () =>
       await idempotentPost(`/procurement/purchase-orders/${id}/pay`, {
         amount: amount ? Number(amount) : undefined,
         reference: reference || undefined,
+        method,
+        cashRegisterId: method === 'cash' && cashRegisterId ? cashRegisterId : undefined,
+        paidAt: paidAt || undefined,
       }),
     onSuccess: () => {
       notify.success(tx('Payment recorded'));
@@ -46,7 +86,7 @@ export function PurchaseOrderPayPage() {
     onError: (e: any) => notify.error(apiMessage(e, tx('Failed'))),
   });
 
-  if (po.isLoading) return <Skeleton className="h-96 w-full" />;
+  if (po.isLoading || payable.isLoading) return <Skeleton className="h-96 w-full" />;
   if (po.error || !po.data) return <Card><CardContent className="p-8 text-center text-destructive">{tx('Not found')}</CardContent></Card>;
 
   const data = po.data;
@@ -59,9 +99,20 @@ export function PurchaseOrderPayPage() {
     );
   }
 
-  const totalPaid = Number(data.totalPaid ?? 0);
-  const totalAmount = Number(data.totalAmount);
-  const remaining = totalAmount - totalPaid;
+  const figures = payable.data;
+  const currency = figures?.currencyCode ?? data.currencyCode;
+  const payableNow = Number(figures?.payableNow ?? 0);
+  const canPay = !!figures?.canPay;
+  const amountValue = amount ? Number(amount) : payableNow;
+  const tiles: { label: string; value: number | string | undefined; tone?: string }[] = [
+    { label: tx('Total'), value: data.totalAmount },
+    { label: tx('Received (vouchered)'), value: figures?.received },
+    { label: tx('Billed or returned'), value: figures?.billed },
+    { label: tx('Settled claims'), value: figures?.claimed },
+    { label: tx('Already Paid'), value: figures?.paid ?? data.totalPaid ?? 0, tone: 'text-emerald-600' },
+    { label: tx('Owed to supplier (ledger)'), value: figures?.supplierOwed },
+    { label: tx('Payable now'), value: payableNow, tone: 'text-amber-600' },
+  ];
 
   return (
     <div className="space-y-4">
@@ -75,48 +126,94 @@ export function PurchaseOrderPayPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">{tx('Total')}</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <p className="text-2xl font-bold">{formatMoney(totalAmount, data.currencyCode)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">{tx('Already Paid')}</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <p className="text-2xl font-bold text-emerald-600">{formatMoney(totalPaid, data.currencyCode)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">{tx('Remaining')}</CardTitle></CardHeader>
-          <CardContent className="pt-0">
-            <p className="text-2xl font-bold text-amber-600">{formatMoney(remaining, data.currencyCode)}</p>
-          </CardContent>
-        </Card>
+      {payable.error && (
+        <Card><CardContent className="p-4 text-sm text-destructive">
+          {apiMessage(payable.error, tx('Could not load what is payable on this order'))}
+        </CardContent></Card>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        {tiles.map((t) => (
+          <Card key={t.label}>
+            <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">{t.label}</CardTitle></CardHeader>
+            <CardContent className="pt-0">
+              <p className={`text-xl font-bold ${t.tone ?? ''}`}>
+                {t.value === undefined || t.value === null ? '—' : formatMoney(Number(t.value), currency)}
+              </p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
+
+      {figures?.message && (
+        <Card><CardContent className="p-4 text-sm text-amber-700">{figures.message}</CardContent></Card>
+      )}
 
       <Card>
         <CardHeader><CardTitle>{tx('Payment details')}</CardTitle></CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
           <div>
-            <label className="text-sm font-medium">
+            <label className="text-sm font-medium" htmlFor="po-pay-amount">
               {tx('Amount')} <span className="text-muted-foreground">{tx('(default: full remaining)')}</span>
             </label>
             <Input
+              id="po-pay-amount"
               type="number"
               min={0.01}
-              max={remaining}
+              max={payableNow > 0 ? payableNow : undefined}
               step="0.01"
               className="mt-1"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder={`${remaining.toFixed(2)}`}
+              placeholder={`${payableNow.toFixed(2)}`}
             />
           </div>
           <div>
-            <label className="text-sm font-medium">{tx('Reference')}</label>
+            <label className="text-sm font-medium" htmlFor="po-pay-date">{tx('Payment date')}</label>
             <Input
+              id="po-pay-date"
+              type="date"
+              className="mt-1"
+              value={paidAt}
+              max={today()}
+              onChange={(e) => setPaidAt(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium" htmlFor="po-pay-method">{tx('Paid from')}</label>
+            <select
+              id="po-pay-method"
+              className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+              value={method}
+              onChange={(e) => setMethod(e.target.value === 'cash' ? 'cash' : 'bank')}
+            >
+              <option value="bank">{tx('Bank')}</option>
+              <option value="cash">{tx('Cash register')}</option>
+            </select>
+          </div>
+          {method === 'cash' && (
+            <div>
+              <label className="text-sm font-medium" htmlFor="po-pay-register">{tx('Register')}</label>
+              <select
+                id="po-pay-register"
+                className="mt-1 h-9 w-full rounded-md border bg-background px-3 text-sm"
+                value={cashRegisterId}
+                onChange={(e) => setCashRegisterId(e.target.value)}
+              >
+                <option value="">{tx('My open register')}</option>
+                {(registers.data ?? []).filter((r) => r.isActive !== false).map((r) => (
+                  <option key={r.id} value={r.id}>{r.code ? `${r.code} — ${r.name}` : r.name}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {tx('The register must have an open session; the cash is paid out of its drawer.')}
+              </p>
+            </div>
+          )}
+          <div>
+            <label className="text-sm font-medium" htmlFor="po-pay-reference">{tx('Reference')}</label>
+            <Input
+              id="po-pay-reference"
               className="mt-1"
               value={reference}
               onChange={(e) => setReference(e.target.value)}
@@ -130,10 +227,10 @@ export function PurchaseOrderPayPage() {
         <Button variant="outline" onClick={() => navigate(-1)}>{tx('Cancel')}</Button>
         <Button
           onClick={() => payMut.mutate()}
-          disabled={payMut.isPending}
+          disabled={payMut.isPending || !canPay || !(amountValue > 0)}
         >
           <Save className="mr-2 h-4 w-4" />
-          {payMut.isPending ? tx('Recording…') : tx('Pay {{v1}}', { v1: amount ? formatMoney(Number(amount)) : formatMoney(remaining) })}
+          {payMut.isPending ? tx('Recording…') : tx('Pay {{v1}}', { v1: formatMoney(amountValue, currency) })}
         </Button>
       </div>
     </div>

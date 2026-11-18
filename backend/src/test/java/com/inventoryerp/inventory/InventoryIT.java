@@ -257,7 +257,8 @@ class InventoryIT extends ApiTestSupport {
         stockIn(loc, List.of(line(p, 2, 10)));
         JsonNode out = ok(200, "POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById",
                 adminId, "approvedById", adminId, "items", List.of(line(p, 1, null))));
-        assertThat(out.get("items").get(0).get("unitCost").asString()).isEqualTo("4");
+        // Gaps h-00 F1: units received without a serial leave at what they came in at (10), not the cost price (4).
+        assertThat(out.get("items").get(0).get("unitCost").asString()).isEqualTo("10");
         Res half = as("POST", "/inventory/direct-stock/out", Map.of("locationId", loc, "responsibleById", adminId,
                 "approvedById", adminId, "items", List.of(line(p, 0.5, null))));
         assertThat(half.body().get("message").asString()).endsWith("is serial-tracked: quantity must be a whole number"

@@ -29,6 +29,8 @@ class SourcingIT extends ApiTestSupport {
 
     String warehouse;
     String checkerToken;
+    /** Approves the requests the administrator raises (gap fix h03-F6). */
+    String approverToken;
     String a;
     String b;
     String c;
@@ -78,7 +80,12 @@ class SourcingIT extends ApiTestSupport {
         String id = ok(201, "POST", "/procurement/purchase-requests", Map.of("description", "Block plant", "lines",
                 lines)).get("id").asString();
         ok(200, "PATCH", "/procurement/purchase-requests/" + id + "/submit", null);
-        ok(200, "PATCH", "/procurement/purchase-requests/" + id + "/approve", null);
+        // Gap fix h03-F6: a second administrator approves the request the first one raised.
+        if (approverToken == null) {
+            approverToken = com.inventoryerp.TestApprovers.secondAdmin(this);
+        }
+        assertThat(call("PATCH", "/procurement/purchase-requests/" + id + "/approve", null, approverToken).status())
+                .isEqualTo(200);
         return ok(200, "GET", "/procurement/purchase-requests/" + id, null);
     }
 
@@ -135,6 +142,8 @@ class SourcingIT extends ApiTestSupport {
                 Map.of("rfqLineId", cementLine, "unitPrice", 1)), Map.of()));
         assertThat(stranger.body().get("message").asString()).isEqualTo("This supplier was not invited to the RFQ");
 
+        // h04-F6: bids are sealed until the deadline or until the RFQ is closed.
+        ok(200, "POST", "/procurement/rfqs/" + rfqId + "/close", null);
         JsonNode cmp = ok(200, "GET", "/procurement/rfqs/" + rfqId + "/comparison", null);
         assertThat(cmp.get("suppliers")).hasSize(3);
         JsonNode bravo = null;

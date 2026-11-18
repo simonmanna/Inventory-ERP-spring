@@ -235,6 +235,8 @@ public class VendorBillService {
         double amount = Money.dec(doc.get("totalAmount")).doubleValue();
         Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(amount), "partnerId", doc.get("partnerId"),
                 "documentNumber", doc.get("documentNumber"), "createdBy", TenantContext.userId());
+        // Gap fix h03-F6: the request records what was submitted, so a post can tell an edit made after the decision.
+        snapshot.put("contentHash", billContentHash(id));
         Map<String, Object> request = approvals.requestApproval("vendor_bill", id, snapshot, null);
         if (request != null) {
             audit.record(AuditInput.of("VendorBill", id, "create", null, Obj.of("documentNumber", doc.get("documentNumber"),
@@ -248,7 +250,9 @@ public class VendorBillService {
      * Raise and post a supplier bill on behalf of an approved landed cost voucher (one per supplier invoice). The
      * voucher's own approval stands in for the bill approval, so no approval request is opened; posting still needs
      * {@code expense:post}. Lines carry their GL account (the landed-cost clearing account), so the bill debits
-     * clearing and credits the supplier's payable.
+     * clearing and credits the supplier's payable. Readiness gap h-05 F1: the bill still runs through every
+     * {@link VendorBillPostGuard} (duplicate checks), as an ordinary bill does; the voucher checks the separation of
+     * duties of its approval itself.
      */
     @Transactional
     public Map<String, Object> createPostedForLandedCost(String partnerId, String issueDate, String dueDate,
@@ -261,6 +265,10 @@ public class VendorBillService {
         String id = (String) doc.get("id");
         Map<String, Object> full = builder.document(id, "vendor_bill");
         full.put("lines", builder.lines(id, false));
+        List<String> warnings = new ArrayList<>();
+        for (VendorBillPostGuard g : guards) {
+            warnings.addAll(g.beforePost(id, full));
+        }
         workflow.transition("vendor_bill", id, "post", null, full);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org());
@@ -269,7 +277,11 @@ public class VendorBillService {
         events.publish("bill.posted", payload);
         audit.record(AuditInput.of("VendorBill", id, "create", null, Obj.of("documentNumber", doc.get("documentNumber"),
                 "source", "landed_cost", "sourceDocument", sourceDocument)));
-        return builder.document(id);
+        Map<String, Object> out = builder.document(id);
+        if (!warnings.isEmpty()) {
+            out.put("warnings", warnings);
+        }
+        return out;
     }
 
     /** Edit a draft bill. */
@@ -397,6 +409,11 @@ public class VendorBillService {
             jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'approved', \"decidedAt\" = now(), \"updatedAt\" = now()"
                     + " WHERE id = ?").param(pending).update();
             audit.record(AuditInput.of("ApprovalRequest", pending, "approve"));
+        } else {
+            String refused = decidedApprovalRefusal(id, doc);
+            if (refused != null) {
+                throw ApiException.forbidden(refused);
+            }
         }
         authorizePosting(id, doc);
         List<String> warnings = new ArrayList<>();
@@ -419,6 +436,72 @@ public class VendorBillService {
             out.put("warnings", warnings);
         }
         return out;
+    }
+
+    /**
+     * Gap fix h03-F6 (Nest deviation, owner-approved 2026-11-17): the latest decision on the bill's own approval counts
+     * at posting, not only a pending request. A rejected bill does not post unchanged; a bill edited after its approval
+     * (amount, supplier or lines differ from the request's snapshot) or whose request was withdrawn needs a new decision
+     * when a workflow applies — the new request is committed on its own, so it survives this refusal. A bill that never
+     * needed an approval posts as before. Returns the refusal, or {@code null}.
+     */
+    private String decidedApprovalRefusal(String id, Map<String, Object> doc) {
+        Map<String, Object> last = jdbc.sql("SELECT id, status::text AS status, snapshot->>'amount' AS amount,"
+                        + " snapshot->>'partnerId' AS \"partnerId\", snapshot->>'contentHash' AS \"contentHash\" FROM"
+                        + " \"ApprovalRequest\" WHERE \"organizationId\" = ? AND \"entityType\" = 'vendor_bill' AND"
+                        + " \"entityId\" = ? ORDER BY \"createdAt\" DESC, id DESC LIMIT 1")
+                .params(org(), id).query().listOfRows().stream().findFirst().orElse(null);
+        if (last == null || "pending".equals(last.get("status"))) {
+            return null;
+        }
+        String status = (String) last.get("status");
+        String hash = billContentHash(id);
+        BigDecimal total = Money.dec(doc.get("totalAmount"));
+        boolean unchanged = last.get("amount") != null
+                && total.subtract(Money.dec(last.get("amount"))).abs().compareTo(new BigDecimal("0.005")) <= 0
+                && java.util.Objects.equals(last.get("partnerId"), doc.get("partnerId"))
+                && (last.get("contentHash") == null || last.get("contentHash").equals(hash));
+        if ("approved".equals(status) && unchanged) {
+            return null;
+        }
+        if ("rejected".equals(status) && unchanged) {
+            return "This bill's approval was rejected — change the bill and post it again to ask for a new decision";
+        }
+        Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(total), "partnerId", doc.get("partnerId"),
+                "documentNumber", doc.get("documentNumber"), "createdBy", doc.get("createdBy"), "contentHash", hash);
+        Map<String, Object> raised = newTx.execute(s -> {
+            if ("approved".equals(status)) {
+                jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'cancelled', \"updatedAt\" = now() WHERE id = ? AND"
+                        + " status = 'approved'").param(last.get("id")).update();
+                audit.recordInTx(AuditInput.of("ApprovalRequest", (String) last.get("id"), "cancel", null, Obj.of(
+                        "status", "cancelled", "reason", "bill changed after approval")));
+            }
+            return approvals.requestApproval("vendor_bill", id, snapshot, null);
+        });
+        if (raised == null) {
+            return null;
+        }
+        return switch (status) {
+            case "approved" -> "This bill changed after it was approved; it needs approval again (request "
+                    + raised.get("id") + ")";
+            case "rejected" -> "This bill changed after its approval was rejected; it needs approval again (request "
+                    + raised.get("id") + ")";
+            default -> "This bill is awaiting approval (request " + raised.get("id") + "). Wait for approval or post"
+                    + " with override.";
+        };
+    }
+
+    /** What an approval of the bill covered: supplier, currency, totals and every line (h03-F6). */
+    private String billContentHash(String id) {
+        return jdbc.sql("SELECT md5(concat_ws('|', COALESCE(d.\"partnerId\", ''), COALESCE(d.\"currencyId\", ''),"
+                        + " d.\"totalAmount\"::text, COALESCE(d.\"withholdingAmount\"::text, ''), COALESCE((SELECT"
+                        + " string_agg(concat_ws(':', COALESCE(l.\"productId\", ''), COALESCE(l.\"variantId\", ''),"
+                        + " COALESCE(l.\"accountId\", ''), COALESCE(l.description, ''), l.quantity::text,"
+                        + " l.\"unitPrice\"::text, COALESCE(l.\"discountPercent\"::text, ''), COALESCE(l.\"taxId\", ''),"
+                        + " COALESCE(l.\"uomId\", '')), ';' ORDER BY l.\"lineNumber\", l.id) FROM \"DocumentLine\" l"
+                        + " WHERE l.\"documentId\" = d.id), ''))) FROM \"Document\" d WHERE d.id = ? AND"
+                        + " d.\"organizationId\" = ?")
+                .params(id, org()).query(String.class).optional().orElse(null);
     }
 
     /**

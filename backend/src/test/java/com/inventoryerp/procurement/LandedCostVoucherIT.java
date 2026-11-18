@@ -570,7 +570,8 @@ class LandedCostVoucherIT extends ApiTestSupport {
         assertThat(call("GET", "/procurement/landed-cost-vouchers/" + id, null, otherToken).status()).isEqualTo(404);
         assertThat(call("GET", "/procurement/landed-cost-vouchers", null, otherToken).body()).isEmpty();
         assertThat(call("GET", "/procurement/shipments/" + shipId, null, otherToken).status()).isEqualTo(404);
-        assertThat(call("POST", "/procurement/landed-cost-vouchers/" + id + "/reverse", null, otherToken).status())
+        assertThat(call("POST", "/procurement/landed-cost-vouchers/" + id + "/reverse", null, Map.of("Authorization",
+                "Bearer " + otherToken, "Idempotency-Key", java.util.UUID.randomUUID().toString())).status())
                 .isEqualTo(404);
     }
 }

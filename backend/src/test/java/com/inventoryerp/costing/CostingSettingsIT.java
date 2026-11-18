@@ -199,7 +199,8 @@ class CostingSettingsIT extends ApiTestSupport {
         jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"costingMethod\","
                 + " \"costPrice\", \"salesPrice\", \"updatedAt\") VALUES (?, ?, ?, 'Gravel', 'stockable', 'AVCO', 0, 20,"
                 + " now())").params(id, org, "GRV-" + id.substring(0, 4)).update();
-        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", location, "receivedAt",
+        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, org), "warehouseId", location, "receivedAt",
                 Instant.now().toString(), "lines", List.of(Map.of("productId", id, "description", "Gravel",
                         "quantity", 10, "unitCost", 5))));
         ok(200, "PUT", "/costing/settings", Map.of("dimensionEnforcement", "enforce"));

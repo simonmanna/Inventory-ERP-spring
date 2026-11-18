@@ -226,7 +226,8 @@ class CostCloseIT extends ApiTestSupport {
         String alpha = nrvProduct(org, "Alpha");
         String beta = nrvProduct(org, "Beta");
         for (String product : List.of(alpha, beta)) {
-            Res grn = call("POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", location, "receivedAt",
+            Res grn = call("POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                    com.inventoryerp.TestSuppliers.supplier(jdbc, org), "warehouseId", location, "receivedAt",
                     Instant.now().minus(2, ChronoUnit.DAYS).toString(), "lines", List.of(Map.of("productId", product,
                             "description", "Stock", "quantity", 100, "unitCost", 10))), token);
             assertThat(grn.status()).as(grn.raw().body()).isEqualTo(200);

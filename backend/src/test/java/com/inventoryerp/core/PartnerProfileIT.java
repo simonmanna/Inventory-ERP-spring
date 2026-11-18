@@ -77,7 +77,10 @@ class PartnerProfileIT extends ApiTestSupport {
         assertThat(saved.get("incotermLocation").asString()).isEqualTo("Mombasa");
         assertThat(saved.get("autoPostBills").asString()).isEqualTo("always");
         assertThat(saved.get("receivableAccountId").asString()).isEqualTo(account);
-        assertThat(saved.get("bankAccounts").get(0).get("accountNumber").asString()).isEqualTo("0012345");
+        // h04-F4: account numbers are returned masked to their last 4 characters.
+        assertThat(saved.get("bankAccounts").get(0).get("accountNumber").asString()).isEqualTo("•••• 2345");
+        assertThat(jdbc.sql("SELECT \"bankAccounts\"->0->>'accountNumber' FROM \"Partner\" WHERE id = ?").param(p)
+                .query(String.class).single()).isEqualTo("0012345");
 
         Map<String, Object> clear = new HashMap<>();
         clear.put("incoterm", null);

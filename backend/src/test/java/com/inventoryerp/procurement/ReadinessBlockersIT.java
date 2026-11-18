@@ -235,13 +235,14 @@ class ReadinessBlockersIT extends ApiTestSupport {
         Res over = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 100, "method",
                 "bank"));
         assertThat(over.status()).isEqualTo(400);
-        assertThat(over.body().get("message").asString()).startsWith("Payment of 100 would overpay the supplier");
+        // Gap fix h03-F4: the return now also takes the 4 off the receipt, so the order itself has 60 left.
+        assertThat(over.body().get("message").asString()).isEqualTo("Payment of 100 exceeds remaining balance of 60");
         JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
         assertThat(new BigDecimal(pay.get("amount").asString())).isEqualByComparingTo("60");
         assertThat(supplierAp(supplier)).isEqualByComparingTo("0");
         Res more = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
         assertThat(more.status()).isEqualTo(400);
-        assertThat(more.body().get("message").asString()).startsWith("Nothing is owed to this supplier in the ledger");
+        assertThat(more.body().get("message").asString()).isEqualTo("This purchase order is already fully paid");
     }
 
     @Test

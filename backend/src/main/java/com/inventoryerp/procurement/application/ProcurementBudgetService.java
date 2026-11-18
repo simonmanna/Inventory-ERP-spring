@@ -161,15 +161,28 @@ public class ProcurementBudgetService {
         return out;
     }
 
+    /**
+     * h04-F9: what an order line can still cost in base currency: its quantity less what was short-closed or cancelled,
+     * at the order price. A received line keeps counting (it was spent).
+     */
+    private static final String ORDER_VALUE = "(l.quantity - l.\"cancelledQuantity\") * l.\"unitPrice\""
+            + " * o.\"exchangeRate\"";
+
+    /** h04-F9: an order that still consumes budget: not deleted or cancelled, and not a draft whose approval was refused. */
+    private static final String LIVE_ORDER = " AND o.\"deletedAt\" IS NULL AND o.status::text <> 'cancelled' AND NOT"
+            + " (o.status::text = 'draft' AND COALESCE((SELECT a.status::text FROM \"ApprovalRequest\" a WHERE"
+            + " a.\"organizationId\" = o.\"organizationId\" AND a.\"entityType\" = 'purchase_order' AND a.\"entityId\" ="
+            + " o.id ORDER BY a.\"createdAt\" DESC LIMIT 1), '') = 'rejected')";
+
     /** Committed and reserved value in the budget's scope and period, leaving out the document being checked. */
     private Usage usage(Map<String, Object> b, String excludeOrderId, String excludeRequestId) {
         String start = String.valueOf(b.get("startDate"));
         String end = String.valueOf(b.get("endDate"));
 
-        StringBuilder orders = new StringBuilder("SELECT COALESCE(SUM(l.subtotal * o.\"exchangeRate\"), 0) AS v FROM"
+        StringBuilder orders = new StringBuilder("SELECT COALESCE(SUM(" + ORDER_VALUE + "), 0) AS v FROM"
                 + " \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\" LEFT JOIN"
-                + " \"Product\" p ON p.id = l.\"productId\" WHERE o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL"
-                + " AND o.status::text <> 'cancelled' AND o.\"orderDate\"::date BETWEEN ?::date AND ?::date");
+                + " \"Product\" p ON p.id = l.\"productId\" WHERE o.\"organizationId\" = ?" + LIVE_ORDER
+                + " AND o.\"orderDate\"::date BETWEEN ?::date AND ?::date");
         List<Object> orderParams = new ArrayList<>(List.of(org(), start, end));
         scope(orders, orderParams, b, "o");
         if (excludeOrderId != null) {
@@ -177,13 +190,17 @@ public class ProcurementBudgetService {
             orderParams.add(excludeOrderId);
         }
 
-        StringBuilder requests = new StringBuilder("SELECT COALESCE(SUM(l.quantity * COALESCE(l.\"estimatedUnitPrice\","
-                + " 0)), 0) AS v FROM \"PurchaseRequestLine\" l JOIN \"PurchaseRequest\" r ON r.id ="
-                + " l.\"purchaseRequestId\" LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE"
-                + " r.\"organizationId\" = ? AND r.\"deletedAt\" IS NULL AND r.status::text IN ('submitted', 'approved')"
-                + " AND r.\"createdAt\"::date BETWEEN ?::date AND ?::date AND NOT EXISTS (SELECT 1 FROM"
-                + " \"PurchaseOrder\" x WHERE x.\"requestId\" = r.id AND x.\"deletedAt\" IS NULL AND x.status::text <>"
-                + " 'cancelled')");
+        // h04-F9: a request reserves only what is still to be ordered, so each request a multi-request order was raised
+        // from hands over the ordered part. A request converted by the parity route (an order naming the request but
+        // no request line) is excluded as before, because its lines never record what was ordered.
+        StringBuilder requests = new StringBuilder("SELECT COALESCE(SUM(GREATEST(l.quantity - l.\"orderedQuantity\", 0)"
+                + " * COALESCE(l.\"estimatedUnitPrice\", 0)), 0) AS v FROM \"PurchaseRequestLine\" l JOIN"
+                + " \"PurchaseRequest\" r ON r.id = l.\"purchaseRequestId\" LEFT JOIN \"Product\" p ON p.id ="
+                + " l.\"productId\" WHERE r.\"organizationId\" = ? AND r.\"deletedAt\" IS NULL AND r.status::text IN"
+                + " ('submitted', 'approved') AND r.\"createdAt\"::date BETWEEN ?::date AND ?::date AND NOT EXISTS"
+                + " (SELECT 1 FROM \"PurchaseOrder\" x WHERE x.\"requestId\" = r.id AND x.\"deletedAt\" IS NULL AND"
+                + " x.status::text <> 'cancelled' AND NOT EXISTS (SELECT 1 FROM \"PurchaseOrderLine\" xl WHERE"
+                + " xl.\"purchaseOrderId\" = x.id AND xl.\"requestLineId\" IS NOT NULL))");
         List<Object> requestParams = new ArrayList<>(List.of(org(), start, end));
         scope(requests, requestParams, b, "r");
         if (excludeRequestId != null) {
@@ -250,10 +267,9 @@ public class ProcurementBudgetService {
         List<Object> orderParams = new ArrayList<>(List.of(org(), b.get("startDate").toString(),
                 b.get("endDate").toString()));
         StringBuilder orders = new StringBuilder("SELECT o.id, o.\"orderNumber\", o.status::text AS status,"
-                + " SUM(l.subtotal * o.\"exchangeRate\") AS value FROM \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" o"
+                + " SUM(" + ORDER_VALUE + ") AS value FROM \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" o"
                 + " ON o.id = l.\"purchaseOrderId\" LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE"
-                + " o.\"organizationId\" = ? AND o.\"deletedAt\" IS NULL AND o.status::text <> 'cancelled' AND"
-                + " o.\"orderDate\"::date BETWEEN ?::date AND ?::date");
+                + " o.\"organizationId\" = ?" + LIVE_ORDER + " AND o.\"orderDate\"::date BETWEEN ?::date AND ?::date");
         scope(orders, orderParams, b, "o");
         orders.append(" GROUP BY o.id, o.\"orderNumber\", o.status ORDER BY o.\"orderNumber\" DESC LIMIT 100");
         b.put("orders", SqlRows.list(jdbc.sql(orders.toString()).params(orderParams)));

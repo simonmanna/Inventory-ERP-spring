@@ -73,14 +73,29 @@ public class LandedCostReconciliationService {
                 drill);
     }
 
-    /** The six reconciliation rows, the classification and location checks, and the open exceptions. */
-    @Transactional
+    /**
+     * A landed-cost account by its mapping, else by its code, without creating it (readiness gap h-05 F15: the
+     * reconciliation only reads); null when the organisation never had one, so its balance is zero.
+     */
+    private String existing(String mappingKey, String code) {
+        String mapped = accounts.byMappingOptional(mappingKey);
+        if (mapped != null) {
+            return mapped;
+        }
+        return jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = ? AND \"deletedAt\" IS NULL"
+                + " ORDER BY id LIMIT 1").params(org(), code).query(String.class).optional().orElse(null);
+    }
+
+    /**
+     * The six reconciliation rows, the classification and location checks, and the open exceptions. Read-only, with a
+     * fixed number of queries whatever the number of posted vouchers (readiness gap h-05 F15).
+     */
+    @Transactional(readOnly = true)
     public Map<String, Object> reconciliation() {
         List<Map<String, Object>> rows = new ArrayList<>();
 
         // 2155 — supplier invoices outstanding: charges posted to clearing whose supplier bill is not booked.
-        String clearing = accounts.ensureByCode("2155", "Landed Cost Clearing", "current_liability",
-                "landed_cost_clearing");
+        String clearing = existing("landed_cost_clearing", "2155");
         List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT l.id AS \"voucherId\", l.code, c.id AS"
                 + " \"chargeId\", c.\"supplierId\", c.\"supplierInvoiceRef\", c.\"billMode\", (coalesce(c.\"baseAmount\","
                 + " c.amount) + c.\"taxAmount\" * coalesce(c.\"exchangeRate\", 1)) AS amount FROM \"LandedCostCharge\" c"
@@ -93,19 +108,18 @@ public class LandedCostReconciliationService {
         rows.add(row("2155", "Landed cost clearing — supplier invoices outstanding", clearing, outstanding,
                 glBalance(clearing, true), open));
 
-        // 2156 — open accruals.
-        String accrual = accounts.ensureByCode("2156", "Landed Cost Accrued", "current_liability",
-                "landed_cost_accrual");
-        List<Map<String, Object>> accruals = SqlRows.list(jdbc.sql("SELECT id, number, \"goodsReceiptId\", amount FROM"
-                + " \"LandedCostAccrual\" WHERE \"organizationId\" = ? AND status = 'posted' ORDER BY number")
-                .param(org()));
+        // 2156 — open accruals: what is still open on posted and partly cleared accruals (h-05 F8, as the accrual
+        // service's own reconciliation and ADR-S053 count it).
+        String accrual = existing("landed_cost_accrual", "2156");
+        List<Map<String, Object>> accruals = SqlRows.list(jdbc.sql("SELECT id, number, \"goodsReceiptId\","
+                + " \"remainingAmount\" AS amount FROM \"LandedCostAccrual\" WHERE \"organizationId\" = ? AND status IN"
+                + " ('posted', 'partially_cleared') ORDER BY number").param(org()));
         BigDecimal accrued = accruals.stream().map(r -> SqlRows.dec(r, "amount")).reduce(Money.ZERO, BigDecimal::add);
         rows.add(row("2156", "Landed cost accrued — open estimates", accrual, accrued, glBalance(accrual, true),
                 accruals));
 
         // 1396 — open adjuncts (price differences: STANDARD landed cost, parked lineage shares, accruals, ML).
-        String adjunct = accounts.ensureByCode("1396", "Inventory Price Differences", "inventory",
-                "inventory_price_difference");
+        String adjunct = existing("inventory_price_difference", "1396");
         List<Map<String, Object>> adjuncts = SqlRows.list(jdbc.sql("SELECT \"sourceType\", \"adjustmentType\","
                 + " (\"anchorLedgerId\" IS NULL) AS parked, sum(\"openAmount\") AS amount, count(*) AS adjustments FROM"
                 + " \"CostValueAdjustment\" WHERE \"organizationId\" = ? AND \"openAmount\" <> 0 AND \"reversedAt\" IS NULL"
@@ -137,8 +151,11 @@ public class LandedCostReconciliationService {
         List<Map<String, Object>> classification = classification(expected);
         BigDecimal cogsSub = expected.getOrDefault("cogs", Money.ZERO);
         BigDecimal wipSub = expected.getOrDefault("wip", Money.ZERO);
-        BigDecimal cogsGl = voucherLines(determination.mapped("cogs"));
-        BigDecimal wipGl = voucherLines(determination.mapped("wip"));
+        // h-05 F15: read-only, so an organisation without a COGS / WIP mapping reads zero instead of failing.
+        String cogsAccount = accounts.byMappingOptional("cogs");
+        String wipAccount = accounts.byMappingOptional("wip");
+        BigDecimal cogsGl = cogsAccount == null ? Money.ZERO : voucherLines(cogsAccount);
+        BigDecimal wipGl = wipAccount == null ? Money.ZERO : voucherLines(wipAccount);
         BigDecimal cascaded = jdbc.sql("SELECT coalesce(sum(r.amount), 0) FROM \"CostAdjustmentRunLine\" r JOIN"
                 + " \"CostValueAdjustmentLine\" cl ON cl.id = r.\"adjustmentLineId\" JOIN \"CostValueAdjustment\" a ON a.id ="
                 + " cl.\"adjustmentId\" JOIN \"LandedCost\" l ON l.code = a.\"sourceId\" AND l.\"organizationId\" ="
@@ -149,9 +166,9 @@ public class LandedCostReconciliationService {
                 + " cl.\"adjustmentId\" WHERE a.\"organizationId\" = ? AND a.\"sourceType\" = 'landed_cost_voucher' AND"
                 + " a.\"reversedAt\" IS NULL AND cl.target = 'wip' AND NOT EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r"
                 + " WHERE r.\"adjustmentLineId\" = cl.id AND r.status = 'posted') GROUP BY 1 ORDER BY 1").param(org()));
-        rows.add(row("cogs", "Cost of sales — landed-cost consumption", determination.mapped("cogs"), cogsSub, cogsGl,
+        rows.add(row("cogs", "Cost of sales — landed-cost consumption", cogsAccount, cogsSub, cogsGl,
                 null));
-        rows.add(row("wip", "WIP — open landed shares per production order", determination.mapped("wip"),
+        rows.add(row("wip", "WIP — open landed shares per production order", wipAccount,
                 wipSub.subtract(cascaded), wipGl.subtract(cascaded), openWip));
 
         List<Map<String, Object>> locations = locationCheck();
@@ -179,45 +196,54 @@ public class LandedCostReconciliationService {
      */
     private List<Map<String, Object>> classification(Map<String, BigDecimal> totals) {
         List<Map<String, Object>> out = new ArrayList<>();
-        String cogs = determination.mapped("cogs");
-        String wip = determination.mapped("wip");
-        String adjunct = accounts.ensureByCode("1396", "Inventory Price Differences", "inventory",
-                "inventory_price_difference");
-        String returns = accounts.ensureByCode("5976", "Landed Cost on Returned Goods", "cost_of_goods_sold",
-                "landed_cost_returns");
-        for (Map<String, Object> v : SqlRows.list(jdbc.sql("SELECT id, code, \"journalEntryId\" FROM \"LandedCost\" WHERE"
-                + " \"organizationId\" = ? AND status = 'posted' AND \"voucherType\" IN ('voucher', 'credit') AND"
-                + " \"journalEntryId\" IS NOT NULL").param(org()))) {
-            Map<String, BigDecimal> exp = new TreeMap<>();
-            boolean lineage = false;
-            for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.\"productId\", a.disposition::text AS d,"
-                    + " p.\"costingMethod\"::text AS method FROM \"LandedCostAllocation\" a JOIN \"Product\" p ON p.id ="
-                    + " a.\"productId\" WHERE a.\"landedCostId\" = ?").param(v.get("id")))) {
-                if (a.get("d") == null) {
-                    continue;
-                }
-                lineage = true;
-                Map<String, Object> d = LandedCostLayers.disposition(Map.of("disposition", a.get("d")));
-                String stockAccount = stockPosting.landedAccount((String) a.get("productId"), BigDecimal.ONE);
-                exp.merge(stockAccount, Money.dec(d.get("stock")), BigDecimal::add);
-                exp.merge(adjunct, Money.dec(d.get("parked")).add(Money.dec(d.getOrDefault("returnParked", 0))),
-                        BigDecimal::add);
-                exp.merge(wip, Money.dec(d.get("wip")), BigDecimal::add);
-                exp.merge(cogs, Money.dec(d.get("cogs")), BigDecimal::add);
-                exp.merge(returns, Money.dec(d.get("returned")), BigDecimal::add);
-                totals.merge("cogs", Money.dec(d.get("cogs")), BigDecimal::add);
-                totals.merge("wip", Money.dec(d.get("wip")), BigDecimal::add);
-            }
-            if (!lineage) {
-                continue;
-            }
-            for (Map.Entry<String, BigDecimal> e : exp.entrySet()) {
-                BigDecimal actual = jdbc.sql("SELECT coalesce(sum(\"baseDebit\" - \"baseCredit\"), 0) FROM \"JournalLine\""
-                        + " WHERE \"journalEntryId\" = ? AND \"accountId\" = ?").params(v.get("journalEntryId"), e.getKey())
-                        .query(BigDecimal.class).single();
+        String cogs = java.util.Objects.requireNonNullElse(accounts.byMappingOptional("cogs"), "cogs");
+        String wip = java.util.Objects.requireNonNullElse(accounts.byMappingOptional("wip"), "wip");
+        // Accounts the organisation never had cannot carry a posting: keyed by code so the check still reads zero.
+        String adjunct = java.util.Objects.requireNonNullElse(existing("inventory_price_difference", "1396"), "1396");
+        String returns = java.util.Objects.requireNonNullElse(existing("landed_cost_returns", "5976"), "5976");
+        // h-05 F15: every lineage allocation of every posted voucher in one query, their journal lines in another.
+        Map<String, Map<String, Object>> vouchers = new LinkedHashMap<>();
+        Map<String, Map<String, BigDecimal>> expected = new LinkedHashMap<>();
+        Map<String, String> landedAccounts = new java.util.HashMap<>();
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT l.id AS \"voucherId\", l.code, l.\"journalEntryId\","
+                + " a.\"productId\", a.disposition::text AS d, p.\"costingMethod\"::text AS method FROM \"LandedCost\" l"
+                + " JOIN \"LandedCostAllocation\" a ON a.\"landedCostId\" = l.id JOIN \"Product\" p ON p.id = a.\"productId\""
+                + " WHERE l.\"organizationId\" = ? AND l.status = 'posted' AND l.\"voucherType\" IN ('voucher', 'credit')"
+                + " AND l.\"journalEntryId\" IS NOT NULL AND a.disposition IS NOT NULL ORDER BY l.code, a.id")
+                .param(org()))) {
+            String voucherId = (String) a.get("voucherId");
+            vouchers.putIfAbsent(voucherId, a);
+            Map<String, BigDecimal> exp = expected.computeIfAbsent(voucherId, k -> new TreeMap<>());
+            Map<String, Object> d = LandedCostLayers.disposition(Map.of("disposition", a.get("d")));
+            String productId = (String) a.get("productId");
+            String stockAccount = landedAccounts.computeIfAbsent(productId, k -> "STANDARD".equals(a.get("method"))
+                    ? adjunct : stockPosting.stockAccount(k, BigDecimal.ONE));
+            exp.merge(stockAccount, Money.dec(d.get("stock")), BigDecimal::add);
+            exp.merge(adjunct, Money.dec(d.get("parked")).add(Money.dec(d.getOrDefault("returnParked", 0))),
+                    BigDecimal::add);
+            exp.merge(wip, Money.dec(d.get("wip")), BigDecimal::add);
+            exp.merge(cogs, Money.dec(d.get("cogs")), BigDecimal::add);
+            exp.merge(returns, Money.dec(d.get("returned")), BigDecimal::add);
+            totals.merge("cogs", Money.dec(d.get("cogs")), BigDecimal::add);
+            totals.merge("wip", Money.dec(d.get("wip")), BigDecimal::add);
+        }
+        if (vouchers.isEmpty()) {
+            return out;
+        }
+        Map<String, BigDecimal> posted = new java.util.HashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"journalEntryId\", \"accountId\","
+                + " sum(\"baseDebit\" - \"baseCredit\") AS amount FROM \"JournalLine\" WHERE \"organizationId\" = ? AND"
+                + " \"journalEntryId\" = ANY(?::text[]) GROUP BY 1, 2").params(org(), vouchers.values().stream()
+                .map(v -> (String) v.get("journalEntryId")).distinct().toArray(String[]::new)))) {
+            posted.put(r.get("journalEntryId") + "|" + r.get("accountId"), SqlRows.dec(r, "amount"));
+        }
+        for (Map.Entry<String, Map<String, Object>> v : vouchers.entrySet()) {
+            for (Map.Entry<String, BigDecimal> e : expected.get(v.getKey()).entrySet()) {
+                BigDecimal actual = posted.getOrDefault(v.getValue().get("journalEntryId") + "|" + e.getKey(),
+                        Money.ZERO);
                 BigDecimal expectedAmount = dp2(e.getValue());
                 if (expectedAmount.compareTo(dp2(actual)) != 0) {
-                    out.add(Obj.of("voucherId", v.get("id"), "code", v.get("code"), "accountId", e.getKey(),
+                    out.add(Obj.of("voucherId", v.getKey(), "code", v.getValue().get("code"), "accountId", e.getKey(),
                             "expected", JsNumbers.dec(expectedAmount), "posted", JsNumbers.dec(dp2(actual))));
                 }
             }
@@ -227,30 +253,35 @@ public class LandedCostReconciliationService {
 
     /**
      * Location check: per posted voucher, product and location, the value-only stock rows it wrote (at posting) vs the
-     * stock its disposition placed there.
+     * stock its disposition placed there. h-05 F15: the vouchers in one query, their stock rows in another.
      */
     private List<Map<String, Object>> locationCheck() {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> v : SqlRows.list(jdbc.sql("SELECT id, code, \"postedAt\" FROM \"LandedCost\" WHERE"
-                + " \"organizationId\" = ? AND status = 'posted' AND \"voucherType\" IN ('voucher', 'credit') AND"
-                + " \"postedDisposition\" IS NOT NULL").param(org()))) {
+        List<Map<String, Object>> vouchers = SqlRows.list(jdbc.sql("SELECT id, code, \"postedDisposition\"::text AS"
+                + " disposition FROM \"LandedCost\" WHERE \"organizationId\" = ? AND status = 'posted' AND \"voucherType\""
+                + " IN ('voucher', 'credit') AND \"postedDisposition\" IS NOT NULL ORDER BY code").param(org()));
+        if (vouchers.isEmpty()) {
+            return out;
+        }
+        Map<String, Map<String, BigDecimal>> written = new java.util.HashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"referenceId\", \"productId\", \"locationId\","
+                + " sum(\"totalValue\") AS v FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND type ="
+                + " 'cost_adjustment' AND \"referenceType\" = 'landed_cost_voucher' AND \"referenceId\" = ANY(?::text[])"
+                + " AND coalesce(notes, '') NOT LIKE 'Released%' GROUP BY 1, 2, 3").params(org(), vouchers.stream()
+                .map(v -> (String) v.get("code")).toArray(String[]::new)))) {
+            written.computeIfAbsent((String) r.get("referenceId"), k -> new TreeMap<>())
+                    .put(r.get("productId") + ":" + r.get("locationId"), SqlRows.dec(r, "v"));
+        }
+        for (Map<String, Object> v : vouchers) {
             Map<String, BigDecimal> expected = new TreeMap<>();
-            String json = jdbc.sql("SELECT \"postedDisposition\"::text FROM \"LandedCost\" WHERE id = ?").param(v.get("id"))
-                    .query(String.class).single();
-            com.inventoryerp.shared.web.EntityJson.tree(json).properties().forEach(e -> {
+            com.inventoryerp.shared.web.EntityJson.tree((String) v.get("disposition")).properties().forEach(e -> {
                 if (e.getKey().startsWith("stock:") || e.getKey().startsWith("adjunct:")
                         || e.getKey().startsWith("parked:")) {
                     String[] k = e.getKey().split(":");
                     expected.merge(k[1] + ":" + k[2], new BigDecimal(e.getValue().asString()), BigDecimal::add);
                 }
             });
-            Map<String, BigDecimal> actual = new TreeMap<>();
-            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"locationId\", sum(\"totalValue\")"
-                    + " AS v FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND type = 'cost_adjustment' AND"
-                    + " \"referenceType\" = 'landed_cost_voucher' AND \"referenceId\" = ? AND coalesce(notes, '') NOT LIKE"
-                    + " 'Released%' GROUP BY 1, 2").params(org(), v.get("code")))) {
-                actual.put(r.get("productId") + ":" + r.get("locationId"), SqlRows.dec(r, "v"));
-            }
+            Map<String, BigDecimal> actual = written.getOrDefault((String) v.get("code"), Map.of());
             java.util.TreeSet<String> keys = new java.util.TreeSet<>(expected.keySet());
             keys.addAll(actual.keySet());
             for (String k : keys) {

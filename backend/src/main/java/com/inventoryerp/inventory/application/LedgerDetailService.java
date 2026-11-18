@@ -11,7 +11,9 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,56 +53,103 @@ public class LedgerDetailService {
         return String.join(" ", words);
     }
 
-    /** {@code {entry, lines, totals, source}}. */
+    /** Most sibling lines one entry returns (h-01 F10); the totals still cover every line of the reference. */
+    static final int MAX_LINES = 500;
+
+    /**
+     * {@code {entry, lines, totals, source}}. h-01 F10: at most {@value #MAX_LINES} sibling lines come back (oldest
+     * first) with {@code totals.truncated} when there are more; the totals are summed over every line in the database,
+     * and products, variants, locations and lots are read once for all lines.
+     */
     public Map<String, Object> getEntry(String id) {
         Map<String, Object> entry = SqlRows.one(InventoryLedger.class, jdbc.sql("SELECT * FROM \"InventoryLedger\""
                 + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
         if (entry == null || !scope.permits(str(entry, "locationId"))) {
             throw ApiException.notFound("Ledger entry not found");
         }
-        include(entry);
         String refType = str(entry, "referenceType");
         String refId = str(entry, "referenceId");
         List<Map<String, Object>> lines;
-        if (refType != null && refId != null) {
-            lines = SqlRows.list(InventoryLedger.class, jdbc.sql("SELECT * FROM \"InventoryLedger\" WHERE"
-                    + " \"organizationId\" = ? AND \"referenceType\" = ? AND \"referenceId\" = ? ORDER BY \"createdAt\" ASC")
-                    .params(org(), refType, refId));
-            lines.forEach(this::include);
-        } else {
-            lines = List.of(entry);
-        }
+        long count;
         BigDecimal in = BigDecimal.ZERO;
         BigDecimal out = BigDecimal.ZERO;
         BigDecimal total = BigDecimal.ZERO;
-        for (Map<String, Object> l : lines) {
-            BigDecimal change = Money.dec(l.get("quantityChange"));
+        if (refType != null && refId != null) {
+            lines = SqlRows.list(InventoryLedger.class, jdbc.sql("SELECT * FROM \"InventoryLedger\" WHERE"
+                    + " \"organizationId\" = ? AND \"referenceType\" = ? AND \"referenceId\" = ?"
+                    + " ORDER BY \"createdAt\" ASC, id ASC LIMIT " + MAX_LINES).params(org(), refType, refId));
+            Map<String, Object> sums = SqlRows.one(jdbc.sql("SELECT count(*) AS n,"
+                    + " COALESCE(SUM(\"quantityChange\") FILTER (WHERE \"quantityChange\" >= 0), 0) AS qin,"
+                    + " COALESCE(SUM(-\"quantityChange\") FILTER (WHERE \"quantityChange\" < 0), 0) AS qout,"
+                    + " COALESCE(SUM(\"totalValue\"), 0) AS total FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                    + " AND \"referenceType\" = ? AND \"referenceId\" = ?").params(org(), refType, refId));
+            count = ((Number) sums.get("n")).longValue();
+            in = Money.dec(sums.get("qin"));
+            out = Money.dec(sums.get("qout"));
+            total = Money.dec(sums.get("total"));
+        } else {
+            lines = List.of(entry);
+            count = 1;
+            BigDecimal change = Money.dec(entry.get("quantityChange"));
             if (change.signum() >= 0) {
-                in = in.add(change);
+                in = change;
             } else {
-                out = out.add(change.abs());
+                out = change.abs();
             }
-            total = total.add(Money.dec(l.get("totalValue")));
+            total = Money.dec(entry.get("totalValue"));
         }
-        return Obj.of("entry", entry, "lines", lines, "totals", Obj.of("lines", lines.size(), "quantityIn",
-                JsNumbers.js(in), "quantityOut", JsNumbers.js(out), "totalValue", JsNumbers.js(total)), "source",
-                resolveSource(refType, refId));
+        List<Map<String, Object>> all = new ArrayList<>(lines);
+        if (lines.stream().noneMatch(l -> l == entry)) {
+            all.add(entry);
+        }
+        include(all);
+        return Obj.of("entry", entry, "lines", lines, "totals", Obj.of("lines", count, "quantityIn",
+                JsNumbers.js(in), "quantityOut", JsNumbers.js(out), "totalValue", JsNumbers.js(total), "truncated",
+                count > lines.size()), "source", resolveSource(refType, refId));
     }
 
-    private void include(Map<String, Object> r) {
-        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT p.id, p.code, p.name, u.code AS uom FROM \"Product\" p"
-                + " LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\" WHERE p.id = ?").param(r.get("productId")));
-        if (p != null) {
-            Object uom = p.remove("uom");
-            p.put("uom", uom == null ? null : Obj.of("code", uom));
+    /** Product (with its unit), variant, location and lot of each line, one query per kind for all lines. */
+    private void include(List<Map<String, Object>> rows) {
+        Map<String, Map<String, Object>> products = byId(rows, "productId", "SELECT p.id, p.code, p.name, u.code AS uom"
+                + " FROM \"Product\" p LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\" WHERE p.id IN (:ids)"
+                + " AND p.\"organizationId\" = :org");
+        Map<String, Map<String, Object>> variants = byId(rows, "variantId", "SELECT id, name FROM \"ProductVariant\""
+                + " WHERE id IN (:ids) AND \"organizationId\" = :org");
+        Map<String, Map<String, Object>> locations = byId(rows, "locationId", "SELECT id, code, name FROM"
+                + " \"InventoryLocation\" WHERE id IN (:ids) AND \"organizationId\" = :org");
+        Map<String, Map<String, Object>> batches = byId(rows, "batchId", "SELECT id, \"batchNumber\", \"expiryDate\""
+                + " FROM \"InventoryBatch\" WHERE id IN (:ids) AND \"organizationId\" = :org");
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> p = copy(products.get(str(r, "productId")));
+            if (p != null) {
+                Object uom = p.get("uom");
+                p.put("uom", uom == null ? null : Obj.of("code", uom));
+            }
+            r.put("product", p);
+            r.put("variant", r.get("variantId") == null ? null : copy(variants.get(str(r, "variantId"))));
+            r.put("location", copy(locations.get(str(r, "locationId"))));
+            r.put("batch", r.get("batchId") == null ? null : copy(batches.get(str(r, "batchId"))));
         }
-        r.put("product", p);
-        r.put("variant", r.get("variantId") == null ? null : SqlRows.one(jdbc.sql("SELECT id, name FROM"
-                + " \"ProductVariant\" WHERE id = ?").param(r.get("variantId"))));
-        r.put("location", SqlRows.one(jdbc.sql("SELECT id, code, name FROM \"InventoryLocation\" WHERE id = ?")
-                .param(r.get("locationId"))));
-        r.put("batch", r.get("batchId") == null ? null : SqlRows.one(jdbc.sql("SELECT id, \"batchNumber\","
-                + " \"expiryDate\" FROM \"InventoryBatch\" WHERE id = ?").param(r.get("batchId"))));
+    }
+
+    private Map<String, Map<String, Object>> byId(List<Map<String, Object>> rows, String key, String sql) {
+        Set<String> ids = new LinkedHashSet<>();
+        rows.forEach(r -> {
+            if (r.get(key) != null) {
+                ids.add(str(r, key));
+            }
+        });
+        Map<String, Map<String, Object>> out = new HashMap<>();
+        if (!ids.isEmpty()) {
+            for (Map<String, Object> row : SqlRows.list(jdbc.sql(sql).param("ids", List.copyOf(ids)).param("org", org()))) {
+                out.put(str(row, "id"), row);
+            }
+        }
+        return out;
+    }
+
+    private static Map<String, Object> copy(Map<String, Object> row) {
+        return row == null ? null : new LinkedHashMap<>(row);
     }
 
     private Map<String, Object> resolveSource(String referenceType, String referenceId) {

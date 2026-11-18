@@ -4,6 +4,7 @@ import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
 
+import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -14,6 +15,7 @@ import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -52,15 +54,22 @@ public class PoChangeService {
     private final EventBus events;
     private final PurchaseCommitments commitments;
     private final ProcurementPolicyService policies;
+    private final ApprovalsService approvals;
+    private final ProcurementBudgetService budgets;
+    private final ProcurementDelegationService delegations;
     private final TransactionTemplate tx;
 
     public PoChangeService(JdbcClient jdbc, AuditService audit, EventBus events, PurchaseCommitments commitments,
-            ProcurementPolicyService policies, PlatformTransactionManager txm) {
+            ProcurementPolicyService policies, PlatformTransactionManager txm, ApprovalsService approvals,
+            ProcurementBudgetService budgets, ProcurementDelegationService delegations) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.events = events;
         this.commitments = commitments;
         this.policies = policies;
+        this.approvals = approvals;
+        this.budgets = budgets;
+        this.delegations = delegations;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -75,6 +84,7 @@ public class PoChangeService {
         }
         String orgId = org();
         String id = UUID.randomUUID().toString();
+        List<String> warnings = new ArrayList<>();
         tx.executeWithoutResult(st -> {
             Map<String, Object> po = lockOpen(poId);
             Map<String, Map<String, Object>> lines = lines(poId);
@@ -86,40 +96,62 @@ public class PoChangeService {
             boolean needsApproval = newTotal.compareTo(oldTotal) > 0 && (pct.signum() == 0 || newTotal.compareTo(limit) > 0);
             int number = jdbc.sql("SELECT COALESCE(MAX(\"changeNumber\"), 0) + 1 FROM \"PoChangeRequest\" WHERE"
                     + " \"purchaseOrderId\" = ?").param(poId).query(Integer.class).single();
+            // h03-F6 / h04-F2: a change that raises the order meets the limits of a new order of its new value: the
+            // requester's delegated purchasing limit now, the approval workflow's amount bands before it applies.
+            String workflowRequest = null;
+            if (newTotal.compareTo(oldTotal) > 0) {
+                if (jdbc.sql("SELECT count(*) FROM \"PoChangeRequest\" WHERE \"purchaseOrderId\" = ? AND status ="
+                        + " 'pending'").param(poId).query(Long.class).single() > 0) {
+                    throw ApiException.conflict("This order already has an open change request — decide it first");
+                }
+                BigDecimal rate = rate(po);
+                delegations.enforce((String) po.get("branchId"), baseValue(lines, in, rate));
+                workflowRequest = workflowGate(po, newTotal.multiply(rate), oldTotal.multiply(rate), id, number);
+                needsApproval = needsApproval || workflowRequest != null;
+            }
             try {
                 jdbc.sql("INSERT INTO \"PoChangeRequest\" (id, \"organizationId\", \"purchaseOrderId\", \"changeNumber\","
                                 + " status, reason, changes, \"oldTotal\", \"newTotal\", \"needsApproval\", \"requestedBy\","
-                                + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, 'pending', ?, ?::jsonb, ?, ?, ?, ?, "
-                                + NOW + ", " + NOW + ")")
+                                + " \"approvalRequestId\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, 'pending', ?,"
+                                + " ?::jsonb, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ")")
                         .params(id, orgId, poId, number, in.reason().trim(), EntityJson.toJson(changesJson(in)), oldTotal,
-                                newTotal, needsApproval, user())
+                                newTotal, needsApproval, user(), workflowRequest)
                         .update();
             } catch (org.springframework.dao.DuplicateKeyException e) {
                 throw ApiException.conflict("This order already has an open change request — decide it first");
             }
             audit.recordInTx(AuditInput.of("PoChangeRequest", id, "create", null, Obj.of("purchaseOrderId", poId,
                     "oldTotal", JsNumbers.dec(oldTotal), "newTotal", JsNumbers.dec(newTotal), "needsApproval",
-                    needsApproval)));
+                    needsApproval, "approvalRequestId", workflowRequest)));
             if (!needsApproval) {
-                apply(id);
+                warnings.addAll(apply(id));
             }
         });
-        return get(id);
+        return withWarnings(get(id), warnings);
     }
 
-    /** Approve and apply a pending change (not by the person who asked). */
+    /**
+     * Approve and apply a pending change (not by the person who asked). A change that raised the order past its
+     * approved amount applies only once the order's approval workflow approved the new value (h03-F6).
+     */
     public Map<String, Object> approve(String changeId, String note) {
+        List<String> warnings = new ArrayList<>();
         tx.executeWithoutResult(st -> {
             Map<String, Object> cr = lockPending(changeId);
-            if (user() != null && user().equals(cr.get("requestedBy"))) {
+            if (user() == null) {
+                // h04-F11: a token without a user cannot prove it is not the requester.
+                throw ApiException.forbidden("A change cannot be approved without a signed-in user; approve it from a"
+                        + " user account");
+            }
+            if (user().equals(cr.get("requestedBy"))) {
                 throw ApiException.forbidden("You cannot approve a change you requested — another approver must decide");
             }
             jdbc.sql("UPDATE \"PoChangeRequest\" SET status = 'approved', \"decidedBy\" = ?, \"decidedAt\" = " + NOW
                     + ", \"decisionNote\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?").params(user(), note, changeId)
                     .update();
-            apply(changeId);
+            warnings.addAll(apply(changeId));
         });
-        return get(changeId);
+        return withWarnings(get(changeId), warnings);
     }
 
     /** Reject a pending change. */
@@ -128,7 +160,8 @@ public class PoChangeService {
             throw ApiException.badRequest("A reason is required to reject a change");
         }
         tx.executeWithoutResult(st -> {
-            lockPending(changeId);
+            Map<String, Object> cr = lockPending(changeId);
+            withdrawWorkflow(cr, "The order change was rejected");
             jdbc.sql("UPDATE \"PoChangeRequest\" SET status = 'rejected', \"decidedBy\" = ?, \"decidedAt\" = " + NOW
                     + ", \"decisionNote\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                     .params(user(), note.trim(), changeId).update();
@@ -144,6 +177,7 @@ public class PoChangeService {
             if (user() != null && !user().equals(cr.get("requestedBy"))) {
                 throw ApiException.forbidden("Only the person who asked for the change can withdraw it");
             }
+            withdrawWorkflow(cr, "The order change was withdrawn");
             jdbc.sql("UPDATE \"PoChangeRequest\" SET status = 'cancelled', \"updatedAt\" = " + NOW + " WHERE id = ?")
                     .param(changeId).update();
         });
@@ -190,15 +224,21 @@ public class PoChangeService {
 
     // ── internals ─────────────────────────────────────────────────────────────────────────────────────────────
 
-    private void apply(String changeId) {
+    /** Apply a change; returns the budget warnings to show (warn-mode budgets the raised order now exceeds). */
+    private List<String> apply(String changeId) {
         String orgId = org();
         Map<String, Object> cr = SqlRows.one(jdbc.sql("SELECT * FROM \"PoChangeRequest\" WHERE id = ? AND"
                 + " \"organizationId\" = ?").params(changeId, orgId));
+        requireWorkflowApproved(cr);
         String poId = (String) cr.get("purchaseOrderId");
         Map<String, Object> po = lockOpen(poId);
         Map<String, Map<String, Object>> lines = lines(poId);
         ChangeInput in = parse(cr.get("changes"));
-        validateAndTotal(po, lines, in);
+        BigDecimal newTotal = validateAndTotal(po, lines, in);
+        List<String> warnings = List.of();
+        if (newTotal.compareTo(Money.dec(po.get("totalAmount"))) > 0) {
+            warnings = checkBudgets(po, lines, in);
+        }
         int revision = ((Number) po.get("revision")).intValue();
         if (revision == 0) {
             snapshot(poId, 0, null);
@@ -252,6 +292,138 @@ public class PoChangeService {
                 JsNumbers.dec(total), "revision", revision + 1, "changeRequestId", changeId)));
         events.publish("purchase_order.changed", Obj.of("organizationId", orgId, "orderId", poId, "changeRequestId",
                 changeId, "revision", revision + 1));
+        return warnings;
+    }
+
+    // ── limits for a raised order (h03-F6 / h04-F2) ─────────────────────────────────────────────────────────────
+
+    /** The order's rate to the functional currency. */
+    private static BigDecimal rate(Map<String, Object> po) {
+        BigDecimal rate = Money.dec(po.get("exchangeRate"));
+        return rate.signum() > 0 ? rate : BigDecimal.ONE;
+    }
+
+    /** The changed line's quantity and price, else the line's own. */
+    private static BigDecimal[] qtyPrice(Map<String, Object> l, Map<String, LineChange> byLine) {
+        LineChange c = byLine.get((String) l.get("id"));
+        return new BigDecimal[] {c != null && c.quantity() != null ? c.quantity() : Money.dec(l.get("quantity")),
+            c != null && c.unitPrice() != null ? c.unitPrice() : Money.dec(l.get("unitPrice"))};
+    }
+
+    private static Map<String, LineChange> byLine(ChangeInput in) {
+        Map<String, LineChange> out = new HashMap<>();
+        if (in.lines() != null) {
+            in.lines().forEach(l -> out.put(l.lineId(), l));
+        }
+        return out;
+    }
+
+    /** The changed order's value in base currency, excluding tax: what a delegated purchasing limit is measured on. */
+    private static BigDecimal baseValue(Map<String, Map<String, Object>> lines, ChangeInput in, BigDecimal rate) {
+        Map<String, LineChange> byLine = byLine(in);
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Map<String, Object> l : lines.values()) {
+            BigDecimal[] qp = qtyPrice(l, byLine);
+            sum = sum.add(qp[0].multiply(qp[1]).multiply(rate));
+        }
+        return sum.setScale(6, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * The approval workflow sees a raised order as a new order of its new value (functional currency). When that is
+     * above every amount the order was approved for, a {@code purchase_order} request is raised; {@code null} when the
+     * approved amount covers it or no workflow step applies to the new value.
+     */
+    private String workflowGate(Map<String, Object> po, BigDecimal newAmount, BigDecimal oldAmount, String changeId,
+            int changeNumber) {
+        String poId = (String) po.get("id");
+        BigDecimal approved = null;
+        for (String raw : jdbc.sql("SELECT snapshot->>'amount' FROM \"ApprovalRequest\" WHERE \"organizationId\" = ? AND"
+                + " \"entityType\" = 'purchase_order' AND \"entityId\" = ? AND status::text = 'approved'")
+                .params(org(), poId).query(String.class).list()) {
+            try {
+                BigDecimal a = raw == null ? null : new BigDecimal(raw.trim());
+                approved = a == null ? approved : approved == null ? a : approved.max(a);
+            } catch (NumberFormatException e) {
+                // a snapshot without a readable amount approves nothing
+            }
+        }
+        if (approved != null && newAmount.compareTo(approved.add(new BigDecimal("0.005"))) <= 0) {
+            return null;
+        }
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("amount", JsNumbers.js(newAmount.setScale(6, RoundingMode.HALF_UP)));
+        snapshot.put("previousAmount", JsNumbers.js(oldAmount.setScale(6, RoundingMode.HALF_UP)));
+        snapshot.put("partnerId", po.get("partnerId"));
+        snapshot.put("orderNumber", po.get("orderNumber"));
+        snapshot.put("createdBy", user());
+        if (po.get("branchId") != null) {
+            snapshot.put("branchId", po.get("branchId"));
+        }
+        if (po.get("departmentId") != null) {
+            snapshot.put("departmentId", po.get("departmentId"));
+        }
+        snapshot.put("changeRequestId", changeId);
+        snapshot.put("changeNumber", changeNumber);
+        Map<String, Object> req = approvals.requestApproval("purchase_order", poId, snapshot, null);
+        return req == null ? null : (String) req.get("id");
+    }
+
+    /** A change raised to the approval workflow applies only after that request was approved. */
+    private void requireWorkflowApproved(Map<String, Object> cr) {
+        Object requestId = cr.get("approvalRequestId");
+        if (requestId == null) {
+            return;
+        }
+        String status = jdbc.sql("SELECT status::text FROM \"ApprovalRequest\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(requestId, org()).query(String.class).optional().orElse("missing");
+        if ("pending".equals(status)) {
+            throw ApiException.badRequest("This change cannot be applied while the order's approval workflow is"
+                    + " deciding the new total (request " + requestId + "); approve that request first");
+        }
+        if (!"approved".equals(status)) {
+            throw ApiException.badRequest("This change cannot be applied: the order's approval workflow did not approve"
+                    + " the new total (" + status + "); reject or withdraw the change");
+        }
+    }
+
+    /** Withdraw the change's still-pending workflow request (a no-op when there is none or it was decided). */
+    private void withdrawWorkflow(Map<String, Object> cr, String reason) {
+        if (cr.get("approvalRequestId") != null) {
+            approvals.withdraw((String) cr.get("approvalRequestId"), reason);
+        }
+    }
+
+    /**
+     * Budget control on the raised order, as on a new order: the procurement budgets of its branch and department
+     * (blocking ones refuse with 409 under the budget row lock) and the {@code budget.control} policy on the accounting
+     * budgets, with each line's request cost centre. The order's own earlier value is left out of both.
+     */
+    private List<String> checkBudgets(Map<String, Object> po, Map<String, Map<String, Object>> lines, ChangeInput in) {
+        Map<String, LineChange> byLine = byLine(in);
+        BigDecimal rate = rate(po);
+        List<ProcurementBudgetService.DocLine> docLines = new ArrayList<>();
+        List<PurchaseCommitments.Draft> drafts = new ArrayList<>();
+        for (Map<String, Object> l : lines.values()) {
+            BigDecimal[] qp = qtyPrice(l, byLine);
+            BigDecimal cancelled = Money.dec(l.get("cancelledQuantity"));
+            BigDecimal open = qp[0].subtract(Money.dec(l.get("receivedQuantity"))).subtract(cancelled).max(BigDecimal.ZERO);
+            docLines.add(new ProcurementBudgetService.DocLine((String) l.get("productId"), qp[0].subtract(cancelled)
+                    .multiply(qp[1]).multiply(rate).setScale(6, RoundingMode.HALF_UP)));
+            drafts.add(new PurchaseCommitments.Draft((String) l.get("id"), (String) l.get("productId"), open, qp[1],
+                    (String) l.get("requestLineId")));
+        }
+        budgets.enforce(new ProcurementBudgetService.Doc(ProcurementBudgetService.ORDER, (String) po.get("id"),
+                (String) po.get("branchId"), (String) po.get("departmentId"), docLines, null));
+        return commitments.checkBudget((String) po.get("id"), (String) po.get("branchId"),
+                (String) po.get("currencyCode"), rate, drafts);
+    }
+
+    private static Map<String, Object> withWarnings(Map<String, Object> out, List<String> warnings) {
+        if (!warnings.isEmpty()) {
+            out.put("warnings", warnings);
+        }
+        return out;
     }
 
     private BigDecimal validateAndTotal(Map<String, Object> po, Map<String, Map<String, Object>> lines, ChangeInput in) {
@@ -331,8 +503,9 @@ public class PoChangeService {
 
     private Map<String, Object> lockOpen(String poId) {
         Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT id, status::text AS status, \"branchId\", \"totalAmount\","
-                + " revision FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
-                + " FOR UPDATE").params(poId, org()));
+                + " revision, \"departmentId\", \"exchangeRate\", \"currencyCode\", \"partnerId\", \"orderNumber\" FROM"
+                + " \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL FOR UPDATE")
+                .params(poId, org()));
         if (po == null) {
             throw ApiException.notFound("Purchase order not found");
         }

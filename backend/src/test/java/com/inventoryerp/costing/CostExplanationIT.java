@@ -87,7 +87,8 @@ class CostExplanationIT extends ApiTestSupport {
     @DisplayName("100 in at 10, 30 out, revalued to 12, NRV 11: value 840, allowance −70, carried 770 = 11 a unit")
     void explainsTheCarryingCost() {
         String cement = product("Cement");
-        String grn = ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", location, "receivedAt",
+        String grn = ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, org), "warehouseId", location, "receivedAt",
                 Instant.now().toString(), "lines", List.of(Map.of("productId", cement, "description", "Cement",
                         "quantity", 100, "unitCost", 10)))).get("id").asString();
         String grnNumber = jdbc.sql("SELECT \"receiptNumber\" FROM \"GoodsReceiptNote\" WHERE id = ?").param(grn)

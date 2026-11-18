@@ -10,6 +10,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
@@ -33,7 +34,7 @@ public class SupplierPortalController {
     public record QuoteLineRequest(@NotBlank(message = "rfqLineId is required") String rfqLineId,
             @NotNull(message = "unitPrice is required") @DecimalMin(value = "0", message = "unitPrice must not be less"
                     + " than 0") BigDecimal unitPrice,
-            @DecimalMin(value = "0", message = "quantity must not be less than 0") BigDecimal quantity,
+            @Positive(message = "quantity must be a positive number") BigDecimal quantity,
             @Min(value = 0, message = "leadTimeDays must not be less than 0") Integer leadTimeDays,
             @DecimalMin(value = "0", message = "taxRate must not be less than 0") BigDecimal taxRate,
             @Size(max = 500, message = "alternative is too long") String alternative,
