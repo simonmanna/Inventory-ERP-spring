@@ -1583,7 +1583,7 @@ public class LandedCostVoucherService {
         return SqlRows.one(jdbc.sql("SELECT c.\"supplierInvoiceRef\", l.code FROM \"LandedCostCharge\" c JOIN"
                 + " \"LandedCost\" l ON l.id = c.\"landedCostId\" WHERE c.\"organizationId\" = ? AND c.\"supplierId\" = ?"
                 + " AND c.\"supplierInvoiceRefNorm\" = ? AND c.live AND c.\"billMode\" = 'link' AND c.\"landedCostId\" <> ?"
-                + (billId != null ? " AND c.\"vendorBillId\" IS DISTINCT FROM ?" : "") + " ORDER BY c.\"createdAt\","
+                + (billId != null ? " AND c.\"vendorBillId\" IS DISTINCT FROM ?" : "") + " ORDER BY l.\"createdAt\","
                 + " c.id LIMIT 1").params(params));
     }
 

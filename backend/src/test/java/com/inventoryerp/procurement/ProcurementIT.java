@@ -1126,6 +1126,7 @@ class ProcurementIT extends ApiTestSupport {
     void authorization() {
         // 158 Source-to-Pay + 1 PROC-4 supplier performance + 14 PROC-3/5 (budgets, delegations, PR approval).
         // Accounting controls (2026-11-17): +4 supplier-claim quantity routes, +1 debit-note reversal.
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(199);
+        // Readiness gaps h06-F6 (2026-11-18): +1 GET /procurement/purchase-orders/{id}/payable.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(200);
     }
 }

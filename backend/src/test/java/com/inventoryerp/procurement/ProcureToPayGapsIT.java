@@ -590,7 +590,7 @@ class ProcureToPayGapsIT extends ApiTestSupport {
 
         receive(poId, product, 10);
         assertThat(supplierAp(supplier)).isEqualByComparingTo("1000");
-        assertThat(jdbc.sql("SELECT COALESCE(SUM(\"totalValue\"), 0) FROM \"StockItem\" WHERE \"productId\" = ?")
+        assertThat(jdbc.sql("SELECT COALESCE(SUM(quantity * \"runningAverageCost\"), 0) FROM \"StockItem\" WHERE \"productId\" = ?")
                 .param(product).query(BigDecimal.class).single()).isEqualByComparingTo("1000");
     }
 

@@ -639,7 +639,7 @@ class WarehouseReplenishmentGapsIT extends ApiTestSupport {
         assertThat(sb.get("needed").asBoolean()).isTrue();
         assertThat(dec(sb, "suggestedQuantity")).isEqualByComparingTo("50");
 
-        // a request line in packs of 10 for store B counts 2 packs as 20 units
+        // a request line in packs of 10 for store B counts 1 pack as 10 units (position 10, below the minimum 20)
         String pack = jdbc.sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND id <> ? ORDER BY code"
                 + " LIMIT 1").params(demoOrg, uom).query(String.class).single();
         jdbc.sql("INSERT INTO \"ProductUom\" (id, \"organizationId\", \"productId\", \"uomId\", factor) VALUES"
@@ -649,10 +649,10 @@ class WarehouseReplenishmentGapsIT extends ApiTestSupport {
                 + " VALUES (?, ?, ?, 'submitted', now())").params(request, demoOrg, "PR-GB" + suffix()).update();
         jdbc.sql("INSERT INTO \"PurchaseRequestLine\" (id, \"organizationId\", \"purchaseRequestId\", \"productId\","
                 + " description, quantity, \"unitOfMeasureId\", \"deliveryLocationId\") VALUES (?, ?, ?, ?, 'Cement',"
-                + " 2, ?, ?)").params(UUID.randomUUID().toString(), demoOrg, request, cement, pack, b).update();
+                + " 1, ?, ?)").params(UUID.randomUUID().toString(), demoOrg, request, cement, pack, b).update();
         sb = suggestion(ok(200, "GET", "/procurement/replenishment/suggestions?all=true", null), ruleB);
-        assertThat(dec(sb, "openRequests")).isEqualByComparingTo("20");
-        assertThat(dec(sb, "suggestedQuantity")).isEqualByComparingTo("30");
+        assertThat(dec(sb, "openRequests")).isEqualByComparingTo("10");
+        assertThat(dec(sb, "suggestedQuantity")).isEqualByComparingTo("40");
 
         String foreign = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isSupplier\", \"updatedAt\")"

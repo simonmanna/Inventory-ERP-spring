@@ -151,8 +151,11 @@ public class LandedCostReconciliationService {
         List<Map<String, Object>> classification = classification(expected);
         BigDecimal cogsSub = expected.getOrDefault("cogs", Money.ZERO);
         BigDecimal wipSub = expected.getOrDefault("wip", Money.ZERO);
-        BigDecimal cogsGl = voucherLines(determination.mapped("cogs"));
-        BigDecimal wipGl = voucherLines(determination.mapped("wip"));
+        // h-05 F15: read-only, so an organisation without a COGS / WIP mapping reads zero instead of failing.
+        String cogsAccount = accounts.byMappingOptional("cogs");
+        String wipAccount = accounts.byMappingOptional("wip");
+        BigDecimal cogsGl = cogsAccount == null ? Money.ZERO : voucherLines(cogsAccount);
+        BigDecimal wipGl = wipAccount == null ? Money.ZERO : voucherLines(wipAccount);
         BigDecimal cascaded = jdbc.sql("SELECT coalesce(sum(r.amount), 0) FROM \"CostAdjustmentRunLine\" r JOIN"
                 + " \"CostValueAdjustmentLine\" cl ON cl.id = r.\"adjustmentLineId\" JOIN \"CostValueAdjustment\" a ON a.id ="
                 + " cl.\"adjustmentId\" JOIN \"LandedCost\" l ON l.code = a.\"sourceId\" AND l.\"organizationId\" ="
@@ -163,9 +166,9 @@ public class LandedCostReconciliationService {
                 + " cl.\"adjustmentId\" WHERE a.\"organizationId\" = ? AND a.\"sourceType\" = 'landed_cost_voucher' AND"
                 + " a.\"reversedAt\" IS NULL AND cl.target = 'wip' AND NOT EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r"
                 + " WHERE r.\"adjustmentLineId\" = cl.id AND r.status = 'posted') GROUP BY 1 ORDER BY 1").param(org()));
-        rows.add(row("cogs", "Cost of sales — landed-cost consumption", determination.mapped("cogs"), cogsSub, cogsGl,
+        rows.add(row("cogs", "Cost of sales — landed-cost consumption", cogsAccount, cogsSub, cogsGl,
                 null));
-        rows.add(row("wip", "WIP — open landed shares per production order", determination.mapped("wip"),
+        rows.add(row("wip", "WIP — open landed shares per production order", wipAccount,
                 wipSub.subtract(cascaded), wipGl.subtract(cascaded), openWip));
 
         List<Map<String, Object>> locations = locationCheck();
@@ -193,8 +196,8 @@ public class LandedCostReconciliationService {
      */
     private List<Map<String, Object>> classification(Map<String, BigDecimal> totals) {
         List<Map<String, Object>> out = new ArrayList<>();
-        String cogs = determination.mapped("cogs");
-        String wip = determination.mapped("wip");
+        String cogs = java.util.Objects.requireNonNullElse(accounts.byMappingOptional("cogs"), "cogs");
+        String wip = java.util.Objects.requireNonNullElse(accounts.byMappingOptional("wip"), "wip");
         // Accounts the organisation never had cannot carry a posting: keyed by code so the check still reads zero.
         String adjunct = java.util.Objects.requireNonNullElse(existing("inventory_price_difference", "1396"), "1396");
         String returns = java.util.Objects.requireNonNullElse(existing("landed_cost_returns", "5976"), "5976");

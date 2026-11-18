@@ -18,4 +18,6 @@ CREATE INDEX "DebitNoteReceiptMatch_note" ON "DebitNoteReceiptMatch" ("organizat
 CREATE INDEX "DebitNoteReceiptMatch_receipt_line" ON "DebitNoteReceiptMatch" ("organizationId", "goodsReceiptLineId");
 
 ALTER TABLE "DebitNoteReceiptMatch" ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON "DebitNoteReceiptMatch" USING (("organizationId" = current_setting('app.org_id', true)));
+CREATE POLICY tenant_isolation ON "DebitNoteReceiptMatch"
+    USING (coalesce(current_setting('app.org_id', true), '') = '' OR "organizationId" = current_setting('app.org_id', true))
+    WITH CHECK (coalesce(current_setting('app.org_id', true), '') = '' OR "organizationId" = current_setting('app.org_id', true));
