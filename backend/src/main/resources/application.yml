@@ -118,6 +118,9 @@ app:
         procurement: ${SUPERSET_DASHBOARD_PROCUREMENT:}
         inventory: ${SUPERSET_DASHBOARD_INVENTORY:}
         finance: ${SUPERSET_DASHBOARD_FINANCE:}
+        pos: ${SUPERSET_DASHBOARD_POS:}
+        hr: ${SUPERSET_DASHBOARD_HR:}
+        manufacturing: ${SUPERSET_DASHBOARD_MANUFACTURING:}
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}

@@ -30,12 +30,18 @@ public class SupersetEmbedService {
     /** An ERP module that can have a dashboard; the key is the analytics screen path and the config key. */
     public record BiModule(String key, String label, String permission) {}
 
-    /** Same keys and permissions as the built-in analytics dashboards (ADR-S020). */
+    /**
+     * B0 modules use the keys and permissions of the built-in analytics dashboards (ADR-S020); B1 modules, which have
+     * no built-in dashboard, use the permission of the module's own reports.
+     */
     public static final List<BiModule> MODULES = List.of(
             new BiModule("sales", "Sales", Permissions.ANALYTICS__SALES),
             new BiModule("procurement", "Procurement", Permissions.ANALYTICS__PROCUREMENT),
             new BiModule("inventory", "Inventory", Permissions.ANALYTICS__INVENTORY),
-            new BiModule("finance", "Finance", Permissions.ANALYTICS__FINANCE));
+            new BiModule("finance", "Finance", Permissions.ANALYTICS__FINANCE),
+            new BiModule("pos", "Point of sale", Permissions.POS__REPORTS),
+            new BiModule("hr", "HR", Permissions.HR__REPORT),
+            new BiModule("manufacturing", "Manufacturing", Permissions.PRODUCTION_ORDER__READ));
 
     /** What the browser needs to embed one dashboard with the Superset embedded SDK. */
     public record GuestToken(String module, String dashboardId, String supersetDomain, String token,

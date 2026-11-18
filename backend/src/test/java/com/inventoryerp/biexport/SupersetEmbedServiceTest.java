@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 class SupersetEmbedServiceTest {
 
     static final String DASHBOARD = "8f0f6b1c-1111-4c3e-9a51-0123456789ab";
+    static final String HR_DASHBOARD = "8f0f6b1c-2222-4c3e-9a51-0123456789ab";
 
     HttpServer server;
     final List<String> guestBodies = new CopyOnWriteArrayList<>();
@@ -82,7 +83,7 @@ class SupersetEmbedServiceTest {
 
     SupersetEmbedService service(String url) {
         SupersetProperties props = new SupersetProperties(url, "https://bi.example.com/", "embedder", "secret",
-                Map.of("sales", DASHBOARD, "inventory", ""), Duration.ofSeconds(2));
+                Map.of("sales", DASHBOARD, "inventory", "", "hr", HR_DASHBOARD), Duration.ofSeconds(2));
         return new SupersetEmbedService(props, new SupersetClient(props), permissions);
     }
 
@@ -118,6 +119,18 @@ class SupersetEmbedServiceTest {
     @DisplayName("only configured dashboards the caller holds the permission for are listed")
     void listsAllowed() {
         assertThat(service(url()).dashboards()).containsExactly(Map.of("module", "sales", "label", "Sales"));
+    }
+
+    @Test
+    @DisplayName("a module without a built-in dashboard is gated by its own reports permission (HR: hr:report)")
+    void moduleReportPermission() {
+        SupersetEmbedService s = service(url());
+        assertThatThrownBy(() -> s.guestToken("hr")).extracting(e -> ((ApiException) e).status().value())
+                .isEqualTo(403);
+        when(permissions.current()).thenReturn(List.of("analytics:view", "hr:report"));
+        assertThat(s.dashboards()).containsExactly(Map.of("module", "hr", "label", "HR"));
+        assertThat(s.guestToken("hr").dashboardId()).isEqualTo(HR_DASHBOARD);
+        assertThat(guestBodies.getFirst()).contains("\"organizationId\\\" = 'org-a'");
     }
 
     @Test

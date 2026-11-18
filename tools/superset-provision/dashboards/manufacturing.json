@@ -1,0 +1,17 @@
+{
+  "module": "manufacturing",
+  "title": "Manufacturing",
+  "slug": "erp-manufacturing",
+  "charts": [
+    { "name": "Orders completed", "viz": "big_number_total", "dataset": "production_orders", "metric": "COUNT(*)", "where": "status = 'completed'", "width": 3 },
+    { "name": "Production cost", "viz": "big_number_total", "dataset": "production_orders", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 3 },
+    { "name": "Average yield %", "viz": "big_number_total", "dataset": "production_orders", "metric": "AVG(\"yieldPercent\")", "where": "status = 'completed'", "width": 3 },
+    { "name": "Orders in progress", "viz": "big_number_total", "dataset": "production_orders", "metric": "COUNT(*)", "where": "status IN ('confirmed', 'in_progress', 'qc_hold')", "width": 3 },
+    { "name": "Production cost by month", "viz": "bar_by_month", "dataset": "production_orders", "time": "completedDate", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 8 },
+    { "name": "Orders by status", "viz": "pie", "dataset": "production_orders", "groupby": "status", "metric": "COUNT(*)", "width": 4 },
+    { "name": "Output by product", "viz": "table", "dataset": "production_orders", "groupby": "productName", "metric": "SUM(\"producedQty\")", "where": "status = 'completed'", "width": 6 },
+    { "name": "Scrap by product", "viz": "table", "dataset": "production_orders", "groupby": "productName", "metric": "SUM(\"scrapQty\")", "where": "status = 'completed'", "width": 6 },
+    { "name": "Material cost by component", "viz": "table", "dataset": "production_materials", "groupby": "productName", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 6 },
+    { "name": "Variance by kind", "viz": "table", "dataset": "production_variances", "groupby": "kind", "metric": "SUM(\"amount\")", "width": 6 }
+  ]
+}

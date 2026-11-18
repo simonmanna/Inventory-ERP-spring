@@ -4,6 +4,7 @@ import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
 
 const AnalyticsDomainPage = lazy(() => import('./AnalyticsDomainPage').then((m) => ({ default: m.AnalyticsDomainPage })));
+const BiModuleDashboardPage = lazy(() => import('./BiModuleDashboardPage').then((m) => ({ default: m.BiModuleDashboardPage })));
 const AnalyticsOverviewPage = lazy(() => import('./AnalyticsOverviewPage').then((m) => ({ default: m.AnalyticsOverviewPage })));
 
 const P = PERMISSIONS.analytics;
@@ -17,6 +18,8 @@ const DASHBOARDS: Array<[string, string]> = [
 export const analyticsRoutes = (
   <>
     <Route path="/analytics" element={<RequirePermission permission={P.view}><AnalyticsOverviewPage /></RequirePermission>} />
+    {/* Embedded Superset dashboards of modules without a built-in one (ADR-S078); the API checks the module's permission. */}
+    <Route path="/analytics/bi/:module" element={<RequirePermission permission={P.view}><BiModuleDashboardPage /></RequirePermission>} />
     {DASHBOARDS.map(([path, permission]) => (
       <Route key={path} path={`/analytics/${path}`}
         element={<RequirePermission permission={permission}><AnalyticsDomainPage path={path} /></RequirePermission>} />

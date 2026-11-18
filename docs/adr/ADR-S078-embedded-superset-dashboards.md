@@ -1,9 +1,10 @@
 # ADR-S078 — Embedded Apache Superset dashboards, one per module
 
-- Status: accepted by the owner (2026-11-18). B0 (Sales, Procurement, Inventory, Finance) is built; B1–B3 follow.
+- Status: accepted by the owner (2026-11-18). B0 (Sales, Procurement, Inventory, Finance) and B1 (POS, HR,
+  Manufacturing) are built; B2–B3 follow.
 - Related: ADR-S020 (built-in analytics dashboards), docs/integrations.md (BI export, the `reporting` views of V111).
 - Extension: no NestJS counterpart. Two new routes under `/bi/dashboards`; nothing existing changes shape.
-- Migration: `V570__bi_superset_views.sql`. LP work in other worktrees holds V563–V567.
+- Migrations: `V570__bi_superset_views.sql` (B0), `V571__bi_superset_views_pos_hr_manufacturing.sql` (B1). LP work in other worktrees holds V563–V567.
 - New runtime component outside the pinned stack (AGENTS.md §3): Apache Superset 6.1.0 in its own container, with
   Redis. It is optional (compose profile `bi`) and the API runs unchanged without it.
 
@@ -75,5 +76,10 @@ Five engines were compared: Apache Superset, Metabase, Lightdash, JasperReports 
   - the `EmbedIssuer` login minted tokens but got 403 on `/api/v1/dashboard/` and `/api/v1/database/`;
   - the embedded page loaded with the ERP origin as referer and returned 403 for another site;
   - CSP `frame-ancestors` was set, with no `X-Frame-Options`.
+- B1, same setup: seven dashboards provisioned; all 34 POS, HR and Manufacturing charts ran their queries without
+  error; the isolation check passed on `hr_employees` (2 rows for one org, 1 for the other, control seeing both).
+  POS and Manufacturing views had no test rows, so isolation there rests on the same clause, not on a row count.
+- B1 modules with no built-in analytics screen use their own reports permission (`pos:reports`, `hr:report`,
+  `production_order:read`) plus `analytics:view`. HR views hold no pay per employee or personal details.
 - `SupersetEmbedServiceTest` (stubbed Superset) and `BiDashboardIT` pass.
 - Not yet verified: the dashboards rendered in a browser through the web app.

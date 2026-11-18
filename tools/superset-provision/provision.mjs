@@ -24,7 +24,8 @@ const env = (name, fallback) => {
 const BASE = env('SUPERSET_URL').replace(/\/+$/, '');
 const DB_NAME = 'ERP bi';
 const BI_VIEWS = ['sales_lines', 'sales_invoices', 'purchase_lines', 'vendor_bills', 'stock_on_hand', 'stock_movements',
-  'journal_lines', 'payments'];
+  'journal_lines', 'payments', 'pos_sales', 'pos_sale_lines', 'pos_cash_sessions', 'pos_voided_items', 'hr_employees',
+  'hr_attendance', 'hr_leave', 'hr_payroll_costs', 'production_orders', 'production_materials', 'production_variances'];
 const PROBE_PREFIX = '[isolation probe] ';
 
 // ---- HTTP -----------------------------------------------------------------------------------------------------------
@@ -118,7 +119,9 @@ async function ensureDatasets(databaseId) {
 const metric = (sql, label) => ({ expressionType: 'SQL', sqlExpression: sql, label });
 
 function chartParams(c, datasetId) {
-  const base = { datasource: `${datasetId}__table`, adhoc_filters: [], time_range: 'No filter' };
+  // `where` (optional): a SQL filter for this chart only, e.g. "status = 'completed'".
+  const adhoc = c.where ? [{ expressionType: 'SQL', clause: 'WHERE', sqlExpression: c.where }] : [];
+  const base = { datasource: `${datasetId}__table`, adhoc_filters: adhoc, time_range: 'No filter' };
   const m = metric(c.metric, c.name);
   switch (c.viz) {
     case 'big_number_total':

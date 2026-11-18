@@ -1,0 +1,18 @@
+{
+  "module": "hr",
+  "title": "HR",
+  "slug": "erp-hr",
+  "charts": [
+    { "name": "Active headcount", "viz": "big_number_total", "dataset": "hr_employees", "metric": "COUNT(*)", "where": "\"isActive\" AND \"employmentStatus\" NOT IN ('TERMINATED', 'RESIGNED')", "width": 4 },
+    { "name": "Payroll gross pay", "viz": "big_number_total", "dataset": "hr_payroll_costs", "metric": "SUM(\"grossPay\")", "width": 4 },
+    { "name": "Leave days approved", "viz": "big_number_total", "dataset": "hr_leave", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 4 },
+    { "name": "Payroll cost by month", "viz": "bar_by_month", "dataset": "hr_payroll_costs", "time": "paymentDate", "metric": "SUM(\"grossPay\")", "width": 8 },
+    { "name": "Headcount by employment type", "viz": "pie", "dataset": "hr_employees", "groupby": "employmentType", "metric": "COUNT(*)", "where": "\"isActive\"", "width": 4 },
+    { "name": "Headcount by department", "viz": "table", "dataset": "hr_employees", "groupby": "departmentName", "metric": "COUNT(*)", "where": "\"isActive\"", "width": 6 },
+    { "name": "Payroll cost by department", "viz": "table", "dataset": "hr_payroll_costs", "groupby": "departmentName", "metric": "SUM(\"grossPay\")", "width": 6 },
+    { "name": "Hires by month", "viz": "bar_by_month", "dataset": "hr_employees", "time": "hireDate", "metric": "COUNT(*)", "width": 6 },
+    { "name": "Attendance by status", "viz": "pie", "dataset": "hr_attendance", "groupby": "status", "metric": "COUNT(*)", "width": 6 },
+    { "name": "Overtime hours by department", "viz": "table", "dataset": "hr_attendance", "groupby": "departmentName", "metric": "SUM(\"overtimeMinutes\") / 60.0", "width": 6 },
+    { "name": "Leave days by type", "viz": "table", "dataset": "hr_leave", "groupby": "leaveType", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 6 }
+  ]
+}

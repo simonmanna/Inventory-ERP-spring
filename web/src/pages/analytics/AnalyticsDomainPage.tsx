@@ -16,6 +16,9 @@ import { useAnalyticsFilters } from './use-analytics-filters';
 /** Links to the dashboards this user may open; filters carry over. */
 export function DomainTabs({ current, search }: { current?: string; search: string }) {
   const has = useAuthStore((s) => s.hasPermission);
+  // Modules that only have an embedded Superset dashboard (POS, HR, Manufacturing, ...; ADR-S078).
+  const { data: bi } = useBiDashboards();
+  const builtIn = new Set(analyticsDomains().map((d) => d.path));
   const qs = search ? `?${search}` : '';
   const tab = (active: boolean) => `whitespace-nowrap rounded-md px-3 py-1.5 text-sm ${active
     ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted'}`;
@@ -24,6 +27,9 @@ export function DomainTabs({ current, search }: { current?: string; search: stri
       <Link className={tab(!current)} to={`/analytics${qs}`}>{tx('Overview')}</Link>
       {analyticsDomains().filter((d) => has(d.permission)).map((d) => (
         <Link key={d.path} className={tab(current === d.path)} to={`/analytics/${d.path}${qs}`}>{d.label}</Link>
+      ))}
+      {(bi ?? []).filter((d) => !builtIn.has(d.module)).map((d) => (
+        <Link key={d.module} className={tab(current === d.module)} to={`/analytics/bi/${d.module}`}>{tx(d.label)}</Link>
       ))}
     </nav>
   );

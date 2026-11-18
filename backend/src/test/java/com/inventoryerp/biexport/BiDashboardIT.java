@@ -23,11 +23,26 @@ class BiDashboardIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("no bi view exposes personal or secret columns (salary per employee, bank, tax, contact, password)")
+    void noPersonalColumns() {
+        List<String> leaked = jdbc.sql("SELECT c.relname || '.' || a.attname FROM pg_attribute a"
+                + " JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace"
+                + " WHERE n.nspname = 'bi' AND a.attnum > 0 AND NOT a.attisdropped AND a.attname = ANY (?::text[])")
+                .param(new String[] {"baseSalary", "hourlyRate", "bankAccountNumber", "bankName", "taxNumber",
+                    "pensionNumber", "socialSecurityNumber", "email", "phone", "dateOfBirth", "passwordHash",
+                    "pinHash", "mobileMoneyNumber", "address"})
+                .query(String.class).list();
+        assertThat(leaked).isEmpty();
+    }
+
+    @Test
     @DisplayName("every bi view exposes organizationId, the column the guest-token clause filters on")
     void everyViewCarriesOrganization() {
         List<String> views = biViews();
         assertThat(views).contains("sales_lines", "sales_invoices", "purchase_lines", "vendor_bills", "stock_on_hand",
-                "stock_movements", "journal_lines", "payments");
+                "stock_movements", "journal_lines", "payments", "pos_sales", "pos_sale_lines", "pos_cash_sessions",
+                "pos_voided_items", "hr_employees", "hr_attendance", "hr_leave", "hr_payroll_costs", "production_orders",
+                "production_materials", "production_variances");
         for (String v : views) {
             Integer has = jdbc.sql("SELECT count(*) FROM pg_attribute WHERE attrelid = " + OID
                     + " AND attname = 'organizationId' AND NOT attisdropped").params("bi", v).query(Integer.class)

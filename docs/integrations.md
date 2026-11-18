@@ -16,7 +16,7 @@ or vendor.
 | Labels | `documents.application.LabelRenderer` (not an SPI) | PDF, ZPL; QR, Code 128 | `format` and `symbology` on the request | No direct printing: the browser or driver prints the file |
 | Messaging | `communication.application.providers.MessagingProvider` | `internal`, `telegram`, `whatsapp` | Channel configured per organization | See [`spec/communication.md`](spec/communication.md) |
 | BI | `reporting` views and `/bi/datasets` | 8 datasets | Permission `bi:export` | Read-only; see below |
-| Embedded dashboards | Apache Superset 6.1.0, `bi` views, `/bi/dashboards` | 4 module dashboards | `SUPERSET_*`, compose profile `bi` | Isolation through guest-token row-level security; see below |
+| Embedded dashboards | Apache Superset 6.1.0, `bi` views, `/bi/dashboards` | 7 module dashboards | `SUPERSET_*`, compose profile `bi` | Isolation through guest-token row-level security; see below |
 
 A failed call to an external system never posts anything to the ledger, and no key or token is ever logged.
 
@@ -188,9 +188,22 @@ a row to `DATASETS` in `BiExportService`. Columns are read from the database, so
 
 ## Embedded dashboards (Apache Superset)
 
-ADR-S078. Each module's analytics screen (`/analytics/<module>`) gets an **Explore** view showing a Superset dashboard
-inside the ERP. It appears only when that module has a configured dashboard and the user holds the module's
-`analytics:<module>` permission. The browser never logs into Superset. The API mints a guest token valid for 5 minutes
+ADR-S078. Sales, Procurement, Inventory and Finance have a built-in analytics screen (`/analytics/<module>`); it gets an
+**Explore** view showing the module's Superset dashboard inside the ERP. POS, HR and Manufacturing have no built-in
+screen; their dashboard opens at `/analytics/bi/<module>`, linked from the analytics tabs. A dashboard appears only when
+it is configured and the user holds `analytics:view` plus the module's permission:
+
+| Module | Permission | Views |
+|---|---|---|
+| `sales` | `analytics:sales` | `sales_lines`, `sales_invoices` |
+| `procurement` | `analytics:procurement` | `purchase_lines`, `vendor_bills` |
+| `inventory` | `analytics:inventory` | `stock_on_hand`, `stock_movements` |
+| `finance` | `analytics:finance` | `journal_lines`, `payments` |
+| `pos` | `pos:reports` | `pos_sales`, `pos_sale_lines`, `pos_cash_sessions`, `pos_voided_items` |
+| `hr` | `hr:report` | `hr_employees`, `hr_attendance`, `hr_leave`, `hr_payroll_costs` |
+| `manufacturing` | `production_order:read` | `production_orders`, `production_materials`, `production_variances` |
+
+ The browser never logs into Superset. The API mints a guest token valid for 5 minutes
 for one dashboard, and the token carries the clause `"organizationId" = '<the user's organization>'`. Superset adds
 that clause to every query the token runs. The organization comes from the signed-in session, so this is safe on a
 shared database.
@@ -198,12 +211,15 @@ shared database.
 | Route | Permission | Returns |
 |---|---|---|
 | `GET /bi/dashboards` | `analytics:view` | `[{module, label}]` the caller may open; `[]` when Superset is off |
-| `GET /bi/dashboards/{module}/guest-token` | `analytics:view` + `analytics:<module>` | `{module, dashboardId, supersetDomain, token, expiresAt}`; 404 unknown or unconfigured module or Superset off, 503 Superset configured but unreachable |
+| `GET /bi/dashboards/{module}/guest-token` | `analytics:view` + the module's permission (table above) | `{module, dashboardId, supersetDomain, token, expiresAt}`; 404 unknown or unconfigured module or Superset off, 503 Superset configured but unreachable |
 
 **Data.** Migration V570 creates the `bi` schema: `sales_lines`, `sales_invoices` (with aging), `purchase_lines`,
 `vendor_bills` (with aging), `stock_on_hand`, `stock_movements`, `journal_lines` and `payments`. Unlike `reporting`,
 these views do not filter on `app.org_id`. Only `superset_reader` may read them; the API role may not. Every view has
-an `organizationId` column, because the guest-token clause filters on it.
+an `organizationId` column, because the guest-token clause filters on it. V571 adds the POS, HR and Manufacturing
+views. POS sales follow the POS reports (POS invoices posted, paid or refunded). The HR views carry no personal data a
+dashboard does not need: no pay per employee, bank, tax, pension or contact details; payroll is summed per run and
+department (`BiDashboardIT` fails if such a column appears in any `bi` view).
 
 **Set up (once per installation).**
 
@@ -229,8 +245,10 @@ in place. To add a module:
 
 1. Add its views to a new migration, each with `organizationId`.
 2. Add a `BiModule` to `SupersetEmbedService.MODULES` and a `dashboards.<module>` key to `application.yml`.
-3. Add a spec file.
+3. Add a spec file. A chart may carry `"where"`, a SQL filter for that chart only.
 4. Add the view names to `BI_VIEWS` in the script.
+5. If the module has no built-in analytics screen, it shows at `/analytics/bi/<module>` with no web change; add its
+   icon to `ICONS` in `BiModuleDashboardPage.tsx`.
 
 **Never** expose a dashboard whose isolation check failed. Run the check again before changing the Superset image tag.
 

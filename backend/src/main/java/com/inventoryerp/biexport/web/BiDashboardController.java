@@ -15,7 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * {@code /bi/dashboards}: embedded Superset dashboards, one per module (ADR-S078). Every route needs
- * {@code analytics:view}; each dashboard also needs its module's analytics permission, checked by the service.
+ * {@code analytics:view}; each dashboard also needs its module's permission ({@code analytics:sales}, {@code pos:reports}, ...), checked by
+ * the service.
  */
 @RestController
 @RequestMapping("/bi/dashboards")
