@@ -29,6 +29,8 @@ class RequisitionToOrderIT extends ApiTestSupport {
     String warehouse;
     String supplierA;
     String supplierB;
+    /** Approves the requests the administrator raises (gap fix h03-F6). */
+    String approverToken;
 
     @BeforeAll
     void fixtures() {
@@ -70,7 +72,12 @@ class RequisitionToOrderIT extends ApiTestSupport {
         String id = ok(201, "POST", "/procurement/purchase-requests", Map.of("description", "Crusher spares", "lines",
                 lines)).get("id").asString();
         ok(200, "PATCH", "/procurement/purchase-requests/" + id + "/submit", null);
-        ok(200, "PATCH", "/procurement/purchase-requests/" + id + "/approve", null);
+        // Gap fix h03-F6: a second administrator approves the request the first one raised.
+        if (approverToken == null) {
+            approverToken = com.inventoryerp.TestApprovers.secondAdmin(this);
+        }
+        assertThat(call("PATCH", "/procurement/purchase-requests/" + id + "/approve", null, approverToken).status())
+                .isEqualTo(200);
         return ok(200, "GET", "/procurement/purchase-requests/" + id, null);
     }
 

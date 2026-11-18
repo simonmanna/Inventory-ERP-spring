@@ -105,11 +105,14 @@ public class SupplierClaimService {
     private final StockService stock;
     private final StockPostingService stockPosting;
     private final TransactionTemplate tx;
+    private final com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod;
 
     public SupplierClaimService(JdbcClient jdbc, SequenceService seq, AuditService audit, EventBus events,
             PostingService posting, AccountDeterminationService determination, StockService stock,
-            StockPostingService stockPosting, PlatformTransactionManager txm) {
+            StockPostingService stockPosting, PlatformTransactionManager txm,
+            com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod) {
         this.jdbc = jdbc;
+        this.sod = sod;
         this.seq = seq;
         this.audit = audit;
         this.events = events;
@@ -168,13 +171,75 @@ public class SupplierClaimService {
         return transition(id, List.of("open"), "submitted", ", \"submittedAt\" = " + NOW, null, null);
     }
 
-    /** Supplier accepted (optionally for a different amount). */
+    /**
+     * Supplier accepted (optionally for a different amount). Gap fix h03-F7: the accepted amount is capped by what the
+     * claimed document leaves open to claims, and whoever raised the claim cannot record its acceptance once the
+     * {@code supplier_claim_settlement} separation-of-duties pair is on.
+     */
     public Map<String, Object> accept(String id, BigDecimal agreedAmount, String response) {
         if (agreedAmount != null && agreedAmount.signum() < 0) {
             throw ApiException.badRequest("Agreed amount must not be negative");
         }
+        Map<String, Object> c = SqlRows.one(jdbc.sql("SELECT * FROM \"SupplierClaim\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(id, org()));
+        if (c != null) {
+            sod.assertSeparated(com.inventoryerp.kernel.approvals.SegregationOfDutiesService.SUPPLIER_CLAIM_SETTLEMENT,
+                    "SupplierClaim", id, java.util.Arrays.asList((String) c.get("createdBy")));
+            assertWithinDocument(c, agreedAmount != null ? agreedAmount : Money.dec(c.get("amount")));
+        }
         return transition(id, List.of("open", "submitted"), "accepted", ", \"decidedAt\" = " + NOW
                 + ", amount = COALESCE(?, amount), \"supplierResponse\" = ?", agreedAmount, response);
+    }
+
+    /**
+     * Gap fix h03-F7: a claim credits at most the claimed document's net value (bill lines; receipt quantities at the
+     * order price, or the receipt cost without an order; order lines) less what other accepted or settled claims on
+     * that document already took. A claim that names no document has nothing to cap against.
+     */
+    private void assertWithinDocument(Map<String, Object> c, BigDecimal amount) {
+        String orgId = org();
+        BigDecimal value;
+        String column;
+        Object documentId;
+        if (c.get("vendorBillId") != null) {
+            value = sum(billBasis((String) c.get("vendorBillId")));
+            column = "vendorBillId";
+            documentId = c.get("vendorBillId");
+        } else if (c.get("goodsReceiptId") != null) {
+            // The order price converted to the receipt line's unit (a line received in pieces of a box order).
+            value = Money.dec(jdbc.sql("SELECT COALESCE(SUM(gl.quantity * CASE WHEN pl.id IS NULL THEN gl.\"unitCost\""
+                    + " WHEN COALESCE(pl.\"uomFactor\", 0) > 0 AND COALESCE(gl.\"uomFactor\", 0) > 0 THEN"
+                    + " pl.\"unitPrice\" * gl.\"uomFactor\" / pl.\"uomFactor\" ELSE pl.\"unitPrice\" END), 0) FROM"
+                    + " \"GoodsReceiptLine\" gl LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = gl.\"purchaseOrderLineId\""
+                    + " WHERE gl.\"goodsReceiptId\" = ? AND gl.\"organizationId\" = ?")
+                    .params(c.get("goodsReceiptId"), orgId).query(BigDecimal.class).single());
+            column = "goodsReceiptId";
+            documentId = c.get("goodsReceiptId");
+        } else if (c.get("purchaseOrderId") != null) {
+            value = sum(orderBasis((String) c.get("purchaseOrderId")));
+            column = "purchaseOrderId";
+            documentId = c.get("purchaseOrderId");
+        } else {
+            return;
+        }
+        BigDecimal taken = Money.dec(jdbc.sql("SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN"
+                        + " COALESCE(\"settledAmount\", amount) ELSE amount END), 0) FROM \"SupplierClaim\" WHERE \"organizationId\" = ? AND \"" + column
+                        + "\" = ? AND id <> ? AND status IN ('accepted', 'settled')")
+                .params(orgId, documentId, c.get("id")).query(BigDecimal.class).single());
+        BigDecimal open = Money.round(value.subtract(taken).max(Money.ZERO));
+        if (Money.round(amount).compareTo(open) > 0) {
+            throw ApiException.badRequest("Claim " + c.get("claimNumber") + " for " + JsNumbers.dec(Money.round(amount))
+                    + " exceeds what the claimed document leaves open to claims (" + JsNumbers.dec(open) + " of "
+                    + JsNumbers.dec(Money.round(value)) + "); agree a lower amount");
+        }
+    }
+
+    private static BigDecimal sum(List<Basis> basis) {
+        BigDecimal total = Money.ZERO;
+        for (Basis b : basis) {
+            total = total.add(b.weight());
+        }
+        return total;
     }
 
     /** Supplier rejected the claim. */
@@ -415,7 +480,19 @@ public class SupplierClaimService {
             if (amount.signum() <= 0) {
                 throw ApiException.badRequest("Nothing to settle — the agreed amount is 0");
             }
+            // Gap fix h03-F7: maker-checker (when the pair is on), and the cap again under the document's lock so two
+            // claims on one document cannot both take its last open value.
+            sod.assertSeparated(com.inventoryerp.kernel.approvals.SegregationOfDutiesService.SUPPLIER_CLAIM_SETTLEMENT,
+                    "SupplierClaim", id, java.util.Arrays.asList((String) c.get("createdBy")));
             Map<String, Object> bill = lockBill(c);
+            if (bill == null && c.get("goodsReceiptId") != null) {
+                jdbc.sql("SELECT id FROM \"GoodsReceiptNote\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(c.get("goodsReceiptId"), orgId).query().listOfRows();
+            } else if (bill == null && c.get("purchaseOrderId") != null) {
+                jdbc.sql("SELECT id FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(c.get("purchaseOrderId"), orgId).query().listOfRows();
+            }
+            assertWithinDocument(c, amount);
             Doc doc = document(c, bill);
             boolean hasLines = jdbc.sql("SELECT count(*) FROM \"SupplierClaimLine\" WHERE \"claimId\" = ? AND"
                     + " \"organizationId\" = ?").params(id, orgId).query(Long.class).single() > 0;

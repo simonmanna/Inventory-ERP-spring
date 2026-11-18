@@ -183,17 +183,21 @@ class SupplierClaimSettlementIT extends AccountingFixtures {
     void claimAboveResidual() {
         String supplier = demoPartner("R11 excess", true);
         String bill = postedServiceBill(supplier);
-        String first = claim(supplier, "price", 40, Map.of("vendorBillId", bill));
-        settle(first);
+        // Gap fix h03-F7: claims are capped at the bill's value (100 net), so the open amount is lowered by a payment
+        // (118 → 68) rather than by a first claim.
+        String payment = demoMoney("POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today(),
+                "amount", 50, "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", bill, "amount",
+                        50)))).get("id").asString();
+        assertThat(residual(bill)).isEqualByComparingTo("68");
         String second = claim(supplier, "damage", 100, Map.of("vendorBillId", bill));
         String entryId = settle(second).get("journalEntryId").asString();
 
         assertThat(apDebit(entryId, supplier)).isEqualByComparingTo("118");
         assertThat(residual(bill)).as("never below zero").isEqualByComparingTo("0");
         assertThat(paymentStatus(bill)).isEqualTo("paid");
-        BigDecimal apNet = netForSources(demoOrg, mapped(demoOrg, "accounts_payable"), List.of(bill, first, second));
-        assertThat(apNet).as("bill 118 Cr − credits 47.20 + 118 Dr = 47.20 supplier credit (debit balance)")
-                .isEqualByComparingTo("47.2");
+        BigDecimal apNet = netForSources(demoOrg, mapped(demoOrg, "accounts_payable"), List.of(bill, payment, second));
+        assertThat(apNet).as("bill 118 Cr − payment 50 Dr − credit 118 Dr = 50 supplier credit (debit balance)")
+                .isEqualByComparingTo("50");
     }
 
     @Test
@@ -322,7 +326,8 @@ class SupplierClaimSettlementIT extends AccountingFixtures {
         LedgerInvariants.postingComplete(jdbc, demoOrg, "supplier_claim", id, 1, false);
         assertThat(onHand(product)).as("replay does not issue twice").isEqualByComparingTo("8");
 
-        JsonNode lines = ok(200, "GET", "/procurement/claims/" + claim(supplier, "damage", 1000, Map.of(
+        // Gap fix h03-F7: within what the receipt (1000) leaves open after the settled 200.
+        JsonNode lines = ok(200, "GET", "/procurement/claims/" + claim(supplier, "damage", 100, Map.of(
                 "goodsReceiptId", grnId)) + "/receipt-lines", null);
         assertThat(lines.get(0).get("claimable").asString()).as("10 received − 2 claimed").isEqualTo("8");
     }

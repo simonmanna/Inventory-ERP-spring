@@ -82,7 +82,8 @@ class InventoryHardeningIT extends ApiTestSupport {
         line.put("description", "goods");
         line.put("quantity", qty);
         line.put("unitCost", cost);
-        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("warehouseId", warehouse, "receivedAt",
+        ok(200, "POST", "/procurement/goods-receipts/adhoc", Map.of("partnerId",
+                com.inventoryerp.TestSuppliers.supplier(jdbc, demoOrg), "warehouseId", warehouse, "receivedAt",
                 receivedAt.toString(), "lines", List.of(line)));
     }
 

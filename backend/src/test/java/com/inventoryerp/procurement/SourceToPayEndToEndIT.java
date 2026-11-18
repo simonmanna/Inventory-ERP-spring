@@ -61,7 +61,9 @@ class SourceToPayEndToEndIT extends ApiTestSupport {
                 "lines", List.of(Map.of("productId", cement, "description", "Cement 42.5 (50 kg)", "quantity", 200,
                         "requiredDate", LocalDate.now().plusDays(7).toString())))).get("id").asString();
         ok(200, "PATCH", "/procurement/purchase-requests/" + prId + "/submit", null);
-        ok(200, "PATCH", "/procurement/purchase-requests/" + prId + "/approve", null);
+        // Gap fix h03-F6: a second administrator approves the request the first one raised.
+        assertThat(call("PATCH", "/procurement/purchase-requests/" + prId + "/approve", null,
+                com.inventoryerp.TestApprovers.secondAdmin(this)).status()).isEqualTo(200);
         String reqLine = ok(200, "GET", "/procurement/purchase-requests/" + prId, null).get("lines").get(0).get("id")
                 .asString();
 
