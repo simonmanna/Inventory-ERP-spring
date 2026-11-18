@@ -1817,3 +1817,20 @@ Tests: `LpEventValidatorTest`, `LpEnginesTest`, `LpLedgerIT`, `LpReconIT`.
 
 Not verified against live POS traffic: the projection has only run against the demo seed. See the spec, "Assumptions
 to check on real data".
+
+## Embedded Superset dashboards (ADR-S078, extension: no Nest counterpart)
+
+[Integration notes](integrations.md#embedded-dashboards-apache-superset). Off unless `SUPERSET_URL` is set; compose
+profile `bi`.
+
+2 routes: `BiDashboardController` (`GET /bi/dashboards`, `GET /bi/dashboards/{module}/guest-token`). Migration V570
+(`bi` schema, `superset_reader`). Permissions reused: `analytics:view` + `analytics:<module>`. Web: Explore view on
+`/analytics/<module>`. Tests: `SupersetEmbedServiceTest`, `BiDashboardIT`, plus `provision.mjs --check-isolation`
+against a live Superset.
+
+- [x] B0 Sales, Procurement, Inventory, Finance dashboards
+- [ ] B1 POS, HR, Manufacturing
+- [ ] B2 remaining modules
+- [ ] B3 AI "ask your data" (own ADR)
+
+Not verified yet: the dashboards rendered in a browser through the ERP web app.

@@ -16,6 +16,7 @@ or vendor.
 | Labels | `documents.application.LabelRenderer` (not an SPI) | PDF, ZPL; QR, Code 128 | `format` and `symbology` on the request | No direct printing: the browser or driver prints the file |
 | Messaging | `communication.application.providers.MessagingProvider` | `internal`, `telegram`, `whatsapp` | Channel configured per organization | See [`spec/communication.md`](spec/communication.md) |
 | BI | `reporting` views and `/bi/datasets` | 8 datasets | Permission `bi:export` | Read-only; see below |
+| Embedded dashboards | Apache Superset 6.1.0, `bi` views, `/bi/dashboards` | 4 module dashboards | `SUPERSET_*`, compose profile `bi` | Isolation through guest-token row-level security; see below |
 
 A failed call to an external system never posts anything to the ledger, and no key or token is ever logged.
 
@@ -184,6 +185,54 @@ organization. The views are a contract: a later migration that drops or retypes 
 
 **Add a dataset.** Add the view in a new migration, with the `app.org_id` filter and an `organizationId` column, then add
 a row to `DATASETS` in `BiExportService`. Columns are read from the database, so nothing else changes.
+
+## Embedded dashboards (Apache Superset)
+
+ADR-S078. Each module's analytics screen (`/analytics/<module>`) gets an **Explore** view showing a Superset dashboard
+inside the ERP. It appears only when that module has a configured dashboard and the user holds the module's
+`analytics:<module>` permission. The browser never logs into Superset. The API mints a guest token valid for 5 minutes
+for one dashboard, and the token carries the clause `"organizationId" = '<the user's organization>'`. Superset adds
+that clause to every query the token runs. The organization comes from the signed-in session, so this is safe on a
+shared database.
+
+| Route | Permission | Returns |
+|---|---|---|
+| `GET /bi/dashboards` | `analytics:view` | `[{module, label}]` the caller may open; `[]` when Superset is off |
+| `GET /bi/dashboards/{module}/guest-token` | `analytics:view` + `analytics:<module>` | `{module, dashboardId, supersetDomain, token, expiresAt}`; 404 unknown or unconfigured module, 503 Superset off or unreachable |
+
+**Data.** Migration V570 creates the `bi` schema: `sales_lines`, `sales_invoices` (with aging), `purchase_lines`,
+`vendor_bills` (with aging), `stock_on_hand`, `stock_movements`, `journal_lines` and `payments`. Unlike `reporting`,
+these views do not filter on `app.org_id`. Only `superset_reader` may read them; the API role may not. Every view has
+an `organizationId` column, because the guest-token clause filters on it.
+
+**Set up (once per installation).**
+
+1. Fill the `SUPERSET_*` block of `.env` (see `.env.example`). Use long random values for `SUPERSET_SECRET_KEY` and
+   `SUPERSET_GUEST_TOKEN_SECRET`. Set `SUPERSET_FRAME_ANCESTORS` to the ERP web origin.
+2. `docker compose --profile bi up -d --build`. `superset-db-init` creates the `superset` metadata database (owned by
+   `superset_meta`) and gives `superset_reader` its password. `superset` starts on port 8088 and creates the admin,
+   the `EmbedViewer` guest role and the `EmbedIssuer` account the API uses.
+3. Provision the dashboards and prove isolation with two real organization ids:
+
+   ```bash
+   SUPERSET_URL=http://localhost:8088 SUPERSET_ADMIN_PASSWORD=... \
+   BI_DB_URI='postgresql+psycopg2://superset_reader:<SUPERSET_READER_PASSWORD>@db:5432/erp' \
+   SUPERSET_EMBED_ALLOWED_DOMAINS='https://erp.example.com' BI_CHECK_ORGS='<org-a> <org-b>' \
+   node tools/superset-provision/provision.mjs --check-isolation
+   ```
+
+   Copy the printed `SUPERSET_DASHBOARD_<MODULE>=` lines into `.env`. Set `SUPERSET_URL=http://superset:8088` and
+   `SUPERSET_PUBLIC_URL` to the address browsers use, then restart the API.
+
+**Change a dashboard.** Edit `tools/superset-provision/dashboards/<module>.json` and run the script again; it updates
+in place. To add a module:
+
+1. Add its views to a new migration, each with `organizationId`.
+2. Add a `BiModule` to `SupersetEmbedService.MODULES` and a `dashboards.<module>` key to `application.yml`.
+3. Add a spec file.
+4. Add the view names to `BI_VIEWS` in the script.
+
+**Never** expose a dashboard whose isolation check failed. Run the check again before changing the Superset image tag.
 
 ## Alerts as an integration point
 

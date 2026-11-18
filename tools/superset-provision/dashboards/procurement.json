@@ -1,0 +1,15 @@
+{
+  "module": "procurement",
+  "title": "Procurement",
+  "slug": "erp-procurement",
+  "charts": [
+    { "name": "Ordered value", "viz": "big_number_total", "dataset": "purchase_lines", "metric": "SUM(\"subtotal\")", "width": 3 },
+    { "name": "Purchase orders", "viz": "big_number_total", "dataset": "purchase_lines", "metric": "COUNT(DISTINCT \"purchaseOrderId\")", "width": 3 },
+    { "name": "Payables outstanding", "viz": "big_number_total", "dataset": "vendor_bills", "metric": "SUM(\"amountResidual\")", "width": 3 },
+    { "name": "Payables overdue", "viz": "big_number_total", "dataset": "vendor_bills", "metric": "SUM(CASE WHEN \"daysOverdue\" > 0 THEN \"amountResidual\" ELSE 0 END)", "width": 3 },
+    { "name": "Purchases by month", "viz": "bar_by_month", "dataset": "purchase_lines", "time": "orderDate", "metric": "SUM(\"subtotal\")", "width": 8 },
+    { "name": "Payables aging", "viz": "pie", "dataset": "vendor_bills", "groupby": "agingBucket", "metric": "SUM(\"amountResidual\")", "width": 4 },
+    { "name": "Top suppliers", "viz": "table", "dataset": "purchase_lines", "groupby": "supplierName", "metric": "SUM(\"subtotal\")", "width": 6 },
+    { "name": "Not yet received", "viz": "table", "dataset": "purchase_lines", "groupby": "productName", "metric": "SUM(\"quantity\" - COALESCE(\"receivedQuantity\", 0))", "width": 6 }
+  ]
+}

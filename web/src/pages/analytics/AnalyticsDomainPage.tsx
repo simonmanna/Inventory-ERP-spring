@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SupersetDashboard } from '@/components/bi/SupersetDashboard';
+import { useBiDashboards } from '@/components/bi/use-bi-dashboards';
 import { ListPageHeader } from '@/components/list';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
@@ -34,11 +36,27 @@ export function AnalyticsDomainPage({ path }: { path: string }) {
   const { query, update, search } = useAnalyticsFilters();
   const { data, isLoading, isError, isFetching } = useDashboard(path, query);
   const [drill, setDrill] = useState<Drill | null>(null);
+  // An embedded Superset dashboard for this module, when one is configured and allowed (ADR-S078).
+  const { data: bi } = useBiDashboards();
+  const hasExplore = !!bi?.some((d) => d.module === path);
+  const [view, setView] = useState<'summary' | 'explore'>('summary');
+  const explore = hasExplore && view === 'explore';
+  const toggle = (active: boolean) => `rounded-md px-3 py-1.5 text-sm ${active
+    ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-muted'}`;
   return (
     <div className="space-y-4">
       <ListPageHeader icon={domain?.icon} title={domain?.label ?? path}
         description={tx('Figures for the selected period and filters. Click a figure to see its documents.')} />
       <DomainTabs current={path} search={search} />
+      {hasExplore && (
+        <div className="flex gap-1" role="tablist" aria-label={tx('Dashboard view')}>
+          <button type="button" role="tab" aria-selected={!explore} className={toggle(!explore)}
+            onClick={() => setView('summary')}>{tx('Summary')}</button>
+          <button type="button" role="tab" aria-selected={explore} className={toggle(explore)}
+            onClick={() => setView('explore')}>{tx('Explore')}</button>
+        </div>
+      )}
+      {explore ? <SupersetDashboard module={path} /> : (<>
       <AnalyticsFilterBar query={query} update={update} supported={data?.supportedFilters ?? ['date']}
         suppliers={path === 'procurement'} />
       {isLoading && <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /><Skeleton className="h-20" /></div>}
@@ -49,6 +67,7 @@ export function AnalyticsDomainPage({ path }: { path: string }) {
         </div>
       )}
       {drill && <DrillDownDialog path={path} drill={drill} query={query} onClose={() => setDrill(null)} />}
+      </>)}
     </div>
   );
 }

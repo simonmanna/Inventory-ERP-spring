@@ -103,6 +103,21 @@ app:
     http-timeout: ${LICENSE_HTTP_TIMEOUT:10s}
     # What this install calls itself in the authority's list of activations (default: hostname).
     instance-name: ${LICENSE_INSTANCE_NAME:}
+  bi:
+    # Embedded Apache Superset dashboards (ADR-S078, docs/integrations.md). Off while SUPERSET_URL is empty.
+    superset:
+      url: ${SUPERSET_URL:}
+      # Where the browser loads Superset from, when it differs from the URL the API uses.
+      public-url: ${SUPERSET_PUBLIC_URL:}
+      username: ${SUPERSET_EMBED_USERNAME:}
+      password: ${SUPERSET_EMBED_PASSWORD:}
+      http-timeout: ${SUPERSET_HTTP_TIMEOUT:10s}
+      # Embedded-dashboard id per module, printed by tools/superset-provision.
+      dashboards:
+        sales: ${SUPERSET_DASHBOARD_SALES:}
+        procurement: ${SUPERSET_DASHBOARD_PROCUREMENT:}
+        inventory: ${SUPERSET_DASHBOARD_INVENTORY:}
+        finance: ${SUPERSET_DASHBOARD_FINANCE:}
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}

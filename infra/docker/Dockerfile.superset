@@ -1,0 +1,13 @@
+# Apache Superset for the ERP's embedded dashboards (ADR-S078). The official image ships no Postgres driver, and both
+# the metadata database and the ERP `bi` views are Postgres. Version pinned: the guest-token row-level security that
+# keeps tenants apart is re-verified (tools/superset-provision --check-isolation) before this tag changes.
+FROM apache/superset:6.1.0
+
+USER root
+RUN uv pip install --no-cache --python /app/.venv/bin/python "psycopg2-binary==2.9.10"
+COPY infra/docker/superset/superset_config.py /app/pythonpath/superset_config.py
+COPY infra/docker/superset/bootstrap_roles.py /app/docker/erp/bootstrap_roles.py
+COPY --chmod=755 infra/docker/superset/bootstrap.sh /app/docker/erp/bootstrap.sh
+USER superset
+
+CMD ["/app/docker/erp/bootstrap.sh"]
