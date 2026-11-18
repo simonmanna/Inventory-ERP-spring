@@ -315,17 +315,110 @@ public class LandedCostCustomsService {
                 + " \"createdAt\" DESC LIMIT 500").param(org()));
     }
 
-    /** Record the charge a calculation was used for (the only change a calculation accepts). */
+    /**
+     * Record the charge a calculation was used for (the only change a calculation accepts). Readiness gap h-05 F14:
+     * the charge must be live (its voucher not cancelled or reversed) and positive; a calculation already linked to
+     * another live charge is never re-linked; the calculations linked to one charge cannot total more than the charge
+     * (in base currency); every link is audited. Linking the same charge again changes nothing.
+     */
     @Transactional
     public Map<String, Object> link(String id, String chargeId) {
-        calculation(id);
-        if (jdbc.sql("SELECT count(*) FROM \"LandedCostCharge\" WHERE id = ? AND \"organizationId\" = ?")
-                .params(chargeId, org()).query(Long.class).single() == 0) {
+        Map<String, Object> calc = SqlRows.one(jdbc.sql("SELECT id, \"landedCostChargeId\", \"totalAmount\" FROM"
+                + " \"CustomsCalculation\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org()));
+        if (calc == null) {
+            throw ApiException.notFound("Customs calculation not found");
+        }
+        Map<String, Object> charge = linkCharge(chargeId, true);
+        if (charge == null) {
             throw ApiException.notFound("Landed cost charge not found");
         }
+        String current = (String) calc.get("landedCostChargeId");
+        if (chargeId.equals(current)) {
+            return calculation(id);
+        }
+        if (current != null) {
+            Map<String, Object> was = linkCharge(current, false);
+            if (was != null && Boolean.TRUE.equals(was.get("live"))) {
+                throw ApiException.conflict("Customs calculation is already linked to charge " + was.get("lineNumber")
+                        + " of landed cost " + was.get("code") + "; remove that charge from its voucher before linking"
+                        + " the calculation to another charge");
+            }
+        }
+        if (!Boolean.TRUE.equals(charge.get("live")) || SqlRows.dec(charge, "amount").signum() <= 0) {
+            throw ApiException.badRequest("Charge " + charge.get("lineNumber") + " of landed cost " + charge.get("code")
+                    + " is not a live charge; link the calculation to a charge of a voucher that is not cancelled,"
+                    + " reversed or a credit");
+        }
+        assertWithinCharge(charge, SqlRows.dec(calc, "totalAmount"), id);
         jdbc.sql("UPDATE \"CustomsCalculation\" SET \"landedCostChargeId\" = ? WHERE id = ?").params(chargeId, id)
                 .update();
+        audit.recordInTx(AuditInput.of("CustomsCalculation", id, "update", Obj.of("landedCostChargeId", current),
+                Obj.of("landedCostChargeId", chargeId, "voucher", charge.get("code"), "chargeLine",
+                        charge.get("lineNumber"), "totalAmount", JsNumbers.dec(SqlRows.dec(calc, "totalAmount")))));
         return calculation(id);
+    }
+
+    /** One charge with its voucher (code, live flag, base amount); locked when {@code lock}. */
+    private Map<String, Object> linkCharge(String chargeId, boolean lock) {
+        return SqlRows.one(jdbc.sql("SELECT c.id, c.\"lineNumber\", c.kind, c.amount, coalesce(c.\"baseAmount\", c.amount)"
+                + " AS base, c.live, l.code FROM \"LandedCostCharge\" c JOIN \"LandedCost\" l ON l.id = c.\"landedCostId\""
+                + " WHERE c.id = ? AND c.\"organizationId\" = ?" + (lock ? " FOR UPDATE OF c" : ""))
+                .params(chargeId, org()));
+    }
+
+    /** What the calculations linked to one charge would total with {@code extra} joining (except {@code calcId}). */
+    private BigDecimal linkedWith(Map<String, Object> charge, BigDecimal extra, String calcId) {
+        return jdbc.sql("SELECT coalesce(sum(\"totalAmount\"), 0) FROM \"CustomsCalculation\" WHERE"
+                + " \"organizationId\" = ? AND \"landedCostChargeId\" = ? AND id <> ?").params(org(), charge.get("id"),
+                calcId).query(BigDecimal.class).single().add(extra);
+    }
+
+    /** The calculations linked to one charge (with {@code extra} about to join, except {@code calcId}) fit in it. */
+    private void assertWithinCharge(Map<String, Object> charge, BigDecimal extra, String calcId) {
+        BigDecimal linked = linkedWith(charge, extra, calcId);
+        BigDecimal base = SqlRows.dec(charge, "base");
+        if (linked.compareTo(base) > 0) {
+            throw ApiException.badRequest("Customs calculations linked to charge " + charge.get("lineNumber")
+                    + " of landed cost " + charge.get("code") + " would total " + JsNumbers.dec(linked)
+                    + ", more than the charge's " + JsNumbers.dec(base) + "; correct the charge or link the"
+                    + " calculation to another charge");
+        }
+    }
+
+    /** h-05 F14: the calculations linked to a voucher's charges, with each charge's line number and kind. */
+    List<Map<String, Object>> linksOf(String voucherId) {
+        return SqlRows.list(jdbc.sql("SELECT cc.id, cc.\"totalAmount\", c.\"lineNumber\", c.kind FROM"
+                + " \"CustomsCalculation\" cc JOIN \"LandedCostCharge\" c ON c.id = cc.\"landedCostChargeId\" WHERE"
+                + " c.\"landedCostId\" = ? AND cc.\"organizationId\" = ? ORDER BY cc.id").params(voucherId, org()));
+    }
+
+    /**
+     * h-05 F14: after a draft voucher's charges were rewritten (new ids), each calculation of {@link #linksOf} follows
+     * the new charge with the same line number and kind while the calculations still fit in it; otherwise it is
+     * unlinked. Either way the change is audited.
+     */
+    void relink(String voucherId, String voucherCode, List<Map<String, Object>> links) {
+        for (Map<String, Object> l : links) {
+            Map<String, Object> next = SqlRows.one(jdbc.sql("SELECT c.id, c.\"lineNumber\", c.kind, c.amount,"
+                    + " coalesce(c.\"baseAmount\", c.amount) AS base, c.live, ? AS code FROM \"LandedCostCharge\" c WHERE"
+                    + " c.\"landedCostId\" = ? AND c.\"lineNumber\" = ? AND c.kind = ?").params(voucherCode, voucherId,
+                    l.get("lineNumber"), l.get("kind")));
+            String calcId = (String) l.get("id");
+            String outcome = "relinked: voucher edited";
+            if (next == null) {
+                outcome = "unlinked: voucher edited, no charge " + l.get("lineNumber") + " (" + l.get("kind") + ") left";
+            } else if (linkedWith(next, SqlRows.dec(l, "totalAmount"), calcId).compareTo(SqlRows.dec(next, "base")) > 0) {
+                outcome = "unlinked: voucher edited, charge " + l.get("lineNumber") + " is now less than the customs"
+                        + " calculations linked to it";
+                next = null;
+            }
+            String chargeId = next == null ? null : (String) next.get("id");
+            jdbc.sql("UPDATE \"CustomsCalculation\" SET \"landedCostChargeId\" = ? WHERE id = ? AND \"organizationId\" = ?")
+                    .params(chargeId, calcId, org()).update();
+            audit.recordInTx(AuditInput.of("CustomsCalculation", calcId, "update", Obj.of("voucher", voucherCode,
+                    "chargeLine", l.get("lineNumber")), Obj.of("landedCostChargeId", chargeId, "voucher", voucherCode,
+                    "outcome", outcome)));
+        }
     }
 
     // ---- allocation templates ----------------------------------------------------------------------------------------

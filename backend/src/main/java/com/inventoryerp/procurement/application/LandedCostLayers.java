@@ -80,6 +80,18 @@ class LandedCostLayers {
     /** The document posting the charge (stock-ledger reference of the value rows). */
     record Source(String sourceType, String sourceId) {}
 
+    /** One receipt movement about to be re-costed (readiness gap h-05 F13: locked before anything is computed). */
+    record Pool(String grnId, Group group) {}
+
+    /** Amount followed when only the pools a layer reaches are wanted (large, so no share rounds away). */
+    private static final BigDecimal PROBE = new BigDecimal("1000000000000");
+
+    /**
+     * Reversal target naming where a release of an adjunct put it (h-05 F7): {@code account:<release target>:<account
+     * id>}, e.g. {@code account:wip:<id>}.
+     */
+    static final String ACCOUNT = "account:";
+
     private final JdbcClient jdbc;
     private final CostLineageService lineage;
     private final LineageFollower follower;
@@ -104,6 +116,67 @@ class LandedCostLayers {
         List<Quant> quants = new ArrayList<>();
         for (Map<String, Object> r : SqlRows.list(jdbc.sql(sql).params(params))) {
             quants.add(new Quant(productId, (String) r.get("variantId"), (String) r.get("locationId")));
+        }
+        layers.lockQuants(quants);
+    }
+
+    private List<Quant> quantsOf(String productId, String sql, Object... params) {
+        List<Quant> quants = new ArrayList<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql(sql).params(params))) {
+            quants.add(new Quant(productId, (String) r.get("variantId"), (String) r.get("locationId")));
+        }
+        return quants;
+    }
+
+    /**
+     * Readiness gap h-05 F13: take the engine's quant lock of every pool the receipt movements can touch — the receipt
+     * pool, every pool its goods reached through transfers, every location of its lot, the quants of its serials — in
+     * one call, so in the engine's global order, before any on-hand / consumed split is computed. The per-pool locks the
+     * writes take later are re-entrant.
+     */
+    void lockPools(List<Pool> pools) {
+        List<Quant> quants = new ArrayList<>();
+        String orgId = org();
+        for (Pool p : pools) {
+            Group g = p.group();
+            quants.add(new Quant(g.productId(), g.variantId(), g.locationId()));
+            if (Boolean.TRUE.equals(g.product().get("serialTracking"))) {
+                quants.addAll(quantsOf(g.productId(), "SELECT DISTINCT \"variantId\", \"locationId\" FROM"
+                        + " \"InventorySerial\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ?",
+                        orgId, g.productId(), "goods_receipt:" + p.grnId()));
+            } else if (g.batchId() != null) {
+                quants.addAll(quantsOf(g.productId(), "SELECT DISTINCT b.\"variantId\", b.\"locationId\" FROM"
+                        + " \"InventoryBatch\" b JOIN \"InventoryBatch\" r ON r.id = ? AND r.\"organizationId\" = b.\"organizationId\""
+                        + " AND r.\"batchNumber\" = b.\"batchNumber\" WHERE b.\"organizationId\" = ? AND b.\"productId\" = ?",
+                        g.batchId(), orgId, g.productId()));
+            } else {
+                Map<String, Object> layer = lineage.receiptLayer(p.grnId(), g.productId(), g.variantId(), g.locationId(),
+                        null);
+                if (layer != null) {
+                    for (LineageFollower.Node n : follower.follow((String) layer.get("id"), PROBE).nodes()) {
+                        quants.add(new Quant(n.productId(), n.variantId(), n.locationId()));
+                    }
+                }
+            }
+        }
+        layers.lockQuants(quants);
+    }
+
+    /** h-05 F13: the quants a legacy (non-lineage) reversal of these allocations touches, locked in one call. */
+    void lockAllocations(List<Map<String, Object>> allocations, String fallbackGrnId) {
+        List<Quant> quants = new ArrayList<>();
+        String orgId = org();
+        for (Map<String, Object> a : allocations) {
+            String productId = (String) a.get("productId");
+            quants.add(new Quant(productId, (String) a.get("variantId"), (String) a.get("locationId")));
+            if (a.get("batchId") != null) {
+                quants.addAll(quantsOf(productId, "SELECT \"variantId\", \"locationId\" FROM \"InventoryBatch\" WHERE"
+                        + " id = ? AND \"organizationId\" = ?", a.get("batchId"), orgId));
+            }
+            String grnId = a.get("goodsReceiptId") != null ? (String) a.get("goodsReceiptId") : fallbackGrnId;
+            quants.addAll(quantsOf(productId, "SELECT DISTINCT \"variantId\", \"locationId\" FROM \"InventorySerial\""
+                    + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ?", orgId, productId,
+                    "goods_receipt:" + grnId));
         }
         layers.lockQuants(quants);
     }
@@ -143,7 +216,7 @@ class LandedCostLayers {
                     + g.locationId(), a.capitalized(), "cogs:" + g.productId(), allocated.subtract(a.capitalized()))));
         }
         if (g.batchId() != null) {
-            return lotLineage(g, allocated, write, source);
+            return lotLineage(grnId, g, allocated, write, source);
         }
         boolean standard = "STANDARD".equals(g.product().get("costingMethod"));
         Map<String, Object> layer = lineage.receiptLayer(grnId, g.productId(), g.variantId(), g.locationId(), null);
@@ -246,11 +319,17 @@ class LandedCostLayers {
 
     /**
      * Lot (F2): transfers move a lot by creating batch rows with the same batch number at the destination, so the
-     * receipt's units still on hand are that batch number's quantity at every location (at most the receipt quantity).
-     * Each such batch row's unit cost rises by the charge per received unit; the rest was consumed and is classified
-     * by the lot's own issue rows (production → WIP of its order, waste → scrap, return → return, else COGS).
+     * receipt's units still on hand sit in that batch number's rows at every location. Each such batch row's unit cost
+     * rises by the charge per received unit; the rest was consumed and is classified by the lot's own issue rows
+     * (production → WIP of its order, waste → scrap, return → return, else COGS).
+     *
+     * <p>Readiness gap h-05 F11: other receipts (and other variants) can share the batch number, so only this receipt's
+     * goods count. A lot is consumed first in, first out: the receipt's units are its window in the order the lot's
+     * goods arrived (transfers are moves, not arrivals), and an issue consumed them as far as its own place in the
+     * order of the lot's issues overlaps that window. That gives the units still on hand (at most the batch rows hold)
+     * and the issues to classify the consumed part by.
      */
-    private Applied lotLineage(Group g, BigDecimal allocated, boolean write, Source source) {
+    private Applied lotLineage(String grnId, Group g, BigDecimal allocated, boolean write, Source source) {
         String orgId = org();
         String number = jdbc.sql("SELECT \"batchNumber\" FROM \"InventoryBatch\" WHERE id = ? AND \"organizationId\" = ?")
                 .params(g.batchId(), orgId).query(String.class).optional().orElse(null);
@@ -269,7 +348,15 @@ class LandedCostLayers {
                 .params(orgId, g.productId(), g.variantId(), number, g.batchId()));
         BigDecimal qty = g.qty()[0];
         BigDecimal perUnit = Money.div(allocated, qty);
+        // Null when the receipt's own stock rows are not found: then, as before, every unit of the lot number counts.
+        List<Map<String, Object>> issues = lotIssues(grnId, g, number);
         BigDecimal remaining = qty;
+        if (issues != null) {
+            for (Map<String, Object> r : issues) {
+                remaining = remaining.subtract(SqlRows.dec(r, "q"));
+            }
+            remaining = Money.max(Money.ZERO, remaining);
+        }
         BigDecimal capitalized = Money.ZERO;
         BigDecimal onHand = Money.ZERO;
         List<Map<String, Object>> touched = new ArrayList<>();
@@ -311,11 +398,13 @@ class LandedCostLayers {
         BigDecimal weightTotal = Money.ZERO;
         List<Map<String, Object>> wipRows = new ArrayList<>();
         if (consumed.signum() != 0) {
-            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.id, l.type::text AS type, l.\"referenceType\","
-                            + " l.\"referenceId\", -l.\"quantityChange\" AS q FROM \"InventoryLedger\" l JOIN"
-                            + " \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ? AND"
-                            + " b.\"productId\" = ? AND b.\"batchNumber\" = ? AND l.\"quantityChange\" < 0 AND l.type <>"
-                            + " 'transfer_out'").params(orgId, g.productId(), number))) {
+            List<Map<String, Object>> consumers = issues != null ? issues : SqlRows.list(jdbc.sql("SELECT l.id,"
+                    + " l.type::text AS type, l.\"referenceType\", l.\"referenceId\", -l.\"quantityChange\" AS q FROM"
+                    + " \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ?"
+                    + " AND b.\"productId\" = ? AND b.\"variantId\" IS NOT DISTINCT FROM ? AND b.\"batchNumber\" = ? AND"
+                    + " l.\"quantityChange\" < 0 AND l.type <> 'transfer_out'").params(orgId, g.productId(), g.variantId(),
+                    number));
+            for (Map<String, Object> r : consumers) {
                 String target = follower.target(new AvcoLineageCalculator.Share((String) r.get("id"),
                         (String) r.get("type"), (String) r.get("referenceType"), (String) r.get("referenceId"),
                         Money.ZERO));
@@ -360,6 +449,58 @@ class LandedCostLayers {
                 returned, policy);
     }
 
+    /**
+     * h-05 F11: the lot's issues (transfers are moves, not issues) that consumed this receipt's units, first in first
+     * out — each with {@code q} = the units of this receipt it took. The receipt's units are its window in the order
+     * the lot's goods arrived (same product and variant); an issue takes the window's units its own place in the order
+     * of the lot's issues overlaps. Null when the receipt's own stock rows are not found.
+     */
+    private List<Map<String, Object>> lotIssues(String grnId, Group g, String number) {
+        String orgId = org();
+        List<Map<String, Object>> arrivals = SqlRows.list(jdbc.sql("SELECT l.\"quantityChange\" AS q,"
+                        + " (l.\"referenceType\" = 'goods_receipt' AND l.\"referenceId\" = ? AND l.\"batchId\" = ?) AS mine"
+                        + " FROM \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE"
+                        + " l.\"organizationId\" = ? AND b.\"productId\" = ? AND b.\"variantId\" IS NOT DISTINCT FROM ? AND"
+                        + " b.\"batchNumber\" = ? AND l.\"quantityChange\" > 0 AND l.type <> 'transfer_in' ORDER BY"
+                        + " l.\"createdAt\", l.id")
+                .params(grnId, g.batchId(), orgId, g.productId(), g.variantId(), number));
+        BigDecimal start = null;
+        BigDecimal seen = Money.ZERO;
+        for (Map<String, Object> a : arrivals) {
+            if (Boolean.TRUE.equals(a.get("mine"))) {
+                start = seen;
+                break;
+            }
+            seen = seen.add(SqlRows.dec(a, "q"));
+        }
+        if (start == null) {
+            return null;
+        }
+        BigDecimal end = start.add(g.qty()[0]);
+        List<Map<String, Object>> out = new ArrayList<>();
+        BigDecimal taken = Money.ZERO;
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.id, l.type::text AS type, l.\"referenceType\","
+                        + " l.\"referenceId\", -l.\"quantityChange\" AS q FROM \"InventoryLedger\" l JOIN \"InventoryBatch\" b"
+                        + " ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ? AND b.\"productId\" = ? AND"
+                        + " b.\"variantId\" IS NOT DISTINCT FROM ? AND b.\"batchNumber\" = ? AND l.\"quantityChange\" < 0"
+                        + " AND l.type <> 'transfer_out' ORDER BY l.\"createdAt\", l.id")
+                .params(orgId, g.productId(), g.variantId(), number))) {
+            if (taken.compareTo(end) >= 0) {
+                break;
+            }
+            BigDecimal q = SqlRows.dec(r, "q");
+            BigDecimal lo = Money.max(taken, start);
+            BigDecimal hi = Money.min(taken.add(q), end);
+            taken = taken.add(q);
+            if (hi.compareTo(lo) > 0) {
+                Map<String, Object> share = new LinkedHashMap<>(r);
+                share.put("q", hi.subtract(lo));
+                out.add(share);
+            }
+        }
+        return out;
+    }
+
     /** The WIP share of a lot, one lineage line per consuming ledger row: a later cost adjustment run cascades them. */
     private void recordLotWip(Group g, BigDecimal wip, List<Map<String, Object>> rows, BigDecimal weight, Source source) {
         List<AvcoLineageCalculator.Share> shares = new ArrayList<>();
@@ -379,8 +520,9 @@ class LandedCostLayers {
     /**
      * LC-1 reversal of a lineage-mode source, mirroring its posting. For each pool share the part still on hand now —
      * followed through any transfer since posting — is taken out of that pool; the part consumed since stays where the
-     * consumption put it and is returned per product and target, for the caller to reclass (Dr stock or adjunct / Cr
-     * the target). Lots are unwound per batch number; open adjuncts (STANDARD, parked) by their open amount.
+     * consumption put it and is returned per product and target ({@code wip}, {@code return}, {@code cogs}, or
+     * {@link #ACCOUNT} + the account a release of an adjunct went to), for the caller to reclass (Dr stock or adjunct /
+     * Cr the target). Lots are unwound per batch number; open adjuncts (STANDARD, parked) by their open amount.
      * Refused when a WIP share was already cascaded by a cost adjustment run, or a parked share was resolved.
      */
     Map<String, Map<String, BigDecimal>> reverseLineage(String sourceType, String sourceId, String originalEntryId,
@@ -407,6 +549,7 @@ class LandedCostLayers {
         List<Map<String, Object>> adjustments = SqlRows.list(jdbc.sql("SELECT * FROM \"CostValueAdjustment\" WHERE"
                 + " \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ? AND \"reversedAt\" IS NULL"
                 + " ORDER BY \"createdAt\", id").params(orgId, sourceType, sourceId));
+        lockReversal(adjustments, allocations);
         String note = "Landed cost " + sourceId + " reversed";
         for (Map<String, Object> a : adjustments) {
             String product = (String) a.get("productId");
@@ -417,7 +560,22 @@ class LandedCostLayers {
                 BigDecimal carried = SqlRows.dec(a, "onHandAmount");
                 lineage.recordValueOnly(product, variant, location, null, open.negate(), "reversal", originalEntryId,
                         (String) a.get("valuationComponent"), note);
-                add(unwound, product, "cogs", carried.subtract(open));
+                // h-05 F7: the part released since posting is reclassed from where each release put it (WIP of an
+                // order, scrap, cost of sales), not always from cost of sales; anything without a release row (released
+                // before V531) stays on cost of sales as before.
+                BigDecimal released = carried.subtract(open);
+                for (Map<String, Object> x : SqlRows.list(jdbc.sql("SELECT target, \"accountId\", sum(amount) AS amount"
+                        + " FROM \"CostValueAdjustmentRelease\" WHERE \"organizationId\" = ? AND \"adjustmentId\" = ? GROUP"
+                        + " BY target, \"accountId\" ORDER BY target, \"accountId\"").params(orgId, a.get("id")))) {
+                    BigDecimal part = Money.min(released.abs(), SqlRows.dec(x, "amount").abs())
+                            .multiply(BigDecimal.valueOf(released.signum()));
+                    if (part.signum() == 0) {
+                        continue;
+                    }
+                    add(unwound, product, ACCOUNT + x.get("target") + ":" + x.get("accountId"), part);
+                    released = released.subtract(part);
+                }
+                add(unwound, product, "cogs", released);
                 continue;
             }
             if (a.get("batchId") != null) {
@@ -458,6 +616,40 @@ class LandedCostLayers {
         return unwound;
     }
 
+    /**
+     * h-05 F13: every pool a reversal unwinds — each adjustment's pool, the pools its goods reached since, every location
+     * of a lot — locked in one call (the engine's global order) before anything is read.
+     */
+    private void lockReversal(List<Map<String, Object>> adjustments, List<Map<String, Object>> allocations) {
+        List<Quant> quants = new ArrayList<>();
+        String orgId = org();
+        for (Map<String, Object> a : adjustments) {
+            quants.add(new Quant((String) a.get("productId"), (String) a.get("variantId"), (String) a.get("locationId")));
+            if (a.get("valuationComponent") != null || a.get("batchId") != null || a.get("anchorLedgerId") == null
+                    || SqlRows.dec(a, "onHandAmount").signum() == 0) {
+                continue;
+            }
+            Map<String, Object> anchor = SqlRows.one(jdbc.sql("SELECT * FROM \"InventoryLedger\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(a.get("anchorLedgerId"), orgId));
+            BigDecimal poolQty = anchor == null ? Money.ZERO : SqlRows.dec(anchor, "balanceAfter");
+            if (poolQty.signum() <= 0) {
+                continue;
+            }
+            for (LineageFollower.Node n : follower.follow(anchor, poolQty, Money.ZERO, PROBE).nodes()) {
+                quants.add(new Quant(n.productId(), n.variantId(), n.locationId()));
+            }
+        }
+        for (Map<String, Object> alloc : allocations) {
+            Map<String, Object> d = disposition(alloc);
+            if (d != null && "lot".equals(d.get("mode")) && d.get("batchNumber") != null) {
+                quants.addAll(quantsOf((String) alloc.get("productId"), "SELECT DISTINCT \"variantId\", \"locationId\""
+                        + " FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
+                        + " \"batchNumber\" = ?", orgId, alloc.get("productId"), d.get("batchNumber")));
+            }
+        }
+        layers.lockQuants(quants);
+    }
+
     private void unwindLot(Map<String, Object> alloc, String originalEntryId, String note,
             Map<String, Map<String, BigDecimal>> unwound) {
         Map<String, Object> d = disposition(alloc);
@@ -481,10 +673,16 @@ class LandedCostLayers {
         lockQuantsOf(product, "SELECT DISTINCT \"variantId\", \"locationId\" FROM \"InventoryBatch\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ? AND \"batchNumber\" = ?", org(), product,
                 d.get("batchNumber"));
+        // h-05 F11: only the receipt's variant, and the receipt's own batch first (the order posting raised them in).
+        String receiptBatch = (String) alloc.get("batchId");
+        String variant = receiptBatch == null ? null : jdbc.sql("SELECT \"variantId\" FROM \"InventoryBatch\" WHERE"
+                + " id = ? AND \"organizationId\" = ?").params(receiptBatch, org()).query(String.class).optional()
+                .orElse(null);
         for (Map<String, Object> b : SqlRows.list(jdbc.sql("SELECT id, \"locationId\", \"variantId\", quantity,"
                         + " \"unitCost\" FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
-                        + " \"batchNumber\" = ? AND quantity > 0 AND \"isActive\" = true ORDER BY \"receivedAt\", id FOR UPDATE")
-                .params(org(), product, d.get("batchNumber")))) {
+                        + " \"variantId\" IS NOT DISTINCT FROM ? AND \"batchNumber\" = ? AND quantity > 0 AND"
+                        + " \"isActive\" = true ORDER BY (id = ?) DESC, \"receivedAt\", id FOR UPDATE")
+                .params(org(), product, variant, d.get("batchNumber"), receiptBatch == null ? "" : receiptBatch))) {
             if (remaining.signum() <= 0) {
                 break;
             }

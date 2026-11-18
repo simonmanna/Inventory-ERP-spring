@@ -250,7 +250,9 @@ public class VendorBillService {
      * Raise and post a supplier bill on behalf of an approved landed cost voucher (one per supplier invoice). The
      * voucher's own approval stands in for the bill approval, so no approval request is opened; posting still needs
      * {@code expense:post}. Lines carry their GL account (the landed-cost clearing account), so the bill debits
-     * clearing and credits the supplier's payable.
+     * clearing and credits the supplier's payable. Readiness gap h-05 F1: the bill still runs through every
+     * {@link VendorBillPostGuard} (duplicate checks), as an ordinary bill does; the voucher checks the separation of
+     * duties of its approval itself.
      */
     @Transactional
     public Map<String, Object> createPostedForLandedCost(String partnerId, String issueDate, String dueDate,
@@ -263,6 +265,10 @@ public class VendorBillService {
         String id = (String) doc.get("id");
         Map<String, Object> full = builder.document(id, "vendor_bill");
         full.put("lines", builder.lines(id, false));
+        List<String> warnings = new ArrayList<>();
+        for (VendorBillPostGuard g : guards) {
+            warnings.addAll(g.beforePost(id, full));
+        }
         workflow.transition("vendor_bill", id, "post", null, full);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org());
@@ -271,7 +277,11 @@ public class VendorBillService {
         events.publish("bill.posted", payload);
         audit.record(AuditInput.of("VendorBill", id, "create", null, Obj.of("documentNumber", doc.get("documentNumber"),
                 "source", "landed_cost", "sourceDocument", sourceDocument)));
-        return builder.document(id);
+        Map<String, Object> out = builder.document(id);
+        if (!warnings.isEmpty()) {
+            out.put("warnings", warnings);
+        }
+        return out;
     }
 
     /** Edit a draft bill. */

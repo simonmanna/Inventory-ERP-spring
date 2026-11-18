@@ -223,7 +223,7 @@ class ApprovalControlsIT extends ApiTestSupport {
     @DisplayName("separation of duties: the catalogue lists the pairs; weighbridge cannot be switched off")
     void sodCatalogue() {
         JsonNode rules = okAs(senior, 200, "GET", "/approval-controls/sod-rules", null);
-        assertThat(rules).hasSize(9); // + supplier_claim_settlement (h03-F7), stock_write_off (h00-F2)
+        assertThat(rules).hasSize(11); // + supplier_claim_settlement, stock_write_off, inventory_valuation, landed_cost_approval
         Res off = call("PUT", "/approval-controls/sod-rules/" + SegregationOfDutiesService.WEIGHBRIDGE_EXCEPTION,
                 Map.of("isActive", false), senior.token());
         assertThat(off.status()).isEqualTo(400);

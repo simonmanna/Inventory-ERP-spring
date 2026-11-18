@@ -47,6 +47,11 @@ public class SegregationOfDutiesService {
      * entity type, so an approval request does not clear it: the poster must not be a maker.
      */
     public static final String STOCK_WRITE_OFF = "stock_write_off";
+    /**
+     * Landed cost vouchers (readiness gap h-05 F4): whoever creates, edits or submits a voucher cannot also approve it,
+     * and whoever approved a duplicate-invoice override cannot also use it on a charge.
+     */
+    public static final String LANDED_COST_APPROVAL = "landed_cost_approval";
 
     public static final String AUDIT_ENTITY = "SodCheck";
 
@@ -72,7 +77,10 @@ public class SegregationOfDutiesService {
                 new Pair(SUPPLIER_CLAIM_SETTLEMENT, "Supplier claim settlement", "Raises the claim",
                         "Accepts or settles it", false),
                 new Pair(STOCK_WRITE_OFF, "Stock write-off", "Creates the stock-out or reports the waste",
-                        "Approves and posts it", false))) {
+                        "Approves and posts it", false),
+                new Pair(LANDED_COST_APPROVAL, "Landed cost approval",
+                        "Creates, edits or submits the voucher, or enters a charge that uses a duplicate-invoice override",
+                        "Approves the voucher or the override", false))) {
             PAIRS.put(p.key(), p);
         }
     }

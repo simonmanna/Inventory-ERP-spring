@@ -151,14 +151,14 @@ public class LandedCostVoucherController {
     }
 
     @PostMapping("/landed-cost-vouchers/{id}/post")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.LANDED_COST__POST)
     public Map<String, Object> post(@PathVariable String id) {
         return vouchers.post(id);
     }
 
     @PostMapping("/landed-cost-vouchers/{id}/reverse")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.LANDED_COST__REVERSE)
     public Map<String, Object> reverse(@PathVariable String id) {
         return vouchers.reverse(id);
@@ -183,7 +183,7 @@ public class LandedCostVoucherController {
     }
 
     @PostMapping("/invoice-duplicate-overrides")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.LANDED_COST__OVERRIDE_DUPLICATE)
     public Map<String, Object> createOverride(@Valid @RequestBody OverrideRequest dto) {
         return vouchers.createOverride(dto.supplierId(), dto.supplierInvoiceRef(), dto.reason());
@@ -209,7 +209,7 @@ public class LandedCostVoucherController {
             @NotNull(message = "charges must be an array") @ArrayMinSize(1) List<@Valid CreditChargeRequest> charges) {}
 
     @PostMapping("/landed-cost-vouchers/{id}/credit")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.LANDED_COST__CREATE)
     public Map<String, Object> credit(@PathVariable String id, @Valid @RequestBody CreditRequest dto) {
         return vouchers.createCredit(id, dto.date(), dto.notes(), dto.charges().stream().map(c ->

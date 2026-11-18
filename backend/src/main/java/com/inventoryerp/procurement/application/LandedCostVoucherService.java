@@ -19,6 +19,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.VendorBillService;
 import com.inventoryerp.inventory.application.StockPostingService.LandedLine;
 import com.inventoryerp.kernel.approvals.ApprovalLimitService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -152,13 +153,18 @@ public class LandedCostVoucherService {
     private final SettingResolverService settings;
     private final ApprovalLimitService limits;
     private final LandedCostCustomsService customs;
+    private final LandedCostBillGuard billGuard;
+    private final SegregationOfDutiesService sod;
 
     public LandedCostVoucherService(JdbcClient jdbc, SequenceService seq, AuditService audit,
             StockPostingService stockPosting, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, LandedCostLayers layers, CostComponentService components,
             ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm,
             CostLineageService lineage, AccountingPolicyService policies, SettingResolverService settings,
-            ApprovalLimitService limits, LandedCostCustomsService customs, CostingReversals reversals) {
+            ApprovalLimitService limits, LandedCostCustomsService customs, CostingReversals reversals,
+            LandedCostBillGuard billGuard, SegregationOfDutiesService sod) {
+        this.billGuard = billGuard;
+        this.sod = sod;
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -395,16 +401,60 @@ public class LandedCostVoucherService {
                     .update();
             jdbc.sql("DELETE FROM \"LandedCostReceipt\" WHERE \"landedCostId\" = ?").param(id).update();
             releaseInvoiceRefs(id);
+            // h-05 F14: customs calculations follow their charge across the rewrite (or are unlinked), audited.
+            List<Map<String, Object>> customsLinks = customs.linksOf(id);
             jdbc.sql("DELETE FROM \"LandedCostCharge\" WHERE \"landedCostId\" = ?").param(id).update();
             writeReceipts(id, receipts);
             writeCharges(id, in.charges(), receipts);
+            customs.relink(id, (String) lc.get("code"), customsLinks);
         });
         return get(id);
     }
 
     public Map<String, Object> submit(String id) {
-        return transition(id, List.of("draft"), "submitted", "\"submittedAt\" = " + NOW + ", \"submittedBy\" = ?",
-                "Only a draft landed cost voucher can be submitted");
+        return tx.execute(st -> {
+            assertOriginalPosted(id, "submitted");
+            return transition(id, List.of("draft"), "submitted", "\"submittedAt\" = " + NOW + ", \"submittedBy\" = ?",
+                    "Only a draft landed cost voucher can be submitted");
+        });
+    }
+
+    /**
+     * Readiness gap h-05 F5: a credit voucher moves on only while its original voucher is posted. The original is locked
+     * (shared) before the credit, the order its reversal locks them in (the reversal cancels draft credits and refuses
+     * the rest), so the two cannot both go through. Nothing to check for an ordinary voucher.
+     */
+    private void assertOriginalPosted(String id, String verb) {
+        Map<String, Object> credit = SqlRows.one(jdbc.sql("SELECT code, \"originalVoucherId\" FROM \"LandedCost\" WHERE"
+                + " id = ? AND \"organizationId\" = ? AND \"voucherType\" = 'credit'").params(id, org()));
+        if (credit == null || credit.get("originalVoucherId") == null) {
+            return;
+        }
+        Map<String, Object> original = SqlRows.one(jdbc.sql("SELECT code, status FROM \"LandedCost\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR SHARE").params(credit.get("originalVoucherId"), org()));
+        if (original == null || !"posted".equals(original.get("status"))) {
+            throw ApiException.badRequest("Credit voucher " + credit.get("code") + " cannot be " + verb + " while its"
+                    + " original voucher " + (original == null ? "is missing" : original.get("code") + " is "
+                    + original.get("status")) + "; cancel the credit voucher");
+        }
+    }
+
+    /**
+     * Readiness gap h-05 F4 (pair {@code landed_cost_approval}, enforced once switched on): whoever created, last edited
+     * or submitted the voucher cannot approve it. A {@code generate} charge's supplier bill is posted without an
+     * approval of its own, so the voucher's approval is that bill's approval: the {@code supplier_bill_approval} pair
+     * applies to it too.
+     */
+    private void assertSeparated(String id) {
+        Map<String, Object> v = SqlRows.one(jdbc.sql("SELECT \"createdBy\", \"updatedBy\", \"submittedBy\" FROM"
+                + " \"LandedCost\" WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
+        List<String> makers = java.util.Arrays.asList((String) v.get("createdBy"), (String) v.get("updatedBy"),
+                (String) v.get("submittedBy"));
+        sod.assertSeparated(SegregationOfDutiesService.LANDED_COST_APPROVAL, "LandedCost", id, makers);
+        if (jdbc.sql("SELECT count(*) FROM \"LandedCostCharge\" WHERE \"landedCostId\" = ? AND \"billMode\" = 'generate'")
+                .param(id).query(Long.class).single() > 0) {
+            sod.assertSeparated(SegregationOfDutiesService.SUPPLIER_BILL_APPROVAL, "LandedCost", id, makers);
+        }
     }
 
     /**
@@ -414,6 +464,7 @@ public class LandedCostVoucherService {
      */
     public Map<String, Object> approve(String id) {
         tx.executeWithoutResult(st -> {
+            assertOriginalPosted(id, "approved");
             Map<String, Object> locked = lock(id);
             boolean direct = settings.resolveBool("costing.landedCost.allowDirectApproval", SettingContext.EMPTY);
             List<String> from = direct ? List.of("draft", "submitted") : List.of("submitted");
@@ -421,6 +472,7 @@ public class LandedCostVoucherService {
                 throw ApiException.badRequest(direct ? "Only a draft or submitted landed cost voucher can be approved"
                         : "Only a submitted landed cost voucher can be approved; submit it first");
             }
+            assertSeparated(id);
             Map<String, Object> lc = get(id);
             Computation c = compute(lc, false);
             limits.assertWithin("landed_cost_voucher", c.total().abs().doubleValue(), null, null, user(),
@@ -470,9 +522,17 @@ public class LandedCostVoucherService {
         return get(id);
     }
 
-    /** Allocate and post an approved voucher (one transaction). */
+    /**
+     * Allocate and post an approved voucher (one transaction). Readiness gaps h-05: a credit voucher's original is
+     * locked first and must still be posted (F5); the receipts are locked (shared) before the voucher is claimed, the
+     * order a receipt reversal takes them in, so a reversal and a post cannot both commit (F6); linked bills are
+     * re-checked (F3); every pool the posting re-costs is locked once, in the engine's order, before the split is
+     * computed (F13).
+     */
     public Map<String, Object> post(String id) {
         tx.executeWithoutResult(st -> {
+            assertOriginalPosted(id, "posted");
+            lockReceipts(id);
             int claim = jdbc.sql("UPDATE \"LandedCost\" SET status = 'posted', \"postedAt\" = " + NOW + ","
                     + " \"postedById\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
                     + " AND \"voucherType\" IN ('voucher', 'credit') AND status = 'approved'").params(user(), id, org()).update();
@@ -489,12 +549,14 @@ public class LandedCostVoucherService {
                     throw ApiException.badRequest("Charge " + label(ch) + ": tax recoverability is unreviewed");
                 }
             }
+            assertLinkedBills(id, true);
             Map<String, BigDecimal> approved = approvedDisposition(id);
             String approvedHash = jdbc.sql("SELECT \"approvedHash\" FROM \"LandedCost\" WHERE id = ?").param(id)
                     .query(String.class).optional().orElse(null);
             if (approvedHash != null && !approvedHash.equals(driverHash(lc))) {
                 throw ApiException.badRequest("Voucher changed since approval; reopen and re-approve");
             }
+            layers.lockPools(pools(lc));
             Map<String, BigDecimal> now = approvedHash == null ? null : disposition(compute(lc, false));
             if (approved != null && now != null) {
                 assertWithinTolerance(approved, now);
@@ -557,9 +619,27 @@ public class LandedCostVoucherService {
                 throw ApiException.badRequest("Credit voucher " + credit + " references this voucher; reverse or cancel"
                         + " it first");
             }
+            cancelDraftCredits(lc);
             reverseLocked(lc, "landed_cost_voucher");
         });
         return get(id);
+    }
+
+    /**
+     * h-05 F5: draft credit vouchers of a voucher being reversed are cancelled with it (audited) — there is nothing left
+     * for them to credit. The caller holds the original's row lock, which every credit transition takes first.
+     */
+    private void cancelDraftCredits(Map<String, Object> original) {
+        for (Map<String, Object> d : SqlRows.list(jdbc.sql("SELECT id, code FROM \"LandedCost\" WHERE"
+                + " \"originalVoucherId\" = ? AND \"organizationId\" = ? AND status = 'draft' ORDER BY id FOR UPDATE")
+                .params(original.get("id"), org()))) {
+            String creditId = (String) d.get("id");
+            jdbc.sql("UPDATE \"LandedCost\" SET status = 'cancelled', \"updatedBy\" = ?, \"updatedAt\" = " + NOW
+                    + " WHERE id = ?").params(user(), creditId).update();
+            markDead(creditId);
+            audit.recordInTx(AuditInput.of("LandedCost", creditId, "update", null, Obj.of("kind",
+                    "landed_cost_voucher_cancelled", "reason", "original voucher " + original.get("code") + " reversed")));
+        }
     }
 
     /**
@@ -567,6 +647,14 @@ public class LandedCostVoucherService {
      * ADR-S036): capitalisation taken back out of stock, entry reversed, the share sold since reclassed to COGS.
      */
     public void reverseReceipt(String id) {
+        reverseReceipt(id, null);
+    }
+
+    /**
+     * As {@link #reverseReceipt(String)}, with the reason the user gave (readiness gap h-06 F13: the GRN screen reverses
+     * a posted landed cost); the reason is kept in the audit trail.
+     */
+    public void reverseReceipt(String id, String reason) {
         tx.executeWithoutResult(st -> {
             Map<String, Object> lc = SqlRows.one(jdbc.sql("SELECT id, code, status, \"journalEntryId\","
                     + " \"costCenterId\", \"goodsReceiptId\" FROM \"LandedCost\" WHERE id = ? AND \"organizationId\" = ?"
@@ -578,6 +666,10 @@ public class LandedCostVoucherService {
                 throw ApiException.badRequest("Only a posted landed cost can be reversed");
             }
             reverseLocked(lc, "landed_cost");
+            if (reason != null && !reason.isBlank()) {
+                audit.recordInTx(AuditInput.of("LandedCost", id, "update", null, Obj.of("kind",
+                        "landed_cost_reversal_reason", "code", lc.get("code"), "reason", reason.trim())));
+            }
         });
     }
 
@@ -605,6 +697,8 @@ public class LandedCostVoucherService {
                 reverseLineage(lc, sourceType, allocations);
                 return;
             }
+            // h-05 F13: every quant this reversal touches, locked once in the engine's global order.
+            layers.lockAllocations(allocations, (String) lc.get("goodsReceiptId"));
             Map<String, BigDecimal> unabsorbed = new LinkedHashMap<>();
             List<Object[]> valueRows = new ArrayList<>();
             for (Map<String, Object> a : allocations) {
@@ -682,13 +776,23 @@ public class LandedCostVoucherService {
                 return;
             }
             String account = stockPosting.landedAccount(product, amount.abs());
-            String other = switch (target) {
-                case "wip" -> determination.mapped("wip");
-                case "return" -> returnsAccount();
-                default -> determination.mapped("cogs");
-            };
+            String other;
+            boolean wip;
+            if (target.startsWith(LandedCostLayers.ACCOUNT)) {
+                // h-05 F7: a released adjunct names where its release went (target and account: WIP, scrap, COGS).
+                String[] released = target.substring(LandedCostLayers.ACCOUNT.length()).split(":", 2);
+                wip = "wip".equals(released[0]);
+                other = released[1];
+            } else {
+                wip = "wip".equals(target);
+                other = switch (target) {
+                    case "wip" -> determination.mapped("wip");
+                    case "return" -> returnsAccount();
+                    default -> determination.mapped("cogs");
+                };
+            }
             reclass.add(signedLine(account, amount, text, null));
-            reclass.add(signedLine(other, amount.negate(), text, "wip".equals(target) ? null : cc));
+            reclass.add(signedLine(other, amount.negate(), text, wip ? null : cc));
         }));
         if (!reclass.isEmpty()) {
             posting.post(PostingRequest.of("INV", now, text, "landed_cost_voucher_reversal", code,
@@ -1033,11 +1137,22 @@ public class LandedCostVoucherService {
                         + " FROM \"InventoryLedger\" l JOIN \"Product\" p ON p.id = l.\"productId\""
                         + " LEFT JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\""
                         + " WHERE l.\"organizationId\" = ? AND l.\"referenceType\" = 'goods_receipt'"
-                        + " AND l.\"referenceId\" = ? AND l.\"quantityChange\" > 0 ORDER BY l.\"createdAt\" ASC")
+                        + " AND l.\"referenceId\" = ? AND l.\"quantityChange\" > 0 ORDER BY l.\"createdAt\" ASC, l.id")
                 .params(org(), grn.get("id")));
         if (rows.isEmpty()) {
             throw ApiException.badRequest(grn.get("receiptNumber") + " put no goods into stock; nothing to allocate to");
         }
+        return matchLines(grn, grnLines, rows);
+    }
+
+    /**
+     * Readiness gap h-05 F10: each stock group of a receipt is matched to its receipt line by product <b>and variant</b>
+     * (two variants of one product are two lines), lot number first, then the first line not yet used, then any line of
+     * that product and variant; only a receipt line without a variant falls back to the product alone. Rows and lines are
+     * read in a fixed order, so the match (and the approval hash built on it) is the same every time.
+     */
+    private List<Unit> matchLines(Map<String, Object> grn, List<Map<String, Object>> grnLines,
+            List<Map<String, Object>> rows) {
         Map<String, Object[]> groups = new LinkedHashMap<>();
         for (Map<String, Object> r : rows) {
             String key = r.get("productId") + ":" + nz(r.get("variantId")) + ":" + r.get("locationId") + ":"
@@ -1057,19 +1172,34 @@ public class LandedCostVoucherService {
             Group grp = (Group) g[0];
             Map<String, Object> r = (Map<String, Object>) g[1];
             String lineId = null;
-            for (Map<String, Object> l : grnLines) {
-                if (grp.productId().equals(l.get("productId")) && r.get("b_number") != null
-                        && r.get("b_number").equals(l.get("batchNumber"))) {
-                    lineId = (String) l.get("id");
-                    break;
-                }
-            }
-            if (lineId == null) {
+            // Same variant first (h-05 F10); a line without a variant only matches by product when nothing else does.
+            for (boolean sameVariant : new boolean[] {true, false}) {
+                List<Map<String, Object>> candidates = new ArrayList<>();
                 for (Map<String, Object> l : grnLines) {
-                    if (grp.productId().equals(l.get("productId")) && !used.contains((String) l.get("id"))) {
+                    if (grp.productId().equals(l.get("productId")) && (sameVariant
+                            ? Objects.equals(grp.variantId(), l.get("variantId")) : l.get("variantId") == null)) {
+                        candidates.add(l);
+                    }
+                }
+                for (Map<String, Object> l : candidates) {
+                    if (r.get("b_number") != null && r.get("b_number").equals(l.get("batchNumber"))) {
                         lineId = (String) l.get("id");
                         break;
                     }
+                }
+                if (lineId == null) {
+                    for (Map<String, Object> l : candidates) {
+                        if (!used.contains((String) l.get("id"))) {
+                            lineId = (String) l.get("id");
+                            break;
+                        }
+                    }
+                }
+                if (lineId == null && !candidates.isEmpty()) {
+                    lineId = (String) candidates.getFirst().get("id");
+                }
+                if (lineId != null) {
+                    break;
                 }
             }
             if (lineId == null) {
@@ -1225,6 +1355,11 @@ public class LandedCostVoucherService {
                         throw ApiException.badRequest("Vendor bill " + bill.get("documentNumber")
                                 + " belongs to another supplier than charge " + label(c, kind));
                     }
+                    // h-05 F3: the linked bill debits landed cost clearing, so the charge must credit clearing too.
+                    if (c.creditAccountId() != null && !c.creditAccountId().equals(clearingAccount())) {
+                        throw ApiException.badRequest("Charge " + label(c, kind) + ": a linked supplier bill is"
+                                + " cleared through landed cost clearing; leave the credit account empty");
+                    }
                     supplierId = (String) bill.get("partnerId");
                     if (supplierRef == null) {
                         supplierRef = bill.get("reference") != null ? (String) bill.get("reference")
@@ -1310,6 +1445,7 @@ public class LandedCostVoucherService {
         }
         registerInvoices(id, written);
         assertBillGroups(written);
+        assertLinkedBills(id, false);
         jdbc.sql("UPDATE \"LandedCost\" SET \"totalAmount\" = ?, \"taxAmount\" = ? WHERE id = ?")
                 .params(total, taxTotal, id).update();
     }
@@ -1322,9 +1458,7 @@ public class LandedCostVoucherService {
         if (ref == null || ref.isBlank()) {
             return null;
         }
-        String v = ref.trim().toUpperCase(java.util.Locale.ROOT);
-        String mode = settings.resolveString("procurement.invoiceRef.normalization", SettingContext.EMPTY);
-        return "exact".equals(mode) ? v : v.replaceAll("[ \\-_/.]", "");
+        return LandedCostBillGuard.normalize(ref, billGuard.mode());
     }
 
     /**
@@ -1332,17 +1466,28 @@ public class LandedCostVoucherService {
      * normalised number) — one invoice may span several charge lines of a voucher. Another live voucher holding the
      * same invoice is a 409 naming the original reference and its voucher, unless the charge names an approved, unused
      * duplicate override for that supplier and number. Serialised per invoice; the partial unique indexes are the
-     * backstop (a violation is the same 409). Linked bills and credit vouchers are exempt.
+     * backstop (a violation is the same 409). Credit vouchers are exempt.
+     *
+     * <p>Readiness gaps h-05 F1, F3 and F4: a charge that generates its supplier bill is also refused while an
+     * ordinary bill for that invoice is posted (unless an override covers it); a linked charge's invoice is checked
+     * against the registry and against other vouchers' links to another bill with that number (several vouchers may
+     * link one bill, up to its amount, see {@link #assertLinkedBills}); and whoever approved an override cannot use it
+     * while the landed cost approval pair is on.
      */
     private void registerInvoices(String voucherId, List<Map<String, Object>> charges) {
         Map<String, Map<String, Object>> byInvoice = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> links = new LinkedHashMap<>();
         for (Map<String, Object> c : charges) {
             String supplier = (String) c.get("supplierId");
             String ref = (String) c.get("supplierInvoiceRef");
-            if (supplier == null || ref == null || "link".equals(c.get("billMode"))) {
+            if (supplier == null || ref == null) {
                 continue;
             }
             String norm = normalize(ref);
+            if ("link".equals(c.get("billMode"))) {
+                links.putIfAbsent(supplier + "|" + norm + "|" + c.get("vendorBillId"), c);
+                continue;
+            }
             Map<String, Object> first = byInvoice.putIfAbsent(supplier + "|" + norm, c);
             if (first != null && c.get("duplicateOverrideId") != null && first.get("duplicateOverrideId") == null) {
                 byInvoice.put(supplier + "|" + norm, c);
@@ -1352,16 +1497,17 @@ public class LandedCostVoucherService {
             String supplier = (String) c.get("supplierId");
             String ref = (String) c.get("supplierInvoiceRef");
             String norm = normalize(ref);
-            jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("lc-inv:" + org() + ":" + supplier + ":"
-                    + norm).query().listOfRows();
-            Map<String, Object> other = SqlRows.one(jdbc.sql("SELECT r.\"supplierInvoiceRef\", l.code FROM"
-                            + " \"LandedCostInvoiceRef\" r JOIN \"LandedCost\" l ON l.id = r.\"landedCostId\" WHERE"
-                            + " r.\"organizationId\" = ? AND r.\"supplierId\" = ? AND r.\"supplierInvoiceRefNorm\" = ? AND r.live"
-                            + " AND r.\"landedCostId\" <> ? ORDER BY r.\"createdAt\" LIMIT 1")
-                    .params(org(), supplier, norm, voucherId));
+            billGuard.lock(supplier, norm);
+            Map<String, Object> other = registered(supplier, norm, voucherId);
+            if (other == null) {
+                other = linkedElsewhere(supplier, norm, voucherId, null);
+            }
             String override = (String) c.get("duplicateOverrideId");
             if (other != null && override == null) {
                 throw ApiException.conflict(duplicateMessage(ref, other));
+            }
+            if ("generate".equals(c.get("billMode")) && override == null) {
+                assertNotBilled(ref, supplier, norm);
             }
             String refId = UUID.randomUUID().toString();
             if (override != null) {
@@ -1375,6 +1521,14 @@ public class LandedCostVoucherService {
                 if (o.get("usedByChargeId") != null) {
                     throw ApiException.badRequest("Duplicate override for supplier invoice " + ref
                             + " has already been used");
+                }
+                String me = user();
+                if (me != null && me.equals(o.get("approvedBy"))
+                        && sod.enforced(SegregationOfDutiesService.LANDED_COST_APPROVAL)) {
+                    sod.recordBlocked(SegregationOfDutiesService.LANDED_COST_APPROVAL, "InvoiceDuplicateOverride",
+                            override, me, List.of(me));
+                    throw ApiException.forbidden("Separation of duties: whoever approved the duplicate override for"
+                            + " supplier invoice " + ref + " cannot also use it on a charge (Landed cost approval)");
                 }
                 jdbc.sql("UPDATE \"InvoiceDuplicateOverride\" SET \"usedByChargeId\" = ? WHERE id = ?")
                         .params(refId, override).update();
@@ -1391,6 +1545,116 @@ public class LandedCostVoucherService {
                         + " AND r.\"landedCostId\" <> ? LIMIT 1").params(org(), supplier, norm, voucherId));
                 throw ApiException.conflict(again == null ? "Supplier invoice " + ref + " is already landed"
                         : duplicateMessage(ref, again));
+            }
+        }
+        for (Map<String, Object> c : links.values()) {
+            String supplier = (String) c.get("supplierId");
+            String ref = (String) c.get("supplierInvoiceRef");
+            String norm = normalize(ref);
+            billGuard.lock(supplier, norm);
+            Map<String, Object> other = registered(supplier, norm, voucherId);
+            if (other == null) {
+                other = linkedElsewhere(supplier, norm, voucherId, (String) c.get("vendorBillId"));
+            }
+            if (other != null) {
+                throw ApiException.conflict(duplicateMessage(ref, other));
+            }
+        }
+    }
+
+    /** The live registration of this supplier invoice by another voucher, or null. */
+    private Map<String, Object> registered(String supplier, String norm, String voucherId) {
+        return SqlRows.one(jdbc.sql("SELECT r.\"supplierInvoiceRef\", l.code FROM \"LandedCostInvoiceRef\" r JOIN"
+                        + " \"LandedCost\" l ON l.id = r.\"landedCostId\" WHERE r.\"organizationId\" = ? AND r.\"supplierId\" = ?"
+                        + " AND r.\"supplierInvoiceRefNorm\" = ? AND r.live AND r.\"landedCostId\" <> ? ORDER BY"
+                        + " r.\"createdAt\" LIMIT 1")
+                .params(org(), supplier, norm, voucherId));
+    }
+
+    /**
+     * A live charge of another voucher that links a supplier bill for this invoice (h-05 F3) — any bill, or only a bill
+     * other than {@code billId} when given (several vouchers may share one bill) — or null.
+     */
+    private Map<String, Object> linkedElsewhere(String supplier, String norm, String voucherId, String billId) {
+        List<Object> params = new ArrayList<>(List.of(org(), supplier, norm, voucherId));
+        if (billId != null) {
+            params.add(billId);
+        }
+        return SqlRows.one(jdbc.sql("SELECT c.\"supplierInvoiceRef\", l.code FROM \"LandedCostCharge\" c JOIN"
+                + " \"LandedCost\" l ON l.id = c.\"landedCostId\" WHERE c.\"organizationId\" = ? AND c.\"supplierId\" = ?"
+                + " AND c.\"supplierInvoiceRefNorm\" = ? AND c.live AND c.\"billMode\" = 'link' AND c.\"landedCostId\" <> ?"
+                + (billId != null ? " AND c.\"vendorBillId\" IS DISTINCT FROM ?" : "") + " ORDER BY c.\"createdAt\","
+                + " c.id LIMIT 1").params(params));
+    }
+
+    /**
+     * h-05 F1: a charge that generates its supplier bill cannot duplicate an ordinary bill already posted for the same
+     * supplier invoice (the caller holds the invoice's advisory lock).
+     */
+    private void assertNotBilled(String ref, String supplier, String norm) {
+        Map<String, Object> bill = billGuard.ordinaryBill(supplier, norm);
+        if (bill != null) {
+            throw ApiException.conflict("Supplier invoice " + ref + " is already entered as supplier bill "
+                    + bill.get("documentNumber") + "; link that bill to the charge instead of generating another");
+        }
+    }
+
+    /**
+     * h-05 F3: every bill the voucher's charges link must book the charges to landed-cost clearing, in the charges'
+     * currency, and cannot carry more linked charges (all live vouchers together, amount + tax in the bill currency)
+     * than it debits to clearing. At posting the bill must also be posted. Serialised per bill.
+     */
+    private void assertLinkedBills(String voucherId, boolean posting) {
+        List<String> billIds = jdbc.sql("SELECT DISTINCT \"vendorBillId\" FROM \"LandedCostCharge\" WHERE"
+                + " \"landedCostId\" = ? AND \"billMode\" = 'link' AND \"vendorBillId\" IS NOT NULL ORDER BY 1")
+                .param(voucherId).query(String.class).list();
+        if (billIds.isEmpty()) {
+            return;
+        }
+        String clearing = clearingAccount();
+        String base = jdbc.sql("SELECT upper(coalesce(\"currencyCode\", '')) FROM \"Organization\" WHERE id = ?")
+                .param(org()).query(String.class).optional().orElse("");
+        for (String billId : billIds) {
+            jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("lc-bill:" + org() + ":" + billId)
+                    .query().listOfRows();
+            Map<String, Object> bill = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", status::text AS status,"
+                    + " upper(coalesce(nullif(btrim(\"currencyId\"), ''), ?)) AS currency FROM \"Document\" WHERE id = ? AND"
+                    + " \"organizationId\" = ? AND \"documentType\" = 'vendor_bill'").params(base, billId, org()));
+            if (bill == null) {
+                throw ApiException.badRequest("Vendor bill not found");
+            }
+            String number = (String) bill.get("documentNumber");
+            if ("cancelled".equals(bill.get("status"))) {
+                throw ApiException.badRequest("Vendor bill " + number + " is cancelled");
+            }
+            if (posting && !List.of("posted", "paid").contains((String) bill.get("status"))) {
+                throw ApiException.badRequest("Vendor bill " + number + " is " + bill.get("status") + "; post it before"
+                        + " posting the landed cost voucher that links it");
+            }
+            for (Map<String, Object> ch : SqlRows.list(jdbc.sql("SELECT \"lineNumber\", kind,"
+                    + " upper(coalesce(nullif(btrim(\"currencyCode\"), ''), ?)) AS currency FROM \"LandedCostCharge\" WHERE"
+                    + " \"landedCostId\" = ? AND \"vendorBillId\" = ? AND \"billMode\" = 'link' ORDER BY \"lineNumber\"")
+                    .params(base, voucherId, billId))) {
+                if (!Objects.equals(ch.get("currency"), bill.get("currency"))) {
+                    throw ApiException.badRequest("Charge " + label(ch) + " is in " + ch.get("currency") + " but vendor"
+                            + " bill " + number + " is in " + bill.get("currency") + "; link a bill in the charge's"
+                            + " currency");
+                }
+            }
+            BigDecimal booked = jdbc.sql("SELECT coalesce(sum(subtotal), 0) FROM \"DocumentLine\" WHERE"
+                    + " \"documentId\" = ? AND \"accountId\" = ?").params(billId, clearing).query(BigDecimal.class)
+                    .single();
+            if (booked.signum() <= 0) {
+                throw ApiException.badRequest("Vendor bill " + number + " books nothing to landed cost clearing; a"
+                        + " linked bill must debit the clearing account with the charge");
+            }
+            BigDecimal linked = jdbc.sql("SELECT coalesce(sum(amount + coalesce(\"taxAmount\", 0)), 0) FROM"
+                    + " \"LandedCostCharge\" WHERE \"organizationId\" = ? AND \"vendorBillId\" = ? AND live AND amount > 0")
+                    .params(org(), billId).query(BigDecimal.class).single();
+            if (linked.compareTo(booked) > 0) {
+                throw ApiException.badRequest("Vendor bill " + number + " books " + JsNumbers.dec(booked)
+                        + " to landed cost clearing but its landed cost charges total " + JsNumbers.dec(linked)
+                        + "; reduce the charges or link another bill");
             }
         }
     }
@@ -1609,6 +1873,16 @@ public class LandedCostVoucherService {
         String fallbackDate = voucherDate.atZone(java.time.ZoneOffset.UTC).toLocalDate().toString();
         for (List<Map<String, Object>> group : groups.values()) {
             Map<String, Object> first = group.getFirst();
+            // h-05 F1: re-checked under the invoice's lock — no second bill for an invoice already billed outside
+            // landed cost, unless an approved duplicate override covers this voucher's entry of it.
+            String supplier = (String) first.get("supplierId");
+            String norm = normalize((String) first.get("supplierInvoiceRef"));
+            billGuard.lock(supplier, norm);
+            if (jdbc.sql("SELECT count(*) FROM \"LandedCostInvoiceRef\" WHERE \"landedCostId\" = ? AND \"supplierId\" = ?"
+                    + " AND \"supplierInvoiceRefNorm\" = ? AND \"duplicateOverrideId\" IS NOT NULL")
+                    .params(lc.get("id"), supplier, norm).query(Long.class).single() == 0) {
+                assertNotBilled((String) first.get("supplierInvoiceRef"), supplier, norm);
+            }
             List<DocumentBuilderService.LineInput> billLines = new ArrayList<>();
             String due = null;
             for (Map<String, Object> ch : group) {
@@ -1733,6 +2007,37 @@ public class LandedCostVoucherService {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> charges = (List<Map<String, Object>>) lc.get("charges");
         return charges;
+    }
+
+    /**
+     * h-05 F6: share-lock the voucher's receipts (id order) before the voucher row is claimed. A receipt reversal locks
+     * the receipt FOR UPDATE and then re-checks for approved or posted landed cost, so whichever comes second sees the
+     * other's result: the post finds the receipt reversed, or the reversal finds the voucher posted.
+     */
+    private void lockReceipts(String id) {
+        jdbc.sql("SELECT g.id FROM \"GoodsReceiptNote\" g WHERE g.\"organizationId\" = ? AND g.id IN (SELECT"
+                + " \"goodsReceiptId\" FROM \"LandedCostReceipt\" WHERE \"landedCostId\" = ? UNION SELECT \"goodsReceiptId\""
+                + " FROM \"LandedCost\" WHERE id = ? AND \"organizationId\" = ?) ORDER BY g.id FOR SHARE OF g")
+                .params(org(), id, id, org()).query().listOfRows();
+    }
+
+    /** h-05 F13: every receipt movement of the voucher, for {@link LandedCostLayers#lockPools}. */
+    @SuppressWarnings("unchecked")
+    private List<LandedCostLayers.Pool> pools(Map<String, Object> lc) {
+        List<LandedCostLayers.Pool> out = new ArrayList<>();
+        for (Map<String, Object> r : (List<Map<String, Object>>) lc.get("receipts")) {
+            Map<String, Object> grn = SqlRows.one(jdbc.sql("SELECT id, \"receiptNumber\" FROM \"GoodsReceiptNote\" WHERE"
+                    + " id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(r.get("id"), org()));
+            if (grn == null || jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                    + " \"referenceType\" = 'goods_receipt' AND \"referenceId\" = ? AND \"quantityChange\" > 0")
+                    .params(org(), grn.get("id")).query(Long.class).single() == 0) {
+                continue;
+            }
+            for (Unit u : units(grn)) {
+                out.add(new LandedCostLayers.Pool(u.grnId(), u.group()));
+            }
+        }
+        return out;
     }
 
     private Map<String, Object> lock(String id) {
