@@ -1792,6 +1792,28 @@ channels per event. The actor is never told.
 - [x] UB2 (web) the shared `Select` accepts an empty item value (Radix 2.x)
 - [x] Tests: `ReadinessBlockersIT` (10), `WarehouseIT#manualPickWithDocumentReferenceRefused`; `PoBillApplicationIT` voids
   with a reason
-- [ ] P1 / P2 gaps listed in the audit: in progress, see the [handoff](audits/readiness-gaps/HANDOFF.md).
+- [x] P1 / P2 gaps listed in the audit ([handoff](audits/readiness-gaps/HANDOFF.md),
+  [integration notes](audits/readiness-gaps/integration-2026-11-18.md)).
   - [x] Web screens (stream gW; [notes](audits/readiness-gaps/gW-web.md)).
-  - [ ] Six backend streams: work in progress on `phase/gaps-*` branches, not merged.
+  - [x] Six backend streams gA–gF, merged 2026-11-18 (`d7442438`, CI green).
+
+## Loss prevention (ADR-S077, extension: no Nest counterpart)
+
+[Spec](spec/loss-prevention.md) · [LP0 brief](phases/LP0-exception-intelligence.md). Behind `ENABLE_LOSS_PREVENTION`.
+
+27 routes: `LossPreventionEventController` (3), `LossPreventionRuleController` (6), `LossPreventionRunController` (6),
+`LossPreventionCaseController` (8), `LossPreventionReportController` (4). Migrations V560–V562 (renumbered from V520–V522 at merge). Permissions `lp:*`,
+licence feature `lossPrevention`, event `lp.case.opened`. Web: `/loss-prevention`.
+Tests: `LpEventValidatorTest`, `LpEnginesTest`, `LpLedgerIT`, `LpReconIT`.
+
+- [x] WP1 event ledger and ingest
+- [x] WP2 projection from POS, kitchen, cash sessions and beverage counts (`LpProjectionService`)
+- [x] WP3 reconciliation runs, late events, replay, comparison, verification (`LpReconService`)
+- [x] WP4 cashier rules C01–C10 (`LpCashierEngine`)
+- [x] WP5 bar rules B01–B03 (`LpBarEngine`); B03 off by default
+- [x] WP6 cases (`LpCaseService`)
+- [x] WP7 reports and web screens
+- [x] WP8 integration contract schemas (`docs/spec/loss-prevention/`)
+
+Not verified against live POS traffic: the projection has only run against the demo seed. See the spec, "Assumptions
+to check on real data".

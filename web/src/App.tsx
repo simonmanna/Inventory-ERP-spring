@@ -278,6 +278,7 @@ const ZonesPage = lazy(() => import('@/pages/tables/ZonesPage'));
 const ReportCenterPage = lazy(() => import('@/pages/reports/ReportCenterPage'));
 const BiExportsPage = lazy(() => import('@/pages/reports/BiExportsPage').then((m) => ({ default: m.BiExportsPage })));
 const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage').then((m) => ({ default: m.AlertsPage })));
+const LossPreventionPage = lazy(() => import('@/pages/loss-prevention/LossPreventionPage').then((m) => ({ default: m.LossPreventionPage })));
 const BranchPerformancePage = lazy(() => import('@/pages/reports/BranchPerformancePage').then((m) => ({ default: m.BranchPerformancePage })));
 const ReportLibraryPage = lazy(() => import('@/pages/reports/ReportLibraryPage').then((m) => ({ default: m.ReportLibraryPage })));
 const ReportCategoryPage = lazy(() => import('@/pages/reports/ReportCategoryPage').then((m) => ({ default: m.ReportCategoryPage })));
@@ -446,6 +447,7 @@ export function App() {
             <Route path="/reports/library/:id" element={<RequirePermission permission={PERMISSIONS.reportLibrary.read}><ReportViewerPage /></RequirePermission>} />
             <Route path="/reports/bi-exports" element={<RequirePermission permission={PERMISSIONS.bi.export}><BiExportsPage /></RequirePermission>} />
             <Route path="/alerts" element={<RequirePermission permission={PERMISSIONS.alerts.read}><AlertsPage /></RequirePermission>} />
+            <Route path="/loss-prevention" element={<RequirePermission permission={PERMISSIONS.lossPrevention.view}><LossPreventionPage /></RequirePermission>} />
             <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
             <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
             <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />

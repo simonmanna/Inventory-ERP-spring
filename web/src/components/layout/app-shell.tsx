@@ -280,7 +280,7 @@ interface NavItem {
   reportId?: string | string[];
   badge?: string;
   /** Per-item feature gate, resolved the same way as section flags. */
-  flag?: 'VITE_ENABLE_BEVERAGE' | 'VITE_ENABLE_TASKS' | 'VITE_ENABLE_MANUFACTURING' | 'VITE_ENABLE_HR' | 'VITE_ENABLE_ORDERS' | 'VITE_ENABLE_ALERTS';
+  flag?: 'VITE_ENABLE_BEVERAGE' | 'VITE_ENABLE_TASKS' | 'VITE_ENABLE_MANUFACTURING' | 'VITE_ENABLE_HR' | 'VITE_ENABLE_ORDERS' | 'VITE_ENABLE_ALERTS' | 'VITE_ENABLE_LOSS_PREVENTION';
   /** Sub-heading inside the section (e.g. "Configuration"); shown above the first item of each run. */
   group?: string;
   /** POS modes this item applies to (Menus and Tables are cafe-only). */
@@ -319,6 +319,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/', label: tx('Dashboard'), icon: LayoutDashboard },
       { to: '/approvals', label: tx('My Approvals'), icon: ShieldCheck, permission: 'approvals:read' },
       { to: '/alerts', label: tx('Alerts & Exceptions'), icon: BellRing, permission: PERMISSIONS.alerts.read, flag: 'VITE_ENABLE_ALERTS' },
+      // Loss prevention (ADR-S077): pair with ENABLE_LOSS_PREVENTION on the API.
+      { to: '/loss-prevention', label: tx('Loss Prevention'), icon: ShieldAlert, permission: PERMISSIONS.lossPrevention.view, flag: 'VITE_ENABLE_LOSS_PREVENTION' },
     ],
   },
   // ── Sell ──

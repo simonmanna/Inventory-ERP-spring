@@ -37,6 +37,9 @@ public final class LicenseFeatures {
     /** Quarry &amp; extraction management (sites, extraction, blasting, ROM stockpiles — ADR-S012). */
     public static final String QUARRY = "quarry";
 
+    /** Loss prevention: exception intelligence from POS, kitchen, cash and stock-count records (ADR-S077). */
+    public static final String LOSS_PREVENTION = "lossPrevention";
+
     // Add-ons that are not sidebar sections.
     public static final String MULTI_ORG = "multiOrg";
     public static final String ANDROID_POS = "androidPos";
@@ -48,7 +51,7 @@ public final class LicenseFeatures {
     /** Everything, which is what a trial grants. */
     public static final Set<String> ALL = Set.of(
             CRM, RENTAL, MANUFACTURING, REPAIR, COMMUNICATION, ASSETS, TASK_BOARD, ACCOUNTING, EXPENSE, HR,
-            BEVERAGE, FLEET, SALES_AGREEMENTS, CUSTOMER_PORTAL, QUARRY, MULTI_ORG, ANDROID_POS, API_ACCESS, WEBHOOKS,
+            BEVERAGE, FLEET, SALES_AGREEMENTS, CUSTOMER_PORTAL, QUARRY, LOSS_PREVENTION, MULTI_ORG, ANDROID_POS, API_ACCESS, WEBHOOKS,
             ADVANCED_REPORTS, BACKUP_OFFSITE);
 
     /**
@@ -58,7 +61,8 @@ public final class LicenseFeatures {
      */
     public static final java.util.Map<String, String> MODULE_NAME_BY_FEATURE = java.util.Map.of(
             ASSETS, "fixed-asset",
-            TASK_BOARD, "task");
+            TASK_BOARD, "task",
+            LOSS_PREVENTION, "loss-prevention");
 
     private LicenseFeatures() {}
 

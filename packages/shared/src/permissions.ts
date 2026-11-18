@@ -313,6 +313,15 @@ export const PERMISSIONS = {
     read: 'alerts:read',
     manage: 'alerts:manage',
   },
+  /// Loss prevention (ADR-S077). `view` reads the dashboard, cases and reports; `investigate` works a case and reads
+  /// the event ledger; `configure` changes rules and settings and replays reconciliation; `ingest` posts events
+  /// (meant for API clients of a POS or an edge agent).
+  lossPrevention: {
+    view: 'lp:view',
+    investigate: 'lp:investigate',
+    configure: 'lp:configure',
+    ingest: 'lp:ingest',
+  },
   /// Who is told when something happens (ADR-S065): per event, the record's responsible people, extra roles/users and
   /// channels. `read` lists the routing; `manage` changes it.
   notificationRouting: {

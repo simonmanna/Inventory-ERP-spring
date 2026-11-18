@@ -44,7 +44,8 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
             Map.entry("fleet", "app.modules.fleet"),
             Map.entry("quarry", "app.modules.quarry"),
             Map.entry("portal", "app.modules.portal"),
-            Map.entry("alerts", "app.modules.alerts"));
+            Map.entry("alerts", "app.modules.alerts"),
+            Map.entry("loss-prevention", "app.modules.lossprevention"));
 
     private final PermissionService permissions;
     private final FeatureFlagsService flags;

@@ -73,6 +73,7 @@ services:
         VITE_ENABLE_HR: ${VITE_ENABLE_HR:-}
         VITE_ENABLE_ORDERS: ${VITE_ENABLE_ORDERS:-}
         VITE_ENABLE_ALERTS: ${VITE_ENABLE_ALERTS:-}
+        VITE_ENABLE_LOSS_PREVENTION: ${VITE_ENABLE_LOSS_PREVENTION:-}
     container_name: ierp-web
     restart: unless-stopped
     depends_on:

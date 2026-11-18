@@ -128,6 +128,7 @@ app:
     quarry: ${ENABLE_QUARRY:false}
     portal: ${ENABLE_PORTAL:false}
     alerts: ${ENABLE_ALERTS:false}
+    lossprevention: ${ENABLE_LOSS_PREVENTION:false}
   # Notification routing (ADR-S065): tell the responsible people when a catalogued event happens. false keeps the
   # settings editable and sends nothing.
   notification-routing:

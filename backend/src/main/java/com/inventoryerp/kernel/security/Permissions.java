@@ -187,6 +187,10 @@ public final class Permissions {
     public static final String INVENTORY_LOCATION__DELETE = "inventory_location:delete";
     public static final String ALERTS__READ = "alerts:read";
     public static final String ALERTS__MANAGE = "alerts:manage";
+    public static final String LOSS_PREVENTION__VIEW = "lp:view";
+    public static final String LOSS_PREVENTION__INVESTIGATE = "lp:investigate";
+    public static final String LOSS_PREVENTION__CONFIGURE = "lp:configure";
+    public static final String LOSS_PREVENTION__INGEST = "lp:ingest";
     public static final String NOTIFICATION_ROUTING__READ = "notification_routing:read";
     public static final String NOTIFICATION_ROUTING__MANAGE = "notification_routing:manage";
     public static final String BI__EXPORT = "bi:export";
@@ -916,6 +920,10 @@ public final class Permissions {
             "inventory_location:delete",
             "alerts:read",
             "alerts:manage",
+            "lp:view",
+            "lp:investigate",
+            "lp:configure",
+            "lp:ingest",
             "notification_routing:read",
             "notification_routing:manage",
             "bi:export",
