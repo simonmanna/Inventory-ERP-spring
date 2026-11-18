@@ -140,6 +140,11 @@ class LandedCostLineageIT extends LandedCostFixtures {
         assertBooks(s, moves("stock", "1000", "clearing", "-1000"));
         assertThat(avg(p, w2)).isEqualByComparingTo("60");
         assertThat(exceptions(p).getFirst().get("status")).isEqualTo("resolved");
+        // Readiness gaps h-02 F10: the assignment is recorded as a release of the parked amount, so accrual clearing
+        // and the release history see where the 600 went.
+        assertThat(jdbc.sql("SELECT coalesce(sum(amount), 0) FROM \"CostValueAdjustmentRelease\" WHERE target ="
+                + " 'assigned' AND \"targetRef\" = ? AND \"sourceId\" = ?").params(in, id).query(BigDecimal.class)
+                .single()).isEqualByComparingTo("600");
         Res rev = call("POST", "/procurement/landed-cost-vouchers/" + v + "/reverse", null, key());
         assertThat(rev.status()).isEqualTo(400);
         assertThat(rev.body().get("message").asString()).contains("lineage exception");

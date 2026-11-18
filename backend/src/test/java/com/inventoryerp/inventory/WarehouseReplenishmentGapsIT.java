@@ -672,6 +672,25 @@ class WarehouseReplenishmentGapsIT extends ApiTestSupport {
                 + " the store's own branch or leave the branch empty");
     }
 
+    // ------------------------------------------------------------------ h01-F7 indexes
+
+    @Test
+    @DisplayName("h01-F7: open-task and sourced-pick lookups have their indexes (V540)")
+    void warehouseLookupIndexes() {
+        List<String> names = jdbc.sql("SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname IN"
+                + " ('WarehouseTask_from_bin', 'WarehouseTask_to_bin', 'WarehouseTask_wave', 'WarehousePickOrder_source')")
+                .query(String.class).list();
+        assertThat(names).containsExactlyInAnyOrder("WarehouseTask_from_bin", "WarehouseTask_to_bin",
+                "WarehouseTask_wave", "WarehousePickOrder_source");
+        // The bin's open-task lookup is answered from the index, not by reading every task ever written.
+        String plan = new TransactionTemplate(txm).execute(st -> {
+            jdbc.sql("SET LOCAL enable_seqscan = off").update();
+            return String.join("\n", jdbc.sql("EXPLAIN SELECT id FROM \"WarehouseTask\" WHERE \"fromBinId\" = 'x' AND"
+                    + " status = 'open'").query(String.class).list());
+        });
+        assertThat(plan).contains("WarehouseTask_from_bin");
+    }
+
     // ------------------------------------------------------------------ h01-F9 / F10 reports and ledger detail
 
     @Test
