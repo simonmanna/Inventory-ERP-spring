@@ -18,6 +18,7 @@ import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -83,10 +84,12 @@ public class InventoryCountService {
     private final LocationScope locationScope;
     private final SegregationOfDutiesService sod;
     private final TransactionTemplate newTx;
+    private final StockService stock;
 
     public InventoryCountService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq,
             StockDocService stockDoc, ApprovalsService approvals, AuditService audit, LocationScope locationScope,
-            SegregationOfDutiesService sod, PlatformTransactionManager txm) {
+            SegregationOfDutiesService sod, PlatformTransactionManager txm, StockService stock) {
+        this.stock = stock;
         this.locationScope = locationScope;
         this.sod = sod;
         this.jdbc = jdbc;
@@ -97,6 +100,8 @@ public class InventoryCountService {
         this.audit = audit;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // Only the approval request (reused on the next submit) goes through newTx (gaps h-06 F7).
+        this.newTx.setName(BusinessOutcome.RETRY_SAFE_TX);
     }
 
     private static String org() {
@@ -683,6 +688,9 @@ public class InventoryCountService {
             throw ApiException.badRequest("Nothing counted yet — enter at least one physical count.");
         }
         boolean overwrite = Boolean.TRUE.equals(force);
+        // Gaps h-00 F7: hold the counted cells' quant locks until this transaction ends, so the on-hand, lot and
+        // ledger reads below see one state (a movement committing between them was erased from the variance).
+        stock.lockQuants(str(head, "locationId"), counted);
         List<Posting> all = postings(head, counted, overwrite);
         List<Posting> stale = all.stream().filter(p -> p.movements() > 0).toList();
         if (!stale.isEmpty() && overwrite && (forceReason == null || forceReason.trim().isEmpty())) {
@@ -853,9 +861,14 @@ public class InventoryCountService {
     public Map<String, Object> cancel(String id) {
         assertInScope(id);
         assertDraft(id);
-        jdbc.sql("UPDATE \"InventoryCountSession\" SET status = 'cancelled', \"updatedBy\" = ?, \"updatedAt\" = " + NOW
-                        + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+        // Gaps h-00 F8: claim the draft, as submit does, so a cancel racing a submit cannot mark a posted count cancelled.
+        int claimed = jdbc.sql("UPDATE \"InventoryCountSession\" SET status = 'cancelled', \"updatedBy\" = ?,"
+                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
+                        + " AND status = 'draft'")
                 .params(TenantContext.userId(), id, org()).update();
+        if (claimed == 0) {
+            throw ApiException.conflict("Count was already submitted or cancelled by another request");
+        }
         return Obj.of("ok", true);
     }
 }

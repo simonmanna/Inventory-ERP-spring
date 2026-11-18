@@ -42,6 +42,11 @@ public class SegregationOfDutiesService {
     public static final String DOCUMENT_REVERSAL = "document_reversal";
     /** Readiness gap h03-F7: whoever raised a supplier claim cannot also accept or settle it. */
     public static final String SUPPLIER_CLAIM_SETTLEMENT = "supplier_claim_settlement";
+    /**
+     * Gaps h-00 F2: whoever created a stock-out or reported waste cannot also approve and post it. Not an approval
+     * entity type, so an approval request does not clear it: the poster must not be a maker.
+     */
+    public static final String STOCK_WRITE_OFF = "stock_write_off";
 
     public static final String AUDIT_ENTITY = "SodCheck";
 
@@ -65,7 +70,9 @@ public class SegregationOfDutiesService {
                 new Pair(DOCUMENT_REVERSAL, "Document reversal", "Creates or posts the invoice, bill, note or payment",
                         "Cancels, voids or reverses it", false),
                 new Pair(SUPPLIER_CLAIM_SETTLEMENT, "Supplier claim settlement", "Raises the claim",
-                        "Accepts or settles it", false))) {
+                        "Accepts or settles it", false),
+                new Pair(STOCK_WRITE_OFF, "Stock write-off", "Creates the stock-out or reports the waste",
+                        "Approves and posts it", false))) {
             PAIRS.put(p.key(), p);
         }
     }

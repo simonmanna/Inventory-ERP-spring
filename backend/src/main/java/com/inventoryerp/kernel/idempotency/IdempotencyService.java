@@ -278,6 +278,22 @@ public class IdempotencyService {
     }
 
     /**
+     * Gaps h-06 F7: forget a pending key whose handler failed without committing anything (every write transaction it
+     * opened rolled back and no outcome was saved), so a retry with the same key runs the operation again instead of
+     * answering {@code OPERATION_PENDING} until the key is abandoned.
+     */
+    public void release(BusinessOutcome.Operation op) {
+        int deleted = jdbc.sql("""
+                        DELETE FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ? AND status = 'pending'
+                          AND "responseJson" = '{}'::jsonb""")
+                .params(op.organizationId(), op.key())
+                .update();
+        if (deleted > 0) {
+            log.info("Operation {} on {} failed and committed nothing; key released for a retry", op.key(), op.path());
+        }
+    }
+
+    /**
      * Transport-agnostic core (sync push processor: one key per offline operation). Same semantics as
      * the HTTP path; {@code handler} returns the status and body.
      */
