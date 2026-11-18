@@ -56,25 +56,38 @@ Conflicts and how they were resolved:
 Not run: the full `./gradlew build` (CI runs it), the seed / architecture suites (`fastTest` skips them), JaCoCo,
 and the parity harness.
 
-## Coverage gaps: changed code without a dedicated test
+## Coverage follow-up (2026-11-18, after the merge)
 
-The stream code for these findings is merged and the existing ITs pass over it, but no test was written that fails
-without the fix:
-- gB: h01-F7 (indexes, V540), h01-F8 (drift detection).
-- gC: h02-F2 (costing locks between activation and moves), h02-F6 (re-costing posts to the STOCK_IN account),
-  h02-F7 (job failures counted, effective date in an open period), h02-F10 / ACR-14 (assign release).
-- gE: h04-F2 (budget and branch on sourcing / RFQ / agreement orders), F3 (award approval snapshot), F4 (bank details
-  dual control and masking), F5 (inspection hold and cancel reason), F7 (portal dates and first promised date), F8
-  (RFQ order locking), F9 (budget consumption). The existing `SourcingIT`, `PlanningIT`, `SourceToPayEndToEndIT` and
-  `PartnerProfileIT`, as updated by gE, exercise parts of these.
+The findings first merged without a dedicated test now have one. Every test below passes on `main`.
 
-## Still open (from HANDOFF.md "Then integrate")
+| Finding | Test |
+|---|---|
+| h01-F7 indexes (V540) | `WarehouseReplenishmentGapsIT.warehouseLookupIndexes`: the indexes exist, and the open-task lookup plans on `WarehouseTask_from_bin` |
+| h01-F8 drift detection | Covered by the h01-F2 tests: goods awaiting a pick count as still in the location, and only in-progress pick orders count as staged. Automatic bin decrement stays deferred (ADR-S026 "Still open"). |
+| h02-F2 costing locks | `ValuationGapsIT.activationWaitsForInFlightMove`: a standard activation waits while a move holds the product's costing key |
+| h02-F6 STOCK_IN account | `ValuationGapsIT.recostingUsesItemStockAccount`: the re-costing posts to the product rule's stock account, not `stock_valuation` |
+| h02-F7 effective date | `ValuationGapsIT.policyEffectiveDateMustBeOpen`: refused inside the books lock (the convertMethod check was already tested) |
+| h02-F10 assign release | `LandedCostLineageIT.unpairedThenAssigned`: the assignment writes a `CostValueAdjustmentRelease` row (`assigned`, 600) |
+| h04-F2 branch on sourced orders | `ProcurementControlsGapsIT.sourcedOrderCarriesBranch`: the order takes the request's branch and its budget counts it |
+| h04-F3 award approval | `ProcurementControlsGapsIT.awardApprovalGatesOrders`: no orders while the award is pending or after it was rejected |
+| h04-F4 bank details | `ProcurementControlsGapsIT.supplierBankDetails`: masked out, a masked round-trip keeps the stored value, a supplier's account cannot be added through the profile |
+| h04-F5 inspection | `inspectionCancel` (reason, not the receiver, recorded), `billHoldByLines` (a bill without `purchaseOrderIds` is held), `rejectedQuantitiesOnClaim` (rejected units become claim quantity lines) |
+| h04-F7 portal | `ProcurementControlsGapsIT.portalConfirm`: a bad date is a 400, the supplier confirms once, the first promised date is kept |
+| h04-F8 RFQ order lock | `ProcurementControlsGapsIT.concurrentAwardOrders`: two concurrent order calls → one 200, one 400, one PO |
+| h04-F9 budget consumption | `ProcurementControlsGapsIT.budgetIgnoresCancelledQuantity` |
+| h04-F11 policy approver | `ProcurementControlsGapsIT.policyApproverIsNotLastEditor` |
 
-1. Per-stream notes files (`gA…gF.md`) were never written by the streams. This file stands in for them. A
-   per-finding status with the Nest deviations still has to go into the module specs' Deviations sections
-   ("Approved by the owner 2026-11-17").
-2. `docs/PORT_STATUS.md`: the item "P1 / P2 gaps listed in the audit" is still unticked.
-3. The readiness audit is not updated yet.
-4. Merge to `main`, push, and watch CI.
-5. Migration numbering: `phase/LP0-exception-intelligence` uses V520–V522, which collide with V520 on `main`. It must
-   be renumbered above V559 before it merges.
+Still without a dedicated test: h02-F7 job-failure metrics (`CostActivationFailures`), which need the scheduled
+activation job to run.
+
+The tests were written against the fixed code. They are not re-run against the pre-fix code; each assertion targets
+the behaviour the fix introduced.
+
+## Still open
+
+1. Merged and pushed: `d7442438`, CI green. `docs/PORT_STATUS.md` is ticked.
+2. The owner decided on 2026-11-18 that the Spring app is independent of the NestJS reference, so these fixes record no
+   "Nest deviations".
+3. The readiness audit (`../2026-11-17-inventory-procurement-readiness.md`) is not rewritten. This file is its
+   follow-up.
+4. `phase/LP0-exception-intelligence`: migrations renumbered V520–V522 → V560–V562.

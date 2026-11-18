@@ -33,6 +33,9 @@ import tools.jackson.databind.JsonNode;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ValuationGapsIT extends ApiTestSupport {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    javax.sql.DataSource dataSource;
+
     String org;
     String code;
     String token;
@@ -231,6 +234,95 @@ class ValuationGapsIT extends ApiTestSupport {
         Res approve = call("POST", "/inventory/standard-costs/" + id + "/approve", null, token);
         assertThat(approve.status()).as(approve.raw().body()).isEqualTo(400);
         assertThat(approve.body().get("message").asString()).contains("set convertMethod to switch it to standard");
+    }
+
+    String standard(String productId, Object cost) {
+        String id = ok(201, "POST", "/inventory/standard-costs", Map.of("productId", productId, "effectiveFrom", today,
+                "materialCost", cost, "convertMethod", true)).get("id").asString();
+        ok(200, "POST", "/inventory/standard-costs/" + id + "/approve", null);
+        return id;
+    }
+
+    String mapped(String key) {
+        return jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key = ?")
+                .params(org, key).query(String.class).single();
+    }
+
+    BigDecimal balance(String accountId) {
+        return jdbc.sql("SELECT coalesce(sum(debit), 0) - coalesce(sum(credit), 0) FROM \"JournalLine\" WHERE"
+                + " \"organizationId\" = ? AND \"accountId\" = ?").params(org, accountId).query(BigDecimal.class)
+                .single();
+    }
+
+    @Test
+    @DisplayName("h-02 F2: a standard cost activation waits for a stock move of the product that is in flight")
+    void activationWaitsForInFlightMove() throws Exception {
+        String p = product("Granite", "AVCO");
+        receive(p, 10, 10);
+        String std = standard(p, 12);
+        // A move in flight holds the product's costing key shared until it commits (what StockService takes).
+        try (java.sql.Connection c = dataSource.getConnection()) {
+            c.setAutoCommit(false);
+            try (java.sql.PreparedStatement ps = c.prepareStatement("SELECT set_config('app.org_id', ?, true),"
+                    + " pg_advisory_xact_lock_shared(hashtext(?)::bigint)")) {
+                ps.setString(1, org);
+                ps.setString(2, "costing:" + org + ":" + p);
+                ps.executeQuery().close();
+            }
+            java.util.concurrent.CompletableFuture<Res> activation = java.util.concurrent.CompletableFuture.supplyAsync(
+                    () -> keyed("POST", "/inventory/standard-costs/" + std + "/activate", null, token));
+            Thread.sleep(1500);
+            assertThat(activation).as("activation must wait for the move").isNotDone();
+            c.commit();
+            Res done = activation.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(done.status()).as(done.raw().body()).isIn(200, 201);
+        }
+        assertThat(avg(p)).isEqualByComparingTo("12");
+    }
+
+    @Test
+    @DisplayName("h-02 F6: a standard cost activation re-costs on the item's own STOCK_IN account, not the mapping")
+    void recostingUsesItemStockAccount() {
+        String p = product("Marble", "AVCO");
+        String sv = mapped("stock_valuation");
+        String own = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Account\" (id, \"organizationId\", code, name, \"categoryId\", \"normalBalance\","
+                + " \"reportSection\", \"updatedAt\") SELECT ?, \"organizationId\", ?, 'Marble stock', \"categoryId\","
+                + " \"normalBalance\", \"reportSection\", now() FROM \"Account\" WHERE id = ?").params(own, "13" + UUID
+                        .randomUUID().toString().substring(0, 4), sv).update();
+        Map<String, Object> debit = new LinkedHashMap<>(Map.of("movementType", "STOCK_IN", "lineIndex", 0,
+                "debitOrCredit", "debit", "accountSource", "literal", "literalAccountId", own, "productId", p));
+        Map<String, Object> credit = new LinkedHashMap<>(Map.of("movementType", "STOCK_IN", "lineIndex", 1,
+                "debitOrCredit", "credit", "accountSource", "account_mapping", "accountMappingKey", "grni_accrued",
+                "productId", p));
+        ok(201, "POST", "/inventory/posting-rules", debit);
+        ok(201, "POST", "/inventory/posting-rules", credit);
+        receive(p, 10, 10);
+        assertThat(balance(own)).isEqualByComparingTo("100");
+        BigDecimal sv0 = balance(sv);
+
+        keyedOk("POST", "/inventory/standard-costs/" + standard(p, 12) + "/activate", null);
+        assertThat(balance(own)).isEqualByComparingTo("120");
+        assertThat(balance(sv)).isEqualByComparingTo(sv0);
+    }
+
+    @Test
+    @DisplayName("h-02 F7: a cost policy cannot take effect on a day the books are locked")
+    void policyEffectiveDateMustBeOpen() {
+        jdbc.sql("UPDATE \"Organization\" SET \"booksLockDate\" = now() - interval '1 day' WHERE id = ?").param(org)
+                .update();
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("scopeType", "organization");
+            body.put("method", "FIFO");
+            body.put("effectiveFrom", LocalDate.now(ZoneOffset.UTC).minusDays(5).toString());
+            Res r = call("POST", "/inventory/cost-policies", body, token);
+            assertThat(r.status()).as(r.raw().body()).isEqualTo(400);
+            assertThat(r.body().get("message").asString()).startsWith("The cost policy cannot take effect on")
+                    .endsWith("Choose an effective date in an open period");
+        } finally {
+            jdbc.sql("UPDATE \"Organization\" SET \"booksLockDate\" = NULL WHERE id = ?").param(org).update();
+        }
     }
 
     @Test
