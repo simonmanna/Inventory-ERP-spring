@@ -90,9 +90,9 @@ class LpReconIT extends ApiTestSupport {
     @DisplayName("rules: defaults until changed, each change a new version, bad input refused")
     void rules() {
         JsonNode list = ok(200, "GET", "/loss-prevention/rules", null);
-        // C01–C11, B01–B03, V-C1–V-C3 (LP2), B04, B05, V-B1, V-B2 (LP3), K01, K02, V-K1, V-F1 (LP4), V-R1, V-R2,
-        // V-S1 (LP5).
-        assertThat(list.size()).isEqualTo(28);
+        // C01–C11, B01–B03, V-C1–V-C3 (LP2), B04, B05, V-B1, V-B2 (LP3), K01, K02, V-K1, V-F1 (LP4),
+        // V-K2, V-K3, V-F2 (LP4b), V-R1, V-R2, V-S1 (LP5).
+        assertThat(list.size()).isEqualTo(31);
         assertThat(as("PUT", "/loss-prevention/rules/NOPE", Map.of("enabled", true, "severity", "info")).status())
                 .isEqualTo(404);
         assertThat(as("PUT", "/loss-prevention/rules/C08", Map.of("enabled", true, "severity", "loud")).status())

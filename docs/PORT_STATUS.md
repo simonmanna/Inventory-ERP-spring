@@ -1858,6 +1858,7 @@ meters need the module only; the camera rules need `lpVision` zones.
 - [x] LP3 edge meter adapters `jsonl_dir`, `csv_dir`, `http_poll` (`edge/lp_edge/measurements`)
 - [x] LP4 engine `kitchen_flow`, rules K01, K02 (`LpKitchenFlowEngine`); `LpEngine.lookaheadDays()`
 - [x] LP4 engine `service_vision`, rules V-K1, V-F1 (`LpServiceVisionEngine`)
+- [x] LP4b rules V-K2, V-K3, V-F2 in `service_vision`; `cafe_counter` may link to a `station` (2026-11-18)
 - [x] LP4 projection: `itemCount`, `orderType` on kitchen events
 - [x] Web: Pour meters tab, engine and rule labels
 - [ ] Translations of the new phrases (English fallback now); web tests; owner's full build and coverage gate

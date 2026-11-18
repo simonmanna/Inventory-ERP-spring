@@ -298,7 +298,7 @@ an object enters when it crosses "in".
 | `checkout` | polygon over the customer side of the till | `till` (required) | V-C2, V-C3 |
 | `bar_counter` | polygon | `station` or `location` | LP3 |
 | `kitchen_pass` | line or polygon | `station` | LP4 |
-| `cafe_counter` | line or polygon | `counter` or `till` | LP4 |
+| `cafe_counter` | line or polygon | `counter`, `till` or `station` (LP4b, V-F2) | LP4 |
 | `dining` | polygon | `table_area` or `table` | LP4, LP6b table occupancy |
 | `storage` | line or polygon | `location` | LP5 V-S1 |
 | `entrance` | line | none (the branch) | LP6b footfall |
@@ -619,6 +619,9 @@ Brief: [LP4](../phases/LP4-restaurant-cafe.md).
 | `K02` | `kitchen_flow` | Remakes at one station above the threshold | `maxRatePercent` 10, `minCount` 3 | info, final day |
 | `V-K1` | `service_vision` | More plates left the kitchen pass than the tickets account for | `bucketMinutes` 60, `slackMinutes` 10, `tolerancePercent` 25, `minExcess` 3, `minConfidence` 0.5 | warning, every run |
 | `V-F1` | `service_vision` | More items handed over at the cafe counter than were sold | `bucketMinutes` 60, `slackMinutes` 5, `tolerancePercent` 20, `minExcess` 3, `minConfidence` 0.5 | warning, every run |
+| `V-K2` | `service_vision` | Ticket marked served with no plate seen leaving the kitchen pass | `windowMinutes` 5, `minConfidence` 0.5 | info, every run |
+| `V-K3` | `service_vision` | Plates delivered to a table with no open order | `clusterMinutes` 10, `slackMinutes` 10, `maxOrderMinutes` 240, `minPlates` 1, `minConfidence` 0.5 | warning, every run |
+| `V-F2` | `service_vision` | Fewer items handed over at the cafe counter than were prepared | `bucketMinutes` 60, `slackMinutes` 5, `tolerancePercent` 20, `minShortfall` 3, `minConfidence` 0.5 | info, every run |
 
 - `kitchen_flow` is a business-day engine with no camera; it settles with `cashierSettleMinutes`. It reads the next
   business day's sales, cancellations and stages too (`lookaheadDays`): such an event makes the earlier reconciled
@@ -635,6 +638,23 @@ Brief: [LP4](../phases/LP4-restaurant-cafe.md).
   is the excess × the average price of the items sold in the period.
 - A period is skipped, never found, when a ticket in it has no `itemCount`, when the zone has a `vision.gap` in it,
   or when it ends after the camera's watermark; the run is then marked `observationGap`.
+- LP4b, the rest of the design's restaurant and cafe rules (the engine now also reads `order.cancelled` and `dining`
+  zones):
+  - V-K2: each ticket of the day whose first `dispatched` stage (this ERP's "served") is that day, not cancelled and
+    with items, against the `out` crossings of the kitchen passes of its station (linked to it, or not linked)
+    within `windowMinutes` either side. Found when there are none. A ticket no pass covers, or whose window has a
+    gap or is after the watermark, is skipped. Subject: the ticket.
+  - V-K3: `in` crossings, not people, of a `dining` zone linked to a POS `table`, grouped into deliveries no more
+    than `clusterMinutes` apart. Found when the table had no open order within `slackMinutes` of the delivery. An
+    order is open from its first `kitchen.ticket_created` with that `tableId` to its `sale.completed` or
+    `order.cancelled` (open to the end of the run when neither came); a `sale.completed` with that `tableId` also
+    counts as open for the `maxOrderMinutes` before it. Skipped for the whole day when no ticket or sale carries a
+    `tableId` field (a sender that does not send one). Zones linked to a `table_area` are not read. Subject: the
+    table.
+  - V-F2: per period of a `cafe_counter` zone linked to a `station` (the drinks station of the kitchen display):
+    prepared = Σ `itemCount` of the station's tickets first `prepared` or `dispatched` in the period; handed over =
+    `out` crossings in the period and `slackMinutes` after. Found when prepared − handed over ≥ `minShortfall` and
+    handed over < prepared × (1 − `tolerancePercent`/100). No exposure: what a missing hand-over costs is not known.
 
 The projection now writes `itemCount` (quantities on the ticket not cancelled) on `kitchen.ticket_created` and every
 `kitchen.stage`, and `orderType` on `kitchen.ticket_created`. Tickets projected before LP4 carry none.

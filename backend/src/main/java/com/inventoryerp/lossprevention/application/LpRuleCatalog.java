@@ -98,6 +98,15 @@ public final class LpRuleCatalog {
         add("V-F1", SERVICE_VISION, "More items handed over at the cafe counter than were sold", "warning", true,
                 false, Obj.of("bucketMinutes", 60, "slackMinutes", 5, "tolerancePercent", 20, "minExcess", 3,
                         "minConfidence", new BigDecimal("0.5")));
+        // LP4b: the rest of the design's restaurant and cafe rules (docs/phases/LP4-restaurant-cafe.md §4b).
+        add("V-K2", SERVICE_VISION, "Ticket marked served with no plate seen leaving the kitchen pass", "info", true,
+                false, Obj.of("windowMinutes", 5, "minConfidence", new BigDecimal("0.5")));
+        add("V-K3", SERVICE_VISION, "Plates delivered to a table with no open order", "warning", true, false,
+                Obj.of("clusterMinutes", 10, "slackMinutes", 10, "maxOrderMinutes", 240, "minPlates", 1,
+                        "minConfidence", new BigDecimal("0.5")));
+        add("V-F2", SERVICE_VISION, "Fewer items handed over at the cafe counter than were prepared", "info", true,
+                false, Obj.of("bucketMinutes", 60, "slackMinutes", 5, "tolerancePercent", 20, "minShortfall", 3,
+                        "minConfidence", new BigDecimal("0.5")));
         // LP5: docs/phases/LP5-retail-checkout.md. V-R1 and V-R2 ship off until a pilot has measured the count
         // error per transaction batch; an organization turns them on.
         add("V-R1", RETAIL_VISION, "More items passed the scanner than the sale records", "warning", false, false,

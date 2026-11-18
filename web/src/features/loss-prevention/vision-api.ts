@@ -279,7 +279,7 @@ export const ZONE_LINKS: Record<ZoneType, { types: LinkedType[]; required: boole
   checkout: { types: ['till'], required: true },
   bar_counter: { types: ['station', 'location'], required: false },
   kitchen_pass: { types: ['station'], required: false },
-  cafe_counter: { types: ['counter', 'till'], required: false },
+  cafe_counter: { types: ['counter', 'till', 'station'], required: false },
   dining: { types: ['table_area', 'table'], required: false },
   storage: { types: ['location'], required: false },
   entrance: { types: [], required: false },

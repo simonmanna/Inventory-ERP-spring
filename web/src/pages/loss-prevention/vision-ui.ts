@@ -53,13 +53,13 @@ export const ZONE_USES: Record<string, string> = {
   cash_drawer: tx('Used by rule V-C1: drawer opened with no sale, refund or cash movement near it.'),
   checkout: tx('Used by rules V-C2 and V-C3: refunds with no customer at the till, customers served with no sale.'),
   bar_counter: tx('Used by rules V-B1 and V-B2: pours seen with no drink sale near them, or with no meter reading.'),
-  kitchen_pass: tx('Used by rule V-K1: more plates leaving the kitchen than the tickets account for.'),
-  cafe_counter: tx('Used by rule V-F1: more items handed over at the counter than were sold.'),
+  kitchen_pass: tx('Used by rules V-K1 and V-K2: more plates leaving the kitchen than the tickets account for, and tickets marked served with no plate seen leaving.'),
+  cafe_counter: tx('Used by rule V-F1: more items handed over at the counter than were sold. Linked to the drinks station, also by rule V-F2: fewer items handed over than the station prepared.'),
   scan_area: tx('Used by rules V-R1 and V-R2, which are off until turned on: items passed over or around the scanner, compared with the sale. Draw the area over the scanner and link the till.'),
   storage: tx('Used by rule V-S1 when linked to a stock location: goods carried out of the store room with no stock movement recorded.'),
   entrance: tx('Used by the insights for footfall and conversion. It counts people crossing the line and never identifies anyone.'),
   queue: tx('Used by the insights for queue length and waiting time. It counts people and never identifies anyone.'),
-  dining: tx('Used by the insights for table occupancy and seatings, and, when linked to a table, the wait to the first order. It counts people and never identifies anyone.'),
+  dining: tx('Used by the insights for table occupancy and seatings, and, when linked to a table, the wait to the first order and rule V-K3: plates delivered while the table had no open order. It counts people and plates and never identifies anyone.'),
 };
 export const LINK_LABELS: Record<string, string> = {
   till: tx('Till'), station: tx('Station'), table_area: tx('Table area'), counter: tx('Counter'),

@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 
 /**
  * The restaurant and cafe rules of LP4 on synthetic events: K01 and K02 (kitchen flow, no camera), V-K1 and V-F1
- * (counts over the kitchen pass and the cafe counter). How well a camera counts plates or cups is not measured here.
+ * (counts over the kitchen pass and the cafe counter), and LP4b's V-K2, V-K3 and V-F2. How well a camera counts plates or cups is not measured here.
  */
 class LpRestaurantEnginesTest {
 
@@ -178,7 +178,8 @@ class LpRestaurantEnginesTest {
         List<LedgerEvent> unknown = new ArrayList<>(base);
         unknown.add(created("12:00:00", "t2", "o2", "Hot", null));
         unknown.add(stage("12:15:00", "t2", "o2", "Hot", "dispatched"));
-        assertThat(service.evaluate(input(unknown, false, SEEN))).isEmpty();
+        // t2 served with no plate within 5 minutes is V-K2's business (LP4b), not V-K1's.
+        assertThat(codes(service.evaluate(input(unknown, false, SEEN)))).doesNotContain("V-K1");
     }
 
     @Test
@@ -195,5 +196,117 @@ class LpRestaurantEnginesTest {
         assertThat(f1.delta()).isEqualByComparingTo("5");
         assertThat(f1.exposureAmount()).isEqualByComparingTo("15");
         assertThat(service.evaluate(input(events, false, SEEN))).isEqualTo(f);
+    }
+
+    // ---------------------------------------------------------------- LP4b
+
+    LedgerEvent crossedAt(String time, String zone, String cls, int count, String direction) {
+        seq++;
+        return new LedgerEvent("v" + seq, seq, "vision.line_crossed", null, null, null, null, null, null, DAY,
+                at(time), "zone", "observed", Obj.of("cameraId", "c1", "class", cls, "direction", direction,
+                        "count", count), zone, new BigDecimal("0.8"));
+    }
+
+    LedgerEvent tableTicket(String time, String ticket, String order, String table) {
+        return ticket("kitchen.ticket_created", time, DAY, ticket, order, Obj.of("station", "Hot", "itemCount", 2,
+                "tableId", table));
+    }
+
+    LedgerEvent tableSale(String time, String order, String table) {
+        seq++;
+        return new LedgerEvent("s" + seq, seq, "sale.completed", "cashier-1", "inv" + seq, order, null, null, null,
+                DAY, at(time), "order", "observed", Obj.of("tillId", "till-1", "tableId", table, "lines",
+                        List.of(Obj.of("quantity", 2, "total", 20))));
+    }
+
+    /** A dining zone at table T1 and a cafe counter linked to the Bar station, beside the pass of SEEN. */
+    static Map<String, Object> lp4b(String mark) {
+        return Obj.of("timeZone", "UTC",
+                "zones", List.of(
+                        Obj.of("id", "zk", "cameraId", "c1", "agentId", "a1", "zoneType", "kitchen_pass",
+                                "linkedType", "station", "linkedId", "Hot", "enabled", true, "createdAt",
+                                "2026-11-01T00:00:00Z"),
+                        Obj.of("id", "zd", "cameraId", "c1", "agentId", "a1", "zoneType", "dining",
+                                "linkedType", "table", "linkedId", "T1", "enabled", true, "createdAt",
+                                "2026-11-01T00:00:00Z"),
+                        Obj.of("id", "zc", "cameraId", "c1", "agentId", "a1", "zoneType", "cafe_counter",
+                                "linkedType", "station", "linkedId", "Bar", "enabled", true, "createdAt",
+                                "2026-11-01T00:00:00Z")),
+                "cameras", List.of(Obj.of("id", "c1", "observedThrough", mark)),
+                "agents", List.of(Obj.of("id", "a1", "observedThrough", mark)));
+    }
+
+    static final Map<String, Object> SEEN_4B = lp4b("2026-11-11T00:30:00Z");
+
+    static List<Finding> only(List<Finding> f, String code) {
+        return f.stream().filter(x -> code.equals(x.ruleCode())).toList();
+    }
+
+    @Test
+    @DisplayName("V-K2: a ticket served with no plate over its station's pass is found; a plate near it, another"
+            + " station, a cancelled ticket or a gap is not")
+    void servedWithoutPlate() {
+        List<LedgerEvent> events = new ArrayList<>(List.of(
+                created("12:00:00", "t1", "o1", "Hot", 2), stage("12:20:00", "t1", "o1", "Hot", "dispatched"),
+                created("12:00:00", "t2", "o2", "Hot", 1), stage("13:00:00", "t2", "o2", "Hot", "dispatched"),
+                crossedAt("13:03:00", "zk", "plate", 1, "out"),
+                created("12:00:00", "t3", "o3", "Grill", 1), stage("14:00:00", "t3", "o3", "Grill", "dispatched"),
+                created("12:00:00", "t4", "o4", "Hot", 1), stage("15:00:00", "t4", "o4", "Hot", "dispatched"),
+                stage("15:10:00", "t4", "o4", "Hot", "cancelled"),
+                crossedAt("12:21:00", "zk", "person", 1, "out")));
+        List<Finding> f = only(service.evaluate(input(events, false, SEEN_4B)), "V-K2");
+        assertThat(f).extracting(Finding::subjectId).containsExactly("t1");
+        assertThat(f.getFirst().expected()).isEqualByComparingTo("2");
+        assertThat(f.getFirst().observed()).isEqualByComparingTo("0");
+        assertThat(f.getFirst().subjectType()).isEqualTo("ticket");
+
+        events.add(gap("12:18:00", "12:19:00", "zk"));
+        assertThat(only(service.evaluate(input(events, false, SEEN_4B)), "V-K2")).isEmpty();
+        assertThat(only(service.evaluate(input(events.subList(0, 2), false, lp4b("2026-11-10T12:22:00Z"))), "V-K2"))
+                .as("the window is not observed yet").isEmpty();
+    }
+
+    @Test
+    @DisplayName("V-K3: plates arriving at a table with no open order are found once per delivery; an open order,"
+            + " a sale on the table, or a day without table ids is not")
+    void platesWithoutOrder() {
+        List<LedgerEvent> events = new ArrayList<>(List.of(
+                tableTicket("12:00:00", "t1", "o1", "T1"), crossedAt("12:20:00", "zd", "plate", 2, "in"),
+                tableSale("12:50:00", "o1", "T1"),
+                crossedAt("08:00:00", "zd", "plate", 1, "in"), crossedAt("08:04:00", "zd", "plate", 2, "in"),
+                crossedAt("08:05:00", "zd", "person", 3, "in"),
+                crossedAt("18:00:00", "zd", "plate", 1, "in"), tableSale("19:00:00", null, "T1")));
+        List<Finding> f = only(service.evaluate(input(events, false, SEEN_4B)), "V-K3");
+        assertThat(f).hasSize(1);
+        assertThat(f.getFirst().subjectType()).isEqualTo("table");
+        assertThat(f.getFirst().subjectId()).isEqualTo("T1");
+        assertThat(f.getFirst().observed()).as("two arrivals, one delivery, people not counted")
+                .isEqualByComparingTo("3");
+        assertThat(f.getFirst().detail()).containsEntry("firstArrival", at("08:00:00").toString());
+
+        List<LedgerEvent> noTables = events.stream().filter(e -> e.type().startsWith("vision")).toList();
+        assertThat(only(service.evaluate(input(noTables, false, SEEN_4B)), "V-K3")).as("no table ids sent")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("V-F2: fewer cups handed over than the Bar station prepared is found; within tolerance or another"
+            + " station it is not")
+    void preparedNotHandedOver() {
+        List<LedgerEvent> events = new ArrayList<>(List.of(
+                created("09:00:00", "b1", "o1", "Bar", 6), stage("09:10:00", "b1", "o1", "Bar", "prepared"),
+                created("09:00:00", "h1", "o2", "Hot", 9), stage("09:15:00", "h1", "o2", "Hot", "prepared"),
+                crossedAt("09:20:00", "zc", "cup", 2, "out"), crossedAt("09:25:00", "zc", "cup", 1, "in")));
+        List<Finding> f = only(service.evaluate(input(events, false, SEEN_4B)), "V-F2");
+        assertThat(f).hasSize(1);
+        assertThat(f.getFirst().expected()).isEqualByComparingTo("6");
+        assertThat(f.getFirst().observed()).isEqualByComparingTo("2");
+        assertThat(f.getFirst().delta()).isEqualByComparingTo("-4");
+
+        events.add(crossedAt("10:03:00", "zc", "cup", 3, "out"));
+        assertThat(only(service.evaluate(input(events, false, SEEN_4B)), "V-F2")).as("handed over in the slack")
+                .isEmpty();
+        assertThat(service.evaluate(input(events, false, SEEN_4B))).isEqualTo(service.evaluate(input(events, false,
+                SEEN_4B)));
     }
 }

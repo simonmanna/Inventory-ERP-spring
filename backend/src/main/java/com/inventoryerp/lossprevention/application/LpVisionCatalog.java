@@ -32,7 +32,8 @@ public final class LpVisionCatalog {
             "checkout", List.of("till"),
             "bar_counter", List.of("station", "location"),
             "kitchen_pass", List.of("station"),
-            "cafe_counter", List.of("counter", "till"),
+            // LP4b: a station link (the drinks station of the kitchen display) feeds V-F2.
+            "cafe_counter", List.of("counter", "till", "station"),
             "dining", List.of("table_area", "table"),
             "storage", List.of("location"),
             "entrance", List.of(),

@@ -19,6 +19,9 @@ what a camera counts leaving the kitchen or crossing the counter.
 | `K02` | `kitchen_flow` | Remakes at one station above the threshold | Kitchen tickets |
 | `V-K1` | `service_vision` | More plates left the kitchen pass than the tickets account for | A `kitchen_pass` zone |
 | `V-F1` | `service_vision` | More items handed over at the cafe counter than were sold | A `cafe_counter` zone |
+| `V-K2` | `service_vision` | Ticket marked served with no plate seen leaving the kitchen pass | A `kitchen_pass` zone (LP4b) |
+| `V-K3` | `service_vision` | Plates delivered to a table with no open order | A `dining` zone linked to a table (LP4b) |
+| `V-F2` | `service_vision` | Fewer items handed over at the cafe counter than were prepared | A `cafe_counter` zone linked to a station (LP4b) |
 
 ## 2. Out of scope
 
@@ -58,6 +61,18 @@ what a camera counts leaving the kitchen or crossing the counter.
   linked: every sale of the branch), `slackMinutes` 5, `tolerancePercent` 20. Exposure: the excess × the average
   price of the items sold in the period.
 
+## 4b. LP4b: V-K2, V-K3, V-F2 (coded 2026-11-18)
+
+The design document's remaining restaurant and cafe rules, on the same signals; no edge change (the counting profile
+already reports plates entering a `dining` polygon as `in` crossings). How each decides is in the spec, section
+"Restaurant and cafe (LP4)". `cafe_counter` may now link to a `station` (V-F2 reads the drinks station's tickets).
+
+- **V-K2**: per served ticket (first `dispatched`), no plate out over its station's pass within ±`windowMinutes`.
+  Info: a ticket bumped on the display without food leaving, or a plate carried another way.
+- **V-K3**: plates arriving at a table (`dining` zone linked to a POS table) with no open order then. Warning.
+- **V-F2**: fewer cups handed over than the counter's station prepared in a period. Info: waste, remakes, staff
+  drinks, or drinks taken to tables instead of over the counter.
+
 ## 5. Settings
 
 No new setting. `kitchen_flow` settles with `cashierSettleMinutes`; `service_vision` with `visionSettleMinutes`.
@@ -67,11 +82,17 @@ No new setting. `kitchen_flow` settles with `cashierSettleMinutes`; `service_vis
 - Plates and cups counted against a reviewed sample of video, per camera (V-K1 and V-F1 rest on that count).
 - How many plates a ticket item really is (sides, shared plates): it sets `tolerancePercent`.
 - K01 on real tabs: orders settled on a later day, staff meals, and tickets without an order.
+- V-K2: how long after "dispatched" a plate really crosses the pass, and whether staff bump tickets in batches.
+- V-K3: plates entering a table polygon from a neighbouring table (polygon overlap), and table moves (an order
+  moved to another table keeps its first `tableId`).
+- V-F2: what share of drinks leave the counter some other way (to tables, takeaway hatch).
 
 ## 7. Tests
 
 - `LpRestaurantEnginesTest`: K01 found, paid that day, paid the next day, cancelled, no order; K02 per station; V-K1
-  found, within tolerance, gap, watermark, ticket without `itemCount`; V-F1 found at its till only, with the
+  found, within tolerance, gap, watermark, ticket without `itemCount`; V-K2 found, plate near it, other station,
+  cancelled, gap, not yet observed; V-K3 one finding per delivery, open order, table sale, people not counted, no
+  table ids; V-F2 found, handed over in the slack, other station; V-F1 found at its till only, with the
   estimated amount; determinism.
 - `LpBarRestaurantIT`: a dispatched ticket with no sale becomes a K01 case through a replay.
 - Not run: the full build.
