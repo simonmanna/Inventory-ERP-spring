@@ -77,6 +77,18 @@ public class SegregationOfDutiesService {
         }
     }
 
+    /**
+     * Readiness gaps h-02 F5: whoever created an inventory revaluation / NRV review, a standard cost or a cost policy, or
+     * posted the cost a lineage exception parked, cannot also post, reverse, approve or write it off.
+     */
+    public static final String INVENTORY_VALUATION = "inventory_valuation";
+
+    static {
+        PAIRS.put(INVENTORY_VALUATION, new Pair(INVENTORY_VALUATION, "Inventory valuation change",
+                "Creates the revaluation, standard cost or cost policy", "Approves, posts, reverses or writes it off",
+                false));
+    }
+
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
 
     private final JdbcClient jdbc;

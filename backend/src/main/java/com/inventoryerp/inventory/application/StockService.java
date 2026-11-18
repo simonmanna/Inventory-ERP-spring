@@ -170,6 +170,7 @@ public class StockService {
     public Received receiveReturn(StockMove dto) {
         Instant date = dto.date != null ? dto.date : Instant.now();
         assertStockPeriodOpen(date);
+        holdCostingShared(TenantContext.organizationId(), dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
         BigDecimal baseQty = product != null && dto.uomFactor != null
                 ? uomConversion.applyFactor(dto.quantity, dto.uomFactor, str(product, "uomId"), true)
@@ -230,6 +231,7 @@ public class StockService {
     private Received receiveCore(StockMove dto, GlReceiptContext glCtx) {
         String org = TenantContext.organizationId();
         assertStockPeriodOpen(glCtx != null && glCtx.date() != null ? glCtx.date() : Instant.now());
+        holdCostingShared(org, dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
         if (product == null) {
             throw ApiException.notFound("Product not found");
@@ -517,6 +519,7 @@ public class StockService {
         String org = TenantContext.organizationId();
         Instant date = dto.date != null ? dto.date : Instant.now();
         assertStockPeriodOpen(date);
+        holdCostingShared(org, dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
         if (product == null) {
             throw ApiException.notFound("Product not found");
@@ -884,6 +887,7 @@ public class StockService {
     public Adjusted adjust(StockMove dto) {
         String org = TenantContext.organizationId();
         assertStockPeriodOpen(Instant.now());
+        holdCostingShared(org, dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
         if (product == null) {
             throw ApiException.notFound("Product not found");
@@ -1029,6 +1033,7 @@ public class StockService {
         if (dto.fromLocationId.equals(dto.toLocationId)) {
             throw ApiException.badRequest("Source and destination locations must be different");
         }
+        holdCostingShared(org, dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
         if (product == null) {
             throw ApiException.notFound("Product not found");
@@ -1323,6 +1328,23 @@ public class StockService {
                 lockQuantForAvco(org, str(l, "productId"), variantKey, locationId);
             }
         }
+    }
+
+    /** Costing-change lock key (readiness gaps h-02 F2): the organisation's ({@code productId} null) or a product's. */
+    static String costingLockKey(String org, String productId) {
+        return productId == null ? "costing:" + org : "costing:" + org + ":" + productId;
+    }
+
+    /**
+     * Readiness gaps h-02 F2: the shared side of the costing-change locks, taken (organisation key first) before a move
+     * reads the product's costing method, lot tracking or active standard. A cost policy activation holds the
+     * organisation key and a standard cost activation the product key exclusively, so a move runs wholly before a
+     * re-costing (which waits for it) or wholly after it, reading the new method.
+     */
+    private void holdCostingShared(String org, String productId) {
+        jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint),"
+                        + " pg_advisory_xact_lock_shared(hashtext(?)::bigint)")
+                .params(costingLockKey(org, null), costingLockKey(org, productId)).query().listOfRows();
     }
 
     /** Transaction-scoped advisory lock serialising one quant's AVCO recompute (first half of the quant lock). */
