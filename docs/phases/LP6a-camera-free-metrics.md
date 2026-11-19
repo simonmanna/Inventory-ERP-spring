@@ -61,9 +61,11 @@ No new permission: reading needs `lp:view`, per-person staff figures `lp:investi
 
 ## 5. Not done
 
-- A native-speaker check of the Insights translations (ti, lg, sw): written 2026-11-18 by the assistant, not by a
-  translator. The rest of the loss-prevention screens are still untranslated.
-- Web component tests.
+- A native-speaker check of the loss-prevention translations (ti, lg, sw). Insights was written by the assistant on
+  2026-11-18; the rest of the loss-prevention screens were written by an AI assistant on 2026-11-19. None of them is by
+  a translator, and all of them still need a native-speaker check.
+- Web component tests. Since 2026-11-19, Vitest unit tests (`pnpm web:test`) cover the pure helpers, including the
+  Insights formatting in `pages/loss-prevention/lp-format.ts`.
 - Cash accuracy per cashier (rule C09 already covers repeated shortfalls per cashier).
 - Retention of summary rows: they are derived and small; they are not deleted when ledger retention arrives.
 
