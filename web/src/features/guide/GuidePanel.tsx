@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { CheckCircle2, GraduationCap, PlayCircle, RotateCcw, Search } from 'lucide-react';
+import { BookOpen, CheckCircle2, GraduationCap, PlayCircle, RotateCcw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -108,6 +108,7 @@ function TourRow({ tour, progress, onStart }: {
   tour: TourDef; progress?: TourProgress; onStart: (t: TourDef, fresh?: boolean) => void;
 }) {
   const state = tourState(tour, progress);
+  const [reading, setReading] = useState(false);
   return (
     <div className="rounded-lg border p-3">
       <div className="flex items-start gap-3">
@@ -120,7 +121,11 @@ function TourRow({ tour, progress, onStart }: {
           <p className="mt-1 text-xs text-muted-foreground">{tour.steps.length} {tx('steps')}</p>
         </div>
       </div>
+      {reading && <Tutorial tour={tour} />}
       <div className="mt-2 flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setReading(!reading)} aria-expanded={reading}>
+          <BookOpen className="mr-1 h-3.5 w-3.5" />{reading ? tx('Hide tutorial') : tx('Read as tutorial')}
+        </Button>
         {state !== 'new' && (
           <Button size="sm" variant="ghost" onClick={() => onStart(tour, true)}>
             <RotateCcw className="mr-1 h-3.5 w-3.5" />{tx('Start over')}
@@ -133,5 +138,20 @@ function TourRow({ tour, progress, onStart }: {
         )}
       </div>
     </div>
+  );
+}
+
+/** The tour as a written, numbered tutorial: every step's text, grouped by chapter. */
+function Tutorial({ tour }: { tour: TourDef }) {
+  return (
+    <ol className="mt-3 space-y-2 border-t pt-3 text-sm">
+      {tour.steps.map((s, i) => (
+        <li key={i}>
+          {s.chapter && <p className="mb-1 mt-3 text-[11px] font-semibold uppercase tracking-wide text-primary first:mt-0">{s.chapter}</p>}
+          <p className="font-medium">{i + 1}. {s.title}</p>
+          <p className="text-muted-foreground">{s.body}</p>
+        </li>
+      ))}
+    </ol>
   );
 }

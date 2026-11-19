@@ -179,7 +179,7 @@ export function OrderDeliveryTab({ order, requestedDate, onRequestedDate, dateEd
         canAdd={canPlan && toScheduleTotal > 0} onAdd={() => setAction({ key: 'add' })} onAction={run} deadline={s?.deadline ?? null} />
 
       {/* per line */}
-      {s && lines.length > 0 && <LineFulfilment lines={lines} deadline={s.deadline} returns={s.returns ?? []} deliveries={list} onAction={run} />}
+      {s && lines.length > 0 && <div data-tour="sales.order.line-fulfilment"><LineFulfilment lines={lines} deadline={s.deadline} returns={s.returns ?? []} deliveries={list} onAction={run} /></div>}
 
       {/* notes / confirmation */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -293,7 +293,7 @@ function QuickAdd({ orderId, lines, plan, form, fallbackLocationId, nextIndex, o
 
   const sel = 'h-9 w-full rounded-md border bg-background px-2 text-sm';
   return (
-    <section className="rounded-xl border border-primary/30 bg-primary/[0.03] p-4 shadow-sm">
+    <section data-tour="sales.order.add-delivery" className="rounded-xl border border-primary/30 bg-primary/[0.03] p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h3 className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground"><Plus className="h-4 w-4" /></span>{tx('Add delivery')}</h3>
         <button type="button" className="text-xs font-medium text-primary hover:underline" onClick={() => onAdvanced(quantities)}>{tx('More options & per-product quantities…')}</button>
@@ -360,6 +360,7 @@ function DeliveriesTable({ rows, loading, error, onRetry, percent, orderOpen, or
   const lateFor = (d: SalesDelivery) => !!deadline && deadline < today && ['scheduled', 'dispatched', 'in_transit', 'failed'].includes(d.stage);
 
   return (
+    <div data-tour="sales.order.delivery-list">
     <Section icon={Truck} title={<>{tx('Deliveries')} <span className="font-normal text-muted-foreground">({rows.filter((d) => d.stage !== 'cancelled').length})</span></>}
       bodyClassName="p-0" actions={
         <>
@@ -472,6 +473,7 @@ function DeliveriesTable({ rows, loading, error, onRetry, percent, orderOpen, or
         </div>
       )}
     </Section>
+    </div>
   );
 }
 

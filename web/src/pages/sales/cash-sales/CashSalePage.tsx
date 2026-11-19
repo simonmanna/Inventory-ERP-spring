@@ -271,14 +271,14 @@ export function CashSalePage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div data-tour="sales.cash.actions" className="flex flex-wrap items-center gap-2">
           {editable && <Button data-tour="sales.cash.save" disabled={busy} onClick={save}>{tx('Save')}</Button>}
-          {has('confirm') && <Button variant="secondary" disabled={busy} onClick={() => act('confirm', tx('Sale confirmed: stock, payments and revenue posted'), null, true)}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Confirm sale & handover')}</Button>}
-          {has('submit') && <Button disabled={busy} onClick={() => act('submit', tx('Submitted to head office'))}><Send className="mr-1.5 h-4 w-4" />{tx('Submit to head office')}</Button>}
+          {has('confirm') && <Button data-tour="sales.cash.confirm" variant="secondary" disabled={busy} onClick={() => act('confirm', tx('Sale confirmed: stock, payments and revenue posted'), null, true)}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Confirm sale & handover')}</Button>}
+          {has('submit') && <Button data-tour="sales.cash.submit" disabled={busy} onClick={() => act('submit', tx('Submitted to head office'))}><Send className="mr-1.5 h-4 w-4" />{tx('Submit to head office')}</Button>}
           {has('resubmit') && <Button disabled={busy} onClick={() => act('resubmit', tx('Resubmitted'))}><Send className="mr-1.5 h-4 w-4" />{tx('Resubmit')}</Button>}
-          {has('start_review') && <Button disabled={busy} onClick={() => act('start-review', tx('Review started'))}>{tx('Start review')}</Button>}
-          {has('approve') && <Button disabled={busy} onClick={() => act('approve', tx('Approved'))}><ShieldCheck className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>}
+          {has('start_review') && <Button data-tour="sales.cash.start-review" disabled={busy} onClick={() => act('start-review', tx('Review started'))}>{tx('Start review')}</Button>}
+          {has('approve') && <Button data-tour="sales.cash.approve" disabled={busy} onClick={() => act('approve', tx('Approved'))}><ShieldCheck className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>}
           {has('return') && <Button variant="outline" disabled={busy} onClick={() => setDialog('return')}><Undo2 className="mr-1.5 h-4 w-4" />{tx('Return for correction')}</Button>}
           {has('reject') && <Button variant="outline" disabled={busy} onClick={() => setDialog('reject')}><XCircle className="mr-1.5 h-4 w-4" />{tx('Reject')}</Button>}
-          {has('generate_invoice') && <Button disabled={busy} onClick={() => act('generate-invoice', tx('Invoice generated'), null, true)}><FileText className="mr-1.5 h-4 w-4" />{tx('Generate invoice')}</Button>}
+          {has('generate_invoice') && <Button data-tour="sales.cash.generate-invoice" disabled={busy} onClick={() => act('generate-invoice', tx('Invoice generated'), null, true)}><FileText className="mr-1.5 h-4 w-4" />{tx('Generate invoice')}</Button>}
           {menu.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -296,7 +296,7 @@ export function CashSalePage() {
           )}
         </div>
         {s && (
-          <div className="flex flex-wrap gap-2">
+          <div data-tour="sales.cash.links" className="flex flex-wrap gap-2">
             <SmartButton icon={<Receipt className="h-4 w-4" />} count={s.currentInvoiceId ? 1 : 0} label={tx('Invoice')} disabled={!s.currentInvoiceId} onClick={() => s.currentInvoiceId && navigate(`/invoices/${s.currentInvoiceId}`)} />
             <SmartButton icon={<Wallet className="h-4 w-4" />} count={paymentsCount} label={tx('Payments')} onClick={() => setTab('payments')} />
             <SmartButton icon={<Truck className="h-4 w-4" />} count={DELIVERY_STATUS_LABEL[s.deliveryStatus ?? 'pending']} label={tx('Delivery')} onClick={() => setTab('delivery')} />
@@ -573,7 +573,7 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
 function ReviewPanel({ sale, busy, run }: { sale: CashSale; busy: boolean; run: (fn: () => Promise<unknown>, ok: string) => Promise<void> }) {
   const [checked, setChecked] = useState<boolean[]>(CHECKS.map(() => false));
   return (
-    <aside className="space-y-3">
+    <aside data-tour="sales.cash.review" className="space-y-3">
       <div className="rounded-xl border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold">{tx('Verification')}</h3>
         <ul className="space-y-1.5 text-sm">

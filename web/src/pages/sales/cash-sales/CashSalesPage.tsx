@@ -101,12 +101,12 @@ export function CashSalesPage({ scope }: { scope: 'branch' | 'head_office' }) {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap rounded-lg border bg-card p-0.5">
+        <div data-tour="sales.cash.queues" className="flex flex-wrap rounded-lg border bg-card p-0.5">
           {QUEUES.map(([k, l]) => <button key={k} onClick={() => setQueue(k)} className={cn('rounded-md px-3 py-1.5 text-sm', queue === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>{l}</button>)}
         </div>
         <Input className="h-9 w-60" placeholder={tx('Search number or customer…')} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
-      <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+      <div data-tour="sales.cash.list" className="overflow-x-auto rounded-xl border bg-card shadow-sm">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr>
             <th className="px-3 py-2">{tx('Number')}</th><th className="px-3 py-2">{tx('Date')}</th><th className="px-3 py-2">{tx('Branch')}</th>

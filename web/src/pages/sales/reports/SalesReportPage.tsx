@@ -69,7 +69,7 @@ export function SalesReportPage() {
           </select>
 
           {/* desktop: report tabs as a side rail */}
-          <aside className="hidden lg:block print:hidden">
+          <aside data-tour="sales.report.rail" className="hidden lg:block print:hidden">
             <div className="sticky top-4 space-y-3 rounded-xl border bg-card p-2 shadow-sm">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />

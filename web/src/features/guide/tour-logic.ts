@@ -5,9 +5,13 @@ import type { TourDef, TourProgress, TourStep } from './types';
 export function routeMatches(pattern: string | undefined, pathname: string): boolean {
   if (!pattern) return true;
   const m = matchPath({ path: pattern, end: true }, pathname);
-  // A record page (`/:id`) is not the "new" form: the app declares `/x/new` before `/x/:id`, so a tour must too.
-  return m !== null && !Object.values(m.params).includes('new');
+  // A record page (`/:id`) is not one of the fixed pages beside it: the app declares `/x/new` and
+  // `/sales/cash-sales/processing` before `/x/:id`, so a tour must not read them as records either.
+  return m !== null && !Object.values(m.params).some((v) => v !== undefined && STATIC_SEGMENTS.has(v));
 }
+
+/** Fixed path segments that sit where a record id could be. */
+const STATIC_SEGMENTS = new Set(['new', 'processing']);
 
 /** The chapter the step belongs to: the last chapter heading at or before it. */
 export function chapterAt(steps: TourStep[], index: number): string | undefined {

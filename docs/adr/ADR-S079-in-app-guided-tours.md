@@ -1,7 +1,7 @@
 # ADR-S079 — In-app guided tours (the "Learn" assistant), Sales first
 
 - Status: accepted by the owner (2026-11-19). G1 (engine, Learn panel, two Sales tours) and G2 (the rest of the Sales
-  catalog, seven tours in all) are built; G3 (an AI chat) needs its own approval.
+  catalog, seven tours in all) are built; G3 (branch cash sales, delivery notes, reports, written tutorials) is built too; the AI chat (G4) needs its own approval.
 - Extension: no NestJS counterpart. Three new routes under `/guide/progress`; nothing existing changes shape.
 - Migration: `V580__guide_tour_progress.sql`.
 

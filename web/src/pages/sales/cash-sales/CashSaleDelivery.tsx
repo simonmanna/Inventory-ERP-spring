@@ -89,6 +89,7 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
       : sale.confirmedAt ? `${tx('Issued from')} ${sale.locationName ?? tx('the stock location')} ${tx('on')} ${date(sale.confirmedAt)}.` : null;
 
   return (
+    <div data-tour="sales.cash.delivery">
     <HandoverDeliveryView form={f} onChange={setF} status={status} lines={lines} stockLocationName={sale.locationName}
       methods={CASH_SALE_METHODS} hide={CASH_SALE_HIDE} planLocked={!editable || done} receiptLocked={!editable}
       actions={actions || undefined} notice={notice}
@@ -101,5 +102,6 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
         customerName: sale.customerName ?? sale.partnerName, deliveredAt: sale.deliveredAt, returns: sale.returns ?? [], currency: sale.currencyCode,
         onNote: (mode) => void openPdf(`/sales/cash-sales/${sale.id}/delivery-note`, `DN-${sale.number}.pdf`, mode),
       }} />
+    </div>
   );
 }

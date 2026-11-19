@@ -160,7 +160,7 @@ const quoteToOrderSteps = (): TourStep[] => [
   },
 ];
 
-/** Opened sales order → confirmed → delivery planned. */
+/** Opened sales order → confirmed → deliveries, delivery notes and proof of delivery. */
 const confirmAndDeliverSteps = (): TourStep[] => [
   {
     route: '/sales/orders/:id',
@@ -186,8 +186,36 @@ const confirmAndDeliverSteps = (): TourStep[] => [
   {
     route: '/sales/orders/:id',
     anchor: 'sales.order.deliveries',
-    title: tx('Plan the deliveries'),
-    body: tx('Choose the delivery method and address, then add a delivery for what goes out now. An order can be delivered in several parts; the strip at the top shows what is still to schedule.'),
+    title: tx('Delivery plan'),
+    body: tx('The strip at the top shows the requested date and how far the order is: scheduled, dispatched, delivered. Below it, choose the delivery method, address and dispatch warehouse.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/orders/:id',
+    anchor: 'sales.order.add-delivery',
+    title: tx('Add a delivery'),
+    body: tx('Enter what goes out on this trip, the date, vehicle and driver, then click "Add delivery". An order can go out in several deliveries; each one gets its own delivery note number. This box is shown while something is left to schedule.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/orders/:id',
+    anchor: 'sales.order.delivery-list',
+    title: tx('Dispatch and confirm each delivery'),
+    body: tx('Every row is one delivery with its delivery note (DN-…). Open the ⋮ menu on a row: "Dispatch (issue stock)" when the goods leave the warehouse, "Mark in transit" on the road, and "Confirm delivery" with what the customer actually received.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/orders/:id',
+    anchor: 'sales.order.delivery-list',
+    title: tx('The delivery note'),
+    body: tx('In the same ⋮ menu, "Delivery note (PDF)" downloads the delivery note and "Print delivery note" prints it for the driver. The customer signs it on receipt; the PDF and print buttons in the documents list below do the same.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/orders/:id',
+    anchor: 'sales.order.line-fulfilment',
+    title: tx('Fulfilment by order line'),
+    body: tx('For each product: how much is scheduled, dispatched, delivered, invoiced and still outstanding. Returns and damaged goods show here too.'),
     advanceOn: 'next',
   },
   {
@@ -195,20 +223,6 @@ const confirmAndDeliverSteps = (): TourStep[] => [
     anchor: 'sales.order.availability',
     title: tx('Is the stock there?'),
     body: tx('Availability shows, line by line, what is in stock in the dispatch warehouse. Reserve stock here so another order cannot take it.'),
-    advanceOn: 'next',
-  },
-  {
-    route: '/sales/orders/:id',
-    anchor: 'sales.order.tab.billing',
-    title: tx('Billing'),
-    body: tx('Open the Billing tab. It shows what has been delivered and what can be invoiced.'),
-    advanceOn: { click: 'sales.order.tab.billing' },
-  },
-  {
-    route: '/sales/orders/:id',
-    anchor: 'sales.order.fulfilment',
-    title: tx('Fulfilment'),
-    body: tx('"Create delivery order" sends the order to the warehouse. Stock is issued when the delivery is dispatched, and the order is delivered when the customer confirms receipt.'),
     advanceOn: 'next',
   },
   {
@@ -259,20 +273,20 @@ const invoiceSteps = (): TourStep[] => [
   },
 ];
 
-/** A walk-in sale paid on the spot. */
-const cashSaleSteps = (): TourStep[] => [
+/** Showroom: a new cash sale with its lines and payment. */
+const showroomSteps = (): TourStep[] => [
   {
     route: '/sales/cash-sales',
     anchor: 'sales.cash.new',
     title: tx('Start a cash sale'),
-    body: tx('A cash sale is for a customer who pays and takes the goods now, without a quotation or order. Click "New cash sale".'),
+    body: tx('A branch cash sale is for a customer who pays at the showroom, without a quotation or order. Click "New cash sale".'),
     advanceOn: { click: 'sales.cash.new' },
   },
   {
     route: '/sales/cash-sales/new',
     anchor: 'sales.cash.customer',
     title: tx('Customer'),
-    body: tx('Leave the walk-in customer, or pick a named customer when they need an invoice in their name.'),
+    body: tx('Leave the walk-in customer, or pick a named customer when they need an invoice in their name. Head office checks these details later.'),
     advanceOn: 'next',
   },
   {
@@ -293,7 +307,7 @@ const cashSaleSteps = (): TourStep[] => [
     route: '/sales/cash-sales/new',
     anchor: 'sales.cash.save',
     title: tx('Save the draft'),
-    body: tx('Click Save. Payments can be added once the sale is saved.'),
+    body: tx('Click Save. The sale gets its number; payments can be added once it is saved.'),
     advanceOn: { route: '/sales/cash-sales/:id' },
   },
   {
@@ -307,24 +321,181 @@ const cashSaleSteps = (): TourStep[] => [
     route: '/sales/cash-sales/:id',
     anchor: 'sales.cash.add-payment',
     title: tx('Add the payment'),
-    body: tx('Click "Add payment" and enter the payment mode, the amount and any reference such as the mobile money code. Split payments are added one by one.'),
+    body: tx('Click "Add payment" and enter the payment mode, the amount and the reference, such as the mobile money code. Split payments are added one by one. A supervisor marks each payment Verified once the money is seen.'),
+    advanceOn: 'next',
+  },
+];
+
+/** Confirm the cash sale, hand the goods over and print the delivery note. */
+const cashHandoverSteps = (): TourStep[] => [
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.confirm',
+    title: tx('Confirm sale & handover'),
+    body: tx('Click "Confirm sale & handover". Stock, payments and revenue are posted once, here. After that the amounts are frozen. If your branch does not confirm sales itself, the button is not shown: press Skip.'),
+    advanceOn: { click: 'sales.cash.confirm' },
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.tab.delivery',
+    title: tx('Delivery and fulfilment'),
+    body: tx('Open this tab to record how the goods reach the customer.'),
+    advanceOn: { click: 'sales.cash.tab.delivery' },
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.delivery',
+    title: tx('Collect or deliver'),
+    body: tx('Choose "Customer collect" when the customer takes the goods, or delivery to site with the address, contact, vehicle and driver.'),
     advanceOn: 'next',
   },
   {
     route: '/sales/cash-sales/:id',
-    anchor: 'sales.cash.actions',
-    title: tx('Finish the sale'),
-    body: tx('Depending on your branch, either "Confirm sale & handover" posts the stock, payments and revenue at once, or "Submit to head office" sends the sale for review first.'),
+    anchor: 'handover.actions',
+    title: tx('Record the handover'),
+    body: tx('Use Schedule and "Mark dispatched" for a delivery, then "Mark delivered" (or "Mark collected") with the name of the person who received the goods.'),
     advanceOn: 'next',
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'handover.note',
+    title: tx('Delivery note'),
+    body: tx('The delivery note lists what was handed over. Print it or download the PDF for the customer to sign; it also lists any returns.'),
+    advanceOn: 'next',
+  },
+];
+
+/** Branch sends the confirmed sale to head office. */
+const cashSubmitSteps = (): TourStep[] => [
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.submit',
+    title: tx('Submit to head office'),
+    body: tx('Click "Submit to head office". Head office reviews the sale and issues the official invoice. If the button is not shown, the sale is not confirmed yet or was already submitted: press Skip.'),
+    advanceOn: { click: 'sales.cash.submit' },
   },
   {
     route: '/sales/cash-sales/:id',
     anchor: 'sales.cash.ribbon',
     title: tx('Track it here'),
-    body: tx('The ribbon shows where the sale stands, from draft to invoiced.'),
+    body: tx('The ribbon shows where the sale stands. If head office returns it for correction, the reason is in the Timeline tab: correct it and resubmit.'),
     advanceOn: 'next',
   },
 ];
+
+/** Head office: from the processing queue to the official invoice. */
+const headOfficeSteps = (): TourStep[] => [
+  {
+    route: '/sales/cash-sales/processing',
+    anchor: 'sales.cash.queues',
+    title: tx('Branch Sales Processing'),
+    body: tx('Head office sees every branch\'s submitted sales here, by queue: Pending review, Awaiting invoice, Returned, Rejected and Invoiced.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/cash-sales/processing',
+    anchor: 'sales.cash.list',
+    title: tx('Open a sale'),
+    body: tx('Click a sale in the list to review it.'),
+    advanceOn: { route: '/sales/cash-sales/:id' },
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.start-review',
+    title: tx('Start the review'),
+    body: tx('Click "Start review" so the branch sees that head office is checking it. Already under review? Press Skip.'),
+    advanceOn: { click: 'sales.cash.start-review' },
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.review',
+    title: tx('Verification checklist'),
+    body: tx('Tick each check: customer, products and prices, tax, payment evidence, stock issue and delivery. Below it you see what was posted when the branch confirmed the sale.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.actions',
+    title: tx('Approve, return or reject'),
+    body: tx('"Approve" when everything is right. "Return for correction" sends it back to the branch with a reason; "Reject" refuses it (the posting stays until the sale is reopened or returned).'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.generate-invoice',
+    title: tx('Generate the invoice'),
+    body: tx('Once approved, click "Generate invoice". It moves the sale to receivables and applies the payments; nothing is posted twice. Not approved yet? Press Skip.'),
+    advanceOn: { click: 'sales.cash.generate-invoice' },
+  },
+  {
+    route: '/sales/cash-sales/:id',
+    anchor: 'sales.cash.links',
+    title: tx('The official invoice'),
+    body: tx('The Invoice button opens the invoice made for this sale. Payments, Delivery and Timeline are one click away too.'),
+    advanceOn: 'next',
+  },
+];
+
+/** Sales reports: from the hub to one report, exported. */
+const reportSteps = (slug: string, pick: string): TourStep[] => [
+  {
+    route: '/sales/reports',
+    anchor: 'sales.reports.filters',
+    title: tx('Sales reports'),
+    body: tx('Choose the period and branch here; the overview and every report use them.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/reports',
+    anchor: 'sales.reports.catalog',
+    title: tx('All sales reports'),
+    body: tx('Reports are grouped by subject. Search by name if you know what you are looking for.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/reports',
+    anchor: `sales.reports.page.${slug}`,
+    title: tx('Open the report group'),
+    body: pick,
+    advanceOn: { route: '/sales/reports/:page' },
+  },
+  {
+    route: '/sales/reports/:page',
+    anchor: 'sales.report.rail',
+    title: tx('Pick a report'),
+    body: tx('Every report of the group is listed on the left. Click one to show it.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/reports/:page',
+    anchor: 'sales.report.filters',
+    title: tx('Filters'),
+    body: tx('Narrow the report by period, branch, customer, product or salesperson. The figures update straight away.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/reports/:page',
+    anchor: 'sales.report.body',
+    title: tx('Read the report'),
+    body: tx('Totals at the top, then the chart and the table. Click a column heading to sort, and a row to drill down to the documents behind it.'),
+    advanceOn: 'next',
+  },
+  {
+    route: '/sales/reports/:page',
+    anchor: 'sales.report.export',
+    title: tx('Export and print'),
+    body: tx('Switch between chart and table, export to Excel, CSV or PDF, or print the report.'),
+    advanceOn: 'next',
+  },
+];
+
+/** Bridge to a sidebar page from anywhere. */
+const goTo = (path: string, title: string, body: string): TourStep => ({
+  anchor: `nav:${path}`,
+  title,
+  body,
+  advanceOn: { route: path },
+});
 
 /** Opening step for tours that start on a record picked from a list. */
 const openFromList = (route: string, target: string, body: string): TourStep => ({
@@ -391,17 +562,17 @@ export function salesTours(): TourDef[] {
     },
     {
       key: 'sales.confirm-and-deliver',
-      version: 1,
+      version: 2,
       module: 'sales',
       title: tx('Confirm and deliver an order'),
-      summary: tx('Confirm a sales order, check stock and plan the delivery.'),
-      keywords: ['confirm', 'deliver', 'delivery', 'dispatch', 'stock', 'availability', 'reserve', 'fulfilment', 'ship'],
-      permissions: [P.orderConfirm],
+      summary: tx('Confirm a sales order, plan deliveries, dispatch them, confirm receipt and print the delivery note.'),
+      keywords: ['confirm', 'deliver', 'delivery', 'note', 'dispatch', 'stock', 'availability', 'reserve', 'fulfilment', 'ship', 'driver'],
+      permissions: [P.orderConfirm, P.deliveryWrite],
       startPath: '/sales/orders',
       steps: [
         openFromList('/sales/orders', '/sales/orders/:id', tx('Click a sales order to open it.')),
         ...confirmAndDeliverSteps(),
-        done(tx('The order is confirmed and on its way. Next: invoice it.')),
+        done(tx('The order is confirmed and its deliveries planned. Next: invoice it.')),
       ],
     },
     {
@@ -421,30 +592,85 @@ export function salesTours(): TourDef[] {
     },
     {
       key: 'sales.cash-sale',
-      version: 1,
+      version: 2,
       module: 'sales',
-      title: tx('Record a cash sale'),
-      summary: tx('A walk-in customer pays and takes the goods: record the sale and the payment.'),
-      keywords: ['cash', 'walk', 'counter', 'pay', 'payment', 'mobile', 'money', 'receipt', 'shop'],
+      title: tx('Record a branch cash sale'),
+      summary: tx('At the showroom: record the sale and payment, hand the goods over with a delivery note and submit to head office.'),
+      keywords: ['cash', 'branch', 'showroom', 'walk', 'counter', 'pay', 'payment', 'mobile', 'money', 'receipt', 'shop', 'delivery', 'note', 'submit'],
       permissions: [P.cashSaleCreate],
       startPath: '/sales/cash-sales',
-      steps: [...cashSaleSteps(), done(tx('You have recorded a cash sale.'))],
+      steps: [...showroomSteps(), ...cashHandoverSteps(), ...cashSubmitSteps(),
+        done(tx('The sale is recorded, handed over and with head office.'))],
+    },
+    {
+      key: 'sales.branch-cash-review',
+      version: 1,
+      module: 'sales',
+      title: tx('Process branch sales (head office)'),
+      summary: tx('Review the sales submitted by branches, approve, return or reject them, and issue the official invoice.'),
+      keywords: ['head', 'office', 'review', 'approve', 'branch', 'cash', 'processing', 'verify', 'invoice', 'return', 'reject'],
+      permissions: [P.cashSaleReview, P.cashSaleApprove, P.cashSaleInvoice],
+      startPath: '/sales/cash-sales/processing',
+      steps: [...headOfficeSteps(), done(tx('The branch sale is approved and invoiced.'))],
+    },
+    {
+      key: 'sales.branch-cash-full',
+      version: 1,
+      module: 'sales',
+      title: tx('Branch cash sales: showroom to report'),
+      summary: tx('The whole branch cash sale in five chapters: the sale, handover and delivery note, submission, head-office review and invoice, and the Branch Cash Sales report.'),
+      keywords: ['branch', 'cash', 'full', 'whole', 'complete', 'process', 'wizard', 'showroom', 'head', 'office', 'report', 'delivery', 'note'],
+      permissions: [P.cashSaleCreate, P.cashSaleReadAll],
+      startPath: '/sales/cash-sales',
+      steps: [
+        ...chapter(tx('Chapter 1 · The sale'), showroomSteps()),
+        ...chapter(tx('Chapter 2 · Handover and delivery note'), cashHandoverSteps()),
+        ...chapter(tx('Chapter 3 · Submit to head office'), cashSubmitSteps()),
+        ...chapter(tx('Chapter 4 · Head-office review and invoice'), [
+          goTo('/sales/cash-sales/processing', tx('Over to head office'),
+            tx('Head office works from "Branch Sales Processing" in the Sales menu. Click it (it needs head-office rights; otherwise ask a colleague to show you).')),
+          ...headOfficeSteps(),
+        ]),
+        ...chapter(tx('Chapter 5 · Branch Cash Sales report'), [
+          goTo('/sales/reports', tx('Reports'), tx('Click "Sales Reports" in the Sales menu, under Reporting.')),
+          ...reportSteps('branch-cash', tx('Click "Branch Cash Sales": takings per branch and day, the cash / mobile money / bank split, the sale register and head-office processing.')),
+        ]),
+        done(tx('You have followed a branch cash sale from the showroom to the report.')),
+      ],
+    },
+    {
+      key: 'sales.reports',
+      version: 1,
+      module: 'sales',
+      title: tx('Use the sales reports'),
+      summary: tx('Find a report, filter it by period and branch, drill down, and export it to Excel or PDF.'),
+      keywords: ['report', 'reports', 'analysis', 'export', 'excel', 'pdf', 'print', 'filter', 'period', 'branch'],
+      permissions: [P.reportRead],
+      startPath: '/sales/reports',
+      steps: [
+        ...reportSteps('performance', tx('Click "Sales Performance" to open the summary, period sales and comparisons.')),
+        done(tx('You can now find, filter and export any sales report.')),
+      ],
     },
     {
       key: 'sales.order-to-cash',
-      version: 1,
+      version: 2,
       module: 'sales',
-      title: tx('Quote to cash: the full sale'),
-      summary: tx('One sale from start to finish: quotation, sales order, delivery and invoice, in four chapters.'),
-      keywords: ['full', 'whole', 'complete', 'process', 'wizard', 'end', 'cycle', 'order', 'cash', 'quote'],
+      title: tx('Quote to cash: quotation to delivery note and reports'),
+      summary: tx('One sale from start to finish in five chapters: quotation, sales order, delivery and delivery note, invoice, and the reports.'),
+      keywords: ['full', 'whole', 'complete', 'process', 'wizard', 'end', 'cycle', 'order', 'cash', 'quote', 'delivery', 'note', 'report'],
       permissions: [P.quotationWrite],
       startPath: '/sales/quotations',
       steps: [
         ...chapter(tx('Chapter 1 · Quotation'), createQuotationSteps()),
         ...chapter(tx('Chapter 2 · Sales order'), quoteToOrderSteps()),
-        ...chapter(tx('Chapter 3 · Delivery'), confirmAndDeliverSteps()),
+        ...chapter(tx('Chapter 3 · Delivery and delivery note'), confirmAndDeliverSteps()),
         ...chapter(tx('Chapter 4 · Invoice'), invoiceSteps()),
-        done(tx('You have taken a sale from quotation to invoice. That is the whole Sales cycle.')),
+        ...chapter(tx('Chapter 5 · Reports'), [
+          goTo('/sales/reports', tx('See it in the reports'), tx('Click "Sales Reports" in the Sales menu, under Reporting.')),
+          ...reportSteps('orders', tx('Click "Orders & Fulfilment": order registers, backorders, deliveries, trips and drivers. "Billing & Collections" next to it covers invoices and payments.')),
+        ]),
+        done(tx('You have taken a sale from quotation through delivery note and invoice to the reports. That is the whole Sales cycle.')),
       ],
     },
   ];

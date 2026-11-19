@@ -24,6 +24,8 @@ describe('routes', () => {
     expect(routeMatches('/sales/quotations', '/sales/quotations/abc')).toBe(false);
     expect(routeMatches(undefined, '/anything')).toBe(true);
     expect(routeMatches('/sales/quotations/:id', '/sales/quotations/new')).toBe(false);
+    expect(routeMatches('/sales/cash-sales/:id', '/sales/cash-sales/processing')).toBe(false);
+    expect(routeMatches('/sales/reports/:page', '/sales/reports/branch-cash')).toBe(true);
   });
 
   it('a route step is reached only after leaving its own page', () => {

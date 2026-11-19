@@ -26,9 +26,12 @@ rows are removed when their user or organization is deleted.
 
 - `web/src/features/guide/` holds the engine (`tour-store`, `tour-logic`, `TourOverlay`), the Learn panel
   (`GuidePanel`, opened by the graduation-cap button in the header) and the catalog (`tours/`).
+- Every tour can also be read as a written tutorial ("Read as tutorial" in the Learn panel): the same steps,
+  numbered and grouped by chapter.
 - Anchors are `data-tour="…"` attributes. Sidebar links carry `nav:<path>`; tab triggers carry
   `sales.order.tab.<tab>` / `sales.cash.tab.<tab>`.
-- A route pattern with a parameter (`/sales/orders/:id`) never matches the `new` form, the same as the app's routes.
+- A route pattern with a parameter (`/sales/orders/:id`) never matches the fixed pages beside it (`new`,
+  `/sales/cash-sales/processing`), the same as the app's routes.
 - Steps that depend on a document's state (e.g. "Confirm order" on a draft) show "I can't find this" with Skip when
   the button is not there.
 
@@ -39,10 +42,13 @@ rows are removed when their user or organization is deleted.
 | `sales.overview` | G1 | Dashboard flow: quotations → orders → deliver → collect |
 | `sales.create-quotation` | G1 | New quotation: customer, dates, lines, totals, save, ribbon, next actions |
 | `sales.quote-to-order` | G2 | Approve/accept (waits for Convert to appear) → convert dialog → sales order |
-| `sales.confirm-and-deliver` | G2 | Confirm, delivery tab, availability, fulfilment, linked documents |
+| `sales.confirm-and-deliver` (v2) | G3 | Confirm, delivery plan, add delivery, dispatch / confirm, delivery note PDF/print, line fulfilment |
 | `sales.invoice-order` | G2 | Billing panel → draft invoice → post, register payment |
-| `sales.cash-sale` | G2 | Walk-in cash sale: lines, save, payment, confirm or submit |
-| `sales.order-to-cash` | G2 | Chains quotation, order, delivery and invoice in four chapters |
+| `sales.cash-sale` (v2) | G3 | Branch cash sale: lines, payment, confirm & handover, delivery note, submit to head office |
+| `sales.branch-cash-review` | G3 | Head office: processing queues, start review, checklist, approve/return/reject, generate invoice |
+| `sales.branch-cash-full` | G3 | Five chapters: sale, handover + delivery note, submit, head-office review + invoice, Branch Cash Sales report |
+| `sales.reports` | G3 | Reports hub filters, catalog, a report: rail, filters, drill-down, Excel/CSV/PDF/print |
+| `sales.order-to-cash` (v2) | G3 | Five chapters: quotation, order, delivery + delivery note, invoice, Orders & Fulfilment report |
 
 ## Deviations
 

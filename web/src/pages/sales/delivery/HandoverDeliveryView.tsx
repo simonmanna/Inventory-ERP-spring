@@ -135,7 +135,7 @@ export function HandoverDeliveryView({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,300px)] xl:items-center">
         <div className="space-y-3">
           <HandoverStepper status={status} collect={collect} />
-          {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+          {actions && <div data-tour="handover.actions" className="flex flex-wrap gap-2">{actions}</div>}
         </div>
         <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm dark:border-blue-900 dark:bg-blue-950/30">
           <Lightbulb className="mt-0.5 h-5 w-5 shrink-0 text-blue-600" />
@@ -205,8 +205,10 @@ export function HandoverDeliveryView({
 
       {/* fulfilment: operations, delivery note, returns */}
       {!draft && (
+        <div data-tour="handover.note">
         <Fulfilment rows={rows} status={status} collect={collect} tracksIssue={tracksIssue} issuedLabel={issuedLabel}
           stockLocationName={stockLocationName} form={form} docs={docs} />
+        </div>
       )}
 
       {dirty && onSave && (

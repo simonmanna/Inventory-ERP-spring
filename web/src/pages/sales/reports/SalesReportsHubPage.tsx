@@ -66,7 +66,7 @@ export function SalesReportsHubPage() {
       <ListPageHeader icon={HUB_ICON} title={tx('Sales reports')}
         description={`${tx('Executive overview and')} ${catalog?.count ?? '…'} ${tx('reports across sales, customers, products, orders, deliveries, billing, collections, team and profitability.')}`}
         actions={(
-          <div className="flex flex-wrap items-center gap-2">
+          <div data-tour="sales.reports.filters" className="flex flex-wrap items-center gap-2">
             {isFetching && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
             <select className="h-9 rounded-md border bg-background px-2 text-sm" value={state.period} onChange={(e) => setFilter('period', e.target.value)}>
               {PERIODS.filter(([k]) => k !== 'custom').map(([k, l]) => <option key={k} value={k}>{l}</option>)}
@@ -135,7 +135,7 @@ export function SalesReportsHubPage() {
         <div className="flex h-60 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       )}
 
-      <section className="space-y-3">
+      <section data-tour="sales.reports.catalog" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-lg font-semibold">{tx('All sales reports')}</h2>
           <div className="relative">
@@ -151,7 +151,7 @@ export function SalesReportsHubPage() {
             const Icon = p.icon;
             return (
               <div key={p.slug} className="flex flex-col rounded-xl border bg-card p-4 shadow-sm">
-                <Link to={`/sales/reports/${p.slug}`} className="group flex items-start gap-3">
+                <Link to={`/sales/reports/${p.slug}`} data-tour={`sales.reports.page.${p.slug}`} className="group flex items-start gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon className="h-5 w-5" /></span>
                   <span className="min-w-0">
                     <span className="flex items-center gap-1 font-semibold group-hover:text-primary">{tx(p.title)}<span className="text-xs font-normal text-muted-foreground">· {reports.length}</span></span>

@@ -1983,6 +1983,7 @@ Migration V580. Web: Learn button in the header, overlay in `AppShell`. Tests: `
 
 - [x] G1 engine, Learn panel, progress API, `sales.overview`, `sales.create-quotation`
 - [x] G2 remaining Sales tours (quote → order, deliver, invoice, cash sale, order-to-cash)
-- [ ] G3 AI chat behind `AssistantResolver` (own ADR)
+- [x] G3 branch cash sale (showroom → head office → report), delivery note in the order tours, reports tour, written-tutorial view
+- [ ] G4 AI chat behind `AssistantResolver` (own ADR)
 
 Not verified yet: the tours driven by hand in a browser.

@@ -90,7 +90,7 @@ export function ReportFilters({ def, state, onChange }: { def: ReportDef; state:
   );
   const range = periodRange(period);
   return (
-    <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-card p-3 shadow-sm print:hidden">
+    <div data-tour="sales.report.filters" className="flex flex-wrap items-end gap-3 rounded-xl border bg-card p-3 shadow-sm print:hidden">
       {has('period') && (
         <>
           {plain(tx('Period'), 'period', PERIODS, false, 'this_year')}
@@ -331,7 +331,7 @@ export function ReportViewer({ def, state, onChange }: { def: ReportDef; state: 
           </h2>
           <p className="text-sm text-muted-foreground">{def.description}</p>
         </div>
-        <div className="flex items-center gap-2 print:hidden">
+        <div data-tour="sales.report.export" className="flex items-center gap-2 print:hidden">
           {hasChart && (
             <div className="flex rounded-lg border bg-card p-0.5" role="tablist" aria-label={tx('View')}>
               {([['split', Columns2, tx('Both')], ['chart', BarChart3, tx('Chart')], ['table', Table2, tx('Table')]] as const).map(([v, Icon, label]) => (
@@ -366,7 +366,7 @@ export function ReportViewer({ def, state, onChange }: { def: ReportDef; state: 
       {!report && !error && <div className="flex h-60 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>}
 
       {report && (
-        <div className={cn('space-y-4 transition-opacity', isFetching && 'opacity-70')}>
+        <div data-tour="sales.report.body" className={cn('space-y-4 transition-opacity', isFetching && 'opacity-70')}>
           <KpiTiles kpis={report.kpis} />
           {hasChart && view !== 'table' && (
             <div className="rounded-xl border bg-card p-3 shadow-sm">
