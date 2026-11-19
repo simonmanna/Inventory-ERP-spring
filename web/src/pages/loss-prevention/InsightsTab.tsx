@@ -14,23 +14,9 @@ import {
   type InsightsSummary, type OccupancyHourRow, type OccupancyRow, type PourRow, type QueueHourRow, type QueueRow,
   type StaffRow, type StationRow, type TableRow,
 } from '@/features/loss-prevention/insights-api';
+import { dur, hourText, num, pct, type Num } from './lp-format';
 
-type Num = number | string | null | undefined;
 const TABLE = { cellClassName: 'py-2.5 px-4', headerRowClassName: 'h-10' } as const;
-
-const num = (v: Num, digits = 2) =>
-  v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: digits });
-const pct = (v: Num) =>
-  v === null || v === undefined || v === '' ? '—' : `${(Number(v) * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-/** Seconds as m:ss (or h:mm:ss). */
-const dur = (v: Num) => {
-  if (v === null || v === undefined || v === '') return '—';
-  const s = Math.round(Number(v));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, '0');
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
-};
 
 function Stat({ label, value, hint, partial }: { label: string; value: string | number; hint?: string; partial?: string }) {
   return (
@@ -56,8 +42,6 @@ const salesColumns: Column<StaffRow>[] = [
   { key: 'refunds', header: tx('Refund rate'), className: 'text-right', render: (r) => pct(r.refunds.amountRate) },
   { key: 'discounts', header: tx('Discount rate'), className: 'text-right', render: (r) => pct(r.discounts.rate) },
 ];
-
-const hourText = (h: number) => `${String(h).padStart(2, '0')}:00`;
 
 /**
  * Operations insights (LP6a): how the business ran, from the same ledger as the cases. No camera is needed for any

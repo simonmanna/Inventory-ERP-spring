@@ -20,6 +20,7 @@ import {
 import { useLpZones } from '@/features/loss-prevention/vision-api';
 import { TABLE, ZONE_LABELS, clipLength, labelOf, words } from './vision-ui';
 import { RangeClipForm } from './EvidenceTab';
+import { num, options, pct } from './lp-format';
 
 const VERDICT_LABELS: Record<string, string> = {
   unreviewed: tx('Not reviewed'), correct: tx('Correct'), incorrect: tx('Incorrect'), unsure: tx('Unsure'),
@@ -27,18 +28,6 @@ const VERDICT_LABELS: Record<string, string> = {
 const VERDICT_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   correct: 'default', incorrect: 'destructive', unsure: 'secondary',
 };
-
-const num = (v: number | string | null | undefined, digits = 2) =>
-  v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: digits });
-const pct = (v: number | string | null | undefined) =>
-  v === null || v === undefined || v === '' ? '—' : `${(Number(v) * 100).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
-
-/** Distinct values for a filter, with the chosen one kept even when this page no longer shows it. */
-function options(values: (string | null | undefined)[], chosen: string, label: (v: string) => string = (v) => v) {
-  const set = new Set(values.filter((v): v is string => !!v));
-  if (chosen) set.add(chosen);
-  return [...set].sort().map((v) => ({ value: v, label: label(v) }));
-}
 
 /**
  * Activity recognition research (LP7, shadow mode). The agent reports what its recognizers see in zones marked for

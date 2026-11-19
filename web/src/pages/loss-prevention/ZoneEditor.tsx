@@ -14,7 +14,7 @@ import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import {
-  ACTIVITY_RESEARCH_PARAM, FRACTION_PARAMS, LINK_MAX_LENGTH, PARAM_CHOICES, ZONE_DEFAULT_PARAMS, ZONE_LINKS, ZONE_SHAPES,
+  ACTIVITY_RESEARCH_PARAM, LINK_MAX_LENGTH, PARAM_CHOICES, ZONE_DEFAULT_PARAMS, ZONE_LINKS, ZONE_SHAPES,
   ZONE_TYPES, useCalibrateLpZone, useCreateLpZone, useLpCamera, useLpLocationChoices, useLpTableChoices,
   useLpTillChoices, useRetireLpZone, useUpdateLpZone, type LinkedType, type LpCamera, type LpZone, type Point, type Side,
   type ZoneShape, type ZoneType, type ZoneUpdate,
@@ -23,6 +23,7 @@ import {
   LINK_LABELS, PARAM_CHOICE_LABELS, PARAM_LABELS, SELECT, ZONE_LABELS, ZONE_USES, centroid, clamp01, labelOf, round4,
   useCameraSnapshot, useObjectUrl, type CameraSnapshot,
 } from './vision-ui';
+import { defaultLink, inArrow, joinParams, paramProblem, splitParams, svgPoints } from './zone-geometry';
 
 /**
  * Zones of one camera, drawn on a still from the agent. Points are fractions of the picture (x to the right, y down),
@@ -31,27 +32,6 @@ import {
 
 const EDIT_COLOR = '#16a34a';
 const OTHER_COLOR = '#f59e0b';
-
-const svgPoints = (ps: Point[]) => ps.map(([x, y]) => `${x * 1000},${y * 1000}`).join(' ');
-
-/**
- * The "in" arrow of a counting line: from its middle towards `side`, drawn square on screen whatever the picture's
- * aspect. Left and right are as seen on the picture when walking from A to B.
- */
-function inArrow(a: Point, b: Point, side: Side, aspect: number): Point[] {
-  const ax = a[0] * aspect;
-  const bx = b[0] * aspect;
-  const len = Math.hypot(bx - ax, b[1] - a[1]) || 1;
-  const ux = (bx - ax) / len;
-  const uy = (b[1] - a[1]) / len;
-  const s = side === 'left' ? 1 : -1;
-  const nx = s * uy;
-  const ny = s * -ux;
-  const mx = (ax + bx) / 2;
-  const my = (a[1] + b[1]) / 2;
-  const at = (along: number, across: number): Point => [(mx + nx * along + ux * across) / aspect, my + ny * along + uy * across];
-  return [at(-0.05, 0.006), at(0.04, 0.006), at(0.04, 0.025), at(0.08, 0), at(0.04, -0.025), at(0.04, -0.006), at(-0.05, -0.006)];
-}
 
 function Shape({ points, color, dashed, aspect, side, line }: {
   points: Point[]; color: string; dashed?: boolean; aspect: number; side?: Side | null; line: boolean;
@@ -190,45 +170,7 @@ function PictureBar({ snap }: { snap: CameraSnapshot }) {
   );
 }
 
-const defaultLink = (t: ZoneType): LinkedType | '' => (ZONE_LINKS[t].required ? ZONE_LINKS[t].types[0] : '');
 const linkText = (z: LpZone) => (z.linkedType ? `${labelOf(LINK_LABELS, z.linkedType)} ${z.linkedId ?? ''}` : '—');
-
-/** The parameters of a zone as text fields; keys the zone type does not define are kept untouched. */
-function splitParams(type: ZoneType, stored: Record<string, unknown> | null | undefined) {
-  const defaults = ZONE_DEFAULT_PARAMS[type];
-  const text: Record<string, string> = {};
-  const extra: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(stored ?? {})) {
-    if (!(k in defaults)) extra[k] = v;
-    else text[k] = Array.isArray(v) ? v.join(', ') : v === null || v === undefined ? '' : String(v);
-  }
-  return { text, extra };
-}
-
-function paramProblem(type: ZoneType, text: Record<string, string>): boolean {
-  return Object.entries(ZONE_DEFAULT_PARAMS[type]).some(([k, d]) => {
-    const v = (text[k] ?? '').trim();
-    if (v === '') return false;
-    if (typeof d === 'number') {
-      const n = Number(v);
-      return !Number.isFinite(n) || n < 0 || (FRACTION_PARAMS.has(k) && n > 1);
-    }
-    if (Array.isArray(d)) return v.split(',').map((s) => s.trim()).filter(Boolean).length === 0;
-    return false;
-  });
-}
-
-function joinParams(type: ZoneType, text: Record<string, string>, extra: Record<string, unknown>) {
-  const out: Record<string, unknown> = { ...extra };
-  for (const [k, d] of Object.entries(ZONE_DEFAULT_PARAMS[type])) {
-    const v = (text[k] ?? '').trim();
-    if (v === '') continue;
-    if (typeof d === 'number') out[k] = Number(v);
-    else if (Array.isArray(d)) out[k] = v.split(',').map((s) => s.trim()).filter(Boolean);
-    else out[k] = v;
-  }
-  return out;
-}
 
 function ZoneForm({ camera, zone, imageUrl, aspect, onAspect, others, snap, onDone }: {
   camera: LpCamera;
