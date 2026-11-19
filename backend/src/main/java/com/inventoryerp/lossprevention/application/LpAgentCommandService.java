@@ -164,6 +164,39 @@ public class LpAgentCommandService {
         return row;
     }
 
+    /** A command as the screens show it: the payload and result as objects. */
+    static Map<String, Object> view(Map<String, Object> row) {
+        return Obj.of("id", row.get("id"), "agentId", row.get("agentId"), "kind", row.get("kind"), "state",
+                row.get("state"), "payload", LpJson.map(row.get("payload")), "result", row.get("result") == null ? null
+                        : LpJson.map(row.get("result")), "createdBy", row.get("createdBy"), "createdAt",
+                row.get("createdAt"), "deliveredAt", row.get("deliveredAt"), "completedAt", row.get("completedAt"),
+                "expiresAt", row.get("expiresAt"));
+    }
+
+    /** The agent's latest commands, newest first, optionally of one state and kind. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> list(String agentId, String state, String kind, int limit) {
+        if (state != null && !List.of("pending", "delivered", "done", "failed", "expired").contains(state)) {
+            throw ApiException.badRequest("state must be one of: pending, delivered, done, failed, expired");
+        }
+        if (kind != null && !KINDS.contains(kind)) {
+            throw ApiException.badRequest("kind must be one of: " + String.join(", ", KINDS));
+        }
+        List<Object> params = new ArrayList<>(List.of(LpScope.org(), agentId));
+        StringBuilder w = new StringBuilder(" WHERE \"organizationId\" = ? AND \"agentId\" = ?");
+        if (state != null) {
+            w.append(" AND state = ?");
+            params.add(state);
+        }
+        if (kind != null) {
+            w.append(" AND kind = ?");
+            params.add(kind);
+        }
+        int n = Math.max(1, Math.min(200, limit));
+        return SqlRows.list(jdbc.sql("SELECT * FROM \"LpAgentCommand\"" + w + " ORDER BY \"createdAt\" DESC, id LIMIT "
+                + n).params(params)).stream().map(LpAgentCommandService::view).toList();
+    }
+
     /**
      * Records the agent's result. Reporting a finished command again changes nothing. Returns the command as it was
      * before, with {@code firstReport} true when this report is the one that finished it.

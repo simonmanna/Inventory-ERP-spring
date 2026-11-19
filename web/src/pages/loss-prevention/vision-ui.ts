@@ -33,6 +33,14 @@ export const AGENT_EVENT_LABELS: Record<string, string> = {
   created: tx('Created'), code_issued: tx('Enrolment code issued'), enrolled: tx('Enrolled'), online: tx('Came online'),
   degraded: tx('Degraded'), offline: tx('Went offline'), revoked: tx('Revoked'), updated: tx('Changed'),
 };
+export const COMMAND_KIND_LABELS: Record<string, string> = {
+  config_changed: tx('Read the settings again'), snapshot: tx('Take a still'), calibrate: tx('Calibrate a drawer'),
+  clip_upload: tx('Upload a clip'), live_start: tx('Start live view'), live_stop: tx('Stop live view'),
+};
+export const COMMAND_STATE_LABELS: Record<string, string> = {
+  pending: tx('Waiting for the box'), delivered: tx('Taken by the box'), done: tx('Done'), failed: tx('Failed'),
+  expired: tx('Expired'),
+};
 export const STREAM_LABELS: Record<string, string> = {
   ok: tx('Picture OK'), connecting: tx('Connecting'), lost: tx('No picture'), disabled: tx('Switched off'),
 };

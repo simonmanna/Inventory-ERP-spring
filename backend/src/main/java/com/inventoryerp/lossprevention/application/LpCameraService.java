@@ -8,6 +8,7 @@ import com.inventoryerp.lossprevention.application.LpVisionCommands.CreateCamera
 import com.inventoryerp.lossprevention.application.LpVisionCommands.CreateZoneInput;
 import com.inventoryerp.lossprevention.application.LpVisionCommands.UpdateCameraInput;
 import com.inventoryerp.lossprevention.application.LpVisionCommands.UpdateZoneInput;
+import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -72,7 +73,7 @@ public class LpCameraService {
 
     private Map<String, Object> camera(String id) {
         List<Object> params = new ArrayList<>();
-        String w = scope.where("c", params) + " AND c.id = ?";
+        String w = scope.where("c", params) + " AND c.id = ? AND c.\"deletedAt\" IS NULL";
         params.add(id);
         Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT " + CAMERA_COLUMNS + CAMERA_FROM + w).params(params));
         if (row == null) {
@@ -86,8 +87,8 @@ public class LpCameraService {
         if (reason != null) {
             throw ApiException.badRequest(reason);
         }
-        if (jdbc.sql("SELECT count(*) FROM \"LpCamera\" WHERE \"agentId\" = ? AND \"streamAlias\" = ? AND id IS DISTINCT"
-                + " FROM ?").params(java.util.Arrays.asList(agentId, alias, exceptCameraId)).query(Long.class)
+        if (jdbc.sql("SELECT count(*) FROM \"LpCamera\" WHERE \"agentId\" = ? AND \"streamAlias\" = ? AND \"deletedAt\" IS"
+                + " NULL AND id IS DISTINCT FROM ?").params(java.util.Arrays.asList(agentId, alias, exceptCameraId)).query(Long.class)
                 .single() > 0) {
             throw ApiException.conflict("Another camera of this agent already uses this streamAlias");
         }
@@ -97,7 +98,7 @@ public class LpCameraService {
     public List<Map<String, Object>> list(String branchId, String agentId) {
         scope.assertBranch(branchId);
         List<Object> params = new ArrayList<>();
-        StringBuilder w = new StringBuilder(scope.where("c", params));
+        StringBuilder w = new StringBuilder(scope.where("c", params)).append(" AND c.\"deletedAt\" IS NULL");
         if (LpScope.has(branchId)) {
             w.append(" AND c.\"branchId\" = ?");
             params.add(branchId);
@@ -183,6 +184,29 @@ public class LpCameraService {
     public LpLiveService.Snapshot snapshot(String id) {
         camera(id);
         return live.snapshot(id);
+    }
+
+    /**
+     * Deletes a camera. The row is kept with {@code deletedAt} so its zones, observations and clips still resolve; its
+     * zones are retired, its live views end, its stream alias is free for a new camera and the agent drops it from its
+     * configuration. A camera whose agent is revoked can be deleted too.
+     */
+    @Transactional
+    public Map<String, Object> delete(String id) {
+        Map<String, Object> before = camera(id);
+        String agentId = (String) before.get("agentId");
+        int retired = jdbc.sql("UPDATE \"LpZone\" SET \"retiredAt\" = CURRENT_TIMESTAMP, enabled = false, \"updatedAt\" ="
+                + " CURRENT_TIMESTAMP WHERE \"cameraId\" = ? AND \"retiredAt\" IS NULL").param(id).update();
+        jdbc.sql("UPDATE \"LpCamera\" SET \"deletedAt\" = CURRENT_TIMESTAMP, \"deletedBy\" = ?, enabled = false,"
+                + " \"streamState\" = NULL, fps = NULL, \"updatedAt\" = CURRENT_TIMESTAMP WHERE id = ?")
+                .params(java.util.Arrays.asList(TenantContext.userId(), id)).update();
+        live.stopCamera(id);
+        if (!"revoked".equals(before.get("agentStatus"))) {
+            agents.configChanged(agentId);
+        }
+        audit.recordInTx(AuditInput.of("LpCamera", id, "delete", Obj.of("name", before.get("name"), "streamAlias",
+                before.get("streamAlias"), "agentId", agentId), null));
+        return Obj.of("id", id, "deleted", true, "zonesRetired", retired);
     }
 
     // ------------------------------------------------------------------ zones

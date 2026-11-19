@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from lp_edge.timeutil import parse_iso
+
 log = logging.getLogger(__name__)
 
 ZONE_TYPES = (
@@ -97,6 +99,16 @@ def _bounded_int(value: Any, default: int, low: int, high: int) -> int:
     return max(low, min(high, number))
 
 
+def _instant_or_none(value: Any) -> float | None:
+    """An ISO-8601 instant as epoch seconds; ``None`` when absent or unreadable (an older server sends none)."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return parse_iso(value)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class Zone:
     id: str
@@ -107,6 +119,9 @@ class Zone:
     linked_type: str | None = None
     linked_id: str | None = None
     params: Mapping[str, Any] = field(default_factory=dict)
+    #: When the zone was drawn on the server (epoch seconds), if sent. Not part of the fingerprint: a zone loaded after
+    #: it was drawn reports the time in between as a ``config_pending`` gap.
+    created_at: float | None = None
 
     @property
     def is_line(self) -> bool:
@@ -163,6 +178,7 @@ class Zone:
             linked_type=data.get("linkedType"),
             linked_id=None if data.get("linkedId") is None else str(data.get("linkedId")),
             params=params,
+            created_at=_instant_or_none(data.get("createdAt")),
         )
 
 

@@ -139,7 +139,12 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
         return true;
     }
 
-    private boolean moduleAllowed(String orgId, String required) {
+    /**
+     * Whether a module is on for the organization, as {@link RequiresModule} decides it. Public for routes that cannot
+     * carry the annotation because the organization is known only inside the handler (an edge agent's public
+     * enrolment, ADR-S077). Call it inside the organization's tenant context.
+     */
+    public boolean moduleAllowed(String orgId, String required) {
         if (!flags.hasAnyModuleRow()) {
             if (warned.add(orgId)) {
                 log.warn("Organization {} has no OrganizationModule rows; allowing '{}' by default. "

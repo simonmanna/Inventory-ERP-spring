@@ -63,9 +63,13 @@ public class LpReconService {
     private final TransactionTemplate newTx;
     private final Clock clock = Clock.systemUTC();
 
+    private final LpLedgerRetentionService retention;
+
     public LpReconService(JdbcClient jdbc, LpScope scope, LpRuleService rules, LpSettingsService settings,
-            LpCaseService cases, List<LpEngine> engines, PlatformTransactionManager txm) {
+            LpCaseService cases, List<LpEngine> engines, PlatformTransactionManager txm,
+            LpLedgerRetentionService retention) {
         this.jdbc = jdbc;
+        this.retention = retention;
         this.scope = scope;
         this.rules = rules;
         this.settings = settings;
@@ -527,6 +531,11 @@ public class LpReconService {
             throw ApiException.badRequest("A replay covers at most " + MAX_REPLAY_DAYS + " days");
         }
         scope.assertBranch(dto.branchId());
+        LocalDate kept = LpScope.has(dto.branchId()) ? retention.cutoff(dto.branchId()) : retention.latestCutoff();
+        if (kept != null && from.isBefore(kept)) {
+            throw ApiException.badRequest("The ledger keeps events from " + kept + " only (retention): a replay must"
+                    + " start on or after that day");
+        }
         List<Object> params = new ArrayList<>();
         StringBuilder w = new StringBuilder(scope.where("", params))
                 .append(" AND engine = ? AND \"businessDate\" >= ? AND \"businessDate\" <= ?");

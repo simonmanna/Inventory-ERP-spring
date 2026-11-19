@@ -34,7 +34,8 @@ class LpInsightsIT extends ApiTestSupport {
 
     final String source = "ins-" + UUID.randomUUID().toString().substring(0, 8);
     /** A business day nobody else uses: the DEMO organization is shared between runs. */
-    final LocalDate day = LocalDate.of(2009, 1, 1).plusDays((long) (Math.random() * 2000));
+    // A past day within the ledger's 24-month retention, in a range no other loss-prevention suite uses.
+    final LocalDate day = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(523 + (long) (Math.random() * 100));
     String branch;
     String cashier;
     String roleName;

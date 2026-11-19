@@ -196,7 +196,7 @@ A window is one engine, one branch and one business day. An accepted event makes
 | `barSettleMinutes` | 0 | The same for the bar engine |
 | `dailySettleMinutes` | 120 | A business day is final this long after it ends |
 | `backfillDays` | 30 | How far back the first sweep reads |
-| `retentionMonths` | 24 | Stored only; nothing deletes ledger rows yet |
+| `retentionMonths` | 24 | Ledger events whose business date is older are deleted nightly (`LP_LEDGER_RETENTION_CRON`, 03:47), except days of a branch with a case not closed. 0 keeps every event. An event older than the limit is refused at ingest (`businessDate is older than the ledger keeps (before <date>)`) and a replay may not start before it (`The ledger keeps events from <date> only (retention): a replay must start on or after that day`), so a day is never reconciled against part of its events. Windows, runs, discrepancies, cases and metric days are kept |
 
 - Rules that compare a whole day (`finalOnly`) run only once the day is final. Until then a run may find less.
 - Each run stores the engine version, every rule version, the settings, the highest ledger `seq` it read, the event
@@ -261,15 +261,18 @@ that branch only.
 | `POST /agents` | `lp:configure` + `lp:ingest` | `{ branchId, name }`; answers the agent with `enrolmentCode` (shown once) and `enrolmentCodeExpiresAt`. The agent's credentials carry `lp:ingest`, so the caller must hold it |
 | `GET /agents/{id}` | `lp:configure` | The agent with `cameras`, the last 60 `heartbeats` and its `timeline` |
 | `PUT /agents/{id}` | `lp:configure` | `{ name, desiredModelVersion?, desiredAgentVersion? }` |
+| `GET /agents/{id}/commands` | `lp:configure` | The agent's latest commands, newest first: `state`, `kind`, `limit` (1–200, default 50); each `{ id, agentId, kind, state, payload, result, createdBy, createdAt, deliveredAt, completedAt, expiresAt }` |
+| `GET /agents/{id}/commands/{commandId}` | `lp:configure` | One command with its state and the box's `result` (`{ message, code }`); 404 `Command not found` |
 | `POST /agents/{id}/enrolment-code` | `lp:configure` + `lp:ingest` | A new one-time code (15 minutes); enrolling with it replaces the agent's credentials |
 | `POST /agents/{id}/revoke` | `lp:configure` | `{ reason? }`; its credentials stop working at once |
 | `GET /models` | `lp:configure` | Detector models this installation offers (`LP_VISION_MODELS`) and agent releases (`LP_EDGE_RELEASES`) |
 | `GET /cameras` | `lp:configure` | `branchId`, `agentId` filters; a plain array |
 | `POST /cameras` | `lp:configure` | `{ agentId, name, streamAlias, enabled?, analysed?, notes? }` |
+| `DELETE /cameras/{id}` | `lp:configure` | Deletes the camera: `{ id, deleted, zonesRetired }`. The row stays with `deletedAt` (its zones, observations and clips still resolve), its zones are retired, its live views end, its alias is free again and the agent drops it. A deleted camera answers 404 everywhere |
 | `GET /cameras/{id}` | `lp:configure` | The camera with its zones |
 | `PUT /cameras/{id}` | `lp:configure` | `{ name, streamAlias, enabled?, analysed?, notes? }` |
 | `POST /cameras/{id}/snapshot` | `lp:configure` + `lp:evidence` | Asks the agent for a still image; answers `{ commandId }` |
-| `GET /cameras/{id}/snapshot` | `lp:configure` + `lp:evidence` | The latest still (`image/jpeg`, at most 10 minutes old, kept in memory only); `X-Snapshot-Taken-At` says when it arrived; 404 until the agent sent one |
+| `GET /cameras/{id}/snapshot` | `lp:configure` + `lp:evidence` | The latest still (`image/jpeg`, at most 10 minutes old, never stored with the evidence; see `LP_LIVE_STORE`); `X-Snapshot-Taken-At` says when it arrived; 404 until the agent sent one |
 | `POST /cameras/{id}/live` | `lp:evidence` | Starts live view: `{ sessionId, streamUrl, expiresAt, endsAt, maxFps }`; connect by `expiresAt` (5 minutes); the view ends at `endsAt` (30 minutes) |
 | `DELETE /live/{sessionId}` | `lp:evidence` | Stops live view |
 | `GET /live/{sessionId}/stream?token=` | signed link | `multipart/x-mixed-replace` JPEG stream; the token in `streamUrl` is the authorization (5 minutes to connect) |
@@ -284,7 +287,13 @@ A camera record holds a display name and a **stream alias**. The stream address 
 edge box and never reach the backend: an alias with `://`, `@`, `:` or `/` is refused. An alias is unique per
 agent (409).
 
-Every change to a camera or zone raises the agent's `configVersion` and queues a `config_changed` command.
+Every change to a camera or zone raises the agent's `configVersion` and queues a `config_changed` command. The
+configuration sends each zone's `createdAt`; an agent that loads a zone drawn after its previous configuration reports
+the time in between as a `vision.gap` with reason `config_pending` (from the later of `createdAt` and that
+configuration), and holds the camera's watermark there until it does.
+
+Enrolment is public, so it checks the organization's `loss-prevention` module switch itself (403 `Module
+'loss-prevention' is not enabled for this organization`, the code stays usable).
 
 ### Zones
 
@@ -431,7 +440,7 @@ All carry `evidenceSource` `camera` (or `sensor`), `evidenceLevel` `zone`, the z
 | `vision.state_changed` | A fixed object changes state (a drawer opens) | `object`, `to`; also `from`, `secondsInPreviousState` |
 | `vision.handling` | A hand takes or returns an object; on a `scan_area`, an item carried past the scanner (`action` `bypassed`) | `object`, `action` |
 | `vision.occupancy` | Periodic count in a zone | `count` (0 or more); also `class`, `periodSeconds` |
-| `vision.gap` | A camera had no usable picture | `from`, `to`, `reason` (`stream_lost`, `agent_down`, `clock_drift`, `disabled`); `observationStatus` `unavailable` |
+| `vision.gap` | A camera had no usable picture | `from`, `to`, `reason` (`stream_lost`, `agent_down`, `clock_drift`, `disabled`, `config_pending`: a zone drawn before the agent loaded it); `observationStatus` `unavailable` |
 | `vision.activity` | (LP7, research) A recognizer saw an activity in a zone | `activity`, `startedAt`, `endedAt`, `recognizer`; also `score` (0 to 1), `trackIds` |
 
 Besides the payload checks, an observation is refused (that event only, in the batch answer) when the zone is
@@ -507,6 +516,8 @@ The agent stops sending observations while its clock is off by more than `maxClo
 | `LP_VISION_DEFAULT_MODEL` | empty | The model an agent gets unless it is set to another |
 | `LP_VISION_CRON` | `20 * * * * *` | The minute job above |
 | `LP_VISION_HOUSEKEEPING_CRON` | `0 17 3 * * *` | The nightly job above |
+| `LP_LIVE_STORE` | `memory` | `memory`: live views and stills live in the API instance that took them, so several instances need sticky routing for `/live/*`, `/cameras/{id}/snapshot` and the agent's frame and snapshot posts. `database`: they live in the UNLOGGED tables `LpLiveSession` and `LpLiveSnapshot` (V577), encrypted with the evidence key, one latest frame per session, and every instance serves every session. The stream link is signed with a key derived from the evidence key, so all instances must share it |
+| `LP_LEDGER_RETENTION_CRON` | `0 47 3 * * *` | Ledger retention (see `retentionMonths`) |
 
 No detector model ships with LP1: until one is configured, an agent runs only the methods that need none (the
 drawer reference picture and motion). Detection accuracy has not been measured on real footage.
@@ -847,7 +858,7 @@ default to the last 30 days. `pageSize` defaults to 50, at most 200.
 ## Storage
 
 `LpEvent`, `LpRuleVersion`, `LpReconRun`, `LpCaseEvent`, `LpAgentEvent`, `LpEvidenceAccess` and `LpActivityReview` are append-only: a
-trigger refuses any update. Deleting is left possible for a retention job; the ledger's is not built. Evidence
+trigger refuses any update. Deleting is left to retention: the ledger's (`retentionMonths`, V577) and evidence's. Evidence
 retention (LP1) deletes the stored clip, marks its row `deleted` and records the deletion in the access trail.
 `seq` is the ledger order, which is arrival order and not event-time order.
 

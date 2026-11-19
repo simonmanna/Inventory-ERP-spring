@@ -243,3 +243,51 @@ def test_the_worker_reconnects_when_asked():
         wait_until(lambda: CountingSource.opened == 2)
     finally:
         worker.stop(timeout=5)
+
+
+def test_a_zone_drawn_before_the_agent_loaded_it_reports_the_wait_as_a_gap():
+    import dataclasses
+
+    emitted = []
+    observer, _ = make_observer(emitted, zone_ids=("z1",))
+    observer.frame(FrameContext(ts=T0 + 1))
+    observer.frame(FrameContext(ts=T0 + 10))
+    new = dataclasses.replace(zone("checkout", SQUARE, "z2"), created_at=T0 + 4)
+    old = observer.camera.zones[0]
+    observer.configure(Camera("cam-1", "Till 1", "till-1", zones=(old, new)), None)
+    # Until the next frame reports the gap, the watermark stays where the new zone started to be missed.
+    assert observer.watermark() == T0 + 4
+    emitted.clear()
+    observer.frame(FrameContext(ts=T0 + 11))
+    assert gaps(emitted) == [("z2", "config_pending", iso(T0 + 4), iso(T0 + 11))]
+    assert observer.watermark() == T0 + 11
+    # Loading the same configuration again reports nothing.
+    observer.configure(Camera("cam-1", "Till 1", "till-1", zones=(old, new)), None)
+    emitted.clear()
+    observer.frame(FrameContext(ts=T0 + 12))
+    assert gaps(emitted) == []
+
+
+def test_a_new_zone_is_missed_from_the_previous_configuration_at_most():
+    import dataclasses
+
+    emitted = []
+    observer, _ = make_observer(emitted, zone_ids=("z1",))
+    observer.frame(FrameContext(ts=T0 + 1))
+    observer.configure(observer.camera, None)  # a configuration applied at T0 + 1
+    observer.frame(FrameContext(ts=T0 + 20))
+    new = dataclasses.replace(zone("checkout", SQUARE, "z2"), created_at=T0 - 500)
+    observer.configure(Camera("cam-1", "Till 1", "till-1", zones=(observer.camera.zones[0], new)), None)
+    emitted.clear()
+    observer.frame(FrameContext(ts=T0 + 21))
+    assert gaps(emitted) == [("z2", "config_pending", iso(T0 + 1), iso(T0 + 21))]
+
+
+def test_a_zone_sent_without_created_at_reports_no_gap():
+    emitted = []
+    observer, _ = make_observer(emitted, zone_ids=("z1",))
+    observer.frame(FrameContext(ts=T0 + 1))
+    observer.configure(make_camera("z1", "z2"), None)
+    emitted.clear()
+    observer.frame(FrameContext(ts=T0 + 2))
+    assert gaps(emitted) == []

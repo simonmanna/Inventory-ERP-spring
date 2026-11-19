@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -47,15 +48,17 @@ public class LpLedgerService {
     private final LpReconService recon;
     private final LpVisionDirectory directory;
     private final LpInsightsService insights;
+    private final LpLedgerRetentionService retention;
     private final Clock clock = Clock.systemUTC();
 
     public LpLedgerService(JdbcClient jdbc, BranchScopeService branches, LpReconService recon,
-            LpVisionDirectory directory, LpInsightsService insights) {
+            LpVisionDirectory directory, LpInsightsService insights, LpLedgerRetentionService retention) {
         this.jdbc = jdbc;
         this.branches = branches;
         this.recon = recon;
         this.directory = directory;
         this.insights = insights;
+        this.retention = retention;
     }
 
     private static String org() {
@@ -104,10 +107,17 @@ public class LpLedgerService {
         int rejected = 0;
         Set<LpReconService.WindowKey> touched = new HashSet<>();
         Set<LpInsightsService.DayKey> days = new HashSet<>();
+        Map<String, Optional<LocalDate>> cutoffs = new HashMap<>();
         for (EventInput e : events) {
             String reason = LpEventValidator.reject(e, now);
             if (reason == null) {
                 reason = branchReason(e, known, external);
+            }
+            if (reason == null) {
+                // The ledger no longer holds that day's other events (retention): storing it would re-run the day.
+                LocalDate cutoff = cutoffs.computeIfAbsent(e.branchId() == null ? "" : e.branchId(),
+                        b -> Optional.ofNullable(retention.cutoff(b.isEmpty() ? null : b))).orElse(null);
+                reason = LpLedgerRetentionService.refusal(cutoff, businessDate(e));
             }
             if (reason == null) {
                 reason = senderReason(e, agent, zones);

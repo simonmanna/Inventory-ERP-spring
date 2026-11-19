@@ -204,7 +204,8 @@ class LpEventValidatorTest {
                 .isEqualTo("observationStatus must be unavailable for type 'vision.gap'");
         assertThat(reject(seen("vision.gap", "{\"cameraId\":\"c1\",\"from\":\"2026-11-17T09:00:00Z\",\"to\":"
                 + "\"2026-11-17T09:10:00Z\",\"reason\":\"lunch\"}", "zone", "camera", "unavailable", "zone-1")))
-                .isEqualTo("payload.reason must be one of: stream_lost, agent_down, clock_drift, disabled");
+                .isEqualTo("payload.reason must be one of: stream_lost, agent_down, clock_drift, disabled,"
+                        + " config_pending");
     }
 
     @Test

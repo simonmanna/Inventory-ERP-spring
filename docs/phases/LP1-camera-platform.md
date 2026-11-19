@@ -167,15 +167,15 @@ Until then every vision case states the observation and its confidence, and the 
 
 ## 12. Open items
 
-- Live views and stills are in the memory of the API instance that started them; behind several instances the
-  live and snapshot routes need sticky routing.
-- No route deletes a camera (switch it off instead) or shows a command's status.
-- Enrolment is public, so the organization's module switch is not checked there; the other routes refuse the
-  credentials while the module is off.
-- The ledger retention job (LP0) is still not built; evidence retention is.
-- The agent cannot tell when a zone was drawn, so between drawing a zone and the agent loading it (seconds while it
-  is online) the camera's watermark already covers the zone. Sending each zone's `createdAt` in the configuration
-  would let the agent report that period as a gap.
+- ~~Live views and stills are in the memory of the API instance that started them.~~ Done 2026-11-19 (V577):
+  `LP_LIVE_STORE=database` shares them between instances; the default `memory` still needs sticky routing.
+- ~~No route deletes a camera or shows a command's status.~~ Done 2026-11-19: `DELETE /cameras/{id}`,
+  `GET /agents/{id}/commands[/{commandId}]` (41 routes), with a delete button and a "Requests to the box" list.
+- ~~Enrolment does not check the module switch.~~ Done 2026-11-19: it refuses while the module is off (not covered by
+  a test: the module flags are cached per organization).
+- ~~The ledger retention job (LP0) is still not built.~~ Done 2026-11-19 (`LpLedgerRetentionService`).
+- ~~The agent cannot tell when a zone was drawn.~~ Done 2026-11-19: zones carry `createdAt`; the agent reports
+  the wait as a `config_pending` gap.
 - At the default settings the agent's buffer takes roughly 4 to 6 GB per camera per day, against 1 GB in the design.
   `LP_EDGE_BUFFER_FPS` and the buffer width bring it down; to be sized at the pilot.
 - No detector model ships. Without one, drawer zones use the reference picture, checkout zones fall back to motion,

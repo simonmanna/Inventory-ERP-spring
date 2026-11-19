@@ -257,7 +257,7 @@ Each is one PR. Stop for owner review after each.
 | Bar waterfall computed by the engine | Components computed by the projection and sent in the event | The engine stays a pure function of ledger events, and another POS can send the same figures |
 | `B03` blocks `B01` | `B03` is off by default; it blocks `B01` only when switched on | The tie-out assumes stock in millilitres and has not been checked on real counts |
 | `C03` "refund without original sale" | Threshold and rate rules only | Every POS refund here is tied to an invoice |
-| Retention job | Setting stored; nothing deletes | Deleting evidence needs an explicit owner decision |
+| Retention job | Built 2026-11-19 at the owner's request ("code and develop all the remaining ones"): nightly, days with an open case kept, older events refused at ingest and replay | — |
 | Five screens | One page with five tabs; the case opens in a dialog | Matches the Alerts page |
 | — | `GET /runs/{id}/verify`, `POST /projection/run` added | Reproducibility check; a way to run the sweep on demand |
 | — | `cash.movement` and `staff.session` not projected | No LP0 rule reads them |

@@ -82,6 +82,12 @@ public class LossPreventionCameraController {
         return cameras.update(id, dto);
     }
 
+    @DeleteMapping("/cameras/{id}")
+    @RequirePermissions(Permissions.LOSS_PREVENTION__CONFIGURE)
+    public Map<String, Object> delete(@PathVariable String id) {
+        return cameras.delete(id);
+    }
+
     @PostMapping("/cameras/{id}/snapshot")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions({Permissions.LOSS_PREVENTION__CONFIGURE, Permissions.LOSS_PREVENTION__EVIDENCE})

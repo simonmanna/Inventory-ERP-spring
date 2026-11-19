@@ -43,7 +43,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
 ACTIVITY_NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 MAX_TRACK_IDS = 50
 
-GAP_REASONS = ("stream_lost", "agent_down", "clock_drift", "disabled")
+GAP_REASONS = ("stream_lost", "agent_down", "clock_drift", "disabled", "config_pending")
 
 POUR_MEASURED = "pour.measured"
 MEASUREMENT_GAP = "measurement.gap"

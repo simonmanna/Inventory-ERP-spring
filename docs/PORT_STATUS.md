@@ -1859,6 +1859,7 @@ meters need the module only; the camera rules need `lpVision` zones.
 - [x] LP4 engine `kitchen_flow`, rules K01, K02 (`LpKitchenFlowEngine`); `LpEngine.lookaheadDays()`
 - [x] LP4 engine `service_vision`, rules V-K1, V-F1 (`LpServiceVisionEngine`)
 - [x] LP4b rules V-K2, V-K3, V-F2 in `service_vision`; `cafe_counter` may link to a `station` (2026-11-18)
+- [x] LP1b follow-ups (2026-11-19, V577): ledger retention job (`retentionMonths`; ingest and replay refuse older days), `DELETE /cameras/{id}` (soft, alias freed), `GET /agents/{id}/commands[/{commandId}]`, shared live view store (`LP_LIVE_STORE=database`), zone `createdAt` → edge `config_pending` gap, enrolment checks the module switch. Tests: `LpVisionFollowUpIT`, `LpRetentionAndLiveStoreIT`, edge `test_camera.py`; LP suites now use days within the 24-month retention
 - [x] LP4 projection: `itemCount`, `orderType` on kitchen events
 - [x] Web: Pour meters tab, engine and rule labels
 - [ ] Translations of the new phrases (English fallback now); web tests; owner's full build and coverage gate

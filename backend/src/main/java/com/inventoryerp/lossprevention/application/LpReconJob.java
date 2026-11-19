@@ -27,8 +27,12 @@ public class LpReconJob {
     private final LpReconService recon;
     private final JobMetrics metrics;
 
-    public LpReconJob(JdbcClient jdbc, LpProjectionService projection, LpReconService recon, JobMetrics metrics) {
+    private final LpLedgerRetentionService retention;
+
+    public LpReconJob(JdbcClient jdbc, LpProjectionService projection, LpReconService recon, JobMetrics metrics,
+            LpLedgerRetentionService retention) {
         this.jdbc = jdbc;
+        this.retention = retention;
         this.projection = projection;
         this.recon = recon;
         this.metrics = metrics;
@@ -51,6 +55,32 @@ public class LpReconJob {
             } catch (RuntimeException err) {
                 log.error("loss prevention tick failed for org {}: {}", orgId, err.toString());
                 metrics.jobFailed("loss-prevention-sweep-and-run");
+            }
+        }
+    }
+
+    /**
+     * Nightly ledger retention (LP0 §8 item 3): every organization's events older than its {@code retentionMonths}
+     * are deleted, except days with a case still open. One failing organization never stops the others.
+     */
+    @Scheduled(cron = "${app.lossprevention.ledger-retention-cron:0 47 3 * * *}")
+    @SchedulerLock(name = "loss-prevention-ledger-retention", lockAtMostFor = "PT2H")
+    public void ledgerRetention() {
+        List<String> orgs = jdbc.sql("SELECT DISTINCT s.\"organizationId\" FROM \"LpSetting\" s JOIN \"Organization\" o"
+                + " ON o.id = s.\"organizationId\" WHERE o.\"deletedAt\" IS NULL UNION SELECT o.id FROM \"Organization\" o"
+                + " WHERE o.\"deletedAt\" IS NULL AND EXISTS (SELECT 1 FROM \"LpEvent\" e WHERE e.\"organizationId\" ="
+                + " o.id)").query(String.class).list();
+        for (String orgId : orgs) {
+            try {
+                TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
+                    java.util.Map<String, Object> done = retention.apply();
+                    if (((Number) done.get("deleted")).longValue() > 0) {
+                        log.info("loss prevention org {}: ledger retention {}", orgId, done);
+                    }
+                });
+            } catch (RuntimeException err) {
+                log.error("loss prevention ledger retention failed for org {}: {}", orgId, err.toString());
+                metrics.jobFailed("loss-prevention-ledger-retention");
             }
         }
     }

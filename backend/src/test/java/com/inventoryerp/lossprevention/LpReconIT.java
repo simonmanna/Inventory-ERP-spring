@@ -30,7 +30,8 @@ class LpReconIT extends ApiTestSupport {
 
     final String source = "it-" + UUID.randomUUID().toString().substring(0, 8);
     /** A finished business day nobody else uses: the DEMO organization is shared between runs. */
-    final LocalDate day = LocalDate.of(2015, 1, 1).plusDays((long) (Math.random() * 3000));
+    // A past day within the ledger's 24-month retention, in a range no other loss-prevention suite uses.
+    final LocalDate day = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(241 + (long) (Math.random() * 200));
     String branch;
     String cashier;
     String cashierToken;

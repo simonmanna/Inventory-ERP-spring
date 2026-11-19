@@ -401,7 +401,7 @@ public class LpEvidenceService {
             assertCase(dto.caseId());
         }
         List<Object> params = new ArrayList<>();
-        String w = scope.where("c", params) + " AND c.id = ?";
+        String w = scope.where("c", params) + " AND c.id = ? AND c.\"deletedAt\" IS NULL";
         params.add(dto.cameraId());
         Map<String, Object> cam = SqlRows.one(jdbc.sql("SELECT c.id, c.\"agentId\", c.\"branchId\" FROM \"LpCamera\" c"
                 + w).params(params));

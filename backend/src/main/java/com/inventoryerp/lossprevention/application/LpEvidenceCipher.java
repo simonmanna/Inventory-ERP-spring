@@ -94,6 +94,20 @@ public class LpEvidenceCipher {
         }
     }
 
+    /**
+     * A key for another purpose derived from the evidence key (HMAC-SHA256 of the purpose), so every API instance of
+     * a deployment derives the same one. Used to sign live view links (LP1).
+     */
+    public byte[] subkey(String purpose) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(key.getEncoded(), "HmacSHA256"));
+            return mac.doFinal(purpose.getBytes(StandardCharsets.UTF_8));
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     public static String sha256(byte[] bytes) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));

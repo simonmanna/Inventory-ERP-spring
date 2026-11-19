@@ -41,7 +41,8 @@ class LpRetailResearchIT extends LpVisionSupport {
     LpProjectionService projection;
 
     /** A past day nobody else uses: DEMO is shared between suites and reruns. */
-    final LocalDate day = LocalDate.of(2005, 1, 1).plusDays((long) (Math.random() * 1400));
+    // A past day within the ledger's 24-month retention, in a range no other loss-prevention suite uses.
+    final LocalDate day = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(624 + (long) (Math.random() * 76));
     String agentId;
     String cameraId;
     String adminId;

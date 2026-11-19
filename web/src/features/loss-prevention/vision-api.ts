@@ -188,6 +188,23 @@ export interface ZoneCreate extends ZoneUpdate {
   zoneType: ZoneType;
 }
 
+export type CommandState = 'pending' | 'delivered' | 'done' | 'failed' | 'expired';
+
+/** Work sent to an edge agent and what it answered (LP1). */
+export interface AgentCommand {
+  id: string;
+  agentId: string;
+  kind: string;
+  state: CommandState;
+  payload: Record<string, unknown>;
+  result: { message?: string | null; code?: string | null } | null;
+  createdBy: string | null;
+  createdAt: string;
+  deliveredAt: string | null;
+  completedAt: string | null;
+  expiresAt: string;
+}
+
 export interface LiveSession {
   sessionId: string;
   streamUrl: string;
@@ -395,6 +412,14 @@ export const useNewLpEnrolmentCode = () => useVisionChange(async (id: string) =>
 export const useRevokeLpAgent = () => useVisionChange(async (v: { id: string; reason?: string }) =>
   (await api.post<LpAgent>(`${BASE}/agents/${v.id}/revoke`, { reason: v.reason })).data);
 
+/** The agent's latest 30 commands, newest first. */
+export const useLpAgentCommands = (id: string | null) => useQuery({
+  queryKey: [...KEY, 'agent', id, 'commands'],
+  enabled: !!id,
+  refetchInterval: 15_000,
+  queryFn: async () => (await api.get<AgentCommand[]>(`${BASE}/agents/${id}/commands`, { params: { limit: 30 } })).data,
+});
+
 export const useLpModels = (enabled = true) => useQuery({
   queryKey: [...KEY, 'models'],
   enabled,
@@ -420,6 +445,10 @@ export const useCreateLpCamera = () => useVisionChange(async (body: CameraCreate
 
 export const useUpdateLpCamera = () => useVisionChange(async (v: { id: string; body: CameraUpdate }) =>
   (await api.put<LpCamera>(`${BASE}/cameras/${v.id}`, v.body)).data);
+
+/** Deletes the camera: its zones retire, its clips and observations stay, its alias is free again. */
+export const useDeleteLpCamera = () => useVisionChange(async (id: string) =>
+  (await api.delete<{ id: string; deleted: boolean; zonesRetired: number }>(`${BASE}/cameras/${id}`)).data);
 
 export const useCreateLpZone = () => useVisionChange(async (body: ZoneCreate) =>
   (await api.post<LpZone>(`${BASE}/zones`, body)).data);

@@ -163,6 +163,11 @@ app:
     insights-cron: ${LP_INSIGHTS_CRON:40 */5 * * * *}
     vision-cron: ${LP_VISION_CRON:20 * * * * *}
     vision-housekeeping-cron: ${LP_VISION_HOUSEKEEPING_CRON:0 17 3 * * *}
+    # Ledger retention (LP0 §8): nightly, deletes events older than each organization's retentionMonths.
+    ledger-retention-cron: ${LP_LEDGER_RETENTION_CRON:0 47 3 * * *}
+    # Live view and stills: memory (one API instance, or sticky routing) or database (shared by every instance, V577).
+    live:
+      store: ${LP_LIVE_STORE:memory}
     vision:
       models: "${LP_VISION_MODELS:[]}"
       releases: "${LP_EDGE_RELEASES:[]}"

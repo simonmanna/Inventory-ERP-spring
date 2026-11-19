@@ -19,11 +19,11 @@ import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
 import {
   STREAM_ALIAS_RE, VISION_SETTINGS, useCreateLpAgent, useCreateLpCamera, useLpAgent, useLpAgents, useLpBranchChoices,
-  useLpCameras, useLpModels, useLpSettings, useNewLpEnrolmentCode, useRevokeLpAgent, useSaveLpSettings,
-  useUpdateLpAgent, useUpdateLpCamera, type AgentEvent, type EnrolledAgent, type LpAgent, type LpCamera, type LpModels,
+  useLpAgentCommands, useLpCameras, useLpModels, useLpSettings, useNewLpEnrolmentCode, useRevokeLpAgent,
+  useSaveLpSettings, useDeleteLpCamera, useUpdateLpAgent, useUpdateLpCamera, type AgentEvent, type EnrolledAgent, type LpAgent, type LpCamera, type LpModels,
 } from '@/features/loss-prevention/vision-api';
 import {
-  AGENT_EVENT_LABELS, AGENT_STATUS_LABELS, HEALTH_LABELS, HEALTH_REASON_LABELS, SELECT, SETTING_LABELS, TABLE, labelOf,
+  AGENT_EVENT_LABELS, AGENT_STATUS_LABELS, COMMAND_KIND_LABELS, COMMAND_STATE_LABELS, HEALTH_LABELS, HEALTH_REASON_LABELS, SELECT, SETTING_LABELS, TABLE, labelOf,
   toNumber,
 } from './vision-ui';
 import { HealthBadge, LiveViewDialog, StreamBadge } from './vision-shared';
@@ -370,6 +370,7 @@ function AgentDialog({ id, onClose }: { id: string; onClose: () => void }) {
                 ))}
               </div>
             </div>
+            <AgentCommands id={id} />
             {!revoked && (
               <div className="space-y-2 border-t pt-3">
                 <p className="text-sm font-medium">{tx('Revoke')}</p>
@@ -485,6 +486,12 @@ function CameraDialog({ camera, agents, onClose, onCreated }: {
   const [notes, setNotes] = useState(camera?.notes ?? '');
   const create = useCreateLpCamera();
   const update = useUpdateLpCamera();
+  const remove = useDeleteLpCamera();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const onDelete = () => camera && remove.mutate(camera.id, {
+    onSuccess: () => { notify.success(tx('Camera deleted')); onClose(); },
+    onError: (e) => notify.error(apiMessage(e, tx('Could not delete the camera'))),
+  });
   const aliasProblem = !alias ? null
     : /:\/\/|@|:/.test(alias) ? tx('Enter only the alias here. The stream address and its password stay on the edge box.')
       : !STREAM_ALIAS_RE.test(alias) ? tx('Use lower-case letters, digits, - and _, up to 64, starting with a letter or a digit.')
@@ -544,6 +551,23 @@ function CameraDialog({ camera, agents, onClose, onCreated }: {
             <Textarea value={notes} maxLength={1000} rows={2} onChange={(e) => setNotes(e.target.value)} />
           </div>
         </div>
+        {camera && (
+          <div className="space-y-2 border-t pt-3">
+            <p className="text-xs text-muted-foreground">
+              {tx('Deleting retires its zones and frees the alias. Its clips and past observations are kept. To pause a camera, switch it off instead.')}
+            </p>
+            {!confirmDelete ? (
+              <Button variant="outline" size="sm" onClick={() => setConfirmDelete(true)}>{tx('Delete camera')}</Button>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="destructive" size="sm" disabled={remove.isPending} onClick={onDelete}>
+                  {tx('Yes, delete it')}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfirmDelete(false)}>{tx('Keep it')}</Button>
+              </div>
+            )}
+          </div>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
           <Button disabled={invalid || create.isPending || update.isPending} onClick={onSave}>{tx('Save')}</Button>
@@ -633,5 +657,43 @@ function VisionSettingsCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** What was sent to the box and what it answered: a still, a calibration, an upload or live view that did not happen. */
+function AgentCommands({ id }: { id: string }) {
+  const { data, isLoading } = useLpAgentCommands(id);
+  const rows = data ?? [];
+  return (
+    <div>
+      <p className="mb-1 text-sm font-medium">{tx('Requests to the box')}</p>
+      <div className="max-h-48 overflow-y-auto rounded-md border text-xs">
+        <table className="w-full">
+          <thead className="sticky top-0 bg-muted text-left">
+            <tr>
+              <th className="px-2 py-1 font-medium">{tx('Sent')}</th>
+              <th className="px-2 py-1 font-medium">{tx('Request')}</th>
+              <th className="px-2 py-1 font-medium">{tx('Status')}</th>
+              <th className="px-2 py-1 font-medium">{tx('Answer')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id} className="border-t">
+                <td className="px-2 py-1">{dateTime(c.createdAt)}</td>
+                <td className="px-2 py-1">{labelOf(COMMAND_KIND_LABELS, c.kind)}</td>
+                <td className="px-2 py-1">
+                  <Badge variant={c.state === 'failed' || c.state === 'expired' ? 'destructive' : c.state === 'done' ? 'secondary' : 'outline'}>
+                    {labelOf(COMMAND_STATE_LABELS, c.state)}
+                  </Badge>
+                </td>
+                <td className="px-2 py-1 text-muted-foreground">{c.result?.message ?? (c.completedAt ? dateTime(c.completedAt) : '—')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!isLoading && rows.length === 0 && <p className="p-2 text-muted-foreground">{tx('Nothing sent yet.')}</p>}
+      </div>
+    </div>
   );
 }

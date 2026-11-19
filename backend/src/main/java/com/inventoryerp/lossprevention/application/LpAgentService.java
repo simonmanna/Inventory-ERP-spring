@@ -9,6 +9,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.security.AuthUser;
 import com.inventoryerp.kernel.security.Permissions;
+import com.inventoryerp.kernel.security.AccessGuardInterceptor;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.lossprevention.application.LpVisionCommands.CameraStatus;
@@ -62,7 +63,8 @@ public class LpAgentService {
             + " CURRENT_TIMESTAMP) AS \"enrolmentPending\", CASE WHEN a.\"enrolCodeHash\" IS NOT NULL THEN"
             + " a.\"enrolCodeExpiresAt\" END AS \"enrolmentCodeExpiresAt\", a.\"enrolledAt\", a.\"revokedAt\","
             + " a.\"revokedBy\", a.\"revokeReason\", a.\"apiClientId\", a.\"createdBy\", a.\"createdAt\", a.\"updatedAt\","
-            + " (SELECT count(*) FROM \"LpCamera\" c WHERE c.\"agentId\" = a.id) AS \"cameraCount\"";
+            + " (SELECT count(*) FROM \"LpCamera\" c WHERE c.\"agentId\" = a.id AND c.\"deletedAt\" IS"
+            + " NULL) AS \"cameraCount\"";
     private static final String FROM = " FROM \"LpAgent\" a LEFT JOIN \"Branch\" b ON b.id = a.\"branchId\"";
 
     private final JdbcClient jdbc;
@@ -77,13 +79,16 @@ public class LpAgentService {
     private final LpLiveService live;
     private final AuditService audit;
     private final EventBus events;
+    private final AccessGuardInterceptor moduleGate;
     private final SecureRandom random = new SecureRandom();
     private final Clock clock = Clock.systemUTC();
 
     public LpAgentService(JdbcClient jdbc, LpScope scope, BranchScopeService branches, ApiClientService apiClients,
             LpSettingsService settings, LpAgentCommandService commands, LpModelCatalog models, LpReconService recon,
-            LpVisionDirectory directory, LpLiveService live, AuditService audit, EventBus events) {
+            LpVisionDirectory directory, LpLiveService live, AuditService audit, EventBus events,
+            AccessGuardInterceptor moduleGate) {
         this.jdbc = jdbc;
+        this.moduleGate = moduleGate;
         this.scope = scope;
         this.branches = branches;
         this.apiClients = apiClients;
@@ -149,13 +154,28 @@ public class LpAgentService {
                 .params(params));
     }
 
+    /** The agent's latest commands (LP1 §12): what was asked of the box and what it answered. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> commands(String id, String state, String kind, Integer limit) {
+        load(id);
+        return commands.list(id, LpScope.has(state) ? state : null, LpScope.has(kind) ? kind : null,
+                limit == null ? 50 : limit);
+    }
+
+    /** One command of the agent, with its state and result; 404 when it is another agent's. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> command(String id, String commandId) {
+        load(id);
+        return LpAgentCommandService.view(commands.get(id, commandId));
+    }
+
     /** The agent with its cameras, its last 60 heartbeats and its timeline. */
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> out = new LinkedHashMap<>(load(id));
         out.put("cameras", SqlRows.list(jdbc.sql("SELECT c.*, (SELECT count(*) FROM \"LpZone\" z WHERE z.\"cameraId\" ="
                 + " c.id AND z.\"retiredAt\" IS NULL) AS \"zoneCount\" FROM \"LpCamera\" c WHERE c.\"organizationId\" = ?"
-                + " AND c.\"agentId\" = ? ORDER BY c.name, c.id").params(LpScope.org(), id)));
+                + " AND c.\"agentId\" = ? AND c.\"deletedAt\" IS NULL ORDER BY c.name, c.id").params(LpScope.org(), id)));
         out.put("heartbeats", SqlRows.list(jdbc.sql("SELECT * FROM \"LpAgentHeartbeat\" WHERE \"organizationId\" = ? AND"
                 + " \"agentId\" = ? ORDER BY \"receivedAt\" DESC LIMIT 60").params(LpScope.org(), id)));
         out.put("timeline", SqlRows.list(jdbc.sql("SELECT t.*, coalesce(nullif(trim(coalesce(u.\"firstName\", '') || ' '"
@@ -300,6 +320,10 @@ public class LpAgentService {
         }
         String org = (String) row.get("organizationId");
         return TenantContext.run(TenantStore.organization(org), () -> {
+            // The route is public, so the module switch the other agent routes carry is checked here.
+            if (!moduleGate.moduleAllowed(org, "loss-prevention")) {
+                throw ApiException.forbidden("Module 'loss-prevention' is not enabled for this organization");
+            }
             String id = (String) row.get("id");
             String clientRowId = (String) row.get("apiClientId");
             Map<String, Object> client = apiClients.rotate(clientRowId);
@@ -467,17 +491,18 @@ public class LpAgentService {
         List<Map<String, Object>> cameras = new ArrayList<>();
         Map<String, List<Map<String, Object>>> zonesByCamera = new HashMap<>();
         for (Map<String, Object> z : SqlRows.list(jdbc.sql("SELECT z.id, z.\"cameraId\", z.name, z.\"zoneType\","
-                + " z.polygon, z.\"inSide\", z.\"linkedType\", z.\"linkedId\", z.params, z.enabled FROM \"LpZone\" z JOIN"
+                + " z.polygon, z.\"inSide\", z.\"linkedType\", z.\"linkedId\", z.params, z.enabled, z.\"createdAt\" FROM \"LpZone\" z JOIN"
                 + " \"LpCamera\" c ON c.id = z.\"cameraId\" WHERE z.\"organizationId\" = ? AND c.\"agentId\" = ? AND"
                 + " z.\"retiredAt\" IS NULL ORDER BY z.name, z.id").params(org, agent.id()))) {
             zonesByCamera.computeIfAbsent((String) z.get("cameraId"), k -> new ArrayList<>()).add(Obj.of("id",
                     z.get("id"), "name", z.get("name"), "zoneType", z.get("zoneType"), "polygon", z.get("polygon"),
                     "inSide", z.get("inSide"), "linkedType", z.get("linkedType"), "linkedId", z.get("linkedId"),
                     "enabled", z.get("enabled"), "params", LpVisionCatalog.effectiveParams((String) z.get("zoneType"),
-                            LpJson.map(z.get("params")))));
+                            LpJson.map(z.get("params"))), "createdAt", isoInstant(z.get("createdAt"))));
         }
         for (Map<String, Object> c : SqlRows.list(jdbc.sql("SELECT id, name, \"streamAlias\", enabled, analysed FROM"
-                + " \"LpCamera\" WHERE \"organizationId\" = ? AND \"agentId\" = ? ORDER BY name, id")
+                + " \"LpCamera\" WHERE \"organizationId\" = ? AND \"agentId\" = ? AND \"deletedAt\" IS NULL ORDER BY"
+                + " name, id")
                 .params(org, agent.id()))) {
             cameras.add(Obj.of("id", c.get("id"), "name", c.get("name"), "streamAlias", c.get("streamAlias"),
                     "enabled", c.get("enabled"), "analysed", c.get("analysed"), "zones",
@@ -492,6 +517,17 @@ public class LpAgentService {
                 "model", models.modelFor((String) a.get("desiredModelVersion")),
                 "release", models.releaseFor((String) a.get("desiredAgentVersion")),
                 "cameras", cameras, "measurementDevices", measurementDevices(agent.id()));
+    }
+
+    /** A timestamp column as an ISO-8601 instant, so the agent can compare it with its own clock. */
+    static String isoInstant(Object v) {
+        if (v instanceof java.sql.Timestamp t) {
+            return t.toInstant().toString();
+        }
+        if (v instanceof Instant i) {
+            return i.toString();
+        }
+        return v == null ? null : v.toString();
     }
 
     /** The pour meters this agent's adapters read (LP3); see {@link LpMeasurementService}. */

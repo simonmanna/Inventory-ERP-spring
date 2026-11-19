@@ -90,7 +90,8 @@ public final class LpEventTypes {
             "other");
 
     /** Why a camera had no usable picture ({@link #VISION_GAP}). */
-    public static final List<String> GAP_REASONS = List.of("stream_lost", "agent_down", "clock_drift", "disabled");
+    public static final List<String> GAP_REASONS = List.of("stream_lost", "agent_down", "clock_drift", "disabled",
+            "config_pending");
 
     /** Directions of a counting line ({@link #VISION_LINE_CROSSED}) and of a {@link #STOCK_MOVEMENT}. */
     public static final List<String> DIRECTIONS = List.of("in", "out");

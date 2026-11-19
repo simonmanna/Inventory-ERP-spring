@@ -201,7 +201,7 @@
       "description": "The camera had no usable picture from..to. observationStatus must be unavailable. No vision rule finds anything inside a gap.",
       "properties": {
         "from": { "$ref": "#/$defs/instant" }, "to": { "$ref": "#/$defs/instant" },
-        "reason": { "enum": ["stream_lost", "agent_down", "clock_drift", "disabled"] }
+        "reason": { "enum": ["stream_lost", "agent_down", "clock_drift", "disabled", "config_pending"] }
       }
     },
     "vision.activity": {

@@ -64,6 +64,19 @@ public class LossPreventionAgentController {
         return agents.get(id);
     }
 
+    @GetMapping("/agents/{id}/commands")
+    @RequirePermissions(Permissions.LOSS_PREVENTION__CONFIGURE)
+    public List<Map<String, Object>> commands(@PathVariable String id, @RequestParam(required = false) String state,
+            @RequestParam(required = false) String kind, @RequestParam(required = false) Integer limit) {
+        return agents.commands(id, state, kind, limit);
+    }
+
+    @GetMapping("/agents/{id}/commands/{commandId}")
+    @RequirePermissions(Permissions.LOSS_PREVENTION__CONFIGURE)
+    public Map<String, Object> command(@PathVariable String id, @PathVariable String commandId) {
+        return agents.command(id, commandId);
+    }
+
     @PutMapping("/agents/{id}")
     @RequirePermissions(Permissions.LOSS_PREVENTION__CONFIGURE)
     public Map<String, Object> update(@PathVariable String id, @Valid @RequestBody UpdateAgentInput dto) {

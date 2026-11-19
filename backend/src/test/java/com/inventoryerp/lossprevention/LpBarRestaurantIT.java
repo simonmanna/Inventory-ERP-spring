@@ -24,7 +24,8 @@ import tools.jackson.databind.JsonNode;
 class LpBarRestaurantIT extends LpVisionSupport {
 
     /** A past day nobody else uses: DEMO is shared between suites. */
-    final LocalDate day = LocalDate.of(2015, 1, 1).plusDays((long) (Math.random() * 300));
+    // A past day within the ledger's 24-month retention, in a range no other loss-prevention suite uses.
+    final LocalDate day = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(442 + (long) (Math.random() * 80));
     static String agentId;
     static String otherAgentId;
     static String deviceId;

@@ -75,7 +75,13 @@ class CameraObserver:
         self._unobserved: Unobserved | None = unobserved
         self._last_frame: float | None = None
         self._calibrations: list[tuple[str, Future]] = []
+        #: Zones added by a configuration change, with the instant from which they were not watched: the next frame
+        #: reports that period as a ``config_pending`` gap (the server drew them before this agent loaded them).
+        self._pending: dict[str, float] = {}
+        #: The last frame when the configuration was last applied; a new zone was not in the configuration before it.
+        self._configured_at: float | None = None
         self._rebuild(camera, detector_classes)
+        self._configured_at = self._last_frame
 
     # -- configuration -----------------------------------------------------------------------------------------
 
@@ -86,7 +92,18 @@ class CameraObserver:
             if detector_classes != self._detector_classes:
                 self._detector_classes = detector_classes
                 self._fingerprints = {}
+            known = set(self._profiles) | set(self._pending)
             self._rebuild(camera, detector_classes)
+            if self._unobserved is None and self._last_frame is not None:
+                for zone in camera.zones:
+                    if zone.id in known or zone.created_at is None:
+                        continue
+                    start = zone.created_at if self._configured_at is None else max(zone.created_at, self._configured_at)
+                    if start < self._last_frame:
+                        self._pending[zone.id] = start
+            wanted = {zone.id for zone in camera.zones}
+            self._pending = {k: v for k, v in self._pending.items() if k in wanted}
+            self._configured_at = self._last_frame
 
     def _rebuild(self, camera: Camera, detector_classes: frozenset[str] | None) -> None:
         wanted = {zone.id: zone for zone in camera.zones}
@@ -142,6 +159,12 @@ class CameraObserver:
                         observations.append(gap(zone.id, self.camera.id, reason, hole.since, context.ts))
                 for profile in self._profiles.values():
                     profile.start(context.ts)
+                # The hole's gap already covers the zones added meanwhile.
+                self._pending = {}
+            for zone_id, start in self._pending.items():
+                if context.ts > start:
+                    observations.append(gap(zone_id, self.camera.id, "config_pending", start, context.ts))
+            self._pending = {}
             for zone_id, profile in self._profiles.items():
                 if profile.started_at is None:
                     profile.start(context.ts)
@@ -179,6 +202,7 @@ class CameraObserver:
                 return self._unobserved.since
             values = [self._last_frame] if self._last_frame is not None else []
             values += [h for h in (p.hold() for p in self._profiles.values()) if h is not None]
+            values += list(self._pending.values())
             return min(values) if values else 0.0
 
     # -- calibration ---------------------------------------------------------------------------------------------

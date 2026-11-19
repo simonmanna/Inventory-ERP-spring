@@ -45,7 +45,8 @@ import tools.jackson.databind.JsonNode;
 class LpVisionIT extends LpVisionSupport {
 
     /** A past calendar day nobody else uses: DEMO is shared between suites. */
-    final LocalDate day = LocalDate.of(2016, 1, 1).plusDays((long) (Math.random() * 2500));
+    // A past day within the ledger's 24-month retention, in a range no other loss-prevention suite uses.
+    final LocalDate day = LocalDate.now(java.time.ZoneOffset.UTC).minusDays(40 + (long) (Math.random() * 200));
     final byte[] clip = ("clip " + tag + " ").repeat(40_000).getBytes(StandardCharsets.UTF_8);
     String agentId;
     String cameraId;
@@ -465,6 +466,6 @@ class LpVisionIT extends LpVisionSupport {
     void authorization() {
         assertThat(assertAuthorizationMatrix(LossPreventionAgentController.class,
                 LossPreventionAgentApiController.class, LossPreventionCameraController.class,
-                LossPreventionEvidenceController.class)).isEqualTo(38);
+                LossPreventionEvidenceController.class)).isEqualTo(41);
     }
 }
