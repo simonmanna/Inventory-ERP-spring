@@ -96,6 +96,14 @@ public class SalesQuotationService {
         this.images = images;
     }
 
+    private SalesLetterhead letterhead;
+
+    /** Company name, contact lines and logo printed on quotations. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLetterhead(SalesLetterhead letterhead) {
+        this.letterhead = letterhead;
+    }
+
     @org.springframework.beans.factory.annotation.Autowired
     void setAccess(SalesAccess access) {
         this.access = access;
@@ -910,30 +918,73 @@ public class SalesQuotationService {
      */
     @Transactional(readOnly = true)
     public byte[] pdf(String id, Boolean withImages) {
-        Map<String, Object> q = require(id);
+        return render(require(id), config.quoteLayout(), withImages);
+    }
+
+    /**
+     * Preview of a quotation layout before it is saved (Sales settings): {@code layout} (partial, validated like the
+     * settings update; {@code null} = the saved layout) applied to the latest quotation this user can see, or to sample
+     * lines when there is none.
+     */
+    @Transactional(readOnly = true)
+    public byte[] layoutPreview(Object layout) {
+        QuoteLayout saved = config.quoteLayout();
+        QuoteLayout l = layout == null ? saved : QuoteLayout.validate(layout, saved);
+        StringBuilder where = new StringBuilder(" WHERE q.\"organizationId\" = ? AND q.\"deletedAt\" IS NULL");
+        List<Object> params = new ArrayList<>(List.of(org()));
+        visibility(where, params);
+        Map<String, Object> latest = db.row(SELECT + where + " ORDER BY q.\"createdAt\" DESC LIMIT 1",
+                params.toArray());
+        if (latest != null) {
+            return render(latest, l, null);
+        }
+        SalesLetterhead.Head head = letterhead.company(l.companyName());
+        List<Map<String, Object>> lines = new ArrayList<>();
+        lines.add(new HashMap<>(Map.of("displayType", "line_section", "description", "Sample section")));
+        lines.add(new HashMap<>(Map.of("description", "Sample product", "quantity", 2, "unit", "pc", "unitPrice", 50000,
+                "discountPercent", 0, "total", 100000)));
+        lines.add(new HashMap<>(Map.of("description", "Sample service", "quantity", 1, "unit", "h", "unitPrice", 25000,
+                "discountPercent", 10, "total", 22500)));
+        return SalesQuotationPdf.render(new SalesQuotationPdf.Quote(new SalesQuotationPdf.Company(head.name(),
+                head.lines(), head.logo()), "QT-SAMPLE", List.of(new SalesQuotationPdf.Fact("Customer",
+                        "Sample Customer Ltd"), new SalesQuotationPdf.Fact("Date", java.time.LocalDate.now().toString())),
+                lines, orgCurrency(), List.of(new SalesDocumentPdf.Total("Untaxed", new BigDecimal("122500")),
+                        new SalesDocumentPdf.Total("Tax", BigDecimal.ZERO), new SalesDocumentPdf.Total("Total",
+                                new BigDecimal("122500"))), "Sample notes.", "Sample terms.", false), l);
+    }
+
+    /** The customer PDF of quotation row {@code q} in {@code layout}. */
+    private byte[] render(Map<String, Object> q, QuoteLayout layout, Boolean withImages) {
         boolean showImages = config.quoteLineImages() && !Boolean.FALSE.equals(withImages);
-        List<Map<String, Object>> lines = db.rows("SELECT l.description, l.quantity, l.\"unitPrice\", l.\"discountPercent\","
-                + " l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height, p.\"sizingUnit\", p.image FROM"
-                + " \"SalesQuotationLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND"
-                + " l.\"organizationId\" = ? AND NOT COALESCE(l.\"isOptional\", false) AND l.\"displayType\" IS NULL ORDER BY"
-                + " l.\"sortOrder\"", id, org());
+        List<Map<String, Object>> lines = db.rows("SELECT l.\"displayType\", l.description, l.quantity, l.\"unitPrice\","
+                + " l.\"discountPercent\", l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height,"
+                + " p.\"sizingUnit\", p.image, COALESCE(NULLIF(u.symbol, ''), u.code) AS unit, t.name AS tax FROM"
+                + " \"SalesQuotationLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" LEFT JOIN \"UnitOfMeasure\" u"
+                + " ON u.id = l.\"uomId\" LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" WHERE l.\"quotationId\" = ? AND"
+                + " l.\"organizationId\" = ? AND NOT COALESCE(l.\"isOptional\", false) ORDER BY l.\"sortOrder\"",
+                str(q.get("id")), org());
         if (showImages) {
             Map<String, byte[]> loaded = new HashMap<>();
             for (Map<String, Object> l : lines) {
                 String stored = str(l.get("image"));
-                if (stored != null) {
+                if (stored != null && l.get("displayType") == null) {
                     l.put("imageBytes", loaded.computeIfAbsent(stored, images::bytes));
                 }
             }
         }
-        String company = str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM"
-                + " \"Organization\" WHERE id = ?", org()).get("n"));
-        return SalesDocumentPdf.render(company, "QUOTATION", str(q.get("number")), List.of("Customer: " + q.get("partnerName"),
-                "Date: " + q.get("issueDate"), "Valid until: " + q.get("validUntil")), lines, str(q.get("currencyCode")), List.of(
+        SalesLetterhead.Head head = letterhead.company(layout.companyName());
+        List<SalesQuotationPdf.Fact> facts = new ArrayList<>();
+        facts.add(new SalesQuotationPdf.Fact("Customer", str(q.get("partnerName"))));
+        facts.add(new SalesQuotationPdf.Fact("Date", str(q.get("issueDate"))));
+        facts.add(new SalesQuotationPdf.Fact("Valid until", str(q.get("validUntil"))));
+        if (layout.showSalesperson()) {
+            facts.add(new SalesQuotationPdf.Fact("Salesperson", str(q.get("ownerName"))));
+        }
+        return SalesQuotationPdf.render(new SalesQuotationPdf.Quote(new SalesQuotationPdf.Company(head.name(),
+                head.lines(), head.logo()), str(q.get("number")), facts, lines, str(q.get("currencyCode")), List.of(
                         new SalesDocumentPdf.Total("Untaxed", dec(q.get("subtotal"))), new SalesDocumentPdf.Total("Tax",
-                                dec(q.get("taxAmount"))), new SalesDocumentPdf.Total("Total", dec(q.get("total")))), List.of(
-                                        new SalesDocumentPdf.Block("Notes", str(q.get("notes"))),
-                                        new SalesDocumentPdf.Block("Terms", str(q.get("terms")))), showImages);
+                                dec(q.get("taxAmount"))), new SalesDocumentPdf.Total("Total", dec(q.get("total")))),
+                str(q.get("notes")), str(q.get("terms")), showImages), layout);
     }
 
     /** Email the PDF to the customer; an approved quotation becomes sent. */

@@ -235,6 +235,59 @@ class SalesQuoteProformaIT extends ApiTestSupport {
         assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("lines").get(0).get("productImage").isNull()).isTrue();
     }
 
+    byte[] layoutPreview(Object body) throws Exception {
+        HttpResponse<byte[]> r = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port
+                + "/api/v1/sales/settings/quote-layout/preview")).header("Authorization", "Bearer " + adminToken)
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(
+                        mapper.writeValueAsString(body))).build(), HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(r.statusCode()).as(new String(r.body(), StandardCharsets.UTF_8)).isEqualTo(200);
+        return r.body();
+    }
+
+    @Test
+    @DisplayName("quotation layout: defaults, validated partial updates, preview without saving; the PDF follows it and"
+            + " prints the company settings name unless overridden")
+    void quoteLayout() throws Exception {
+        String orgName = jdbc.sql("SELECT name FROM \"Organization\" WHERE id = ?").param(demoOrg).query(String.class)
+                .single();
+        String id = quote(Map.of("notes", "Layout notes " + sfx)).get("id").asString();
+        try {
+            JsonNode layout = ok(200, "GET", "/sales/settings", null).get("quoteLayout");
+            assertThat(layout.get("title").asString()).isEqualTo("QUOTATION");
+            assertThat(layout.get("showUnit").asBoolean()).isTrue();
+            assertThat(layout.get("showSignature").asBoolean()).isFalse();
+
+            // The company name comes from the company settings (not the POS receipt header).
+            String plain = pdfText(quotationPdf(id, ""));
+            assertThat(plain).contains(orgName, "QUOTATION", "Layout notes " + sfx, "Disc %").doesNotContain("Accepted by");
+
+            assertThat(call("PUT", "/sales/settings", Map.of("quoteLayout", Map.of("paperSize", "A3")), adminToken)
+                    .raw().body()).contains("quoteLayout.paperSize must be one of: A4, A5, Letter");
+
+            // Preview applies an unsaved layout; the saved one is unchanged.
+            assertThat(pdfText(layoutPreview(Map.of("layout", Map.of("title", "DRAFT " + sfx.substring(0, 4))))))
+                    .contains("DRAFT " + sfx.substring(0, 4));
+            assertThat(ok(200, "GET", "/sales/settings", null).get("quoteLayout").get("title").asString())
+                    .isEqualTo("QUOTATION");
+
+            JsonNode saved = ok(200, "PUT", "/sales/settings", Map.of("quoteLayout", Map.of("title", "PRICE OFFER",
+                    "companyName", "Stone Works " + sfx, "showDiscount", false, "showNotes", false, "showSignature", true,
+                    "footerText", "Footer " + sfx))).get("quoteLayout");
+            assertThat(saved.get("title").asString()).isEqualTo("PRICE OFFER");
+            assertThat(saved.get("showUnit").asBoolean()).isTrue();
+            String styled = pdfText(quotationPdf(id, ""));
+            assertThat(styled).contains("PRICE OFFER", "Stone Works " + sfx, "Accepted by (customer)", "Footer " + sfx)
+                    .doesNotContain("Disc %", "Layout notes " + sfx);
+
+            // A partial update keeps the other choices; a blank name returns to the company settings name.
+            ok(200, "PUT", "/sales/settings", Map.of("quoteLayout", Map.of("companyName", "")));
+            assertThat(pdfText(quotationPdf(id, ""))).contains(orgName, "PRICE OFFER");
+        } finally {
+            jdbc.sql("UPDATE \"SalesSettings\" SET \"quoteLayout\" = '{}'::jsonb WHERE \"organizationId\" = ?")
+                    .param(demoOrg).update();
+        }
+    }
+
     @Test
     @DisplayName("proforma from a quote and an order: listed, opened, advance applied, no journal or receivable")
     void proforma() {

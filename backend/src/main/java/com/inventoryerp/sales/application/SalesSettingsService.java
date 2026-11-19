@@ -52,7 +52,17 @@ public class SalesSettingsService {
     @Transactional
     public Map<String, Object> settings() {
         db.update("INSERT INTO \"SalesSettings\" (\"organizationId\") VALUES (?) ON CONFLICT DO NOTHING", org());
-        return db.row("SELECT * FROM \"SalesSettings\" WHERE \"organizationId\" = ?", org());
+        Map<String, Object> row = db.row("SELECT * FROM \"SalesSettings\" WHERE \"organizationId\" = ?", org());
+        row.put("quoteLayout", QuoteLayout.of(row.get("quoteLayout")).toMap());
+        return row;
+    }
+
+    /** How quotations print (defaults filled in); read-only. */
+    @Transactional(readOnly = true)
+    public QuoteLayout quoteLayout() {
+        Map<String, Object> r = db.row("SELECT \"quoteLayout\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?",
+                org());
+        return QuoteLayout.of(r == null ? null : r.get("quoteLayout"));
     }
 
     /** Whether quotations offer product images (Image column, printed / PDF thumbnails); read-only, default off. */
@@ -154,6 +164,11 @@ public class SalesSettingsService {
             }
             sets.add("\"proformaAdvancePercent\" = ?");
             params.add(v);
+        }
+        if (in.containsKey("quoteLayout")) {
+            QuoteLayout layout = QuoteLayout.validate(in.get("quoteLayout"), QuoteLayout.of(before.get("quoteLayout")));
+            sets.add("\"quoteLayout\" = ?");
+            params.add(SalesDb.jsonb(layout.toMap()));
         }
         if (in.containsKey("defaultQuoteTerms")) {
             sets.add("\"defaultQuoteTerms\" = ?");

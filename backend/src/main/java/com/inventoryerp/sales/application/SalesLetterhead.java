@@ -54,6 +54,32 @@ public class SalesLetterhead {
         return new Head(name == null ? "" : name, List.copyOf(lines), logo(str(o.get("logoUrl"))));
     }
 
+    /**
+     * Letterhead for quotations: the company name from the company settings ({@code Organization.name}, or
+     * {@code nameOverride} when given), contact lines from the organization settings falling back to the receipt
+     * header, and the company logo.
+     */
+    public Head company(String nameOverride) {
+        Map<String, Object> o = db.row("SELECT name, settings->>'logoUrl' AS \"logoUrl\","
+                + " COALESCE(NULLIF(settings->>'address', ''), \"receiptHeader\"->>'addressLine1') AS a1,"
+                + " \"receiptHeader\"->>'addressLine2' AS a2,"
+                + " COALESCE(NULLIF(settings->>'phone', ''), \"receiptHeader\"->>'phone') AS phone,"
+                + " settings->>'email' AS email,"
+                + " COALESCE(NULLIF(settings->>'taxNumber', ''), NULLIF(settings->>'tin', ''),"
+                + " \"receiptHeader\"->>'taxId') AS \"taxId\" FROM \"Organization\" WHERE id = ?", org());
+        if (o == null) {
+            return new Head(blank(nameOverride) ? "" : nameOverride.trim(), List.of(), null);
+        }
+        String name = blank(nameOverride) ? str(o.get("name")) : nameOverride.trim();
+        List<String> lines = new ArrayList<>();
+        add(lines, "", str(o.get("a1")));
+        add(lines, "", str(o.get("a2")));
+        add(lines, "Tel: ", str(o.get("phone")));
+        add(lines, "", str(o.get("email")));
+        add(lines, "TIN: ", str(o.get("taxId")));
+        return new Head(name == null ? "" : name, List.copyOf(lines), logo(str(o.get("logoUrl"))));
+    }
+
     /** Bytes of the organization logo (a file of this org referenced by its signed URL), or {@code null}. */
     public byte[] logo(String logoUrl) {
         Matcher m = FILE_ID.matcher(logoUrl == null ? "" : logoUrl);

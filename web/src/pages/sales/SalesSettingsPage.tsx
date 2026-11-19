@@ -11,6 +11,7 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
 import { useSalesSettings } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
+import { QuoteLayoutSettings, type QuoteLayout } from './QuoteLayoutSettings';
 
 type Kind = 'bool' | 'num' | 'text' | string[];
 const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
@@ -85,6 +86,7 @@ export function SalesSettingsPage() {
           </div>
         </section>
       ))}
+      <QuoteLayoutSettings saved={data?.quoteLayout as QuoteLayout | undefined} />
     </div>
   );
 }

@@ -80,6 +80,18 @@ public class SalesProformaController {
         return pdf(quotations.pdf(id, images), "quotation-" + id);
     }
 
+    /**
+     * Preview of the quotation layout being edited in Sales settings ({@code {layout: {...}}}, unsaved), shown inline.
+     * Uses the latest quotation, or sample lines.
+     */
+    @PostMapping("/settings/quote-layout/preview")
+    @RequirePermissions(Permissions.SALES__CONFIGURE)
+    public ResponseEntity<byte[]> quoteLayoutPreview(@RequestBody(required = false) Map<String, Object> b) {
+        return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"quotation-layout-preview.pdf\"")
+                .body(quotations.layoutPreview(b == null ? null : b.get("layout")));
+    }
+
     @PostMapping("/quotations/{id}/email")
     @RequirePermissions(Permissions.SALES__QUOTATION_SEND)
     public Map<String, Object> quotationEmail(@PathVariable String id,

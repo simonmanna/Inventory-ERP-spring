@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, resolveAssetUrl } from '@/lib/api';
+import { api } from '@/lib/api';
 import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields';
 import { defaultUnitId, unitPrice as priceForUnit, withVariantPrices } from '@/features/products/units';
 import { cachedVariantOption } from '@/features/products/variants-api';
@@ -31,7 +31,7 @@ import { Field, QuoteStatusPill } from './crm-ui';
 import { PartnerPicker } from './crm-dialogs';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { QuoteLinesTable, type QuoteLine } from './QuoteLinesTable';
-import { EMPTY_SIZE, sizeLabel, sizeOf, sizePayload } from '@/features/products/sizing';
+import { EMPTY_SIZE, sizeOf, sizePayload } from '@/features/products/sizing';
 import { isLayout, lineAmounts, useQuoteImageColumn } from './quote-lines';
 
 const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
@@ -259,7 +259,7 @@ export function QuotationEditorPage() {
   if (q) {
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`/sales/quotations/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
     menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
-    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printQuote(q, lk?.users.find((u) => u.id === q.ownerId)?.name, printImages) });
+    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printPdf(`/sales/quotations/${q.id}/pdf?images=${printImages}`) });
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
     if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
     if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
@@ -518,8 +518,6 @@ function Banner({ tone, title, items, link }: { tone: 'warning' | 'danger' | 'su
   );
 }
 
-const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
-
 async function downloadBlob(path: string, name: string) {
   try {
     const r = await api.get(path, { responseType: 'blob' });
@@ -530,30 +528,26 @@ async function downloadBlob(path: string, name: string) {
   } catch (err) { toast.error(apiErrorMessage(err, tx('Could not download'))); }
 }
 
-/** Printable quotation in a new window; with {@code images}, a product picture column first. */
-function printQuote(q: Quotation, owner?: string, images = false) {
-  const w = window.open('', '_blank', 'width=900,height=1000');
-  if (!w) return;
-  const m = (v: number) => money(v, q.currencyCode);
-  const cols = images ? 6 : 5;
-  const picture = (src?: string | null) => {
-    const url = src ? resolveAssetUrl(src) : undefined;
-    return images ? `<td class="img">${url ? `<img src="${esc(new URL(url, window.location.href).href)}" alt="">` : ''}</td>` : '';
-  };
-  const rows = (q.lines ?? []).map((l) => l.displayType === 'line_section' ? `<tr class="sec"><td colspan="${cols}">${esc(l.description)}</td></tr>`
-    : l.displayType === 'line_note' ? `<tr><td colspan="${cols}" class="muted" style="font-style:italic;white-space:pre-wrap">${esc(l.description)}</td></tr>`
-    : `<tr>${picture(l.productImage)}<td>${esc(l.description)}${sizeLabel(l as Parameters<typeof sizeLabel>[0]) ? `<br><small>${esc(sizeLabel(l as Parameters<typeof sizeLabel>[0]))}</small>` : ''}</td><td class="r">${esc(l.quantity)}</td><td class="r">${m(l.unitPrice)}</td><td class="r">${Number(l.discountPercent) ? esc(l.discountPercent) + '%' : ''}</td><td class="r">${m(l.lineTotal ?? 0)}</td></tr>`).join('');
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(q.number)}</title><style>
-    body{font-family:system-ui,sans-serif;color:#111;margin:40px}h1{margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:24px}
-    th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left;font-size:13px}.r{text-align:right}.tot td{border:0}.muted{color:#666;font-size:13px}
-    .grid{display:flex;justify-content:space-between;margin-top:16px}.sec td{font-weight:600;background:#f3f4f6}
-    td.img{width:64px;padding:4px 8px}td.img img{display:block;max-width:56px;max-height:56px;object-fit:contain}</style></head><body>
-    <h1>${esc(tx('Quotation'))} ${esc(q.number)}</h1><div class="muted">${esc(tx('Date'))}: ${esc(date(q.issueDate))} · ${esc(tx('Valid until'))}: ${esc(q.validUntil ? date(q.validUntil) : '—')}</div>
-    <div class="grid"><div><strong>${esc(q.partnerName)}</strong></div><div class="muted">${esc(tx('Salesperson'))}: ${esc(owner ?? q.ownerName ?? '')}</div></div>
-    <table><thead><tr>${images ? `<th>${esc(tx('Image'))}</th>` : ''}<th>${esc(tx('Description'))}</th><th class="r">${esc(tx('Qty'))}</th><th class="r">${esc(tx('Unit price'))}</th><th class="r">${esc(tx('Disc.'))}</th><th class="r">${esc(tx('Amount'))}</th></tr></thead>
-    <tbody>${rows}</tbody><tbody class="tot"><tr><td colspan="${cols - 1}" class="r">${esc(tx('Untaxed amount'))}</td><td class="r">${m(q.subtotal)}</td></tr>
-    <tr><td colspan="${cols - 1}" class="r">${esc(tx('Taxes'))}</td><td class="r">${m(q.taxAmount)}</td></tr><tr><td colspan="${cols - 1}" class="r"><strong>${esc(tx('Total'))}</strong></td><td class="r"><strong>${m(q.total)}</strong></td></tr></tbody></table>
-    ${q.notes ? `<p class="muted">${esc(q.notes)}</p>` : ''}${q.terms ? `<h4>${esc(tx('Terms & conditions'))}</h4><p class="muted" style="white-space:pre-wrap">${esc(q.terms)}</p>` : ''}
-    <script>window.onload=()=>window.print()</script></body></html>`);
-  w.document.close();
+/**
+ * Print the quotation PDF (laid out by Sales settings → Quotation layout) through a hidden frame, so Print, Download
+ * PDF and the emailed PDF look the same. Opens the PDF in a tab when the browser cannot print a framed PDF.
+ */
+async function printPdf(path: string) {
+  try {
+    const r = await api.get(path, { responseType: 'blob' });
+    const url = URL.createObjectURL(new Blob([r.data as Blob], { type: 'application/pdf' }));
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    frame.onload = () => {
+      try {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      } catch {
+        window.open(url, '_blank');
+      }
+      setTimeout(() => { frame.remove(); URL.revokeObjectURL(url); }, 60_000);
+    };
+    frame.src = url;
+    document.body.appendChild(frame);
+  } catch (err) { toast.error(apiErrorMessage(err, tx('Could not print'))); }
 }

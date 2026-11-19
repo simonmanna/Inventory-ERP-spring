@@ -351,6 +351,36 @@ Some customers want product pictures on their quotations, others do not, so the 
   (> 5 MB) or in a format the PDF library cannot read (e.g. WebP) leaves its cell blank.
 - Tests: `SalesQuoteProformaIT.productImages`, `SalesDocumentPdfTest`.
 
+## Quotation layout (2026-11-19, V579, owner request)
+
+Extension (no Nest counterpart). Users choose how quotations print without editing HTML (the HTML designer in
+Settings → Print templates stays separate and is not used by quotations).
+
+- **Setting.** `SalesSettings.quoteLayout` (JSONB, default `{}`). `GET /sales/settings` returns it with every key
+  filled in (`QuoteLayout.DEFAULT`); `PUT /sales/settings` `{quoteLayout: {...}}` takes a partial object merged onto the
+  saved one. Keys: `title` (≤ 60, blank = `QUOTATION`), `companyName` (≤ 120, blank = company settings name),
+  `showLogo`, `showCompanyDetails`, `accentColor` (`#RGB` / `#RRGGBB`), `paperSize` (`A4|A5|Letter`), `orientation`
+  (`portrait|landscape`), `showUnit`, `showDiscount`, `showTax` (default off), `showSize`, `showSections`,
+  `showSalesperson`, `showNotes`, `showTerms`, `showSignature` (default off), `headerText` (≤ 2000), `footerText`
+  (≤ 500, every page). Errors (400): `quoteLayout.<key> should not exist`, `quoteLayout.<key> must be a boolean value`,
+  `quoteLayout.<key> must be at most <n> characters`, `quoteLayout.accentColor must be a hex colour like #1F2937`,
+  `quoteLayout.paperSize must be one of: A4, A5, Letter`, `quoteLayout.orientation must be one of: landscape, portrait`,
+  `quoteLayout must be an object`.
+- **Company name.** Quotations print the company settings name (`Organization.name`, Settings → Developer company
+  settings) unless the layout's `companyName` overrides it. Before, they printed the POS receipt header's business name.
+  Contact lines: organization settings `address` / `phone` / `email` / `taxNumber`, falling back to the receipt header;
+  logo: the company settings logo.
+- **PDF.** `GET /sales/quotations/{id}/pdf` (and the emailed PDF) renders `SalesQuotationPdf` with the layout: logo and
+  company on the left, title, number, customer, dates and salesperson on the right; an accent-coloured lines table with
+  optional Image / Unit / Disc % / Tax columns; section and note rows; the size under the description; totals; notes,
+  terms, signature block; footer text and page number on every page. Proformas keep `SalesDocumentPdf`.
+- **Preview.** `POST /sales/settings/quote-layout/preview` `{layout}` (`sales:configure`) returns the PDF inline for an
+  unsaved layout, on the latest quotation the user can see, or on sample lines. Nothing is saved.
+- **Web.** Sales settings → *Quotation layout* card (options, live preview, own Save). The quotation's *Print* now prints
+  the same server PDF through a hidden frame (the browser-built print page is gone), so Print, Download PDF and email
+  look the same.
+- Tests: `SalesQuotationPdfTest` (defaults, validation, rendering), `SalesQuoteProformaIT.quoteLayout`.
+
 ## Delivery & fulfilment management (2026-11-13, V484, owner request)
 
 Post-parity enhancement (not in the Nest reference). One sales order → many deliveries; a delivery is the existing
