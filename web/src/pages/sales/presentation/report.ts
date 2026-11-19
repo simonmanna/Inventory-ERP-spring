@@ -8,7 +8,21 @@ import type { PresentationCategory, PresentationData } from './types';
 
 export type SlideKind =
   | 'cover' | 'summary' | 'catTable' | 'catChart' | 'catCompare' | 'lost' | 'visits'
-  | 'market' | 'progress' | 'digital' | 'results' | 'objectives' | 'plan';
+  | 'market' | 'progress' | 'digital' | 'results' | 'objectives' | 'plan' | 'custom';
+
+/** Arrangement of a user-added ('custom') slide. */
+export type CustomLayout = 'bullets' | 'textImage' | 'imageText' | 'image' | 'table' | 'chart' | 'chartText' | 'cards';
+
+export const CUSTOM_LAYOUTS: Array<{ key: CustomLayout; label: string }> = [
+  { key: 'bullets', label: 'Title + bullet points' },
+  { key: 'textImage', label: 'Text left, image right' },
+  { key: 'imageText', label: 'Image left, text right' },
+  { key: 'image', label: 'Full-slide image with caption' },
+  { key: 'table', label: 'Table' },
+  { key: 'chart', label: 'Chart' },
+  { key: 'chartText', label: 'Chart + commentary' },
+  { key: 'cards', label: 'Four cards' },
+];
 
 export interface SlideTable { header: string[]; rows: string[][]; total?: string[] }
 export interface SlideChart { title: string; xTitle: string; yTitle: string; series: string; labels: string[]; values: number[] }
@@ -37,6 +51,49 @@ export interface ReportSlide {
   images?: string[];
   /** Cover / header key-value fields. */
   meta?: Record<string, string>;
+  /** Only for kind 'custom'. */
+  layout?: CustomLayout;
+}
+
+/** A slide the presenter added; it sits after the generated slide `after` ('' = at the end). */
+export interface ExtraSlide extends ReportSlide { kind: 'custom'; after: string }
+
+let seq = 0;
+/** New blank user slide with sensible placeholder content for its layout. */
+export function newCustomSlide(layout: CustomLayout, after: string): ExtraSlide {
+  const id = `custom-${Date.now().toString(36)}-${(seq++).toString(36)}`;
+  const s: ExtraSlide = { id, kind: 'custom', layout, after, label: 'Custom slide', on: true, title: 'New slide', subtitle: '', heading: '', text: '', note: '' };
+  if (layout === 'bullets' || layout === 'textImage' || layout === 'imageText' || layout === 'chartText') s.list = ['First point', 'Second point', 'Third point'];
+  if (layout === 'textImage' || layout === 'imageText' || layout === 'image') s.images = [''];
+  if (layout === 'table') s.table = { header: ['Item', 'Value', 'Comment'], rows: [['', '', ''], ['', '', '']] };
+  if (layout === 'chart' || layout === 'chartText') s.chart = { title: '', xTitle: '', yTitle: '', series: 'Value', labels: ['A', 'B', 'C'], values: [10, 20, 15] };
+  if (layout === 'cards') s.cards = [1, 2, 3, 4].map((i) => ({ title: `Card ${i}`, body: '' }));
+  return s;
+}
+
+/** Fills in the fields a layout needs when the presenter switches layout on an existing custom slide. */
+export function relayout(s: ReportSlide, layout: CustomLayout): SlideEdit {
+  const blank = newCustomSlide(layout, '');
+  return {
+    layout,
+    list: s.list ?? blank.list, images: s.images?.length ? s.images : blank.images,
+    table: s.table ?? blank.table, chart: s.chart ?? blank.chart, cards: s.cards ?? blank.cards,
+  };
+}
+
+/** Places the presenter's extra slides after their anchor slide (unknown anchors go to the end). */
+export function mergeExtras(slides: ReportSlide[], extras: ExtraSlide[]): ReportSlide[] {
+  const ids = new Set(slides.map((s) => s.id));
+  const out: ReportSlide[] = [];
+  const chainAfter = (id: string) => {
+    for (const x of extras.filter((e) => e.after === id)) { out.push(x); chainAfter(x.id); }
+  };
+  chainAfter('');
+  const head = out.splice(0);
+  for (const s of slides) { out.push(s); chainAfter(s.id); }
+  const placed = new Set(out.map((s) => s.id));
+  const orphans = extras.filter((e) => !placed.has(e.id) && !head.some((h) => h.id === e.id) && !ids.has(e.after));
+  return [...out, ...head, ...orphans];
 }
 
 /** Fields a user may override; ids are stable across data reloads so edits survive a date change. */

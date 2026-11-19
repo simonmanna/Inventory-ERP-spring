@@ -1,13 +1,20 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ImagePlus } from 'lucide-react';
-import { C, CSS_FONT, G, type Box } from './look';
+import { evenCols, fitRowH, G, resolveLook, type Box, type Look, type Palette } from './look';
 import { money2, type ReportSlide, type SlideTable } from './report';
 
 /** HTML replica of one report slide on a 1280×720 canvas (same geometry the PPTX exporter uses). */
 
 const hex = (c: string) => `#${c}`;
 const at = (b: Box, extra: CSSProperties = {}): CSSProperties => ({ position: 'absolute', left: b.x, top: b.y, width: b.w, height: b.h, ...extra });
-const shadow = '0 3px 5px rgba(0,0,0,.28)';
+const SHADOW = '0 3px 5px rgba(0,0,0,.28)';
+
+const LookContext = createContext<Look>(resolveLook());
+/** Provides the presenter's theme / layout style / font to every slide rendered below. */
+export const LookProvider = LookContext.Provider;
+const useLook = () => useContext(LookContext);
+/** Shadow for the classic and bold styles; none for minimal. */
+const useShadow = () => (useLook().style === 'minimal' ? 'none' : SHADOW);
 
 function Rect({ b, color, style }: { b: Box; color: string; style?: CSSProperties }) {
   return <div style={at(b, { background: hex(color), ...style })} />;
@@ -17,28 +24,67 @@ function Text({ b, children, style }: { b: Box; children: ReactNode; style?: CSS
   return <div style={at(b, { display: 'flex', alignItems: 'center', whiteSpace: 'pre-line', overflow: 'hidden', ...style })}>{children}</div>;
 }
 
-function Band({ s, h = G.band.h, color = C.navyBand }: { s: ReportSlide; h?: number; color?: string }) {
+/**
+ * Coloured header block of height `h`. Classic: solid band; minimal: nothing but a short accent rule
+ * under the title; bold: band plus an accent strip. Returns the ink colour titles on it should use.
+ */
+function Header({ b, color }: { b: Box; color: string }) {
+  const { c, style } = useLook();
+  const shadow = useShadow();
+  if (style === 'minimal') return <Rect b={{ x: 55, y: b.y + b.h - 10, w: 180, h: 5 }} color={c.blue} />;
   return (
     <>
-      <Rect b={{ ...G.band, h }} color={color} style={{ boxShadow: shadow }} />
-      <Text b={G.bandTitle} style={{ color: '#fff', fontSize: 32, fontWeight: 700 }}>{s.title}</Text>
-      {s.subtitle && <Text b={G.bandSub} style={{ color: hex(C.muted), fontSize: 17 }}>{s.subtitle}</Text>}
+      <Rect b={b} color={color} style={{ boxShadow: shadow }} />
+      {style === 'bold' && <Rect b={{ x: 0, y: b.y + b.h, w: b.w, h: 8 }} color={c.cyan} />}
+    </>
+  );
+}
+const useOnHeader = () => { const { c, style } = useLook(); return style === 'minimal' ? `#${c.navy}` : '#fff'; };
+
+function Band({ s, h = G.band.h }: { s: ReportSlide; h?: number }) {
+  const { c } = useLook();
+  const ink = useOnHeader();
+  return (
+    <>
+      <Header b={{ ...G.band, h }} color={c.navyBand} />
+      <Text b={G.bandTitle} style={{ color: ink, fontSize: 32, fontWeight: 700 }}>{s.title}</Text>
+      {s.subtitle && <Text b={G.bandSub} style={{ color: hex(c.muted), fontSize: 17 }}>{s.subtitle}</Text>}
     </>
   );
 }
 
-const TopBar = () => <Rect b={G.topBar} color={C.navy} style={{ boxShadow: shadow }} />;
-
-function Pill({ b, children, size = 28, color = C.navy, bg = C.pill, align = 'flex-start' }: { b: Box; children: ReactNode; size?: number; color?: string; bg?: string; align?: string }) {
+function TopBar() {
+  const { c, style } = useLook();
+  if (style === 'minimal') return <Rect b={{ ...G.topBar, h: 6 }} color={c.blue} />;
   return (
-    <Text b={b} style={{ background: hex(bg), borderRadius: 10, boxShadow: shadow, padding: '0 14px', fontSize: size, fontWeight: 700, color: hex(color), justifyContent: align }}>
+    <>
+      <Rect b={G.topBar} color={c.navy} style={{ boxShadow: SHADOW }} />
+      {style === 'bold' && <Rect b={{ x: 0, y: G.topBar.h, w: 1280, h: 6 }} color={c.cyan} />}
+    </>
+  );
+}
+
+function Pill({ b, children, size = 28, color, align = 'flex-start' }: { b: Box; children: ReactNode; size?: number; color?: string; align?: string }) {
+  const { c, style } = useLook();
+  const look: CSSProperties = style === 'minimal'
+    ? { background: 'transparent', borderLeft: `6px solid ${hex(c.blue)}`, color: hex(color ?? c.navy) }
+    : style === 'bold'
+      ? { background: hex(c.navy), color: '#fff', boxShadow: SHADOW }
+      : { background: hex(c.pill), borderRadius: 10, boxShadow: SHADOW, color: hex(color ?? c.navy) };
+  return (
+    <Text b={b} style={{ padding: '0 14px', fontSize: size, fontWeight: 700, justifyContent: align, ...look }}>
       {children}
     </Text>
   );
 }
 
-function Card({ b, children, bg = C.panel, line = C.panelLine, radius = 40, style }: { b: Box; children: ReactNode; bg?: string; line?: string; radius?: number; style?: CSSProperties }) {
-  return <div style={at(b, { background: hex(bg), border: `1px solid ${hex(line)}`, borderRadius: radius, boxShadow: '0 4px 6px rgba(0,0,0,.25)', ...style })}>{children}</div>;
+function Card({ b, children, bg, line, radius = 40, style }: { b: Box; children: ReactNode; bg?: string; line?: string; radius?: number; style?: CSSProperties }) {
+  const { c, style: st } = useLook();
+  const shape: CSSProperties = st === 'minimal'
+    ? { borderRadius: 8 }
+    : st === 'bold' ? { borderRadius: 4, borderLeft: `8px solid ${hex(c.cyan)}`, boxShadow: '0 4px 6px rgba(0,0,0,.25)' }
+      : { borderRadius: radius, boxShadow: '0 4px 6px rgba(0,0,0,.25)' };
+  return <div style={at(b, { background: hex(bg ?? c.panel), border: `1px solid ${hex(line ?? c.panelLine)}`, ...shape, ...style })}>{children}</div>;
 }
 
 interface TableLook {
@@ -47,6 +93,7 @@ interface TableLook {
 }
 
 function Table({ t, x, y, cols, look }: { t: SlideTable; x: number; y: number; cols: readonly number[]; look: TableLook }) {
+  const { c: C } = useLook();
   const cell = (i: number): CSSProperties => ({
     width: cols[i], padding: '4px 10px', textAlign: look.align?.[i] ?? 'left', verticalAlign: 'middle', whiteSpace: 'pre-line',
     borderRight: i < cols.length - 1 ? '1px solid #fff' : undefined,
@@ -96,6 +143,7 @@ const niceMax = (v: number) => {
 
 /** Flat column chart on a grey radial-gradient chart area (the reference deck's Excel style). */
 function BarChart({ b, s }: { b: Box; s: ReportSlide }) {
+  const { c: C } = useLook();
   const ch = s.chart!;
   const max = niceMax(Math.max(...ch.values, 0));
   const plot = { x: 50, y: 62, w: b.w - 70, h: b.h - 165 };
@@ -131,6 +179,7 @@ function BarChart({ b, s }: { b: Box; s: ReportSlide }) {
 
 /** Three 3-D columns (blue / red / green), one per period. */
 function Bar3D({ b, s }: { b: Box; s: ReportSlide }) {
+  const { c: C } = useLook();
   const ch = s.chart!;
   const max = niceMax(Math.max(...ch.values, 0));
   const plot = { x: 130, y: 20, w: b.w - 150, h: b.h - 140 };
@@ -171,7 +220,11 @@ function Bar3D({ b, s }: { b: Box; s: ReportSlide }) {
 
 // ---------------------------------------------------------------- slides
 
-function body(s: ReportSlide, n: number | null): ReactNode {
+function body(s: ReportSlide, n: number | null, look: Look): ReactNode {
+  const C: Palette = look.c;
+  const shadow = look.style === 'minimal' ? 'none' : SHADOW;
+  const onHeader = look.style === 'minimal' ? hex(C.navy) : '#fff';
+  const arial = look.font === 'Calibri' ? 'Arial, sans-serif' : look.cssFont;
   switch (s.kind) {
     case 'cover': {
       const g = G.cover;
@@ -179,7 +232,7 @@ function body(s: ReportSlide, n: number | null): ReactNode {
       return (
         <>
           {photo && <img src={photo} alt="" style={at(g.photo, { objectFit: 'cover' })} />}
-          <div style={at(g.logo, { background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' })}>
+          <div style={at(g.logo, { background: hex(C.logoBg), display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' })}>
             {logo ? <img src={logo} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} /> : (
               <>
                 <span style={{ fontFamily: 'Georgia, serif', fontSize: 50, fontWeight: 700, letterSpacing: 8, color: hex(C.gold), textAlign: 'center', lineHeight: 1.05 }}>{s.meta?.logoText}</span>
@@ -187,7 +240,7 @@ function body(s: ReportSlide, n: number | null): ReactNode {
               </>
             )}
           </div>
-          <Text b={g.title} style={{ justifyContent: 'center', textAlign: 'center', fontFamily: 'Arial, sans-serif', fontSize: 30, fontWeight: 700, color: '#000', whiteSpace: 'pre' }}>{s.title}</Text>
+          <Text b={g.title} style={{ justifyContent: 'center', textAlign: 'center', fontFamily: arial, fontSize: 30, fontWeight: 700, color: '#000', whiteSpace: 'pre' }}>{s.title}</Text>
           <Rect b={{ x: 0, y: 645, w: 1280, h: 75 }} color={C.white} />
         </>
       );
@@ -197,10 +250,10 @@ function body(s: ReportSlide, n: number | null): ReactNode {
       const kv: Array<[string, string]> = [['Submitted by:', s.meta?.submittedBy ?? ''], ['Role:', s.meta?.role ?? ''], ['Report date:', s.meta?.reportDate ?? '']];
       return (
         <>
-          <Rect b={g.band} color={C.navySummary} />
-          <Text b={g.title} style={{ color: '#fff', fontSize: 25, fontWeight: 700, fontFamily: 'Arial, sans-serif' }}>{s.title}</Text>
-          <Rect b={g.strip} color={C.cyan} style={{ borderTop: `2px solid ${hex(C.orange)}`, borderBottom: `2px solid ${hex(C.orange)}` }} />
-          <div style={{ position: 'absolute', left: g.kv.x, top: g.kv.y, width: g.kv.w, boxShadow: shadow, fontFamily: 'Arial, sans-serif' }}>
+          <Header b={g.band} color={C.navySummary} />
+          <Text b={g.title} style={{ color: onHeader, fontSize: 25, fontWeight: 700, fontFamily: arial }}>{s.title}</Text>
+          {look.style === 'classic' && <Rect b={g.strip} color={C.cyan} style={{ borderTop: `2px solid ${hex(C.orange)}`, borderBottom: `2px solid ${hex(C.orange)}` }} />}
+          <div style={{ position: 'absolute', left: g.kv.x, top: g.kv.y, width: g.kv.w, boxShadow: shadow, fontFamily: arial }}>
             {kv.map(([k, v]) => (
               <div key={k} style={{ display: 'flex', height: g.kvRow, borderBottom: '1px solid #d6d6d6' }}>
                 <div style={{ width: g.kvCols[0], background: hex(C.grey), color: hex(C.keyLabel), fontSize: 23, fontWeight: 700, padding: '0 10px', display: 'flex', alignItems: 'center', borderRight: '1px solid #d6d6d6' }}>{k}</div>
@@ -208,9 +261,9 @@ function body(s: ReportSlide, n: number | null): ReactNode {
               </div>
             ))}
           </div>
-          <Text b={g.heading} style={{ background: hex(C.navySummary), color: '#fff', fontSize: 24, fontWeight: 700, padding: '0 24px', fontFamily: 'Arial, sans-serif', boxShadow: shadow }}>{s.heading}</Text>
+          <Text b={g.heading} style={{ background: hex(C.navySummary), color: '#fff', fontSize: 24, fontWeight: 700, padding: '0 24px', fontFamily: arial, boxShadow: shadow }}>{s.heading}</Text>
           {s.table && (
-            <div style={{ fontFamily: 'Arial, sans-serif' }}>
+            <div style={{ fontFamily: arial }}>
               <Table t={s.table} x={g.table.x} y={g.table.y} cols={g.cols} look={{ head: C.tan, headSize: 13, headH: 25, size: 13, rowH: 32, zebra: C.grey, align: ['left', 'center', 'center', 'left'] }} />
             </div>
           )}
@@ -234,10 +287,10 @@ function body(s: ReportSlide, n: number | null): ReactNode {
       const withText = !!s.text.trim();
       return (
         <>
-          <Rect b={g.band} color={C.navy} />
-          <Rect b={g.strip} color={C.blue} style={{ boxShadow: shadow }} />
-          <Text b={g.title} style={{ color: '#fff', fontSize: 24, fontWeight: 700 }}>{s.title}</Text>
-          <Text b={g.sub} style={{ color: '#fff', fontSize: 12, whiteSpace: 'nowrap' }}>{s.subtitle}</Text>
+          <Header b={g.band} color={C.navy} />
+          {look.style === 'classic' && <Rect b={g.strip} color={C.blue} style={{ boxShadow: shadow }} />}
+          <Text b={g.title} style={{ color: onHeader, fontSize: 24, fontWeight: 700 }}>{s.title}</Text>
+          <Text b={g.sub} style={{ color: look.style === 'minimal' ? hex(C.muted) : '#fff', fontSize: 12, whiteSpace: 'nowrap' }}>{s.subtitle}</Text>
           <BarChart b={withText ? g.chartWithText : g.chartWide} s={s} />
           {withText && (
             <>
@@ -245,7 +298,7 @@ function body(s: ReportSlide, n: number | null): ReactNode {
               <Card b={g.card}>
                 <div style={{ padding: '30px 34px', textAlign: 'center' }}>
                   <div style={{ fontSize: 17, fontWeight: 700, color: hex(C.link), textDecoration: 'underline', marginBottom: 8 }}>{s.heading}</div>
-                  <div style={{ fontSize: 17, fontWeight: 700, fontStyle: 'italic', whiteSpace: 'pre-line', fontFamily: 'Arial, sans-serif' }}>{s.text}</div>
+                  <div style={{ fontSize: 17, fontWeight: 700, fontStyle: 'italic', whiteSpace: 'pre-line', fontFamily: arial }}>{s.text}</div>
                 </div>
               </Card>
             </>
@@ -275,8 +328,8 @@ function body(s: ReportSlide, n: number | null): ReactNode {
       const g = G.lost;
       return (
         <>
-          <Rect b={{ ...G.band, h: 110 }} color={C.navyBand} style={{ boxShadow: shadow }} />
-          <Text b={{ x: 50, y: 25, w: 1100, h: 62 }} style={{ color: '#fff', fontSize: 32, fontWeight: 700 }}>{s.title}</Text>
+          <Header b={{ ...G.band, h: 110 }} color={C.navyBand} />
+          <Text b={{ x: 50, y: 25, w: 1100, h: 62 }} style={{ color: onHeader, fontSize: 32, fontWeight: 700 }}>{s.title}</Text>
           <Text b={g.sub} style={{ fontSize: 18, color: hex(C.muted) }}>{s.subtitle}</Text>
           {s.table && <Table t={s.table} x={g.table.x} y={g.table.y} cols={g.cols} look={{ head: C.brown, headSize: 19, headH: 75, size: 18, firstSize: 18, rowH: 76 }} />}
         </>
@@ -356,13 +409,78 @@ function body(s: ReportSlide, n: number | null): ReactNode {
         </>
       );
     }
+    case 'custom':
+      return <CustomBody s={s} />;
   }
 }
 
-export function SlideCanvas({ slide, n = null }: { slide: ReportSlide; n?: number | null }) {
+/** Paragraphs from `text`, then bullets from `list`. */
+function Prose({ b, s, size = 20 }: { b: Box; s: ReportSlide; size?: number }) {
+  const { c } = useLook();
+  const paras = s.text.split('\n').filter((p) => p.trim());
   return (
-    <div style={{ position: 'relative', width: 1280, height: 720, background: slide.kind === 'catTable' ? '#F5F7FA' : '#fff', overflow: 'hidden', fontFamily: CSS_FONT, color: '#000' }}>
-      {body(slide, n)}
+    <div style={at(b, { fontSize: size, color: hex(c.ink), lineHeight: 1.45, overflow: 'hidden' })}>
+      {s.heading && <div style={{ fontSize: size + 3, fontWeight: 700, color: hex(c.navyText), marginBottom: 12 }}>{s.heading}</div>}
+      {paras.map((p, i) => <p key={i} style={{ margin: '0 0 12px' }}>{p}</p>)}
+      {(s.list ?? []).filter((v) => v.trim()).map((v, i) => (
+        <div key={i} style={{ display: 'flex', gap: 12, margin: '0 0 10px' }}><span style={{ color: hex(c.blue), fontWeight: 700 }}>■</span><span>{v}</span></div>
+      ))}
+    </div>
+  );
+}
+
+function CustomBody({ s }: { s: ReportSlide }) {
+  const { c } = useLook();
+  const g = G.custom;
+  const layout = s.layout ?? 'bullets';
+  const note = s.note && <Text b={g.note} style={{ fontSize: 14, fontStyle: 'italic', color: hex(c.muted) }}>{s.note}</Text>;
+  if (layout === 'image') {
+    return (
+      <>
+        <ImageSlot b={{ x: 0, y: 0, w: 1280, h: 720 }} src={s.images?.[0]} />
+        <div style={at(g.caption, { background: 'rgba(0,0,0,.55)', padding: '18px 60px', color: '#fff' })}>
+          <div style={{ fontSize: 34, fontWeight: 700 }}>{s.title}</div>
+          {(s.subtitle || s.text) && <div style={{ fontSize: 18, marginTop: 6 }}>{s.subtitle || s.text}</div>}
+        </div>
+      </>
+    );
+  }
+  const t = s.table;
+  return (
+    <>
+      <Band s={s} />
+      {(layout === 'bullets') && <Prose b={g.full} s={s} size={22} />}
+      {layout === 'textImage' && <><Prose b={g.left} s={s} /><ImageSlot b={g.right} src={s.images?.[0]} /></>}
+      {layout === 'imageText' && <><ImageSlot b={g.left} src={s.images?.[0]} /><Prose b={{ ...g.right, x: g.right.x + 10 }} s={s} /></>}
+      {layout === 'table' && t && (
+        <Table t={t} x={g.full.x} y={g.full.y} cols={evenCols(t.header.length, g.full.w)}
+          look={{ head: c.navyTable, headSize: 15, headH: 44, size: 14, rowH: fitRowH(t.rows.length + (t.total ? 1 : 0), 440) }} />
+      )}
+      {layout === 'chart' && s.chart && <BarChart b={g.full} s={s} />}
+      {layout === 'chartText' && s.chart && (
+        <>
+          <BarChart b={g.chart} s={s} />
+          <Card b={g.side} radius={24}><div style={{ position: 'relative', width: '100%', height: '100%' }}><Prose b={{ x: 30, y: 26, w: g.side.w - 60, h: g.side.h - 52 }} s={s} size={18} /></div></Card>
+        </>
+      )}
+      {layout === 'cards' && (s.cards ?? []).slice(0, 4).map((cd, i) => (
+        <Card key={i} b={g.cards[i]} bg={c.white} line={c.cardLine} radius={28}>
+          <div style={{ padding: '20px 30px' }}>
+            <div style={{ fontSize: 21, fontWeight: 700, color: hex(c.navyText), marginBottom: 8 }}>{cd.title}</div>
+            <div style={{ fontSize: 16, color: hex(c.ink), lineHeight: 1.4, whiteSpace: 'pre-line' }}>{cd.body}</div>
+          </div>
+        </Card>
+      ))}
+      {note}
+    </>
+  );
+}
+
+export function SlideCanvas({ slide, n = null }: { slide: ReportSlide; n?: number | null }) {
+  const look = useLook();
+  return (
+    <div style={{ position: 'relative', width: 1280, height: 720, background: slide.kind === 'catTable' ? '#F5F7FA' : '#fff', overflow: 'hidden', fontFamily: look.cssFont, color: '#000' }}>
+      {body(slide, n, look)}
     </div>
   );
 }

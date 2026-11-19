@@ -6,6 +6,7 @@
 export const FONT = 'Calibri';
 export const CSS_FONT = "Calibri, Carlito, 'Segoe UI', Arial, sans-serif";
 
+/** Classic palette (the owner's reference deck). Other themes derive the same keys. */
 export const C = {
   navy: '143056', navyBand: '17375E', navySummary: '0C3E5B', navyTable: '1B304F', navyText: '16365C',
   blue: '2563AA', total: '2563A0', link: '2470AD', cyan: '00B0F0', orange: 'D97B2B',
@@ -13,8 +14,72 @@ export const C = {
   zebra: 'EBEFF4', grey: 'F5F5F5', gridLine: 'D6D6D6', ink: '26303C', muted: '5E6B7B', black: '000000', white: 'FFFFFF',
   brown: '875330', tan: 'B8845E', keyLabel: '234860',
   greenBg: 'E5F0EA', greenLine: 'BED8C9', green: '2B7352',
-  chartBar: 'C0504D', bars3d: ['4F81BD', 'C0504D', '9BBB59'], gold: 'E8C25A',
+  chartBar: 'C0504D', bars3d: ['4F81BD', 'C0504D', '9BBB59'], gold: 'E8C25A', logoBg: '000000',
 } as const;
+
+export type Palette = { [K in keyof typeof C]: K extends 'bars3d' ? readonly string[] : string };
+
+// ---------------------------------------------------------------- themes
+
+const rgb = (h: string) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+const toHex = (v: number[]) => v.map((x) => Math.round(Math.max(0, Math.min(255, x))).toString(16).padStart(2, '0')).join('').toUpperCase();
+/** Mixes `a` towards `b` by `t` (0 → a, 1 → b). Colours are 6-digit hex without '#'. */
+export const mix = (a: string, b: string, t: number) => { const x = rgb(a); const y = rgb(b); return toHex(x.map((v, i) => v + (y[i] - v) * t)); };
+export const cleanHex = (v: string, fallback: string) => { const h = v.replace('#', '').trim(); return /^[0-9a-fA-F]{6}$/.test(h) ? h.toUpperCase() : fallback; };
+
+/** Builds a full palette from a brand primary, a secondary (charts / totals) and an accent (strips, highlights). */
+export function derive(primary: string, secondary: string, accent: string): Palette {
+  const W = 'FFFFFF';
+  return {
+    ...C,
+    navy: primary, navyBand: mix(primary, W, 0.08), navySummary: mix(primary, '000000', 0.1), navyTable: mix(primary, W, 0.05), navyText: primary,
+    blue: secondary, total: secondary, link: mix(secondary, '000000', 0.1), cyan: accent, orange: mix(accent, '000000', 0.25),
+    pill: mix(primary, W, 0.86), panel: mix(primary, W, 0.94), panelLine: mix(primary, W, 0.8), bar: mix(primary, W, 0.78),
+    cardLine: mix(primary, W, 0.8), zebra: mix(primary, W, 0.9), keyLabel: primary,
+    brown: mix(primary, secondary, 0.35), tan: mix(secondary, W, 0.2),
+    chartBar: secondary, bars3d: [mix(secondary, W, 0.35), secondary, accent], gold: mix(accent, W, 0.25), logoBg: primary,
+  };
+}
+
+export type ThemeKey = 'classic' | 'corporate' | 'emerald' | 'sunset' | 'royal' | 'ocean' | 'brand';
+export type StyleKey = 'classic' | 'minimal' | 'bold';
+
+export const THEMES: Array<{ key: ThemeKey; label: string; colors: [string, string, string] }> = [
+  { key: 'classic', label: 'Navy classic', colors: ['143056', '2563AA', '00B0F0'] },
+  { key: 'corporate', label: 'Corporate slate', colors: ['2F3B4C', '3A7CA5', '81B29A'] },
+  { key: 'emerald', label: 'Emerald', colors: ['0F5132', '198754', 'E0A800'] },
+  { key: 'sunset', label: 'Sunset', colors: ['5B1A2E', 'C8553D', 'F4A259'] },
+  { key: 'royal', label: 'Royal', colors: ['2E1A5B', '6A4C93', 'F2B134'] },
+  { key: 'ocean', label: 'Ocean', colors: ['0B3C49', '0F7C8C', '5CC8D7'] },
+  { key: 'brand', label: 'My brand colours', colors: ['143056', '2563AA', 'D97B2B'] },
+];
+
+export const STYLES: Array<{ key: StyleKey; label: string; hint: string }> = [
+  { key: 'classic', label: 'Classic', hint: 'Colour bands, pills and soft shadows' },
+  { key: 'minimal', label: 'Minimal', hint: 'White headers, thin accent lines, no shadows' },
+  { key: 'bold', label: 'Bold', hint: 'Solid colour blocks with accent strips' },
+];
+
+export const FONTS = ['Calibri', 'Arial', 'Georgia', 'Verdana', 'Trebuchet MS', 'Segoe UI'] as const;
+
+/** Presenter's choice of theme, layout style and font (persisted per browser). */
+export interface DeckLook { theme: ThemeKey; style: StyleKey; font: string; brand: [string, string, string] }
+export const DEFAULT_LOOK: DeckLook = { theme: 'classic', style: 'classic', font: FONT, brand: ['143056', '2563AA', 'D97B2B'] };
+
+/** Resolved look the renderers use. */
+export interface Look { c: Palette; style: StyleKey; font: string; cssFont: string }
+
+export function resolveLook(l: DeckLook = DEFAULT_LOOK): Look {
+  const t = THEMES.find((x) => x.key === l.theme) ?? THEMES[0];
+  const [p, s, a] = t.key === 'brand' ? l.brand.map((v, i) => cleanHex(v, t.colors[i])) : t.colors;
+  const font = FONTS.includes(l.font as (typeof FONTS)[number]) ? l.font : FONT;
+  return {
+    c: t.key === 'classic' ? C : derive(p, s, a),
+    style: (['classic', 'minimal', 'bold'] as const).includes(l.style) ? l.style : 'classic',
+    font,
+    cssFont: font === FONT ? CSS_FONT : `'${font}', Arial, sans-serif`,
+  };
+}
 
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -73,4 +138,22 @@ export const G = {
     note: { x: 79, y: 562, w: 1100, h: 30 },
   },
   plan: { table: { x: 86, y: 193, w: 1025 }, cols: [192, 466, 367], note: { x: 77, y: 592, w: 1100, h: 28 } },
+  /** User-added slides (kind 'custom'); content area sits under the 105px band. */
+  custom: {
+    full: { x: 70, y: 150, w: 1140, h: 480 },
+    left: { x: 70, y: 150, w: 560, h: 480 }, right: { x: 670, y: 150, w: 540, h: 480 },
+    chart: { x: 40, y: 150, w: 640, h: 470 }, side: { x: 720, y: 170, w: 500, h: 430 },
+    caption: { x: 0, y: 590, w: 1280, h: 130 }, note: { x: 70, y: 650, w: 1140, h: 30 },
+    cards: [{ x: 63, y: 160, w: 566, h: 220 }, { x: 654, y: 160, w: 566, h: 220 }, { x: 63, y: 405, w: 566, h: 220 }, { x: 654, y: 405, w: 566, h: 220 }],
+  },
 } as const;
+
+/** Column widths that share `w` evenly, first column a little wider. */
+export const evenCols = (n: number, w: number): number[] => {
+  if (n <= 1) return [w];
+  const first = Math.round((w / n) * 1.3);
+  const rest = (w - first) / (n - 1);
+  return [first, ...Array.from({ length: n - 1 }, () => rest)];
+};
+/** Row height that fits `rows` body rows (+ header) in `h` pixels. */
+export const fitRowH = (rows: number, h: number, max = 48) => Math.max(22, Math.min(max, Math.floor(h / Math.max(1, rows + 1))));

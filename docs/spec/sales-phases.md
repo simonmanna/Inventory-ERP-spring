@@ -371,6 +371,17 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
 - Web: Sales → Generate presentation (`/sales/presentation`). Date presets, four themes, cover fields and free-text
   highlights / marketing update / next actions (kept in local storage), slide toggles; the PPTX (16:9, native
   editable charts, speaker notes) is built in the browser with `pptxgenjs` — the server only serves data.
+- Customisation (2026-11-19, web only, `web/src/pages/sales/presentation/`): theme bar with seven palettes (Navy
+  classic = the reference deck, unchanged; Corporate slate, Emerald, Sunset, Royal, Ocean, "My brand colours" with
+  three colour pickers), three layout styles (classic bands / minimal white headers / bold blocks with accent strips)
+  and a font choice — applied to the preview and the PPTX alike (`look.ts` → `LookProvider`, exporter `Ctx`).
+  "Add slide" inserts user slides after any slide with eight layouts (bullets, text+image, image+text, full image,
+  table, chart, chart+commentary, four cards). Tables and charts accept pasted data (Excel tab-separated, CSV, or a
+  ChatGPT Markdown table); images upload or paste with Ctrl+V. ChatGPT is a **copy/paste bridge** (owner decision):
+  per slide and for the whole deck the page copies a prompt with the slide text / tables / chart numbers (never
+  images) and applies the pasted JSON reply — only editable fields, sanitised (`chatgpt.ts`); a deck reply can also
+  add slides. No API key, nothing sent by the server. Look, edits and added slides live in the browser's local
+  storage (per user and device). Tests: `chatgpt.test.ts`.
 - Tests: `SalesInsightsIT.presentation` — period / previous period, revenue vs previous, 6 trend buckets, product in
   its category, monthly granularity for a year, 400 on reversed and over-long ranges.
 - Deviations: the "AI" assist is deterministic rules, not a language model, and does not draft quotations; costs

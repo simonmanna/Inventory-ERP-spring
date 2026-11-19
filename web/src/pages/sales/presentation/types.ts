@@ -62,8 +62,6 @@ export interface DeckNotes {
   actions: string;
 }
 
-export type ThemeKey = 'midnight' | 'corporate' | 'emerald' | 'sunset';
-
 export type SectionKey =
   | 'agenda' | 'summary' | 'funnel' | 'trend' | 'mix' | 'categories' | 'customers' | 'team'
   | 'pipeline' | 'lost' | 'receivables' | 'activity' | 'forecast' | 'risks' | 'actions' | 'closing';
