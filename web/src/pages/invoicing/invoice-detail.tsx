@@ -222,18 +222,18 @@ export function InvoiceDetailPage() {
           <span className="font-semibold">{inv.documentNumber}</span>
           <span className="ml-3"><InvoiceStatusPill status={inv.status} paid={paid} /></span>
         </div>
-        {inv.status !== 'cancelled' && <div className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
+        {inv.status !== 'cancelled' && <div data-tour="invoice.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div data-tour="invoice.actions" className="flex flex-wrap items-center gap-2">
           {isProforma && <span className="text-sm text-muted-foreground">{tx('Proforma, not a tax invoice')}</span>}
           {!isProforma && isDraft && has(PERMISSIONS.invoice.post) && (
-            <Button onClick={() => postInvoice.mutate(inv.id)} disabled={postInvoice.isPending}>
+            <Button data-tour="invoice.post" onClick={() => postInvoice.mutate(inv.id)} disabled={postInvoice.isPending}>
               {postInvoice.isPending ? tx('Posting...') : tx('Confirm')}
             </Button>
           )}
-          {canPay && has(PERMISSIONS.payment.create) && <Button onClick={openPay}>{tx('Register Payment')}</Button>}
+          {canPay && has(PERMISSIONS.payment.create) && <Button data-tour="invoice.pay" onClick={openPay}>{tx('Register Payment')}</Button>}
           {!isProforma && <Button variant="outline" onClick={() => openPdf(`/invoices/${inv.id}/pdf`)}><FileDown className="mr-1.5 h-4 w-4" />{tx('PDF')}</Button>}
           {!isProforma && (canEmail || canCancel) && (
             <DropdownMenu>

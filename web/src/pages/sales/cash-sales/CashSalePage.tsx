@@ -265,12 +265,12 @@ export function CashSalePage() {
             {s.fiscalStatus !== 'none' && <FiscalPill status={s.fiscalStatus} />}
           </span>}
         </div>
-        {showRibbon && <div className="w-full max-w-lg"><StatusRibbon steps={ribbon} current={step} /></div>}
+        {showRibbon && <div data-tour="sales.cash.ribbon" className="w-full max-w-lg"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {editable && <Button disabled={busy} onClick={save}>{tx('Save')}</Button>}
+        <div data-tour="sales.cash.actions" className="flex flex-wrap items-center gap-2">
+          {editable && <Button data-tour="sales.cash.save" disabled={busy} onClick={save}>{tx('Save')}</Button>}
           {has('confirm') && <Button variant="secondary" disabled={busy} onClick={() => act('confirm', tx('Sale confirmed: stock, payments and revenue posted'), null, true)}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Confirm sale & handover')}</Button>}
           {has('submit') && <Button disabled={busy} onClick={() => act('submit', tx('Submitted to head office'))}><Send className="mr-1.5 h-4 w-4" />{tx('Submit to head office')}</Button>}
           {has('resubmit') && <Button disabled={busy} onClick={() => act('resubmit', tx('Resubmitted'))}><Send className="mr-1.5 h-4 w-4" />{tx('Resubmit')}</Button>}
@@ -323,7 +323,7 @@ export function CashSalePage() {
             <div>
               <MetaRow label={tx('Customer')}>
                 {editable ? (
-                  <div className="flex items-center gap-2">
+                  <div data-tour="sales.cash.customer" className="flex items-center gap-2">
                     <div className="min-w-0 flex-1">
                       <PartnerPicker value={partnerId} label={partnerName} pinned={walkIn} onPick={(i, nm) => { setPartnerTouched(true); setPartnerId(i); setPartnerName(nm || null); }} />
                     </div>
@@ -377,7 +377,7 @@ export function CashSalePage() {
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
               {([['lines', tx('Sale lines')], ['payments', `${tx('Billing & payments details')}${paymentsCount ? ` (${paymentsCount})` : ''}`], ['delivery', tx('Delivery and Fulfilment')], ['documents', tx('Supporting documents')], ['history', tx('Timeline')]] as const).map(([v, label]) => (
-                <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
+                <TabsTrigger key={v} value={v} data-tour={`sales.cash.tab.${v}`} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
               ))}
             </TabsList>
 
@@ -446,12 +446,12 @@ export function CashSalePage() {
                   </tbody>
                 </table>
               </div>
-              {editable && <Button variant="outline" size="sm" onClick={() => setLines([...lines, { productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null, size: EMPTY_SIZE }])}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>}
+              {editable && <Button data-tour="sales.cash.add-line" variant="outline" size="sm" onClick={() => setLines([...lines, { productId: '', description: '', quantity: 1, unitPrice: '', discountPercent: 0, taxId: null, size: EMPTY_SIZE }])}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>}
               <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
                 <Field label={tx('Remarks')}>
                   {editable ? <Textarea rows={3} value={customer.remarks} onChange={(e) => setCustomer({ ...customer, remarks: e.target.value })} /> : <p className="py-2 text-sm">{s?.remarks ?? '—'}</p>}
                 </Field>
-                <div className="text-sm">
+                <div data-tour="sales.cash.totals" className="text-sm">
                   <h2 className="mb-2 font-semibold">{tx('Totals')}{editable && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
                   <Row label={tx('Untaxed amount')} value={money(editable || !s ? est : s.subtotal)} />
                   {s && !editable && <Row label={tx('Taxes')} value={money(s.taxTotal)} />}
@@ -520,7 +520,7 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
         <h3 className="text-sm font-semibold">{tx('Payments')}</h3>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span>{tx('Collected')} {money(paid)} / {money(sale.grandTotal)}</span>
-          {draft && <Button size="sm" variant="outline" disabled={busy} onClick={onAdd}><Plus className="mr-1 h-4 w-4" />{tx('Add payment')}</Button>}
+          {draft && <Button data-tour="sales.cash.add-payment" size="sm" variant="outline" disabled={busy} onClick={onAdd}><Plus className="mr-1 h-4 w-4" />{tx('Add payment')}</Button>}
         </div>
       </div>
       <table className="w-full text-sm">

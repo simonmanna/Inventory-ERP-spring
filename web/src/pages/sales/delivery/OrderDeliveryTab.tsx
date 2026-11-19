@@ -113,7 +113,7 @@ export function OrderDeliveryTab({ order, requestedDate, onRequestedDate, dateEd
   const toScheduleTotal = lines.reduce((a, l) => a + n(l.toSchedule), 0);
 
   return (
-    <div className="space-y-5">
+    <div data-tour="sales.order.deliveries" className="space-y-5">
       {/* status strip */}
       <div className="grid gap-4 xl:grid-cols-[auto_minmax(0,1fr)_minmax(0,300px)] xl:items-center">
         <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm">

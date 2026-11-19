@@ -26,7 +26,11 @@ rows are removed when their user or organization is deleted.
 
 - `web/src/features/guide/` holds the engine (`tour-store`, `tour-logic`, `TourOverlay`), the Learn panel
   (`GuidePanel`, opened by the graduation-cap button in the header) and the catalog (`tours/`).
-- Anchors are `data-tour="…"` attributes. Sidebar links carry `nav:<path>`.
+- Anchors are `data-tour="…"` attributes. Sidebar links carry `nav:<path>`; tab triggers carry
+  `sales.order.tab.<tab>` / `sales.cash.tab.<tab>`.
+- A route pattern with a parameter (`/sales/orders/:id`) never matches the `new` form, the same as the app's routes.
+- Steps that depend on a document's state (e.g. "Confirm order" on a draft) show "I can't find this" with Skip when
+  the button is not there.
 
 ### Sales tours
 
@@ -34,11 +38,11 @@ rows are removed when their user or organization is deleted.
 |---|---|---|
 | `sales.overview` | G1 | Dashboard flow: quotations → orders → deliver → collect |
 | `sales.create-quotation` | G1 | New quotation: customer, dates, lines, totals, save, ribbon, next actions |
-| `sales.quote-to-order` | G2 | Convert dialog → sales order |
-| `sales.confirm-and-deliver` | G2 | Confirm, availability, delivery |
-| `sales.invoice-order` | G2 | Billing panel → invoice |
-| `sales.cash-sale` | G2 | Walk-in cash sale |
-| `sales.order-to-cash` | G2 | Chains the four above |
+| `sales.quote-to-order` | G2 | Approve/accept (waits for Convert to appear) → convert dialog → sales order |
+| `sales.confirm-and-deliver` | G2 | Confirm, delivery tab, availability, fulfilment, linked documents |
+| `sales.invoice-order` | G2 | Billing panel → draft invoice → post, register payment |
+| `sales.cash-sale` | G2 | Walk-in cash sale: lines, save, payment, confirm or submit |
+| `sales.order-to-cash` | G2 | Chains quotation, order, delivery and invoice in four chapters |
 
 ## Deviations
 

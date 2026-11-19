@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { tx } from '@/lib/i18n/tx';
 import { useSaveTourProgress } from './api';
 import { findTour } from './tours';
-import { clickAnchor, routeMatches, routeReached, visibleAnchor } from './tour-logic';
+import { chapterAt, clickAnchor, routeMatches, routeReached, visibleAnchor } from './tour-logic';
 import { useTourStore } from './tour-store';
 
 const CARD_W = 340;
@@ -31,7 +31,8 @@ function placeCard(target: Box | null, cardH: number): { top: number; left: numb
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const w = Math.min(CARD_W, vw - 2 * GAP);
-  if (!target) return { top: Math.max(GAP, (vh - cardH) / 2), left: (vw - w) / 2 };
+  // Nothing to point at: bottom-right, out of the way of the page the user is reading.
+  if (!target) return { top: Math.max(GAP, vh - cardH - 2 * GAP), left: vw - w - 2 * GAP < GAP ? GAP : vw - w - 2 * GAP };
   const clampX = (x: number) => Math.min(Math.max(GAP, x), vw - w - GAP);
   const clampY = (y: number) => Math.min(Math.max(GAP, y), vh - cardH - GAP);
   const below = target.top + target.height + GAP;
@@ -154,6 +155,7 @@ export function TourOverlay() {
   // Only static routes can be opened for the user; a record page (`/:id`) has to be reached through the steps.
   const canOpen = !!step.route && !step.route.includes(':');
   const pad = 6;
+  const chapter = chapterAt(tour.steps, stepIndex);
 
   return (
     <>
@@ -189,6 +191,7 @@ export function TourOverlay() {
 
         {onRoute ? (
           <>
+            {chapter && <p className="text-[11px] font-semibold uppercase tracking-wide text-primary">{chapter}</p>}
             <h2 className="text-base font-semibold">{step.title}</h2>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{step.body}</p>
             {missing && (

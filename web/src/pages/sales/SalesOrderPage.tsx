@@ -211,13 +211,13 @@ export function SalesOrderPage() {
           {o && o.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{o.revision}</span>}
           {o && <span className="ml-3"><OrderStatusPill status={o.status} onHold={o.onHold} /></span>}
         </div>
-        {status !== 'cancelled' && <div className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
+        {status !== 'cancelled' && <div data-tour="sales.order.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div data-tour="sales.order.actions" className="flex flex-wrap items-center gap-2">
           {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
-          {o?.status === 'draft' && has(P.orderConfirm) && <Button variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
+          {o?.status === 'draft' && has(P.orderConfirm) && <Button data-tour="sales.order.confirm" variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
           {o?.status === 'pending_approval' && has(P.quotationApprove) && <>
             <Button onClick={() => run('approve', {})}>{tx('Approve')}</Button>
             <Button variant="destructive" onClick={() => { const r = prompt(tx('Reason')); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
@@ -239,7 +239,7 @@ export function SalesOrderPage() {
             </DropdownMenu>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div data-tour="sales.order.links" className="flex flex-wrap gap-2">
           <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/sales/quotations/${rel.quotation.id}`)} />
           <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/sales/deliveries?orderId=${o?.id}`)} />
           <SmartButton icon={<Receipt className="h-4 w-4" />} count={rel?.invoices.length ?? 0} label={tx('Invoices')} disabled={!rel?.invoices.length} onClick={() => rel?.invoices.length && navigate(`/invoices/${rel.invoices[0].id}`)} />
@@ -315,7 +315,7 @@ export function SalesOrderPage() {
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
             {([['lines', tx('Order lines')], ['delivery', tx('Delivery & fulfilment')], ['billing', tx('Billing')], ['other', tx('Other info')]] as const).map(([v, label]) => (
-              <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
+              <TabsTrigger key={v} value={v} data-tour={`sales.order.tab.${v}`} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
             ))}
           </TabsList>
 

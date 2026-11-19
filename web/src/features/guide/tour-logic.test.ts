@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clickAnchor, keywordResolver, resumeStep, routeMatches, routeReached, tourState, toursForPage, visibleAnchor, visibleTours } from './tour-logic';
+import { chapterAt, clickAnchor, keywordResolver, resumeStep, routeMatches, routeReached, tourState, toursForPage, visibleAnchor, visibleTours } from './tour-logic';
 import type { TourDef, TourProgress } from './types';
 
 const tour = (over: Partial<TourDef> = {}): TourDef => ({
@@ -23,6 +23,7 @@ describe('routes', () => {
     expect(routeMatches('/sales/quotations/:id', '/sales/quotations/abc')).toBe(true);
     expect(routeMatches('/sales/quotations', '/sales/quotations/abc')).toBe(false);
     expect(routeMatches(undefined, '/anything')).toBe(true);
+    expect(routeMatches('/sales/quotations/:id', '/sales/quotations/new')).toBe(false);
   });
 
   it('a route step is reached only after leaving its own page', () => {
@@ -42,6 +43,14 @@ describe('routes', () => {
   it('lists the tours that start on a page', () => {
     expect(toursForPage([tour()], '/sales/quotations')).toHaveLength(1);
     expect(toursForPage([tour()], '/sales')).toHaveLength(0);
+  });
+});
+
+describe('chapters', () => {
+  it('a step belongs to the last chapter heading at or before it', () => {
+    const steps = [{ chapter: 'A' }, {}, { chapter: 'B' }, {}].map((x) => ({ title: '', body: '', advanceOn: 'next' as const, ...x }));
+    expect([0, 1, 2, 3].map((i) => chapterAt(steps, i))).toEqual(['A', 'A', 'B', 'B']);
+    expect(chapterAt([{ title: '', body: '', advanceOn: 'next' }], 0)).toBeUndefined();
   });
 });
 

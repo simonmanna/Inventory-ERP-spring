@@ -3,7 +3,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { allTours } from './tours';
 
-/** Every `data-tour` value written in the web source, literal or from the nav (`nav:${item.to}`). */
+const prefixes = new Set<string>();
+
+/** Every literal `data-tour` value written in the web source; template anchors go to `prefixes`. */
 function sourceAnchors(): Set<string> {
   const root = path.resolve(__dirname, '../..');
   const out = new Set<string>();
@@ -15,7 +17,8 @@ function sourceAnchors(): Set<string> {
       const text = readFileSync(full, 'utf8');
       for (const m of text.matchAll(/data-tour="([^"]+)"/g)) out.add(m[1]);
       for (const m of text.matchAll(/tour="([^"]+)"/g)) out.add(m[1]);
-      for (const m of text.matchAll(/data-tour=\{`sales\.flow\.\$\{step\}`\}/g)) { void m; [1, 2, 3, 4].forEach((n) => out.add(`sales.flow.${n}`)); }
+      // Template anchors such as data-tour={`sales.order.tab.${v}`}: kept as a prefix.
+      for (const m of text.matchAll(/data-tour=\{`([^`$]+)\$\{[^}]+\}`\}/g)) prefixes.add(m[1]);
     }
   };
   walk(root);
@@ -49,7 +52,7 @@ describe('tour catalog', () => {
       const named = [s.anchor, typeof s.advanceOn === 'object' ? Object.values(s.advanceOn)[0] : undefined];
       for (const a of named) {
         if (!a || a.startsWith('/')) continue;
-        expect(anchors.has(a) || navPaths.has(a), `anchor ${a}`).toBe(true);
+        expect(anchors.has(a) || navPaths.has(a) || [...prefixes].some((p) => a.startsWith(p)), `anchor ${a}`).toBe(true);
       }
       if (s.route) expect(routes.has(s.route), `route ${s.route}`).toBe(true);
       if (typeof s.advanceOn === 'object' && 'route' in s.advanceOn) expect(routes.has(s.advanceOn.route)).toBe(true);

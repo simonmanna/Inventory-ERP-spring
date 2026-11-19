@@ -57,7 +57,7 @@ export function CashSalesPage({ scope }: { scope: 'branch' | 'head_office' }) {
         description={scope === 'head_office'
           ? tx('Review showroom sales from every branch, return or reject them, approve and issue the official invoice.')
           : tx('Record showroom sales, capture and verify payments, confirm the handover and submit to head office.')}
-        actions={scope === 'branch' && canCreate ? <Button onClick={() => navigate('/sales/cash-sales/new')}><Plus className="mr-1 h-4 w-4" />{tx('New cash sale')}</Button> : undefined}
+        actions={scope === 'branch' && canCreate ? <Button data-tour="sales.cash.new" onClick={() => navigate('/sales/cash-sales/new')}><Plus className="mr-1 h-4 w-4" />{tx('New cash sale')}</Button> : undefined}
       />
       {t && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">

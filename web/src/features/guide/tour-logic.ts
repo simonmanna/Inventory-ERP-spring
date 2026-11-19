@@ -4,7 +4,15 @@ import type { TourDef, TourProgress, TourStep } from './types';
 /** Does `pathname` match the route pattern? A step without a route matches everywhere. */
 export function routeMatches(pattern: string | undefined, pathname: string): boolean {
   if (!pattern) return true;
-  return matchPath({ path: pattern, end: true }, pathname) !== null;
+  const m = matchPath({ path: pattern, end: true }, pathname);
+  // A record page (`/:id`) is not the "new" form: the app declares `/x/new` before `/x/:id`, so a tour must too.
+  return m !== null && !Object.values(m.params).includes('new');
+}
+
+/** The chapter the step belongs to: the last chapter heading at or before it. */
+export function chapterAt(steps: TourStep[], index: number): string | undefined {
+  for (let i = Math.min(index, steps.length - 1); i >= 0; i--) if (steps[i].chapter) return steps[i].chapter;
+  return undefined;
 }
 
 /** Tours this user may take: any one of the tour's permissions (same rule as RequirePermission). */

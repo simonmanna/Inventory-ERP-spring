@@ -16,7 +16,7 @@ export function AvailabilityPanel({ order }: { order: SalesOrder }) {
   const reserve = useSalesMutation(atpApi.reserve);
   if (!data?.lines.length) return null;
   return (
-    <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
+    <div data-tour="sales.order.availability" className="rounded-xl border bg-card p-4 text-sm shadow-sm">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="font-semibold">{tx('Availability')}</h2>
         {open && canReserve && (

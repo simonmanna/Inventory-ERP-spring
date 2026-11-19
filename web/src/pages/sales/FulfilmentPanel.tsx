@@ -48,7 +48,7 @@ export function FulfilmentPanel({ order }: { order: SalesOrder }) {
   const open = ['confirmed', 'in_fulfilment'].includes(order.status);
   const live = data.deliveries.some((d) => d.status !== 'cancelled' && d.status !== 'closed');
   return (
-    <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
+    <div data-tour="sales.order.fulfilment" className="rounded-xl border bg-card p-4 text-sm shadow-sm">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="font-semibold">{tx('Fulfilment')}</h2>
         {open && !live && !order.onHold && has(PERMISSIONS.sales.orderConfirm) && (

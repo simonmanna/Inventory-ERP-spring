@@ -292,7 +292,7 @@ export function QuotationEditorPage() {
           {q && status === 'approved' && canWrite && <Button variant="secondary" onClick={() => run('send', undefined, tx('Marked as sent'))}><Send className="mr-1.5 h-4 w-4" />{tx('Mark as sent')}</Button>}
           {q && ['approved', 'sent'].includes(status) && canWrite && <Button variant="secondary" onClick={() => run('accept', undefined, tx('Accepted by customer'))}>{tx('Customer accepted')}</Button>}
           {q && ['approved', 'sent', 'accepted'].includes(status) && canConvert && (
-            <Button onClick={() => { setShortages(null); setBackorder(false); setDialog('convert'); }}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Convert')}</Button>
+            <Button data-tour="sales.quote.convert" onClick={() => { setShortages(null); setBackorder(false); setDialog('convert'); }}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Convert')}</Button>
           )}
           {menu.length > 0 && (
             <DropdownMenu>
@@ -310,7 +310,7 @@ export function QuotationEditorPage() {
             </DropdownMenu>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div data-tour="sales.quote.links" className="flex flex-wrap gap-2">
           <SmartButton icon={<Handshake className="h-4 w-4" />} count={opportunityId ? 1 : 0} label={tx('Opportunity')} disabled={!opportunityId} onClick={() => opportunityId && navigate(`/crm/opportunities/${opportunityId}`)} />
           <SmartButton icon={<ShoppingCart className="h-4 w-4" />} count={convertedLink ? 1 : 0} label={q?.convertedType === 'proforma' ? tx('Proforma') : tx('Order')} disabled={!convertedLink} onClick={() => convertedLink && navigate(convertedLink)} />
         </div>
@@ -466,10 +466,10 @@ export function QuotationEditorPage() {
       </Dialog>
 
       <Dialog open={dialog === 'convert'} onOpenChange={(v) => !v && setDialog(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent data-tour="sales.quote.convert-dialog" className="max-w-md">
           <DialogHeader><DialogTitle>{tx('Convert quotation')}</DialogTitle></DialogHeader>
           <div className="space-y-2 text-sm">
-            <label className="flex items-start gap-2 rounded-lg border p-3"><input type="radio" className="mt-1" checked={target === 'sales_order'} onChange={() => setTarget('sales_order')} />
+            <label data-tour="sales.quote.convert-target" className="flex items-start gap-2 rounded-lg border p-3"><input type="radio" className="mt-1" checked={target === 'sales_order'} onChange={() => setTarget('sales_order')} />
               <span><strong>{tx('Sales order')}</strong><span className="block text-xs text-muted-foreground">{tx('Creates a B2B sales order with the agreed prices: delivery, invoicing and changes are tracked on it.')}</span></span></label>
             <label className="flex items-start gap-2 rounded-lg border p-3"><input type="radio" className="mt-1" checked={target === 'order'} onChange={() => setTarget('order')} />
               <span><strong>{tx('Counter order')}</strong><span className="block text-xs text-muted-foreground">{tx('Creates an order; stock is checked and the order is invoiced from Orders.')}</span></span></label>
@@ -485,7 +485,7 @@ export function QuotationEditorPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>{tx('Cancel')}</Button>
-            <Button disabled={convert.isPending} onClick={() => convert.mutate({ id: q!.id, target, allowBackorder: backorder }, {
+            <Button data-tour="sales.quote.convert-confirm" disabled={convert.isPending} onClick={() => convert.mutate({ id: q!.id, target, allowBackorder: backorder }, {
               onSuccess: (r) => { toast.success(tx('Created') + ' ' + r.converted.number); setDialog(null); },
               onError: (e) => {
                 const data = (e as { response?: { status?: number; data?: { shortages?: string[] } } }).response;
