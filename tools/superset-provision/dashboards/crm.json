@@ -1,0 +1,24 @@
+{
+  "module": "crm",
+  "title": "CRM pipeline",
+  "slug": "erp-crm",
+  "filters": [
+    { "name": "Created in", "type": "time" },
+    { "name": "Owner", "dataset": "crm_deals", "column": "ownerName" },
+    { "name": "Team", "dataset": "crm_deals", "column": "teamName" },
+    { "name": "Source", "dataset": "crm_deals", "column": "sourceName" }
+  ],
+  "charts": [
+    { "name": "Open pipeline", "viz": "kpi", "dataset": "crm_deals", "metric": "SUM(\"amount\")", "where": "status = 'open' AND kind = 'opportunity'", "subheader": "open opportunities", "width": 3, "height": 30 },
+    { "name": "Weighted pipeline", "viz": "kpi", "dataset": "crm_deals", "metric": "SUM(\"weightedAmount\")", "where": "status = 'open' AND kind = 'opportunity'", "subheader": "amount x win probability", "width": 3, "height": 30 },
+    { "name": "Won value", "viz": "kpi_trend", "dataset": "crm_deals", "time": "wonAt", "metric": "SUM(\"amount\")", "where": "status = 'won'", "width": 3 },
+    {"name": "Win rate", "viz": "kpi", "dataset": "crm_deals", "metric": "1.0 * COUNT(CASE WHEN status = 'won' THEN 1 END) / NULLIF(COUNT(CASE WHEN status IN ('won', 'lost') THEN 1 END), 0)", "format": ".1%", "width": 3, "subheader": "won / (won + lost)"},
+    { "name": "Pipeline by stage", "viz": "funnel", "dataset": "crm_deals", "x": { "sql": "\"stageSequence\" || '. ' || \"stageName\"", "label": "Stage" }, "metric": "COUNT(*)", "where": "status = 'open'", "keepOrder": true, "width": 6 },
+    { "name": "Pipeline value by stage", "viz": "bar", "dataset": "crm_deals", "x": { "sql": "\"stageSequence\" || '. ' || \"stageName\"", "label": "Stage" }, "metrics": [{ "sql": "SUM(\"amount\")", "label": "Amount" }, { "sql": "SUM(\"weightedAmount\")", "label": "Weighted" }], "where": "status = 'open'", "order": "x", "vertical": true, "width": 6 },
+    { "name": "Deals created by month", "viz": "bar_time", "dataset": "crm_deals", "metric": "COUNT(*)", "series": "status", "width": 8 },
+    { "name": "Leads by source", "viz": "donut", "dataset": "crm_deals", "x": "sourceName", "metric": "COUNT(*)", "width": 4 },
+    { "name": "Won value by owner", "viz": "bar", "dataset": "crm_deals", "x": "ownerName", "metric": "SUM(\"amount\")", "where": "status = 'won'", "width": 6 },
+    { "name": "Lost reasons", "viz": "donut", "dataset": "crm_deals", "x": "lostReason", "metric": "COUNT(*)", "where": "status = 'lost'", "width": 6 },
+    { "name": "Open opportunities", "viz": "list", "dataset": "crm_deals", "columns": ["dealName", "customerName", "stageName", "ownerName", "amount", "probability", "expectedClose"], "orderBy": [["expectedClose", true]], "where": "status = 'open' AND kind = 'opportunity'", "limit": 100, "width": 12, "height": 55 }
+  ]
+}

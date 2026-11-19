@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useDashboardView } from '@/components/bi/use-dashboard-view';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SupersetDashboard } from '@/components/bi/SupersetDashboard';
 import { useBiDashboards } from '@/components/bi/use-bi-dashboards';
@@ -28,13 +29,30 @@ export function DomainTabs({ current, search }: { current?: string; search: stri
       {analyticsDomains().filter((d) => has(d.permission)).map((d) => (
         <Link key={d.path} className={tab(current === d.path)} to={`/analytics/${d.path}${qs}`}>{d.label}</Link>
       ))}
-      {(bi ?? []).filter((d) => !builtIn.has(d.module)).map((d) => (
+      {/* "overview" is the Overview tab's own interactive view, not a tab of its own. */}
+      {(bi ?? []).filter((d) => !builtIn.has(d.module) && d.module !== 'overview').map((d) => (
         <Link key={d.module} className={tab(current === d.module)} to={`/analytics/bi/${d.module}`}>{tx(d.label)}</Link>
       ))}
     </nav>
   );
 }
 
+
+/** Interactive (embedded Superset) or Summary (built-in tiles) view of a dashboard. */
+export function DashboardViewToggle({ explore, onChange }: {
+  explore: boolean; onChange: (view: 'summary' | 'explore') => void;
+}) {
+  const toggle = (active: boolean) => `rounded-md px-3 py-1.5 text-sm ${active
+    ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-muted'}`;
+  return (
+    <div className="flex gap-1" role="tablist" aria-label={tx('Dashboard view')}>
+      <button type="button" role="tab" aria-selected={explore} className={toggle(explore)}
+        onClick={() => onChange('explore')}>{tx('Interactive')}</button>
+      <button type="button" role="tab" aria-selected={!explore} className={toggle(!explore)}
+        onClick={() => onChange('summary')}>{tx('Summary')}</button>
+    </div>
+  );
+}
 
 /** One dashboard: filters, tiles, charts, tables, drill-down (ADR-S020). */
 export function AnalyticsDomainPage({ path }: { path: string }) {
@@ -45,23 +63,14 @@ export function AnalyticsDomainPage({ path }: { path: string }) {
   // An embedded Superset dashboard for this module, when one is configured and allowed (ADR-S078).
   const { data: bi } = useBiDashboards();
   const hasExplore = !!bi?.some((d) => d.module === path);
-  const [view, setView] = useState<'summary' | 'explore'>('summary');
+  const [view, setView] = useDashboardView();
   const explore = hasExplore && view === 'explore';
-  const toggle = (active: boolean) => `rounded-md px-3 py-1.5 text-sm ${active
-    ? 'bg-secondary text-secondary-foreground' : 'text-muted-foreground hover:bg-muted'}`;
   return (
     <div className="space-y-4">
       <ListPageHeader icon={domain?.icon} title={domain?.label ?? path}
         description={tx('Figures for the selected period and filters. Click a figure to see its documents.')} />
       <DomainTabs current={path} search={search} />
-      {hasExplore && (
-        <div className="flex gap-1" role="tablist" aria-label={tx('Dashboard view')}>
-          <button type="button" role="tab" aria-selected={!explore} className={toggle(!explore)}
-            onClick={() => setView('summary')}>{tx('Summary')}</button>
-          <button type="button" role="tab" aria-selected={explore} className={toggle(explore)}
-            onClick={() => setView('explore')}>{tx('Explore')}</button>
-        </div>
-      )}
+      {hasExplore && <DashboardViewToggle explore={explore} onChange={setView} />}
       {explore ? <SupersetDashboard module={path} /> : (<>
       <AnalyticsFilterBar query={query} update={update} supported={data?.supportedFilters ?? ['date']}
         suppliers={path === 'procurement'} />

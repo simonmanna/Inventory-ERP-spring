@@ -2,19 +2,32 @@
   "module": "pos",
   "title": "Point of sale",
   "slug": "erp-pos",
+  "filters": [
+    { "name": "Trading day", "type": "time" },
+    { "name": "Branch", "dataset": "pos_sales", "column": "branchName" },
+    { "name": "Order type", "dataset": "pos_sales", "column": "orderType" },
+    { "name": "Payment mode", "dataset": "pos_sales", "column": "paymentMode" }
+  ],
   "charts": [
-    { "name": "Net sales", "viz": "big_number_total", "dataset": "pos_sales", "metric": "SUM(\"netSales\")", "width": 3 },
-    { "name": "Tickets", "viz": "big_number_total", "dataset": "pos_sales", "metric": "COUNT(*)", "width": 3 },
-    { "name": "Average ticket", "viz": "big_number_total", "dataset": "pos_sales", "metric": "SUM(\"netSales\") / NULLIF(COUNT(*), 0)", "width": 3 },
-    { "name": "Voided value", "viz": "big_number_total", "dataset": "pos_voided_items", "metric": "SUM(\"voidedValue\")", "width": 3 },
-    { "name": "Net sales by month", "viz": "bar_by_month", "dataset": "pos_sales", "time": "tradingDate", "metric": "SUM(\"netSales\")", "width": 8 },
-    { "name": "Sales by payment mode", "viz": "pie", "dataset": "pos_sales", "groupby": "paymentMode", "metric": "SUM(\"netSales\")", "width": 4 },
-    { "name": "Top products", "viz": "table", "dataset": "pos_sale_lines", "groupby": "productName", "metric": "SUM(\"subtotal\")", "width": 6 },
-    { "name": "Sales by category", "viz": "pie", "dataset": "pos_sale_lines", "groupby": "categoryName", "metric": "SUM(\"subtotal\")", "width": 6 },
-    { "name": "Sales by order type", "viz": "pie", "dataset": "pos_sales", "groupby": "orderType", "metric": "SUM(\"netSales\")", "width": 4 },
-    { "name": "Sales by waiter", "viz": "table", "dataset": "pos_sales", "groupby": "waiterName", "metric": "SUM(\"netSales\")", "width": 4 },
-    { "name": "Sales by branch", "viz": "table", "dataset": "pos_sales", "groupby": "branchName", "metric": "SUM(\"netSales\")", "width": 4 },
-    { "name": "Cash over / short by cashier", "viz": "table", "dataset": "pos_cash_sessions", "groupby": "cashierName", "metric": "SUM(\"closingDifference\")", "where": "\"closedAt\" IS NOT NULL", "width": 6 },
-    { "name": "Voids by reason", "viz": "table", "dataset": "pos_voided_items", "groupby": "cancelReason", "metric": "SUM(\"voidedValue\")", "width": 6 }
+    { "tab": "Overview", "name": "Net sales", "viz": "kpi_trend", "dataset": "pos_sales", "metric": "SUM(\"netSales\")", "grain": "P1D", "compareSuffix": "vs previous day", "width": 3 },
+    { "tab": "Overview", "name": "Tickets", "viz": "kpi_trend", "dataset": "pos_sales", "metric": "COUNT(*)", "grain": "P1D", "compareSuffix": "vs previous day", "width": 3 },
+    { "tab": "Overview", "name": "Average ticket", "viz": "kpi_trend", "dataset": "pos_sales", "metric": "SUM(\"netSales\") / NULLIF(COUNT(*), 0)", "grain": "P1D", "compareSuffix": "vs previous day", "width": 3 },
+    { "tab": "Overview", "name": "Guests served", "viz": "kpi_trend", "dataset": "pos_sales", "metric": "SUM(COALESCE(\"guestCount\", 0))", "grain": "P1D", "compareSuffix": "vs previous day", "width": 3 },
+    { "tab": "Overview", "name": "Daily net sales by branch", "viz": "bar_time", "dataset": "pos_sales", "metric": "SUM(\"netSales\")", "series": "branchName", "grain": "P1D", "width": 8 },
+    { "tab": "Overview", "name": "Sales by payment mode", "viz": "donut", "dataset": "pos_sales", "x": "paymentMode", "metric": "SUM(\"netSales\")", "width": 4 },
+    { "tab": "Overview", "name": "Busy hours", "viz": "heatmap", "dataset": "pos_sales", "x": { "sql": "to_char(\"issueDate\", 'HH24')", "label": "Hour" }, "y": { "sql": "to_char(\"issueDate\", 'ID Dy')", "label": "Weekday" }, "metric": "SUM(\"netSales\")", "colors": "fire", "description": "Net sales by weekday and hour of the ticket", "width": 8 },
+    { "tab": "Overview", "name": "Sales by order type", "viz": "donut", "dataset": "pos_sales", "x": "orderType", "metric": "SUM(\"netSales\")", "width": 4 },
+
+    { "tab": "Products", "name": "Top products", "viz": "bar", "dataset": "pos_sale_lines", "x": "productName", "metric": "SUM(\"subtotal\")", "limit": 15, "width": 6, "height": 60 },
+    { "tab": "Products", "name": "Menu mix", "viz": "sunburst", "dataset": "pos_sale_lines", "x": ["categoryName", "productName"], "metric": "SUM(\"subtotal\")", "width": 6, "height": 60 },
+    { "tab": "Products", "name": "Category sales by day", "viz": "area", "dataset": "pos_sale_lines", "metric": "SUM(\"subtotal\")", "series": "categoryName", "grain": "P1D", "width": 12 },
+    { "tab": "Products", "name": "Product performance", "viz": "table", "dataset": "pos_sale_lines", "x": ["productName", "categoryName"], "metrics": [{ "sql": "SUM(\"subtotal\")", "label": "Sales" }, { "sql": "SUM(\"quantity\" - COALESCE(\"refundedQty\", 0))", "label": "Quantity" }, { "sql": "SUM(\"discountAmount\")", "label": "Discounts" }], "limit": 100, "search": true, "width": 12, "height": 60 },
+
+    { "tab": "Staff and cash", "name": "Sales by waiter", "viz": "bar", "dataset": "pos_sales", "x": "waiterName", "metric": "SUM(\"netSales\")", "width": 6 },
+    { "tab": "Staff and cash", "name": "Cash over / short by cashier", "viz": "bar", "dataset": "pos_cash_sessions", "x": "cashierName", "metric": "SUM(\"closingDifference\")", "where": "\"closedAt\" IS NOT NULL", "width": 6 },
+    { "tab": "Staff and cash", "name": "Voided value", "viz": "kpi_trend", "dataset": "pos_voided_items", "metric": "SUM(\"voidedValue\")", "grain": "P1D", "compareSuffix": "vs previous day", "width": 4 },
+    { "tab": "Staff and cash", "name": "Voids by reason", "viz": "donut", "dataset": "pos_voided_items", "x": "cancelReason", "metric": "SUM(\"voidedValue\")", "width": 4, "height": 30 },
+    { "tab": "Staff and cash", "name": "Voids by staff", "viz": "bar", "dataset": "pos_voided_items", "x": "voidedByName", "metric": "SUM(\"voidedValue\")", "width": 4, "height": 30 },
+    { "tab": "Staff and cash", "name": "Cash sessions", "viz": "list", "dataset": "pos_cash_sessions", "columns": ["businessDate", "branchName", "registerName", "cashierName", "openingFloat", "closingExpected", "closingCounted", "closingDifference", "varianceStatus"], "orderBy": [["businessDate", false]], "limit": 100, "width": 12, "height": 55 }
   ]
 }

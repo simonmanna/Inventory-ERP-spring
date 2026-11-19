@@ -2,14 +2,36 @@
   "module": "sales",
   "title": "Sales",
   "slug": "erp-sales",
+  "filters": [
+    { "name": "Period", "type": "time" },
+    { "name": "Branch", "dataset": "sales_lines", "column": "branchName" },
+    { "name": "Customer", "dataset": "sales_lines", "column": "customerName" },
+    { "name": "Product category", "dataset": "sales_lines", "column": "categoryName" },
+    { "name": "Salesperson", "dataset": "sales_lines", "column": "salespersonName" }
+  ],
   "charts": [
-    { "name": "Net sales", "viz": "big_number_total", "dataset": "sales_lines", "metric": "SUM(\"signedSubtotal\")", "width": 3 },
-    { "name": "Invoices", "viz": "big_number_total", "dataset": "sales_invoices", "metric": "COUNT(DISTINCT \"documentId\")", "width": 3 },
-    { "name": "Receivables outstanding", "viz": "big_number_total", "dataset": "sales_invoices", "metric": "SUM(\"amountResidual\")", "width": 3 },
-    { "name": "Receivables overdue", "viz": "big_number_total", "dataset": "sales_invoices", "metric": "SUM(CASE WHEN \"daysOverdue\" > 0 THEN \"amountResidual\" ELSE 0 END)", "width": 3 },
-    { "name": "Net sales by month", "viz": "bar_by_month", "dataset": "sales_lines", "time": "issueDate", "metric": "SUM(\"signedSubtotal\")", "width": 8 },
-    { "name": "Receivables aging", "viz": "pie", "dataset": "sales_invoices", "groupby": "agingBucket", "metric": "SUM(\"amountResidual\")", "width": 4 },
-    { "name": "Top customers", "viz": "table", "dataset": "sales_lines", "groupby": "customerName", "metric": "SUM(\"signedSubtotal\")", "width": 6 },
-    { "name": "Top products", "viz": "table", "dataset": "sales_lines", "groupby": "productName", "metric": "SUM(\"signedSubtotal\")", "width": 6 }
+    { "tab": "Overview", "name": "Net sales", "viz": "kpi_trend", "dataset": "sales_lines", "metric": "SUM(\"signedSubtotal\")", "width": 3 },
+    { "tab": "Overview", "name": "Invoices", "viz": "kpi_trend", "dataset": "sales_invoices", "metric": "COUNT(DISTINCT \"documentId\")", "width": 3 },
+    { "tab": "Overview", "name": "Average invoice", "viz": "kpi_trend", "dataset": "sales_lines", "metric": "SUM(\"signedSubtotal\") / NULLIF(COUNT(DISTINCT \"documentId\"), 0)", "width": 3 },
+    { "tab": "Overview", "name": "Active customers", "viz": "kpi_trend", "dataset": "sales_lines", "metric": "COUNT(DISTINCT \"partnerId\")", "width": 3 },
+    { "tab": "Overview", "name": "Net sales by month and branch", "viz": "bar_time", "dataset": "sales_lines", "metric": "SUM(\"signedSubtotal\")", "series": "branchName", "width": 8 },
+    { "tab": "Overview", "name": "Sales mix by category", "viz": "donut", "dataset": "sales_lines", "x": "categoryName", "metric": "SUM(\"signedSubtotal\")", "width": 4 },
+    { "tab": "Overview", "name": "Net sales trend by salesperson", "viz": "line", "dataset": "sales_lines", "metric": "SUM(\"signedSubtotal\")", "series": "salespersonName", "seriesLimit": 6, "width": 6 },
+    { "tab": "Overview", "name": "Category by month", "viz": "heatmap", "dataset": "sales_lines", "x": { "sql": "to_char(\"issueDate\", 'YYYY-MM')", "label": "Month" }, "y": "categoryName", "metric": "SUM(\"signedSubtotal\")", "width": 6 },
+
+    { "tab": "Customers", "name": "Top customers", "viz": "bar", "dataset": "sales_lines", "x": "customerName", "metric": "SUM(\"signedSubtotal\")", "limit": 12, "width": 6 },
+    { "tab": "Customers", "name": "Customer share", "viz": "treemap", "dataset": "sales_lines", "x": ["customerName"], "metric": "SUM(\"signedSubtotal\")", "limit": 30, "width": 6 },
+    { "tab": "Customers", "name": "Customers by month", "viz": "pivot", "dataset": "sales_lines", "rows": "customerName", "cols": { "sql": "to_char(\"issueDate\", 'YYYY-MM')", "label": "Month" }, "metric": "SUM(\"signedSubtotal\")", "width": 12, "height": 60 },
+
+    { "tab": "Products", "name": "Top products by revenue", "viz": "bar", "dataset": "sales_lines", "x": "productName", "metric": "SUM(\"signedSubtotal\")", "limit": 12, "width": 6 },
+    { "tab": "Products", "name": "Category and product", "viz": "sunburst", "dataset": "sales_lines", "x": ["categoryName", "productName"], "metric": "SUM(\"signedSubtotal\")", "width": 6 },
+    { "tab": "Products", "name": "Product performance", "viz": "table", "dataset": "sales_lines", "x": ["productCode", "productName"], "metrics": [{ "sql": "SUM(\"signedSubtotal\")", "label": "Net sales" }, { "sql": "SUM(\"quantity\" * \"uomFactor\")", "label": "Quantity" }, { "sql": "SUM(\"signedSubtotal\") / NULLIF(SUM(\"quantity\" * \"uomFactor\"), 0)", "label": "Average price" }, { "sql": "COUNT(DISTINCT \"documentId\")", "label": "Invoices" }], "limit": 50, "search": true, "width": 12, "height": 60 },
+
+    { "tab": "Receivables", "name": "Receivables outstanding", "viz": "kpi", "dataset": "sales_invoices", "metric": "SUM(\"amountResidual\")", "subheader": "still to collect", "width": 4 },
+    { "tab": "Receivables", "name": "Receivables overdue", "viz": "kpi", "dataset": "sales_invoices", "metric": "SUM(CASE WHEN \"daysOverdue\" > 0 THEN \"amountResidual\" ELSE 0 END)", "subheader": "past due date", "width": 4 },
+    {"tab": "Receivables", "name": "Collected", "viz": "kpi", "dataset": "sales_invoices", "metric": "SUM(\"amountPaid\") / NULLIF(SUM(\"totalAmount\"), 0)", "format": ".1%", "width": 4, "subheader": "of invoiced value paid"},
+    { "tab": "Receivables", "name": "Receivables aging", "viz": "bar", "dataset": "sales_invoices", "x": "agingBucket", "metric": "SUM(\"amountResidual\")", "where": "\"amountResidual\" > 0", "order": "x", "vertical": true, "width": 5 },
+    { "tab": "Receivables", "name": "Outstanding by customer", "viz": "bar", "dataset": "sales_invoices", "x": "customerName", "series": "agingBucket", "metric": "SUM(\"amountResidual\")", "where": "\"amountResidual\" > 0", "width": 7 },
+    { "tab": "Receivables", "name": "Overdue invoices", "viz": "list", "dataset": "sales_invoices", "columns": ["documentNumber", "customerName", "issueDate", "dueDate", "daysOverdue", "totalAmount", "amountResidual"], "orderBy": [["daysOverdue", false]], "where": "\"amountResidual\" > 0 AND \"daysOverdue\" > 0", "limit": 100, "width": 12, "height": 60 }
   ]
 }

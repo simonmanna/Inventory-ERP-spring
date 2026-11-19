@@ -16,7 +16,7 @@ or vendor.
 | Labels | `documents.application.LabelRenderer` (not an SPI) | PDF, ZPL; QR, Code 128 | `format` and `symbology` on the request | No direct printing: the browser or driver prints the file |
 | Messaging | `communication.application.providers.MessagingProvider` | `internal`, `telegram`, `whatsapp` | Channel configured per organization | See [`spec/communication.md`](spec/communication.md) |
 | BI | `reporting` views and `/bi/datasets` | 8 datasets | Permission `bi:export` | Read-only; see below |
-| Embedded dashboards | Apache Superset 6.1.0, `bi` views, `/bi/dashboards` | 7 module dashboards | `SUPERSET_*`, compose profile `bi` | Isolation through guest-token row-level security; see below |
+| Embedded dashboards | Apache Superset 6.1.0, `bi` views, `/bi/dashboards` | 10 dashboards, on by default in compose | `SUPERSET_*` (all optional in compose) | Isolation through guest-token row-level security; see below |
 
 A failed call to an external system never posts anything to the ledger, and no key or token is ever logged.
 
@@ -188,10 +188,12 @@ a row to `DATASETS` in `BiExportService`. Columns are read from the database, so
 
 ## Embedded dashboards (Apache Superset)
 
-ADR-S078. Sales, Procurement, Inventory and Finance have a built-in analytics screen (`/analytics/<module>`); it gets an
-**Explore** view showing the module's Superset dashboard inside the ERP. POS, HR and Manufacturing have no built-in
-screen; their dashboard opens at `/analytics/bi/<module>`, linked from the analytics tabs. A dashboard appears only when
-it is configured and the user holds `analytics:view` plus the module's permission:
+ADR-S078. Sales, Procurement, Inventory and Finance have a built-in analytics screen (`/analytics/<module>`), and the
+analytics overview (`/analytics`) has one too. When the module has a Superset dashboard, the screen opens on its
+**Interactive** view (the embedded dashboard), with **Summary** (the built-in tiles) one click away. The browser
+remembers the last choice. POS, HR, Manufacturing, Expenses and CRM have no built-in screen; their dashboard opens at
+`/analytics/bi/<module>`, linked from the analytics tabs. A dashboard appears only when it is configured and the user
+holds `analytics:view` plus the module's permission:
 
 | Module | Permission | Views |
 |---|---|---|
@@ -202,6 +204,15 @@ it is configured and the user holds `analytics:view` plus the module's permissio
 | `pos` | `pos:reports` | `pos_sales`, `pos_sale_lines`, `pos_cash_sessions`, `pos_voided_items` |
 | `hr` | `hr:report` | `hr_employees`, `hr_attendance`, `hr_leave`, `hr_payroll_costs` |
 | `manufacturing` | `production_order:read` | `production_orders`, `production_materials`, `production_variances` |
+| `overview` (Business overview, on `/analytics`) | `analytics:finance` (it shows profit) | `journal_lines`, `payments`, `sales_lines`, `sales_invoices`, `vendor_bills`, `stock_on_hand` |
+| `expenses` | `expense:read` | `expenses` |
+| `crm` (CRM pipeline) | `crm:report:read` | `crm_deals` |
+
+Every dashboard (B2, 167 charts) has tabs where it needs them, figures with a monthly or daily trend and the change on
+the previous period, native filters (period plus branch, customer, category, supplier and the like, each applied to
+the charts whose view has that column), and cross-filtering: a click on a bar or slice filters the other charts.
+Charts include ranked bars, donuts, treemaps, sunbursts, heatmaps (for example POS busy hours by weekday and hour),
+pivot tables by month, a pipeline funnel, a gross-margin gauge and lists such as overdue invoices.
 
  The browser never logs into Superset. The API mints a guest token valid for 5 minutes
 for one dashboard, and the token carries the clause `"organizationId" = '<the user's organization>'`. Superset adds
@@ -219,16 +230,28 @@ these views do not filter on `app.org_id`. Only `superset_reader` may read them;
 an `organizationId` column, because the guest-token clause filters on it. V571 adds the POS, HR and Manufacturing
 views. POS sales follow the POS reports (POS invoices posted, paid or refunded). The HR views carry no personal data a
 dashboard does not need: no pay per employee, bank, tax, pension or contact details; payroll is summed per run and
-department (`BiDashboardIT` fails if such a column appears in any `bi` view).
+department (`BiDashboardIT` fails if such a column appears in any `bi` view). V581 appends `categoryName` to sales,
+purchase and stock views, gives `journal_lines` the account category's report section, `classification` and
+`plAmount` (credit minus debit on revenue and expense lines, so its sum is net profit), and adds `expenses` and
+`crm_deals`. Existing columns keep their names, types and order, so provisioned datasets keep working.
 
-**Set up (once per installation).**
+**Set up with compose: nothing to do.** `docker compose up -d --build` starts Superset with the rest:
 
-1. Fill the `SUPERSET_*` block of `.env` (see `.env.example`). Use long random values for `SUPERSET_SECRET_KEY` and
-   `SUPERSET_GUEST_TOKEN_SECRET`. Set `SUPERSET_FRAME_ANCESTORS` to the ERP web origin.
-2. `docker compose --profile bi up -d --build`. `superset-db-init` creates the `superset` metadata database (owned by
-   `superset_meta`) and gives `superset_reader` its password. `superset` starts on port 8088 and creates the admin,
-   the `EmbedViewer` guest role and the `EmbedIssuer` account the API uses.
-3. Provision the dashboards and prove isolation with two real organization ids:
+1. `bi-secrets` writes `secrets.env` to the private `bi` volume: every `SUPERSET_*` secret, taken from `.env` when set,
+   kept when already generated, generated otherwise.
+2. `superset-db-init` creates the `superset` metadata database (owned by `superset_meta`) and gives `superset_reader`
+   its password. `superset` starts on port 8088 and creates the admin, the `EmbedViewer` guest role and the
+   `EmbedIssuer` account the API uses.
+3. `superset-provision` (on every `up`) creates or updates the dashboards and writes their ids to
+   `/bi/dashboards.json`. The API reads that file and `secrets.env` (`SUPERSET_DASHBOARDS_FILE`,
+   `SUPERSET_SECRETS_FILE`), re-reading them when they change, so dashboards appear without an API restart.
+
+For anything but localhost, set `SUPERSET_PUBLIC_URL` (the address browsers load Superset from) and
+`SUPERSET_FRAME_ANCESTORS` (the ERP web origin). Superset needs about 1.5 GB of RAM. To run without it, set
+`SUPERSET_URL=` (empty) in `.env` and start `docker compose up -d db api web`. The admin password is
+`SUPERSET_ADMIN_PASSWORD` in `.env`, or in the generated file: `docker compose exec superset cat /bi/secrets.env`.
+
+**Set up a native installation, or prove isolation.** Run the provisioner by hand with two real organization ids:
 
    ```bash
    SUPERSET_URL=http://localhost:8088 SUPERSET_ADMIN_PASSWORD=... \
@@ -237,16 +260,22 @@ department (`BiDashboardIT` fails if such a column appears in any `bi` view).
    node tools/superset-provision/provision.mjs --check-isolation
    ```
 
-   Copy the printed `SUPERSET_DASHBOARD_<MODULE>=` lines into `.env`. Set `SUPERSET_URL=http://superset:8088` and
-   `SUPERSET_PUBLIC_URL` to the address browsers use, then restart the API.
+   Copy the printed `SUPERSET_DASHBOARD_<MODULE>=` lines into the API's environment, or add
+   `--write-config <file>` and point `SUPERSET_DASHBOARDS_FILE` at it. Set `SUPERSET_URL`, `SUPERSET_PUBLIC_URL` and
+   the embed account, then restart the API. The script also runs every chart's query and fails if one errors;
+   `--validate` checks the dashboard files without Superset. The isolation probes (one per view) live on a dashboard of
+   their own, `erp-isolation-probes`, which no ERP user is ever given a token for.
 
-**Change a dashboard.** Edit `tools/superset-provision/dashboards/<module>.json` and run the script again; it updates
-in place. To add a module:
+**Change a dashboard.** Edit `tools/superset-provision/dashboards/<module>.json` and run the script again (compose:
+`docker compose up superset-provision`); it updates in place and deletes charts no longer in the file. The header of
+`provision.mjs` documents the file format; chart types are the builders in its `VIZ` table (`kpi`, `kpi_trend`, `line`,
+`area`, `bar_time`, `bar`, `donut`, `treemap`, `sunburst`, `heatmap`, `funnel`, `gauge`, `table`, `list`, `pivot`).
+To add a module:
 
 1. Add its views to a new migration, each with `organizationId`.
 2. Add a `BiModule` to `SupersetEmbedService.MODULES` and a `dashboards.<module>` key to `application.yml`.
 3. Add a spec file. A chart may carry `"where"`, a SQL filter for that chart only.
-4. Add the view names to `BI_VIEWS` in the script.
+4. Add each view and its time column to `DATASETS` in the script.
 5. If the module has no built-in analytics screen, it shows at `/analytics/bi/<module>` with no web change; add its
    icon to `ICONS` in `BiModuleDashboardPage.tsx`.
 

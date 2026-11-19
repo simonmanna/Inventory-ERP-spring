@@ -42,7 +42,7 @@ class BiDashboardIT extends ApiTestSupport {
         assertThat(views).contains("sales_lines", "sales_invoices", "purchase_lines", "vendor_bills", "stock_on_hand",
                 "stock_movements", "journal_lines", "payments", "pos_sales", "pos_sale_lines", "pos_cash_sessions",
                 "pos_voided_items", "hr_employees", "hr_attendance", "hr_leave", "hr_payroll_costs", "production_orders",
-                "production_materials", "production_variances");
+                "production_materials", "production_variances", "expenses", "crm_deals");
         for (String v : views) {
             Integer has = jdbc.sql("SELECT count(*) FROM pg_attribute WHERE attrelid = " + OID
                     + " AND attname = 'organizationId' AND NOT attisdropped").params("bi", v).query(Integer.class)

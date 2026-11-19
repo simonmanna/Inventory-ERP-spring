@@ -1,0 +1,24 @@
+{
+  "module": "expenses",
+  "title": "Expenses",
+  "slug": "erp-expenses",
+  "filters": [
+    { "name": "Period", "type": "time" },
+    { "name": "Branch", "dataset": "expenses", "column": "branchName" },
+    { "name": "Category", "dataset": "expenses", "column": "categoryName" },
+    { "name": "Supplier", "dataset": "expenses", "column": "supplierName" }
+  ],
+  "charts": [
+    { "name": "Total expenses", "viz": "kpi_trend", "dataset": "expenses", "metric": "SUM(\"amount\")", "width": 3 },
+    { "name": "Expenses recorded", "viz": "kpi_trend", "dataset": "expenses", "metric": "COUNT(*)", "width": 3 },
+    { "name": "Unpaid", "viz": "kpi", "dataset": "expenses", "metric": "SUM(\"amountUnpaid\")", "subheader": "still to pay", "width": 3, "height": 30 },
+    { "name": "Tax on expenses", "viz": "kpi_trend", "dataset": "expenses", "metric": "SUM(\"taxAmount\")", "width": 3 },
+    { "name": "Expenses by month and category", "viz": "bar_time", "dataset": "expenses", "metric": "SUM(\"amount\")", "series": "categoryName", "width": 8 },
+    { "name": "Expenses by category", "viz": "donut", "dataset": "expenses", "x": "categoryName", "metric": "SUM(\"amount\")", "width": 4 },
+    { "name": "Category and supplier", "viz": "treemap", "dataset": "expenses", "x": ["categoryName", "supplierName"], "metric": "SUM(\"amount\")", "width": 6 },
+    { "name": "Top suppliers", "viz": "bar", "dataset": "expenses", "x": "supplierName", "metric": "SUM(\"amount\")", "width": 6 },
+    { "name": "Payment status", "viz": "donut", "dataset": "expenses", "x": "paymentStatus", "metric": "SUM(\"amount\")", "width": 4 },
+    { "name": "Expenses by branch", "viz": "bar", "dataset": "expenses", "x": "branchName", "metric": "SUM(\"amount\")", "width": 8 },
+    { "name": "Unpaid expenses", "viz": "list", "dataset": "expenses", "columns": ["expenseCode", "title", "categoryName", "supplierName", "expenseDate", "dueDate", "amount", "amountUnpaid"], "orderBy": [["dueDate", true]], "where": "\"amountUnpaid\" > 0", "limit": 100, "width": 12, "height": 55 }
+  ]
+}

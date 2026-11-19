@@ -2,12 +2,31 @@
   "module": "finance",
   "title": "Finance",
   "slug": "erp-finance",
+  "filters": [
+    { "name": "Period", "type": "time" },
+    { "name": "Branch", "dataset": "journal_lines", "column": "branchName" }
+  ],
   "charts": [
-    { "name": "Cash received", "viz": "big_number_total", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE 0 END)", "width": 4 },
-    { "name": "Cash paid", "viz": "big_number_total", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'outbound' THEN \"amount\" ELSE 0 END)", "width": 4 },
-    { "name": "Journal entries", "viz": "big_number_total", "dataset": "journal_lines", "metric": "COUNT(DISTINCT \"entryNumber\")", "width": 4 },
-    { "name": "Payments by month", "viz": "bar_by_month", "dataset": "payments", "time": "paymentDate", "metric": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE -\"amount\" END)", "width": 8 },
-    { "name": "Activity by report section", "viz": "pie", "dataset": "journal_lines", "groupby": "reportSection", "metric": "SUM(ABS(\"baseNet\"))", "width": 4 },
-    { "name": "Account balances", "viz": "table", "dataset": "journal_lines", "groupby": "accountName", "metric": "SUM(\"baseNet\")", "width": 12 }
+    { "tab": "Profit and loss", "name": "Revenue", "viz": "kpi_trend", "dataset": "journal_lines", "metric": "SUM(CASE WHEN \"classification\" = 'revenue' THEN \"plAmount\" ELSE 0 END)", "width": 3 },
+    { "tab": "Profit and loss", "name": "Expenses", "viz": "kpi_trend", "dataset": "journal_lines", "metric": "SUM(CASE WHEN \"classification\" = 'expense' THEN -\"plAmount\" ELSE 0 END)", "width": 3 },
+    { "tab": "Profit and loss", "name": "Net profit", "viz": "kpi_trend", "dataset": "journal_lines", "metric": "SUM(\"plAmount\")", "width": 3 },
+    {"tab": "Profit and loss", "name": "Net margin", "viz": "kpi", "dataset": "journal_lines", "metric": "SUM(\"plAmount\") / NULLIF(SUM(CASE WHEN \"classification\" = 'revenue' THEN \"plAmount\" ELSE 0 END), 0)", "format": ".1%", "width": 3, "subheader": "net profit / revenue"},
+    { "tab": "Profit and loss", "name": "Revenue and expenses by month", "viz": "bar_time", "dataset": "journal_lines", "metrics": [{ "sql": "SUM(CASE WHEN \"classification\" = 'revenue' THEN \"plAmount\" ELSE 0 END)", "label": "Revenue" }, { "sql": "SUM(CASE WHEN \"classification\" = 'expense' THEN -\"plAmount\" ELSE 0 END)", "label": "Expenses" }], "width": 8 },
+    { "tab": "Profit and loss", "name": "Net profit by month", "viz": "area", "dataset": "journal_lines", "metric": "SUM(\"plAmount\")", "width": 4 },
+    { "tab": "Profit and loss", "name": "Expenses by account", "viz": "treemap", "dataset": "journal_lines", "x": ["reportSection", "accountName"], "metric": "SUM(\"baseDebit\" - \"baseCredit\")", "where": "\"classification\" = 'expense'", "width": 6 },
+    { "tab": "Profit and loss", "name": "Revenue by account", "viz": "donut", "dataset": "journal_lines", "x": "accountName", "metric": "SUM(\"plAmount\")", "where": "\"classification\" = 'revenue'", "width": 6 },
+    { "tab": "Profit and loss", "name": "Profit and loss by month", "viz": "pivot", "dataset": "journal_lines", "rows": ["reportSection", "accountName"], "cols": { "sql": "to_char(\"postingDate\", 'YYYY-MM')", "label": "Month" }, "metric": "SUM(\"plAmount\")", "where": "\"classification\" IN ('revenue', 'expense')", "width": 12, "height": 70 },
+
+    { "tab": "Cash", "name": "Cash received", "viz": "kpi_trend", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE 0 END)", "width": 4 },
+    { "tab": "Cash", "name": "Cash paid", "viz": "kpi_trend", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'outbound' THEN \"amount\" ELSE 0 END)", "width": 4 },
+    { "tab": "Cash", "name": "Net cash flow", "viz": "kpi_trend", "dataset": "payments", "metric": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE -\"amount\" END)", "width": 4 },
+    { "tab": "Cash", "name": "Cash in and out by month", "viz": "bar_time", "dataset": "payments", "metrics": [{ "sql": "SUM(CASE WHEN \"direction\" = 'inbound' THEN \"amount\" ELSE 0 END)", "label": "In" }, { "sql": "SUM(CASE WHEN \"direction\" = 'outbound' THEN \"amount\" ELSE 0 END)", "label": "Out" }], "width": 8 },
+    { "tab": "Cash", "name": "Receipts by method", "viz": "donut", "dataset": "payments", "x": "paymentMethod", "metric": "SUM(\"amount\")", "where": "\"direction\" = 'inbound'", "width": 4 },
+    { "tab": "Cash", "name": "Top payers", "viz": "bar", "dataset": "payments", "x": "partnerName", "metric": "SUM(\"amount\")", "where": "\"direction\" = 'inbound'", "width": 6 },
+    { "tab": "Cash", "name": "Top payees", "viz": "bar", "dataset": "payments", "x": "partnerName", "metric": "SUM(\"amount\")", "where": "\"direction\" = 'outbound'", "width": 6 },
+
+    { "tab": "Ledger", "name": "Journal entries", "viz": "kpi_trend", "dataset": "journal_lines", "metric": "COUNT(DISTINCT \"entryNumber\")", "width": 4 },
+    { "tab": "Ledger", "name": "Activity by report section", "viz": "donut", "dataset": "journal_lines", "x": "reportSection", "metric": "SUM(ABS(\"baseNet\"))", "width": 8, "height": 30 },
+    { "tab": "Ledger", "name": "Account balances", "viz": "table", "dataset": "journal_lines", "x": ["accountCode", "accountName", "reportSection"], "metrics": [{ "sql": "SUM(\"baseDebit\")", "label": "Debit" }, { "sql": "SUM(\"baseCredit\")", "label": "Credit" }, { "sql": "SUM(\"baseNet\")", "label": "Balance (Dr - Cr)" }], "limit": 300, "search": true, "width": 12, "height": 70 }
   ]
 }

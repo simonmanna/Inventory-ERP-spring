@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import com.inventoryerp.biexport.application.SupersetClient;
 import com.inventoryerp.biexport.application.SupersetEmbedService;
 import com.inventoryerp.biexport.application.SupersetProperties;
+import com.inventoryerp.biexport.application.SupersetSettings;
 import com.inventoryerp.kernel.security.PermissionService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -16,6 +17,8 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -25,6 +28,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /** Guest tokens against a stub Superset: the clause pins the session's organization, and failures are a clean 503. */
 class SupersetEmbedServiceTest {
@@ -84,7 +88,8 @@ class SupersetEmbedServiceTest {
     SupersetEmbedService service(String url) {
         SupersetProperties props = new SupersetProperties(url, "https://bi.example.com/", "embedder", "secret",
                 Map.of("sales", DASHBOARD, "inventory", "", "hr", HR_DASHBOARD), Duration.ofSeconds(2));
-        return new SupersetEmbedService(props, new SupersetClient(props), permissions);
+        SupersetSettings settings = new SupersetSettings(props);
+        return new SupersetEmbedService(settings, new SupersetClient(settings), permissions);
     }
 
     String url() {
@@ -151,10 +156,46 @@ class SupersetEmbedServiceTest {
         assertThatThrownBy(() -> service("http://127.0.0.1:1").guestToken("sales"))
                 .extracting(e -> ((ApiException) e).status().value()).isEqualTo(503);
         SupersetEmbedService off = new SupersetEmbedService(
-                new SupersetProperties("", null, null, null, null, null), null, permissions);
+                new SupersetSettings(new SupersetProperties("", null, null, null, null, null)), null, permissions);
         assertThat(off.dashboards()).isEmpty();
         assertThatThrownBy(() -> off.guestToken("sales")).extracting(e -> ((ApiException) e).status().value())
                 .isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("B2 modules: the business overview needs analytics:finance, expenses expense:read, CRM crm:report:read")
+    void b2Modules() {
+        SupersetProperties props = new SupersetProperties(url(), null, "embedder", "secret",
+                Map.of("overview", DASHBOARD, "expenses", DASHBOARD, "crm", DASHBOARD), Duration.ofSeconds(2));
+        SupersetSettings settings = new SupersetSettings(props);
+        SupersetEmbedService s = new SupersetEmbedService(settings, new SupersetClient(settings), permissions);
+        assertThat(s.dashboards()).isEmpty();
+        assertThatThrownBy(() -> s.guestToken("overview")).extracting(e -> ((ApiException) e).status().value())
+                .isEqualTo(403);
+        when(permissions.current()).thenReturn(List.of("analytics:view", "analytics:finance", "expense:read",
+                "crm:report:read"));
+        assertThat(s.dashboards()).extracting(m -> m.get("module")).containsExactly("overview", "expenses", "crm");
+    }
+
+    @Test
+    @DisplayName("ids and the service account can come from files written at run time; values set directly win")
+    void fileValues(@TempDir Path dir) throws IOException {
+        Path dashboards = dir.resolve("dashboards.json");
+        Path secrets = dir.resolve("secrets.env");
+        SupersetProperties props = new SupersetProperties(url(), null, null, null, Map.of("hr", HR_DASHBOARD),
+                Duration.ofSeconds(2), dashboards.toString(), secrets.toString());
+        SupersetSettings settings = new SupersetSettings(props);
+        SupersetEmbedService s = new SupersetEmbedService(settings, new SupersetClient(settings), permissions);
+        assertThat(s.dashboards()).as("no service account yet: off").isEmpty();
+
+        Files.writeString(secrets, "# generated\nSUPERSET_EMBED_USERNAME=erp_embedder\nSUPERSET_EMBED_PASSWORD=\"pw\"\n");
+        Files.writeString(dashboards, "{\"dashboards\": {\"sales\": \"" + DASHBOARD + "\", \"hr\": \"other\","
+                + " \"bad key\": \"x\", \"inventory\": \"'; DROP\"}}");
+        assertThat(settings.current().username()).isEqualTo("erp_embedder");
+        assertThat(settings.current().password()).isEqualTo("pw");
+        assertThat(settings.current().dashboards()).containsEntry("sales", DASHBOARD)
+                .containsEntry("hr", HR_DASHBOARD).doesNotContainKeys("bad key", "inventory");
+        assertThat(s.guestToken("sales").dashboardId()).isEqualTo(DASHBOARD);
     }
 
     @Test

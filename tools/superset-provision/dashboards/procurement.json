@@ -2,14 +2,31 @@
   "module": "procurement",
   "title": "Procurement",
   "slug": "erp-procurement",
+  "filters": [
+    { "name": "Period", "type": "time" },
+    { "name": "Branch", "dataset": "purchase_lines", "column": "branchName" },
+    { "name": "Supplier", "dataset": "purchase_lines", "column": "supplierName" },
+    { "name": "Product category", "dataset": "purchase_lines", "column": "categoryName" }
+  ],
   "charts": [
-    { "name": "Ordered value", "viz": "big_number_total", "dataset": "purchase_lines", "metric": "SUM(\"subtotal\")", "width": 3 },
-    { "name": "Purchase orders", "viz": "big_number_total", "dataset": "purchase_lines", "metric": "COUNT(DISTINCT \"purchaseOrderId\")", "width": 3 },
-    { "name": "Payables outstanding", "viz": "big_number_total", "dataset": "vendor_bills", "metric": "SUM(\"amountResidual\")", "width": 3 },
-    { "name": "Payables overdue", "viz": "big_number_total", "dataset": "vendor_bills", "metric": "SUM(CASE WHEN \"daysOverdue\" > 0 THEN \"amountResidual\" ELSE 0 END)", "width": 3 },
-    { "name": "Purchases by month", "viz": "bar_by_month", "dataset": "purchase_lines", "time": "orderDate", "metric": "SUM(\"subtotal\")", "width": 8 },
-    { "name": "Payables aging", "viz": "pie", "dataset": "vendor_bills", "groupby": "agingBucket", "metric": "SUM(\"amountResidual\")", "width": 4 },
-    { "name": "Top suppliers", "viz": "table", "dataset": "purchase_lines", "groupby": "supplierName", "metric": "SUM(\"subtotal\")", "width": 6 },
-    { "name": "Not yet received", "viz": "table", "dataset": "purchase_lines", "groupby": "productName", "metric": "SUM(\"quantity\" - COALESCE(\"receivedQuantity\", 0))", "width": 6 }
+    { "tab": "Overview", "name": "Ordered value", "viz": "kpi_trend", "dataset": "purchase_lines", "metric": "SUM(\"subtotal\")", "width": 3 },
+    { "tab": "Overview", "name": "Purchase orders", "viz": "kpi_trend", "dataset": "purchase_lines", "metric": "COUNT(DISTINCT \"purchaseOrderId\")", "width": 3 },
+    { "tab": "Overview", "name": "Active suppliers", "viz": "kpi_trend", "dataset": "purchase_lines", "metric": "COUNT(DISTINCT \"partnerId\")", "width": 3 },
+    {"tab": "Overview", "name": "Received", "viz": "kpi", "dataset": "purchase_lines", "metric": "SUM(COALESCE(\"receivedQuantity\", 0)) / NULLIF(SUM(\"quantity\"), 0)", "format": ".1%", "width": 3, "subheader": "of ordered quantity received"},
+    { "tab": "Overview", "name": "Purchases by month and category", "viz": "bar_time", "dataset": "purchase_lines", "metric": "SUM(\"subtotal\")", "series": "categoryName", "width": 8 },
+    { "tab": "Overview", "name": "Orders by status", "viz": "donut", "dataset": "purchase_lines", "x": "status", "metric": "COUNT(DISTINCT \"purchaseOrderId\")", "width": 4 },
+    { "tab": "Overview", "name": "Not yet received", "viz": "table", "dataset": "purchase_lines", "x": ["orderNumber", "supplierName", "productName"], "metrics": [{ "sql": "SUM(\"quantity\" - COALESCE(\"receivedQuantity\", 0))", "label": "Open quantity" }, { "sql": "SUM((\"quantity\" - COALESCE(\"receivedQuantity\", 0)) * \"unitPrice\")", "label": "Open value" }], "where": "\"quantity\" > COALESCE(\"receivedQuantity\", 0) AND \"status\" NOT IN ('cancelled', 'draft', 'closed')", "limit": 50, "search": true, "width": 12, "height": 55 },
+
+    { "tab": "Suppliers", "name": "Top suppliers", "viz": "bar", "dataset": "purchase_lines", "x": "supplierName", "metric": "SUM(\"subtotal\")", "limit": 12, "width": 6 },
+    { "tab": "Suppliers", "name": "Spend by category and supplier", "viz": "treemap", "dataset": "purchase_lines", "x": ["categoryName", "supplierName"], "metric": "SUM(\"subtotal\")", "width": 6 },
+    { "tab": "Suppliers", "name": "Supplier spend by month", "viz": "pivot", "dataset": "purchase_lines", "rows": "supplierName", "cols": { "sql": "to_char(\"orderDate\", 'YYYY-MM')", "label": "Month" }, "metric": "SUM(\"subtotal\")", "width": 12, "height": 55 },
+    { "tab": "Suppliers", "name": "Top purchased products", "viz": "table", "dataset": "purchase_lines", "x": ["productCode", "productName"], "metrics": [{ "sql": "SUM(\"subtotal\")", "label": "Spend" }, { "sql": "SUM(\"quantity\")", "label": "Quantity" }, { "sql": "SUM(\"subtotal\") / NULLIF(SUM(\"quantity\"), 0)", "label": "Average price" }], "limit": 50, "search": true, "width": 12, "height": 55 },
+
+    { "tab": "Payables", "name": "Payables outstanding", "viz": "kpi", "dataset": "vendor_bills", "metric": "SUM(\"amountResidual\")", "subheader": "owed to suppliers", "width": 4 },
+    { "tab": "Payables", "name": "Payables overdue", "viz": "kpi", "dataset": "vendor_bills", "metric": "SUM(CASE WHEN \"daysOverdue\" > 0 THEN \"amountResidual\" ELSE 0 END)", "subheader": "past due date", "width": 4 },
+    { "tab": "Payables", "name": "Bills", "viz": "kpi", "dataset": "vendor_bills", "metric": "COUNT(*)", "subheader": "vendor bills", "width": 4 },
+    { "tab": "Payables", "name": "Payables aging", "viz": "bar", "dataset": "vendor_bills", "x": "agingBucket", "metric": "SUM(\"amountResidual\")", "where": "\"amountResidual\" > 0", "order": "x", "vertical": true, "width": 5 },
+    { "tab": "Payables", "name": "Owed by supplier", "viz": "bar", "dataset": "vendor_bills", "x": "supplierName", "series": "agingBucket", "metric": "SUM(\"amountResidual\")", "where": "\"amountResidual\" > 0", "width": 7 },
+    { "tab": "Payables", "name": "Bills due", "viz": "list", "dataset": "vendor_bills", "columns": ["documentNumber", "supplierName", "issueDate", "dueDate", "daysOverdue", "totalAmount", "amountResidual"], "orderBy": [["dueDate", true]], "where": "\"amountResidual\" > 0", "limit": 100, "width": 12, "height": 55 }
   ]
 }

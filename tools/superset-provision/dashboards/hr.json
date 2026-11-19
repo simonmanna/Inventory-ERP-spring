@@ -2,17 +2,41 @@
   "module": "hr",
   "title": "HR",
   "slug": "erp-hr",
+  "filters": [
+    { "name": "Department", "dataset": "hr_employees", "column": "departmentName" },
+    { "name": "Branch", "dataset": "hr_employees", "column": "branchName" },
+    { "name": "Period", "type": "time" }
+  ],
   "charts": [
-    { "name": "Active headcount", "viz": "big_number_total", "dataset": "hr_employees", "metric": "COUNT(*)", "where": "\"isActive\" AND \"employmentStatus\" NOT IN ('TERMINATED', 'RESIGNED')", "width": 4 },
-    { "name": "Payroll gross pay", "viz": "big_number_total", "dataset": "hr_payroll_costs", "metric": "SUM(\"grossPay\")", "width": 4 },
-    { "name": "Leave days approved", "viz": "big_number_total", "dataset": "hr_leave", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 4 },
-    { "name": "Payroll cost by month", "viz": "bar_by_month", "dataset": "hr_payroll_costs", "time": "paymentDate", "metric": "SUM(\"grossPay\")", "width": 8 },
-    { "name": "Headcount by employment type", "viz": "pie", "dataset": "hr_employees", "groupby": "employmentType", "metric": "COUNT(*)", "where": "\"isActive\"", "width": 4 },
-    { "name": "Headcount by department", "viz": "table", "dataset": "hr_employees", "groupby": "departmentName", "metric": "COUNT(*)", "where": "\"isActive\"", "width": 6 },
-    { "name": "Payroll cost by department", "viz": "table", "dataset": "hr_payroll_costs", "groupby": "departmentName", "metric": "SUM(\"grossPay\")", "width": 6 },
-    { "name": "Hires by month", "viz": "bar_by_month", "dataset": "hr_employees", "time": "hireDate", "metric": "COUNT(*)", "width": 6 },
-    { "name": "Attendance by status", "viz": "pie", "dataset": "hr_attendance", "groupby": "status", "metric": "COUNT(*)", "width": 6 },
-    { "name": "Overtime hours by department", "viz": "table", "dataset": "hr_attendance", "groupby": "departmentName", "metric": "SUM(\"overtimeMinutes\") / 60.0", "width": 6 },
-    { "name": "Leave days by type", "viz": "table", "dataset": "hr_leave", "groupby": "leaveType", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 6 }
+    { "tab": "People", "name": "Active headcount", "viz": "kpi", "dataset": "hr_employees", "metric": "COUNT(*)", "where": "\"isActive\" AND \"employmentStatus\" NOT IN ('TERMINATED', 'RESIGNED')", "subheader": "employees", "width": 3 },
+    { "tab": "People", "name": "Average tenure", "viz": "kpi", "dataset": "hr_employees", "metric": "AVG(\"tenureYears\")", "where": "\"isActive\"", "subheader": "years", "format": ",.1f", "width": 3 },
+    { "tab": "People", "name": "New hires", "viz": "kpi", "dataset": "hr_employees", "metric": "COUNT(*)", "where": "\"hireDate\" >= CURRENT_DATE - INTERVAL '90 days'", "subheader": "in the last 90 days", "width": 3 },
+    { "tab": "People", "name": "Leavers", "viz": "kpi", "dataset": "hr_employees", "metric": "COUNT(*)", "where": "\"terminationDate\" >= CURRENT_DATE - INTERVAL '90 days'", "subheader": "in the last 90 days", "width": 3 },
+    { "tab": "People", "name": "Headcount by department", "viz": "bar", "dataset": "hr_employees", "x": "departmentName", "series": "employmentType", "metric": "COUNT(*)", "where": "\"isActive\"", "width": 8 },
+    { "tab": "People", "name": "Gender mix", "viz": "donut", "dataset": "hr_employees", "x": "gender", "metric": "COUNT(*)", "where": "\"isActive\"", "width": 4 },
+    { "tab": "People", "name": "Hires by month", "viz": "bar_time", "dataset": "hr_employees", "time": "hireDate", "metric": "COUNT(*)", "width": 6 },
+    { "tab": "People", "name": "Department and position", "viz": "sunburst", "dataset": "hr_employees", "x": ["departmentName", "positionName"], "metric": "COUNT(*)", "where": "\"isActive\"", "width": 6 },
+
+    { "tab": "Attendance", "name": "Hours worked", "viz": "kpi_trend", "dataset": "hr_attendance", "metric": "SUM(\"workedMinutes\") / 60.0", "width": 4 },
+    { "tab": "Attendance", "name": "Overtime hours", "viz": "kpi_trend", "dataset": "hr_attendance", "metric": "SUM(\"overtimeMinutes\") / 60.0", "width": 4 },
+    { "tab": "Attendance", "name": "Late arrivals", "viz": "kpi_trend", "dataset": "hr_attendance", "metric": "COUNT(*)", "where": "\"lateMinutes\" > 0", "width": 4 },
+    { "tab": "Attendance", "name": "Attendance by status", "viz": "donut", "dataset": "hr_attendance", "x": "status", "metric": "COUNT(*)", "width": 4 },
+    { "tab": "Attendance", "name": "Hours by month", "viz": "bar_time", "dataset": "hr_attendance", "metrics": [{ "sql": "SUM(\"workedMinutes\" - COALESCE(\"overtimeMinutes\", 0)) / 60.0", "label": "Regular" }, { "sql": "SUM(\"overtimeMinutes\") / 60.0", "label": "Overtime" }], "stack": true, "width": 8 },
+    { "tab": "Attendance", "name": "Late minutes by department and weekday", "viz": "heatmap", "dataset": "hr_attendance", "x": { "sql": "to_char(\"attendanceDate\", 'ID Dy')", "label": "Weekday" }, "y": "departmentName", "metric": "SUM(\"lateMinutes\")", "colors": "reds", "width": 6 },
+    { "tab": "Attendance", "name": "Overtime hours by department", "viz": "bar", "dataset": "hr_attendance", "x": "departmentName", "metric": "SUM(\"overtimeMinutes\") / 60.0", "width": 6 },
+
+    { "tab": "Payroll", "name": "Gross pay", "viz": "kpi_trend", "dataset": "hr_payroll_costs", "metric": "SUM(\"grossPay\")", "width": 4 },
+    { "tab": "Payroll", "name": "Net pay", "viz": "kpi_trend", "dataset": "hr_payroll_costs", "metric": "SUM(\"netPay\")", "width": 4 },
+    { "tab": "Payroll", "name": "Deductions", "viz": "kpi_trend", "dataset": "hr_payroll_costs", "metric": "SUM(\"totalDeductions\")", "width": 4 },
+    { "tab": "Payroll", "name": "Payroll cost by month", "viz": "bar_time", "dataset": "hr_payroll_costs", "metrics": [{ "sql": "SUM(\"netPay\")", "label": "Net pay" }, { "sql": "SUM(\"taxAmount\")", "label": "Tax" }, { "sql": "SUM(\"pensionAmount\")", "label": "Pension" }, { "sql": "SUM(\"socialSecurityAmount\")", "label": "Social security" }], "stack": true, "width": 8 },
+    { "tab": "Payroll", "name": "Gross pay by department", "viz": "donut", "dataset": "hr_payroll_costs", "x": "departmentName", "metric": "SUM(\"grossPay\")", "width": 4 },
+    { "tab": "Payroll", "name": "Payroll by department and period", "viz": "pivot", "dataset": "hr_payroll_costs", "rows": "departmentName", "cols": "periodCode", "metric": "SUM(\"grossPay\")", "width": 12 },
+
+    { "tab": "Leave", "name": "Leave days approved", "viz": "kpi_trend", "dataset": "hr_leave", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 4 },
+    { "tab": "Leave", "name": "Pending requests", "viz": "kpi", "dataset": "hr_leave", "metric": "COUNT(*)", "where": "status = 'PENDING'", "subheader": "waiting for approval", "width": 4, "height": 30 },
+    { "tab": "Leave", "name": "Unpaid leave days", "viz": "kpi", "dataset": "hr_leave", "metric": "SUM(\"days\")", "where": "status = 'APPROVED' AND NOT \"isPaid\"", "subheader": "approved, unpaid", "width": 4, "height": 30 },
+    { "tab": "Leave", "name": "Leave days by type", "viz": "donut", "dataset": "hr_leave", "x": "leaveType", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 4 },
+    { "tab": "Leave", "name": "Leave days by month", "viz": "bar_time", "dataset": "hr_leave", "metric": "SUM(\"days\")", "series": "leaveType", "where": "status = 'APPROVED'", "width": 8 },
+    { "tab": "Leave", "name": "Leave by department", "viz": "bar", "dataset": "hr_leave", "x": "departmentName", "series": "leaveType", "metric": "SUM(\"days\")", "where": "status = 'APPROVED'", "width": 12 }
   ]
 }

@@ -83,3 +83,31 @@ Five engines were compared: Apache Superset, Metabase, Lightdash, JasperReports 
   `production_order:read`) plus `analytics:view`. HR views hold no pay per employee or personal details.
 - `SupersetEmbedServiceTest` (stubbed Superset) and `BiDashboardIT` pass.
 - Not yet verified: the dashboards rendered in a browser through the web app.
+
+## B2 (2026-11-19): richer dashboards, on by default
+
+The owner kept Superset (a switch to Metabase was weighed and dropped the same day: its free embedding cannot filter
+rows per tenant on the server) and asked for richer reports, enabled by default.
+
+- **Ten dashboards, 167 charts**: the seven B0/B1 modules redesigned, plus Business overview (`overview`, gated by
+  `analytics:finance` because it shows profit; embedded on `/analytics`), Expenses (`expense:read`) and CRM pipeline
+  (`crm:report:read`). Tabs, trend figures with the change on the previous period, native filters (period + select
+  filters scoped to the charts whose view has the column), cross-filtering, and the chart types listed in
+  docs/integrations.md.
+- **V581** appends columns to existing `bi` views (names, types and order of existing columns unchanged) and adds
+  `bi.expenses` and `bi.crm_deals`, both with `organizationId`.
+- **Default view.** An analytics screen with a dashboard opens on it (**Interactive**); the built-in tiles are the
+  **Summary** view. The choice is remembered per browser.
+- **On by default in compose.** No profile: `bi-secrets` generates every secret `.env` leaves empty into the private
+  `bi` volume, `superset-provision` provisions on each `up` and writes the ids to `/bi/dashboards.json`, and the API
+  reads both files (`SUPERSET_DASHBOARDS_FILE`, `SUPERSET_SECRETS_FILE`), re-reading on change. `SUPERSET_URL=` (empty)
+  turns it off. Cost: about 1.5 GB of RAM on every compose install.
+- **Isolation probes moved** to their own dashboard (`erp-isolation-probes`, never configured in the API). On B0/B1 they
+  sat on each module dashboard, where Superset appended them below the layout, visible to viewers (own rows only).
+  Guest-token RLS applies per token and dataset, so a probe there proves every dashboard reading that dataset.
+- **Provisioning checks**: `--validate` (files only), and every run executes each chart's query and fails on an error.
+
+Verified 2026-11-19 against `apache/superset:6.1.0` on a copy of the live database: all 167 chart queries ran; the
+isolation check passed on all 21 views (13 with rows for at least one of DEMO and GQDEMO; 8 empty, not proven by row
+count); dashboards checked visually in headless Firefox. Not yet verified: the new dashboards rendered through the ERP
+web app, and a full `docker compose up` from scratch (the compose services were exercised one by one).

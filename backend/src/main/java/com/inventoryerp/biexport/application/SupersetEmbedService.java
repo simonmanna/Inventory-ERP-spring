@@ -31,8 +31,8 @@ public class SupersetEmbedService {
     public record BiModule(String key, String label, String permission) {}
 
     /**
-     * B0 modules use the keys and permissions of the built-in analytics dashboards (ADR-S020); B1 modules, which have
-     * no built-in dashboard, use the permission of the module's own reports.
+     * B0 modules use the keys and permissions of the built-in analytics dashboards (ADR-S020); B1 and B2 modules, which
+     * have no built-in dashboard, use the permission of the module's own reports.
      */
     public static final List<BiModule> MODULES = List.of(
             new BiModule("sales", "Sales", Permissions.ANALYTICS__SALES),
@@ -41,18 +41,22 @@ public class SupersetEmbedService {
             new BiModule("finance", "Finance", Permissions.ANALYTICS__FINANCE),
             new BiModule("pos", "Point of sale", Permissions.POS__REPORTS),
             new BiModule("hr", "HR", Permissions.HR__REPORT),
-            new BiModule("manufacturing", "Manufacturing", Permissions.PRODUCTION_ORDER__READ));
+            new BiModule("manufacturing", "Manufacturing", Permissions.PRODUCTION_ORDER__READ),
+            // B2: the business overview shows profit, so it needs the finance analytics permission.
+            new BiModule("overview", "Business overview", Permissions.ANALYTICS__FINANCE),
+            new BiModule("expenses", "Expenses", Permissions.EXPENSE__READ),
+            new BiModule("crm", "CRM pipeline", Permissions.CRM__REPORT_READ));
 
     /** What the browser needs to embed one dashboard with the Superset embedded SDK. */
     public record GuestToken(String module, String dashboardId, String supersetDomain, String token,
             Instant expiresAt) {}
 
-    private final SupersetProperties properties;
+    private final SupersetSettings settings;
     private final SupersetClient client;
     private final PermissionService permissions;
 
-    public SupersetEmbedService(SupersetProperties properties, SupersetClient client, PermissionService permissions) {
-        this.properties = properties;
+    public SupersetEmbedService(SupersetSettings settings, SupersetClient client, PermissionService permissions) {
+        this.settings = settings;
         this.client = client;
         this.permissions = permissions;
     }
@@ -67,6 +71,7 @@ public class SupersetEmbedService {
 
     /** The dashboards the caller may open: configured, and the caller holds the module's analytics permission. */
     public List<Map<String, Object>> dashboards() {
+        SupersetProperties properties = settings.current();
         if (!properties.enabled()) {
             return List.of();
         }
@@ -84,6 +89,7 @@ public class SupersetEmbedService {
     public GuestToken guestToken(String module) {
         // Superset off means no module has a dashboard: the same 404 as an unconfigured module. 503 is kept for a
         // configured Superset that cannot be reached.
+        SupersetProperties properties = settings.current();
         if (!properties.enabled()) {
             throw ApiException.notFound("Dashboard not found");
         }

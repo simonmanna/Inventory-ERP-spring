@@ -38,15 +38,15 @@ public class SupersetClient {
         }
     }
 
-    private final SupersetProperties properties;
+    private final SupersetSettings settings;
     private final HttpClient http;
     private String accessToken;
     private Instant accessTokenAt = Instant.EPOCH;
 
-    public SupersetClient(SupersetProperties properties) {
-        this.properties = properties;
+    public SupersetClient(SupersetSettings settings) {
+        this.settings = settings;
         this.http = HttpClient.newBuilder()
-                .connectTimeout(properties.httpTimeout())
+                .connectTimeout(settings.current().httpTimeout())
                 .cookieHandler(new CookieManager())
                 .build();
     }
@@ -85,11 +85,11 @@ public class SupersetClient {
         String bearer = access(freshLogin);
         String csrf = csrfToken(bearer);
         HttpResponse<String> res = send(HttpRequest.newBuilder(uri("/api/v1/security/guest_token/"))
-                .timeout(properties.httpTimeout())
+                .timeout(settings.current().httpTimeout())
                 .header("Authorization", "Bearer " + bearer)
                 .header("Content-Type", "application/json")
                 .header("X-CSRFToken", csrf)
-                .header("Referer", properties.url())
+                .header("Referer", settings.current().url())
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build());
         if (res.statusCode() == 401) {
@@ -107,12 +107,12 @@ public class SupersetClient {
             return accessToken;
         }
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("username", properties.username());
-        body.put("password", properties.password());
+        body.put("username", settings.current().username());
+        body.put("password", settings.current().password());
         body.put("provider", "db");
         body.put("refresh", false);
         HttpResponse<String> res = send(HttpRequest.newBuilder(uri("/api/v1/security/login"))
-                .timeout(properties.httpTimeout())
+                .timeout(settings.current().httpTimeout())
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(EntityJson.toJson(body)))
                 .build());
@@ -128,7 +128,7 @@ public class SupersetClient {
 
     private String csrfToken(String bearer) {
         HttpResponse<String> res = send(HttpRequest.newBuilder(uri("/api/v1/security/csrf_token/"))
-                .timeout(properties.httpTimeout())
+                .timeout(settings.current().httpTimeout())
                 .header("Authorization", "Bearer " + bearer)
                 .GET()
                 .build());
@@ -144,14 +144,14 @@ public class SupersetClient {
     }
 
     private URI uri(String path) {
-        return URI.create(properties.url() + path);
+        return URI.create(settings.current().url() + path);
     }
 
     private HttpResponse<String> send(HttpRequest request) {
         try {
             return http.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (IOException e) {
-            log.warn("Superset unreachable at {}: {}", properties.url(), e.getClass().getSimpleName());
+            log.warn("Superset unreachable at {}: {}", settings.current().url(), e.getClass().getSimpleName());
             throw new Unavailable("Superset is unreachable", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

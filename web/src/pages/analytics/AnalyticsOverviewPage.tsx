@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { SupersetDashboard } from '@/components/bi/SupersetDashboard';
+import { useBiDashboards } from '@/components/bi/use-bi-dashboards';
+import { useDashboardView } from '@/components/bi/use-dashboard-view';
 import { ListPageHeader } from '@/components/list';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 import { useDashboard, type AnalyticsQuery } from './api';
 import { AnalyticsFilterBar } from './AnalyticsFilterBar';
-import { DomainTabs } from './AnalyticsDomainPage';
+import { DashboardViewToggle, DomainTabs } from './AnalyticsDomainPage';
 import { TileGrid, type Drill } from './DashboardView';
 import { DrillDownDialog } from './DrillDownDialog';
 import { AnalyticsIcon, analyticsDomains, type Domain } from './domains';
@@ -37,11 +40,18 @@ export function AnalyticsOverviewPage() {
   const [drill, setDrill] = useState<{ path: string; drill: Drill } | null>(null);
   const shared: AnalyticsQuery = { from: query.from, to: query.to, branchId: query.branchId };
   const domains = analyticsDomains().filter((d) => has(d.permission));
+  // The embedded Business overview (ADR-S078), when configured and allowed: the default view.
+  const { data: bi } = useBiDashboards();
+  const hasExplore = !!bi?.some((d) => d.module === 'overview');
+  const [view, setView] = useDashboardView();
+  const explore = hasExplore && view === 'explore';
   return (
     <div className="space-y-4">
       <ListPageHeader icon={AnalyticsIcon} title={tx('Management Dashboards')}
         description={tx('Headline figures across the business for the selected period.')} />
       <DomainTabs search={search} />
+      {hasExplore && <DashboardViewToggle explore={explore} onChange={setView} />}
+      {explore ? <SupersetDashboard module="overview" /> : (<>
       <AnalyticsFilterBar query={query} update={update} supported={['date', 'branch']} />
       {domains.length === 0 && <p className="text-sm text-muted-foreground">{tx('No dashboard has been granted to your role yet.')}</p>}
       {domains.map((d) => (
@@ -49,6 +59,7 @@ export function AnalyticsOverviewPage() {
           onDrill={(path, x) => setDrill({ path, drill: x })} />
       ))}
       {drill && <DrillDownDialog path={drill.path} drill={drill.drill} query={shared} onClose={() => setDrill(null)} />}
+      </>)}
     </div>
   );
 }

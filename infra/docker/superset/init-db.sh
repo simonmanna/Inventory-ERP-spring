@@ -5,6 +5,12 @@
 #   - superset_reader: the read-only login Superset uses for the ERP `bi` views (grants come from V570/afterMigrate).
 # Superset itself never gets the owner's password.
 set -eu
+# Generated secrets (gen-secrets.sh) fill in whatever .env left empty.
+if [ -r /bi/secrets.env ]; then
+  set -a
+  . /bi/secrets.env
+  set +a
+fi
 : "${SUPERSET_META_DB_PASSWORD:?set SUPERSET_META_DB_PASSWORD}"
 : "${SUPERSET_READER_PASSWORD:?set SUPERSET_READER_PASSWORD}"
 export PGPASSWORD="$POSTGRES_PASSWORD"

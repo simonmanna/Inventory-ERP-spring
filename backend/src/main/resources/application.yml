@@ -121,6 +121,13 @@ app:
         pos: ${SUPERSET_DASHBOARD_POS:}
         hr: ${SUPERSET_DASHBOARD_HR:}
         manufacturing: ${SUPERSET_DASHBOARD_MANUFACTURING:}
+        overview: ${SUPERSET_DASHBOARD_OVERVIEW:}
+        expenses: ${SUPERSET_DASHBOARD_EXPENSES:}
+        crm: ${SUPERSET_DASHBOARD_CRM:}
+      # Written at run time by the compose stack (docker-compose.yml): the ids from `provision.mjs --write-config` and
+      # the generated service account. Values set above win; empty = not used.
+      dashboards-file: ${SUPERSET_DASHBOARDS_FILE:}
+      secrets-file: ${SUPERSET_SECRETS_FILE:}
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}

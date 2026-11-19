@@ -1,4 +1,4 @@
-import { Factory, Store, Users, type LucideIcon } from 'lucide-react';
+import { Factory, Handshake, Receipt, Store, Users, type LucideIcon } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SupersetDashboard } from '@/components/bi/SupersetDashboard';
@@ -8,10 +8,10 @@ import { tx } from '@/lib/i18n/tx';
 import { DomainTabs } from './AnalyticsDomainPage';
 import { AnalyticsIcon } from './domains';
 
-const ICONS: Record<string, LucideIcon> = { pos: Store, hr: Users, manufacturing: Factory };
+const ICONS: Record<string, LucideIcon> = { pos: Store, hr: Users, manufacturing: Factory, expenses: Receipt, crm: Handshake };
 
 /**
- * A module that has only an embedded Superset dashboard, no built-in one (ADR-S078 B1: POS, HR, Manufacturing). The
+ * A module that has only an embedded Superset dashboard, no built-in one (ADR-S078: POS, HR, Manufacturing, Expenses, CRM). The
  * API decides who may open it: the list holds only configured modules the user has the permission for.
  */
 export function BiModuleDashboardPage() {
@@ -21,7 +21,7 @@ export function BiModuleDashboardPage() {
   return (
     <div className="space-y-4">
       <ListPageHeader icon={ICONS[module] ?? AnalyticsIcon} title={entry ? tx(entry.label) : tx('Dashboard')}
-        description={tx('Explore the figures: filter, drill into a chart, or download its data.')} />
+        description={tx('Filter by period, branch and more; click a chart to cross-filter the others, or download its data.')} />
       <DomainTabs current={module} search="" />
       {isLoading && <Skeleton className="h-96" />}
       {isError && <p className="text-sm text-destructive">{tx('Could not load the dashboards.')}</p>}

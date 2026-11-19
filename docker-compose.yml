@@ -55,9 +55,16 @@ services:
       THROTTLE_ENABLED: ${THROTTLE_ENABLED:-true}
       STORAGE_LOCAL_DIR: /app/var/uploads
       BACKUP_DIR: /app/backups
+      # Embedded Superset (on by default): dashboard ids and the embed service account come from the bi volume.
+      # SUPERSET_URL set but empty in .env turns it off.
+      SUPERSET_URL: ${SUPERSET_URL-http://superset:8088}
+      SUPERSET_PUBLIC_URL: ${SUPERSET_PUBLIC_URL:-http://localhost:8088}
+      SUPERSET_DASHBOARDS_FILE: /bi/dashboards.json
+      SUPERSET_SECRETS_FILE: /bi/secrets.env
     volumes:
       - uploads:/app/var/uploads
       - backups:/app/backups
+      - bi:/bi:ro
     ports:
       - "127.0.0.1:3001:3000"
 
@@ -81,17 +88,36 @@ services:
     ports:
       - "8080:80"
 
-  # ---- embedded Apache Superset dashboards (profile: bi, ADR-S078, docs/integrations.md) ----
+  # ---- embedded Apache Superset dashboards (on by default, ADR-S078, docs/integrations.md) ----
   #
-  #   docker compose --profile bi up -d --build      # Superset on http://localhost:8088
-  #   node tools/superset-provision/provision.mjs --check-isolation    # dashboards + their ids for the API
-  # The API reaches it at SUPERSET_URL=http://superset:8088; browsers at SUPERSET_PUBLIC_URL.
+  # `docker compose up -d --build` starts Superset with the rest: bi-secrets generates any secret .env leaves empty,
+  # superset-provision builds the dashboards and writes their ids for the API, and every analytics screen opens on its
+  # interactive dashboard. Superset on http://localhost:8088 (admin password: SUPERSET_ADMIN_PASSWORD in .env, else
+  # `docker compose exec superset cat /bi/secrets.env`). It needs about 1.5 GB of RAM; to run without it:
+  #   docker compose up -d db api web        and set SUPERSET_URL= (empty) in .env
+  bi-secrets:
+    image: alpine:3.20
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-}
+      SUPERSET_GUEST_TOKEN_SECRET: ${SUPERSET_GUEST_TOKEN_SECRET:-}
+      SUPERSET_META_DB_PASSWORD: ${SUPERSET_META_DB_PASSWORD:-}
+      SUPERSET_READER_PASSWORD: ${SUPERSET_READER_PASSWORD:-}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-}
+      SUPERSET_EMBED_USERNAME: ${SUPERSET_EMBED_USERNAME:-}
+      SUPERSET_EMBED_PASSWORD: ${SUPERSET_EMBED_PASSWORD:-}
+    volumes:
+      - bi:/bi
+      - ./infra/docker/superset/gen-secrets.sh:/gen-secrets.sh:ro
+    entrypoint: ["sh", "/gen-secrets.sh"]
+    restart: "no"
+
   superset-db-init:
     image: postgres:16-alpine
-    profiles: ["bi"]
     depends_on:
       db:
         condition: service_healthy
+      bi-secrets:
+        condition: service_completed_successfully
     environment:
       PGHOST: db
       POSTGRES_USER: ${DB_USER:-erp}
@@ -100,6 +126,7 @@ services:
       SUPERSET_META_DB_PASSWORD: ${SUPERSET_META_DB_PASSWORD:-}
       SUPERSET_READER_PASSWORD: ${SUPERSET_READER_PASSWORD:-}
     volumes:
+      - bi:/bi:ro
       - ./infra/docker/superset/init-db.sh:/init-db.sh:ro
     entrypoint: ["sh", "/init-db.sh"]
     restart: "no"
@@ -107,7 +134,6 @@ services:
   superset-redis:
     image: redis:7-alpine
     container_name: ierp-superset-redis
-    profiles: ["bi"]
     restart: unless-stopped
 
   superset:
@@ -115,7 +141,6 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.superset
     container_name: ierp-superset
-    profiles: ["bi"]
     restart: unless-stopped
     depends_on:
       superset-db-init:
@@ -123,17 +148,15 @@ services:
       superset-redis:
         condition: service_started
     environment:
-      # Not declared with `:?`: that is evaluated for the whole file and would break `docker compose up db`.
-      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-}
-      SUPERSET_GUEST_TOKEN_SECRET: ${SUPERSET_GUEST_TOKEN_SECRET:-}
-      SUPERSET_METADATA_DB_URI: postgresql+psycopg2://superset_meta:${SUPERSET_META_DB_PASSWORD:-}@db:5432/superset
+      # Secrets come from /bi/secrets.env (bi-secrets: .env values, else generated); bootstrap.sh builds the
+      # metadata database URI from them.
+      SUPERSET_DB_HOST: db
       SUPERSET_REDIS_URL: redis://superset-redis:6379/0
       SUPERSET_FRAME_ANCESTORS: ${SUPERSET_FRAME_ANCESTORS:-http://localhost:8080 http://localhost:5173}
       SUPERSET_COOKIE_SECURE: ${SUPERSET_COOKIE_SECURE:-false}
       SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
-      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-}
-      SUPERSET_EMBED_USERNAME: ${SUPERSET_EMBED_USERNAME:-}
-      SUPERSET_EMBED_PASSWORD: ${SUPERSET_EMBED_PASSWORD:-}
+    volumes:
+      - bi:/bi:ro
     ports:
       - "8088:8088"
     healthcheck:
@@ -142,6 +165,25 @@ services:
       timeout: 5s
       retries: 20
       start_period: 60s
+
+  # Dashboards as code: creates or updates every dashboard in tools/superset-provision/dashboards on each `up`, then
+  # writes their ids to /bi/dashboards.json, which the API picks up without a restart.
+  superset-provision:
+    image: node:22-alpine
+    depends_on:
+      superset:
+        condition: service_healthy
+    environment:
+      SUPERSET_URL: http://superset:8088
+      SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
+      SUPERSET_FRAME_ANCESTORS: ${SUPERSET_FRAME_ANCESTORS:-http://localhost:8080 http://localhost:5173}
+      BI_DB_NAME: ${DB_NAME:-erp}
+    volumes:
+      - bi:/bi
+      - ./tools/superset-provision:/provision:ro
+      - ./infra/docker/superset/provision.sh:/provision.sh:ro
+    entrypoint: ["sh", "/provision.sh"]
+    restart: "no"
 
   # ---- the licence authority (profile: license) ----
   #
@@ -203,6 +245,7 @@ services:
 
 volumes:
   pgdata:
+  bi:
   uploads:
   backups:
   licensedata:

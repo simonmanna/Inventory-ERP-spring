@@ -2,13 +2,29 @@
   "module": "inventory",
   "title": "Inventory",
   "slug": "erp-inventory",
+  "filters": [
+    { "name": "Branch", "dataset": "stock_on_hand", "column": "branchName" },
+    { "name": "Location", "dataset": "stock_on_hand", "column": "locationName" },
+    { "name": "Product category", "dataset": "stock_on_hand", "column": "categoryName" },
+    { "name": "Movement period", "type": "time" }
+  ],
   "charts": [
-    { "name": "Stock value", "viz": "big_number_total", "dataset": "stock_on_hand", "metric": "SUM(\"stockValue\")", "width": 4 },
-    { "name": "Products in stock", "viz": "big_number_total", "dataset": "stock_on_hand", "metric": "COUNT(DISTINCT CASE WHEN \"quantity\" > 0 THEN \"productId\" END)", "width": 4 },
-    { "name": "Stock movements", "viz": "big_number_total", "dataset": "stock_movements", "metric": "COUNT(*)", "width": 4 },
-    { "name": "Movement value by month", "viz": "bar_by_month", "dataset": "stock_movements", "time": "createdAt", "metric": "SUM(ABS(\"totalValue\"))", "width": 8 },
-    { "name": "Movements by type", "viz": "pie", "dataset": "stock_movements", "groupby": "movementType", "metric": "COUNT(*)", "width": 4 },
-    { "name": "Stock value by location", "viz": "table", "dataset": "stock_on_hand", "groupby": "locationName", "metric": "SUM(\"stockValue\")", "width": 6 },
-    { "name": "Top products by value", "viz": "table", "dataset": "stock_on_hand", "groupby": "productName", "metric": "SUM(\"stockValue\")", "width": 6 }
+    { "tab": "Stock on hand", "name": "Stock value", "viz": "kpi", "dataset": "stock_on_hand", "metric": "SUM(\"stockValue\")", "subheader": "at average cost", "width": 3 },
+    { "tab": "Stock on hand", "name": "Products in stock", "viz": "kpi", "dataset": "stock_on_hand", "metric": "COUNT(DISTINCT CASE WHEN \"quantity\" > 0 THEN \"productId\" END)", "subheader": "with a positive quantity", "width": 3 },
+    { "tab": "Stock on hand", "name": "Out of stock", "viz": "kpi", "dataset": "stock_on_hand", "metric": "COUNT(*)", "where": "\"quantity\" = 0", "subheader": "product-location pairs at zero", "width": 3 },
+    { "tab": "Stock on hand", "name": "Negative stock", "viz": "kpi", "dataset": "stock_on_hand", "metric": "COUNT(*)", "where": "\"quantity\" < 0", "subheader": "pairs below zero: check", "width": 3 },
+    { "tab": "Stock on hand", "name": "Stock value by category and product", "viz": "treemap", "dataset": "stock_on_hand", "x": ["categoryName", "productName"], "metric": "SUM(\"stockValue\")", "where": "\"stockValue\" > 0", "limit": 80, "width": 8, "height": 60 },
+    { "tab": "Stock on hand", "name": "Stock value by location", "viz": "donut", "dataset": "stock_on_hand", "x": "locationName", "metric": "SUM(\"stockValue\")", "where": "\"stockValue\" > 0", "width": 4, "height": 60 },
+    { "tab": "Stock on hand", "name": "Top products by value", "viz": "bar", "dataset": "stock_on_hand", "x": "productName", "metric": "SUM(\"stockValue\")", "limit": 12, "width": 6 },
+    { "tab": "Stock on hand", "name": "Category by location", "viz": "heatmap", "dataset": "stock_on_hand", "x": "locationName", "y": "categoryName", "metric": "SUM(\"stockValue\")", "where": "\"stockValue\" > 0", "width": 6 },
+    { "tab": "Stock on hand", "name": "Stock list", "viz": "table", "dataset": "stock_on_hand", "x": ["productCode", "productName", "locationName"], "metrics": [{ "sql": "SUM(\"quantity\")", "label": "Quantity" }, { "sql": "SUM(\"stockValue\") / NULLIF(SUM(\"quantity\"), 0)", "label": "Average cost" }, { "sql": "SUM(\"stockValue\")", "label": "Value" }], "limit": 200, "search": true, "width": 12, "height": 60 },
+
+    { "tab": "Movements", "name": "Stock movements", "viz": "kpi_trend", "dataset": "stock_movements", "metric": "COUNT(*)", "width": 4 },
+    { "tab": "Movements", "name": "Value received", "viz": "kpi_trend", "dataset": "stock_movements", "metric": "SUM(CASE WHEN \"flow\" = 'in' THEN ABS(\"totalValue\") ELSE 0 END)", "width": 4 },
+    { "tab": "Movements", "name": "Value issued", "viz": "kpi_trend", "dataset": "stock_movements", "metric": "SUM(CASE WHEN \"flow\" = 'out' THEN ABS(\"totalValue\") ELSE 0 END)", "width": 4 },
+    { "tab": "Movements", "name": "Stock in and out by month", "viz": "bar_time", "dataset": "stock_movements", "metrics": [{ "sql": "SUM(CASE WHEN \"flow\" = 'in' THEN ABS(\"totalValue\") ELSE 0 END)", "label": "In" }, { "sql": "SUM(CASE WHEN \"flow\" = 'out' THEN ABS(\"totalValue\") ELSE 0 END)", "label": "Out" }], "width": 8 },
+    { "tab": "Movements", "name": "Movements by type", "viz": "donut", "dataset": "stock_movements", "x": "movementType", "metric": "COUNT(*)", "width": 4 },
+    { "tab": "Movements", "name": "Fastest moving products", "viz": "bar", "dataset": "stock_movements", "x": "productName", "metric": "SUM(-\"quantityChange\")", "where": "\"flow\" = 'out'", "limit": 12, "width": 6 },
+    { "tab": "Movements", "name": "Movement value by type and month", "viz": "pivot", "dataset": "stock_movements", "rows": "movementType", "cols": { "sql": "to_char(\"createdAt\", 'YYYY-MM')", "label": "Month" }, "metric": "SUM(ABS(\"totalValue\"))", "width": 6 }
   ]
 }

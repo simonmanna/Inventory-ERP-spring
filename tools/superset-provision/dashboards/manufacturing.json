@@ -2,16 +2,25 @@
   "module": "manufacturing",
   "title": "Manufacturing",
   "slug": "erp-manufacturing",
+  "filters": [
+    { "name": "Completed in", "type": "time" },
+    { "name": "Branch", "dataset": "production_orders", "column": "branchName" },
+    { "name": "Product", "dataset": "production_orders", "column": "productName" }
+  ],
   "charts": [
-    { "name": "Orders completed", "viz": "big_number_total", "dataset": "production_orders", "metric": "COUNT(*)", "where": "status = 'completed'", "width": 3 },
-    { "name": "Production cost", "viz": "big_number_total", "dataset": "production_orders", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 3 },
-    { "name": "Average yield %", "viz": "big_number_total", "dataset": "production_orders", "metric": "AVG(\"yieldPercent\")", "where": "status = 'completed'", "width": 3 },
-    { "name": "Orders in progress", "viz": "big_number_total", "dataset": "production_orders", "metric": "COUNT(*)", "where": "status IN ('confirmed', 'in_progress', 'qc_hold')", "width": 3 },
-    { "name": "Production cost by month", "viz": "bar_by_month", "dataset": "production_orders", "time": "completedDate", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 8 },
-    { "name": "Orders by status", "viz": "pie", "dataset": "production_orders", "groupby": "status", "metric": "COUNT(*)", "width": 4 },
-    { "name": "Output by product", "viz": "table", "dataset": "production_orders", "groupby": "productName", "metric": "SUM(\"producedQty\")", "where": "status = 'completed'", "width": 6 },
-    { "name": "Scrap by product", "viz": "table", "dataset": "production_orders", "groupby": "productName", "metric": "SUM(\"scrapQty\")", "where": "status = 'completed'", "width": 6 },
-    { "name": "Material cost by component", "viz": "table", "dataset": "production_materials", "groupby": "productName", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 6 },
-    { "name": "Variance by kind", "viz": "table", "dataset": "production_variances", "groupby": "kind", "metric": "SUM(\"amount\")", "width": 6 }
+    { "tab": "Production", "name": "Orders completed", "viz": "kpi_trend", "dataset": "production_orders", "metric": "COUNT(*)", "where": "status = 'completed'", "width": 3 },
+    { "tab": "Production", "name": "Production cost", "viz": "kpi_trend", "dataset": "production_orders", "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 3 },
+    {"tab": "Production", "name": "Average yield", "viz": "kpi", "dataset": "production_orders", "metric": "AVG(\"yieldPercent\") / 100.0", "where": "status = 'completed'", "format": ".1%", "width": 3, "subheader": "output / planned, completed orders"},
+    { "tab": "Production", "name": "Orders in progress", "viz": "kpi", "dataset": "production_orders", "metric": "COUNT(*)", "time": false, "where": "status IN ('confirmed', 'in_progress', 'qc_hold')", "subheader": "confirmed, running or on QC hold", "width": 3, "height": 30 },
+    { "tab": "Production", "name": "Production cost by month", "viz": "bar_time", "dataset": "production_orders", "metrics": [{ "sql": "SUM(\"materialCost\")", "label": "Material" }, { "sql": "SUM(\"overheadCost\")", "label": "Overhead" }], "stack": true, "where": "status = 'completed'", "width": 8 },
+    { "tab": "Production", "name": "Orders by status", "viz": "donut", "dataset": "production_orders", "x": "status", "metric": "COUNT(*)", "time": false, "width": 4 },
+    { "tab": "Production", "name": "Output by product", "viz": "bar", "dataset": "production_orders", "x": "productName", "metric": "SUM(\"producedQty\")", "where": "status = 'completed'", "width": 6 },
+    { "tab": "Production", "name": "Scrap by product", "viz": "bar", "dataset": "production_orders", "x": "productName", "metric": "SUM(\"scrapQty\")", "where": "status = 'completed'", "width": 6 },
+    { "tab": "Production", "name": "Lead time and yield by month", "viz": "line", "dataset": "production_orders", "metrics": [{ "sql": "AVG(\"leadTimeHours\")", "label": "Lead time (h)" }, { "sql": "AVG(\"yieldPercent\")", "label": "Yield %" }], "where": "status = 'completed'", "width": 12 },
+
+    { "tab": "Materials and variances", "name": "Material cost by component", "viz": "treemap", "dataset": "production_materials", "x": ["productName"], "metric": "SUM(\"totalCost\")", "where": "status = 'completed'", "width": 6 },
+    { "tab": "Materials and variances", "name": "Variance by kind", "viz": "bar", "dataset": "production_variances", "x": "kind", "metric": "SUM(\"amount\")", "width": 6 },
+    { "tab": "Materials and variances", "name": "Variance by month", "viz": "bar_time", "dataset": "production_variances", "metric": "SUM(\"amount\")", "series": "kind", "width": 12 },
+    { "tab": "Materials and variances", "name": "Material usage against plan", "viz": "table", "dataset": "production_materials", "x": ["productCode", "productName", "unit"], "metrics": [{ "sql": "SUM(\"qtyPlanned\")", "label": "Planned" }, { "sql": "SUM(\"qtyConsumed\")", "label": "Consumed" }, { "sql": "SUM(\"qtyVariance\")", "label": "Variance" }, { "sql": "SUM(\"totalCost\")", "label": "Cost" }], "where": "status = 'completed'", "limit": 100, "search": true, "width": 12, "height": 60 }
   ]
 }
