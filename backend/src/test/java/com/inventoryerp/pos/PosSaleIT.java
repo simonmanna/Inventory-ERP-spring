@@ -556,7 +556,7 @@ class PosSaleIT extends ApiTestSupport {
     @DisplayName("authorization matrix covers every POS route")
     void authorizationMatrix() {
         // 219 ported Nest routes + 5 post-parity /returns routes (docs/spec/pos.md "Deviations") + the Posting Monitor
-        // abandon route (review 2026-11-17, ACR-17).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.pos")).isEqualTo(225);
+        // abandon route (review 2026-11-17, ACR-17) + POST /pos/cash-drawer/openings (LP2b, 2026-11-19).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.pos")).isEqualTo(226);
     }
 }

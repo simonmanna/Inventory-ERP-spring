@@ -268,7 +268,7 @@ class LpReconIT extends ApiTestSupport {
     void projection() {
         JsonNode r = ok(201, "POST", "/loss-prevention/projection/run", null);
         JsonNode sources = r.get("projection");
-        assertThat(sources.size()).isEqualTo(10);
+        assertThat(sources.size()).isEqualTo(11);
         sources.forEach(s -> {
             assertThat(s.get("error").isNull()).as(s.toString()).isTrue();
             assertThat(s.get("rejected").asInt()).as(s.toString()).isZero();

@@ -214,7 +214,7 @@ events and configuration.
 3. LP1 — camera platform.
 4. LP3 — bar intelligence (measurement adapters, optional camera assistance).
 5. LP4 — restaurant and cafe staged flow.
-6. LP2 — cashier vision (and the deferred no-sale event, if still wanted).
+6. LP2 — cashier vision (and the deferred no-sale event, if still wanted). The no-sale event was added as LP2b (owner decision 2026-11-19): `CashDrawerOpening`, projected as `cash_drawer.opened`.
 7. LP5 — retail checkout count.
 8. LP6, LP7 — operations intelligence, activity recognition research.
 

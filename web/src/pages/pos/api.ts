@@ -269,6 +269,18 @@ export function useRecordMovement() {
   });
 }
 
+/** A cash-drawer opening (LP2b). "No sale" opens the drawer without a sale; loss prevention counts these. */
+export function useRecordDrawerOpening() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: { sessionId?: string; cashRegisterId?: string; reason: 'sale' | 'refund' | 'cash_movement' | 'no_sale' | 'float' | 'other'; note?: string }) =>
+      submitCashOperation('/pos/cash-drawer/openings', body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['cash-session'] });
+    },
+  });
+}
+
 export function useSessionMovements(sessionId?: string) {
   return useQuery({
     queryKey: ['cash-session', 'movements', sessionId],

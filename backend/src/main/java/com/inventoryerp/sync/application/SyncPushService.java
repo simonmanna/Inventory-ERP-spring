@@ -25,6 +25,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.kernel.web.JsonConfig;
 import com.inventoryerp.pos.application.KitchenWaste;
+import com.inventoryerp.pos.application.PosCashDrawerService;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.pos.application.PosInvoiceService;
 import com.inventoryerp.pos.application.PosOverridesService;
@@ -96,6 +97,7 @@ public class SyncPushService {
     private final ExpensesService expenses;
     private final PosOverridesService overrides;
     private final KitchenWaste kitchenWaste;
+    private final PosCashDrawerService cashDrawer;
     private final AuditService audit;
     private final org.springframework.transaction.support.TransactionTemplate tx;
 
@@ -104,7 +106,8 @@ public class SyncPushService {
             CashSessionService cashSessions, CashRegisterService cashRegisters, ProductService products,
             DirectStockService directStock, InventoryCountService counts, ExpensesService expenses,
             org.springframework.transaction.PlatformTransactionManager txm, PosOverridesService overrides,
-            KitchenWaste kitchenWaste, AuditService audit) {
+            KitchenWaste kitchenWaste, AuditService audit, PosCashDrawerService cashDrawer) {
+        this.cashDrawer = cashDrawer;
         this.overrides = overrides;
         this.kitchenWaste = kitchenWaste;
         this.audit = audit;
@@ -358,6 +361,14 @@ public class SyncPushService {
                                 occurredAt, str(payload.get("approvedById")), str(payload.get("approverEmail")),
                                 str(payload.get("managerPin"))));
                 m.put("id", movement.get("id"));
+            }
+            case "cash_drawer.open" -> {
+                // LP2b: a drawer opening made at the till (a no-sale opening needs the actor's own open shift).
+                Map<String, Object> opening = cashDrawer.record(new PosCashDrawerService.OpeningInput(
+                        str(payload.get("sessionId")), str(payload.get("cashRegisterId")), str(payload.get("reason")),
+                        str(payload.get("note")), str(payload.get("referenceType")), str(payload.get("referenceId")),
+                        occurredAt));
+                m.put("id", opening.get("id"));
             }
             case "sale.checkout" -> {
                 Map<String, Object> checkout = new LinkedHashMap<>(payload);

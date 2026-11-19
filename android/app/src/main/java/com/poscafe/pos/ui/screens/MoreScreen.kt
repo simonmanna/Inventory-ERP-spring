@@ -113,6 +113,16 @@ class MoreViewModel @Inject constructor(
         }
     }
 
+    /** "No sale": record a drawer opening without a sale on the open shift (LP2b). */
+    fun recordNoSale(note: String?, onDone: () -> Unit) {
+        val user = auth.current ?: return
+        viewModelScope.launch {
+            runCatching { sessions.recordNoSale(user.userId, note) }
+                .onFailure { dialogError = it.message }
+                .onSuccess { dialogError = null; onDone() }
+        }
+    }
+
     fun recordMovement(type: String, amount: Double, reason: String, counterpartId: String?, managerPin: String?, onDone: () -> Unit) {
         val user = auth.current ?: return
         viewModelScope.launch {
@@ -203,6 +213,7 @@ fun MoreScreen(
     var showOpen by remember { mutableStateOf(false) }
     var showClose by remember { mutableStateOf(false) }
     var showMovement by remember { mutableStateOf<String?>(null) } // "pay_in" | "pay_out"
+    var showNoSale by remember { mutableStateOf(false) }
     var showChangePin by remember { mutableStateOf(false) }
     var showServer by remember { mutableStateOf(false) }
 
@@ -255,6 +266,7 @@ fun MoreScreen(
                         SecondaryButton("Cash in", { vm.loadCashContext(); showMovement = "pay_in" }, Modifier.weight(1f), height = 48.dp)
                         SecondaryButton("Cash out", { vm.loadCashContext(); showMovement = "pay_out" }, Modifier.weight(1f), height = 48.dp)
                     }
+                    SecondaryButton("No sale (open drawer)", { vm.loadCashContext(); showNoSale = true }, Modifier.fillMaxWidth(), height = 48.dp)
                     PrimaryButton("Close session", { vm.loadCashContext(); showClose = true }, Modifier.fillMaxWidth(), height = 48.dp)
                 } else {
                     Text(
@@ -364,6 +376,14 @@ fun MoreScreen(
             error = vm.dialogError,
             onSave = { amount, reason, counterpart, pin -> vm.recordMovement(type, amount, reason, counterpart, pin) { showMovement = null } },
             onDismiss = { showMovement = null },
+        )
+    }
+
+    if (showNoSale) {
+        NoSaleDialog(
+            error = vm.dialogError,
+            onSave = { note -> vm.recordNoSale(note) { showNoSale = false } },
+            onDismiss = { showNoSale = false },
         )
     }
 

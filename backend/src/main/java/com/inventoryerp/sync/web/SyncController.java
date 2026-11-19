@@ -72,7 +72,7 @@ public class SyncController {
                 "accompanimentGroup.delete", "tax.upsert", "tax.delete", "product.upsert", "product.delete",
                 "productCategory.upsert", "productCategory.delete", "cashRegister.upsert", "cashRegister.delete",
                 "posTable.upsert", "posTable.delete", "staff.pinChange", "message.send", "message.markRead",
-                "stock.in", "stock.out", "stock.count", "expense.create", "kitchen.void"}) String type,
+                "stock.in", "stock.out", "stock.count", "expense.create", "kitchen.void", "cash_drawer.open"}) String type,
             @NotNull(message = STR) String actorUserId,
             @NotNull(message = "must be a valid ISO 8601 date string")
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String occurredAt,
@@ -85,7 +85,8 @@ public class SyncController {
             + " accompanimentGroup.upsert, accompanimentGroup.delete, tax.upsert, tax.delete, product.upsert,"
             + " product.delete, productCategory.upsert, productCategory.delete, cashRegister.upsert, cashRegister.delete,"
             + " posTable.upsert, posTable.delete, staff.pinChange, message.send, message.markRead, stock.in, stock.out,"
-            + " stock.count, expense.create, kitchen.void"; // kitchen.void: Phase I6 (additive)
+            + " stock.count, expense.create, kitchen.void, cash_drawer.open"; // kitchen.void: Phase I6, cash_drawer.open:
+    // LP2b (both additive)
 
     /** {@code SyncPushDto}. */
     public record SyncPushRequest(

@@ -181,6 +181,25 @@ Post-parity additions (no Nest counterpart, explicitly labelled):
   The 5 routes live in the `pos` package, so the `PosSaleIT` authorization matrix covers 224 routes
   (219 ported + 5 returns).
 
+- **Cash-drawer openings** (LP2b, owner decision 2026-11-19; ADR-S077). `POST /pos/cash-drawer/openings`,
+  `cash_session:open` (the permission of `POST /cash-sessions/movement`), `Idempotency-Key` required, answers 200 with
+  the stored row. Body `{ reason, sessionId?, cashRegisterId?, note?, referenceType?, referenceId?, occurredAt? }`:
+  `reason` is one of `sale`, `refund`, `cash_movement`, `no_sale`, `float`, `other`; `note` at most 500 characters;
+  `referenceType` (`invoice`, `refund`, `cash_movement`) and `referenceId` name the sale, refund or movement the opening
+  belongs to and come together ("referenceType and referenceId are given together"; an unknown one answers 404 "The
+  referenced invoice was not found"). The till is the session's register, else `cashRegisterId`, else the caller's one
+  open shift ("No open cash session" 404; "You have shifts open on more than one register; choose the shift" 400).
+  A `no_sale` needs the caller's own open shift on that till: "No open cash session" (404), "Session is not open"
+  (400), "This cash session belongs to a different cashier" (403), "No open session on this register" (404). Any other
+  reason is linked to the shift open on the till when there is one, and may be recorded with none when
+  `cashRegisterId` is given ("Cash register not found" 404 for another organization's till). Each opening is one
+  append-only `CashDrawerOpening` row (V578, tenant policy), audited (`CashDrawerOpening create`), and announced on
+  commit as `pos.cash_drawer.opened` (`organizationId`, `openingId`, `cashRegisterId`, `cashSessionId`, `userId`,
+  `reason`). Offline tills push the same thing as the sync op `cash_drawer.open` (`docs/spec/sync.md`). Loss
+  prevention projects every row as `cash_drawer.opened` (`docs/spec/loss-prevention.md`). Web: "No sale" on the cash
+  register page while a shift is open; Android: "No sale (open drawer)" on the More screen. Test `PosCashDrawerIT`.
+  The `PosSaleIT` authorization matrix counts 226 routes.
+
 Post-parity fixes (found in the 2026-10-24 web walkthrough, explicitly labelled):
 
 - `POST /pos/tabs/:tableId/split/equal` works: the bills are written with split type `even` (Nest wrote `'equal'`,
