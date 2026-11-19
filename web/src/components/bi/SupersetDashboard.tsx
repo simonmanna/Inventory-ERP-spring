@@ -32,6 +32,9 @@ export function SupersetDashboard({ module }: { module: string }) {
           return (await guestToken(module)).token;
         },
         dashboardUiConfig: { hideTitle: true, filters: { expanded: false } },
+        // The web app's Referrer-Policy is no-referrer, which the iframe would inherit; Superset checks the embedding
+        // page's origin against the dashboard's allowed domains, so send the origin only (never the path).
+        referrerPolicy: 'strict-origin-when-cross-origin',
       });
       if (cancelled) dashboard.unmount();
       else unmount = () => dashboard.unmount();
