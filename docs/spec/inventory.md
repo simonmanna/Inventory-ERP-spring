@@ -57,7 +57,8 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 - [x] Services: rules above + verbatim errors + same transaction/locking boundaries
 - [x] Controllers: same paths/verbs/status/permissions/response shapes
 - [x] Events published/consumed as in Nest
-- [x] Jest specs ported; integration tests; authz + tenant isolation tests
+- [x] Jest specs ported; integration tests; authz + tenant isolation tests — see "Jest specs" under Status for what
+  is ported where and what is deliberately not
 - [ ] Parity scenarios `contract-tests/scenarios/inventory-*.json` — zero unexplained diffs
 - [ ] Web screens for this module work against Spring (no console errors)
 - [x] `docs/PORT_STATUS.md` updated
@@ -177,8 +178,10 @@ has the same gaps:
     the GL side keeps `postingDate`. Daily job `inventory-gl-tieout-check` (02:40 UTC, ShedLock, per organisation with
     stock) runs the same tie-out; settings `inventory.glTieOut.enabled` (default on) and `inventory.glTieOut.tolerance`
     (default 1). A variance above tolerance opens one `InventoryException` (kind `gl_tieout_variance`, Posting Monitor;
-    no second one while it is open) and an in-app alert *Inventory does not tie to the GL*. Note: an open exception
-    in a period blocks closing it, like the stock-posting exceptions.
+    no second one while it is open) and an in-app alert *Inventory does not tie to the GL*. The open variance shows on
+    the period-close checklist as its own advisory item `inventory_gl_tieout` (*Inventory ties to the GL*), like the
+    other reconciliation items; it does not block `POST /fiscal-periods/:id/close`, and the blocking
+    `inventory_exceptions` check / close guard (sale lines whose stock or COGS was not posted) leave it out.
 21. **Register reports in SQL.** `GET /inventory/reports/register/:kind`: classification, filters, breakdowns, ordering
     and the 5000-row cap (`truncated`) run in the database (no multi-year ledger load). Same-timestamp lines are
     ordered by id; source-document lookups take one match.
@@ -249,15 +252,37 @@ cache still considered it present (500 on the next `nextval`).
 
 ## Status
 
-P3a: 69/69 routes. Tests: `InventoryIT` (15: locations, items, ledger, stock-out / waste / adjustment / transfer
-document flows incl. approve + reverse, counts, reservations + ATP, posting rules, reports, period lock,
-idempotent replay, authorization matrix = 69 routes, tenant isolation), `InventoryUnitTest` (ports of
-`cost-resolver.spec.ts`, `stock-posting.service.spec.ts`, decimal formatting). Parity scenario:
-`contract-tests/scenarios/inventory-stock.json`.
+P3a: 69/69 routes. Tests: `InventoryIT` (locations, items, ledger, document flows incl. approve + reverse, transit,
+counts incl. count-time posting / approval / lots / serials / scope, reservations + ATP, posting rules, reports, period
+lock, idempotency, authorization matrix = 69 routes, tenant isolation), `InventoryUnitTest`, `StockConcurrencyIT`,
+`InventoryHardeningIT`, `InventoryReadsIT`, `InventoryRegisterIT`, `InventoryValuationReportIT`,
+`InventoryCostPolicyIT`, `WarehouseIT`, `StockReservationOverviewIT`, `ReplenishmentIT`, `ReplenishmentCalculatorTest`,
+and the audit ports in `inventory/audit/` (below). Parity scenario: `contract-tests/scenarios/inventory-stock.json`.
 
-Deferred to the phase that owns the other side of the flow: the `test/integration/audit/inv-*`,
-`procurement-flow`, `pos-*` and `sync-*` Jest suites listed in the generated spec drive POS / procurement /
-sync routes (P4–P6) and are ported there.
+Jest specs (generated list):
+
+- Ported here: `cost-resolver` + `stock-posting.service` → `InventoryUnitTest`. The `test/integration/audit/inv-*`
+  suites → `inventory/audit/*IT`, each on its own isolated organisation (seeded chart, two warehouses) so GL balances
+  and the tie-out are exact: `InventoryAuditConcurrencyIT` (inv-audit-concurrency; INV-002 of inv-p0; P0-3 and P2 of
+  inv-readiness), `InventoryAuditConservationIT` (inv-audit-conservation; INV-010/011/013 of inv-p2; N1/N2 of inv-p1;
+  P1-04 of inv-audit3; final whole-org check: Σ ledger = on-hand, open lots = max(0, on-hand), unbroken chain, tie-out
+  variance 0), `InventoryAuditCrashBoundaryIT` (inv-audit-crash-boundaries H3/H8/D-E, inv-audit-period-lock H9, the
+  drain cases of inv-audit-pos-lifecycle on hand-built jobs, plus mid-transaction crashes injected with a schema-owner
+  trigger into stock-out / transfer / direct stock-in GL / count submit: nothing half-commits, the retry posts once),
+  `InventoryAuditTenancyLocationIT` (inv-audit-tenancy-location, incl. an RLS probe), `InventoryAuditRemediationIT`
+  (P1-02/P1-03/P2-03/P2-04 of inv-audit3; INV-008/N5 of inv-p1; P1-1 of inv-readiness). Where a deviation changed the
+  asserted behaviour the test follows the deviation (P0-3 runs in strict mode, deviation 7; concurrent count submits
+  each carry their own key, deviation 16).
+- Covered by existing tests instead of a second port: inv-audit-purchasing H1/H18, purchase-bill-matching,
+  supplier-payment-withholding, INV-003 (inv-p0), INV-010 GRN reversal (inv-p2), N3 / INV-012 (inv-p1), P0-2 / P1-3
+  (inv-readiness), P2-02 landed cost (inv-audit3) → `procurement/ProcurementIT`; crash C/F and H8 job state →
+  `pos/PosStockPostingIT` (`reclaimRace`, `recipeLessMenuItem`); N4 adjustment drift → `InventoryIT.documents`; P1-2
+  approver PIN and P1-6 duplicate serial → `InventoryIT.directStockGuards` / `serials`; `stock-posting-job` →
+  `PosStockPostingIT`; `pos-offline-inventory-replay` → `sync/SyncInventoryReplayIT`; `sync-cash-inventory` →
+  `sync/SyncIT`; `manufacturing-flow` → `manufacturing/ManufacturingIT`; lakeview simulations → `pos/PosLakeviewSimIT`
+  (reduced); `inventory-engine` → `InventoryIT` + `StockConcurrencyIT` (scenario-equivalent, not line by line).
+- Not ported (no Java port yet; they drive POS cash / refund routes, not inventory ones): `pos-cash-flow-adversarial`,
+  `pos-cash-flow-day`, and inv-readiness P0-1 (refund restock of sale-unit / recipe-unit quantities).
 
 ## ADR-S007 extensions — configurable costing policy (roadmap 1.8)
 
@@ -276,15 +301,17 @@ stock at standard with purchase price variance (account 5905); activation revalu
 
 ## Locations and branches (BR-1, ADR-S017)
 
-Status: built, not compiled or run. `InventoryLocation.branchId` (V62), accepted on create and update. Reads and stock
+Status: built and tested — `core/UserDataScopeIT` (no grant = unchanged access, branch / location grants, reports
+outside the scope refused), `costing/DistributionBranchScenarioIT` (branch transfer with inter-branch clearing), count
+scope in `InventoryIT.countScope`. `InventoryLocation.branchId` (V62), accepted on create and update. Reads and stock
 documents go through `LocationScope`; `StockService` does not.
 
-## INV-1 reservation screen (built, unverified)
+## INV-1 reservation screen (built, tested: `StockReservationOverviewIT`)
 
 Additive `GET /inventory/reservations/overview` (`StockReservationService.overview`, paged, with names and on-hand). The
 Nest list route is unchanged and POS does not call the new method. Screen: `/inventory/reservations`.
 
-## INV-3 replenishment (built, unverified)
+## INV-3 replenishment (built, tested: `ReplenishmentIT`, `ReplenishmentCalculatorTest`, `manufacturing/ReplenishmentMrpIT`)
 
 `ReplenishmentController` (8 routes on `/inventory/replenishment`: rules CRUD, `alerts`, `alerts/{id}/dismiss`, `scan`,
 `requisition`), `ReplenishmentService`, `ReplenishmentCalculator`, `ReplenishmentScanJob` (hourly), migration V97, permission

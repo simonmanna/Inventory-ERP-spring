@@ -119,6 +119,8 @@ Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md
    `GET /reports/inventory/valuation?asOf=` date stock ledger rows by their source's inventory journal posting date
    (else `createdAt`); job `inventory-gl-tieout-check` (daily 02:40 UTC) raises an `InventoryException`
    (`gl_tieout_variance`) + in-app alert above `inventory.glTieOut.tolerance` (setting `inventory.glTieOut.enabled`).
+   The open variance is the advisory close-checklist item `inventory_gl_tieout`; the period-close guard on open
+   inventory exceptions (Nest message about sale lines) and the blocking `inventory_exceptions` check leave it out.
 
 Same as Nest, kept on purpose:
 

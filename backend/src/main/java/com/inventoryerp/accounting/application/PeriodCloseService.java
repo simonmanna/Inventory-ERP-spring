@@ -122,9 +122,12 @@ public class PeriodCloseService {
                     + " pending inventory mutation(s) (" + stockOuts + " stock-outs, " + waste + " waste, " + adjustments
                     + " adjustments, " + transfers + " transfers). Post or cancel them before closing.");
         }
+        // A GL tie-out variance (daily tie-out job) is not a sale line: it shows on the close checklist as its own
+        // advisory item and does not block the close.
         long openExceptions = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
-                        + " AND status::text = 'open' AND \"createdAt\" >= ? AND \"createdAt\" <= ?",
-                organizationId, period.startDate(), period.endDate());
+                        + " AND status::text = 'open' AND kind IS DISTINCT FROM ? AND \"createdAt\" >= ?"
+                        + " AND \"createdAt\" <= ?",
+                organizationId, InventoryTieOutMonitor.KIND, period.startDate(), period.endDate());
         if (openExceptions > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + openExceptions
                     + " open inventory exception(s) in this period — sale lines whose stock/COGS was not posted."

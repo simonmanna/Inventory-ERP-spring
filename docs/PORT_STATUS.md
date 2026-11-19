@@ -85,6 +85,21 @@ stock events only after commit, cost policy / standard activation hourly on the 
 `InventoryHardeningIT`, `InventoryRegisterIT`, `InventoryValuationReportIT`, `DetachedWritesTest`, `PosStockPostingIT`,
 `InventoryIT`, `ReplenishmentIT`.
 
+**Inventory audit suites ported (`phase/inv-hardening`):** the Nest `test/integration/audit/inv-*` suites run against
+Spring in `inventory/audit/` on isolated organisations — concurrency (INV-024/025, INV-002, last unit, count submits),
+conservation (classified movements, valuation = GL, reversals, transit, whole-org quant invariants, tie-out variance 0),
+crash boundaries (posting key replay, failing drain line, job-completion crash, injected mid-document / GL / count
+failures: nothing half-commits), period lock (H9), POS drain (INV-004/005/028/25), tenancy + POS location (RLS probe,
+H2, H10), engine remediations (skip_expired, serials on base quantity, count modes, stock health, FIFO valuation) —
+`InventoryAuditConcurrencyIT`, `InventoryAuditConservationIT`, `InventoryAuditCrashBoundaryIT`,
+`InventoryAuditTenancyLocationIT`, `InventoryAuditRemediationIT`; what is covered elsewhere or not ported:
+[inventory → Status](spec/inventory.md#status). A tie-out variance is now its own advisory close-checklist item
+(`inventory_gl_tieout`) and no longer blocks a period close — `PeriodCloseChecklistIT`.
+
+**Posting integrity (ACC-8 tests, salvaged from `phase/acc-hardening`):** the VAT-period lock holds for invoice
+cancellations (reversed today), explicit back-dated reversals and drafts approved after settlement; concurrent
+reversals of one entry yield exactly one — `Acc8PostingIntegrityIT`.
+
 **Sales / variant / UOM / inventory integrity (Phase I, [audit](audits/2026-11-15-sales-variant-uom-inventory-audit.md); not counted above):**
 
 | Phase | Scope | Status |

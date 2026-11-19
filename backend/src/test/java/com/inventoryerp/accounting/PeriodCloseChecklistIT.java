@@ -3,6 +3,7 @@ package com.inventoryerp.accounting;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.accounting.application.InventoryTieOutMonitor;
 import com.inventoryerp.accounting.web.PeriodCloseController;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -95,6 +96,57 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
                 .isEqualTo("closed");
         assertThat(as("PUT", "/fiscal-periods/" + closed + "/close-checklist/bank_reconciled", Map.of("signed", true))
                 .status()).isEqualTo(400);
+    }
+
+    String exception(String org, String kind, String createdAt) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"InventoryException\" (id, \"organizationId\", description, quantity, kind, reason, status,"
+                + " \"createdAt\") VALUES (?, ?, 'test', 0, ?, 'test', 'open', ?::timestamp)")
+                .params(id, org, kind, createdAt).update();
+        return id;
+    }
+
+    @Test
+    @DisplayName("a GL tie-out variance is its own advisory item and does not block the close; sale-line exceptions do")
+    void tieOutVarianceIsAdvisory() {
+        // The other organisation of this suite: nothing else (shifts, queued jobs, pending stock documents) blocks it.
+        String period = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status,"
+                + " \"updatedAt\") VALUES (?, ?, 'Tie-out 2008-06', '2008-06-01', '2008-06-30 23:59:59', 'open', now())")
+                .params(period, otherOrg).update();
+        String tieOut = exception(otherOrg, InventoryTieOutMonitor.KIND, "2008-06-03 02:40:00");
+        String path = "/fiscal-periods/" + period + "/close-checklist";
+        JsonNode checklist = call("GET", path, null, otherToken).body();
+        JsonNode variance = check(checklist, "inventory_gl_tieout");
+        assertThat(variance.get("count").asInt()).isEqualTo(1);
+        assertThat(variance.get("ok").asBoolean()).isFalse();
+        assertThat(variance.get("blocking").asBoolean()).isFalse();
+        assertThat(variance.get("label").asString()).contains("ties to the GL");
+        assertThat(check(checklist, "inventory_exceptions").get("count").asInt()).isZero();
+        assertThat(checklist.get("readyToClose").asBoolean()).isTrue();
+
+        // The close passes the inventory-exception gate (it stops later: nothing to close in an empty period).
+        Res close = call("POST", "/fiscal-periods/" + period + "/close", null, Map.of("Authorization", "Bearer " + otherToken,
+                "Idempotency-Key", UUID.randomUUID().toString()));
+        assertThat(close.status()).isEqualTo(400);
+        assertThat(close.body().get("message").asString()).startsWith("Nothing to close for 'Tie-out 2008-06'");
+
+        // A sale-line exception still blocks, with the sale-line message; the tie-out item is unchanged.
+        exception(otherOrg, "missing_recipe", "2008-06-04 10:00:00");
+        JsonNode blocked = call("GET", path, null, otherToken).body();
+        assertThat(check(blocked, "inventory_exceptions").get("count").asInt()).isEqualTo(1);
+        assertThat(check(blocked, "inventory_gl_tieout").get("count").asInt()).isEqualTo(1);
+        assertThat(blocked.get("readyToClose").asBoolean()).isFalse();
+        Res refused = call("POST", "/fiscal-periods/" + period + "/close", null, Map.of("Authorization", "Bearer " + otherToken,
+                "Idempotency-Key", UUID.randomUUID().toString()));
+        assertThat(refused.body().get("message").asString()).isEqualTo("Cannot close 'Tie-out 2008-06': 1 open inventory"
+                + " exception(s) in this period — sale lines whose stock/COGS was not posted. Resolve them in the Posting"
+                + " Monitor before closing.");
+
+        // Resolving the variance clears the item.
+        jdbc.sql("UPDATE \"InventoryException\" SET status = 'resolved' WHERE id = ?").param(tieOut).update();
+        assertThat(check(call("GET", path, null, otherToken).body(), "inventory_gl_tieout").get("ok").asBoolean())
+                .isTrue();
     }
 
     @Test

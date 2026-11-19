@@ -93,8 +93,15 @@ public class PeriodCloseChecklistService {
         checks.add(check("inventory_mutations", "No pending stock documents", true, mutations));
         checks.add(check("inventory_exceptions", "No open inventory exceptions", true,
                 count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text = "
-                        + "'open'"
-                        + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, startAt, endAt)));
+                        + "'open' AND kind IS DISTINCT FROM ?"
+                        + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, InventoryTieOutMonitor.KIND,
+                        startAt, endAt)));
+        // The daily inventory / GL tie-out check (deviation 20 of docs/spec/inventory.md) parks a variance as an open
+        // InventoryException of its own kind. A reconciliation finding, so advisory like the bank and landed-cost
+        // ones: raised since the period started (the run after the last day lands in the next period) and still open.
+        checks.add(check("inventory_gl_tieout", "Inventory ties to the GL (no open tie-out variance)", false,
+                count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND kind = ? AND"
+                        + " status::text = 'open' AND \"createdAt\" >= ?", org, InventoryTieOutMonitor.KIND, startAt)));
         checks.add(check("draft_journals", "No draft journal entries", false,
                 count("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND status::text = 'draft'"
                         + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, startAt, endAt)));

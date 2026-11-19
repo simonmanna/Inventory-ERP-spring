@@ -17,6 +17,7 @@ const LABELS: Record<string, string> = {
   stock_posting: tx('Stock postings finished'),
   inventory_mutations: tx('No pending stock documents'),
   inventory_exceptions: tx('No open inventory exceptions'),
+  inventory_gl_tieout: tx('Inventory ties to the GL (no open tie-out variance)'),
   draft_journals: tx('No draft journal entries'),
   draft_invoices: tx('No draft sales invoices'),
   draft_bills: tx('No draft vendor bills'),
