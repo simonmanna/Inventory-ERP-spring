@@ -191,6 +191,13 @@ Deposit receipt: `GET /customer-deposits/:id/pdf` (`payment:read`) returns an A5
 method and reference, the amount received, the applied / refunded / available balance, the history (applications,
 refunds, reversals struck through), who received it, and a "not a tax invoice" note. A void deposit prints as
 "DEPOSIT RECEIPT — VOID". There is a Print button on the deposits list, the deposit detail and the sales-order billing panel.
+Deposit receipt header (Sales settings → Deposit receipt, `SalesSettings.depositReceiptLayout`, JSONB, V582): title,
+business name (blank = company settings name, not the POS receipt header), detail lines (blank = company settings
+address / phone / e-mail / TIN), logo on/off, detail lines on/off, received-by/signature line on/off, footer note
+(blank = none; default is the "not a tax invoice" note). `PUT /sales/settings` validates it (unknown keys, booleans,
+lengths) and merges partial updates. `POST /sales/settings/deposit-receipt/preview` (`sales:configure`) renders the
+unsaved layout on the latest deposit, or on a sample. Invoicing renders the receipt through the `DepositReceiptBranding`
+interface, which the sales module implements, so invoicing does not depend on sales.
 Customer statement (`StatementService`, AR side): deposits sit on the customer-deposit liability, not on AR, so the AR
 lines and closing balance are unchanged. The statement adds a `deposits` section built from the deposit subledger:
 `openingBalance`, `lines` (each with `date`, `reference` = deposit number, `description`, `received`, `used` and

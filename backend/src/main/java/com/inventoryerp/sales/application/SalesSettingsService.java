@@ -54,7 +54,16 @@ public class SalesSettingsService {
         db.update("INSERT INTO \"SalesSettings\" (\"organizationId\") VALUES (?) ON CONFLICT DO NOTHING", org());
         Map<String, Object> row = db.row("SELECT * FROM \"SalesSettings\" WHERE \"organizationId\" = ?", org());
         row.put("quoteLayout", QuoteLayout.of(row.get("quoteLayout")).toMap());
+        row.put("depositReceiptLayout", DepositReceiptLayout.of(row.get("depositReceiptLayout")).toMap());
         return row;
+    }
+
+    /** How customer deposit receipts are headed (defaults filled in); read-only. */
+    @Transactional(readOnly = true)
+    public DepositReceiptLayout depositReceiptLayout() {
+        Map<String, Object> r = db.row("SELECT \"depositReceiptLayout\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?",
+                org());
+        return DepositReceiptLayout.of(r == null ? null : r.get("depositReceiptLayout"));
     }
 
     /** How quotations print (defaults filled in); read-only. */
@@ -168,6 +177,12 @@ public class SalesSettingsService {
         if (in.containsKey("quoteLayout")) {
             QuoteLayout layout = QuoteLayout.validate(in.get("quoteLayout"), QuoteLayout.of(before.get("quoteLayout")));
             sets.add("\"quoteLayout\" = ?");
+            params.add(SalesDb.jsonb(layout.toMap()));
+        }
+        if (in.containsKey("depositReceiptLayout")) {
+            DepositReceiptLayout layout = DepositReceiptLayout.validate(in.get("depositReceiptLayout"),
+                    DepositReceiptLayout.of(before.get("depositReceiptLayout")));
+            sets.add("\"depositReceiptLayout\" = ?");
             params.add(SalesDb.jsonb(layout.toMap()));
         }
         if (in.containsKey("defaultQuoteTerms")) {

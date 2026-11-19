@@ -163,6 +163,54 @@ class SalesBillingIT extends ApiTestSupport {
         assertThat(call("GET", "/customer-deposits/" + id + "/pdf", null, otherToken).status()).isEqualTo(404);
     }
 
+    static String pdfText(byte[] pdf) throws Exception {
+        return new org.openpdf.text.pdf.parser.PdfTextExtractor(new org.openpdf.text.pdf.PdfReader(pdf)).getTextFromPage(1);
+    }
+
+    @Test
+    @DisplayName("Deposit receipt layout in Sales settings: custom header, preview of unsaved layout, validation")
+    void depositReceiptLayout() throws Exception {
+        String c = customer();
+        String id = money("POST", "/customer-deposits", Map.of("partnerId", c, "amount", 1_000_000), 200).get("id")
+                .asString();
+        try {
+            JsonNode s = ok(200, "GET", "/sales/settings", null).get("depositReceiptLayout");
+            assertThat(s.get("title").asString()).isEqualTo("DEPOSIT RECEIPT");
+            assertThat(s.get("showSignature").asBoolean()).isTrue();
+            Map<String, Object> layout = new LinkedHashMap<>();
+            layout.put("title", "ADVANCE PAYMENT RECEIPT");
+            layout.put("companyName", "Granite Quarries " + sfx);
+            layout.put("detailsText", "Plot 9 Jinja Road\n\nTIN: 1009990001");
+            layout.put("showSignature", false);
+            layout.put("footerText", "");
+            ok(200, "PUT", "/sales/settings", Map.of("depositReceiptLayout", layout));
+            String text = pdfText(downloadBytes("/customer-deposits/" + id + "/pdf").body());
+            assertThat(text).contains("Granite Quarries " + sfx, "Plot 9 Jinja Road", "TIN: 1009990001",
+                    "ADVANCE PAYMENT RECEIPT").doesNotContain("Signature", "It is not a tax invoice");
+
+            // preview: unsaved title only, the rest from the saved layout
+            var bytes = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create("http://localhost:" + port
+                    + "/api/v1/sales/settings/deposit-receipt/preview")).header("Authorization", "Bearer " + adminToken)
+                    .header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            "{\"layout\":{\"title\":\"PREVIEW RECEIPT\"}}")).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofByteArray()).body();
+            assertThat(pdfText(bytes)).contains("PREVIEW RECEIPT", "Granite Quarries " + sfx);
+            assertThat(ok(200, "GET", "/sales/settings", null).get("depositReceiptLayout").get("title").asString())
+                    .isEqualTo("ADVANCE PAYMENT RECEIPT");
+
+            assertThat(call("PUT", "/sales/settings", Map.of("depositReceiptLayout", Map.of("colour", "red")),
+                    adminToken).status()).isEqualTo(400);
+            assertThat(call("PUT", "/sales/settings", Map.of("depositReceiptLayout", Map.of("showLogo", "yes")),
+                    adminToken).status()).isEqualTo(400);
+            assertThat(call("POST", "/sales/settings/deposit-receipt/preview", Map.of(), weakToken()).status())
+                    .isEqualTo(403);
+        } finally {
+            ok(200, "PUT", "/sales/settings", Map.of("depositReceiptLayout", Map.of("title", "", "companyName", "",
+                    "detailsText", "", "showLogo", true, "showCompanyDetails", true, "showSignature", true, "footerText",
+                    com.inventoryerp.invoicing.application.CustomerDepositService.DEFAULT_FOOTER)));
+        }
+    }
+
     @Test
     @DisplayName("Customer statement: deposit section (receipts, application, refund, reversal) and net amount due")
     void statementShowsDeposits() throws Exception {

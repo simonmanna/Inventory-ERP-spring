@@ -10,9 +10,16 @@ import org.openpdf.text.pdf.parser.PdfTextExtractor;
 
 class CustomerDepositReceiptPdfTest {
 
+    private static final DepositReceiptBranding.Branding BRAND = new DepositReceiptBranding.Branding(
+            "DEPOSIT RECEIPT", "Demo Trading Ltd", List.of("Plot 1 Kampala Road", "TIN: 1000123456"), null,
+            CustomerDepositService.DEFAULT_FOOTER, true);
+
     private static CustomerDepositReceiptPdf.Receipt receipt(String status) {
-        return new CustomerDepositReceiptPdf.Receipt(new CustomerDepositReceiptPdf.Header("Demo Trading Ltd",
-                List.of("Plot 1 Kampala Road", "TIN: 1000123456")), "DEP-2026-00042", "2026-11-19", status,
+        return receipt(status, BRAND);
+    }
+
+    private static CustomerDepositReceiptPdf.Receipt receipt(String status, DepositReceiptBranding.Branding brand) {
+        return new CustomerDepositReceiptPdf.Receipt(brand, "DEP-2026-00042", "2026-11-19", status,
                 "Acme Builders", "C-001", "1009988776", "SO-2026-00007", "Advance / deposit", "Bank transfer", "TRX-77",
                 "Advance for blocks", "UGX", new BigDecimal("30000000"), new BigDecimal("12000000"),
                 new BigDecimal("5000000"), new BigDecimal("13000000"), "Ann Admin", List.of(
@@ -44,6 +51,15 @@ class CustomerDepositReceiptPdfTest {
     @Test
     void voidDepositIsMarked() throws Exception {
         assertThat(text(CustomerDepositReceiptPdf.render(receipt("void")))).contains("DEPOSIT RECEIPT — VOID");
+    }
+
+    @Test
+    void customBrandingTitleNoSignatureNoFooter() throws Exception {
+        String t = text(CustomerDepositReceiptPdf.render(receipt("void", new DepositReceiptBranding.Branding(
+                "ADVANCE PAYMENT RECEIPT", "Granite Quarries Uganda Ltd", List.of("P.O. Box 1, Mukono"), null, "",
+                false))));
+        assertThat(t).contains("Granite Quarries Uganda Ltd", "P.O. Box 1, Mukono", "ADVANCE PAYMENT RECEIPT — VOID")
+                .doesNotContain("Demo Trading Ltd", "Signature", "It is not a tax invoice");
     }
 
     @Test

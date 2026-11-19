@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.web;
 
+import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -29,9 +30,11 @@ public class SalesProformaController {
     private final SalesProformaService proformas;
     private final SalesQuotationService quotations;
     private final SalesLostReasonService reasons;
+    private final CustomerDepositService deposits;
 
     public SalesProformaController(SalesProformaService proformas, SalesQuotationService quotations,
-            SalesLostReasonService reasons) {
+            SalesLostReasonService reasons, CustomerDepositService deposits) {
+        this.deposits = deposits;
         this.proformas = proformas;
         this.quotations = quotations;
         this.reasons = reasons;
@@ -90,6 +93,15 @@ public class SalesProformaController {
         return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"quotation-layout-preview.pdf\"")
                 .body(quotations.layoutPreview(b == null ? null : b.get("layout")));
+    }
+
+    /** Deposit receipt with an unsaved layout (latest deposit, or a sample); nothing is saved. */
+    @PostMapping("/settings/deposit-receipt/preview")
+    @RequirePermissions(Permissions.SALES__CONFIGURE)
+    public ResponseEntity<byte[]> depositReceiptPreview(@RequestBody(required = false) Map<String, Object> b) {
+        return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"deposit-receipt-preview.pdf\"")
+                .body(deposits.previewPdf(b == null ? null : b.get("layout")));
     }
 
     @PostMapping("/quotations/{id}/email")

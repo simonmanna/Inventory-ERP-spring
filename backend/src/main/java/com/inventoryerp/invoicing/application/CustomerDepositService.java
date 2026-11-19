@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,11 +56,13 @@ public class CustomerDepositService {
     private final SequenceService sequence;
     private final AuditService audit;
     private final WorkflowService workflow;
+    private final ObjectProvider<DepositReceiptBranding> branding;
 
     public CustomerDepositService(JdbcClient jdbc, PostingService posting, PaymentService payments,
             AccountResolverService accounts, AccountDeterminationService determination, SequenceService sequence,
-            AuditService audit, WorkflowService workflow) {
+            AuditService audit, WorkflowService workflow, ObjectProvider<DepositReceiptBranding> branding) {
         this.workflow = workflow;
+        this.branding = branding;
         this.jdbc = jdbc;
         this.posting = posting;
         this.payments = payments;
@@ -472,13 +475,57 @@ public class CustomerDepositService {
     /** A rendered deposit receipt. */
     public record ReceiptPdf(String fileName, byte[] content) {}
 
-    /** Printable receipt of a deposit (any source): business header, customer, amount, balance and history. */
+    /** Printable receipt of a deposit (any source), headed as set in Sales settings → Deposit receipt. */
     @Transactional(readOnly = true)
     public ReceiptPdf receiptPdf(String id) {
         Map<String, Object> d = get(id);
+        return new ReceiptPdf("deposit-" + d.get("number") + ".pdf", CustomerDepositReceiptPdf.render(receipt(d,
+                branding(null))));
+    }
+
+    /**
+     * Preview of an unsaved receipt layout (Sales settings): the latest deposit of the organization printed with it, or
+     * a sample receipt when there is none. Nothing is saved.
+     */
+    @Transactional(readOnly = true)
+    public byte[] previewPdf(Object unsavedLayout) {
+        DepositReceiptBranding.Branding b = branding(unsavedLayout == null ? Map.of() : unsavedLayout);
+        Map<String, Object> latest = SqlRows.one(jdbc.sql("SELECT id FROM \"CustomerDeposit\" WHERE \"organizationId\" = ?"
+                + " ORDER BY \"createdAt\" DESC LIMIT 1").param(org()));
+        if (latest != null) {
+            return CustomerDepositReceiptPdf.render(receipt(get((String) latest.get("id")), b));
+        }
+        Map<String, Object> o = SqlRows.one(jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
+                .param(org()));
+        String currency = o == null || o.get("currencyCode") == null ? "" : str(o.get("currencyCode"));
+        return CustomerDepositReceiptPdf.render(new CustomerDepositReceiptPdf.Receipt(b, "DEP-0000-00000",
+                LocalDate.now().toString(), "open", "Sample Customer Ltd", "CUST-000", null, "SO-0000-00000",
+                "Advance / deposit", "Bank transfer", "TRX-0000", null, currency, new BigDecimal("1000000"),
+                new BigDecimal("400000"), BigDecimal.ZERO, new BigDecimal("600000"), null, List.of(
+                        new CustomerDepositReceiptPdf.HistoryRow(LocalDate.now().toString(), "Applied to invoice"
+                                + " INV-0000-000000", new BigDecimal("400000"), false))));
+    }
+
+    private DepositReceiptBranding.Branding branding(Object unsavedLayout) {
+        DepositReceiptBranding provider = branding.getIfAvailable();
+        if (provider != null) {
+            return provider.branding(unsavedLayout);
+        }
+        Map<String, Object> o = SqlRows.one(jdbc.sql("SELECT name, \"receiptHeader\" FROM \"Organization\" WHERE id = ?")
+                .param(org()));
+        CustomerDepositReceiptPdf.Header h = header(o);
+        return new DepositReceiptBranding.Branding("DEPOSIT RECEIPT", h.businessName(), h.lines(), null,
+                DEFAULT_FOOTER, true);
+    }
+
+    /** Receipt footer when no layout sets one. */
+    public static final String DEFAULT_FOOTER = "This receipt confirms an advance payment held on the customer's"
+            + " account. It is not a tax invoice. The amount will be set against future invoices or refunded.";
+
+    private CustomerDepositReceiptPdf.Receipt receipt(Map<String, Object> d, DepositReceiptBranding.Branding b) {
         String org = org();
-        Map<String, Object> o = SqlRows.one(jdbc.sql("SELECT name, \"currencyCode\", \"receiptHeader\" FROM \"Organization\""
-                + " WHERE id = ?").param(org));
+        Map<String, Object> o = SqlRows.one(jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
+                .param(org));
         Map<String, Object> partner = SqlRows.one(jdbc.sql("SELECT name, code, \"taxNumber\" FROM \"Partner\" WHERE id = ? AND"
                 + " \"organizationId\" = ?").params(d.get("partnerId"), org));
         String order = d.get("salesOrderId") == null ? null : jdbc.sql("SELECT number FROM \"SalesOrder\" WHERE id = ? AND"
@@ -498,15 +545,14 @@ public class CustomerDepositService {
             case "cash_sale" -> "Cash sale payment";
             default -> "Advance / deposit";
         };
-        CustomerDepositReceiptPdf.Receipt r = new CustomerDepositReceiptPdf.Receipt(header(o), str(d.get("number")),
-                day(d.get("receivedDate")), str(d.get("status")), partner == null ? "" : str(partner.get("name")),
-                partner == null ? null : (String) partner.get("code"), partner == null ? null : (String) partner.get(
-                        "taxNumber"), order, source, methodLabel((String) d.get("paymentMethod")),
-                "down_payment_invoice".equals(d.get("source")) ? null : (String) d.get("reference"), (String) d.get("notes"),
-                o == null || o.get("currencyCode") == null ? "" : str(o.get("currencyCode")), SqlRows.dec(d, "amount"),
-                SqlRows.dec(d, "appliedAmount"), SqlRows.dec(d, "refundedAmount"), SqlRows.dec(d, "available"), receivedBy,
-                history);
-        return new ReceiptPdf("deposit-" + d.get("number") + ".pdf", CustomerDepositReceiptPdf.render(r));
+        return new CustomerDepositReceiptPdf.Receipt(b, str(d.get("number")), day(d.get("receivedDate")),
+                str(d.get("status")), partner == null ? "" : str(partner.get("name")), partner == null ? null
+                        : (String) partner.get("code"), partner == null ? null : (String) partner.get("taxNumber"), order,
+                source, methodLabel((String) d.get("paymentMethod")), "down_payment_invoice".equals(d.get("source"))
+                        ? null : (String) d.get("reference"), (String) d.get("notes"), o == null || o.get("currencyCode")
+                                == null ? "" : str(o.get("currencyCode")), SqlRows.dec(d, "amount"), SqlRows.dec(d,
+                                        "appliedAmount"), SqlRows.dec(d, "refundedAmount"), SqlRows.dec(d, "available"),
+                receivedBy, history);
     }
 
     private static CustomerDepositReceiptPdf.Header header(Map<String, Object> o) {

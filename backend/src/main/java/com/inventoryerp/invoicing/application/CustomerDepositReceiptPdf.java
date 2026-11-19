@@ -12,6 +12,7 @@ import org.openpdf.text.Document;
 import org.openpdf.text.Element;
 import org.openpdf.text.Font;
 import org.openpdf.text.FontFactory;
+import org.openpdf.text.Image;
 import org.openpdf.text.PageSize;
 import org.openpdf.text.Paragraph;
 import org.openpdf.text.Phrase;
@@ -23,14 +24,14 @@ import org.openpdf.text.pdf.PdfWriter;
 /** A5 receipt for a customer deposit / advance (pure rendering, no database access). */
 final class CustomerDepositReceiptPdf {
 
-    /** Business header lines (name first, then address, phone, TIN). */
+    /** Business header from the POS receipt header (fallback when no branding provider is present). */
     record Header(String businessName, List<String> lines) {}
 
     /** One row of the deposit's history (application or refund). */
     record HistoryRow(String date, String description, BigDecimal amount, boolean reversed) {}
 
     /** Everything printed on the receipt. */
-    record Receipt(Header header, String number, String receivedDate, String status, String customerName,
+    record Receipt(DepositReceiptBranding.Branding branding, String number, String receivedDate, String status, String customerName,
             String customerCode, String customerTaxNumber, String salesOrderNumber, String source, String method,
             String reference, String notes, String currency, BigDecimal amount, BigDecimal applied, BigDecimal refunded,
             BigDecimal available, String receivedBy, List<HistoryRow> history) {}
@@ -48,15 +49,29 @@ final class CustomerDepositReceiptPdf {
         PdfWriter.getInstance(pdf, out);
         pdf.open();
 
-        Paragraph company = new Paragraph(r.header().businessName(), title);
-        company.setAlignment(Element.ALIGN_CENTER);
-        pdf.add(company);
-        for (String line : r.header().lines()) {
+        DepositReceiptBranding.Branding b = r.branding();
+        if (b.logo() != null) {
+            try {
+                Image logo = Image.getInstance(b.logo());
+                logo.scaleToFit(120, 50);
+                logo.setAlignment(Element.ALIGN_CENTER);
+                pdf.add(logo);
+            } catch (Exception e) {
+                // unreadable logo: print without it
+            }
+        }
+        if (!blank(b.name())) {
+            Paragraph company = new Paragraph(b.name(), title);
+            company.setAlignment(Element.ALIGN_CENTER);
+            pdf.add(company);
+        }
+        for (String line : b.lines()) {
             Paragraph p = new Paragraph(line, small);
             p.setAlignment(Element.ALIGN_CENTER);
             pdf.add(p);
         }
-        Paragraph heading = new Paragraph("void".equals(r.status()) ? "DEPOSIT RECEIPT — VOID" : "DEPOSIT RECEIPT",
+        String docTitle = blank(b.title()) ? "DEPOSIT RECEIPT" : b.title();
+        Paragraph heading = new Paragraph("void".equals(r.status()) ? docTitle + " — VOID" : docTitle,
                 FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, "void".equals(r.status()) ? Color.RED : Color.BLACK));
         heading.setAlignment(Element.ALIGN_CENTER);
         heading.setSpacingBefore(10);
@@ -125,14 +140,17 @@ final class CustomerDepositReceiptPdf {
             pdf.add(n);
         }
 
-        Paragraph sign = new Paragraph("Received by: " + (blank(r.receivedBy()) ? "____________________" : r.receivedBy())
-                + "          Signature: ____________________", small);
-        sign.setSpacingBefore(18);
-        pdf.add(sign);
-        Paragraph disclaimer = new Paragraph("This receipt confirms an advance payment held on the customer's account."
-                + " It is not a tax invoice. The amount will be set against future invoices or refunded.", muted);
-        disclaimer.setSpacingBefore(10);
-        pdf.add(disclaimer);
+        if (b.showSignature()) {
+            Paragraph sign = new Paragraph("Received by: " + (blank(r.receivedBy()) ? "____________________"
+                    : r.receivedBy()) + "          Signature: ____________________", small);
+            sign.setSpacingBefore(18);
+            pdf.add(sign);
+        }
+        if (!blank(b.footer())) {
+            Paragraph footer = new Paragraph(b.footer(), muted);
+            footer.setSpacingBefore(10);
+            pdf.add(footer);
+        }
         pdf.close();
         return out.toByteArray();
     }
