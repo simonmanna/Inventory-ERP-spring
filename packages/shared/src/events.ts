@@ -112,6 +112,9 @@ export const EVENTS = {
   PosHoldRecalled: 'pos.hold.recalled',
   PosHoldDeleted: 'pos.hold.deleted',
   PosOverrideApproved: 'pos.override.approved',
+  /// The cash drawer was opened at a till (LP2b, owner decision 2026-11-19): a no-sale opening or one tied to a
+  /// sale, refund or cash movement. Loss prevention projects it as `cash_drawer.opened`.
+  PosCashDrawerOpened: 'pos.cash_drawer.opened',
   PosVoidCompleted: 'pos.void.completed',
   PosReportGenerated: 'pos.report.generated',
   /// A cashier signed in at a terminal with their PIN. HR listens for this to
@@ -575,6 +578,7 @@ export interface DomainEventMap {
   'pos.hold.created': { organizationId: string; holdId: string; name: string; total: string; heldById: string };
   'pos.hold.recalled': { organizationId: string; holdId: string; recalledById: string };
   'pos.hold.deleted': { organizationId: string; holdId: string };
+  'pos.cash_drawer.opened': { organizationId: string; openingId: string; cashRegisterId: string; cashSessionId: string | null; userId: string; reason: 'sale' | 'refund' | 'cash_movement' | 'no_sale' | 'float' | 'other' };
   'pos.override.approved': { organizationId: string; approverId: string; overrideKind: 'discount' | 'price_change' | 'void' | 'manual_refund' | 'write_off' | 'shift_handover'; referenceId?: string; amount?: string };
   'pos.void.completed': { organizationId: string; invoiceId?: string; documentLineId?: string; voidedById: string; reason?: string };
   'pos.report.generated': { organizationId: string; reportKind: 'x' | 'z' | 'hourly' | 'top_items' | 'variance'; cashSessionId?: string; asOf: string };

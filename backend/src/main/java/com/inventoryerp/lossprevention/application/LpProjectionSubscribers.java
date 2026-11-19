@@ -32,6 +32,7 @@ public class LpProjectionSubscribers {
             Map.entry(DomainEvents.CASH_SESSION_CLOSED, LpProjectionService.CASH_SESSIONS),
             Map.entry(DomainEvents.CASH_SESSION_RECONCILED, LpProjectionService.CASH_SESSIONS),
             Map.entry(DomainEvents.CASH_MOVEMENT_RECORDED, LpProjectionService.CASH_MOVEMENTS),
+            Map.entry(DomainEvents.POS_CASH_DRAWER_OPENED, LpProjectionService.DRAWER_OPENINGS),
             Map.entry("pos.kds.ticket_created", LpProjectionService.KITCHEN),
             Map.entry("pos.kds.ticket_updated", LpProjectionService.KITCHEN));
 

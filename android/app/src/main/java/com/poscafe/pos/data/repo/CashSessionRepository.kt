@@ -236,6 +236,28 @@ class CashSessionRepository @Inject constructor(
         })
     }
 
+    // ------------------------------------------------------------------ no sale
+
+    /**
+     * "No sale": the cashier opens the drawer without a sale (LP2b). Queued as a
+     * `cash_drawer.open` op with reason `no_sale` against the open shift; the
+     * server records a CashDrawerOpening, which loss prevention counts per
+     * cashier. No money moves, so there is no approval and no local ledger row.
+     * The server takes a no-sale only on the actor's own shift, so a colleague's
+     * shift is refused here instead of dead-lettering on replay.
+     */
+    suspend fun recordNoSale(
+        actorUserId: String,
+        note: String?,
+        opId: String = UUID.randomUUID().toString(),
+    ) {
+        val session = dao.open() ?: error("No open session")
+        require(session.actorUserId == null || session.actorUserId == actorUserId) {
+            "This cash session belongs to a different cashier"
+        }
+        enqueue(opId, "cash_drawer.open", actorUserId, Instant.now(), noSalePayload(session.id, note))
+    }
+
     // ------------------------------------------------------------------ close
 
     /** Manager approval: a cash-out, or a close with not-counted tenders / wallet or large cash variance. */
@@ -427,6 +449,23 @@ class CashSessionRepository @Inject constructor(
     private fun fmt(v: Double) = "%,.0f".format(v)
 
     companion object {
+        /** Longest note a drawer opening keeps (server: CashDrawerOpening.note). */
+        const val NO_SALE_NOTE_MAX = 500
+
+        /**
+         * The `cash_drawer.open` payload of a no-sale. [sessionId] is the local
+         * shift id, resolved to the server's id on push like a movement's.
+         */
+        fun noSalePayload(sessionId: String, note: String?): JsonObject {
+            val trimmed = note?.trim()?.takeIf { it.isNotEmpty() }
+            require(trimmed == null || trimmed.length <= NO_SALE_NOTE_MAX) { "The note must be 500 characters or fewer" }
+            return buildJsonObject {
+                put("sessionId", sessionId)
+                put("reason", "no_sale")
+                trimmed?.let { put("note", it) }
+            }
+        }
+
         /** Server default CASH_VARIANCE_APPROVAL_THRESHOLD: at/over this a manager must approve. */
         const val LARGE_VARIANCE = 20_000.0
     }

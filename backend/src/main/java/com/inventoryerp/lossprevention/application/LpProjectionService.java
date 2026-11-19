@@ -49,8 +49,10 @@ public class LpProjectionService {
     public static final String CASH_MOVEMENTS = "cash_movements";
     /** Stock ledger lines at the locations a {@code storage} zone watches (LP5): what V-S1 compares with. */
     public static final String STOCK_MOVEMENTS = "stock_movements";
+    /** Drawer openings the POS recorded ({@code CashDrawerOpening}, LP2b): what C11 counts and V-C1 accepts. */
+    public static final String DRAWER_OPENINGS = "drawer_openings";
     public static final List<String> SOURCES = List.of(SALES, VOIDS, CANCELLATIONS, REFUNDS, OVERRIDES,
-            CASH_SESSIONS, KITCHEN, STOCK_COUNTS, CASH_MOVEMENTS, STOCK_MOVEMENTS);
+            CASH_SESSIONS, KITCHEN, STOCK_COUNTS, CASH_MOVEMENTS, STOCK_MOVEMENTS, DRAWER_OPENINGS);
     /** The till of a cash session is its {@code CashRegister}; it is sent as {@code payload.tillId} (LP2). */
     private static final String TILL_JOIN = " LEFT JOIN \"CashSession\" cs ON cs.id = %s.\"cashSessionId\"";
 
@@ -203,6 +205,12 @@ public class LpProjectionService {
                     + TILL_JOIN.formatted("m") + " WHERE m.\"organizationId\" = ? AND m.\"movementType\"::text IN"
                     + " ('pay_in', 'pay_out', 'supplier_payment', 'adjustment') AND m.\"createdAt\" >= ? ORDER BY"
                     + " m.\"createdAt\", m.id";
+            // Read by when the row was written, so an opening synced late with an earlier occurredAt is not skipped.
+            case DRAWER_OPENINGS -> "SELECT d.id, d.\"cashSessionId\", d.\"cashRegisterId\" AS \"tillId\", d.\"userId\","
+                    + " d.reason, d.note, d.\"referenceType\", d.\"referenceId\", d.\"occurredAt\","
+                    + " d.\"createdAt\" AS ts, d.\"branchId\", cs.\"deviceId\", cs.\"businessDate\" FROM"
+                    + " \"CashDrawerOpening\" d" + TILL_JOIN.formatted("d") + " WHERE d.\"organizationId\" = ? AND"
+                    + " d.\"createdAt\" >= ? ORDER BY d.\"createdAt\", d.id";
             default -> throw new IllegalArgumentException("Unknown projection source " + source);
         };
         return SqlRows.list(jdbc.sql(sql + " LIMIT " + PAGE).params(org, SqlRows.ts(start)));
@@ -222,6 +230,7 @@ public class LpProjectionService {
             case KITCHEN -> flat(rows, this::kitchen);
             case CASH_MOVEMENTS -> map(rows, this::cashMovement);
             case STOCK_MOVEMENTS -> map(rows, this::stockMovement);
+            case DRAWER_OPENINGS -> map(rows, this::drawerOpening);
             default -> stockCounts(org, rows);
         };
     }
@@ -365,6 +374,14 @@ public class LpProjectionService {
                 (Instant) r.get("ts"), (LocalDate) r.get("businessDate"), "session", "pos", "observed",
                 Obj.of("kind", r.get("kind"), "amount", n(r, "amount"), "reason", r.get("reason"), "tillId",
                         s(r, "tillId"), "reversalOfMovementId", r.get("reversalOfMovementId")));
+    }
+
+    private EventInput drawerOpening(Map<String, Object> r) {
+        return event(LpEventTypes.CASH_DRAWER_OPENED, "cash-drawer-opening:" + s(r, "id"), Obj.of("branchId",
+                s(r, "branchId"), "deviceId", s(r, "deviceId"), "actorId", s(r, "userId"), "sessionId",
+                s(r, "cashSessionId")), (Instant) r.get("occurredAt"), (LocalDate) r.get("businessDate"), "session",
+                "pos", "observed", Obj.of("reason", r.get("reason"), "tillId", s(r, "tillId"), "note", r.get("note"),
+                        "referenceType", r.get("referenceType"), "referenceId", r.get("referenceId")));
     }
 
     private List<EventInput> cashSession(Map<String, Object> r) {

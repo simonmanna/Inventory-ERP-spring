@@ -31,7 +31,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import {
   useCashRegisters, useDailyReconciliation,
-  useOpenSession, useRecordMovement,
+  useOpenSession, useRecordDrawerOpening, useRecordMovement,
   useRegisterOpenSession, useSessionHistory, useSessionMovements, useUpdateVariance,
 } from '../api';
 import { HandoverDialog } from '../HandoverDialog';
@@ -209,6 +209,7 @@ const RegisterView: React.FC<RegisterViewProps> = ({ registerId, openSession, on
               <CashInOutButton sessionId={thisSession.id} onDone={onSessionChange} direction="pay_in" />
               <CashInOutButton sessionId={thisSession.id} onDone={onSessionChange} direction="pay_out" />
             </>)}
+            <NoSaleButton sessionId={thisSession.id} />
             <Button variant="outline" className="border-indigo-300 text-indigo-700" onClick={() => setShowHandover(true)}>
               <ArrowLeftRight className="h-4 w-4 mr-1" /> {tx('Handover')}
             </Button>
@@ -296,6 +297,62 @@ const Power: React.FC<{ className?: string }> = ({ className }) => (
     <line x1="12" y1="2" x2="12" y2="12" />
   </svg>
 );
+
+/* ==========================================================================
+   No sale: open the drawer without a sale (LP2b). Recorded as a drawer opening
+   with reason no_sale on the caller's own open shift; loss prevention counts
+   these per cashier. Kept through a lost response like every cash operation.
+   ========================================================================== */
+
+const NoSaleButton: React.FC<{ sessionId: string }> = ({ sessionId }) => {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  const record = useRecordDrawerOpening();
+
+  const close = () => { setNote(''); setOpen(false); };
+
+  const handleSubmit = async () => {
+    try {
+      await record.mutateAsync({ sessionId, reason: 'no_sale', note: note.trim() || undefined });
+      toast.success(tx('Drawer opening recorded'));
+      close();
+    } catch (e: any) {
+      toast.error(apiErrorMessage(e, tx('Failed to record the drawer opening')));
+    }
+  };
+
+  return (
+    <>
+      <Button variant="outline" className="border-slate-300 text-slate-700" onClick={() => setOpen(true)}>
+        <Banknote className="h-4 w-4 mr-1" /> {tx('No sale')}
+      </Button>
+
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={close}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Banknote className="h-4 w-4 text-slate-600" /> {tx('No sale (open drawer)')}
+              </h2>
+              <button onClick={close} aria-label={tx('Close')}><X className="h-5 w-5 text-slate-400" /></button>
+            </div>
+            <p className="text-sm text-slate-600">{tx('Every drawer opening without a sale is recorded against your shift.')}</p>
+            <div>
+              <Label>{tx('Note (optional)')}</Label>
+              <Input value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder={tx('e.g. Change for a customer')} autoFocus />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={close}>{tx('Cancel')}</Button>
+              <Button onClick={handleSubmit} disabled={record.isPending}>
+                {record.isPending ? tx('Recording…') : tx('Open drawer')}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
 
 /* ==========================================================================
    Cash In / Cash Out Button + Dialog (shown while SHOW_CASH_MOVEMENTS is on;

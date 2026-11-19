@@ -1838,6 +1838,10 @@ coverage gate) has not been run. `edge/tests`: 99 pass with a stand-in for pytes
 - [x] LP1 edge agent (`edge/lp_edge`)
 - [x] LP2 engine `cashier_vision`, rules V-C1–V-C3 (`LpCashierVisionEngine`); C11 and `cash_drawer.opened`
 - [x] LP2 projection: `tillId` on POS events, cash movements as `cash.movement`
+- [x] LP2b POS drawer openings (owner decision 2026-11-19): `POST /pos/cash-drawer/openings`, table
+  `CashDrawerOpening` (V578), event `pos.cash_drawer.opened`, sync op `cash_drawer.open`, projection source
+  `drawer_openings` → `cash_drawer.opened`; web and Android "No sale". `PosCashDrawerIT`, `LpReconIT`, `SyncIT` pass on
+  `fastTest`; Android not compiled here (no SDK)
 
 Detection accuracy not measured: no pilot footage, no detector model shipped.
 

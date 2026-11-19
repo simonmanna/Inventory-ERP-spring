@@ -22,8 +22,7 @@ Cases at the till that the POS records alone cannot raise:
 
 ## 2. Out of scope
 
-- Changing this ERP's POS. It records no drawer openings, so its projection sends no `cash_drawer.opened`; C11, and
-  the POS side of V-C1, use the event when another POS sends it.
+- Changing this ERP's POS in this phase. Drawer openings came later, as LP2b (owner decision 2026-11-19): see §8.
 - Identifying people on video. A finding's subject is the cashier logged into the cash session open on the till
   (V-C1, V-C3) or the person who refunded or voided (V-C2); without a session it is the till.
 - Bar and kitchen vision (LP3, LP4).
@@ -92,6 +91,8 @@ confirms on the clip.
 
 ## 8. Open items
 
-- C11 and the POS side of V-C1 stay idle on this ERP's POS until it records drawer openings, which would be a POS
-  change and needs its own decision.
+- Done as LP2b (owner decision 2026-11-19): this ERP's POS records drawer openings (`CashDrawerOpening`, V578;
+  `POST /pos/cash-drawer/openings`; sync op `cash_drawer.open`; "No sale" on the web cash register page and the
+  Android More screen), and the projection sends each as `cash_drawer.opened` (source `drawer_openings`), so C11 and
+  the POS side of V-C1 now run on this ERP's own data. Tests `PosCashDrawerIT`, `LpReconIT` (11 sources).
 - The defaults of every threshold are design values, not measured ones.

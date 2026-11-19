@@ -537,11 +537,18 @@ The till of a POS event is `payload.tillId`; else the till of its cash session (
 - A run whose window has a gap is stored with `observationGap` true.
 
 New POS type `cash_drawer.opened` (level `session`): `payload.reason` is `sale`, `refund`, `cash_movement`,
-`no_sale`, `float` or `other`, and `payload.tillId`. This ERP's POS records no drawer openings, so its projection
-sends none; C11 and the POS side of V-C1 use it when another POS sends it.
+`no_sale`, `float` or `other`, and `payload.tillId`. This ERP's POS records drawer openings (LP2b, owner decision
+2026-11-19): `POST /pos/cash-drawer/openings` and the sync op `cash_drawer.open` write one `CashDrawerOpening` row
+each (`docs/spec/pos.md`). The web and Android "No sale" actions record reason `no_sale` on the cashier's own open
+shift; the other reasons are available to any caller of the route.
 
-The projection adds `payload.tillId` to sales, voids, cancellations, refunds and cash sessions, and projects cash
-pay-ins, pay-outs, supplier payments and adjustments as `cash.movement` (source `cash_movements`).
+The projection adds `payload.tillId` to sales, voids, cancellations, refunds and cash sessions, projects cash
+pay-ins, pay-outs, supplier payments and adjustments as `cash.movement` (source `cash_movements`), and projects each
+`CashDrawerOpening` as `cash_drawer.opened` (source `drawer_openings`, 11 sources in all): `actorId` the person who
+opened it, `sessionId` its shift, `payload.reason`, `payload.tillId` (the `CashRegister` id), and `note`,
+`referenceType`, `referenceId` when given. The source is read by when the row was written, so an opening synced late
+is not skipped; `pos.cash_drawer.opened` sweeps it at once. C11 counts the `no_sale` ones per cashier, and V-C1 takes
+any of them as the explanation of a drawer seen open at that till.
 
 ## Bar intelligence (LP3)
 

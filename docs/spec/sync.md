@@ -71,6 +71,12 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   `PosDevice cancel item_void`). `sale.refund` lines may name a sale line by `lineNumber` (1-based position) instead of
   the invoice-item id. Older devices are unaffected. Tests `SyncDeviceIntegrityIT`.
 
+- **LP2b, additive wire change:** push gains the `cash_drawer.open` op (payload `{ reason, sessionId?,
+  cashRegisterId?, note?, referenceType?, referenceId? }`, `occurredAt` from the op). It runs
+  `PosCashDrawerService.record` as the actor, exactly like `POST /pos/cash-drawer/openings`; `sessionId` may be the
+  client id of a `cash_session.open` in the same batch, and a failed open fails it with 424. The Android "No sale"
+  action queues it with reason `no_sale`. Older devices are unaffected. Test `PosCashDrawerIT#syncPush`.
+
 - **`stock.count` is one transaction (Phase I5, audit S-5).** Opening the spot count, entering the device's figures and
   submitting commit together; a refused count (e.g. "Choose a variant for …") leaves no draft count open. Test
   `SyncIT.stockCountPerVariant`.

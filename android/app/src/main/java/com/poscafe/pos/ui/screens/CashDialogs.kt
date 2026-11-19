@@ -210,6 +210,47 @@ fun MovementDialog(
     )
 }
 
+// ---------------------------------------------------------------- no sale
+
+/** "No sale": open the drawer without a sale; recorded against the shift (LP2b). */
+@Composable
+fun NoSaleDialog(
+    error: String?,
+    onSave: (note: String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var note by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = MaterialTheme.shapes.extraLarge,
+        icon = { Icon(Icons.Outlined.SwapVert, null) },
+        title = { Text("No sale", style = MaterialTheme.typography.headlineSmall) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Every drawer opening without a sale is recorded against your shift.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it.take(CashSessionRepository.NO_SALE_NOTE_MAX) },
+                    label = { Text("Note (optional)") },
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+        },
+        confirmButton = {
+            Button(shape = MaterialTheme.shapes.medium, onClick = { onSave(note.takeIf { it.isNotBlank() }) }) {
+                Text("Open drawer")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
 /** Manager PIN entry for an approval that must come from someone other than the cashier. */
 @Composable
 fun ManagerPinField(pin: String, onChange: (String) -> Unit) {

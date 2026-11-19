@@ -99,6 +99,7 @@ public final class DomainEvents {
     public static final String POS_HOLD_RECALLED = "pos.hold.recalled";
     public static final String POS_HOLD_DELETED = "pos.hold.deleted";
     public static final String POS_OVERRIDE_APPROVED = "pos.override.approved";
+    public static final String POS_CASH_DRAWER_OPENED = "pos.cash_drawer.opened";
     public static final String POS_VOID_COMPLETED = "pos.void.completed";
     public static final String POS_REPORT_GENERATED = "pos.report.generated";
     public static final String POS_PIN_LOGIN = "pos.pin.login";
