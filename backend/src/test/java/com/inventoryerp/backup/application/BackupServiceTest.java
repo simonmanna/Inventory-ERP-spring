@@ -225,8 +225,15 @@ class BackupServiceTest {
         Path back = backupDir.resolve("back.bin");
         BackupCrypto.decryptFile(sealed, back, "pw");
         assertThat(Files.readAllBytes(back)).isEqualTo(data);
-        assertThatThrownBy(() -> BackupCrypto.decryptFile(sealed, backupDir.resolve("x"), "wrong"))
-                .hasMessage("decryption failed: wrong password or corrupted file");
+        // The OpenSSL-compatible format (Nest parity) has no MAC: a wrong key passes the PKCS#5 padding check about
+        // once in 256 tries per derivation (two are tried), so it is refused almost always and never yields the data.
+        Path wrong = backupDir.resolve("x");
+        try {
+            BackupCrypto.decryptFile(sealed, wrong, "wrong");
+            assertThat(Files.readAllBytes(wrong)).isNotEqualTo(data);
+        } catch (java.io.IOException e) {
+            assertThat(e).hasMessage("decryption failed: wrong password or corrupted file");
+        }
         assertThatThrownBy(() -> BackupCrypto.decryptFile(src, backupDir.resolve("y"), "pw"))
                 .hasMessage("not an encrypted backup (missing Salted__ header)");
     }
