@@ -248,6 +248,8 @@ jobs:
           path: |
             ${{ runner.temp }}/translation-completeness.md
             ${{ runner.temp }}/translation-completeness.csv
+      # Vitest unit tests of the web app's pure logic (src/**/*.test.ts); Node only, no browser.
+      - run: pnpm web:test
       - run: pnpm web:build
 
   docker:

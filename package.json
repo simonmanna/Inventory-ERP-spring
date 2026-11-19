@@ -11,6 +11,7 @@
     "web:build": "pnpm shared:build && pnpm --filter @erp/web build",
     "web:typecheck": "pnpm shared:build && pnpm --filter @erp/web typecheck",
     "web:i18n": "pnpm --filter @erp/web i18n:check",
+    "web:test": "pnpm --filter @erp/web test",
     "specs:extract": "node tools/extract-routes/extract.mjs",
     "entities:generate": "node tools/prisma2jpa/generate.mjs"
   },

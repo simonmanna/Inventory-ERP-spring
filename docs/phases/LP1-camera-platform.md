@@ -163,7 +163,12 @@ Until then every vision case states the observation and its confidence, and the 
   and first runs in CI.
 - `LpReconIT` now expects 17 rules and 9 projection sources.
 - Not run: the full build, the web type check (it needs `packages/shared` rebuilt for the new permission), web
-  tests, `docker build` of the edge image. The screens have no translations yet.
+  tests, `docker build` of the edge image.
+- Later (2026-11-19): web unit tests with Vitest (`pnpm web:test`, also run by the CI Web build job) cover the pure
+  logic of the loss-prevention screens: the zone contract tables, labels, formatting helpers, zone geometry and
+  parameters, and the request paths of the API hooks. There are no component tests.
+- Translations (2026-11-19): every loss-prevention phrase now has a Tigrinya, Luganda and Swahili translation. They
+  were written by an AI assistant on 2026-11-19, not by a translator, and still need a native-speaker check.
 
 ## 12. Open items
 
@@ -181,3 +186,4 @@ Until then every vision case states the observation and its confidence, and the 
 - No detector model ships. Without one, drawer zones use the reference picture, checkout zones fall back to motion,
   and the other zone types report a `disabled` gap.
 - The edge container reports unhealthy until it is enrolled. The updater is installed on the host by hand.
+- A native-speaker check of the loss-prevention translations (ti, lg, sw), written by an AI assistant on 2026-11-19.
