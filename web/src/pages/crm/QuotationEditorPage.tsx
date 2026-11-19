@@ -278,12 +278,12 @@ export function QuotationEditorPage() {
           {q && q.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{q.revision}</span>}
           {q && <span className="ml-3"><QuoteStatusPill status={status} /></span>}
         </div>
-        {showRibbon && <div className="w-full max-w-lg"><StatusRibbon steps={ribbon} current={step} /></div>}
+        {showRibbon && <div data-tour="sales.quote.ribbon" className="w-full max-w-lg"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
+        <div data-tour="sales.quote.actions" className="flex flex-wrap items-center gap-2">
+          {editable && <Button data-tour="sales.quote.save" onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
           {q && editable && canWrite && <Button variant="secondary" disabled={action.isPending || save.isPending} onClick={() => dirty ? doSave(() => run('submit')) : run('submit')}>{tx('Submit for approval')}</Button>}
           {q?.status === 'pending_approval' && q.canApprove && <>
             <Button onClick={() => run('approve', {}, tx('Approved'))}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>
@@ -336,7 +336,7 @@ export function QuotationEditorPage() {
           <div>
             <InlineField label={tx('Customer')}>
               {editable ? (
-                <div className="flex items-center gap-2">
+                <div data-tour="sales.quote.customer" className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
                     <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} />
                   </div>
@@ -355,7 +355,7 @@ export function QuotationEditorPage() {
             <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} placeholder={tx('Same as customer')} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
           </div>
-          <div>
+          <div data-tour="sales.quote.dates">
             <InlineField label={tx('Expiration')}><Input type="date" disabled={!editable} value={validUntil} title={tx('After this date the quotation expires')} onChange={(e) => { setValidUntil(e.target.value); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Quotation date')}><Input type="date" disabled={!editable} value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Delivery date')}><Input type="date" disabled={!editable} value={header.commitmentDate} title={tx('The delivery date promised to the customer; it becomes the order commitment date')} onChange={(e) => { const commitmentDate = e.target.value; setHeader((h) => ({ ...h, commitmentDate })); setDirty(true); }} /></InlineField>
@@ -392,7 +392,7 @@ export function QuotationEditorPage() {
               <Textarea disabled={!editable} rows={4} value={terms} placeholder={tx('Terms and conditions…')} aria-label={tx('Terms and conditions')}
                 className="resize-y border-transparent bg-transparent px-0 shadow-none focus-visible:border-input focus-visible:px-3 disabled:cursor-default disabled:opacity-100"
                 onChange={(e) => { setTerms(e.target.value); setDirty(true); }} />
-              <div className="text-sm">
+              <div data-tour="sales.quote.totals" className="text-sm">
                 <div className="border-t pt-2">
                   <Row label={tx('Untaxed Amount') + ':'} value={<strong>{money(useServer ? q!.subtotal : est.sub, currency)}</strong>} />
                   {useServer && Number(q!.discountTotal) > 0 && <Row label={tx('Discount') + ':'} value={'− ' + money(q!.discountTotal, currency)} />}

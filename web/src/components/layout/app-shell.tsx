@@ -161,6 +161,8 @@ import { PushBootstrap } from '@/components/push-bootstrap';
 import { ThemePicker } from '@/components/theme-picker';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { DiscussHeaderButton } from '@/features/communication/discuss-header-button';
+import { GuideHeaderButton, GuidePanel } from '@/features/guide/GuidePanel';
+import { TourOverlay } from '@/features/guide/TourOverlay';
 import { useTranslation } from 'react-i18next';
 import { useSidebarTheme } from '@/lib/sidebar-theme';
 import {
@@ -1255,6 +1257,7 @@ export function AppShell() {
                   )}
                   <NavLink
                     to={item.to}
+                    data-tour={`nav:${item.to}`}
                     end={EXACT_MATCH_ROUTES.has(item.to)}
                     onClick={onItemClick}
                     className={({ isActive }) =>
@@ -1407,6 +1410,7 @@ export function AppShell() {
               </div>
             </div>
             <div className="flex items-center gap-1 sm:gap-2">
+              <GuideHeaderButton />
               <DiscussHeaderButton />
               <LanguageSwitcher />
               <ThemePicker />
@@ -1476,6 +1480,8 @@ export function AppShell() {
       <PendingCashOperations />
       <PushBootstrap />
       <LicenseBlockedDialog />
+      <GuidePanel />
+      <TourOverlay />
     </div>
   );
 }

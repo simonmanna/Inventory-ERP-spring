@@ -1973,3 +1973,16 @@ against a live Superset.
 - [ ] B3 AI "ask your data" (own ADR)
 
 Not verified yet: the dashboards rendered in a browser through the ERP web app.
+
+## Guide: in-app guided tours (ADR-S079, extension: no Nest counterpart)
+
+[Spec](spec/guide.md). 3 routes: `GuideController` (`GET /guide/progress`, `PUT|DELETE /guide/progress/{tourKey}`).
+Any signed-in user may call them, for their own rows only (listed in `ArchitectureTests.SIGNED_IN_CONTROLLERS`).
+Migration V580. Web: Learn button in the header, overlay in `AppShell`. Tests: `GuideProgressIT`,
+`web/src/features/guide/*.test.ts`.
+
+- [x] G1 engine, Learn panel, progress API, `sales.overview`, `sales.create-quotation`
+- [ ] G2 remaining Sales tours (quote → order, deliver, invoice, cash sale, order-to-cash)
+- [ ] G3 AI chat behind `AssistantResolver` (own ADR)
+
+Not verified yet: the tours driven by hand in a browser.

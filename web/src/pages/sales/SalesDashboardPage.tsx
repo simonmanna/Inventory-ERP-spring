@@ -61,7 +61,7 @@ function Ring({ percent }: { percent: number }) {
 
 function FlowStage({ step, icon: Icon, title, value, sub, to, foot }: { step: number; icon: LucideIcon; title: string; value: string; sub: string; to: string; foot?: string }) {
   return (
-    <div className="relative">
+    <div className="relative" data-tour={`sales.flow.${step}`}>
       <Link to={to} className="block h-full rounded-xl border bg-background/60 p-4 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md motion-reduce:hover:translate-y-0">
         <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>
@@ -253,7 +253,7 @@ export function SalesDashboardPage() {
 
           <Reveal delay={140}>
             <Panel title={tx('From quote to cash')} hint={tx('Where sales stand right now · whole company')}>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-5">
+              <div data-tour="sales.flow" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-5">
                 <FlowStage step={1} icon={FileText} title={tx('Open quotations')} value={fmt(quoteValue)} sub={`${quoteCount} ${quoteCount === 1 ? tx('quotation') : tx('quotations')}`} to="/sales/quotations"
                   foot={summary ? `${summary.conversion.rate}% ${tx('converted, last 90 days')}` : undefined} />
                 <FlowStage step={2} icon={ClipboardList} title={tx('Open orders')} value={fmt(summary?.openOrders.total)} sub={orderCount(summary?.openOrders.count ?? 0)} to="/sales/orders?tab=confirmed%2Cin_fulfilment" />

@@ -39,7 +39,7 @@ export function QuotationsPage() {
   return (
     <div className="space-y-4">
       <ListPageHeader icon={FileText} title={tx('Quotations')} description={tx('Price, approve and send quotations; convert accepted ones into orders or proforma invoices.')}
-        actions={canWrite && <Button onClick={() => navigate(`${base}/new`)}><Plus className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>} />
+        actions={canWrite && <Button data-tour="sales.quotes.new" onClick={() => navigate(`${base}/new`)}><Plus className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap rounded-lg border bg-card p-0.5">
           {TABS.map((t) => (

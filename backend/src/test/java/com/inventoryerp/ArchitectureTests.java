@@ -32,10 +32,10 @@ class ArchitectureTests {
      */
     private static final Set<String> SIGNED_IN_CONTROLLERS = Set.of("ApprovalsController", "AuthController",
             "CompanySettingsController", "DigitalMenuPublicController", "DocumentsController",
-            "FeatureFlagsController", "FilesController", "HealthController", "HrController", "LicenseController",
-            "NotificationsController", "OrganizationsController", "PermissionsController", "PosMenuController",
-            "PosSplitController", "PosTablesController", "RecurringController", "ReportAccessController",
-            "ReportsDashboardController", "SearchController", "TaskController");
+            "FeatureFlagsController", "FilesController", "GuideController", "HealthController", "HrController",
+            "LicenseController", "NotificationsController", "OrganizationsController", "PermissionsController",
+            "PosMenuController", "PosSplitController", "PosTablesController", "RecurringController",
+            "ReportAccessController", "ReportsDashboardController", "SearchController", "TaskController");
 
     private static final DescribedPredicate<JavaMethod> ROUTES = DescribedPredicate.describe("a route",
             (JavaMethod m) -> m.isMetaAnnotatedWith(RequestMapping.class) || m.isAnnotatedWith(RequestMapping.class));

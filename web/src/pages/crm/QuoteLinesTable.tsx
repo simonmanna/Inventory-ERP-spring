@@ -188,7 +188,7 @@ export function QuoteLinesTable(p: Props) {
   );
 
   return (
-    <div className="overflow-x-auto">
+    <div data-tour="sales.quote.lines" className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-sm">
         <thead className="border-b text-left">
           <tr>
@@ -329,7 +329,7 @@ export function QuoteLinesTable(p: Props) {
               <td />
               <td colSpan={colCount - 1} className="py-2.5 pr-3">
                 <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
-                  <LinkButton onClick={() => p.onAdd('line')}>{tx('Add a line')}</LinkButton>
+                  <LinkButton tour="sales.quote.add-line" onClick={() => p.onAdd('line')}>{tx('Add a line')}</LinkButton>
                   <LinkButton onClick={() => p.onAdd('section')}>{tx('Add a section')}</LinkButton>
                   <LinkButton onClick={() => p.onAdd('note')}>{tx('Add a note')}</LinkButton>
                   <LinkButton onClick={() => setCatalog(true)}>{tx('Catalog')}</LinkButton>
@@ -350,8 +350,8 @@ export function QuoteLinesTable(p: Props) {
   );
 }
 
-function LinkButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return <button type="button" onClick={onClick} className="text-sm font-medium text-primary hover:underline">{children}</button>;
+function LinkButton({ onClick, children, tour }: { onClick: () => void; children: ReactNode; tour?: string }) {
+  return <button type="button" data-tour={tour} onClick={onClick} className="text-sm font-medium text-primary hover:underline">{children}</button>;
 }
 
 /** Product catalog: search the catalog and set quantities straight onto the quotation. */
