@@ -146,6 +146,80 @@ class SalesBillingIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Deposit receipt PDF: advance without an order prints; 403 without permission; other tenant 404")
+    void depositReceiptPdf() {
+        String c = customer();
+        JsonNode dep = money("POST", "/customer-deposits", Map.of("partnerId", c, "amount", 2_500_000, "paymentMethod",
+                "cash", "reference", "RCPT-" + sfx), 200);
+        String id = dep.get("id").asString();
+        money("POST", "/customer-deposits/" + id + "/refund", Map.of("amount", 500_000, "paymentMethod", "cash"), 200);
+        var pdf = downloadBytes("/customer-deposits/" + id + "/pdf");
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        assertThat(pdf.headers().firstValue("Content-Type")).hasValue("application/pdf");
+        assertThat(pdf.headers().firstValue("Content-Disposition").orElse(""))
+                .contains("deposit-" + dep.get("number").asString() + ".pdf");
+        assertThat(new String(pdf.body(), 0, 5, java.nio.charset.StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        assertThat(call("GET", "/customer-deposits/" + id + "/pdf", null, weakToken()).status()).isEqualTo(403);
+        assertThat(call("GET", "/customer-deposits/" + id + "/pdf", null, otherToken).status()).isEqualTo(404);
+    }
+
+    @Test
+    @DisplayName("Customer statement: deposit section (receipts, application, refund, reversal) and net amount due")
+    void statementShowsDeposits() throws Exception {
+        String c = customer();
+        String depA = money("POST", "/customer-deposits", Map.of("partnerId", c, "amount", 10_000_000), 200).get("id")
+                .asString();
+        String depB = money("POST", "/customer-deposits", Map.of("partnerId", c, "amount", 3_000_000), 200).get("id")
+                .asString();
+        money("POST", "/customer-deposits/" + depB + "/refund", Map.of("amount", 1_000_000), 200);
+        String so = order(c, ordered, 5);
+        String inv = money("POST", "/sales/orders/" + so + "/invoices", Map.of("mode", "regular"), 200).get("id")
+                .asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        money("POST", "/customer-deposits/" + depA + "/apply", Map.of("documentId", inv, "amount", 5_000_000), 200);
+
+        JsonNode st = ok(200, "GET", "/sales/statements/" + c, null);
+        JsonNode dep = st.get("deposits");
+        assertThat(dep.get("openingBalance").asDouble()).isZero();
+        assertThat(dep.get("totalReceived").asDouble()).isEqualTo(13_000_000);
+        assertThat(dep.get("totalUsed").asDouble()).isEqualTo(6_000_000);
+        assertThat(dep.get("closingBalance").asDouble()).isEqualTo(7_000_000);
+        assertThat(dep.get("lines").size()).isEqualTo(4);
+        assertThat(dep.get("lines").get(3).get("balance").asDouble()).isEqualTo(7_000_000);
+        assertThat(st.get("closingBalance").asDouble()).isZero();
+        assertThat(st.get("netBalance").asDouble()).isEqualTo(-7_000_000);
+        // the held amount equals the deposit subledger and the customer-deposit ledger balance
+        assertThat(depositSubledger(c)).isEqualByComparingTo("7000000");
+        assertThat(depositBalance(c)).isEqualByComparingTo("7000000");
+
+        // reversing the application gives the amount back: AR 5M, deposits 12M, net still -7M
+        String paymentId = ok(200, "GET", "/customer-deposits/" + depA, null).get("applications").get(0).get("paymentId")
+                .asString();
+        money("POST", "/customer-deposits/" + depA + "/applications/" + paymentId + "/reverse", Map.of("reason",
+                "Wrong invoice"), 200);
+        st = ok(200, "GET", "/sales/statements/" + c, null);
+        assertThat(st.get("deposits").get("lines").size()).isEqualTo(5);
+        assertThat(st.get("deposits").get("closingBalance").asDouble()).isEqualTo(12_000_000);
+        assertThat(st.get("closingBalance").asDouble()).isEqualTo(5_000_000);
+        assertThat(st.get("netBalance").asDouble()).isEqualTo(-7_000_000);
+
+        // a period that ends before today holds nothing yet; a filtered statement leaves deposits out
+        JsonNode before = ok(200, "GET", "/sales/statements/" + c + "?to=" + LocalDate.now().minusDays(2), null);
+        assertThat(before.get("deposits").get("closingBalance").asDouble()).isZero();
+        assertThat(before.get("deposits").get("lines").size()).isZero();
+        JsonNode filtered = ok(200, "GET", "/sales/statements/" + c + "?type=invoice", null);
+        assertThat(filtered.has("deposits")).isFalse();
+        assertThat(filtered.has("netBalance")).isFalse();
+
+        var pdf = downloadBytes("/sales/statements/" + c + "/pdf");
+        assertThat(pdf.statusCode()).isEqualTo(200);
+        String text = new org.openpdf.text.pdf.parser.PdfTextExtractor(new org.openpdf.text.pdf.PdfReader(pdf.body()))
+                .getTextFromPage(1);
+        assertThat(text).contains("Advances / deposits held on account", "Deposits held: 12000000",
+                "Net amount due after deposits: -7000000");
+    }
+
+    @Test
     @DisplayName("D5: delivered policy, two partial invoices, oldest-first auto application of the deposit")
     void partialInvoicesAutoApply() throws Exception {
         ok(200, "PUT", "/sales/settings", Map.of("depositApplication", "oldest_first"));

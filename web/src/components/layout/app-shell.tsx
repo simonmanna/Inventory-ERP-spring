@@ -359,6 +359,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/deliveries', label: tx('Deliveries'), icon: Truck, permission: PERMISSIONS.sales.deliveryRead },
       { to: '/sales/statements', label: tx('Customer Statements'), icon: FileText, permission: PERMISSIONS.sales.collectionsRead },
       { to: '/sales/collections', label: tx('Collections'), icon: HandCoins, permission: PERMISSIONS.sales.collectionsRead },
+      { to: '/sales/deposits', label: tx('Customer Deposits'), icon: Wallet, permission: PERMISSIONS.payment.read },
       { to: '/sales/credit-notes', label: tx('Credit Notes'), icon: Receipt, permission: PERMISSIONS.sales.returnRead },
       { to: '/sales/returns', label: tx('Returns'), icon: Undo2, permission: PERMISSIONS.sales.returnRead },
       { to: '/sales/complaints', label: tx('Complaints'), icon: MessageSquareWarning, permission: PERMISSIONS.sales.complaintRead },

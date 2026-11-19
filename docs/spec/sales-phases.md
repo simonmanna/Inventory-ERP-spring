@@ -245,7 +245,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   (line on the deposit account, VAT only with tax point "receipt"), batch per customer, gross-invoiced projection on
   `invoice.posted` / `invoice.cancelled`, oldest-first auto application.
 - Routes: `GET /sales/orders/{id}/billing`, `POST /{id}/invoices`, `/{id}/deposits`, `/{id}/apply-deposits`,
-  `POST /sales/invoices/batch`; `/customer-deposits` (list, get, receive, apply, refund, void);
+  `POST /sales/invoices/batch`; `/customer-deposits` (list, get, receive, apply, refund, void, `GET /customer-deposits/:id/pdf` receipt);
   `/payments/mobile-money` (providers, initiate, get, refresh).
 - Web: Billing panel on the order (to invoice, create invoice, down-payment invoice, record deposit incl. mobile-money
   request, apply deposit to an invoice, invoices and deposits list).

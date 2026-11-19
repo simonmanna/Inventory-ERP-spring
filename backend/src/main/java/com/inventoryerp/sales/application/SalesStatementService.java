@@ -116,6 +116,9 @@ public class SalesStatementService {
             }
             out.put("lines", lines);
             out.put("closingBalance", money(running).toPlainString());
+            // Deposits are not split by branch, currency or document type, so they are left off a filtered statement.
+            out.remove("deposits");
+            out.remove("netBalance");
         }
         out.put("reconciliation", reconciliation(partnerId, set, filtered, dec(out.get("closingBalance"))));
         out.put("disputes", db.rows("SELECT * FROM \"SalesStatementDispute\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? ORDER BY \"createdAt\" DESC", org(),

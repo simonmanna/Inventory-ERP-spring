@@ -20,6 +20,9 @@ interface Outstanding { partnerId: string; partnerName: string; email: string | 
 interface Statement { closingBalance: string; openingBalance: string; filtered: boolean; mergedRecords: number; lines: Array<{ date: string; reference: string; description: string | null; debit: string | number; credit: string | number; balance: string }>;
   reconciliation: { openInvoices: number; openCredits: number; documentsTotal: number; closingBalance: number; difference: number; reconciled: boolean | null; note: string | null };
   aging?: { buckets: Record<string, string> };
+  /** Advances held on account (customer-deposit liability); absent on a filtered statement. */
+  deposits?: { openingBalance: string; totalReceived: string; totalUsed: string; closingBalance: string; lines: Array<{ date: string; reference: string; description: string; received: string; used: string; balance: string }> };
+  netBalance?: string;
   log: Array<{ id: string; createdAt: string; sentTo: string | null; delivered: boolean; error: string | null; closingBalance: number; confirmedAt: string | null; confirmedBy: string | null }>;
   disputes: Array<{ id: string; reason: string; amount: number; status: string; resolution: string | null; documentNumber: string | null; createdAt: string }> }
 
@@ -105,6 +108,23 @@ function OneStatement({ partnerId, canManage }: { partnerId: string; canManage: 
           <tbody>{s.lines.map((l, i) => <tr key={i} className="border-t"><td className={th}>{date(l.date)}</td><td className={th}>{l.reference}</td><td className={th}>{l.description}</td><td className={`${th} text-right tabular-nums`}>{Number(l.debit).toLocaleString()}</td><td className={`${th} text-right tabular-nums`}>{Number(l.credit).toLocaleString()}</td><td className={`${th} text-right tabular-nums`}>{Number(l.balance).toLocaleString()}</td></tr>)}</tbody>
         </table>
       </div>
+      {s.deposits && (s.deposits.lines.length > 0 || Number(s.deposits.openingBalance) !== 0 || Number(s.deposits.closingBalance) !== 0) && (
+        <section className="space-y-2">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-semibold">{tx('Advances / deposits held on account')}</h2>
+            <p className="text-sm">{tx('Deposits held')}: <strong>{money(Number(s.deposits.closingBalance))}</strong> · {tx('Net amount due after deposits')}: <strong>{money(Number(s.netBalance ?? 0))}</strong></p>
+          </div>
+          <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr><th className={th}>{tx('Date')}</th><th className={th}>{tx('Deposit')}</th><th className={th}>{tx('Description')}</th><th className={`${th} text-right`}>{tx('Received')}</th><th className={`${th} text-right`}>{tx('Used')}</th><th className={`${th} text-right`}>{tx('Held')}</th></tr></thead>
+              <tbody>
+                <tr className="border-t text-muted-foreground"><td className={th} /><td className={th} /><td className={th}>{tx('Held at start of period')}</td><td className={th} /><td className={th} /><td className={`${th} text-right tabular-nums`}>{Number(s.deposits.openingBalance).toLocaleString()}</td></tr>
+                {s.deposits.lines.map((l, i) => <tr key={i} className="border-t"><td className={th}>{date(l.date)}</td><td className={th}>{l.reference}</td><td className={th}>{l.description}</td><td className={`${th} text-right tabular-nums`}>{Number(l.received) ? Number(l.received).toLocaleString() : ''}</td><td className={`${th} text-right tabular-nums`}>{Number(l.used) ? Number(l.used).toLocaleString() : ''}</td><td className={`${th} text-right tabular-nums`}>{Number(l.balance).toLocaleString()}</td></tr>)}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
       <div className="grid items-start gap-3 lg:grid-cols-2">
         <section className="rounded-xl border bg-card p-4 text-sm shadow-sm"><h2 className="mb-2 font-semibold">{tx('Sent statements')}</h2>
           <ul className="space-y-1">{s.log.map((l) => <li key={l.id} className="flex items-center justify-between gap-2 rounded border p-2"><span>{date(l.createdAt)} · {l.sentTo ?? '—'} · {l.error ? <span className="text-rose-600">{l.error}</span> : l.delivered ? tx('delivered') : tx('queued')}{l.confirmedAt && <span className="block text-xs text-emerald-700">{tx('Confirmed by')} {l.confirmedBy}</span>}</span>

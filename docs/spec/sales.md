@@ -181,6 +181,27 @@ See [`sales-postings.md`](sales-postings.md). Modes: regular (per policy), down 
 customer / period). Deposits through `DepositApplication`. Mobile money via a generic `PaymentGateway` SPI owned by
 invoicing (MTN MoMo, Airtel, mock).
 
+Web: `/sales/deposits` (Customer Deposits) lists deposits by status with an open-balance total. From that page a user can
+record an advance with or without a sales order, apply a deposit to a posted invoice (partial or full), refund it, void
+an unused receipt, and reverse an application from the detail view (needs `payment:void`). The same list appears as a
+"Deposits" tab on the CRM customer page. On the sales-order `BillingPanel`, the deposit rows also offer Refund and
+Void. Cash-sale deposits stay with their cash sale and get no refund/void/reverse actions here.
+Deposit receipt: `GET /customer-deposits/:id/pdf` (`payment:read`) returns an A5 PDF with the business header
+(`Organization.receiptHeader`: name, address, phone, TIN), the customer (code and TIN), the linked sales order, the
+method and reference, the amount received, the applied / refunded / available balance, the history (applications,
+refunds, reversals struck through), who received it, and a "not a tax invoice" note. A void deposit prints as
+"DEPOSIT RECEIPT — VOID". There is a Print button on the deposits list, the deposit detail and the sales-order billing panel.
+Customer statement (`StatementService`, AR side): deposits sit on the customer-deposit liability, not on AR, so the AR
+lines and closing balance are unchanged. The statement adds a `deposits` section built from the deposit subledger:
+`openingBalance`, `lines` (each with `date`, `reference` = deposit number, `description`, `received`, `used` and
+running `balance`), `totalReceived`, `totalUsed` and `closingBalance`. A receipt adds to the amount held. An
+application to an invoice and a refund each use it. A reversed application gives the amount back on its reversal
+date. Void deposits are left out. It also adds `netBalance` = AR closing − deposits held (negative = the customer has
+money on account). The statement PDF (sales, AR report, portal, e-mailed) prints the section with "Deposits held"
+and "Net amount due after deposits" whenever there is anything to show. A filtered sales statement (branch / currency /
+type) omits both fields, because deposits are not split that way.
+Known gaps: no foreign-currency deposits, no deposit tender at POS/Android.
+
 ## 12. Returns (S7), collections (S8), agreements / rebates / commissions / targets (S9), analytics / portal / AI (S10)
 As in the approved plan; detailed here when each phase is authorised.
 

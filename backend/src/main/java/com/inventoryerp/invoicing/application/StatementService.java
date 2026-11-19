@@ -128,12 +128,99 @@ public class StatementService {
         Map<String, Object> aging = aging(ar, partnerId, to != null ? to : Instant.now());
         Map<String, Object> org = SqlRows.one(jdbc.sql("SELECT name, \"currencyCode\", \"receiptHeader\" FROM"
                 + " \"Organization\" WHERE id = ?").param(org()));
-        return Obj.of("side", side, "partner", Obj.of("id", partner.get("id"), "code", partner.get("code"), "name",
-                        partner.get("name"), "email", partner.get("email"), "phone", partner.get("phone"), "taxNumber",
-                        partner.get("taxNumber")),
+        Map<String, Object> out = Obj.of("side", side, "partner", Obj.of("id", partner.get("id"), "code",
+                        partner.get("code"), "name", partner.get("name"), "email", partner.get("email"), "phone",
+                        partner.get("phone"), "taxNumber", partner.get("taxNumber")),
                 "organization", org, "from", fromRaw, "to", toRaw, "openingBalance", plain(opening),
                 "totalDebit", plain(totalDebit), "totalCredit", plain(totalCredit), "closingBalance", plain(running),
                 "lines", lines, "aging", aging);
+        if (ar) {
+            Deposits deposits = deposits(partnerId, from, to);
+            out.put("deposits", deposits.json());
+            out.put("netBalance", plain(running.subtract(deposits.closing())));
+        }
+        return out;
+    }
+
+    /** Deposit section of a customer statement: what was held on account at both ends of the period and why. */
+    private record Deposits(BigDecimal opening, BigDecimal closing, BigDecimal received, BigDecimal used,
+            List<Map<String, Object>> lines) {
+        Map<String, Object> json() {
+            return Obj.of("openingBalance", plain(opening), "totalReceived", plain(received), "totalUsed", plain(used),
+                    "closingBalance", plain(closing), "lines", lines);
+        }
+    }
+
+    private record Movement(Instant at, int order, String reference, String description, BigDecimal received,
+            BigDecimal used) {}
+
+    /**
+     * Customer deposits / advances from the deposit subledger ({@code CustomerDeposit}, {@code DepositApplication}).
+     * They sit on the customer-deposit liability, not on AR, so they never appear among the AR lines: a receipt adds
+     * to the amount held, an application to an invoice or a refund uses it, and a reversed application gives it back.
+     * Void deposits are left out (their receipt was reversed). Receipts are dated by their received day in the
+     * organization's time zone; applications, refunds and reversals by when they happened.
+     */
+    private Deposits deposits(String partnerId, Instant from, Instant to) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        List<Movement> moves = new ArrayList<>();
+        for (Map<String, Object> d : SqlRows.list(jdbc.sql("SELECT number, \"receivedDate\", amount, source, reference"
+                + " FROM \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status <> 'void'")
+                .params(org(), partnerId))) {
+            Object day = d.get("receivedDate");
+            java.time.LocalDate date = day instanceof java.time.LocalDate l ? l : java.time.LocalDate.parse(
+                    String.valueOf(day).substring(0, 10));
+            String what = switch (String.valueOf(d.get("source"))) {
+                case "down_payment_invoice" -> "Down payment invoice " + (d.get("reference") == null ? "" : d.get(
+                        "reference"));
+                case "cash_sale" -> "Cash sale payment";
+                default -> "Advance received";
+            };
+            moves.add(new Movement(AccountingDay.start(date, zone), 0, (String) d.get("number"), what.strip(),
+                    SqlRows.dec(d, "amount"), BigDecimal.ZERO));
+        }
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.kind, a.amount, a.\"createdAt\", a.\"reversedAt\","
+                + " d.number, doc.\"documentNumber\" FROM \"DepositApplication\" a JOIN \"CustomerDeposit\" d ON d.id ="
+                + " a.\"depositId\" LEFT JOIN \"Document\" doc ON doc.id = a.\"documentId\" WHERE a.\"organizationId\" = ?"
+                + " AND d.\"partnerId\" = ? AND d.status <> 'void'").params(org(), partnerId))) {
+            BigDecimal amount = SqlRows.dec(a, "amount");
+            String number = (String) a.get("number");
+            if ("refund".equals(a.get("kind"))) {
+                moves.add(new Movement((Instant) a.get("createdAt"), 1, number, "Refunded to customer", BigDecimal.ZERO,
+                        amount));
+                continue;
+            }
+            String invoice = a.get("documentNumber") == null ? "invoice" : "invoice " + a.get("documentNumber");
+            moves.add(new Movement((Instant) a.get("createdAt"), 1, number, "Applied to " + invoice, BigDecimal.ZERO,
+                    amount));
+            if (a.get("reversedAt") instanceof Instant back) {
+                moves.add(new Movement(back, 2, number, "Application to " + invoice + " reversed", amount,
+                        BigDecimal.ZERO));
+            }
+        }
+        moves.sort(java.util.Comparator.comparing(Movement::at).thenComparingInt(Movement::order));
+        BigDecimal opening = BigDecimal.ZERO;
+        BigDecimal received = BigDecimal.ZERO;
+        BigDecimal used = BigDecimal.ZERO;
+        BigDecimal running = BigDecimal.ZERO;
+        List<Map<String, Object>> lines = new ArrayList<>();
+        for (Movement m : moves) {
+            if (to != null && m.at().isAfter(to)) {
+                continue;
+            }
+            BigDecimal delta = m.received().subtract(m.used());
+            if (from != null && m.at().isBefore(from)) {
+                opening = opening.add(delta);
+                running = running.add(delta);
+                continue;
+            }
+            running = running.add(delta);
+            received = received.add(m.received());
+            used = used.add(m.used());
+            lines.add(Obj.of("date", m.at(), "reference", m.reference(), "description", m.description(), "received",
+                    plain(m.received()), "used", plain(m.used()), "balance", plain(running)));
+        }
+        return new Deposits(opening, running, received, used, lines);
     }
 
     private static BigDecimal signed(boolean ar, BigDecimal debit, BigDecimal credit) {
@@ -290,6 +377,39 @@ public class StatementService {
                 FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12));
         closing.setAlignment(Element.ALIGN_RIGHT);
         pdf.add(closing);
+        Map<String, Object> deposits = (Map<String, Object>) st.get("deposits");
+        if (deposits != null && (!((List<?>) deposits.get("lines")).isEmpty()
+                || !isZero(deposits.get("openingBalance")) || !isZero(deposits.get("closingBalance")))) {
+            pdf.add(new Paragraph(" "));
+            pdf.add(new Paragraph("Advances / deposits held on account", bold));
+            PdfPTable dt = new PdfPTable(new float[] {1.3f, 1.4f, 3.2f, 1.3f, 1.3f, 1.4f});
+            dt.setWidthPercentage(100);
+            for (String h : List.of("Date", "Deposit", "Description", "Received", "Used", "Held")) {
+                dt.addCell(cell(h, bold, Element.ALIGN_LEFT));
+            }
+            dt.addCell(cell("", small, Element.ALIGN_LEFT));
+            dt.addCell(cell("", small, Element.ALIGN_LEFT));
+            dt.addCell(cell("Held at start of period", bold, Element.ALIGN_LEFT));
+            dt.addCell(cell("", small, Element.ALIGN_RIGHT));
+            dt.addCell(cell("", small, Element.ALIGN_RIGHT));
+            dt.addCell(cell(String.valueOf(deposits.get("openingBalance")), bold, Element.ALIGN_RIGHT));
+            for (Map<String, Object> l : (List<Map<String, Object>>) deposits.get("lines")) {
+                dt.addCell(cell(l.get("date") instanceof Instant i ? DAY.format(i) : "", small, Element.ALIGN_LEFT));
+                dt.addCell(cell(String.valueOf(l.get("reference")), small, Element.ALIGN_LEFT));
+                dt.addCell(cell(String.valueOf(l.get("description")), small, Element.ALIGN_LEFT));
+                dt.addCell(cell(zeroBlank(l.get("received")), small, Element.ALIGN_RIGHT));
+                dt.addCell(cell(zeroBlank(l.get("used")), small, Element.ALIGN_RIGHT));
+                dt.addCell(cell(String.valueOf(l.get("balance")), small, Element.ALIGN_RIGHT));
+            }
+            pdf.add(dt);
+            Paragraph held = new Paragraph("Deposits held: " + deposits.get("closingBalance"), bold);
+            held.setAlignment(Element.ALIGN_RIGHT);
+            pdf.add(held);
+            Paragraph net = new Paragraph("Net amount due after deposits: " + st.get("netBalance"),
+                    FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12));
+            net.setAlignment(Element.ALIGN_RIGHT);
+            pdf.add(net);
+        }
         Map<String, Object> aging = (Map<String, Object>) st.get("aging");
         Map<String, Object> buckets = (Map<String, Object>) aging.get("buckets");
         pdf.add(new Paragraph(" "));
@@ -306,6 +426,10 @@ public class StatementService {
         pdf.add(a);
         pdf.close();
         return out.toByteArray();
+    }
+
+    private static boolean isZero(Object v) {
+        return v == null || new BigDecimal(String.valueOf(v)).signum() == 0;
     }
 
     private static String zeroBlank(Object v) {

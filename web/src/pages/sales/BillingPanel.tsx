@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { FileText, Wallet } from 'lucide-react';
+import { FileText, Printer, Wallet } from 'lucide-react';
+import { printDepositReceipt } from '@/features/sales/deposits';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,6 +57,13 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
     mutationFn: async ({ depositId, documentId }: { depositId: string; documentId: string }) => (await api.post(`/customer-deposits/${depositId}/apply`, { documentId }, idem())).data,
     onSuccess: () => { refresh(); toast.success(tx('Deposit applied')); }, onError: err,
   });
+  const settle = useMutation({
+    mutationFn: async ({ url, body }: { url: string; body: Record<string, unknown> }) => (await api.post(url, body, idem())).data,
+    onSuccess: () => { refresh(); setRefunding(null); setVoiding(null); setReason(''); toast.success(tx('Done')); }, onError: err,
+  });
+  const [refunding, setRefunding] = useState<Billing['deposits'][number] | null>(null);
+  const [voiding, setVoiding] = useState<Billing['deposits'][number] | null>(null);
+  const [reason, setReason] = useState('');
   const [dialog, setDialog] = useState<'deposit' | 'down' | null>(null);
   const [amount, setAmount] = useState(0);
   const [percent, setPercent] = useState(30);
@@ -65,6 +73,7 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
   if (!data) return null;
   const canInvoice = has(PERMISSIONS.sales.invoiceCreate);
   const canDeposit = has(PERMISSIONS.sales.depositRecord);
+  const canRefund = has(PERMISSIONS.sales.depositRefund);
   const postedOpen = data.invoices.filter((i) => i.status === 'posted' && Number(i.amountResidual) > 0 && !i.downPayment);
   return (
     <div data-tour="sales.order.billing" className="rounded-xl border bg-card p-4 text-sm shadow-sm">
@@ -95,16 +104,40 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
           {data.deposits.map((d) => (
             <li key={d.id} className="flex flex-wrap items-center gap-2">
               <span>{d.number} · {date(d.receivedDate)} · {money(d.amount)} · {tx('available')} {money(d.available)} · {d.status}</span>
+              <Button size="sm" variant="ghost" title={tx('Print receipt')} onClick={() => void printDepositReceipt(d)}><Printer className="h-3.5 w-3.5" /></Button>
               {d.status === 'open' && Number(d.available) > 0 && postedOpen.length > 0 && canDeposit && <>
                 <select className="h-7 rounded border bg-background px-1" value={target[d.id] ?? ''} onChange={(e) => setTarget({ ...target, [d.id]: e.target.value })}>
                   <option value="">{tx('Apply to…')}</option>{postedOpen.map((i) => <option key={i.id} value={i.id}>{i.documentNumber}</option>)}
                 </select>
                 <Button size="sm" variant="ghost" disabled={!target[d.id]} onClick={() => apply.mutate({ depositId: d.id, documentId: target[d.id] })}>{tx('Apply')}</Button>
               </>}
+              {d.status === 'open' && Number(d.available) > 0 && d.source !== 'cash_sale' && canRefund && <Button size="sm" variant="ghost" onClick={() => { setAmount(Number(d.available)); setMethod('bank'); setRefunding(d); }}>{tx('Refund')}</Button>}
+              {d.source === 'receipt' && d.status === 'open' && Number(d.available) === Number(d.amount) && canRefund && <Button size="sm" variant="ghost" onClick={() => setVoiding(d)}>{tx('Void')}</Button>}
             </li>
           ))}
         </ul>
       </div>}
+      <Dialog open={refunding !== null || voiding !== null} onOpenChange={(v) => { if (!v) { setRefunding(null); setVoiding(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{refunding ? `${tx('Refund')} ${refunding.number}` : `${tx('Void')} ${voiding?.number ?? ''}`}</DialogTitle></DialogHeader>
+          {refunding && <div className="grid gap-3">
+            <p className="text-xs text-muted-foreground">{tx('Available')}: {money(refunding.available)}</p>
+            <Field label={tx('Amount')}><Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></Field>
+            <Field label={tx('Method')}>
+              <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value)}>
+                <option value="bank">{tx('Bank transfer')}</option><option value="cash">{tx('Cash')}</option><option value="cheque">{tx('Cheque')}</option><option value="mobile_money">{tx('Mobile money (recorded)')}</option>
+              </select></Field>
+          </div>}
+          <Field label={tx('Reason')}><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setRefunding(null); setVoiding(null); }}>{tx('Cancel')}</Button>
+            <Button variant={voiding ? 'destructive' : 'default'} disabled={settle.isPending || (voiding ? !reason.trim() : !(amount > 0))} onClick={() => {
+              if (refunding) settle.mutate({ url: `/customer-deposits/${refunding.id}/refund`, body: { amount, paymentMethod: method === 'momo_request' ? 'mobile_money' : method, reason: reason || undefined } });
+              else if (voiding) settle.mutate({ url: `/customer-deposits/${voiding.id}/void`, body: { reason } });
+            }}>{tx('Confirm')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={dialog !== null} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{dialog === 'down' ? tx('Down payment invoice') : tx('Record deposit')}</DialogTitle></DialogHeader>

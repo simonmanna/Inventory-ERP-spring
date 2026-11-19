@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { crmApi, useCategoryOptions, useCrmMutation, useCustomer, useCustomers, useSavedFilters } from '@/features/crm/suite-api';
 import { DealStatusPill, KpiCard, QuoteStatusPill, typeLabel } from './crm-ui';
 import { OpportunityDialog, ScheduleDialog } from './crm-dialogs';
+import { CustomerDepositsList } from '@/pages/sales/CustomerDepositsPage';
 
 /** Customer directory with pipeline, revenue and receivables per customer (ADR-S010). */
 export function CustomersPage() {
@@ -103,6 +104,7 @@ export function CustomerDetailPage() {
   const { data, isLoading } = useCustomer(id);
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
   const canQuote = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite));
+  const canDeposits = useAuthStore((s) => s.hasPermission(PERMISSIONS.payment.read));
   const [dialog, setDialog] = useState<'opp' | 'activity' | null>(null);
   if (isLoading) return <Skeleton className="h-96 w-full" />;
   if (!data) return <p className="text-sm text-muted-foreground">{tx('Customer not found.')}</p>;
@@ -137,6 +139,7 @@ export function CustomerDetailPage() {
           <TabsTrigger value="quotes">{tx('Quotations')} ({data.quotations.length})</TabsTrigger>
           <TabsTrigger value="orders">{tx('Orders')} ({data.orders.length})</TabsTrigger>
           <TabsTrigger value="invoices">{tx('Invoices')} ({data.invoices.length})</TabsTrigger>
+          {canDeposits && <TabsTrigger value="deposits">{tx('Deposits')}</TabsTrigger>}
           <TabsTrigger value="contacts">{tx('Contacts')} ({p.contacts.length})</TabsTrigger>
           <TabsTrigger value="prices">{tx('Prices')}</TabsTrigger>
           <TabsTrigger value="activity">{tx('Activity')}</TabsTrigger>
@@ -145,6 +148,7 @@ export function CustomerDetailPage() {
         <TabsContent value="quotes"><SimpleTable rows={data.quotations.map((q) => ({ key: q.id, link: `/crm/quotations/${q.id}`, cells: [q.number, date(q.issueDate), <QuoteStatusPill key="s" status={q.status} />, q.dealName ?? '', money(q.total, q.currencyCode)] }))} /></TabsContent>
         <TabsContent value="orders"><SimpleTable rows={data.orders.map((o) => ({ key: o.id, link: `/orders/${o.id}`, cells: [o.orderNumber, date(o.createdAt), statusLabel(o.status), o.invoiceId ? tx('Invoiced') : '', money(o.total)] }))} /></TabsContent>
         <TabsContent value="invoices"><SimpleTable rows={data.invoices.map((d) => ({ key: d.id, link: `/invoices/${d.id}`, cells: [d.documentNumber, date(d.issueDate), statusLabel(d.documentType), statusLabel(d.paymentStatus), money(d.amountResidual) + ' / ' + money(d.totalAmount)] }))} /></TabsContent>
+        {canDeposits && <TabsContent value="deposits"><CustomerDepositsList partnerId={p.id} partnerName={p.name} /></TabsContent>}
         <TabsContent value="contacts"><SimpleTable rows={p.contacts.map((c) => ({ key: c.id, cells: [[c.firstName, c.lastName].filter(Boolean).join(' ') + (c.isPrimary ? ' ★' : ''), c.position ?? '', c.email ?? '', c.phone ?? '', ''] }))} /></TabsContent>
         <TabsContent value="prices"><SimpleTable rows={data.priceRules.map((r) => ({ key: r.id, link: '/crm/pricing', cells: [r.name, r.productName ?? tx('All products'), r.kind === 'fixed_price' ? money(r.value) : `${r.value}% ${tx('off')}`, Number(r.minQuantity) > 0 ? `≥ ${r.minQuantity}` : '', [r.validFrom, r.validTo].filter(Boolean).join(' → ')] }))} /></TabsContent>
         <TabsContent value="activity"><SimpleTable rows={data.activities.map((a) => ({ key: a.id, link: a.dealId ? `/crm/opportunities/${a.dealId}` : undefined, cells: [a.title, typeLabel(a.type), statusLabel(a.status), a.outcome ?? '', relativeTime(a.occurredAt)] }))} /></TabsContent>

@@ -469,6 +469,96 @@ public class CustomerDepositService {
                 + " d.\"partnerId\"" + where + " ORDER BY d.\"receivedDate\", d.\"createdAt\"").params(params));
     }
 
+    /** A rendered deposit receipt. */
+    public record ReceiptPdf(String fileName, byte[] content) {}
+
+    /** Printable receipt of a deposit (any source): business header, customer, amount, balance and history. */
+    @Transactional(readOnly = true)
+    public ReceiptPdf receiptPdf(String id) {
+        Map<String, Object> d = get(id);
+        String org = org();
+        Map<String, Object> o = SqlRows.one(jdbc.sql("SELECT name, \"currencyCode\", \"receiptHeader\" FROM \"Organization\""
+                + " WHERE id = ?").param(org));
+        Map<String, Object> partner = SqlRows.one(jdbc.sql("SELECT name, code, \"taxNumber\" FROM \"Partner\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(d.get("partnerId"), org));
+        String order = d.get("salesOrderId") == null ? null : jdbc.sql("SELECT number FROM \"SalesOrder\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(d.get("salesOrderId"), org).query(String.class).optional().orElse(null);
+        String receivedBy = d.get("createdById") == null ? null : jdbc.sql("SELECT trim(\"firstName\" || ' ' ||"
+                + " coalesce(\"lastName\", '')) FROM \"User\" WHERE id = ?").param(d.get("createdById")).query(String.class)
+                .optional().orElse(null);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> apps = (List<Map<String, Object>>) d.get("applications");
+        List<CustomerDepositReceiptPdf.HistoryRow> history = apps.stream().map(a -> new CustomerDepositReceiptPdf.HistoryRow(
+                day(a.get("createdAt")), "refund".equals(a.get("kind")) ? "Refund" : "Applied to invoice "
+                        + (a.get("documentNumber") == null ? "" : a.get("documentNumber")), SqlRows.dec(a, "amount"),
+                a.get("reversedAt") != null)).toList();
+        String source = switch (String.valueOf(d.get("source"))) {
+            case "down_payment_invoice" -> "Down payment (invoice " + (d.get("reference") == null ? "" : d.get("reference"))
+                    + ")";
+            case "cash_sale" -> "Cash sale payment";
+            default -> "Advance / deposit";
+        };
+        CustomerDepositReceiptPdf.Receipt r = new CustomerDepositReceiptPdf.Receipt(header(o), str(d.get("number")),
+                day(d.get("receivedDate")), str(d.get("status")), partner == null ? "" : str(partner.get("name")),
+                partner == null ? null : (String) partner.get("code"), partner == null ? null : (String) partner.get(
+                        "taxNumber"), order, source, methodLabel((String) d.get("paymentMethod")),
+                "down_payment_invoice".equals(d.get("source")) ? null : (String) d.get("reference"), (String) d.get("notes"),
+                o == null || o.get("currencyCode") == null ? "" : str(o.get("currencyCode")), SqlRows.dec(d, "amount"),
+                SqlRows.dec(d, "appliedAmount"), SqlRows.dec(d, "refundedAmount"), SqlRows.dec(d, "available"), receivedBy,
+                history);
+        return new ReceiptPdf("deposit-" + d.get("number") + ".pdf", CustomerDepositReceiptPdf.render(r));
+    }
+
+    private static CustomerDepositReceiptPdf.Header header(Map<String, Object> o) {
+        String name = o == null ? "ERP" : str(o.get("name"));
+        List<String> lines = new ArrayList<>();
+        if (o != null && o.get("receiptHeader") instanceof tools.jackson.databind.JsonNode n) {
+            if (n.hasNonNull("businessName") && !n.get("businessName").asString().isBlank()) {
+                name = n.get("businessName").asString();
+            }
+            for (String k : List.of("addressLine1", "addressLine2", "phone")) {
+                if (n.hasNonNull(k) && !n.get(k).asString().isBlank()) {
+                    lines.add(n.get(k).asString());
+                }
+            }
+            if (n.hasNonNull("taxId") && !n.get("taxId").asString().isBlank()) {
+                lines.add("TIN: " + n.get("taxId").asString());
+            }
+        }
+        return new CustomerDepositReceiptPdf.Header(name, lines);
+    }
+
+    private static String methodLabel(String m) {
+        if (m == null) {
+            return null;
+        }
+        return switch (m) {
+            case "bank" -> "Bank transfer";
+            case "cash" -> "Cash";
+            case "cheque" -> "Cheque";
+            case "mobile_money" -> "Mobile money";
+            default -> m.replace('_', ' ');
+        };
+    }
+
+    private static String day(Object v) {
+        if (v == null) {
+            return "";
+        }
+        if (v instanceof Instant i) {
+            return i.atZone(ZoneOffset.UTC).toLocalDate().toString();
+        }
+        if (v instanceof java.sql.Timestamp t) {
+            return t.toLocalDateTime().toLocalDate().toString();
+        }
+        String s = v.toString();
+        return s.length() >= 10 ? s.substring(0, 10) : s;
+    }
+
+    private static String str(Object v) {
+        return v == null ? "" : v.toString();
+    }
+
     /** Unapplied deposit balance of a customer (credit exposure bucket D). */
     @Transactional(readOnly = true)
     public BigDecimal openBalance(String partnerId) {
