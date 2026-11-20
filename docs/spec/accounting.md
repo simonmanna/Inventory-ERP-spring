@@ -70,7 +70,7 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
-FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; A–G on main, outstanding items in the ADR):
+FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; A–G on main, FX-3..FX-8 on phase/fx3-8):
 
 - Posting refuses when the company has no functional currency (no USD fallback). `PATCH /organizations/me/settings`
   refuses clearing `currencyCode`: "The functional currency is required".
@@ -96,6 +96,13 @@ FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owne
 - Additive route `POST /payments/{id}/allocations` allocates a payment's unallocated advance to open documents with
   realised FX. Credit-note allocation realises FX. Foreign loans and foreign opening balances (`currencyCode`,
   `exchangeRate` on `/opening-balances` lines) carry their currency.
+- FX-3..FX-8 (additive):
+  - `exchangeRate` on credit-note refunds, PO pay, advance disburse / refund, petty-cash replenish and shift banking;
+  - `currencyCode` on expense advances; `depositKind` on rental checkout;
+  - routes `GET /fx-treasury/report[/lines]`, `POST /currencies/rates/fetch`, `GET /currencies/rates/fetch-status|missing`,
+    `GET /rental/deposits/classification-review`, `POST /rental/agreements/{id}/deposit/classify`;
+  - close-checklist item `fx_revaluation`.
+  - A foreign credit is refunded in its own currency (the FX-1 refusal is removed).
 - A foreign PO receipt is valued at the receipt-date rate (table, else the PO rate) and records it on the receipt.
   Bills remeasure AP from the receipt's rate. The PO pay route measures what is owed at the receipts' carrying rate.
 

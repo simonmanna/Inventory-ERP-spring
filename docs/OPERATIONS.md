@@ -40,6 +40,19 @@ OCR of scanned PDFs / images needs `DMS_OCR_ENABLED=true`, the `tesseract` binar
 named in `DMS_OCR_LANGUAGES` (e.g. `eng+ara`). Jobs: `dms-text-extraction` (5 min), `dms-expiry` (daily 06:15),
 `dms-legacy-index` (10 min); all ShedLock-guarded. Helpdesk replies and e-mail dispatch use the SMTP settings.
 
+Automatic exchange rates (FX-8, ADR-S082) are **off by default**; no outbound call is made unless both are set:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FX_RATE_FETCH_ENABLED` | `false` | `true` turns on the daily fetch and `POST /currencies/rates/fetch`. |
+| `FX_RATE_PROVIDER_URL` | (empty) | JSON endpoint with `{base}` replaced by the company's functional currency, answering `{"rates": {"USD": 0.00027, ...}}` or `conversion_rates` (units per one functional unit; the stored rate is the inverse). |
+| `FX_RATE_FETCH_CRON` | `0 30 6 * * *` | When the daily job runs (server time); ShedLock `fx-rate-fetch`. |
+| `FX_RATE_PROVIDER_NAME` | `provider` | Stored as the rate's `source`. |
+| `FX_RATE_FETCH_RATE_TYPE` | `market` | Rate type the fetched rates are stored under (`official`, `bank`, `cash`, `market`). |
+
+A rate already on file for the day and type (for example entered by hand) is never replaced. A company policy
+that requires approved rates of that type leaves fetched rates `pending` until a second person approves them.
+
 Grant `beverage:approve` only to supervisors: they approve flagged counts and unweighed exceptions and cannot
 approve a count they started.
 
