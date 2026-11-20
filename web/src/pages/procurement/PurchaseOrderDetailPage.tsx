@@ -29,6 +29,7 @@ import { usePoLifecycle } from '@/features/procurement/api';
 import { useBranchChoices } from '@/features/approval-controls/api';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
+import { PaymentTypeTag, PoStatusPill, PO_PAYMENT_STATUS_LABELS as PAYMENT_STATUS_LABELS } from './po-ui';
 
 interface POLine {
   id: string; productId: string | null; description: string;
@@ -52,28 +53,6 @@ interface PO {
   receipts?: any[];
   payments?: any[];
   request?: any;
-}
-
-const STATUS_TONE: Record<string, string> = {
-  active: 'bg-sky-100 text-sky-800', partially_received: 'bg-indigo-100 text-indigo-800',
-  received: 'bg-emerald-100 text-emerald-800', cancelled: 'bg-rose-100 text-rose-800',
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  active: tx('Active'), partially_received: tx('Partially Received'),
-  received: tx('Received'), cancelled: tx('Cancelled'),
-};
-
-const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  not_paid: tx('Unpaid'), paid: tx('Paid'), partial: tx('Partial'),
-};
-
-function PoStatusPill({ status }: { status: string }) {
-  return (
-    <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium dark:bg-opacity-20', STATUS_TONE[status] ?? 'bg-slate-100 text-slate-700')}>
-      {STATUS_LABELS[status] ?? status}
-    </span>
-  );
 }
 
 /** A purchase order, laid out like the sales order form: ribbon, action bar, smart buttons, header fields, tabs. */
@@ -143,9 +122,7 @@ export function PurchaseOrderDetailPage() {
           <span className="font-semibold">{data.orderNumber}</span>
           <span className="ml-3 inline-flex items-center gap-1">
             <PoStatusPill status={data.status} />
-            <span className={cn('rounded-full border px-2 py-0.5 text-xs font-medium', isCash ? 'border-yellow-400 text-yellow-700' : 'border-blue-400 text-blue-700')}>
-              {isCash ? tx('Cash') : tx('Credit')}
-            </span>
+            <PaymentTypeTag type={data.paymentType} />
           </span>
         </div>
         {data.status !== 'cancelled' && <div className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
