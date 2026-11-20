@@ -4,7 +4,6 @@ import static com.inventoryerp.procurement.application.ProcurementSql.org;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountingDay;
-import com.inventoryerp.inventory.application.LineageFollower;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -47,14 +46,12 @@ public class LandedCostAnalysisService {
 
     private final JdbcClient jdbc;
     private final AccountDeterminationService determination;
-    private final LineageFollower follower;
     private final ProfitabilitySources sources;
 
     public LandedCostAnalysisService(JdbcClient jdbc, AccountDeterminationService determination,
-            LineageFollower follower, ProfitabilitySources sources) {
+            ProfitabilitySources sources) {
         this.jdbc = jdbc;
         this.determination = determination;
-        this.follower = follower;
         this.sources = sources;
     }
 
@@ -178,7 +175,8 @@ public class LandedCostAnalysisService {
      * Profitability before / after landed cost: the units sold in the period with the cost of sales of their issue rows,
      * plus the later cost adjustments that reached units already sold (posted in the period, taken back when reversed —
      * {@link ProfitabilitySources#postSale}). Layers: landed (vouchers, receipt landed cost, accruals — posted after the
-     * sale, or carried inside the running average of units sold after the charge), conversion (overhead settlement,
+     * sale, or carried inside the running average of units sold after the charge, less what a reversal in the period
+     * took back out of COGS — {@link ProfitabilitySources#carried}), conversion (overhead settlement,
      * cost adjustment runs), distribution (branch transfer freight); purchase = the issue value less the landed cost it
      * carried, plus any other later price correction. Revenue is net of credit notes and POS refunds, in base currency
      * ({@link ProfitabilitySources#revenue}). Selling and admin expenses are reported apart and never added to product
@@ -194,46 +192,27 @@ public class LandedCostAnalysisService {
                 + " l.\"createdAt\" < ? GROUP BY 1, 2").params(p))) {
             byProduct.put((String) r.get("productId"), new LinkedHashMap<>(r));
         }
-        // Units sold after the charge posted carry it inside the running average (already in the issue value): follow
-        // each landed value row (the same lineage the reversal uses) and take the share of this period's sales.
-        Map<String, BigDecimal> carried = new LinkedHashMap<>();
-        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.\"productId\", a.\"onHandAmount\", g.* FROM"
-                + " \"CostValueAdjustment\" a JOIN \"InventoryLedger\" g ON g.id = a.\"anchorLedgerId\" WHERE"
-                + " a.\"organizationId\" = ? AND a.\"reversedAt\" IS NULL AND a.\"valuationComponent\" IS NULL AND"
-                + " a.\"adjustmentType\" IN ('landed_cost', 'landed_accrual') AND a.\"onHandAmount\" <> 0 AND"
-                + " g.\"createdAt\" < ?").params(org(), p[2]))) {
-            BigDecimal pool = SqlRows.dec(a, "balanceAfter");
-            if (pool.signum() <= 0) {
-                continue;
-            }
-            for (var placement : follower.follow(a, pool, BigDecimal.ZERO, SqlRows.dec(a, "onHandAmount"))
-                    .placements()) {
-                if (placement.consumptionLedgerId() == null || !"issue".equals(placement.moveType())) {
-                    continue;
-                }
-                Map<String, Object> issue = SqlRows.one(jdbc.sql("SELECT \"productId\" FROM \"InventoryLedger\" WHERE"
-                        + " id = ? AND \"createdAt\" >= ? AND \"createdAt\" < ?").params(placement.consumptionLedgerId(),
-                        p[1], p[2]));
-                if (issue != null) {
-                    carried.merge((String) issue.get("productId"), placement.amount(), BigDecimal::add);
-                }
-            }
-        }
+        // Units sold after the charge posted carry it inside the running average (already in the issue value); a
+        // reversal in the period takes the share consumed since back out of COGS.
+        ProfitabilitySources.Carried carried = sources.carried(p[1], p[2]);
         Map<String, Map<String, BigDecimal>> postSale = sources.postSale(p[1], p[2]);
         Map<String, ProfitabilitySources.Revenue> revenue = sources.revenue(p[1], p[2]);
-        Map<String, String> names = names(byProduct, postSale.keySet(), revenue.keySet());
+        java.util.Set<String> adjusted = new java.util.LinkedHashSet<>(postSale.keySet());
+        adjusted.addAll(carried.reclass().keySet());
+        Map<String, String> names = names(byProduct, adjusted, revenue.keySet());
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map.Entry<String, String> e : names.entrySet()) {
             String id = e.getKey();
             Map<String, Object> r = byProduct.get(id);
             Map<String, BigDecimal> l = postSale.getOrDefault(id, Map.of());
             BigDecimal issued = r == null ? BigDecimal.ZERO : SqlRows.dec(r, "cogs").abs();
-            BigDecimal inLayer = carried.getOrDefault(id, BigDecimal.ZERO);
-            BigDecimal landed = inLayer.add(l.getOrDefault("landed", BigDecimal.ZERO));
+            BigDecimal inLayer = carried.inLayer().getOrDefault(id, BigDecimal.ZERO);
+            BigDecimal reclass = carried.reclass().getOrDefault(id, BigDecimal.ZERO);
+            BigDecimal landed = inLayer.add(l.getOrDefault("landed", BigDecimal.ZERO)).subtract(reclass);
             BigDecimal conversion = l.getOrDefault("conversion", BigDecimal.ZERO);
             BigDecimal distribution = l.getOrDefault("distribution", BigDecimal.ZERO);
             BigDecimal purchase = issued.subtract(inLayer).add(l.getOrDefault("other", BigDecimal.ZERO));
-            BigDecimal cogs = issued.add(ProfitabilitySources.total(l));
+            BigDecimal cogs = issued.add(ProfitabilitySources.total(l)).subtract(reclass);
             ProfitabilitySources.Revenue rv = revenue.get(id);
             BigDecimal rev = rv == null ? BigDecimal.ZERO : rv.amount();
             rows.add(Obj.of("productId", id, "name", e.getValue(), "unitsSold", JsNumbers.dec(r == null

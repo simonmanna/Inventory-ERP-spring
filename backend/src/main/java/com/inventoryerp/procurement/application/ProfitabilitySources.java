@@ -2,6 +2,7 @@ package com.inventoryerp.procurement.application;
 
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 
+import com.inventoryerp.inventory.application.LineageFollower;
 import com.inventoryerp.kernel.crud.SqlRows;
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
@@ -22,16 +23,22 @@ import org.springframework.stereotype.Component;
  *   <li><b>post-sale adjustments</b> per product and layer — the cost-value adjustment lines that reached units already
  *       issued (landed cost posted after the sale, conversion, distribution, …). They are not in the issue row's value,
  *       so cost of sales = issue value + these lines. Each is dated as posted (its journal entry, else its landed cost
- *       voucher's date, else when it was recorded) and taken back at its reversal date, as the GL does.</li>
+ *       voucher's date, else when it was recorded) and taken back at its reversal date, as the GL does;</li>
+ *   <li><b>carried landed cost</b> — landed cost capitalised before the sale rides inside the running average of the
+ *       units sold after it (already in the issue value), and the <b>reversal reclass</b>: reversing such a voucher
+ *       takes the share consumed since back out of COGS on the reversal date ("consumed since stays consumed"
+ *       reclass). Both follow the same lineage the reversal uses.</li>
  * </ul>
  */
 @Component
 class ProfitabilitySources {
 
     private final JdbcClient jdbc;
+    private final LineageFollower follower;
 
-    ProfitabilitySources(JdbcClient jdbc) {
+    ProfitabilitySources(JdbcClient jdbc, LineageFollower follower) {
         this.jdbc = jdbc;
+        this.follower = follower;
     }
 
     /** Net quantity and revenue of one product. */
@@ -84,6 +91,68 @@ class ProfitabilitySources {
                     "adjustmentType")), SqlRows.dec(r, "amount"), BigDecimal::add);
         }
         return out;
+    }
+
+    /**
+     * Landed cost carried inside the issue value of units sold after the charge, and the reversal reclass.
+     *
+     * @param inLayer per product: the share carried by issues in the period (consumed before any reversal)
+     * @param reclass per product: what reversals in the period took back out of COGS (positive = credit to COGS)
+     */
+    record Carried(Map<String, BigDecimal> inLayer, Map<String, BigDecimal> reclass) {}
+
+    /**
+     * {@link Carried} over {@code [start, end)}. Each landed value row is followed through its pool (the lineage the
+     * reversal itself uses, {@code LandedCostLayers.reverseLineage}); consumptions after a reversal carry nothing. The
+     * reclass mirrors that reversal (a voucher reversed through its lineage) for non-lot rows: the consumed issue
+     * placements, or the whole carried amount when the anchor pool was already empty. Lots (unwound per batch) and STANDARD adjuncts are not modelled.
+     */
+    Carried carried(Object start, Object end) {
+        Map<String, BigDecimal> inLayer = new LinkedHashMap<>();
+        Map<String, BigDecimal> reclass = new LinkedHashMap<>();
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.id AS \"adjustmentId\", a.\"productId\" AS"
+                + " \"adjustedProductId\", a.\"onHandAmount\", a.\"reversedAt\" IS NOT NULL AS reversed,"
+                + " coalesce(a.\"reversedAt\" >= ? AND a.\"reversedAt\" < ?, false) AND EXISTS (SELECT 1 FROM"
+                + " \"LandedCost\" lc WHERE lc.\"organizationId\" = a.\"organizationId\" AND lc.code = a.\"sourceId\" AND"
+                + " lc.status = 'reversed' AND EXISTS (SELECT 1 FROM \"LandedCostAllocation\" x WHERE x.\"landedCostId\" ="
+                + " lc.id AND x.disposition IS NOT NULL)) AS \"reversedInPeriod\", g.* FROM"
+                + " \"CostValueAdjustment\" a JOIN \"InventoryLedger\" g ON g.id = a.\"anchorLedgerId\" WHERE"
+                + " a.\"organizationId\" = ? AND a.\"valuationComponent\" IS NULL AND a.\"adjustmentType\" IN"
+                + " ('landed_cost', 'landed_accrual') AND a.\"onHandAmount\" <> 0 AND g.\"createdAt\" < ? AND"
+                + " (a.\"reversedAt\" IS NULL OR (a.\"batchId\" IS NULL AND a.\"reversedAt\" >= ?))")
+                .params(start, end, org(), end, start))) {
+            boolean reversed = Boolean.TRUE.equals(a.get("reversed"));
+            boolean reclassHere = Boolean.TRUE.equals(a.get("reversedInPeriod"));
+            BigDecimal onHand = SqlRows.dec(a, "onHandAmount");
+            BigDecimal pool = SqlRows.dec(a, "balanceAfter");
+            if (pool.signum() <= 0) {
+                if (reclassHere) {
+                    reclass.merge((String) a.get("adjustedProductId"), onHand, BigDecimal::add);
+                }
+                continue;
+            }
+            for (var placement : follower.follow(a, pool, BigDecimal.ZERO, onHand).placements()) {
+                if (placement.consumptionLedgerId() == null || !"issue".equals(placement.moveType())) {
+                    continue;
+                }
+                Map<String, Object> issue = SqlRows.one(jdbc.sql("SELECT l.\"productId\", l.\"createdAt\" >= ? AND"
+                        + " l.\"createdAt\" < ? AS \"inPeriod\", (a.\"reversedAt\" IS NULL OR l.\"createdAt\" <"
+                        + " a.\"reversedAt\") AS \"beforeReversal\" FROM \"InventoryLedger\" l, \"CostValueAdjustment\" a"
+                        + " WHERE l.id = ? AND a.id = ?").params(start, end, placement.consumptionLedgerId(),
+                        a.get("adjustmentId")));
+                if (issue == null || !Boolean.TRUE.equals(issue.get("beforeReversal"))) {
+                    continue;
+                }
+                String product = (String) issue.get("productId");
+                if (Boolean.TRUE.equals(issue.get("inPeriod"))) {
+                    inLayer.merge(product, placement.amount(), BigDecimal::add);
+                }
+                if (reversed && reclassHere) {
+                    reclass.merge((String) a.get("adjustedProductId"), placement.amount(), BigDecimal::add);
+                }
+            }
+        }
+        return new Carried(inLayer, reclass);
     }
 
     /** The cost layer an adjustment type belongs to. */

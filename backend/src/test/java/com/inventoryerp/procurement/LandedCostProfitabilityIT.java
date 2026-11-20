@@ -283,6 +283,32 @@ class LandedCostProfitabilityIT extends LandedCostFixtures {
         assertThat(num(c, "landedCostInCogs")).isEqualByComparingTo("0");
     }
 
+    @Test
+    @DisplayName("reversal after later sales: 40 sold, 1000 posted (400 late), 30 sold carrying 300, voucher reversed →"
+            + " GL takes 400 + 300 back: COGS 3500 = purchase 3500, landed 0; ties to GL")
+    void reversalAfterLaterSales() {
+        Map<String, String> acc = accounts();
+        BigDecimal cogsBefore = balance(acc.get("cogs"));
+        String p = product("AVCO", false, 0);
+        String grn = receive(p, 100, 50);
+        sell(p, w1, 40);
+        String v = voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000)));
+        approveAndPost(v);
+        sell(p, w1, 30);
+        reverse(v);
+
+        BigDecimal gl = balance(acc.get("cogs")).subtract(cogsBefore);
+        assertThat(gl).as("GL COGS movement").isEqualByComparingTo("3500");
+        JsonNode a = analysis(p);
+        assertThat(num(a, "cogs")).isEqualByComparingTo(gl);
+        assertThat(num(a, "landed")).isEqualByComparingTo("0");
+        assertThat(num(a, "purchase")).isEqualByComparingTo("3500");
+        JsonNode c = classic(p);
+        assertThat(num(c, "cogs")).isEqualByComparingTo(gl);
+        // the 300 carried in the issue value, taken back by the reversal's reclass
+        assertThat(num(c, "landedCostInCogs")).isEqualByComparingTo("-300");
+    }
+
     // ------------------------------------------------------------------ freight history
 
     @Test

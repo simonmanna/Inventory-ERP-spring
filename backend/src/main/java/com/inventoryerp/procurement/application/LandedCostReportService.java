@@ -162,7 +162,8 @@ public class LandedCostReportService {
      * Product profitability: net revenue (POS receipts less refunds plus sales invoices less credit notes, net of
      * discount, excl. tax, base currency — {@link ProfitabilitySources#revenue}), COGS = the period's stock issues (which
      * carry the landed cost already in the layers) plus the later adjustments that reached units already sold, posted
-     * in the period ({@link ProfitabilitySources#postSale}); {@code landedCostInCogs} is the landed part of those, gross
+     * in the period ({@link ProfitabilitySources#postSale}), less what landed cost reversals in the period took back out of
+     * COGS ({@link ProfitabilitySources#carried}); {@code landedCostInCogs} is the landed part of those, gross
      * profit and margin.
      */
     @Transactional(readOnly = true)
@@ -176,9 +177,11 @@ public class LandedCostReportService {
             cogs.put((String) r.get("productId"), Money.dec(r.get("cogs")).abs());
         }
         Map<String, Map<String, BigDecimal>> postSale = sources.postSale(from, end);
+        Map<String, BigDecimal> reclass = sources.carried(from, end).reclass();
         java.util.Set<String> ids = new java.util.LinkedHashSet<>(revenue.keySet());
         ids.addAll(cogs.keySet());
         ids.addAll(postSale.keySet());
+        ids.addAll(reclass.keySet());
         Map<String, Map<String, Object>> products = new LinkedHashMap<>();
         if (!ids.isEmpty()) {
             for (Map<String, Object> p : SqlRows.list(jdbc.sql("SELECT id, name, sku FROM \"Product\" WHERE"
@@ -192,8 +195,9 @@ public class LandedCostReportService {
             ProfitabilitySources.Revenue rv = revenue.get(id);
             BigDecimal rev = rv == null ? Money.ZERO : rv.amount();
             Map<String, BigDecimal> later = postSale.getOrDefault(id, Map.of());
-            BigDecimal landed = later.getOrDefault("landed", Money.ZERO);
-            BigDecimal c = cogs.getOrDefault(id, Money.ZERO).add(ProfitabilitySources.total(later));
+            BigDecimal back = reclass.getOrDefault(id, Money.ZERO);
+            BigDecimal landed = later.getOrDefault("landed", Money.ZERO).subtract(back);
+            BigDecimal c = cogs.getOrDefault(id, Money.ZERO).add(ProfitabilitySources.total(later)).subtract(back);
             BigDecimal gp = rev.subtract(c);
             out.add(Obj.of("productId", id, "name", p.get("name"), "sku", p.get("sku"), "quantity", JsNumbers.dec(
                     rv == null ? Money.ZERO : Money.dec(rv.quantity())), "revenue", JsNumbers.dec(rev), "cogs",
