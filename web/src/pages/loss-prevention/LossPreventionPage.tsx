@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { Eye, RefreshCw, ShieldAlert } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -233,6 +233,13 @@ function CasesTab({ canInvestigate, canConfigure, vision, canEvidence }: {
       ),
     },
     { key: 'assigneeName', header: tx('Assigned to'), render: (c) => c.assigneeName ?? '—' },
+    {
+      key: 'open', header: '', className: 'text-right', render: (c) => (
+        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setOpenId(c.id); }}>
+          <Eye className="mr-1.5 h-4 w-4" />{tx('Open')}
+        </Button>
+      ),
+    },
   ];
   return (
     <>
@@ -247,7 +254,9 @@ function CasesTab({ canInvestigate, canConfigure, vision, canEvidence }: {
       </ListToolbar>
       <ListCard>
         <div className="overflow-x-auto">
+          {/* The whole row opens the case: its details, records, View footage and video evidence. */}
           <DataTable columns={columns} data={data?.data ?? []} loading={isLoading} loadingRows={6} getRowId={(c) => c.id}
+            onRowClick={(c) => setOpenId(c.id)}
             {...TABLE} emptyMessage={isError ? tx('Could not load the cases. Try again.') : tx('No cases here.')} />
         </div>
       </ListCard>
