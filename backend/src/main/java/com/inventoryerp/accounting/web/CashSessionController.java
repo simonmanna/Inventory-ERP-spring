@@ -98,7 +98,10 @@ public class CashSessionController {
             @NotNull(message = "must be a string") String bankName,
             String reference,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal remainingFloat,
-            String notes) {}
+            String notes,
+            /* FX-4: the bank's rate when the destination bank is held in a foreign currency. */
+            @jakarta.validation.constraints.Positive(message = "exchangeRate must be a positive number")
+            BigDecimal exchangeRate) {}
 
     /** {@code VarianceUpdateDto}. */
     public record VarianceUpdateRequest(
@@ -275,7 +278,7 @@ public class CashSessionController {
     @RequirePermissions(Permissions.CASH_SESSION__CLOSE)
     public Map<String, Object> banking(@PathVariable String id, @Valid @RequestBody BankDepositRequest dto) {
         return sessions.recordBankDeposit(id, new CashSessionService.BankDepositInput(dto.destinationAccountId(), dto.amount(),
-                dto.bankName(), dto.reference(), dto.remainingFloat(), dto.notes()));
+                dto.bankName(), dto.reference(), dto.remainingFloat(), dto.notes(), dto.exchangeRate()));
     }
 
     @PatchMapping("/{id}/variance")

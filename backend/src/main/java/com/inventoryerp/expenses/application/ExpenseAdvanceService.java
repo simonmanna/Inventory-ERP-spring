@@ -41,10 +41,24 @@ public class ExpenseAdvanceService {
 
     /** Request body. */
     public record AdvanceInput(String employeeId, String purpose, BigDecimal amount, String neededBy, String branchId,
-            String notes) {}
+            String notes, String currencyCode) {
+
+        /** A functional-currency advance. */
+        public AdvanceInput(String employeeId, String purpose, BigDecimal amount, String neededBy, String branchId,
+                String notes) {
+            this(employeeId, purpose, amount, neededBy, branchId, notes, null);
+        }
+    }
 
     /** Disbursement / refund body. */
-    public record MoneyInput(String paymentMethod, String accountId, String reference, BigDecimal amount) {}
+    public record MoneyInput(String paymentMethod, String accountId, String reference, BigDecimal amount,
+            BigDecimal exchangeRate) {
+
+        /** Without a stated exchange rate. */
+        public MoneyInput(String paymentMethod, String accountId, String reference, BigDecimal amount) {
+            this(paymentMethod, accountId, reference, amount, null);
+        }
+    }
 
     private final JdbcClient jdbc;
     private final SequenceService sequence;
@@ -55,10 +69,13 @@ public class ExpenseAdvanceService {
     private final ExpenseControlService controls;
     private final EventBus events;
     private final PettyCashService pettyCash;
+    private final com.inventoryerp.accounting.application.CurrencyService currencies;
 
     public ExpenseAdvanceService(JdbcClient jdbc, SequenceService sequence, AuditService audit, PostingService posting,
             AccountResolverService accounts, SegregationOfDutiesService sod, ExpenseControlService controls,
-            EventBus events, PettyCashService pettyCash) {
+            EventBus events, PettyCashService pettyCash,
+            com.inventoryerp.accounting.application.CurrencyService currencies) {
+        this.currencies = currencies;
         this.jdbc = jdbc;
         this.sequence = sequence;
         this.audit = audit;
@@ -163,12 +180,22 @@ public class ExpenseAdvanceService {
                 .params(employee, org()).query(Long.class).single() == 0) {
             throw ApiException.badRequest("User not found");
         }
+        // FX-4: an advance may be in a foreign currency; its amounts are then in that currency
+        String ccy = blank(in.currencyCode()) == null ? null : in.currencyCode().trim().toUpperCase();
+        if (ccy != null && ccy.equals(posting.baseCurrency())) {
+            ccy = null;
+        }
+        if (ccy != null && jdbc.sql("SELECT count(*) FROM \"Currency\" WHERE upper(code) = ?").param(ccy)
+                .query(Long.class).single() == 0) {
+            throw ApiException.badRequest("Currency " + ccy + " not found");
+        }
         String id = UUID.randomUUID().toString();
         String number = sequence.next("expense_advance", "ADV-", 5);
         jdbc.sql("INSERT INTO \"ExpenseAdvance\" (id, \"organizationId\", \"advanceNumber\", \"employeeId\", purpose, amount,"
-                        + " \"neededBy\", \"branchId\", notes, \"createdById\") VALUES (?, ?, ?, ?, ?, ?, ?::date, ?, ?, ?)")
+                        + " \"neededBy\", \"branchId\", notes, \"createdById\", \"currencyCode\") VALUES (?, ?, ?, ?, ?, ?,"
+                        + " ?::date, ?, ?, ?, ?)")
                 .params(id, org(), number, employee, in.purpose().trim(), in.amount(), blank(in.neededBy()),
-                        blank(in.branchId()), in.notes(), actorId)
+                        blank(in.branchId()), in.notes(), actorId, ccy)
                 .update();
         audit.recordInTx(AuditInput.of("ExpenseAdvance", id, "create", null, Obj.of("advanceNumber", number, "amount",
                 JsNumbers.js(in.amount()))));
@@ -226,6 +253,9 @@ public class ExpenseAdvanceService {
                 List.of((String) a.get("employeeId")));
         BigDecimal amount = Money.dec(a.get("amount"));
         String cash = cashAccount(in.accountId());
+        if (a.get("currencyCode") != null) {
+            return disburseForeign(a, in, amount, cash, actorId);
+        }
         ForeignCash.assertFunctional(jdbc, org(), cash, "An expense advance");
         TreasuryGuards.assertSufficientFunds(jdbc, org(), cash, amount, accountName(cash));
         pettyCash.assertCanSpend(cash, amount);
@@ -259,6 +289,9 @@ public class ExpenseAdvanceService {
                     + JsNumbers.dec(open));
         }
         String cash = cashAccount(in.accountId());
+        if (a.get("currencyCode") != null) {
+            return refundForeign(a, in, amount, cash);
+        }
         String value = JsNumbers.dec(amount);
         String label = "Advance " + a.get("advanceNumber") + " refund";
         String movementId = UUID.randomUUID().toString();
@@ -273,8 +306,132 @@ public class ExpenseAdvanceService {
         return findOne(id);
     }
 
-    /** Record a claim's settlement against the advance (called by {@link ExpenseClaimService}). */
+    /** FX-4: the functional value per advance-currency unit it was paid out at; {@code null} for a functional advance. */
+    static BigDecimal carryingRate(Map<String, Object> a) {
+        if (a.get("currencyCode") == null || a.get("disbursedBase") == null) {
+            return null;
+        }
+        BigDecimal disbursed = Money.dec(a.get("disbursedAmount"));
+        return disbursed.signum() == 0 ? null
+                : Money.dec(a.get("disbursedBase")).divide(disbursed, 10, java.math.RoundingMode.HALF_UP);
+    }
+
+    /** The open advance in the functional currency (claims are functional): a foreign advance at its carrying rate. */
+    static BigDecimal outstandingFunctional(Map<String, Object> a) {
+        BigDecimal rate = carryingRate(a);
+        BigDecimal open = outstanding(a);
+        return rate == null ? open : open.multiply(rate).setScale(2, java.math.RoundingMode.DOWN);
+    }
+
+    /**
+     * FX-4: pay out a foreign advance. From an account held in its currency: funds check and relief at the account's
+     * carrying value. From a functional account: the payment rate (stated, else table, context expense). The advance
+     * line carries the currency; its functional value is kept as {@code disbursedBase}.
+     */
+    private Map<String, Object> disburseForeign(Map<String, Object> a, MoneyInput in, BigDecimal amount, String cash,
+            String actorId) {
+        String ccy = (String) a.get("currencyCode");
+        String id = (String) a.get("id");
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, org(), cash);
+        if (held != null && !held.currency().equals(ccy)) {
+            throw ApiException.badRequest("Account " + held.name() + " is held in " + held.currency() + "; this advance"
+                    + " is in " + ccy);
+        }
+        BigDecimal base;
+        com.inventoryerp.accounting.application.CurrencyService.Resolution rate = null;
+        if (held != null) {
+            TreasuryGuards.lockAccounts(jdbc, org(), List.of(cash));
+            ForeignCash.Balance bal = ForeignCash.balance(jdbc, org(), cash, ccy);
+            ForeignCash.assertFunds(bal, amount, held.name(), ccy);
+            base = ForeignCash.relieve(bal, amount, BigDecimal.ONE);
+            pettyCash.assertCanSpend(cash, amount);
+        } else {
+            rate = currencies.resolveStated(ccy, posting.baseCurrency(), in.exchangeRate(), Instant.now(), "expense");
+            base = amount.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
+            TreasuryGuards.assertSufficientFunds(jdbc, org(), cash, base, accountName(cash));
+            pettyCash.assertCanSpend(cash, base);
+        }
+        String label = "Advance " + a.get("advanceNumber") + " - " + a.get("purpose");
+        String movementId = UUID.randomUUID().toString();
+        Line cashLine = Line.credit(cash, JsNumbers.dec(base), label);
+        PostingRequest req = PostingRequest.of(ExpensesService.journalForMethod(in.paymentMethod()), Instant.now(), label,
+                "expense_advance", id, "expense_advance:" + movementId, List.of(
+                        new Line(advanceAccount(), JsNumbers.dec(base), null, null, label, (String) a.get("branchId"),
+                                null, null).inCurrency(ccy, JsNumbers.dec(amount)),
+                        held != null ? cashLine.inCurrency(ccy, JsNumbers.dec(amount)) : cashLine));
+        Map<String, Object> entry = rate == null ? posting.post(req) : posting.post(req, List.of(rate));
+        movement(movementId, id, "disburse", amount, null, cash, (String) entry.get("id"), in.reference(), actorId);
+        jdbc.sql("UPDATE \"ExpenseAdvance\" SET status = 'disbursed', \"disbursedAmount\" = ?, \"disbursedBase\" = ?,"
+                + " \"disbursedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ?").params(amount, base, id).update();
+        audit.recordInTx(AuditInput.of("ExpenseAdvance", id, "post", null, Obj.of("disbursed", JsNumbers.dec(amount),
+                "currencyCode", ccy, "functionalValue", JsNumbers.dec(base), "journalEntryId", entry.get("id"))));
+        publish("expense.advance_disbursed", Obj.of("advanceId", id));
+        controls.notify("notifyOnPayment", (String) a.get("employeeId"), "Advance " + a.get("advanceNumber")
+                + " paid out", label, Obj.of("advanceId", id));
+        return findOne(id);
+    }
+
+    /**
+     * FX-4: unused foreign cash returned. Into an account held in the advance currency it moves at the advance's carrying
+     * value (no FX). Into a functional account it is valued at the refund rate; the difference to the advance's carrying
+     * value is realised FX.
+     */
+    private Map<String, Object> refundForeign(Map<String, Object> a, MoneyInput in, BigDecimal amount, String cash) {
+        String ccy = (String) a.get("currencyCode");
+        String id = (String) a.get("id");
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, org(), cash);
+        if (held != null && !held.currency().equals(ccy)) {
+            throw ApiException.badRequest("Account " + held.name() + " is held in " + held.currency() + "; this advance"
+                    + " is in " + ccy);
+        }
+        BigDecimal advanceBase = amount.multiply(carryingRate(a)).setScale(6, java.math.RoundingMode.HALF_UP);
+        com.inventoryerp.accounting.application.CurrencyService.Resolution rate = held != null ? null
+                : currencies.resolveStated(ccy, posting.baseCurrency(), in.exchangeRate(), Instant.now(), "expense");
+        BigDecimal cashBase = rate == null ? advanceBase
+                : amount.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
+        BigDecimal fx = cashBase.subtract(advanceBase);
+        String label = "Advance " + a.get("advanceNumber") + " refund";
+        Line cashLine = Line.debit(cash, JsNumbers.dec(cashBase), label);
+        List<Line> lines = new java.util.ArrayList<>(List.of(held != null ? cashLine.inCurrency(ccy,
+                JsNumbers.dec(amount)) : cashLine, Line.credit(advanceAccount(), JsNumbers.dec(advanceBase), label)
+                .inCurrency(ccy, JsNumbers.dec(amount))));
+        String fxLabel = "Realised FX · " + label;
+        if (fx.signum() > 0) {
+            lines.add(Line.credit(accounts.byMapping("fx_gain"), JsNumbers.dec(fx), fxLabel));
+        } else if (fx.signum() < 0) {
+            lines.add(Line.debit(accounts.byMapping("fx_loss"), JsNumbers.dec(fx.negate()), fxLabel));
+        }
+        String movementId = UUID.randomUUID().toString();
+        PostingRequest req = PostingRequest.of(ExpensesService.journalForMethod(in.paymentMethod()), Instant.now(), label,
+                "expense_advance", id, "expense_advance:" + movementId, lines);
+        Map<String, Object> entry = rate == null ? posting.post(req) : posting.post(req, List.of(rate));
+        movement(movementId, id, "refund", amount, null, cash, (String) entry.get("id"), in.reference(), actor());
+        jdbc.sql("UPDATE \"ExpenseAdvance\" SET \"refundedAmount\" = \"refundedAmount\" + ?, status = CASE WHEN"
+                + " \"disbursedAmount\" - \"settledAmount\" - \"refundedAmount\" - ? <= 0 THEN 'settled' ELSE status END,"
+                + " \"updatedAt\" = " + NOW + " WHERE id = ?").params(amount, amount, id).update();
+        audit.recordInTx(AuditInput.of("ExpenseAdvance", id, "post", null, Obj.of("refunded", JsNumbers.dec(amount),
+                "currencyCode", ccy, "fxAmount", JsNumbers.dec(fx))));
+        return findOne(id);
+    }
+
+    /**
+     * Record a claim's settlement against the advance (called by {@link ExpenseClaimService}). {@code amount} is
+     * functional. FX-4: a foreign advance is consumed at its carrying rate; a balanced entry on the advance account moves
+     * the settled value into the advance's currency bucket so its foreign balance ties.
+     */
     void recordSettlement(String advanceId, String claimId, BigDecimal amount, String journalEntryId) {
+        Map<String, Object> a = require(advanceId, false);
+        BigDecimal rate = carryingRate(a);
+        if (rate != null) {
+            BigDecimal units = amount.divide(rate, 6, java.math.RoundingMode.HALF_UP).min(outstanding(a));
+            String acc = advanceAccount();
+            String label = "Advance " + a.get("advanceNumber") + " settled by claim (in " + a.get("currencyCode") + ")";
+            posting.post(PostingRequest.of("GEN", Instant.now(), label, "expense_advance", advanceId,
+                    "expense_advance:settle:" + UUID.randomUUID(), List.of(Line.debit(acc, JsNumbers.dec(amount), label),
+                            Line.credit(acc, JsNumbers.dec(amount), label).inCurrency((String) a.get("currencyCode"),
+                                    JsNumbers.dec(units)))));
+            amount = units;
+        }
         movement(UUID.randomUUID().toString(), advanceId, "settle", amount, claimId, advanceAccount(), journalEntryId,
                 null, actor());
         jdbc.sql("UPDATE \"ExpenseAdvance\" SET \"settledAmount\" = \"settledAmount\" + ?, status = CASE WHEN"

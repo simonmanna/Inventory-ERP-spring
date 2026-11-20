@@ -46,7 +46,14 @@ public class PettyCashService {
             BigDecimal maxPayment, Boolean isActive, String notes) {}
 
     /** Replenishment body; {@code amount} null = top up to the float. */
-    public record ReplenishInput(String sourceAccountId, BigDecimal amount, String paymentMethod, String reference) {}
+    public record ReplenishInput(String sourceAccountId, BigDecimal amount, String paymentMethod, String reference,
+            BigDecimal exchangeRate) {
+
+        /** Without a stated exchange rate. */
+        public ReplenishInput(String sourceAccountId, BigDecimal amount, String paymentMethod, String reference) {
+            this(sourceAccountId, amount, paymentMethod, reference, null);
+        }
+    }
 
     /** Cash count body. */
     public record CountInput(BigDecimal countedAmount, Map<String, Object> denominations, String notes) {}
@@ -56,8 +63,11 @@ public class PettyCashService {
     private final AccountResolverService accounts;
     private final AuditService audit;
 
+    private final com.inventoryerp.accounting.application.CurrencyService currencies;
+
     public PettyCashService(JdbcClient jdbc, PostingService posting, AccountResolverService accounts,
-            AuditService audit) {
+            AuditService audit, com.inventoryerp.accounting.application.CurrencyService currencies) {
+        this.currencies = currencies;
         this.jdbc = jdbc;
         this.posting = posting;
         this.accounts = accounts;
@@ -78,6 +88,11 @@ public class PettyCashService {
 
     /** GL balance (base) of an account. */
     BigDecimal balance(String accountId) {
+        // FX-4: a fund held in a foreign currency is counted and topped up in that currency
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, org(), accountId);
+        if (held != null) {
+            return ForeignCash.balance(jdbc, org(), accountId, held.currency()).foreign();
+        }
         return jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
                 + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ? AND l.\"accountId\" = ?"
                 + " AND e.status IN ('posted', 'reversed')").params(org(), accountId).query(BigDecimal.class).single();
@@ -231,7 +246,11 @@ public class PettyCashService {
         if (amount.signum() <= 0) {
             throw ApiException.badRequest("The fund is at or above its float: nothing to replenish");
         }
-        ForeignCash.assertFunctional(jdbc, org(), in.sourceAccountId(), "A petty-cash replenishment");
+        ForeignCash.Denomination fundCcy = ForeignCash.of(jdbc, org(), fundAcc);
+        ForeignCash.Denomination srcCcy = ForeignCash.of(jdbc, org(), in.sourceAccountId());
+        if (fundCcy != null || srcCcy != null) {
+            return replenishForeign(id, f, fundAcc, in, amount, fundCcy, srcCcy);
+        }
         TreasuryGuards.assertSufficientFunds(jdbc, org(), in.sourceAccountId(), amount,
                 jdbc.sql("SELECT name FROM \"Account\" WHERE id = ?").param(in.sourceAccountId()).query(String.class)
                         .single());
@@ -242,6 +261,70 @@ public class PettyCashService {
                         new Line(fundAcc, value, null, null, label, (String) f.get("branchId"), null, null),
                         Line.credit(in.sourceAccountId(), value, label))));
         audit.recordInTx(AuditInput.of("PettyCashFund", id, "post", null, Obj.of("replenished", value, "journalEntryId",
+                entry.get("id"), "reference", in.reference())));
+        Map<String, Object> out = findOne(id);
+        out.put("journalEntryId", entry.get("id"));
+        return out;
+    }
+
+    /**
+     * FX-4: a replenishment where the fund or the source is held in a foreign currency; {@code amount} is in the fund's
+     * currency. Same currency: moved at the source's carrying value (no FX). Functional source into a foreign fund: valued
+     * at the rate (stated, else table, context treasury). Foreign source into a functional fund: the foreign units needed
+     * at that rate are relieved at the source's carrying value and the difference is realised FX. Two different foreign
+     * currencies are refused.
+     */
+    private Map<String, Object> replenishForeign(String id, Map<String, Object> f, String fundAcc, ReplenishInput in,
+            BigDecimal amount, ForeignCash.Denomination fundCcy, ForeignCash.Denomination srcCcy) {
+        String src = in.sourceAccountId();
+        String functional = posting.baseCurrency();
+        if (fundCcy != null && srcCcy != null && !fundCcy.currency().equals(srcCcy.currency())) {
+            throw ApiException.badRequest("Petty cash fund " + f.get("name") + " is held in " + fundCcy.currency()
+                    + "; replenish it from a " + fundCcy.currency() + " or functional account");
+        }
+        TreasuryGuards.lockAccounts(jdbc, org(), List.of(fundAcc, src));
+        String ccy = fundCcy != null ? fundCcy.currency() : srcCcy.currency();
+        com.inventoryerp.accounting.application.CurrencyService.Resolution rate = null;
+        BigDecimal fundBase;
+        BigDecimal srcBase;
+        BigDecimal srcUnits = null;
+        if (fundCcy != null && srcCcy != null) {
+            ForeignCash.Balance bal = ForeignCash.balance(jdbc, org(), src, ccy);
+            ForeignCash.assertFunds(bal, amount, srcCcy.name(), ccy);
+            srcBase = ForeignCash.relieve(bal, amount, BigDecimal.ONE);
+            fundBase = srcBase;
+            srcUnits = amount;
+        } else if (fundCcy != null) {
+            rate = currencies.resolveStated(ccy, functional, in.exchangeRate(), Instant.now(), "treasury");
+            fundBase = amount.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
+            srcBase = fundBase;
+            TreasuryGuards.assertSufficientFunds(jdbc, org(), src, srcBase, jdbc.sql("SELECT name FROM \"Account\" WHERE"
+                    + " id = ?").param(src).query(String.class).single());
+        } else {
+            rate = currencies.resolveStated(ccy, functional, in.exchangeRate(), Instant.now(), "treasury");
+            srcUnits = amount.divide(rate.rate(), 2, java.math.RoundingMode.HALF_UP);
+            ForeignCash.Balance bal = ForeignCash.balance(jdbc, org(), src, ccy);
+            ForeignCash.assertFunds(bal, srcUnits, srcCcy.name(), ccy);
+            srcBase = ForeignCash.relieve(bal, srcUnits, rate.rate());
+            fundBase = amount;
+        }
+        BigDecimal fx = fundBase.subtract(srcBase);
+        String label = "Petty cash replenishment - " + f.get("name");
+        Line fundLine = new Line(fundAcc, JsNumbers.dec(fundBase), null, null, label, (String) f.get("branchId"), null,
+                null);
+        Line srcLine = Line.credit(src, JsNumbers.dec(srcBase), label);
+        List<Line> lines = new ArrayList<>(List.of(fundCcy != null ? fundLine.inCurrency(ccy, JsNumbers.dec(amount))
+                : fundLine, srcCcy != null ? srcLine.inCurrency(ccy, JsNumbers.dec(srcUnits)) : srcLine));
+        if (fx.signum() > 0) {
+            lines.add(Line.credit(accounts.byMapping("fx_gain"), JsNumbers.dec(fx), "Realised FX · " + label));
+        } else if (fx.signum() < 0) {
+            lines.add(Line.debit(accounts.byMapping("fx_loss"), JsNumbers.dec(fx.negate()), "Realised FX · " + label));
+        }
+        PostingRequest req = PostingRequest.of(ExpensesService.journalForMethod(in.paymentMethod()), Instant.now(), label,
+                "petty_cash_replenish", id, "petty_cash_replenish:" + UUID.randomUUID(), lines);
+        Map<String, Object> entry = rate == null ? posting.post(req) : posting.post(req, List.of(rate));
+        audit.recordInTx(AuditInput.of("PettyCashFund", id, "post", null, Obj.of("replenished", JsNumbers.dec(amount),
+                "currencyCode", fundCcy != null ? ccy : functional, "fxAmount", JsNumbers.dec(fx), "journalEntryId",
                 entry.get("id"), "reference", in.reference())));
         Map<String, Object> out = findOne(id);
         out.put("journalEntryId", entry.get("id"));
@@ -264,7 +347,28 @@ public class PettyCashService {
         BigDecimal expected = balance(fundAcc);
         BigDecimal diff = in.countedAmount().subtract(expected);
         String entryId = null;
-        if (diff.signum() != 0) {
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, org(), fundAcc);
+        if (diff.signum() != 0 && held != null) {
+            // FX-4: a foreign fund's difference is in its currency, valued at the fund's carrying rate (no FX)
+            ForeignCash.Balance bal = ForeignCash.balance(jdbc, org(), fundAcc, held.currency());
+            BigDecimal carrying = bal.foreign().signum() == 0 ? BigDecimal.ZERO
+                    : bal.base().divide(bal.foreign(), 10, java.math.RoundingMode.HALF_UP);
+            if (carrying.signum() == 0) {
+                throw ApiException.badRequest("Petty cash fund " + f.get("name") + " has no " + held.currency()
+                        + " carrying value to count against");
+            }
+            String base = JsNumbers.dec(diff.abs().multiply(carrying).setScale(6, java.math.RoundingMode.HALF_UP));
+            String units = JsNumbers.dec(diff.abs());
+            String overShort = accounts.byMapping("cash_short_over");
+            String label = "Petty cash count " + (diff.signum() < 0 ? "short" : "over") + " - " + f.get("name");
+            Map<String, Object> entry = posting.post(PostingRequest.of("CASH", Instant.now(), label, "petty_cash_count",
+                    id, "petty_cash_count:" + UUID.randomUUID(), diff.signum() < 0
+                            ? List.of(Line.debit(overShort, base, label), Line.credit(fundAcc, base, label)
+                                    .inCurrency(held.currency(), units))
+                            : List.of(Line.debit(fundAcc, base, label).inCurrency(held.currency(), units),
+                                    Line.credit(overShort, base, label))));
+            entryId = (String) entry.get("id");
+        } else if (diff.signum() != 0) {
             String overShort = accounts.byMapping("cash_short_over");
             String value = JsNumbers.dec(diff.abs());
             String label = "Petty cash count " + (diff.signum() < 0 ? "short" : "over") + " - " + f.get("name");

@@ -310,7 +310,8 @@ public class ExpenseClaimService {
         BigDecimal applied = BigDecimal.ZERO;
         if (c.get("advanceId") != null) {
             Map<String, Object> a = advances.require((String) c.get("advanceId"), true);
-            BigDecimal left = ExpenseAdvanceService.outstanding(a).min(Money.dec(c.get("totalAmount")));
+            // FX-4: a foreign advance covers claims at its carrying (functional) value
+            BigDecimal left = ExpenseAdvanceService.outstandingFunctional(a).min(Money.dec(c.get("totalAmount")));
             String advanceAccount = advances.advanceAccount();
             for (Map<String, Object> l : lines) {
                 if (left.signum() <= 0) {

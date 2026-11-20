@@ -70,13 +70,17 @@ public class ExpenseClaimsController {
 
     /** Reimbursement / disbursement / refund body. */
     public record MoneyRequest(@NotNull(message = "must be a string") String paymentMethod,
-            @NotNull(message = "must be a string") String accountId, String reference, @Positive BigDecimal amount) {}
+            @NotNull(message = "must be a string") String accountId, String reference, @Positive BigDecimal amount,
+            /* FX-4: rate for a foreign advance paid from / returned to a functional account. */
+            @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate) {}
 
     /** Advance request body. */
     public record AdvanceRequest(String employeeId, @NotNull(message = "must be a string") String purpose,
             @NotNull @Positive BigDecimal amount,
             @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = DATE_MSG) String neededBy, String branchId,
-            String notes) {}
+            String notes,
+            /* FX-4: an advance in a foreign currency. */
+            String currencyCode) {}
 
     private final ExpenseClaimService claims;
     private final ExpenseAdvanceService advances;
@@ -176,7 +180,7 @@ public class ExpenseClaimsController {
     @RequirePermissions(Permissions.EXPENSE__CREATE)
     public Map<String, Object> createAdvance(@Valid @RequestBody AdvanceRequest dto) {
         return advances.create(new AdvanceInput(dto.employeeId(), dto.purpose(), dto.amount(), dto.neededBy(),
-                dto.branchId(), dto.notes()));
+                dto.branchId(), dto.notes(), dto.currencyCode()));
     }
 
     @PostMapping("/expense-advances/{id}/approve")
@@ -203,13 +207,15 @@ public class ExpenseClaimsController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.EXPENSE__POST)
     public Map<String, Object> disburse(@PathVariable String id, @Valid @RequestBody MoneyRequest dto) {
-        return advances.disburse(id, new MoneyInput(dto.paymentMethod(), dto.accountId(), dto.reference(), null));
+        return advances.disburse(id, new MoneyInput(dto.paymentMethod(), dto.accountId(), dto.reference(), null,
+                dto.exchangeRate()));
     }
 
     @PostMapping("/expense-advances/{id}/refund")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.EXPENSE__POST)
     public Map<String, Object> refund(@PathVariable String id, @Valid @RequestBody MoneyRequest dto) {
-        return advances.refund(id, new MoneyInput(dto.paymentMethod(), dto.accountId(), dto.reference(), dto.amount()));
+        return advances.refund(id, new MoneyInput(dto.paymentMethod(), dto.accountId(), dto.reference(), dto.amount(),
+                dto.exchangeRate()));
     }
 }

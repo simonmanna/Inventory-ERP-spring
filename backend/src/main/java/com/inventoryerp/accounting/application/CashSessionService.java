@@ -68,7 +68,41 @@ public class CashSessionService {
 
     /** Banking body. */
     public record BankDepositInput(String destinationAccountId, BigDecimal amount, String bankName, String reference,
-            BigDecimal remainingFloat, String notes) {}
+            BigDecimal remainingFloat, String notes, BigDecimal exchangeRate) {
+
+        /** Into a functional-currency bank. */
+        public BankDepositInput(String destinationAccountId, BigDecimal amount, String bankName, String reference,
+                BigDecimal remainingFloat, String notes) {
+            this(destinationAccountId, amount, bankName, reference, remainingFloat, notes, null);
+        }
+    }
+
+    private CurrencyService currencies;
+
+    /** FX-4: rates for banking a shift into a foreign-currency bank. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setCurrencies(CurrencyService currencies) {
+        this.currencies = currencies;
+    }
+
+    /**
+     * FX-4: the bank line of a deposit of {@code amount} functional cash. A bank held in a foreign currency receives the
+     * foreign units the cash buys at the rate (stated, else table, context treasury); the functional value is unchanged,
+     * so no FX arises at conversion. Returns the line and the rate used ({@code null} for a functional bank).
+     */
+    private Map.Entry<PostingRequest.Line, CurrencyService.Resolution> bankLine(String bank, BigDecimal amount,
+            BigDecimal exchangeRate) {
+        PostingRequest.Line line = PostingRequest.Line.debit(bank, plain(amount), null);
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, TenantContext.organizationId(), bank);
+        if (held == null) {
+            return new java.util.AbstractMap.SimpleEntry<>(line, null);
+        }
+        ForeignCash.requireDesignated(held);
+        CurrencyService.Resolution rate = currencies.resolveStated(held.currency(), posting.baseCurrency(), exchangeRate,
+                Instant.now(), "treasury");
+        BigDecimal units = amount.divide(rate.rate(), 2, java.math.RoundingMode.HALF_UP);
+        return new java.util.AbstractMap.SimpleEntry<>(line.inCurrency(held.currency(), plain(units)), rate);
+    }
 
     /** Handover body (POS shift handover). */
     public record HandoverInput(String cashRegisterId, BigDecimal closingCounted, String incomingUserId,
@@ -968,7 +1002,7 @@ public class CashSessionService {
             if (!"bank".equals(destination.categoryKey())) {
                 throw ApiException.badRequest("Select a bank account for the deposit");
             }
-            ForeignCash.assertFunctional(jdbc, organizationId, destination.id(), "Banking a shift");
+            // FX-4: a bank held in a foreign currency is allowed: the cash buys its currency at the bank rate
             String reason = "Bank deposit: " + dto.bankName() + (dto.reference() != null && !dto.reference().isEmpty()
                     ? " ref:" + dto.reference() : "") + (dto.notes() != null && !dto.notes().isEmpty() ? " - " + dto.notes() : "");
             if ("open".equals(status)) {
@@ -980,7 +1014,7 @@ public class CashSessionService {
                 jdbc.sql("INSERT INTO \"CashMovement\" (id, \"organizationId\", \"cashSessionId\", \"movementType\", amount, reason,"
                                 + " \"counterpartAccountId\", \"performedBy\") VALUES (?, ?, ?, 'pay_out', ?, ?, ?, ?)")
                         .params(movementId, organizationId, s.get("id"), amt, reason, destination.id(), userId).update();
-                postBankDepositGl(s, amt, movementId, dto.bankName(), destination.id());
+                postBankDepositGl(s, amt, movementId, dto.bankName(), destination.id(), dto.exchangeRate());
                 jdbc.sql("UPDATE \"CashSession\" SET \"bankedAmount\" = coalesce(\"bankedAmount\", 0) + ?, \"bankName\" = ?,"
                         + " \"updatedAt\" = now() WHERE id = ?").params(amt, dto.bankName(), s.get("id")).update();
                 audit.recordInTx(AuditInput.of("CashMovement", movementId, "create", null, body("cashSessionId", s.get("id"),
@@ -1001,11 +1035,14 @@ public class CashSessionService {
                 throw ApiException.badRequest("Deposit " + plain(amt) + " exceeds the drawer balance " + plain(drawerBalance));
             }
             String id = TreasuryGuards.operationId();
-            Map<String, Object> entry = posting.post(new PostingRequest("BANK", Instant.now(),
+            Map.Entry<PostingRequest.Line, CurrencyService.Resolution> bank = bankLine(destination.id(), amt,
+                    dto.exchangeRate());
+            PostingRequest bankingReq = new PostingRequest("BANK", Instant.now(),
                     reason + " (after close of shift " + s.get("id") + ")", null, null, "cash_session_banking",
                     (String) s.get("id"), null, "cash_session_banking:" + id, (String) s.get("branchId"), null, null,
-                    List.of(PostingRequest.Line.debit(destination.id(), plain(amt), null),
-                            PostingRequest.Line.credit(drawer, plain(amt), null))));
+                    List.of(bank.getKey(), PostingRequest.Line.credit(drawer, plain(amt), null)));
+            Map<String, Object> entry = bank.getValue() == null ? posting.post(bankingReq)
+                    : posting.post(bankingReq, List.of(bank.getValue()));
             audit.recordInTx(AuditInput.of("CashSession", (String) s.get("id"), "update", null, body("kind", "banking_after_close",
                     "amount", plain(amt), "journalEntryId", entry.get("id"), "destinationAccountId", destination.id(),
                     "reason", reason)));
@@ -1533,6 +1570,11 @@ public class CashSessionService {
 
     private void postBankDepositGl(Map<String, Object> session, BigDecimal amount, String movementId, String bankName,
             String destinationAccountId) {
+        postBankDepositGl(session, amount, movementId, bankName, destinationAccountId, null);
+    }
+
+    private void postBankDepositGl(Map<String, Object> session, BigDecimal amount, String movementId, String bankName,
+            String destinationAccountId, BigDecimal exchangeRate) {
         String cash = registerCashAccount(session);
         String bank = destinationAccountId != null ? destinationAccountId : determination.mapped("default_bank");
         String category = categoryOf(bank);
@@ -1540,9 +1582,15 @@ public class CashSessionService {
             throw ApiException.badRequest("Select a bank account for the deposit");
         }
         String amt = plain(amount);
-        posting.post(new PostingRequest("BANK", Instant.now(), "Bank deposit: " + bankName, null, null, "cash_movement",
-                movementId, null, "cash_movement:" + movementId, (String) session.get("branchId"), null, null,
-                List.of(PostingRequest.Line.debit(bank, amt, null), PostingRequest.Line.credit(cash, amt, null))));
+        Map.Entry<PostingRequest.Line, CurrencyService.Resolution> line = bankLine(bank, amount, exchangeRate);
+        PostingRequest req = new PostingRequest("BANK", Instant.now(), "Bank deposit: " + bankName, null, null,
+                "cash_movement", movementId, null, "cash_movement:" + movementId, (String) session.get("branchId"), null,
+                null, List.of(line.getKey(), PostingRequest.Line.credit(cash, amt, null)));
+        if (line.getValue() == null) {
+            posting.post(req);
+        } else {
+            posting.post(req, List.of(line.getValue()));
+        }
     }
 
     /** difference = counted − expected: short (&lt;0) → Dr short/over Cr cash; over → Dr cash Cr short/over. */

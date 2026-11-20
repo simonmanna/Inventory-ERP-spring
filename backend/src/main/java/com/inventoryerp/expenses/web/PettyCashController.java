@@ -44,7 +44,9 @@ public class PettyCashController {
 
     /** Replenishment body. */
     public record ReplenishRequest(@NotNull(message = "must be a string") String sourceAccountId,
-            @Positive BigDecimal amount, String paymentMethod, String reference) {}
+            @Positive BigDecimal amount, String paymentMethod, String reference,
+            /* FX-4: rate when the fund and the source differ in currency. */
+            @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate) {}
 
     /** Cash count body. */
     public record CountRequest(@NotNull @PositiveOrZero BigDecimal countedAmount, Map<String, Object> denominations,
@@ -94,7 +96,7 @@ public class PettyCashController {
     @RequirePermissions(Permissions.EXPENSE__POST)
     public Map<String, Object> replenish(@PathVariable String id, @Valid @RequestBody ReplenishRequest dto) {
         return funds.replenish(id, new ReplenishInput(dto.sourceAccountId(), dto.amount(), dto.paymentMethod(),
-                dto.reference()));
+                dto.reference(), dto.exchangeRate()));
     }
 
     @PostMapping("/{id}/counts")
