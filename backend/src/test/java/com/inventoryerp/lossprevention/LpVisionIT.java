@@ -466,6 +466,6 @@ class LpVisionIT extends LpVisionSupport {
     void authorization() {
         assertThat(assertAuthorizationMatrix(LossPreventionAgentController.class,
                 LossPreventionAgentApiController.class, LossPreventionCameraController.class,
-                LossPreventionEvidenceController.class)).isEqualTo(41);
+                LossPreventionEvidenceController.class)).isEqualTo(44);
     }
 }

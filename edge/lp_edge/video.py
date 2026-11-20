@@ -192,6 +192,12 @@ def stamp(frame: Any, ts: float) -> Any:
     return frame
 
 
+def stamp_jpeg(jpeg: bytes, ts: float, quality: int = 90) -> bytes:
+    """A buffered JPEG with its capture time burnt in, for a still kept as evidence (LP1c). Deterministic, so an
+    upload resumed after a restart sends the same bytes."""
+    return encode_jpeg(stamp(decode_jpeg(jpeg), ts), quality)
+
+
 def encode_clip(
     frames: Callable[[], Iterable[tuple[float, bytes]]],
     out_dir: Path,

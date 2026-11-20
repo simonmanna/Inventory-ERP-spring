@@ -224,6 +224,32 @@ def test_clips_are_registered_and_uploaded_on_request(tmp_path, agents):
     assert by_id["up-3"] == ("failed", "no video in the buffer for that period", "not_found")
 
 
+def test_a_still_is_the_buffered_frame_nearest_the_moment(tmp_path, agents):
+    clock = FakeClock()
+    api = FakeApi(config())
+    agent = make_agent(tmp_path, api=api, clock=clock)
+    agents.append(agent)
+    agent.refresh_config()
+    agent.clips._still_encode = lambda jpeg, ts: jpeg + b"@%d" % int(ts - T0)
+    for i in range(10):
+        agent.ring.append("cam-1", T0 + i, b"frame-%02d" % i)
+    clock.now = T0 + 30
+    agent.commands.submit([{"id": "st-1", "kind": "clip_upload",
+                            "payload": {"evidenceId": "ev-still", "cameraId": "cam-1", "clipId": None,
+                                        "kind": "still", "at": iso(T0 + 4.4)}}])
+    agent.commands.submit([{"id": "st-2", "kind": "clip_upload",
+                            "payload": {"evidenceId": "ev-none", "cameraId": "cam-1", "clipId": None,
+                                        "kind": "still", "at": iso(T0 + 20)}}])
+    wait_until(lambda: len(api.results) == 2)
+    by_id = {r[0]: r[1:] for r in api.results}
+    assert by_id["st-1"] == ("done", None, None)
+    assert by_id["st-2"] == ("failed", "no video in the buffer for that moment", "not_found")
+    [(offset, total, sha, chunk)] = api.chunks
+    assert chunk == b"frame-04@4" and (offset, total) == (0, len(chunk))
+    assert sha == hashlib.sha256(chunk).hexdigest()
+    assert api.content_types == ["image/jpeg"]
+
+
 def test_a_camera_switched_off_and_on_reports_the_time_off(tmp_path, agents):
     clock = FakeClock()
     api = FakeApi(config())

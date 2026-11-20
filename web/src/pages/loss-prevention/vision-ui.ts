@@ -113,7 +113,7 @@ export const EVIDENCE_STATE_VARIANT: Record<string, 'default' | 'secondary' | 'd
 };
 export const EVIDENCE_KIND_LABELS: Record<string, string> = { clip: tx('Clip'), snapshot: tx('Still image') };
 export const EVIDENCE_ORIGIN_LABELS: Record<string, string> = {
-  flagged: tx('Kept by the agent'), range: tx('Cut on request'),
+  flagged: tx('Kept by the agent'), range: tx('Cut on request'), frame: tx('Saved from a clip'),
 };
 export const ACCESS_LABELS: Record<string, string> = {
   view: tx('Viewed'), download: tx('Downloaded'), export: tx('Exported'), request: tx('Upload requested'),

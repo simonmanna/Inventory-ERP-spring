@@ -223,7 +223,8 @@ export interface Evidence {
   zoneName?: string | null;
   clipId: string;
   kind: 'clip' | 'snapshot';
-  origin: 'flagged' | 'range';
+  /** `frame`: a still saved from an uploaded clip in the player (LP1c). */
+  origin: 'flagged' | 'range' | 'frame';
   startedAt: string;
   endedAt: string;
   sha256: string;
@@ -243,7 +244,33 @@ export interface Evidence {
   updatedAt: string;
   /** Not fixed by the spec: the cases the clip is linked to. */
   caseIds?: string[] | null;
+  /** A frame saved from the player: the clip it came from and where (LP1c). */
+  sourceEvidenceId?: string | null;
+  frameOffsetMs?: Num;
 }
+
+/** A camera offered by the footage view; `watches` = it looks at the sale's till (or is the record's camera). */
+export interface FootageCamera {
+  id: string;
+  name: string;
+  enabled: boolean;
+  agentStatus: AgentStatus;
+  watches: boolean;
+}
+
+/** `GET /loss-prevention/footage` (LP1c): the window around a sale, a record or a moment. */
+export interface Footage {
+  source: { type: 'invoice' | 'event' | 'moment'; id: string | null; label: string | null; branchId: string; tillId: string | null; at: string };
+  at: string;
+  from: string;
+  to: string;
+  bufferDays: number;
+  inBuffer: boolean;
+  cameras: FootageCamera[];
+  evidence: Evidence[];
+}
+
+export type FootageQuery = { invoiceId: string } | { eventId: string } | { branchId: string; at: string };
 
 export interface EvidenceAccess {
   id: string;
@@ -489,6 +516,33 @@ export const useRequestLpEvidence = () => useVisionChange(async (v: { id: string
 export const useLpRangeClip = () => useVisionChange(async (body: {
   cameraId: string; from: string; to: string; caseId?: string; reason?: string;
 }) => (await api.post<Evidence>(`${BASE}/evidence/range`, body)).data);
+
+/** A still the agent takes from its buffer at `at` (default now) and uploads (LP1c). */
+export const useLpStill = () => useVisionChange(async (body: {
+  cameraId: string; at?: string; caseId?: string; reason?: string;
+}) => (await api.post<Evidence>(`${BASE}/evidence/still`, body)).data);
+
+/** Keeps a frame of an uploaded clip, taken in the player, as a still of that clip (LP1c). */
+export const useSaveLpFrame = () => useVisionChange(async (v: {
+  id: string; offsetMs: number; image: Blob; reason?: string;
+}) => {
+  const form = new FormData();
+  form.append('file', v.image, v.image.type === 'image/png' ? 'frame.png' : 'frame.jpg');
+  if (v.reason) form.append('reason', v.reason);
+  return (await api.post<Evidence>(`${BASE}/evidence/${v.id}/frame`, form, {
+    params: { offsetMs: Math.max(0, Math.round(v.offsetMs)) }, timeout: LONG,
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })).data;
+});
+
+/** The cameras and evidence around a sale, a ledger record or a moment (LP1c). Asks nothing of the agent. */
+export const useLpFootage = (query: FootageQuery | null) => useQuery({
+  queryKey: [...KEY, 'footage', query],
+  enabled: !!query,
+  // Evidence asked for from here arrives when the agent uploads it.
+  refetchInterval: (q) => (q.state.data?.evidence.some((e) => busy(e.state)) ? 5_000 : false),
+  queryFn: async () => (await api.get<Footage>(`${BASE}/footage`, { params: query })).data,
+});
 
 export const useLpSettings = (enabled = true) => useQuery({
   queryKey: SETTINGS_KEY,

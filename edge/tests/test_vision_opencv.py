@@ -158,3 +158,14 @@ def test_a_drawer_opening_is_seen_against_its_resting_picture():
     assert changes[0].clip is not None and changes[0].clip.started_at == T0 + 3 - 20
     assert changes[0].confidence >= 0.6
     assert changes[1].payload["secondsInPreviousState"] == 2.0
+
+
+def test_a_still_carries_its_capture_time_and_is_the_same_each_time():
+    from lp_edge.video import stamp_jpeg  # noqa: PLC0415
+
+    frame = np.full((120, 160, 3), 90, dtype=np.uint8)
+    jpeg = encode_jpeg(frame, 80)
+    first = stamp_jpeg(jpeg, T0)
+    assert first[:3] == b"\xff\xd8\xff"
+    assert first == stamp_jpeg(jpeg, T0)  # a resumed upload sends the same bytes
+    assert first != stamp_jpeg(jpeg, T0 + 1)

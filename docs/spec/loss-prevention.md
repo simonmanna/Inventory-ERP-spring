@@ -9,7 +9,7 @@
 | Feature flag | `ENABLE_LOSS_PREVENTION` → `app.modules.lossprevention`; `VITE_ENABLE_LOSS_PREVENTION` shows the menu entry |
 | Module name | `loss-prevention` (`@RequiresModule`); licence features `lossPrevention`, for cameras `lpVision`, for operations metrics `lpInsights` |
 | Java package | `com.inventoryerp.lossprevention` |
-| Migrations | `V560` ledger, `V561` rules, settings, windows, runs, findings, `V562` cases, `V572` camera platform (agents, cameras, zones, commands, heartbeats, evidence, access trail), `V573` the `cashier_vision` engine, `V574` operations metric summaries, `V575` pour meters and the `bar_pour`, `kitchen_flow`, `service_vision` engines, `V576` the `retail_vision` engine, `scan_area` and `queue` zones, the `table` link, activity reviews |
+| Migrations | `V560` ledger, `V561` rules, settings, windows, runs, findings, `V562` cases, `V572` camera platform (agents, cameras, zones, commands, heartbeats, evidence, access trail), `V573` the `cashier_vision` engine, `V574` operations metric summaries, `V575` pour meters and the `bar_pour`, `kitchen_flow`, `service_vision` engines, `V576` the `retail_vision` engine, `scan_area` and `queue` zones, the `table` link, activity reviews, `V589` still images as evidence (origin `frame`, `sourceEvidenceId`, `frameOffsetMs`) |
 | Permissions | `lp:view`, `lp:investigate`, `lp:configure`, `lp:ingest`, `lp:evidence` |
 | Screen | `/loss-prevention`: overview, cases, reports, reconciliation runs, rules; with `lpVision`, cameras (`lp:configure`) and evidence (`lp:evidence`); with `lpInsights`, insights (`lp:view`); pour meters (`lp:configure`); with `lpVision`, research (`lp:investigate`) |
 | Schedule | `app.lossprevention.cron` (default every 2 minutes): sweep, then run due windows. `app.lossprevention.vision-cron` (every minute): silent agents go offline, commands lapse. `app.lossprevention.vision-housekeeping-cron` (03:17 daily): evidence retention, heartbeat history. `app.lossprevention.insights-cron` (every 5 minutes, at :40): compute dirty metric days |
@@ -398,7 +398,7 @@ The agent only makes outbound HTTPS calls. Its credentials are an API client bou
    | `config_changed` | `{ configVersion }` | Reads the configuration again |
    | `snapshot` | `{ cameraId }` | `POST /agents/snapshots/{commandId}`, body `image/jpeg` (at most 1.5 MB) |
    | `calibrate` | `{ cameraId, zoneId }` | Takes the current picture as the zone's resting state |
-   | `clip_upload` | `{ evidenceId, cameraId, clipId, from, to }` | Uploads the clip `clipId`, or cuts `from`–`to` from its buffer when `clipId` is null |
+   | `clip_upload` | `{ evidenceId, cameraId, clipId, from, to }` or `{ evidenceId, cameraId, clipId: null, kind: "still", at }` | Uploads the clip `clipId`, or cuts `from`–`to` from its buffer when `clipId` is null; with `kind` `still`, uploads the buffered frame nearest `at` (`image/jpeg`, time-stamped) |
    | `live_start` | `{ sessionId, cameraId, fps, maxWidth, expiresAt }` | Pushes frames to `POST /agents/live/{sessionId}/frames` until told to stop |
    | `live_stop` | `{ sessionId }` | Stops pushing |
 
@@ -453,12 +453,15 @@ unknown or not at the event's branch (`Zone not found`), when an edge agent send
 
 | Verb and path | Permission | Purpose |
 |---|---|---|
-| `GET /evidence` | `lp:evidence` | `caseId`, `cameraId`, `zoneId`, `state`, `from`, `to`, `page`, `pageSize`; page envelope |
+| `GET /evidence` | `lp:evidence` | `caseId`, `cameraId`, `zoneId`, `state`, `kind` (`clip`, `snapshot`), `from`, `to`, `page`, `pageSize`; page envelope |
 | `GET /evidence/{id}` | `lp:evidence` | Metadata, linked cases, observations and the access trail |
 | `GET /evidence/{id}/content?download=` | `lp:evidence` | The clip, decrypted and checked against its SHA-256; recorded as `view` or `download` |
 | `GET /evidence/{id}/export` | `lp:evidence` | A ZIP with the clip, `manifest.json` (metadata, SHA-256, cases) and the access trail; recorded |
 | `POST /evidence/{id}/request` | `lp:evidence` | `{ caseId?, reason? }`: ask the agent to upload the clip |
 | `POST /evidence/range` | `lp:evidence` | `{ cameraId, from, to, caseId?, reason? }`: a clip cut from the agent's buffer, at most 10 minutes |
+| `POST /evidence/still` | `lp:evidence` | `{ cameraId, at?, caseId?, reason? }` (LP1c): a still (kind `snapshot`) of the buffered frame nearest `at` (default now; at most 5 s ahead), uploaded by the agent with its SHA-256 |
+| `POST /evidence/{id}/frame` | `lp:evidence` | Multipart `file` (JPEG or PNG, at most 8 MiB), `offsetMs`, `reason?` (LP1c): a frame of uploaded clip `id` saved from the player; kept as a still of origin `frame`, hashed on receipt, linked to the clip's cases |
+| `GET /footage` | `lp:evidence` | `invoiceId`, or `eventId`, or `branchId` + `at` (LP1c): `{ source, at, from, to, bufferDays, inBuffer, cameras, evidence }`: the 30 s before to 60 s after the sale or record, the branch's cameras (`watches` first: a zone linked to the sale's till, or the record's own camera) and the evidence already kept for that window. Asks nothing of the agent |
 
 States: `on_agent` (registered, still on the edge box), `requested`, `uploading`, `uploaded`, `missing` (the agent no
 longer has it), `integrity_failed` (the upload did not match its SHA-256), `deleted` (retention).
@@ -471,6 +474,19 @@ it is `missing`, 409 `The clip does not match its checksum; it may have been alt
 
 - A clip is uploaded only when a case needs it or an investigator asks. When a case opens from a vision finding,
   the clips of its observations, or a clip of the till around the POS event, are requested and linked to the case.
+- Still images (LP1c) are evidence of kind `snapshot` with `startedAt` = `endedAt` = the moment shown. With a case
+  (as above), the system also asks for a still of each till camera at the POS event and of each observation's camera
+  at the moment it was seen (at most 6 per case; only within `evidenceBufferDays`). An investigator asks for one
+  (`POST /evidence/still`, origin `range`) or saves a frame of an uploaded clip (`POST /evidence/{id}/frame`, origin
+  `frame`). A saved frame's SHA-256 is taken when the backend receives it, not at capture, and it cannot be asked of
+  the agent again: `This frame was saved from the player; save it again from its clip` (409). The source clip's
+  trail records `snapshot`. Messages: `at must not be in the future`, `A frame is saved from a video clip, not from a
+  still`, `offsetMs must be between 0 and <ms>`, `The image must be a JPEG or PNG`, `file is required`.
+- Footage view (LP1c): `GET /footage` answers 404 `Sale not found` / `Record not found` for a sale or record outside
+  the organization or the caller's branches, and 400 `Give invoiceId, eventId, or branchId and at` or `The record has
+  no branch, so no camera can be found for it`. The web offers "View footage" on a POS receipt and on each record
+  behind a case: it shows the clips and stills already kept, or asks the agent for the window and plays it when
+  uploaded.
 - Access: `lp:evidence`, the caller's branches, and never by the subject of a linked case (404). Every view,
   download, export, request, snapshot and live view is written to `LpEvidenceAccess`, which is append-only.
 - Integrity: the SHA-256 taken at capture is checked at upload and again at every view, download and export. A

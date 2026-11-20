@@ -16,6 +16,7 @@ import {
 import { money, date, useOrgCurrency } from '@/lib/format';
 
 import { useReceipt } from '@/pages/pos/api';
+import { ViewFootageButton } from '@/pages/loss-prevention/FootageDialog';
 import { tx } from '@/lib/i18n/tx';
 
 function Field({ label, value }: { label: string; value: string }) {
@@ -47,6 +48,7 @@ export function ReceiptDetailPage() {
           {tx('Back')}
         </Button>
         <div className="flex gap-2">
+          <ViewFootageButton size="default" query={{ invoiceId: receipt.id }} label={receipt.documentNumber} />
           {has(PERMISSIONS.pos.refund) && receipt.status !== 'refunded' && receipt.settlementStatus !== 'written_off' && (
             <Button variant="outline" onClick={() => navigate(`/returns/new?invoiceId=${receipt.id}`)}>
               <Undo2 className="mr-2 h-4 w-4" /> {tx('Return items')}

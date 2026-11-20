@@ -22,7 +22,8 @@ import {
   useCreateLpAgent, useCreateLpCamera, useCreateLpZone, useLpAgent, useLpAgents, useLpBranchChoices, useLpCamera,
   useLpCameras, useLpEvidence, useLpEvidenceList, useLpLocationChoices, useLpModels, useLpRangeClip, useLpSettings,
   useLpTableChoices, useLpTillChoices, useLpZones, useNewLpEnrolmentCode, useRequestLpEvidence, useRetireLpZone,
-  useRevokeLpAgent, useSaveLpSettings, useUpdateLpAgent, useUpdateLpCamera, useUpdateLpZone,
+  useRevokeLpAgent, useSaveLpSettings, useUpdateLpAgent, useUpdateLpCamera, useUpdateLpZone, useLpStill,
+  useSaveLpFrame, useLpFootage,
 } from './vision-api';
 
 interface QueryOptions {
@@ -221,6 +222,30 @@ describe('evidence requests', () => {
     const body = { cameraId: 'c1', from: '2026-11-19T10:00:00Z', to: '2026-11-19T10:05:00Z' };
     await mutation(useLpRangeClip()).mutationFn(body);
     expect(api.post).toHaveBeenLastCalledWith('/loss-prevention/evidence/range', body);
+  });
+
+  it('asks for a still and keeps a frame from the player as multipart', async () => {
+    await mutation(useLpStill()).mutationFn({ cameraId: 'c1', at: '2026-11-19T10:00:00Z' });
+    expect(api.post).toHaveBeenLastCalledWith('/loss-prevention/evidence/still', { cameraId: 'c1', at: '2026-11-19T10:00:00Z' });
+    const image = new Blob(['jpeg'], { type: 'image/jpeg' });
+    await mutation(useSaveLpFrame()).mutationFn({ id: 'e1', offsetMs: 1499.6, image, reason: 'hand' });
+    const [path, form, config] = api.post.mock.calls.at(-1) as [string, FormData, { params: unknown; headers: unknown }];
+    expect(path).toBe('/loss-prevention/evidence/e1/frame');
+    expect(form.get('reason')).toBe('hand');
+    expect((form.get('file') as File).name).toBe('frame.jpg');
+    expect(config.params).toEqual({ offsetMs: 1500 });
+    expect(config.headers).toEqual({ 'Content-Type': 'multipart/form-data' });
+  });
+
+  it('reads the footage around a sale and polls while something is on its way', async () => {
+    expect(query(useLpFootage(null)).enabled).toBe(false);
+    const q = query(useLpFootage({ invoiceId: 'i1' }));
+    expect(q.enabled).toBe(true);
+    await q.queryFn();
+    expect(api.get).toHaveBeenLastCalledWith('/loss-prevention/footage', { params: { invoiceId: 'i1' } });
+    const interval = q.refetchInterval as (s: { state: { data: unknown } }) => number | false;
+    expect(interval({ state: { data: { evidence: [{ state: 'requested' }] } } })).toBe(5_000);
+    expect(interval({ state: { data: { evidence: [{ state: 'uploaded' }] } } })).toBe(false);
   });
 });
 

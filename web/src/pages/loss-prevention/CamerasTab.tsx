@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Copy, Play, Plus } from 'lucide-react';
+import { Camera, Copy, Play, Plus } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
 import {
   STREAM_ALIAS_RE, VISION_SETTINGS, useCreateLpAgent, useCreateLpCamera, useLpAgent, useLpAgents, useLpBranchChoices,
-  useLpAgentCommands, useLpCameras, useLpModels, useLpSettings, useNewLpEnrolmentCode, useRevokeLpAgent,
+  useLpAgentCommands, useLpCameras, useLpModels, useLpSettings, useLpStill, useNewLpEnrolmentCode, useRevokeLpAgent,
   useSaveLpSettings, useDeleteLpCamera, useUpdateLpAgent, useUpdateLpCamera, type AgentEvent, type EnrolledAgent, type LpAgent, type LpCamera, type LpModels,
 } from '@/features/loss-prevention/vision-api';
 import {
@@ -406,6 +406,12 @@ function CamerasSection({ canEvidence }: { canEvidence: boolean }) {
   const [editing, setEditing] = useState<LpCamera | 'new' | null>(null);
   const [zonesOf, setZonesOf] = useState<string | null>(null);
   const [live, setLive] = useState<LpCamera | null>(null);
+  const still = useLpStill();
+  // A still of right now, kept as evidence (LP1c); it shows on the Evidence tab once the box uploads it.
+  const onPhoto = (c: LpCamera) => still.mutate({ cameraId: c.id, reason: tx('Photo from the camera list') }, {
+    onSuccess: () => notify.success(tx('The agent was asked for a still. It appears on the Evidence tab once uploaded.')),
+    onError: (e) => notify.error(apiMessage(e, tx('Could not ask for the still'))),
+  });
   const usable = (agents.data ?? []).filter((a) => a.status !== 'revoked');
   const agentName = (id: string) => agents.data?.find((a) => a.id === id)?.name ?? '—';
   const columns: Column<LpCamera>[] = [
@@ -440,6 +446,12 @@ function CamerasSection({ canEvidence }: { canEvidence: boolean }) {
           {canEvidence && (
             <Button size="sm" variant="outline" disabled={!c.enabled} onClick={() => setLive(c)}>
               <Play className="mr-1 h-3.5 w-3.5" />{tx('Live')}
+            </Button>
+          )}
+          {canEvidence && (
+            <Button size="sm" variant="outline" disabled={!c.enabled || still.isPending} onClick={() => onPhoto(c)}
+              title={tx('Keep a still of right now as evidence')}>
+              <Camera className="mr-1 h-3.5 w-3.5" />{tx('Photo')}
             </Button>
           )}
         </div>
