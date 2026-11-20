@@ -1,7 +1,7 @@
 # ADR-S082 — FX-2: functional currency, rate types and policies, monetary scope, deposits, expenses, receipts
 
 - Status: **built.** Workstreams A–G are merged to `main` and were deployed to the test instance on 2026-11-20
-  (fdc2ee18). Outstanding items FX-3 … FX-8 are built and tested on `phase/fx3-8` (see below). The remaining limits
+  (fdc2ee18). Outstanding items FX-3 … FX-8 are built and tested (see below; V590–V592). The remaining limits
   are listed at the end of that section. Owner decisions 1–6 of 2026-11-20 are the basis. Spec:
   [FX-2-SPEC](../accounting/FX-2-SPEC.md).
 - Builds on: [ADR-S081](ADR-S081-fx-gain-loss-correctness.md) (FX-1), ADR-S054, ADR-S076, ADR-S080.
@@ -218,7 +218,7 @@
   receipt at the table rate 3,750 (stock +75,000, receipt rate recorded, PO rate unchanged), the bill at 3,800 (FX
   loss 1,000, AP 76,000, stock unchanged).
 
-## Outstanding items FX-3 … FX-8 (review of 2026-11-20) — built on branch `phase/fx3-8`
+## Outstanding items FX-3 … FX-8 (review of 2026-11-20) — built
 
 The review asked that foreign-currency accounting not be called complete until these were built and tested. Each
 keeps the constraints at the top of this ADR:
@@ -231,11 +231,11 @@ keeps the constraints at the top of this ADR:
 | Phase | Item | Built | Rule | Test |
 |---|---|---|---|---|
 | FX-3 | Refund of a foreign credit | Credit-flow refund and sales-return refund go through `SalesCreditFlowService.payOut` → `PaymentService.createForeignCreditRefund` | Paid in the credit's currency (stated `exchangeRate`, else table, context `payment_out`). AR relieved at the credit's carrying rate (its entry rate). Cash at the refund rate (functional account) or the foreign account's carrying value. Difference = realised FX. Replaces the FX-1 refusal. | `FxGainLossFx1IT.foreignCreditRefundInItsCurrency` |
-| FX-3 | PO pay route | `POST /procurement/purchase-orders/{id}/pay` accepts `exchangeRate`; V589 `PurchasePayment.currencyCode/exchangeRate/carryingRate/fxAmount` | Receipt valuation (G) → bill recognition (AP remeasured to the bill rate) → settlement at the payment-date rate (stated, else table, else the carrying rate with no FX, so a missing rate never blocks as before). AP relieved at the receipts' carrying rate, realised FX posted. | `ProcurementIntegrityIT.poPayRealisesFx` |
-| FX-4 | Expense advances | V590 `ExpenseAdvance.currencyCode`, `disbursedBase`; `currencyCode` on create, `exchangeRate` on disburse / refund | Paid from an account held in the currency: funds check, relief at carrying value. Paid from a functional account: payment rate. Claims (functional) consume the advance at its carrying rate, with a balanced re-tag entry so the currency bucket ties. A return realises FX against carrying value. An account held in another currency is refused. | `FxCashManagementIT.foreignAdvance`, `.advanceAccountCurrencyChecked` |
+| FX-3 | PO pay route | `POST /procurement/purchase-orders/{id}/pay` accepts `exchangeRate`; V590 `PurchasePayment.currencyCode/exchangeRate/carryingRate/fxAmount` | Receipt valuation (G) → bill recognition (AP remeasured to the bill rate) → settlement at the payment-date rate (stated, else table, else the carrying rate with no FX, so a missing rate never blocks as before). AP relieved at the receipts' carrying rate, realised FX posted. | `ProcurementIntegrityIT.poPayRealisesFx` |
+| FX-4 | Expense advances | V591 `ExpenseAdvance.currencyCode`, `disbursedBase`; `currencyCode` on create, `exchangeRate` on disburse / refund | Paid from an account held in the currency: funds check, relief at carrying value. Paid from a functional account: payment rate. Claims (functional) consume the advance at its carrying rate, with a balanced re-tag entry so the currency bucket ties. A return realises FX against carrying value. An account held in another currency is refused. | `FxCashManagementIT.foreignAdvance`, `.advanceAccountCurrencyChecked` |
 | FX-4 | Petty cash | Funds held in a currency: balance, float, counts and replenishment in that currency; `exchangeRate` on replenish | Same currency: at the source's carrying value. Functional → foreign fund: treasury rate. Foreign → functional fund: units at the rate relieved at carrying value, FX realised. Two different foreign currencies are refused. Count differences are booked at the fund's carrying rate. | `FxCashManagementIT.foreignPettyCash` |
 | FX-4 | Shift banking | `exchangeRate` on `POST /cash-sessions/{id}/banking` | Till cash is functional. Banking into a currency bank buys its currency at the bank rate (stated, else table, context treasury); functional value unchanged, no FX at conversion. | `FxCashManagementIT.shiftBankingIntoForeignBank` |
-| FX-5 | Rental deposits | V591 `RentalDeposit.kind` (+ classified at / by / reason); `depositKind` on checkout; `GET /rental/deposits/classification-review`; `POST /rental/agreements/{id}/deposit/classify` | Refundable security deposit by default, `advance` for prepaid rent. Legacy rows are not bulk-classified (owner decision 3): they wait in the review. Deposits are functional subledger balances, so classifying moves no GL value; it is audited. Ledger maths moved from `double` to BigDecimal. | `RentalIT.lifecycle` |
+| FX-5 | Rental deposits | V592 `RentalDeposit.kind` (+ classified at / by / reason); `depositKind` on checkout; `GET /rental/deposits/classification-review`; `POST /rental/agreements/{id}/deposit/classify` | Refundable security deposit by default, `advance` for prepaid rent. Legacy rows are not bulk-classified (owner decision 3): they wait in the review. Deposits are functional subledger balances, so classifying moves no GL value; it is audited. Ledger maths moved from `double` to BigDecimal. | `RentalIT.lifecycle` |
 | FX-5 | Advance allocation screen | Web, on the payment detail page | Uses `POST /payments/{id}/allocations` (F); estimated FX shown before confirming. | web typecheck |
 | FX-6 | Opening-balance currency fields; account revaluation settings screen | Web | Uses the F and C APIs. | web typecheck |
 | FX-7 | FX reporting and close | `GET /fx-treasury/report?groupBy=partner\|account\|currency\|origin\|document`, `GET /fx-treasury/report/lines` (drill-down with payment allocations); close-checklist item `fx_revaluation` (advisory); web report page | Realised = settlement FX lines; unrealised = revaluations and their reversals. | `FxReportingIT.report` |

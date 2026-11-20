@@ -51,7 +51,7 @@ public class RentalDeposit {
     @Column(name = "totalForfeited", nullable = false, precision = 20, scale = 6)
     private BigDecimal totalForfeited;
 
-    /** FX-5 (V591): {@code advance} | {@code refundable}; {@code null} = not yet classified (legacy). */
+    /** FX-5 (V592): {@code advance} | {@code refundable}; {@code null} = not yet classified (legacy). */
     @Column(name = "kind")
     private String kind;
 
