@@ -168,12 +168,22 @@ class FxRevaluationPartnerIT extends AccountingFixtures {
         String c = partner(b, "FX2 legacy", true);
         String je = postJe(b, "GEN", d0.toString(), ccy, "100", null, null, List.of(dr(ar, 10).partner(c),
                 cr(revenue, 10)));
-        // Simulate a pre-FX-2 line: same posting, no partner.
-        String arId = account(b.org(), ar);
+        // Simulate a pre-FX-2 entry: a copy of it whose receivable line has no partner. Posted lines cannot be changed,
+        // so the copy is built as a draft and then marked posted in the same transaction (as the engine does), with no
+        // superuser bypass: this also runs as the application role.
         new org.springframework.transaction.support.TransactionTemplate(txm).executeWithoutResult(t -> {
-            jdbc.sql("SET LOCAL session_replication_role = replica").update(); // bypass the posted-line guard
-            jdbc.sql("UPDATE \"JournalLine\" SET \"partnerId\" = NULL WHERE \"journalEntryId\" = ? AND \"accountId\" = ?")
-                    .params(je, arId).update();
+            String copy = UUID.randomUUID().toString();
+            jdbc.sql("CREATE TEMP TABLE fx2_entry ON COMMIT DROP AS SELECT * FROM \"JournalEntry\" WHERE id = ?")
+                    .param(je).update();
+            jdbc.sql("UPDATE fx2_entry SET id = ?, \"entryNumber\" = \"entryNumber\" || '-L', status = 'draft'")
+                    .param(copy).update();
+            jdbc.sql("INSERT INTO \"JournalEntry\" SELECT * FROM fx2_entry").update();
+            jdbc.sql("CREATE TEMP TABLE fx2_lines ON COMMIT DROP AS SELECT * FROM \"JournalLine\" WHERE"
+                    + " \"journalEntryId\" = ?").param(je).update();
+            jdbc.sql("UPDATE fx2_lines SET id = gen_random_uuid()::text, \"journalEntryId\" = ?, \"partnerId\" = NULL")
+                    .param(copy).update();
+            jdbc.sql("INSERT INTO \"JournalLine\" SELECT * FROM fx2_lines").update();
+            jdbc.sql("UPDATE \"JournalEntry\" SET status = 'posted' WHERE id = ?").param(copy).update();
         });
         rate(b, ccy, base, d1.toString(), "120");
         JsonNode w = okAs(b, 200, "POST", "/fx-revaluations/warnings", Map.of("asOf", d1.toString()));
