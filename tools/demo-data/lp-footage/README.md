@@ -32,3 +32,17 @@ LP_PASSWORD='<admin password>' LP_AGENT_CLIENT_ID=ierp_... LP_AGENT_SECRET=... p
 
 Live DEMO was loaded on 2026-11-20 (before this tool was in the repo, from the same scripts): 8 clips and 4 stills for
 the KRD cases LP-000009, LP-000014, LP-000017 and LP-000028.
+
+## Realistic scenes (`load_scenes.py`)
+
+For client demos: `scenes/` holds three camera stills made from the owner's AI-generated reference images (counter:
+a customer bagging a cup, with detection boxes; till: barista serving with the "POS AI Insight" overlay; pick-up:
+the hand-over). `make_scene_clip.sh` turns one into a 12 s CCTV-style clip (slow drift, grain, EAT time, camera
+name, REC). `load_scenes.py` attaches a clip and a still to the cases in its `PLAN` (the 4 critical C09 cases and the
+camera cases of the KRD pilot) through the agent upload route; a case that already has one is skipped.
+
+```bash
+LP_PASSWORD='<admin password>' python3 load_scenes.py ../loss-prevention/state.DEMO.json
+```
+
+Live DEMO got these on 2026-11-20 (12 cases; backup `pre-lp-aiscenes-20261120-110005.dump`).
