@@ -52,6 +52,24 @@ public class FxTreasuryController {
                 dto.date(), dto.note()));
     }
 
+    /** FX-7: FX gain / loss by partner, account, currency, origin or document. */
+    @GetMapping("/report")
+    @RequirePermissions(Permissions.CURRENCY__READ)
+    public Map<String, Object> report(@RequestParam(required = false) String from,
+            @RequestParam(required = false) String to, @RequestParam(required = false) String groupBy) {
+        return service.report(from, to, groupBy);
+    }
+
+    /** FX-7: the FX journal lines behind a report row (drill-down to entries and payment allocations). */
+    @GetMapping("/report/lines")
+    @RequirePermissions(Permissions.CURRENCY__READ)
+    public List<Map<String, Object>> reportLines(@RequestParam(required = false) String from,
+            @RequestParam(required = false) String to, @RequestParam(required = false) String kind,
+            @RequestParam(required = false) String partnerId, @RequestParam(required = false) String accountId,
+            @RequestParam(required = false) String currency) {
+        return service.reportLines(from, to, kind, partnerId, accountId, currency);
+    }
+
     @GetMapping("/summary")
     @RequirePermissions(Permissions.CURRENCY__READ)
     public Map<String, Object> summary(@RequestParam(required = false) String from,

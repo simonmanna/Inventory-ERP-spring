@@ -102,6 +102,19 @@ public class PeriodCloseChecklistService {
         checks.add(check("inventory_gl_tieout", "Inventory ties to the GL (no open tie-out variance)", false,
                 count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND kind = ? AND"
                         + " status::text = 'open' AND \"createdAt\" >= ?", org, InventoryTieOutMonitor.KIND, startAt)));
+        // FX-7 (ADR-S082): foreign-currency monetary balances open at period end should be revalued for the period
+        // (advisory: the run is a period-end step, not a lock). Found = open (account, currency) balances when no
+        // revaluation was recorded for this period.
+        long revalued = count("SELECT count(*) FROM \"FxRevaluation\" WHERE \"organizationId\" = ? AND \"fiscalPeriodId\" = ?",
+                org, periodId);
+        long foreignOpen = revalued > 0 ? 0 : count("SELECT count(*) FROM (SELECT 1 FROM \"JournalLine\" l JOIN"
+                + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" JOIN \"Account\" a ON a.id = l.\"accountId\" JOIN"
+                + " \"AccountCategory\" c ON c.id = a.\"categoryId\" JOIN \"Organization\" o ON o.id = l.\"organizationId\""
+                + " WHERE l.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" <= ?"
+                + " AND l.\"currencyId\" IS NOT NULL AND upper(l.\"currencyId\") <> upper(o.\"currencyCode\") AND "
+                + RevaluationService.MONETARY + " GROUP BY l.\"accountId\", upper(l.\"currencyId\") HAVING"
+                + " sum(l.debit - l.credit) <> 0) x", org, endAt);
+        checks.add(check("fx_revaluation", "Foreign-currency balances revalued for the period", false, foreignOpen));
         checks.add(check("draft_journals", "No draft journal entries", false,
                 count("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND status::text = 'draft'"
                         + " AND \"postingDate\" >= ? AND \"postingDate\" <= ?", org, startAt, endAt)));

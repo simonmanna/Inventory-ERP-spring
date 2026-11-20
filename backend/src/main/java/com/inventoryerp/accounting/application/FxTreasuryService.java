@@ -14,6 +14,7 @@ import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -157,6 +158,166 @@ public class FxTreasuryService {
      * Realised and unrealised FX (functional currency) between two dates, by origin: realised FX from payments,
      * treasury operations and credit notes; unrealised from period-end revaluations and their reversals.
      */
+    /**
+     * FX-7 (ADR-S082): FX gain / loss in a period grouped by {@code groupBy} = {@code partner}, {@code account},
+     * {@code currency}, {@code origin} (source type) or {@code document} (source document). Realised = FX lines of
+     * settlements; unrealised = revaluations and their reversals. Partner and currency come from the entry's own
+     * partner / currency lines (the FX line carries neither). Positive = gain.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> report(String fromDate, String toDate, String groupBy) {
+        String org = TenantContext.organizationId();
+        Instant[] range = range(fromDate, toDate, org);
+        String key = switch (groupBy == null || groupBy.isBlank() ? "partner" : groupBy) {
+            case "partner" -> "coalesce(px.\"partnerId\", '')";
+            case "account" -> "coalesce(ax.\"accountId\", '')";
+            case "currency" -> "coalesce(cx.ccy, '')";
+            case "origin" -> "coalesce(o.\"sourceType\", e.\"sourceType\")";
+            case "document" -> "coalesce(o.\"sourceType\", e.\"sourceType\") || ':' || coalesce(o.\"sourceId\","
+                    + " e.\"sourceId\", e.id)";
+            default -> throw ApiException.badRequest("groupBy must be one of: partner, account, currency, origin,"
+                    + " document");
+        };
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT " + key + " AS key, sum(CASE WHEN " + UNREALISED
+                        + " THEN 0 ELSE l.\"baseCredit\" - l.\"baseDebit\" END) AS realised, sum(CASE WHEN " + UNREALISED
+                        + " THEN l.\"baseCredit\" - l.\"baseDebit\" ELSE 0 END) AS unrealised, count(DISTINCT e.id) AS entries"
+                        + FX_FROM + " GROUP BY 1 ORDER BY abs(sum(l.\"baseCredit\" - l.\"baseDebit\")) DESC, 1")
+                .params(org, Timestamp.from(range[0]), Timestamp.from(range[1])));
+        Map<String, String> labels = labels(groupBy == null || groupBy.isBlank() ? "partner" : groupBy, rows, org);
+        BigDecimal realised = BigDecimal.ZERO;
+        BigDecimal unrealised = BigDecimal.ZERO;
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            BigDecimal re = SqlRows.dec(r, "realised");
+            BigDecimal un = SqlRows.dec(r, "unrealised");
+            realised = realised.add(re);
+            unrealised = unrealised.add(un);
+            String k = String.valueOf(r.get("key"));
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", k.isEmpty() ? null : k);
+            row.put("label", k.isEmpty() ? "(none)" : labels.getOrDefault(k, k));
+            row.put("realised", plain(re));
+            row.put("unrealised", plain(un));
+            row.put("total", plain(re.add(un)));
+            row.put("entries", ((Number) r.get("entries")).longValue());
+            out.add(row);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("functionalCurrency", ForeignCash.functional(jdbc, org));
+        result.put("groupBy", groupBy == null || groupBy.isBlank() ? "partner" : groupBy);
+        result.put("realised", plain(realised));
+        result.put("unrealised", plain(unrealised));
+        result.put("total", plain(realised.add(unrealised)));
+        result.put("rows", out);
+        return result;
+    }
+
+    /**
+     * FX-7: the FX lines behind a report row: one per FX journal line with its entry, source, partner, currency and the
+     * payment allocations that realised it (when the source is a payment). Filters are optional.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> reportLines(String fromDate, String toDate, String kind, String partnerId,
+            String accountId, String currency) {
+        String org = TenantContext.organizationId();
+        Instant[] range = range(fromDate, toDate, org);
+        StringBuilder where = new StringBuilder();
+        List<Object> params = new ArrayList<>(List.of(org, Timestamp.from(range[0]), Timestamp.from(range[1])));
+        if ("realised".equals(kind)) {
+            where.append(" AND NOT ").append(UNREALISED);
+        } else if ("unrealised".equals(kind)) {
+            where.append(" AND ").append(UNREALISED);
+        }
+        if (partnerId != null && !partnerId.isBlank()) {
+            where.append(" AND px.\"partnerId\" = ?");
+            params.add(partnerId);
+        }
+        if (accountId != null && !accountId.isBlank()) {
+            where.append(" AND ax.\"accountId\" = ?");
+            params.add(accountId);
+        }
+        if (currency != null && !currency.isBlank()) {
+            where.append(" AND cx.ccy = ?");
+            params.add(currency.trim().toUpperCase());
+        }
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT e.id AS \"journalEntryId\", e.\"entryNumber\","
+                        + " e.\"postingDate\", e.description, coalesce(o.\"sourceType\", e.\"sourceType\") AS \"sourceType\","
+                        + " coalesce(o.\"sourceId\", e.\"sourceId\") AS \"sourceId\", CASE WHEN " + UNREALISED + " THEN"
+                        + " 'unrealised' ELSE 'realised' END AS kind, px.\"partnerId\", p.name AS \"partnerName\","
+                        + " ax.\"accountId\", ac.code AS \"accountCode\", ac.name AS \"accountName\", cx.ccy AS currency,"
+                        + " l.\"baseCredit\" - l.\"baseDebit\" AS gain" + FX_FROM + where
+                        + " ORDER BY e.\"postingDate\" DESC, e.\"entryNumber\" DESC LIMIT 1000")
+                .params(params.toArray()));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> row = new LinkedHashMap<>(r);
+            row.put("gain", plain(SqlRows.dec(r, "gain")));
+            if ("payment".equals(r.get("sourceType")) || "payment_allocation".equals(r.get("sourceType"))) {
+                row.put("allocations", SqlRows.list(jdbc.sql("SELECT a.\"documentId\", d.\"documentNumber\", a.amount,"
+                        + " a.\"carryingRate\", a.\"settlementRate\", a.\"fxAmount\" FROM \"PaymentAllocation\" a LEFT JOIN"
+                        + " \"Document\" d ON d.id = a.\"documentId\" WHERE a.\"paymentId\" = ? AND a.\"organizationId\" = ?")
+                        .params(r.get("sourceId"), org)));
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** Revaluation entries and their reversals (FX-7 classification, same as the summary). */
+    private static final String UNREALISED = "(coalesce(o.\"sourceType\", e.\"sourceType\") = 'fx_revaluation')";
+
+    /**
+     * FX lines (on the designated fx_gain / fx_loss accounts) in [from, to) with, per entry, its first partner line,
+     * first partner-line account and first foreign currency (lateral lookups: an FX line carries none of these).
+     */
+    private static final String FX_FROM = " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
+            + " LEFT JOIN \"JournalEntry\" o ON o.id = e.\"reversalOfId\" JOIN \"AccountMapping\" m ON m.\"accountId\" ="
+            + " l.\"accountId\" AND m.\"organizationId\" = l.\"organizationId\" AND m.key IN ('fx_gain', 'fx_loss') AND"
+            + " m.\"deletedAt\" IS NULL"
+            + " LEFT JOIN LATERAL (SELECT x.\"partnerId\" FROM \"JournalLine\" x WHERE x.\"journalEntryId\" = e.id AND"
+            + " x.\"partnerId\" IS NOT NULL ORDER BY x.\"lineNumber\" LIMIT 1) px ON true"
+            + " LEFT JOIN LATERAL (SELECT x.\"accountId\" FROM \"JournalLine\" x WHERE x.\"journalEntryId\" = e.id AND"
+            + " x.\"currencyId\" IS NOT NULL AND x.\"accountId\" <> l.\"accountId\" ORDER BY x.\"partnerId\" IS NULL,"
+            + " x.\"lineNumber\" LIMIT 1) ax ON true"
+            + " LEFT JOIN LATERAL (SELECT upper(x.\"currencyId\") AS ccy FROM \"JournalLine\" x JOIN \"Organization\" g ON"
+            + " g.id = x.\"organizationId\" WHERE x.\"journalEntryId\" = e.id AND x.\"currencyId\" IS NOT NULL AND"
+            + " upper(x.\"currencyId\") <> upper(g.\"currencyCode\") ORDER BY x.\"lineNumber\" LIMIT 1) cx ON true"
+            + " LEFT JOIN \"Partner\" p ON p.id = px.\"partnerId\" LEFT JOIN \"Account\" ac ON ac.id = ax.\"accountId\""
+            + " WHERE l.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed') AND e.\"postingDate\" >= ? AND"
+            + " e.\"postingDate\" < ?";
+
+    private Map<String, String> labels(String groupBy, List<Map<String, Object>> rows, String org) {
+        Map<String, String> out = new HashMap<>();
+        List<String> keys = rows.stream().map(r -> String.valueOf(r.get("key"))).filter(k -> !k.isEmpty()).toList();
+        if (keys.isEmpty()) {
+            return out;
+        }
+        String sql = switch (groupBy) {
+            case "partner" -> "SELECT id, name FROM \"Partner\" WHERE \"organizationId\" = ? AND id = ANY(?::text[])";
+            case "account" -> "SELECT id, code || ' ' || name FROM \"Account\" WHERE \"organizationId\" = ? AND"
+                    + " id = ANY(?::text[])";
+            default -> null;
+        };
+        if (sql != null) {
+            jdbc.sql(sql).params(org, keys.toArray(String[]::new))
+                    .query((rs, n) -> out.put(rs.getString(1), rs.getString(2))).list();
+        }
+        return out;
+    }
+
+    private Instant[] range(String fromDate, String toDate, String org) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc, org);
+        java.time.LocalDate today = java.time.LocalDate.now(zone);
+        try {
+            return new Instant[] {AccountingDay.start(fromDate == null || fromDate.isBlank() ? today.withDayOfMonth(1)
+                    : java.time.LocalDate.parse(fromDate.substring(0, 10)), zone),
+                AccountingDay.endExclusive(toDate == null || toDate.isBlank() ? today
+                    : java.time.LocalDate.parse(toDate.substring(0, 10)), zone)};
+        } catch (RuntimeException e) {
+            throw ApiException.badRequest("from and to must be dates (YYYY-MM-DD)");
+        }
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> summary(String fromDate, String toDate) {
         String org = TenantContext.organizationId();
