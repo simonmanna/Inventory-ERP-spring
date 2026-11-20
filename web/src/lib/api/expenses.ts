@@ -35,7 +35,8 @@ export const expensesApi = {
   reject(id: string, reason?: string): Promise<Expense> {
     return api.post(`/expenses/${id}/reject`, { reason }).then((r) => r.data);
   },
-  pay(id: string, body: { paidBy?: string; paymentMethod: string; reference?: string; paymentNotes?: string; accountId: string }): Promise<Expense> {
+  pay(id: string, body: { paidBy?: string; paymentMethod: string; reference?: string; paymentNotes?: string; accountId: string;
+    amount?: number; foreignAmount?: number; exchangeRate?: number }): Promise<Expense> {
     return idempotentPost(`/expenses/${id}/pay`, body);
   },
   void(id: string, body: { voidReason: string }): Promise<Expense> {

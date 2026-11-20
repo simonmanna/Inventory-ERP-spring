@@ -1,4 +1,5 @@
 // src/pages/expenses/ExpensesPage.tsx
+import { useAuthStore } from "@/stores/auth.store";
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { useState, useEffect, useCallback } from "react";
@@ -1200,9 +1201,15 @@ function PayExpenseDialog({
     accountId: accounts[0]?.id ?? "",
     paymentNotes: "",
     amount: "",
+    foreignAmount: "",
+    exchangeRate: "",
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // FX-2 E: a foreign-currency expense can be paid in its currency, with the payment-date rate (realised FX)
+  const expCcy = (expense as any).currencyCode as string | undefined;
+  const orgCcy = useAuthStore.getState().organization?.currencyCode;
+  const foreignExpense = !!expCcy && expCcy !== orgCcy;
 
   const selectedAccount = accounts.find((a) => a.id === form.accountId);
 
@@ -1218,7 +1225,9 @@ function PayExpenseDialog({
         paidBy: form.paidBy,
         paymentMethod: form.paymentMethod,
         reference: form.reference || undefined,
-        ...(form.amount ? { amount: parseFloat(form.amount) } : {}),
+        ...(form.amount && !form.foreignAmount ? { amount: parseFloat(form.amount) } : {}),
+        ...(foreignExpense && form.foreignAmount ? { foreignAmount: parseFloat(form.foreignAmount) } : {}),
+        ...(foreignExpense && form.exchangeRate ? { exchangeRate: parseFloat(form.exchangeRate) } : {}),
         paymentNotes: form.paymentNotes || undefined,
         accountId: form.accountId,
       });
@@ -1302,6 +1311,32 @@ function PayExpenseDialog({
                 ))}
               </select>
             </div>
+
+            {foreignExpense && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-gray-500 mb-1">
+                    {tx('Amount in {{v1}}', { v1: expCcy })}
+                  </label>
+                  <input type="number" min="0" step="0.01" value={form.foreignAmount}
+                    placeholder={tx('Whole balance')}
+                    onChange={(e) => setForm((p) => ({ ...p, foreignAmount: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-none border border-gray-300 text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-gray-500 mb-1">
+                    {tx('Rate on payment date')}
+                  </label>
+                  <input type="number" min="0" step="any" value={form.exchangeRate}
+                    placeholder={tx('Rate table')}
+                    onChange={(e) => setForm((p) => ({ ...p, exchangeRate: e.target.value }))}
+                    className="w-full px-3 py-2 rounded-none border border-gray-300 text-sm" />
+                </div>
+                <p className="col-span-2 text-xs text-slate-500">
+                  {tx('Pay from a functional account or an account held in {{v1}}; the difference to the expense rate is realised exchange gain or loss.', { v1: expCcy })}
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold uppercase text-gray-500 mb-1">

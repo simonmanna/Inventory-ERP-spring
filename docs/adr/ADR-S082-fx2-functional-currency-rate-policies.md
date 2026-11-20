@@ -132,6 +132,34 @@
   count, a Classify dialog, and Apply hidden for refundable deposits.
 - Not done: the rental module's `RentalDeposit` (subledger only, `double` math) is a follow-up, as the spec says.
 
+## E. Expenses funded from functional or foreign accounts (decision 5) — built for expense payments
+
+- The ADR-S076 refusal is lifted for expense payments, both `POST /expenses/{id}/pay` and CASH expenses paid on
+  creation. An account held in currency X may pay X expenses. Paying a functional expense from it, or an expense in a
+  third currency, is refused: "Account … is held in USD; it can only pay USD expenses".
+- The pay request gains `exchangeRate` (the payment-date rate; when absent, resolved under the `expense` rate policy)
+  and `foreignAmount` (units in the expense currency). `amount` keeps its functional meaning. Expense amounts stay in
+  functional currency at the expense's own rate, so `amountPaid` and the residual are unchanged. A foreign payment
+  relieves `foreignAmount × expense rate`, and the last payment clears the exact residual.
+- The entry posts in base:
+
+  | Case | Expense / payable side | Cash side | Difference |
+  |---|---|---|---|
+  | Accrued, from a functional account | Relieved at the expense rate, tagged | Foreign × pay rate, untagged | Realised FX |
+  | Accrued, from an account held in the expense currency | Relieved at the expense rate, tagged | Tagged, carrying value (`ForeignCash.relieve`) | Realised FX |
+  | Paid at recognition, from a currency account | Recognised at the expense rate | Carrying value | Cash-disposal gain or loss |
+  | Paid at recognition, from a functional account | At the expense rate | At the expense rate | No FX (same moment) |
+
+  Funds are checked in the account currency for currency accounts.
+- Void reverses the payment entries as before.
+- Web, expense pay dialog: "Amount in CCY" and "Rate on payment date" for foreign expenses.
+- **Not done in E:** expense advances, petty-cash replenishment and shift banking from foreign accounts still refuse
+  (`ForeignCash.assertFunctional`). Planned as a follow-up. `FxSettlementMath` was not extracted; the settlement
+  lives in `ExpensesService.fxPay`, using `ForeignCash` and `CurrencyService` with no new engine.
+- Interaction with C: a foreign CREDIT expense without a supplier accrues to accounts payable without a partner. The
+  engine now refuses that ("Foreign-currency payable lines need a partner"), so a foreign credit expense needs a
+  supplier or an employee claimant.
+
 ## Tests
 
 - `FunctionalCurrencyIT`: clearing refused; changeable before and locked after the first posting; blank refused by
@@ -151,3 +179,14 @@
   FX, reclassification back.
 - Deposit regression unchanged and green: `FxDepositsIT`, `CashSaleIT`, `SalesBillingIT`, `SalesDeliveryIT`,
   `SalesOrderPolicyIT`, `CustomerDepositReceiptPdfTest`.
+- `FxExpenseFundingIT`:
+  - the reviewer example (USD cash carried at 5,000 pays $500 at 5,500: expense 2,750,000, cash 2,500,000, gain
+    250,000);
+  - accrued from USD cash;
+  - accrued paid later from a functional bank in two parts at 5,800 (losses of 12,000 and 18,000, bank untagged),
+    then void;
+  - third-currency refusal;
+  - funds check in the currency.
+- Expense regression green: `ExpensesFlowIT`, `ExpenseAccrualIT`, `ExpenseClaimsIT`, `ExpenseControlsIT` (on a
+  fresh DB), `ExpenseTreasuryIT`, `FleetFuelIT`, `FleetIncidentsIT`, `InvoicingIT` (authorization count +2 for the
+  D routes), `Acc0PostingDateIT`, `ControlAccountRoutesIT`, `BankLedgerMatchIT`.

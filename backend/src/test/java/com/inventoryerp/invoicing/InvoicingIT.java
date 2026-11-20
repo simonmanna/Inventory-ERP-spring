@@ -330,7 +330,8 @@ class InvoicingIT extends ApiTestSupport {
     void authorizationMatrix() {
         // ADR-S071: +4 withholding certificate routes. Control-account policy (2026-11-17): +1 bill write-off, +1 write-off reversal.
         // Document reversals (2026-11-17): +2 (credit-note reverse, customer-deposit application reverse).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(77);
+        // FX-2 D (ADR-S082): +2 (deposit classification review, classify).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(79);
         // ADR-S052: +2 expense return/submit, +6 limits/settings, +18 claims/advances, +7 petty cash,
         // +14 schedules, +8 reports.
         assertThat(assertAuthorizationMatrix("com.inventoryerp.expenses")).isEqualTo(73);

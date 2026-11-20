@@ -74,11 +74,17 @@ public class ExpensesService {
 
     /** {@code PayExpenseDto}; {@code amount} (ADR-S051) = a partial payment, null = the whole residual. */
     public record PayInput(String paymentMethod, String accountId, String reference, String paymentNotes,
-            BigDecimal amount) {
+            BigDecimal amount, BigDecimal exchangeRate, BigDecimal foreignAmount) {
 
         /** Pays the whole residual. */
         public PayInput(String paymentMethod, String accountId, String reference, String paymentNotes) {
-            this(paymentMethod, accountId, reference, paymentNotes, null);
+            this(paymentMethod, accountId, reference, paymentNotes, null, null, null);
+        }
+
+        /** Pays {@code amount} (functional; null = the whole residual). */
+        public PayInput(String paymentMethod, String accountId, String reference, String paymentNotes,
+                BigDecimal amount) {
+            this(paymentMethod, accountId, reference, paymentNotes, amount, null, null);
         }
     }
 
@@ -128,12 +134,14 @@ public class ExpensesService {
     private final SegregationOfDutiesService sod;
     private final PettyCashService pettyCash;
     private final ExpensePrepaymentService prepayments;
+    private final com.inventoryerp.accounting.application.CurrencyService currency;
 
     public ExpensesService(JdbcClient jdbc, EventBus events, SequenceService sequence, AuditService audit,
             ApprovalsService approvals, PostingService posting, PlatformTransactionManager txm,
             ObjectProvider<ExpensePostingTagger> taggers, AccountResolverService accounts,
             ExpenseControlService controls, SegregationOfDutiesService sod, PettyCashService pettyCash,
-            ExpensePrepaymentService prepayments) {
+            ExpensePrepaymentService prepayments, com.inventoryerp.accounting.application.CurrencyService currency) {
+        this.currency = currency;
         this.taggers = taggers;
         this.accounts = accounts;
         this.controls = controls;
@@ -946,8 +954,13 @@ public class ExpensesService {
         }
         sod.assertSeparated(SegregationOfDutiesService.EXPENSE_PAYMENT, "Expense", id, makers);
         Map<String, Object> category = categoryRow(exp.get("categoryId"));
-        recordPayment(exp, payerId, dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(), category,
-                null, dto.amount());
+        payFx.set(new BigDecimal[] {dto.exchangeRate(), dto.foreignAmount()});
+        try {
+            recordPayment(exp, payerId, dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(),
+                    category, null, dto.amount());
+        } finally {
+            payFx.remove();
+        }
         publish("expense.paid", Obj.of("expenseId", id));
         notifyRaiser(exp, "notifyOnPayment", "paid", null);
         Map<String, Object> result = loadDecorated(id);
@@ -1132,6 +1145,17 @@ public class ExpensesService {
 
     // ------------------------------------------------------------------ internals
 
+    /** FX-2 E: the pay request's {exchangeRate, foreignAmount} for the current payment (null = not stated). */
+    private static final ThreadLocal<BigDecimal[]> payFx = new ThreadLocal<>();
+
+    /**
+     * FX-2 E: how a payment of a foreign-currency expense settles. All amounts are functional except
+     * {@code foreign}: the payable / expense side is relieved at the expense's own rate ({@code relief}), the cash side
+     * at {@code cashBase} (functional account: foreign × payment rate; account held in the expense currency: its
+     * carrying value) and the difference is realised FX.
+     */
+    record FxPay(String currency, BigDecimal foreign, BigDecimal relief, BigDecimal cashBase, boolean foreignCash) {}
+
     private void recordPayment(Map<String, Object> expense, String paidBy, String paymentMethod, String accountId,
             String reference, String paymentNotes, Map<String, Object> category, PostingTags explicitTags,
             BigDecimal requested) {
@@ -1139,7 +1163,24 @@ public class ExpensesService {
         if (residual.signum() <= 0) {
             throw ApiException.badRequest("Nothing left to pay");
         }
+        BigDecimal[] fxIn = payFx.get();
+        BigDecimal statedForeign = fxIn == null ? null : fxIn[1];
         BigDecimal amount = requested == null ? residual : requested;
+        String expCcy = foreignCurrencyOf(expense);
+        BigDecimal expRate = expCcy == null ? BigDecimal.ONE : Money.dec(expense.get("exchangeRate"));
+        if (expCcy != null && statedForeign != null) {
+            // FX-2 E: a foreign amount states the payment in the expense currency; relieved at the expense's rate
+            if (statedForeign.signum() <= 0) {
+                throw ApiException.badRequest("foreignAmount must be greater than zero");
+            }
+            BigDecimal foreignResidual = residual.divide(expRate, 6, RoundingMode.HALF_UP);
+            amount = statedForeign.compareTo(foreignResidual) >= 0 ? residual
+                    : statedForeign.multiply(expRate).setScale(6, RoundingMode.HALF_UP);
+            if (statedForeign.compareTo(foreignResidual) > 0) {
+                throw ApiException.badRequest("Payment amount " + JsNumbers.dec(statedForeign) + " " + expCcy
+                        + " exceeds the outstanding balance of " + JsNumbers.dec(foreignResidual) + " " + expCcy);
+            }
+        }
         if (amount.signum() <= 0) {
             throw ApiException.badRequest("Payment amount must be greater than zero");
         }
@@ -1166,9 +1207,14 @@ public class ExpensesService {
             throw ApiException.badRequest("Pay expenses from an active cash, bank or mobile-money account");
         }
         TreasuryGuards.assertNotDrawerAccount(jdbc, org, (String) credit.get("id"), "An expense payment");
-        pettyCash.assertCanSpend((String) credit.get("id"), amount);
-        ForeignCash.assertFunctional(jdbc, org, (String) credit.get("id"), "An expense payment");
-        TreasuryGuards.assertSufficientFunds(jdbc, org, (String) credit.get("id"), amount, (String) credit.get("name"));
+        FxPay fx = fxPay(expense, expCcy, expRate, amount, residual, (String) credit.get("id"), (String) credit.get("name"),
+                payable != null, fxIn == null ? null : fxIn[0]);
+        BigDecimal cashOut = fx == null ? amount : fx.cashBase();
+        pettyCash.assertCanSpend((String) credit.get("id"), cashOut);
+        if (fx == null || !fx.foreignCash()) {
+            TreasuryGuards.assertSufficientFunds(jdbc, org, (String) credit.get("id"), cashOut,
+                    (String) credit.get("name"));
+        }
         String paymentId = UUID.randomUUID().toString();
         String title = (String) expense.get("title");
         String value = JsNumbers.dec(amount);
@@ -1182,11 +1228,36 @@ public class ExpensesService {
             }
             lines.addAll(debitLines(expense, category, tags, amount));
         }
-        lines.add(Line.credit((String) credit.get("id"), value, "Paid: " + title));
-        Map<String, Object> entry = posting.post(inExpenseCurrencyLegs(expense, PostingRequest.of(
-                journalForMethod(paymentMethod), Instant.now(), "Expense " + expense.get("expenseCode") + " - "
-                + title, "expense_payment", (String) expense.get("id"), "expense_payment:" + paymentId, lines),
-                java.util.Set.of((String) credit.get("id"))));
+        java.util.Set<String> untagged = new java.util.HashSet<>(java.util.Set.of((String) credit.get("id")));
+        if (fx == null) {
+            lines.add(Line.credit((String) credit.get("id"), value, "Paid: " + title));
+        } else {
+            // FX-2 E: cash at its own value; the gap to the expense-rate relief is realised FX
+            lines.add(Line.credit((String) credit.get("id"), JsNumbers.dec(fx.cashBase()), "Paid: " + title));
+            BigDecimal diff = fx.relief().subtract(fx.cashBase());
+            String fxLabel = "Realised FX · " + fx.currency() + " expense " + expense.get("expenseCode");
+            if (diff.signum() > 0) {
+                String gain = accounts.byMapping("fx_gain");
+                untagged.add(gain);
+                lines.add(Line.credit(gain, JsNumbers.dec(diff), fxLabel));
+            } else if (diff.signum() < 0) {
+                String loss = accounts.byMapping("fx_loss");
+                untagged.add(loss);
+                lines.add(Line.debit(loss, JsNumbers.dec(diff.negate()), fxLabel));
+            }
+        }
+        PostingRequest req = inExpenseCurrencyLegs(expense, PostingRequest.of(journalForMethod(paymentMethod),
+                Instant.now(), "Expense " + expense.get("expenseCode") + " - " + title, "expense_payment",
+                (String) expense.get("id"), "expense_payment:" + paymentId, lines), untagged);
+        if (fx != null && fx.foreignCash()) {
+            String cash = (String) credit.get("id");
+            String fxQty = JsNumbers.dec(fx.foreign());
+            req = new PostingRequest(req.journalCode(), req.date(), req.description(), req.currencyId(),
+                    req.exchangeRate(), req.sourceType(), req.sourceId(), req.postingType(), req.postingKey(),
+                    req.branchId(), req.costCenterId(), req.dimensions(), req.lines().stream()
+                            .map(l -> cash.equals(l.accountId()) ? l.inCurrency(fx.currency(), fxQty) : l).toList());
+        }
+        Map<String, Object> entry = posting.post(req);
         if (payable == null && tags == null) {
             prepayments.ensureSchedule(expense, resolveExpenseAccountId(category), net(expense));
         }
@@ -1206,6 +1277,59 @@ public class ExpensesService {
         Map<String, Object> values = Obj.of("paymentId", paymentId, "amount", value, "method", paymentMethod, "reason",
                 paymentNotes, "journalEntryId", entry.get("id"));
         audit.recordInTx(AuditInput.of("ExpensePayment", (String) expense.get("id"), "post", null, values));
+    }
+
+    /** The expense's currency when it is foreign (differs from the functional currency, with a rate), else null. */
+    private String foreignCurrencyOf(Map<String, Object> exp) {
+        String ccy = (String) exp.get("currencyCode");
+        Object rate = exp.get("exchangeRate");
+        if (ccy == null || ccy.isBlank() || rate == null || Money.dec(rate).signum() <= 0) {
+            return null;
+        }
+        String base = ForeignCash.functional(jdbc, org());
+        return ccy.equalsIgnoreCase(base) ? null : ccy.toUpperCase();
+    }
+
+    /**
+     * FX-2 E (owner decision 5): settlement of a payment from {@code cashAccount}.
+     * <ul>
+     *   <li>functional expense: only a functional account (an account held in another currency is refused);</li>
+     *   <li>foreign expense from an account held in its currency: cash relieved at carrying value (funds checked in the
+     *       currency), relief at the expense rate, difference realised;</li>
+     *   <li>foreign accrued expense from a functional account: cash = foreign × the payment-date rate (stated, else the
+     *       {@code expense} rate policy), difference realised;</li>
+     *   <li>foreign expense paid at recognition from a functional account: at the expense's own rate, no FX (null).</li>
+     * </ul>
+     * An account held in a third currency is refused.
+     */
+    private FxPay fxPay(Map<String, Object> expense, String expCcy, BigDecimal expRate, BigDecimal amount,
+            BigDecimal residual, String cashAccount, String cashName, boolean accrued, BigDecimal statedRate) {
+        String org = org();
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, org, cashAccount);
+        if (held != null && (expCcy == null || !held.currency().equalsIgnoreCase(expCcy))) {
+            throw ApiException.badRequest("Account " + held.name() + " is held in " + held.currency() + "; it can only"
+                    + " pay " + held.currency() + " expenses");
+        }
+        if (expCcy == null) {
+            return null;
+        }
+        BigDecimal relief = amount;
+        BigDecimal foreign = amount.compareTo(residual) == 0
+                ? residual.divide(expRate, 6, RoundingMode.HALF_UP)
+                : amount.divide(expRate, 6, RoundingMode.HALF_UP);
+        if (held != null) {
+            ForeignCash.Balance bal = ForeignCash.balance(jdbc, org, cashAccount, expCcy);
+            ForeignCash.assertFunds(bal, foreign, cashName, expCcy);
+            BigDecimal spot = statedRate != null ? statedRate
+                    : currency.resolve(expCcy, ForeignCash.functional(jdbc, org), null, Instant.now(), "expense").rate();
+            return new FxPay(expCcy, foreign, relief, ForeignCash.relieve(bal, foreign, spot), true);
+        }
+        if (!accrued) {
+            return null;
+        }
+        BigDecimal payRate = currency.resolveStated(expCcy, ForeignCash.functional(jdbc, org), statedRate, Instant.now(),
+                "expense").rate();
+        return new FxPay(expCcy, foreign, relief, foreign.multiply(payRate).setScale(6, RoundingMode.HALF_UP), false);
     }
 
     // ------------------------------------------------------------------ accrual (ADR-S051)

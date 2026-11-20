@@ -119,7 +119,9 @@ public class ExpensesController {
     /** {@code PayExpenseDto}. */
     public record PayExpenseRequest(String paidBy, @NotNull(message = STR) String paymentMethod,
             @NotNull(message = STR) String accountId, String reference, String paymentNotes,
-            @Positive(message = POSITIVE) BigDecimal amount) {}
+            @Positive(message = POSITIVE) BigDecimal amount,
+            @Positive(message = POSITIVE) BigDecimal exchangeRate,
+            @Positive(message = POSITIVE) BigDecimal foreignAmount) {}
 
     /** {@code ApproveExpenseDto}. */
     public record ApproveExpenseRequest(String approvedBy, String approvalNotes) {}
@@ -226,7 +228,7 @@ public class ExpensesController {
     @RequirePermissions(Permissions.EXPENSE__POST)
     public Map<String, Object> pay(@PathVariable String id, @Valid @RequestBody PayExpenseRequest dto) {
         return expenses.pay(id, new PayInput(dto.paymentMethod(), dto.accountId(), dto.reference(), dto.paymentNotes(),
-                dto.amount()));
+                dto.amount(), dto.exchangeRate(), dto.foreignAmount()));
     }
 
     @PostMapping("/{id}/void")
