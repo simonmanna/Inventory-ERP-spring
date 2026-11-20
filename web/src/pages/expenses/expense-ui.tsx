@@ -156,11 +156,14 @@ export const PAYMENT_METHODS: [string, string][] = [
 ];
 
 /** Payment method + cash account + optional amount; used for reimbursements, disbursements and refunds. */
-export function MoneyDialog({ title, maxAmount, onClose, onSubmit }: {
-  title: string; maxAmount?: number; onClose: () => void; onSubmit: (b: MoneyBody) => Promise<unknown>;
+export function MoneyDialog({ title, maxAmount, currency, onClose, onSubmit }: {
+  title: string; maxAmount?: number;
+  /** FX-4: the document's currency when it is foreign: shows an optional exchange-rate field. */
+  currency?: string | null;
+  onClose: () => void; onSubmit: (b: MoneyBody) => Promise<unknown>;
 }) {
   const [accounts, setAccounts] = useState<Row[]>([]);
-  const [body, setBody] = useState({ paymentMethod: 'CASH', accountId: '', reference: '', amount: '' });
+  const [body, setBody] = useState({ paymentMethod: 'CASH', accountId: '', reference: '', amount: '', exchangeRate: '' });
   useEffect(() => {
     lookupsApi.cashAccounts().then((a) => {
       setAccounts(a);
@@ -171,6 +174,7 @@ export function MoneyDialog({ title, maxAmount, onClose, onSubmit }: {
     <FormDialog title={title} onClose={onClose} submitLabel={tx('Post')} onSubmit={() => onSubmit({
       paymentMethod: body.paymentMethod, accountId: body.accountId, reference: body.reference || undefined,
       amount: body.amount ? Number(body.amount) : undefined,
+      exchangeRate: currency && Number(body.exchangeRate) > 0 ? Number(body.exchangeRate) : undefined,
     })}>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -194,6 +198,14 @@ export function MoneyDialog({ title, maxAmount, onClose, onSubmit }: {
           <label className={fieldLabel}>{tx('Reference')}</label>
           <Input value={body.reference} onChange={(e) => setBody({ ...body, reference: e.target.value })} />
         </div>
+        {currency && (
+          <div className="col-span-2">
+            <label className={fieldLabel}>{tx('Exchange rate (optional)')} · 1 {currency}</label>
+            <Input type="number" min={0} step="any" placeholder={tx('rate table')} value={body.exchangeRate}
+              onChange={(e) => setBody({ ...body, exchangeRate: e.target.value })} />
+            <p className="mt-1 text-xs text-slate-500">{tx('Amounts are in {{v1}}. Used when the account is in another currency.', { v1: currency })}</p>
+          </div>
+        )}
       </div>
     </FormDialog>
   );

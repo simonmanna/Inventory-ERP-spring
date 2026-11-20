@@ -7,6 +7,7 @@
  * org-scoped server-side; permission failures surface as 403s.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { tx } from '@/lib/i18n/tx';
 import { api } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -121,6 +122,12 @@ export interface RentalDeposit {
   totalApplied: number;
   totalRefunded: number;
   totalForfeited: number;
+  /** FX-5: `refundable` security deposit, `advance` (prepaid rent) or null (legacy, not classified). */
+  kind?: 'advance' | 'refundable' | null;
+  classificationReason?: string | null;
+  classifiedAt?: string | null;
+  partnerId?: string | null;
+  createdAt?: string;
   movements: Array<{ id: string; type: string; amount: number; method: string | null; note: string | null; createdAt: string }>;
 }
 
@@ -343,6 +350,29 @@ export function useRefundDeposit() {
   return useMutation({
     mutationFn: async ({ agreementId, method, amount, note }: { agreementId: string; method: string; amount: number; note?: string }) =>
       (await api.post(`/rental/agreements/${agreementId}/deposit/refund`, { method, amount, note })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['rental', 'deposit'] }),
+  });
+}
+
+/** FX-5: how a rental deposit is held. */
+export const depositKindLabel = (kind?: string | null) =>
+  kind === 'refundable' ? tx('Refundable security deposit') : kind === 'advance' ? tx('Advance (prepaid rent)') : tx('Not classified');
+
+/** FX-5: deposits not yet classified as advance or refundable (needs `rental:manage`). */
+export function useDepositClassificationReview(enabled = true) {
+  return useQuery({
+    queryKey: ['rental', 'deposit', 'classification-review'],
+    enabled,
+    queryFn: async () => (await api.get<RentalDeposit[]>('/rental/deposits/classification-review')).data,
+  });
+}
+
+/** FX-5: classify (or reclassify) an agreement's deposit; the reason is required and audited. */
+export function useClassifyDeposit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ agreementId, kind, reason }: { agreementId: string; kind: 'advance' | 'refundable'; reason: string }) =>
+      (await api.post(`/rental/agreements/${agreementId}/deposit/classify`, { kind, reason })).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rental', 'deposit'] }),
   });
 }

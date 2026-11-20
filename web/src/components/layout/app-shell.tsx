@@ -514,6 +514,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/accounts/cash-accounts/settlements', label: tx('Settlements'), icon: Landmark, permission: PERMISSIONS.cashSession.reconcile },
       { to: '/bank-reconciliation', label: tx('Bank Reconciliation'), icon: Landmark, permission: PERMISSIONS.bankAccount.read },
       { to: '/fx-treasury', label: tx('Foreign-currency Accounts'), icon: Globe, permission: PERMISSIONS.treasury.read },
+      { to: '/fx-treasury/report', label: tx('FX Gain / Loss Report'), icon: BarChart3, permission: PERMISSIONS.currency.read },
       { to: '/accounts/bank-import', label: tx('Import Bank Statement'), icon: FileInput, permission: PERMISSIONS.bankAccount.update },
       { to: '/cash-flow/report', label: tx('Money Reports'), icon: BarChart3, permission: PERMISSIONS.account.read, reportId: 'money.reports', group: 'Reporting' },
     ],

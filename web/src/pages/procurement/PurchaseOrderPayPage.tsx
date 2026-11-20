@@ -11,6 +11,7 @@ import { idempotentPost } from '@/lib/idempotent-request';
 import { apiMessage, notify } from '@/lib/notify';
 import { formatMoney } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { useAuthStore } from '@/stores/auth.store';
 
 interface PO {
   id: string; orderNumber: string; status: string;
@@ -46,6 +47,8 @@ export function PurchaseOrderPayPage() {
   const [method, setMethod] = useState<'bank' | 'cash'>('bank');
   const [cashRegisterId, setCashRegisterId] = useState('');
   const [paidAt, setPaidAt] = useState(today());
+  const [exchangeRate, setExchangeRate] = useState('');
+  const baseCurrency = useAuthStore((s) => s.organization?.currencyCode ?? '');
 
   const po = useQuery<PO>({
     queryKey: ['purchase-order', id],
@@ -59,6 +62,9 @@ export function PurchaseOrderPayPage() {
     queryFn: async () => (await api.get<Payable>(`/procurement/purchase-orders/${id}/payable`)).data,
     enabled: !!id,
   });
+
+  const orderCurrency = (payable.data?.currencyCode ?? po.data?.currencyCode ?? '').toUpperCase();
+  const foreignOrder = !!orderCurrency && !!baseCurrency && orderCurrency !== baseCurrency.toUpperCase();
 
   const registers = useQuery<Register[]>({
     queryKey: ['cash-registers', 'pay-po'],
@@ -76,6 +82,8 @@ export function PurchaseOrderPayPage() {
         method,
         cashRegisterId: method === 'cash' && cashRegisterId ? cashRegisterId : undefined,
         paidAt: paidAt || undefined,
+        // FX-3: a foreign order is paid at the stated rate (blank = the rate table); realised FX is posted.
+        exchangeRate: foreignOrder && Number(exchangeRate) > 0 ? Number(exchangeRate) : undefined,
       }),
     onSuccess: () => {
       notify.success(tx('Payment recorded'));
@@ -207,6 +215,26 @@ export function PurchaseOrderPayPage() {
               </select>
               <p className="mt-1 text-xs text-muted-foreground">
                 {tx('The register must have an open session; the cash is paid out of its drawer.')}
+              </p>
+            </div>
+          )}
+          {foreignOrder && (
+            <div>
+              <label className="text-sm font-medium" htmlFor="po-pay-rate">
+                {tx('Exchange rate (optional)')} <span className="text-muted-foreground">1 {orderCurrency} = ? {baseCurrency}</span>
+              </label>
+              <Input
+                id="po-pay-rate"
+                type="number"
+                min={0}
+                step="any"
+                className="mt-1"
+                value={exchangeRate}
+                onChange={(e) => setExchangeRate(e.target.value)}
+                placeholder={tx('rate table')}
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                {tx('Paid in {{v1}}; the difference to the bill rate is posted as realised FX gain or loss.', { v1: orderCurrency })}
               </p>
             </div>
           )}

@@ -64,7 +64,7 @@ function FundDetail({ id, onClose, onChanged }: { id: string; onClose: () => voi
   const st = useLoad(() => pettyCashApi.statement(id, from, to), [id, from, to]);
   const [mode, setMode] = useState<'replenish' | 'count' | 'edit' | null>(null);
   const [accounts, setAccounts] = useState<Row[]>([]);
-  const [form, setForm] = useState({ sourceAccountId: '', amount: '', counted: '', notes: '' });
+  const [form, setForm] = useState({ sourceAccountId: '', amount: '', counted: '', notes: '', exchangeRate: '' });
   useEffect(() => { lookupsApi.cashAccounts().then(setAccounts); }, []);
   const refresh = () => { fund.reload(); st.reload(); onChanged(); };
   const f = fund.data;
@@ -107,7 +107,7 @@ function FundDetail({ id, onClose, onChanged }: { id: string; onClose: () => voi
       {mode === 'replenish' && f && (
         <FormDialog title={tx('Replenish {{n}}', { n: f.name })} onClose={() => setMode(null)} onSubmit={async () => {
           await pettyCashApi.replenish(id, { sourceAccountId: form.sourceAccountId, amount: form.amount ? Number(form.amount) : undefined,
-            paymentMethod: 'BANK_TRANSFER' });
+            paymentMethod: 'BANK_TRANSFER', exchangeRate: Number(form.exchangeRate) > 0 ? Number(form.exchangeRate) : undefined });
           refresh();
         }}>
           <label className={fieldLabel}>{tx('From account')}</label>
@@ -118,6 +118,10 @@ function FundDetail({ id, onClose, onChanged }: { id: string; onClose: () => voi
           <label className={fieldLabel}>{tx('Amount')}</label>
           <Input type="number" min={0} placeholder={tx('Top up to float: {{n}}', { n: fmt(f.replenishmentDue) })} value={form.amount}
             onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+          <label className={fieldLabel}>{tx('Exchange rate (optional)')}</label>
+          <Input type="number" min={0} step="any" placeholder={tx('rate table')} value={form.exchangeRate}
+            onChange={(e) => setForm({ ...form, exchangeRate: e.target.value })} />
+          <p className="text-xs text-slate-500">{tx('Only used when the fund and the source account are in different currencies.')}</p>
         </FormDialog>
       )}
       {mode === 'count' && f && (

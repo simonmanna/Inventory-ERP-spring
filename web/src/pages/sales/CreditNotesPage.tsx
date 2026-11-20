@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ListPageHeader } from '@/components/list';
 import { api } from '@/lib/api';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
@@ -27,6 +28,7 @@ export function CreditNotesPage() {
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.creditNoteWrite));
   const [create, setCreate] = useState(false);
   const [alloc, setAlloc] = useState<Row | null>(null);
+  const [refunding, setRefunding] = useState<Row | null>(null);
   const refresh = () => qc.invalidateQueries({ queryKey: qk });
   const fail = (e: unknown) => toast.error(apiErrorMessage(e, tx('Action failed')));
   const pdf = async (r: Row) => {
@@ -36,9 +38,7 @@ export function CreditNotesPage() {
       const a = document.createElement('a'); a.href = url; a.download = `${r.documentNumber}.pdf`; a.click(); URL.revokeObjectURL(url);
     } catch (e) { fail(e); }
   };
-  const refund = (r: Row) => {
-    if (confirm(tx('Refund the open credit by bank?'))) api.post(`/sales/credit-notes/${r.id}/refund`, { paymentMethod: 'bank' }, key()).then(() => { toast.success(tx('Refunded')); void refresh(); }).catch(fail);
-  };
+  const refund = (r: Row) => setRefunding(r);
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Receipt} title={tx('Credit Notes')} description={tx('Credit for returns, price changes and goodwill. Open credit can be allocated to invoices or refunded.')} actions={canWrite && <Button onClick={() => setCreate(true)}><Plus className="mr-1 h-4 w-4" />{tx('New credit note')}</Button>} />
@@ -59,6 +59,7 @@ export function CreditNotesPage() {
       </div>
       {create && <NewCreditNote onClose={() => setCreate(false)} onDone={refresh} />}
       {alloc && <AllocateDialog note={alloc} onClose={() => setAlloc(null)} onDone={refresh} />}
+      {refunding && <RefundDialog note={refunding} onClose={() => setRefunding(null)} onDone={refresh} />}
     </div>
   );
 }
@@ -97,6 +98,50 @@ function AllocateDialog({ note, onClose, onDone }: { note: Row; onClose: () => v
         <Field label={tx('Invoice')}><select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={documentId} onChange={(e) => setDocumentId(e.target.value)}><option value="">{tx('Choose…')}</option>{open.map((i) => <option key={i.id} value={i.id}>{i.documentNumber} · {money(i.amountResidual)}</option>)}</select></Field>
         <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <DialogFooter><Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button><Button disabled={!documentId || !Number(amount)} onClick={submit}>{tx('Allocate')}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Refund the open credit by bank. FX-3: a foreign credit is refunded in its own currency; the rate is optional (blank =
+ * the rate table) and only asked for when the credit is not in the functional currency.
+ */
+function RefundDialog({ note, onClose, onDone }: { note: Row; onClose: () => void; onDone: () => void }) {
+  const base = useAuthStore((s) => s.organization?.currencyCode ?? '');
+  const { data: detail } = useQuery({
+    queryKey: ['credit-note', note.id, 'currency'],
+    queryFn: async () => (await api.get<{ currencyId?: string | null }>(`/credit-notes/${note.id}`)).data,
+    retry: false,
+  });
+  const currency = (detail?.currencyId ?? '').trim().toUpperCase();
+  const foreign = !!currency && !!base && currency !== base;
+  const [rate, setRate] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = () => {
+    setBusy(true);
+    idempotentPost(`/sales/credit-notes/${note.id}/refund`, { paymentMethod: 'bank', ...(foreign && Number(rate) > 0 ? { exchangeRate: Number(rate) } : {}) })
+      .then(() => { toast.success(tx('Refunded')); onDone(); onClose(); })
+      .catch((e) => toast.error(apiErrorMessage(e, tx('Action failed'))))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>{tx('Refund')} {note.documentNumber}</DialogTitle></DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          {tx('Refund the open credit by bank?')} {money(note.amountResidual)}
+          {foreign && <> · {tx('refunded in {{v1}}', { v1: currency })}</>}
+        </p>
+        {foreign && (
+          <Field label={tx('Exchange rate (optional)')}>
+            <Input type="number" min={0} step="any" value={rate} onChange={(e) => setRate(e.target.value)} placeholder={tx('rate table')} />
+          </Field>
+        )}
+        {foreign && Number(rate) > 0 && (
+          <p className="text-xs text-muted-foreground">1 {currency} = {rate} {base}</p>
+        )}
+        <DialogFooter><Button variant="outline" onClick={onClose} disabled={busy}>{tx('Cancel')}</Button><Button disabled={busy} onClick={submit}>{tx('Refund')}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

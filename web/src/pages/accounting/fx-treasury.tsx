@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -111,7 +112,10 @@ export default function FxTreasuryPage() {
       {canSummary ? (
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-end justify-between gap-3">
-            <CardTitle>{tx('Exchange gains and losses')}</CardTitle>
+            <div className="space-y-1">
+              <CardTitle>{tx('Exchange gains and losses')}</CardTitle>
+              <Link to="/fx-treasury/report" className="text-xs text-primary hover:underline">{tx('Open the FX gain / loss report')}</Link>
+            </div>
             <div className="flex flex-wrap items-end gap-2">
               <div className="space-y-1">
                 <Label htmlFor="fx-from">{tx('From')}</Label>

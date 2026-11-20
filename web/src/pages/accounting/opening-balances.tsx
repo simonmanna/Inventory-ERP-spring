@@ -6,17 +6,68 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { isPostingAccount, useAccounts } from '@/features/accounting/api';
+import { isPostingAccount, useAccounts, useCurrencies } from '@/features/accounting/api';
+import { useAuthStore } from '@/stores/auth.store';
 import { useOpeningBalances, usePostOpeningBalances, localDay } from '@/features/finance/api';
 import { usePartners } from '@/features/partners/api';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 
-type AccountRow = { accountId: string; debit: string; credit: string };
-type PartnerRow = { partnerId: string; amount: string; dueDate: string; reference: string };
+/** FX-2: `currencyCode` '' = functional; a foreign line is entered in its currency at `exchangeRate` (blank = rate table). */
+type Fx = { currencyCode: string; exchangeRate: string };
+type AccountRow = { accountId: string; debit: string; credit: string } & Fx;
+type PartnerRow = { partnerId: string; amount: string; dueDate: string; reference: string } & Fx;
 
-const emptyAccount = (): AccountRow => ({ accountId: '', debit: '', credit: '' });
-const emptyPartner = (): PartnerRow => ({ partnerId: '', amount: '', dueDate: '', reference: '' });
+const emptyAccount = (): AccountRow => ({ accountId: '', debit: '', credit: '', currencyCode: '', exchangeRate: '' });
+const emptyPartner = (): PartnerRow => ({ partnerId: '', amount: '', dueDate: '', reference: '', currencyCode: '', exchangeRate: '' });
+
+/** The body's currency fields: only sent for a foreign line. */
+const fxBody = (r: Fx) =>
+  r.currencyCode
+    ? { currencyCode: r.currencyCode, exchangeRate: Number(r.exchangeRate) > 0 ? Number(r.exchangeRate) : undefined }
+    : {};
+
+/** Functional value of a line amount: the amount itself, amount × rate for a foreign line, null when the rate is unknown. */
+const functionalValue = (amount: number, r: Fx): number | null =>
+  !r.currencyCode ? amount : Number(r.exchangeRate) > 0 ? amount * Number(r.exchangeRate) : null;
+
+function CurrencyCells({ row, onChange, codes, base }: { row: Fx; onChange: (p: Partial<Fx>) => void; codes: string[]; base: string }) {
+  return (
+    <>
+      <select
+        className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+        value={row.currencyCode}
+        onChange={(e) => onChange({ currencyCode: e.target.value, exchangeRate: '' })}
+        aria-label={tx('Currency')}
+      >
+        <option value="">{base || tx('Functional')}</option>
+        {codes.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <Input
+        type="number"
+        min={0}
+        step="any"
+        disabled={!row.currencyCode}
+        placeholder={row.currencyCode ? tx('rate table') : '—'}
+        value={row.exchangeRate}
+        onChange={(e) => onChange({ exchangeRate: e.target.value })}
+        aria-label={tx('Exchange rate')}
+      />
+    </>
+  );
+}
+
+function FunctionalHint({ amount, row, base }: { amount: number; row: Fx; base: string }) {
+  if (!row.currencyCode || !(amount > 0)) return null;
+  const v = functionalValue(amount, row);
+  return (
+    <p className="col-span-full -mt-1 text-xs text-muted-foreground">
+      {v == null
+        ? tx('In {{v1}}; valued at the rate table on the opening date.', { v1: row.currencyCode })
+        : tx('In {{v1}} = {{v2}} {{v3}}', { v1: row.currencyCode, v2: money(v), v3: base })}
+    </p>
+  );
+}
 
 export function OpeningBalancesPage() {
   const [day, setDay] = useState(localDay());
@@ -28,6 +79,9 @@ export function OpeningBalancesPage() {
   const { data: partners } = usePartners({ page: 1, pageSize: 1000 });
   const { data: history } = useOpeningBalances();
   const post = usePostOpeningBalances();
+  const base = useAuthStore((s) => s.organization?.currencyCode ?? '');
+  const { data: currencies } = useCurrencies();
+  const codes = useMemo(() => (currencies ?? []).map((c) => c.code).filter((c) => c !== base), [currencies, base]);
 
   const accountOptions = useMemo(
     () =>
@@ -46,9 +100,11 @@ export function OpeningBalancesPage() {
     [partners],
   );
 
-  const debit = accounts.reduce((s, a) => s + Number(a.debit || 0), 0);
-  const credit = accounts.reduce((s, a) => s + Number(a.credit || 0), 0);
+  // Totals in the functional currency; a foreign line without a rate is valued by the server (rate table).
+  const debit = accounts.reduce((s, a) => s + (functionalValue(Number(a.debit || 0), a) ?? 0), 0);
+  const credit = accounts.reduce((s, a) => s + (functionalValue(Number(a.credit || 0), a) ?? 0), 0);
   const diff = debit - credit;
+  const unvalued = accounts.some((a) => a.currencyCode && !(Number(a.exchangeRate) > 0) && (Number(a.debit) > 0 || Number(a.credit) > 0));
 
   const submit = () => {
     const body = {
@@ -60,13 +116,14 @@ export function OpeningBalancesPage() {
           accountId: a.accountId,
           debit: Number(a.debit) > 0 ? Number(a.debit) : undefined,
           credit: Number(a.credit) > 0 ? Number(a.credit) : undefined,
+          ...fxBody(a),
         })),
       customers: customers
         .filter((c) => c.partnerId && Number(c.amount) > 0)
-        .map((c) => ({ partnerId: c.partnerId, amount: Number(c.amount), dueDate: c.dueDate || undefined, reference: c.reference || undefined })),
+        .map((c) => ({ partnerId: c.partnerId, amount: Number(c.amount), dueDate: c.dueDate || undefined, reference: c.reference || undefined, ...fxBody(c) })),
       suppliers: suppliers
         .filter((c) => c.partnerId && Number(c.amount) > 0)
-        .map((c) => ({ partnerId: c.partnerId, amount: Number(c.amount), dueDate: c.dueDate || undefined, reference: c.reference || undefined })),
+        .map((c) => ({ partnerId: c.partnerId, amount: Number(c.amount), dueDate: c.dueDate || undefined, reference: c.reference || undefined, ...fxBody(c) })),
     };
     if (!confirm(tx('Post these opening balances? This creates posted journal entries, invoices and bills.'))) return;
     post.mutate(body, {
@@ -106,7 +163,7 @@ export function OpeningBalancesPage() {
         </CardHeader>
         <CardContent className="space-y-2">
           {accounts.map((a, i) => (
-            <div key={i} className="grid grid-cols-[1fr_140px_140px_40px] gap-2">
+            <div key={i} className="grid grid-cols-[1fr_140px_140px_100px_120px_40px] gap-2">
               <SearchableSelect
                 value={a.accountId}
                 onValueChange={(v) => setAccounts((rs) => rs.map((r, j) => (j === i ? { ...r, accountId: v } : r)))}
@@ -117,9 +174,12 @@ export function OpeningBalancesPage() {
                 onChange={(e) => setAccounts((rs) => rs.map((r, j) => (j === i ? { ...r, debit: e.target.value, credit: '' } : r)))} />
               <Input type="number" min={0} placeholder={tx('Credit')} value={a.credit}
                 onChange={(e) => setAccounts((rs) => rs.map((r, j) => (j === i ? { ...r, credit: e.target.value, debit: '' } : r)))} />
+              <CurrencyCells row={a} codes={codes} base={base}
+                onChange={(p) => setAccounts((rs) => rs.map((r, j) => (j === i ? { ...r, ...p } : r)))} />
               <Button size="icon" variant="ghost" onClick={() => setAccounts((rs) => rs.filter((_, j) => j !== i))}>
                 <Trash2 className="h-4 w-4" />
               </Button>
+              <FunctionalHint amount={Number(a.debit || a.credit || 0)} row={a} base={base} />
             </div>
           ))}
           <div className="flex items-center justify-between">
@@ -132,13 +192,14 @@ export function OpeningBalancesPage() {
               <span className={diff === 0 ? 'text-emerald-600' : 'text-amber-600'}>
                 {diff === 0 ? tx('Balanced') : `${tx('Equity adjustment')} ${money(Math.abs(diff))}`}
               </span>
+              {unvalued && <span className="text-muted-foreground"> · {tx('foreign lines without a rate are valued on posting')}</span>}
             </div>
           </div>
         </CardContent>
       </Card>
 
-      <PartnerSection title={tx('Customer balances (receivable)')} rows={customers} setRows={setCustomers} options={customerOptions} />
-      <PartnerSection title={tx('Supplier balances (payable)')} rows={suppliers} setRows={setSuppliers} options={supplierOptions} />
+      <PartnerSection title={tx('Customer balances (receivable)')} rows={customers} setRows={setCustomers} options={customerOptions} codes={codes} base={base} />
+      <PartnerSection title={tx('Supplier balances (payable)')} rows={suppliers} setRows={setSuppliers} options={supplierOptions} codes={codes} base={base} />
 
       <div className="flex justify-end">
         <Button onClick={submit} disabled={post.isPending}>
@@ -194,11 +255,15 @@ function PartnerSection({
   rows,
   setRows,
   options,
+  codes,
+  base,
 }: {
   title: string;
   rows: PartnerRow[];
   setRows: React.Dispatch<React.SetStateAction<PartnerRow[]>>;
   options: { value: string; label: string; code?: string }[];
+  codes: string[];
+  base: string;
 }) {
   const update = (i: number, patch: Partial<PartnerRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
@@ -208,14 +273,16 @@ function PartnerSection({
       </CardHeader>
       <CardContent className="space-y-2">
         {rows.map((r, i) => (
-          <div key={i} className="grid grid-cols-[1fr_140px_160px_180px_40px] gap-2">
+          <div key={i} className="grid grid-cols-[1fr_140px_100px_120px_160px_180px_40px] gap-2">
             <SearchableSelect value={r.partnerId} onValueChange={(v) => update(i, { partnerId: v })} options={options} placeholder={tx('Partner…')} />
             <Input type="number" min={0} placeholder={tx('Amount')} value={r.amount} onChange={(e) => update(i, { amount: e.target.value })} />
+            <CurrencyCells row={r} codes={codes} base={base} onChange={(p) => update(i, p)} />
             <Input type="date" value={r.dueDate} onChange={(e) => update(i, { dueDate: e.target.value })} />
             <Input placeholder={tx('Old invoice no.')} value={r.reference} onChange={(e) => update(i, { reference: e.target.value })} />
             <Button size="icon" variant="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
               <Trash2 className="h-4 w-4" />
             </Button>
+            <FunctionalHint amount={Number(r.amount || 0)} row={r} base={base} />
           </div>
         ))}
         <Button variant="outline" size="sm" onClick={() => setRows((rs) => [...rs, emptyPartner()])}>

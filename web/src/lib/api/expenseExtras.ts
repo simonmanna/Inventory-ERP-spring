@@ -14,6 +14,8 @@ export interface MoneyBody {
   accountId: string;
   reference?: string;
   amount?: number;
+  /** FX-4: rate for a foreign advance paid from / returned to a functional account (blank = rate table). */
+  exchangeRate?: number;
 }
 
 export const expenseFlowApi = {
@@ -50,7 +52,7 @@ export const pettyCashApi = {
   get: (id: string) => get<Row>(`/petty-cash-funds/${id}`),
   create: (body: Row) => post<Row>('/petty-cash-funds', body),
   update: (id: string, body: Row) => patch<Row>(`/petty-cash-funds/${id}`, body),
-  replenish: (id: string, body: { sourceAccountId: string; amount?: number; paymentMethod?: string; reference?: string }) =>
+  replenish: (id: string, body: { sourceAccountId: string; amount?: number; paymentMethod?: string; reference?: string; exchangeRate?: number }) =>
     idempotentPost(`/petty-cash-funds/${id}/replenish`, body) as Promise<Row>,
   count: (id: string, body: { countedAmount: number; notes?: string }) =>
     idempotentPost(`/petty-cash-funds/${id}/counts`, body) as Promise<Row>,

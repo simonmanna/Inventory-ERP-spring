@@ -23,6 +23,7 @@ import { money, date, statusLabel } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
 import { usePayment, useVoidPayment } from '@/features/invoicing/api';
 import { tx } from '@/lib/i18n/tx';
+import { AllocateAdvanceDialog } from './allocate-advance-dialog';
 
 function Field({ label, value }: { label: string; value: string }) {
   return (
@@ -41,6 +42,7 @@ export function PaymentDetailPage() {
   const has = useAuthStore((s) => s.hasPermission);
   const [voidOpen, setVoidOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
+  const [allocateOpen, setAllocateOpen] = useState(false);
   // A cash payment from an already-closed shift is corrected in the caller's
   // own open shift on the same drawer; the closed shift is never modified.
   const { data: myOpenShift } = useQuery({
@@ -78,6 +80,11 @@ export function PaymentDetailPage() {
           {tx('Back')}
         </Button>
         <div className="flex gap-2">
+          {payment.status === 'posted' && Number(payment.unallocatedAmount) > 0 && has(PERMISSIONS.payment.allocate) && (
+            <Button variant="outline" onClick={() => setAllocateOpen(true)}>
+              {tx('Allocate advance')}
+            </Button>
+          )}
           {payment.status === 'posted' && has(PERMISSIONS.payment.void) && (
             <Button variant="outline" onClick={() => setVoidOpen(true)} disabled={voidPayment.isPending}>
               {tx('Void')}
@@ -111,7 +118,7 @@ export function PaymentDetailPage() {
 
           <div className="rounded-md bg-muted/50 p-4 text-center">
             <div className="text-xs uppercase tracking-wide text-muted-foreground">{amountLabel}</div>
-            <div className="text-3xl font-semibold">{money(payment.amount)}</div>
+            <div className="text-3xl font-semibold">{money(payment.amount)}{payment.currencyId ? ` ${payment.currencyId}` : ''}</div>
           </div>
 
           {payment.allocations.length > 0 && (
@@ -143,6 +150,8 @@ export function PaymentDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {allocateOpen && <AllocateAdvanceDialog payment={payment} onClose={() => setAllocateOpen(false)} />}
 
       <Dialog open={voidOpen} onOpenChange={(o) => { if (!voidPayment.isPending) setVoidOpen(o); }}>
         <DialogContent className="sm:max-w-md">

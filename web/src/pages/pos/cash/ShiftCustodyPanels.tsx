@@ -108,10 +108,16 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
   const [amount, setAmount] = useState('');
   const [destinationAccountId, setDestinationAccountId] = useState('');
   const [reference, setReference] = useState('');
+  const [exchangeRate, setExchangeRate] = useState('');
 
   const drawer = useMemo(() => (cashAccounts as any[]).find((a) => a.cashRegister?.id === registerId), [cashAccounts, registerId]);
   const banks = useMemo(() => (cashAccounts as any[]).filter((a) => a.accountType === 'bank' && !a.cashRegister), [cashAccounts]);
   const inDrawer = Number(drawer?.balance ?? 0);
+  // FX-4: banking into a bank account held in a foreign currency takes an optional rate (blank = the rate table).
+  const base = cur();
+  const chosenBank = banks.find((b) => b.id === destinationAccountId);
+  const bankCurrency: string = (chosenBank?.currencyCode || chosenBank?.currencyId || '').toString().toUpperCase();
+  const foreignBank = !!bankCurrency && bankCurrency !== base.toUpperCase();
 
   if (!lastClosed || !(inDrawer > 0)) return null;
 
@@ -121,7 +127,7 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
     const bank = banks.find((b) => b.id === destinationAccountId);
     if (!bank) { toast.error(tx('Choose the bank account')); return; }
     try {
-      await bankDeposit.mutateAsync({ sessionId: lastClosed.id, amount: amt, destinationAccountId: bank.id, bankName: bank.bankName || bank.name, reference: reference.trim() || undefined });
+      await bankDeposit.mutateAsync({ sessionId: lastClosed.id, amount: amt, destinationAccountId: bank.id, bankName: bank.bankName || bank.name, reference: reference.trim() || undefined, exchangeRate: foreignBank && Number(exchangeRate) > 0 ? Number(exchangeRate) : undefined });
       toast.success(tx('Deposit recorded'));
       setOpen(false);
       await refetch();
@@ -138,7 +144,7 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
         <p className="text-amber-800">{tx('Bank it before opening with a smaller float: the opening count cannot be below the drawer ledger.')}</p>
       </div>
       {canBank && (
-        <Button variant="outline" className="border-amber-400 text-amber-900" onClick={() => { setAmount(String(inDrawer)); setDestinationAccountId(''); setReference(''); setOpen(true); }}>
+        <Button variant="outline" className="border-amber-400 text-amber-900" onClick={() => { setAmount(String(inDrawer)); setDestinationAccountId(''); setReference(''); setExchangeRate(''); setOpen(true); }}>
           <Landmark className="h-4 w-4 mr-1" /> {tx('Bank it')}
         </Button>
       )}
@@ -161,6 +167,12 @@ export const BankClosedShiftCard: React.FC<{ registerId: string; lastClosed: Ses
                 {banks.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
               </select>
             </div>
+            {foreignBank && (
+              <div>
+                <Label>{tx('Exchange rate (optional)')} <span className="font-normal text-slate-400">1 {bankCurrency} = ? {base}</span></Label>
+                <Input type="number" min={0} step="any" value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)} placeholder={tx('rate table')} className="text-right font-mono" />
+              </div>
+            )}
             <div>
               <Label>{tx('Deposit slip reference')} <span className="font-normal text-slate-400">{tx('(optional)')}</span></Label>
               <Input value={reference} onChange={(e) => setReference(e.target.value)} />

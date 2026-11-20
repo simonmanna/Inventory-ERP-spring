@@ -13,6 +13,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
+  useFxRevaluationAccounts,
+  useSetFxRevaluationAccount,
+  type FxRevaluationSetting,
   useFxRevaluationPreview,
   useFxRevaluationWarnings,
   useRunFxRevaluation,
@@ -44,6 +47,7 @@ export function PeriodEndPage() {
         </p>
       </div>
       <FxRevaluationCard />
+      <FxAccountSettingsCard />
       <VatSettlementCard />
     </div>
   );
@@ -137,6 +141,98 @@ function FxRevaluationCard() {
           </div>
         )}
       </CardContent>
+    </Card>
+  );
+}
+
+/** FX-2 C: which balance-sheet accounts the revaluation treats as monetary (revalued) or non-monetary. */
+function FxAccountSettingsCard() {
+  const canRead = useHasPermission(PERMISSIONS.currency.read);
+  const canEdit = useHasPermission(PERMISSIONS.currency.policy);
+  const [open, setOpen] = useState(false);
+  const accounts = useFxRevaluationAccounts(canRead && open);
+  const save = useSetFxRevaluationAccount();
+  const [filter, setFilter] = useState('');
+  if (!canRead) return null;
+  const q = filter.trim().toLowerCase();
+  const rows = (accounts.data ?? []).filter((a) =>
+    !q || a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q) || (a.categoryKey ?? '').toLowerCase().includes(q));
+  const settingLabel = (v: FxRevaluationSetting, monetaryDefault: boolean) =>
+    v === 'monetary' ? tx('Monetary (revalue)')
+      : v === 'non_monetary' ? tx('Non-monetary (do not revalue)')
+        : tx('Default ({{v1}})', { v1: monetaryDefault ? tx('revalued') : tx('not revalued') });
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>{tx('Account revaluation settings')}</CardTitle>
+            <CardDescription>
+              {tx('Monetary accounts (cash, receivables, payables, loans) are revalued at the closing rate; non-monetary ones (stock, fixed assets, prepayments) keep their historical rate.')}
+            </CardDescription>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setOpen((v) => !v)}>
+            {open ? tx('Hide') : tx('Show')}
+          </Button>
+        </div>
+      </CardHeader>
+      {open && (
+        <CardContent className="space-y-3">
+          <Input placeholder={tx('Filter by code, name or category')} value={filter} onChange={(e) => setFilter(e.target.value)} className="h-9 max-w-sm" />
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{tx('Code')}</TableHead>
+                  <TableHead>{tx('Name')}</TableHead>
+                  <TableHead>{tx('Category')}</TableHead>
+                  <TableHead>{tx('Setting')}</TableHead>
+                  <TableHead>{tx('Effective')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {accounts.isLoading ? (
+                  <TableRow><TableCell colSpan={5}><Skeleton className="h-4 w-full" /></TableCell></TableRow>
+                ) : accounts.isError ? (
+                  <TableRow><TableCell colSpan={5} className="text-sm text-destructive">{tx('Could not load the accounts.')}</TableCell></TableRow>
+                ) : rows.length === 0 ? (
+                  <TableRow><TableCell colSpan={5} className="h-16 text-center text-muted-foreground">{tx('No accounts.')}</TableCell></TableRow>
+                ) : (
+                  rows.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell className="font-mono text-xs">{a.code}</TableCell>
+                      <TableCell>{a.name}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{a.categoryKey ?? '—'}</TableCell>
+                      <TableCell>
+                        {canEdit ? (
+                          <select
+                            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                            value={a.fxRevaluation}
+                            disabled={save.isPending}
+                            onChange={(e) => save.mutate({ id: a.id, fxRevaluation: e.target.value as FxRevaluationSetting })}
+                          >
+                            {(['inherit', 'monetary', 'non_monetary'] as const).map((v) => (
+                              <option key={v} value={v}>{settingLabel(v, a.monetaryDefault)}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs">{settingLabel(a.fxRevaluation, a.monetaryDefault)}</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className={a.monetary ? 'text-xs font-medium text-emerald-700' : 'text-xs text-muted-foreground'}>
+                          {a.monetary ? tx('Revalued') : tx('Not revalued')}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      )}
     </Card>
   );
 }

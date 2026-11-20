@@ -300,7 +300,7 @@ export function useSessionHistory(page = 1, perPage = 20, registerId?: string) {
 export function useRecordBankDeposit() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ sessionId, ...body }: { sessionId: string; amount: number; bankName: string; destinationAccountId?: string; reference?: string; notes?: string }) =>
+    mutationFn: async ({ sessionId, ...body }: { sessionId: string; amount: number; bankName: string; destinationAccountId?: string; reference?: string; notes?: string; exchangeRate?: number }) =>
       submitCashOperation(`/cash-sessions/${sessionId}/banking`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cash-session'] });

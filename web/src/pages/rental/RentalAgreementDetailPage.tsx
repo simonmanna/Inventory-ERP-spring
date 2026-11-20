@@ -10,6 +10,8 @@ import {
   useRentalDeposit,
   useCollectDeposit,
   useRefundDeposit,
+  useClassifyDeposit,
+  depositKindLabel,
   useExtendLine,
   useSwapUnit,
   useRentalReturns,
@@ -20,6 +22,12 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { apiErrorMessage } from '@/lib/api-error';
+import { PERMISSIONS } from '@erp/shared';
+import { useAuthStore } from '@/stores/auth.store';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 
 const fmt = (n: number | string) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
@@ -53,6 +61,12 @@ export function RentalAgreementDetailPage() {
   const cancel = useCancelAgreement();
   const collect = useCollectDeposit();
   const refund = useRefundDeposit();
+  const classify = useClassifyDeposit();
+  const canManage = useAuthStore((s) => s.hasPermission(PERMISSIONS.rental.manage));
+  const [checkoutKind, setCheckoutKind] = useState<'refundable' | 'advance'>('refundable');
+  const [classifyOpen, setClassifyOpen] = useState(false);
+  const [classifyKind, setClassifyKind] = useState<'refundable' | 'advance'>('refundable');
+  const [classifyReason, setClassifyReason] = useState('');
   const extendLine = useExtendLine();
   const swapUnit = useSwapUnit();
 
@@ -118,9 +132,20 @@ export function RentalAgreementDetailPage() {
             </Button>
           )}
           {agreement.status === 'confirmed' && (
-            <Button size="sm" onClick={() => run(() => checkout.mutateAsync({ id: agreement.id }), tx('Checked out'))}>
-              <Layers className="h-4 w-4" /> {tx('Checkout')}
-            </Button>
+            <>
+              <select
+                aria-label={tx('Deposit kind')}
+                value={checkoutKind}
+                onChange={(e) => setCheckoutKind(e.target.value === 'advance' ? 'advance' : 'refundable')}
+                className="h-9 rounded-md border bg-card px-2 text-sm"
+              >
+                <option value="refundable">{tx('Deposit: refundable')}</option>
+                <option value="advance">{tx('Deposit: advance (prepaid rent)')}</option>
+              </select>
+              <Button size="sm" onClick={() => run(() => checkout.mutateAsync({ id: agreement.id, dto: checkoutKind === 'advance' ? { depositKind: 'advance' } : undefined }), tx('Checked out'))}>
+                <Layers className="h-4 w-4" /> {tx('Checkout')}
+              </Button>
+            </>
           )}
           {(agreement.status === 'draft' || agreement.status === 'confirmed') && (
             <Button size="sm" variant="destructive" onClick={() => run(() => cancel.mutateAsync(agreement.id), tx('Agreement cancelled'))}>
@@ -208,7 +233,22 @@ export function RentalAgreementDetailPage() {
         <TabsContent value="deposit" className="space-y-4">
           <Card>
             <CardHeader className="bg-muted/30 border-b rounded-t-lg">
-              <CardTitle className="text-sm">{tx('Deposit ledger')}</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-sm">{tx('Deposit ledger')}</CardTitle>
+                {deposit && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className={deposit.kind ? '' : 'bg-amber-100 text-amber-800'}>{depositKindLabel(deposit.kind)}</Badge>
+                    {canManage && (
+                      <Button size="sm" variant="outline" onClick={() => { setClassifyKind(deposit.kind === 'advance' ? 'advance' : 'refundable'); setClassifyReason(''); setClassifyOpen(true); }}>
+                        {tx('Classify')}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {deposit?.classificationReason && (
+                <p className="text-xs text-muted-foreground">{deposit.classificationReason}</p>
+              )}
             </CardHeader>
             <CardContent className="p-0">
               <dl className="grid grid-cols-2 gap-4 p-4 lg:grid-cols-4">
@@ -312,6 +352,40 @@ export function RentalAgreementDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+      <Dialog open={classifyOpen} onOpenChange={(o) => { if (!classify.isPending) setClassifyOpen(o); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{tx('Classify deposit')} · {agreement.agreementNumber}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="deposit-kind">{tx('Kind')}</Label>
+              <select id="deposit-kind" value={classifyKind} onChange={(e) => setClassifyKind(e.target.value === 'advance' ? 'advance' : 'refundable')}
+                className="h-9 w-full rounded-md border bg-card px-2 text-sm">
+                <option value="refundable">{tx('Refundable security deposit')}</option>
+                <option value="advance">{tx('Advance (prepaid rent)')}</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="deposit-reason">{tx('Reason')}</Label>
+              <Textarea id="deposit-reason" value={classifyReason} onChange={(e) => setClassifyReason(e.target.value)} />
+            </div>
+            <p className="text-xs text-muted-foreground">{tx('The classification is audited and drives reporting; it does not move ledger value.')}</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClassifyOpen(false)} disabled={classify.isPending}>{tx('Cancel')}</Button>
+            <Button disabled={classify.isPending || !classifyReason.trim()} onClick={async () => {
+              try {
+                await classify.mutateAsync({ agreementId: agreement.id, kind: classifyKind, reason: classifyReason.trim() });
+                toast.success(tx('Deposit classified'));
+                setClassifyOpen(false);
+              } catch (e) {
+                toast.error(apiErrorMessage(e, tx('Could not classify the deposit')));
+              }
+            }}>{tx('Save')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

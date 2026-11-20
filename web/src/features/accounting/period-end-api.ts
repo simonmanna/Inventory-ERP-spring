@@ -58,6 +58,44 @@ export function useRunFxRevaluation() {
   });
 }
 
+/** FX-2 C: a balance-sheet account with its revaluation setting and effective treatment (`/fx-revaluations/accounts`). */
+export type FxRevaluationSetting = 'inherit' | 'monetary' | 'non_monetary';
+
+export interface FxRevaluationAccount {
+  id: string;
+  code: string;
+  name: string;
+  categoryKey: string | null;
+  fxRevaluation: FxRevaluationSetting;
+  /** What `inherit` resolves to (from the account category). */
+  monetaryDefault: boolean;
+  /** The effective treatment: true = revalued at the closing rate. */
+  monetary: boolean;
+}
+
+export function useFxRevaluationAccounts(enabled = true) {
+  return useQuery({
+    queryKey: ['fx-revaluation-accounts'],
+    enabled,
+    queryFn: async () => (await api.get<FxRevaluationAccount[]>('/fx-revaluations/accounts')).data,
+  });
+}
+
+export function useSetFxRevaluationAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, fxRevaluation }: { id: string; fxRevaluation: FxRevaluationSetting }) =>
+      (await api.put(`/fx-revaluations/accounts/${id}`, { fxRevaluation })).data,
+    onSuccess: () => {
+      notify.success(tx('Revaluation setting saved'));
+      qc.invalidateQueries({ queryKey: ['fx-revaluation-accounts'] });
+      qc.invalidateQueries({ queryKey: ['fx-revaluation-preview'] });
+      qc.invalidateQueries({ queryKey: ['fx-revaluation-warnings'] });
+    },
+    onError: (e) => notify.error(apiMessage(e, tx('Could not save the revaluation setting'))),
+  });
+}
+
 /** VAT for a period (ACC-7, `/tax-settlements/preview`). */
 export interface TaxSettlementPreview {
   from: string;

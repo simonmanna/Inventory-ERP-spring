@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { DollarSign, Plus, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CloudDownload, DollarSign, Plus, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +17,8 @@ import {
 } from '@/features/accounting/api';
 import { PERMISSIONS } from '@erp/shared';
 import { FxRatePoliciesCard } from './fx-rate-policies-card';
+import { useFetchRates, useMissingRates, useRateFetchStatus } from '@/features/accounting/fx-report-api';
+import { apiMessage, notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { format } from 'date-fns';
 import { tx } from '@/lib/i18n/tx';
@@ -37,6 +39,25 @@ export function CurrencyPage() {
   const canApprove = hasPermission(PERMISSIONS.currency.approve);
   const { data: pending } = usePendingRates();
   const decide = useDecideRate();
+  // FX-8: used currencies without a recent approved rate, and the optional automatic fetch.
+  const canRead = hasPermission(PERMISSIONS.currency.read);
+  const canUpdate = hasPermission(PERMISSIONS.currency.update);
+  const { data: missing } = useMissingRates(3, canRead);
+  const { data: fetchStatus } = useRateFetchStatus(canRead);
+  const fetchRates = useFetchRates();
+
+  const handleFetch = () => {
+    fetchRates.mutate(undefined, {
+      onSuccess: (r) => {
+        const parts = [tx('{{v1}} stored', { v1: r.stored.length })];
+        if (r.skipped.length) parts.push(tx('{{v1}} kept (manual rate on file)', { v1: r.skipped.join(', ') }));
+        if (r.unavailable.length) parts.push(tx('not offered: {{v1}}', { v1: r.unavailable.join(', ') }));
+        notify.success(tx('Rates fetched ({{v1}}, {{v2}})', { v1: r.functionalCurrency, v2: r.rateType }), parts.join(' · '));
+        void refetch();
+      },
+      onError: (e) => notify.error(apiMessage(e, tx('Could not fetch rates'))),
+    });
+  };
 
   const handleAddRate = async () => {
     if (!fromCode || !toCode || !rate || !asOf || Number(rate) <= 0) return;
@@ -120,11 +141,28 @@ export function CurrencyPage() {
               </div>
             </DialogContent>
           </Dialog>
+          {fetchStatus?.configured && canUpdate && (
+            <Button variant="outline" size="sm" onClick={handleFetch} disabled={fetchRates.isPending} className="gap-1.5">
+              <CloudDownload className="h-3.5 w-3.5" /> {fetchRates.isPending ? tx('Fetching…') : tx("Fetch today's rates")}
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => refetch()} className="gap-1.5">
             <RefreshCw className="h-3.5 w-3.5" /> {tx('Refresh')}
           </Button>
         </div>
       </div>
+
+      {missing && missing.length > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">{tx('No approved exchange rate in the last 3 days for:')}</p>
+            <p>
+              {missing.map((m) => `${m.currency} (${m.latestRateDate ? tx('last {{v1}}', { v1: format(new Date(m.latestRateDate), 'MMM d, yyyy') }) : tx('never')})`).join(' · ')}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Currency Catalog */}

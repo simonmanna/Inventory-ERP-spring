@@ -127,6 +127,7 @@ const BudgetDetailPage = lazy(() => import('@/pages/accounting/budget-detail').t
 const OpeningBalancesPage = lazy(() => import('@/pages/accounting/opening-balances').then((m) => ({ default: m.OpeningBalancesPage })));
 const TaxReportPage = lazy(() => import('@/pages/accounting/tax-report').then((m) => ({ default: m.TaxReportPage })));
 const FxTreasuryPage = lazy(() => import('@/pages/accounting/fx-treasury'));
+const FxReportPage = lazy(() => import('@/pages/accounting/fx-report'));
 const BankReconciliationPage = lazy(() => import('@/pages/accounting/bank-reconciliation').then((m) => ({ default: m.BankReconciliationPage })));
 const ConsolidatedReportPage = lazy(() => import('@/pages/accounting/consolidated-report').then((m) => ({ default: m.ConsolidatedReportPage })));
 const StatementsPage = lazy(() => import('@/pages/invoicing/statements').then((m) => ({ default: m.StatementsPage })));
@@ -419,6 +420,7 @@ export function App() {
             <Route path="/accounts/cash-accounts/activity" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyActivityPage /></RequirePermission>} />
             <Route path="/accounts/cash-accounts/settlements" element={<RequirePermission permission={PERMISSIONS.cashSession.reconcile}><MoneySettlementsPage /></RequirePermission>} />
             <Route path="/fx-treasury" element={<RequirePermission permission={PERMISSIONS.treasury.read}><FxTreasuryPage /></RequirePermission>} />
+            <Route path="/fx-treasury/report" element={<RequirePermission permission={PERMISSIONS.currency.read}><FxReportPage /></RequirePermission>} />
             <Route path="/bank-reconciliation" element={<RequirePermission permission={PERMISSIONS.bankAccount.read}><BankReconciliationPage /></RequirePermission>} />
             <Route path="/accounts/cash-accounts/transactions" element={<Navigate to="/accounts/cash-accounts/activity" replace />} />
             <Route path="/accounts/cash-accounts/:id" element={<RequirePermission permission={PERMISSIONS.account.read}><MoneyAccountDetailPage /></RequirePermission>} />

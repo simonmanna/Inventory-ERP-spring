@@ -48,6 +48,10 @@ export interface Invoice {
   reference: string | null;
   notes: string | null;
   journalEntryId: string | null;
+  /** Document currency code (null = functional) and its rate to the functional currency. */
+  currencyId?: string | null;
+  exchangeRate?: string | number | null;
+  documentType?: string;
   reversedDocumentId?: string | null;
   cancelledAt?: string | null;
   cancelledBy?: string | null;
@@ -404,6 +408,9 @@ export interface Payment {
   unallocatedAmount: string;
   reference: string | null;
   status: string;
+  /** Payment currency code (null = functional) and the rate it was booked at. */
+  currencyId?: string | null;
+  exchangeRate?: string | number | null;
 }
 
 export interface PaymentAllocation {
@@ -440,6 +447,24 @@ export function useVoidPayment() {
       qc.invalidateQueries({ queryKey: ['payments'] });
       qc.invalidateQueries({ queryKey: ['supplier-payments'] });
       qc.invalidateQueries({ queryKey: ['payment', id] });
+      qc.invalidateQueries({ queryKey: ['invoices'] });
+      qc.invalidateQueries({ queryKey: ['invoice'] });
+      qc.invalidateQueries({ queryKey: ['expenses'] });
+      qc.invalidateQueries({ queryKey: ['expense'] });
+    },
+  });
+}
+
+/** FX-2 F: allocate a posted payment's unallocated remainder (an advance) to open invoices / bills of its partner. */
+export function useAllocatePayment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, allocations }: { id: string; allocations: { documentId: string; amount: number }[] }) =>
+      idempotentPost<PaymentDetail>(`/payments/${id}/allocations`, { allocations }),
+    onSuccess: (_d, { id }) => {
+      qc.invalidateQueries({ queryKey: ['payment', id] });
+      qc.invalidateQueries({ queryKey: ['payments'] });
+      qc.invalidateQueries({ queryKey: ['supplier-payments'] });
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoice'] });
       qc.invalidateQueries({ queryKey: ['expenses'] });

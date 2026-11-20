@@ -129,9 +129,10 @@ export function useDeleteBudget() {
 export interface OpeningBalancePayload {
   date: string;
   reference?: string;
-  accounts: { accountId: string; debit?: number; credit?: number; description?: string }[];
-  customers: { partnerId: string; amount: number; dueDate?: string; reference?: string }[];
-  suppliers: { partnerId: string; amount: number; dueDate?: string; reference?: string }[];
+  /** FX-2: `currencyCode` (foreign; amounts are in that currency) and an optional `exchangeRate` (blank = rate table). */
+  accounts: { accountId: string; debit?: number; credit?: number; description?: string; currencyCode?: string; exchangeRate?: number }[];
+  customers: { partnerId: string; amount: number; dueDate?: string; reference?: string; currencyCode?: string; exchangeRate?: number }[];
+  suppliers: { partnerId: string; amount: number; dueDate?: string; reference?: string; currencyCode?: string; exchangeRate?: number }[];
 }
 
 export interface OpeningBalanceList {

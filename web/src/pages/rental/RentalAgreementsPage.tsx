@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CalendarDays, Plus } from 'lucide-react';
-import { useRentalAgreements } from '@/features/rental/api';
+import { useDepositClassificationReview, useRentalAgreements } from '@/features/rental/api';
+import { PERMISSIONS } from '@erp/shared';
+import { useAuthStore } from '@/stores/auth.store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -39,6 +41,8 @@ export function RentalAgreementsPage() {
   const { data } = useRentalAgreements({ status: status || undefined, search: search || undefined, pageSize: 50 });
 
   const rows = useMemo(() => data?.items ?? [], [data]);
+  const canManage = useAuthStore((s) => s.hasPermission(PERMISSIONS.rental.manage));
+  const { data: toClassify } = useDepositClassificationReview(canManage);
 
   return (
     <div className="space-y-4 p-6">
@@ -51,6 +55,37 @@ export function RentalAgreementsPage() {
           <Button><Plus className="h-4 w-4" /> {tx('New agreement')}</Button>
         </Link>
       </div>
+
+      {canManage && (toClassify?.length ?? 0) > 0 && (
+        <Card>
+          <CardHeader className="bg-amber-50 border-b rounded-t-lg">
+            <CardTitle className="text-sm">{tx('Deposits to classify')} ({toClassify!.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <p className="px-4 pt-3 text-xs text-muted-foreground">
+              {tx('Older deposits are not yet marked as a refundable security deposit or an advance (prepaid rent). Open the agreement and classify its deposit.')}
+            </p>
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase text-muted-foreground">
+                <tr><th className="px-4 py-2">{tx('Agreement')}</th><th className="px-4 py-2 text-right">{tx('Collected')}</th><th className="px-4 py-2 text-right">{tx('Refunded')}</th><th className="px-4 py-2">{tx('Created')}</th><th /></tr>
+              </thead>
+              <tbody>
+                {toClassify!.map((d) => (
+                  <tr key={d.id} className="border-t">
+                    <td className="px-4 py-2 font-mono text-xs">{d.agreementId.slice(0, 8)}…</td>
+                    <td className="px-4 py-2 text-right">{fmt(d.totalCollected ?? 0)}</td>
+                    <td className="px-4 py-2 text-right">{fmt(d.totalRefunded ?? 0)}</td>
+                    <td className="px-4 py-2">{d.createdAt ? date(d.createdAt) : '—'}</td>
+                    <td className="px-4 py-2 text-right">
+                      <Link to={`/rental/agreements/${d.agreementId}`} className="text-primary hover:underline">{tx('Open')}</Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex items-center gap-2">
         <input

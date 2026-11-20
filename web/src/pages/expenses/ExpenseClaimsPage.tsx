@@ -6,11 +6,16 @@ import { Input } from '@/components/ui/input';
 import { expenseCategoriesApi, type ExpenseCategory } from '@/lib/api/expenseCategories';
 import { advancesApi, claimsApi, fmt, userName, type Row } from '@/lib/api/expenseExtras';
 import { tx } from '@/lib/i18n/tx';
+import { useCurrencies } from '@/features/accounting/api';
+import { useAuthStore } from '@/stores/auth.store';
 import {
   act, DataTable, ErrorBox, fieldLabel, FormDialog, MoneyDialog, PageShell, Pill, selectCls, Spinner, Tabs, useLoad,
 } from './expense-ui';
 
 interface Line { title: string; amount: string; expenseDate: string; categoryId: string; receiptNumber: string }
+
+/** FX-4: an advance amount with its currency when it is foreign (`currencyCode` null = functional). */
+const withCurrency = (n: unknown, code?: string | null) => (code ? `${code} ${fmt(n)}` : fmt(n));
 
 const today = () => new Date().toISOString().split('T')[0];
 const blankLine = (): Line => ({ title: '', amount: '', expenseDate: today(), categoryId: '', receiptNumber: '' });
@@ -51,7 +56,7 @@ function ClaimDialog({ claim, advances, onClose, onSaved }: {
           <select className={selectCls} value={advanceId} onChange={(e) => setAdvanceId(e.target.value)}>
             <option value="">{tx('None')}</option>
             {advances.filter((a) => a.status === 'disbursed').map((a) => (
-              <option key={a.id} value={a.id}>{a.advanceNumber} · {a.purpose} ({fmt(a.outstanding)})</option>
+              <option key={a.id} value={a.id}>{a.advanceNumber} · {a.purpose} ({withCurrency(a.outstanding, a.currencyCode)})</option>
             ))}
           </select>
         </div>
@@ -133,10 +138,13 @@ function ClaimDetail({ id, onClose, onChanged }: { id: string; onClose: () => vo
 }
 
 function AdvanceDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ purpose: '', amount: '', neededBy: '' });
+  const [form, setForm] = useState({ purpose: '', amount: '', neededBy: '', currencyCode: '' });
+  const base = useAuthStore((s) => s.organization?.currencyCode ?? '');
+  const { data: currencies } = useCurrencies();
   return (
     <FormDialog title={tx('Request a cash advance')} onClose={onClose} onSubmit={async () => {
-      await advancesApi.create({ purpose: form.purpose, amount: Number(form.amount), neededBy: form.neededBy || undefined });
+      await advancesApi.create({ purpose: form.purpose, amount: Number(form.amount), neededBy: form.neededBy || undefined,
+        currencyCode: form.currencyCode && form.currencyCode !== base ? form.currencyCode : undefined });
       onSaved();
     }}>
       <div className="grid grid-cols-3 gap-3">
@@ -151,6 +159,13 @@ function AdvanceDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
         <div>
           <label className={fieldLabel}>{tx('Needed by')}</label>
           <Input type="date" value={form.neededBy} onChange={(e) => setForm({ ...form, neededBy: e.target.value })} />
+        </div>
+        <div>
+          <label className={fieldLabel}>{tx('Currency')}</label>
+          <select className={selectCls} value={form.currencyCode || base} onChange={(e) => setForm({ ...form, currencyCode: e.target.value === base ? '' : e.target.value })}>
+            {base && <option value={base}>{base}</option>}
+            {(currencies ?? []).filter((c) => c.code !== base).map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+          </select>
         </div>
       </div>
     </FormDialog>
@@ -189,8 +204,8 @@ export default function ExpenseClaimsPage() {
         {advances.loading ? <Spinner /> : <DataTable rows={advances.data} columns={[
           { key: 'advanceNumber', label: tx('Advance') }, { key: 'purpose', label: tx('Purpose') },
           { key: 'employee', label: tx('Employee'), render: (r) => userName(r.employee) },
-          { key: 'amount', label: tx('Amount'), right: true, render: (r) => fmt(r.amount) },
-          { key: 'outstanding', label: tx('Outstanding'), right: true, render: (r) => fmt(r.outstanding) },
+          { key: 'amount', label: tx('Amount'), right: true, render: (r) => withCurrency(r.amount, r.currencyCode) },
+          { key: 'outstanding', label: tx('Outstanding'), right: true, render: (r) => withCurrency(r.outstanding, r.currencyCode) },
           { key: 'status', label: tx('Status'), render: (r) => <Pill status={r.status} /> },
           { key: 'actions', label: '', render: (r) => (
             <div className="flex gap-1 justify-end">
@@ -208,7 +223,7 @@ export default function ExpenseClaimsPage() {
       {dialog === 'advance' && <AdvanceDialog onClose={() => setDialog(null)} onSaved={advances.reload} />}
       {detail && <ClaimDetail id={detail} onClose={() => setDetail(null)} onChanged={() => { claims.reload(); advances.reload(); }} />}
       {money && <MoneyDialog title={money.kind === 'disburse' ? tx('Disburse {{n}}', { n: money.row.advanceNumber }) : tx('Refund to {{n}}', { n: money.row.advanceNumber })}
-        maxAmount={money.kind === 'refund' ? money.row.outstanding : undefined} onClose={() => setMoney(null)}
+        maxAmount={money.kind === 'refund' ? money.row.outstanding : undefined} currency={money.row.currencyCode || null} onClose={() => setMoney(null)}
         onSubmit={async (b) => { await (money.kind === 'disburse' ? advancesApi.disburse(money.row.id, b) : advancesApi.refund(money.row.id, b)); advances.reload(); }} />}
     </PageShell>
   );
