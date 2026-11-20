@@ -1,48 +1,66 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
-import { Eye, Plus, Search } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { PackageCheck, Plus } from 'lucide-react';
+import { PERMISSIONS, type PaginatedResult } from '@erp/shared';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { DataTable, type Column } from '@/components/data-table';
+import { Skeleton } from '@/components/ui/skeleton';
+import { DataTablePagination, ListPageHeader, SearchInput } from '@/components/list';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/stores/auth.store';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
-import { date } from '@/lib/format';
-import type { PaginatedResult } from '@erp/shared';
+import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { cn } from '@/lib/utils';
+import { GrnStatusPill } from './po-ui';
 
 interface GRN {
   id: string;
   receiptNumber: string;
-  status: 'draft' | 'posted' | 'cancelled';
+  status: 'draft' | 'posted' | 'cancelled' | 'reversed';
   receivedAt: string;
   notes: string | null;
-  order?: { orderNumber: string };
-  lines?: Array<unknown>;
+  purchaseOrderId?: string | null;
+  order?: { orderNumber: string } | null;
+  lines?: Array<{ quantity: number | string; unitCost: number | string }>;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: tx('Draft'),
-  posted: tx('Posted'),
-  cancelled: tx('Cancelled'),
-  reversed: tx('Reversed'),
-};
+const TABS: Array<{ key: string; label: string }> = [
+  { key: '', label: tx('All') },
+  { key: 'draft', label: tx('Drafts') },
+  { key: 'posted', label: tx('Posted') },
+  { key: 'reversed', label: tx('Reversed') },
+  { key: 'cancelled', label: tx('Cancelled') },
+];
 
-const STATUS_FILTERS = ['all', 'draft', 'posted', 'cancelled', 'reversed'] as const;
+const PAGE_SIZE = 50;
+const costOf = (g: GRN) => (g.lines ?? []).reduce((s, l) => s + Number(l.quantity) * Number(l.unitCost ?? 0), 0);
 
+/** Goods receipt register, laid out like the sales order register. */
 export function GoodsReceiptsPage() {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<string>('all');
-  const [page, setPage] = useState(1);
-  const [searchInput, setSearchInput] = useState('');
+  const [params, setParams] = useSearchParams();
+  const canCreate = useAuthStore((s) => s.hasPermission(PERMISSIONS.procurement.goodsReceipt.create));
+
+  const set = (k: string, v: string) => setParams((p) => {
+    const n = new URLSearchParams(p);
+    if (v) n.set(k, v); else n.delete(k);
+    if (k !== 'page') n.delete('page');
+    return n;
+  }, { replace: true });
+
+  const tab = params.get('tab') ?? '';
+  const page = Number(params.get('page') ?? 1);
+  const [searchInput, setSearchInput] = useState(params.get('q') ?? '');
   const search = useDebouncedValue(searchInput, 300);
+  useEffect(() => {
+    if (search !== (params.get('q') ?? '')) set('q', search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
-  useEffect(() => setPage(1), [search, status]);
-
-  const queryParams: Record<string, string | number> = { page, pageSize: 25 };
-  if (status !== 'all') queryParams.status = status;
-  if (search) queryParams.search = search;
+  const queryParams: Record<string, string | number> = { page, pageSize: PAGE_SIZE };
+  if (tab) queryParams.status = tab;
+  if (params.get('q')) queryParams.search = params.get('q')!;
 
   const { data, isLoading } = useQuery<PaginatedResult<GRN>>({
     queryKey: ['goods-receipts', queryParams],
@@ -50,142 +68,79 @@ export function GoodsReceiptsPage() {
       (await api.get<PaginatedResult<GRN>>('/procurement/goods-receipts', { params: queryParams })).data,
   });
 
-  const columns: Column<GRN>[] = [
-    {
-      key: 'receiptNumber',
-      header: tx('Receipt #'),
-      render: (g) => (
-        <Link to={`/procurement/goods-receipts/${g.id}`} className="font-medium text-primary hover:underline">
-          {g.receiptNumber}
-        </Link>
-      ),
-    },
-    {
-      key: 'receivedAt',
-      header: tx('Date'),
-      render: (g) => <span className="text-sm text-muted-foreground">{date(g.receivedAt)}</span>,
-    },
-    {
-      key: 'orderNumber',
-      header: 'PO',
-      render: (g) =>
-        g.order?.orderNumber ? (
-          <span className="text-sm text-muted-foreground">{g.order.orderNumber}</span>
-        ) : (
-          <span className="text-xs text-muted-foreground">&mdash;</span>
-        ),
-    },
-    {
-      key: 'status',
-      header: tx('Status'),
-      render: (g) => (
-        <Badge
-          variant={g.status === 'posted' ? 'default' : g.status === 'cancelled' ? 'destructive' : 'secondary'}
-        >
-          {STATUS_LABELS[g.status] ?? g.status}
-        </Badge>
-      ),
-    },
-    {
-      key: 'lines',
-      header: tx('Items'),
-      render: (g) => <span className="text-sm text-muted-foreground">{g.lines?.length ?? 0}</span>,
-    },
-    {
-      key: 'notes',
-      header: tx('Notes'),
-      className: 'max-w-[200px]',
-      render: (g) => (
-        <span className="text-sm text-muted-foreground truncate block">{g.notes ?? '—'}</span>
-      ),
-    },
-    {
-      key: 'actions',
-      header: '',
-      className: 'w-12',
-      render: (g) => (
-        <Button variant="ghost" size="sm" onClick={() => navigate(`/procurement/goods-receipts/${g.id}`)}>
-          <Eye className="h-4 w-4" />
-        </Button>
-      ),
-    },
-  ];
-
-  const meta = data?.meta;
   const rows = data?.data ?? [];
+  const meta = data?.meta;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{tx('Goods Receipts')}</h1>
-          <p className="text-sm text-muted-foreground">{tx('Stock received against purchases (auto-generated)')}</p>
-        </div>
-        <Button asChild>
-          <Link to="/procurement/goods-receipts/new">
-            <Plus className="mr-2 h-4 w-4" />
-            {tx('New Receipt')}
-          </Link>
-        </Button>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            className="pl-9"
-            placeholder={tx('Search receipts...')}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          {STATUS_FILTERS.map((s) => (
-            <Button
-              key={s}
-              variant={status === s ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => {
-                setStatus(s);
-                setPage(1);
-              }}
-            >
-              {s === 'all' ? tx('All') : STATUS_LABELS[s] ?? s}
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      <DataTable
-        columns={columns}
-        data={rows}
-        loading={isLoading}
-        getRowId={(g) => g.id}
-        emptyMessage={tx('No goods receipts found.')}
+      <ListPageHeader
+        icon={PackageCheck}
+        title={tx('Goods Receipts')}
+        description={tx('Stock received against purchases (auto-generated)')}
+        actions={canCreate && (
+          <Button onClick={() => navigate('/procurement/goods-receipts/new')}><Plus className="mr-1 h-4 w-4" />{tx('New Receipt')}</Button>
+        )}
       />
 
-      {meta && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <span>{meta.total} {tx('receipt(s)')}</span>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              {tx('Previous')}
-            </Button>
-            <span>
-              {tx('Page')} {meta.page} {tx('of')} {meta.totalPages}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={page >= meta.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              {tx('Next')}
-            </Button>
-          </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap rounded-lg border bg-card p-0.5">
+          {TABS.map((x) => (
+            <button key={x.key} type="button" onClick={() => set('tab', x.key)}
+              className={cn('rounded-md px-3 py-1.5 text-sm', tab === x.key ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
+              {x.label}
+            </button>
+          ))}
         </div>
-      )}
+        <SearchInput value={searchInput} onChange={setSearchInput} placeholder={tx('Receipt number, PO number, notes…')} />
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+        <table className="w-full min-w-[820px] text-sm">
+          <thead className="bg-muted/40 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2">{tx('Number')}</th>
+              <th className="px-3 py-2">{tx('Purchase order')}</th>
+              <th className="px-3 py-2">{tx('Received Date')}</th>
+              <th className="px-3 py-2">{tx('Status')}</th>
+              <th className="px-3 py-2 text-right">{tx('Lines')}</th>
+              <th className="px-3 py-2">{tx('Notes')}</th>
+              <th className="px-3 py-2 text-right">{tx('Total Cost')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {isLoading && <tr><td colSpan={7} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
+            {rows.map((g) => (
+              <tr key={g.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/procurement/goods-receipts/${g.id}`)}>
+                <td className="px-3 py-2 font-medium">{g.receiptNumber}</td>
+                <td className="px-3 py-2">
+                  {g.order?.orderNumber && g.purchaseOrderId
+                    ? <Link to={`/procurement/purchase-orders/${g.purchaseOrderId}`} onClick={(e) => e.stopPropagation()} className="text-primary hover:underline">{g.order.orderNumber}</Link>
+                    : <span className="text-muted-foreground">—</span>}
+                </td>
+                <td className="px-3 py-2">{date(g.receivedAt)}</td>
+                <td className="px-3 py-2"><GrnStatusPill status={g.status} /></td>
+                <td className="px-3 py-2 text-right tabular-nums">{g.lines?.length ?? 0}</td>
+                <td className="px-3 py-2"><span className="block max-w-xs truncate text-muted-foreground">{g.notes ?? '—'}</span></td>
+                <td className="px-3 py-2 text-right tabular-nums">{money(costOf(g))}</td>
+              </tr>
+            ))}
+            {data && rows.length === 0 && (
+              <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">{tx('No goods receipts found.')}</td></tr>
+            )}
+          </tbody>
+          {meta && rows.length > 0 && (
+            <tfoot>
+              <tr className="border-t font-semibold">
+                <td colSpan={6} className="px-3 py-2">{meta.total} {tx('receipt(s)')}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{meta.totalPages <= 1 ? money(rows.reduce((s, g) => s + costOf(g), 0)) : ''}</td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+        {meta && meta.totalPages > 1 && (
+          <DataTablePagination page={meta.page} pageSize={meta.pageSize} total={meta.total} totalPages={meta.totalPages} onPageChange={(p) => set('page', String(p))} />
+        )}
+      </div>
     </div>
   );
 }

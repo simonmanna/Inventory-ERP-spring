@@ -33,3 +33,21 @@ export function PaymentTypeTag({ type }: { type: string }) {
     </span>
   );
 }
+
+export const GRN_STATUS_LABELS: Record<string, string> = {
+  draft: tx('Draft'), posted: tx('Posted'), cancelled: tx('Cancelled'), reversed: tx('Reversed'),
+};
+
+const GRN_TONE: Record<string, string> = {
+  draft: 'bg-slate-100 text-slate-700', posted: 'bg-emerald-100 text-emerald-800',
+  cancelled: 'bg-rose-100 text-rose-800', reversed: 'bg-amber-100 text-amber-800',
+};
+
+/** Goods receipt status pill. */
+export function GrnStatusPill({ status }: { status: string }) {
+  return (
+    <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium dark:bg-opacity-20', GRN_TONE[status] ?? 'bg-slate-100 text-slate-700')}>
+      {GRN_STATUS_LABELS[status] ?? status}
+    </span>
+  );
+}
