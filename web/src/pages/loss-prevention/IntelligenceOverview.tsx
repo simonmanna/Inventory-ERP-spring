@@ -88,10 +88,24 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
   // The critical ones may be older than the latest page: read them on their own so the alert card never misses one.
   const critical = useLpCases({ severity: 'critical', page: 1, pageSize: 25 }, LIVE_MS);
   const open = (cases.data?.data ?? []).filter((c) => c.state !== 'closed');
-  const candidates = [...(critical.data?.data ?? []).filter((c) => c.state !== 'closed'), ...open];
-  const featured = candidates.sort((a, b) => RANK[a.severity] - RANK[b.severity]
-    || (a.state === 'escalated' ? -1 : 0) - (b.state === 'escalated' ? -1 : 0)
-    || b.openedAt.localeCompare(a.openedAt))[0];
+  // Cases with a clip or still kept: marked in the list, and first among equals for the alert card.
+  const media = useLpEvidenceList({ state: 'uploaded', pageSize: 200 }, vision && canEvidence);
+  const withVideo = new Set((media.data?.data ?? []).flatMap((e) => e.caseIds ?? []));
+  const seen = new Set<string>();
+  const queue = [...(critical.data?.data ?? []), ...open]
+    .filter((c) => c.state !== 'closed' && !seen.has(c.id) && !!seen.add(c.id))
+    .sort((a, b) => RANK[a.severity] - RANK[b.severity]
+      || Number(withVideo.has(b.id)) - Number(withVideo.has(a.id))
+      || Number(b.state === 'escalated') - Number(a.state === 'escalated')
+      || b.openedAt.localeCompare(a.openedAt));
+  const [videoOnly, setVideoOnly] = useState(false);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const featured = queue.find((c) => c.id === pickedId) ?? queue[0];
+  const listed = videoOnly ? queue.filter((c) => withVideo.has(c.id)) : queue;
+  const pick = (id: string) => {
+    setPickedId(id);
+    rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const branches = Object.fromEntries((dash.data?.byBranch ?? []).map((b) => [b.branchId, b.branchName]));
   const live = !dash.isError && !cases.isError;
 
@@ -162,22 +176,36 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
               {tx('View all')}<ArrowRight className="h-4 w-4" />
             </button>
           )}>
-          {open.length === 0 && !cases.isLoading && (
+          {vision && canEvidence && (
+            <div className="flex gap-2 border-b px-4 py-2 text-xs">
+              {[[false, tx('By priority')], [true, `${tx('With video')} (${queue.filter((c) => withVideo.has(c.id)).length})`]].map(([v, label]) => (
+                <button key={String(v)} type="button" onClick={() => setVideoOnly(v as boolean)}
+                  className={cn('rounded-full border px-3 py-1 font-medium transition',
+                    videoOnly === v ? 'border-blue-600 bg-blue-600 text-white' : 'hover:bg-muted')}>
+                  {label as string}
+                </button>
+              ))}
+            </div>
+          )}
+          {listed.length === 0 && !cases.isLoading && (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">{tx('No open alerts.')}</p>
           )}
           <ul className="divide-y">
-            {open.slice(0, 6).map((c) => {
+            {listed.slice(0, 8).map((c) => {
               const t = TONE[c.severity];
               const top = c.id === featured?.id;
               return (
                 <li key={c.id}>
-                  <button type="button" onClick={() => onOpenCase(c.id)}
+                  <button type="button" onClick={() => pick(c.id)} title={tx('Show in the alert card')}
                     className={cn('grid w-full grid-cols-[auto_4.5rem_1fr_auto] items-center gap-3 px-4 py-3 text-left text-sm transition hover:bg-muted/60 sm:grid-cols-[auto_4.5rem_1fr_auto_8rem]',
                       top && 'bg-red-50/70 dark:bg-red-950/20')}>
                     <span className={cn('h-2.5 w-2.5 rounded-full', t.dot)} />
                     <span className={cn('tabular-nums', top ? t.text : 'text-muted-foreground')}>{timeOf(c.openedAt)}</span>
                     <span className="min-w-0">
-                      <span className="block truncate font-semibold">{c.title}</span>
+                      <span className="flex items-center gap-1.5 font-semibold">
+                        <span className="truncate">{c.title}</span>
+                        {withVideo.has(c.id) && <Video className="h-4 w-4 shrink-0 text-blue-600" aria-label={tx('Video kept')} />}
+                      </span>
                       <span className="block truncate text-xs text-muted-foreground">
                         {c.ruleCode} · {engineLabels[c.engine] ?? c.engine}{c.subjectName ? ` · ${c.subjectName}` : ''}
                       </span>
@@ -235,8 +263,9 @@ function FeaturedAlert({ c, now, branchName, engineLabel, showEvidence, onOpen }
   const t = TONE[c.severity];
   const evidence = useLpEvidenceList({ caseId: c.id, pageSize: 10 }, showEvidence);
   const items = evidence.data?.data ?? [];
-  const best = items.find((e) => e.kind === 'snapshot' && e.state === 'uploaded')
-    ?? items.find((e) => e.state === 'uploaded') ?? items[0];
+  const newest = [...items].sort((a, b) => (b.uploadedAt ?? '').localeCompare(a.uploadedAt ?? ''));
+  const best = newest.find((e) => e.kind === 'snapshot' && e.state === 'uploaded')
+    ?? newest.find((e) => e.state === 'uploaded') ?? newest[0];
   const camera = best ? { id: best.cameraId, name: best.cameraName ?? tx('Camera') } : null;
   const [live, setLive] = useState(false);
   const [footage, setFootage] = useState(false);
