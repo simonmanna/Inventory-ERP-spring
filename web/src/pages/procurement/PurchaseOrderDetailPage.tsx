@@ -164,8 +164,8 @@ export function PurchaseOrderDetailPage() {
           <SmartButton icon={<Truck className="h-4 w-4" />} count={receipts.length} label={tx('Receipts')} disabled={!receipts.length}
             onClick={() => (receipts.length === 1 ? navigate(`/procurement/goods-receipts/${receipts[0].id}`) : setTab('receipts'))} />
           <SmartButton icon={<Receipt className="h-4 w-4" />} count={bills.length} label={tx('Bills')} disabled={!bills.length}
-            onClick={() => (bills.length === 1 ? navigate(`/vendor-bills/${bills[0].id}`) : setTab('receipts'))} />
-          <SmartButton icon={<Wallet className="h-4 w-4" />} count={payments.length} label={tx('Payments')} disabled={!payments.length} onClick={() => setTab('receipts')} />
+            onClick={() => (bills.length === 1 ? navigate(`/vendor-bills/${bills[0].id}`) : setTab('payments'))} />
+          <SmartButton icon={<Wallet className="h-4 w-4" />} count={payments.length} label={tx('Payments')} disabled={!payments.length} onClick={() => setTab('payments')} />
         </div>
       </div>
 
@@ -205,7 +205,7 @@ export function PurchaseOrderDetailPage() {
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
-            {([['lines', tx('Order lines')], ['receipts', tx('Receipts & payments')], ['progress', tx('Progress & changes')], ['other', tx('Other info')]] as const).map(([v, label]) => (
+            {([['lines', tx('Order lines')], ['receipts', tx('Receipts')], ['payments', tx('Payments')], ['progress', tx('Progress & changes')], ['other', tx('Other info')]] as const).map(([v, label]) => (
               <TabsTrigger key={v} value={v} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
             ))}
           </TabsList>
@@ -283,6 +283,11 @@ export function PurchaseOrderDetailPage() {
                   </Link>
                 ))}
               </Panel>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="payments" className="mt-0 p-5">
+            <div className="grid items-start gap-4 lg:grid-cols-2">
               <Panel title={tx('Payments')}>
                 {payments.length === 0
                   ? <p className="text-muted-foreground">{isCash ? tx('Paid automatically when the goods are received.') : tx('No payments yet.')}</p>
