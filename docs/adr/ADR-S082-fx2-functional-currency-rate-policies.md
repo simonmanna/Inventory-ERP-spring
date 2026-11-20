@@ -1,7 +1,9 @@
 # ADR-S082 — FX-2: functional currency, rate types and policies, monetary scope, deposits, expenses, receipts
 
-- Status: **in progress** on branch `phase/fx2`. Owner decisions 1–6 of 2026-11-20 are the basis. Spec:
-  [FX-2-SPEC](../accounting/FX-2-SPEC.md). Workstreams land as one commit each; this ADR records each one when built.
+- Status: **partially built — not complete.** Workstreams A–G are merged to `main` and deployed to the test instance
+  on 2026-11-20 (fdc2ee18). Foreign-currency accounting is **not** declared complete until every item under
+  "Outstanding" below is built and tested. Owner decisions 1–6 of 2026-11-20 are the basis. Spec:
+  [FX-2-SPEC](../accounting/FX-2-SPEC.md).
 - Builds on: [ADR-S081](ADR-S081-fx-gain-loss-correctness.md) (FX-1), ADR-S054, ADR-S076, ADR-S080.
 - Extension: no NestJS counterpart. New routes and request fields are additive; deviations are listed in
   `docs/spec/accounting.md`.
@@ -215,6 +217,36 @@
 - Test changed: `ProcurementIntegrityIT.poReceiptThenForeignBillAtAnotherRate` now covers the G case. PO at 3,700, the
   receipt at the table rate 3,750 (stock +75,000, receipt rate recorded, PO rate unchanged), the bill at 3,800 (FX
   loss 1,000, AP 76,000, stock unchanged).
+
+## Outstanding (tracked; review of 2026-11-20)
+
+Foreign-currency accounting stays open until these items are built and tested. Every item keeps the constraints at the
+top of this ADR:
+- `PostingService` is the only GL writer;
+- journals balance;
+- posted entries are immutable (corrections are reversals);
+- every action is audited;
+- historical postings change only with owner approval.
+
+| Phase | Priority | Item | State today | Accounting rule to build |
+|---|---|---|---|---|
+| FX-3 | P1 | Refund of a foreign-currency credit | Refused (FX-1); allocate to a same-currency invoice instead | Refund in the credit's currency from a foreign account (or functional cash at the refund rate). Relieve AR at the credit's carrying value; realised FX = carrying value − cash value. Do not just lift the refusal. |
+| FX-3 | P1 | PO pay route | Measures at the receipts' carrying rate, books no realised FX; bill payments do realise FX | One settlement rule for both paths. Receipt valuation (receipt rate), bill recognition (AP remeasured to the bill rate) and settlement (payment-date rate, relieve AP at carrying value, difference to realised FX). `PurchasePayment` records rate, carrying rate and FX. |
+| FX-4 | P1 | Expense advances and petty cash | Refuse foreign accounts | Same pattern as E: funds check in the account's currency, relief at carrying value, realised FX on settlement. Account-currency validation is kept, not relaxed. |
+| FX-4 | P1 | Shift banking | Refuses foreign accounts | Banking a foreign till at its carrying value. A transfer to a foreign bank keeps the currency; a transfer to a functional bank realises FX. |
+| FX-5 | P2 | Rental deposits | Subledger only, `double` math, no kind | `kind` advance / refundable as in D. Refundable = monetary liability (revalued), never income. Advance = non-monetary, applied to rent at its historical rate. BigDecimal throughout. |
+| FX-5 | P2 | Advance allocation screen | API built (`POST /payments/{id}/allocations`), no web screen | Screen: open advances per partner, allocate to open documents, show realised FX before confirming. |
+| FX-6 | P2 | Foreign opening balances screen | API built (`currencyCode`, `exchangeRate` on `/opening-balances`), no web fields | Currency and rate per line, functional value shown, rate defaulted from the table. |
+| FX-6 | P2 | Account revaluation settings screen | API built (`GET`/`PUT /fx-revaluations/accounts`), no web editor | Per-account inherit / monetary / non-monetary with the category default shown; permission `currency:policy`. |
+| FX-7 | P2 | FX reporting and close | `/fx-treasury/summary` only | Realised vs unrealised by partner, document and account with drill-down to allocations; revaluation item on the month-end close checklist (original plan). |
+| FX-8 | P3 | Automatic rate fetch | Manual rates only | Scheduled (ShedLock), configurable provider, manual override, missing-rate warning (original plan). |
+
+Order: FX-3 (accounting consistency) → FX-4 (cash management) → FX-5 (deposits, allocation screen) → FX-6 (opening
+balances and configuration screens) → FX-7 → FX-8. Each phase gets:
+- web screens with permissions and audit;
+- integration tests (balanced journals, foreign and functional amounts, subledger = GL per partner, idempotent
+  replay);
+- an entry here when built.
 
 ## Tests
 

@@ -70,7 +70,7 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
-FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; built on branch phase/fx2, not merged):
+FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; A–G on main, outstanding items in the ADR):
 
 - Posting refuses when the company has no functional currency (no USD fallback). `PATCH /organizations/me/settings`
   refuses clearing `currencyCode`: "The functional currency is required".
