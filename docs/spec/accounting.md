@@ -70,6 +70,15 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
+FX gain/loss correctness (FX-1, [ADR-S081](../adr/ADR-S081-fx-gain-loss-correctness.md), owner-approved 2026-11-20):
+
+- `POST /currencies/rates` refuses a rate ≤ 0: "rate must be greater than zero" (Nest accepted 0).
+- `POST /journal-entries/{id}/reverse` refuses the automatic reversal of an FX revaluation.
+- Refunding an open foreign-currency credit (`/sales/credit-notes/{id}/refund`, sales return with refund) is refused
+  instead of paying its face value in the functional currency.
+- A supplier payment from a foreign account is refused when it exceeds the account's balance in its currency.
+- FX revaluation excludes prepaid expenses (non-monetary).
+
 Foreign-currency treasury (R-8, [ADR-S076](../adr/ADR-S076-foreign-currency-treasury.md), owner-approved 2026-11-16):
 
 - **Functional-currency lock.** `PATCH /organizations/me/settings` (`currencyCode`) and `PUT` company settings

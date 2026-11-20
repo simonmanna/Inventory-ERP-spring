@@ -178,6 +178,31 @@ public class ExpensesService {
                 r.postingType(), r.postingKey(), r.branchId(), r.costCenterId(), r.dimensions(), lines);
     }
 
+    /**
+     * FX-1: a payment of a foreign-currency expense. The entry posts in base; the expense / payable lines keep the
+     * expense currency and foreign amount (base ÷ expense rate) so the accrued payable clears in that currency, while
+     * the functional cash or advance account in {@code baseAccounts} stays untagged. Tagging the functional cash line
+     * with the expense currency made period-end revaluation treat it as a foreign balance.
+     */
+    PostingRequest inExpenseCurrencyLegs(Map<String, Object> exp, PostingRequest r, java.util.Set<String> baseAccounts) {
+        String ccy = (String) exp.get("currencyCode");
+        Object rateValue = exp.get("exchangeRate");
+        if (ccy == null || ccy.isBlank() || rateValue == null) {
+            return r;
+        }
+        String base = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(org())
+                .query(String.class).optional().orElse(null);
+        BigDecimal rate = Money.dec(rateValue);
+        if (ccy.equals(base) || rate.signum() <= 0 || rate.compareTo(BigDecimal.ONE) == 0) {
+            return r;
+        }
+        List<Line> lines = r.lines().stream().map(l -> baseAccounts.contains(l.accountId()) ? l
+                : l.inCurrency(ccy, foreign(l.debit() != null && Money.dec(l.debit()).signum() != 0 ? l.debit()
+                        : l.credit(), rate))).toList();
+        return new PostingRequest(r.journalCode(), r.date(), r.description(), null, null, r.sourceType(), r.sourceId(),
+                r.postingType(), r.postingKey(), r.branchId(), r.costCenterId(), r.dimensions(), lines);
+    }
+
     private static Object foreign(Object baseAmount, BigDecimal rate) {
         if (baseAmount == null) {
             return null;
@@ -1085,11 +1110,12 @@ public class ExpensesService {
         String paymentId = UUID.randomUUID().toString();
         String value = JsNumbers.dec(amount);
         String title = (String) exp.get("title");
-        Map<String, Object> entry = posting.post(PostingRequest.of("GEN", Instant.now(), "Expense " + exp.get("expenseCode")
-                + " - " + title + " (" + method.toLowerCase() + ")", "expense_payment", expenseId,
-                "expense_payment:" + paymentId, List.of(new Line((String) payable.get("accountId"), value, null,
-                        (String) payable.get("partnerId"), title, null, null, null),
-                        Line.credit(creditAccountId, value, "Settled: " + title))));
+        Map<String, Object> entry = posting.post(inExpenseCurrencyLegs(exp, PostingRequest.of("GEN", Instant.now(),
+                "Expense " + exp.get("expenseCode") + " - " + title + " (" + method.toLowerCase() + ")",
+                "expense_payment", expenseId, "expense_payment:" + paymentId,
+                List.of(new Line((String) payable.get("accountId"), value, null, (String) payable.get("partnerId"),
+                        title, null, null, null), Line.credit(creditAccountId, value, "Settled: " + title))),
+                java.util.Set.of(creditAccountId)));
         jdbc.sql("INSERT INTO \"ExpensePayment\" (id, \"organizationId\", \"expenseId\", amount, \"paymentMethod\", reference,"
                         + " \"accountId\", \"paidById\", \"journalEntryId\", status, \"createdAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
                         + " ?, 'posted', " + NOW + ")")
@@ -1157,9 +1183,10 @@ public class ExpensesService {
             lines.addAll(debitLines(expense, category, tags, amount));
         }
         lines.add(Line.credit((String) credit.get("id"), value, "Paid: " + title));
-        Map<String, Object> entry = posting.post(inExpenseCurrency(expense, PostingRequest.of(
+        Map<String, Object> entry = posting.post(inExpenseCurrencyLegs(expense, PostingRequest.of(
                 journalForMethod(paymentMethod), Instant.now(), "Expense " + expense.get("expenseCode") + " - "
-                + title, "expense_payment", (String) expense.get("id"), "expense_payment:" + paymentId, lines)));
+                + title, "expense_payment", (String) expense.get("id"), "expense_payment:" + paymentId, lines),
+                java.util.Set.of((String) credit.get("id"))));
         if (payable == null && tags == null) {
             prepayments.ensureSchedule(expense, resolveExpenseAccountId(category), net(expense));
         }

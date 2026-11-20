@@ -211,6 +211,16 @@ public class JournalEntryService {
     @Transactional
     public Map<String, Object> reverse(String id, Instant date, String description) {
         subledger.assertGenericReversible(id);
+        // FX-1: the automatic reversal of an FX revaluation belongs to the revaluation lifecycle; reversing it by hand
+        // would turn an unrealised gain or loss into a permanent one. Re-run the revaluation instead.
+        Boolean revaluationReversal = jdbc.sql("SELECT EXISTS (SELECT 1 FROM \"JournalEntry\" e JOIN \"JournalEntry\" o"
+                        + " ON o.id = e.\"reversalOfId\" WHERE e.id = ? AND e.\"organizationId\" = ?"
+                        + " AND o.\"sourceType\" = 'fx_revaluation')")
+                .params(id, TenantContext.organizationId()).query(Boolean.class).single();
+        if (Boolean.TRUE.equals(revaluationReversal)) {
+            throw ApiException.badRequest("This entry is the automatic reversal of an FX revaluation and cannot be"
+                    + " reversed by hand; run the FX revaluation again for the date instead");
+        }
         // Control-account policy (V518): reversing a control-account adjustment posts to AR / AP again, so it needs
         // the same permission as staging or posting one (the reversal itself is audited by PostingService).
         Boolean adjustment = jdbc.sql("SELECT \"controlAdjustment\" FROM \"JournalEntry\" WHERE id = ? AND"

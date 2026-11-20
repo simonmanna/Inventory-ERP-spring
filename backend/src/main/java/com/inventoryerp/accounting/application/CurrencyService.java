@@ -66,6 +66,10 @@ public class CurrencyService {
         if (fromCode.equals(toCode)) {
             throw ApiException.badRequest("fromCode and toCode must differ");
         }
+        if (rate == null || rate.signum() <= 0) {
+            // FX-1: a zero rate would value every foreign document at nothing (extension; Nest accepted 0).
+            throw ApiException.badRequest("rate must be greater than zero");
+        }
         jdbc.sql("INSERT INTO \"CurrencyRate\" (id, \"organizationId\", \"fromCode\", \"toCode\", \"asOf\", rate, source,"
                         + " \"createdBy\") VALUES (gen_random_uuid()::text, ?, ?, ?, ?, ?, ?, ?)"
                         + " ON CONFLICT ((coalesce(\"organizationId\", '')), \"fromCode\", \"toCode\", \"asOf\") DO UPDATE"
@@ -100,7 +104,7 @@ public class CurrencyService {
             return BigDecimal.ONE;
         }
         BigDecimal direct = lookupRate(fromCode, toCode, asOf);
-        if (direct != null) {
+        if (direct != null && direct.signum() > 0) {
             return direct;
         }
         BigDecimal inverse = lookupRate(toCode, fromCode, asOf);

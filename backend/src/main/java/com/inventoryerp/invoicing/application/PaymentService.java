@@ -433,11 +433,14 @@ public class PaymentService {
                 : null;
         // R-8 (ADR-S076): through a foreign account held in the payment currency the cash line carries that currency;
         // money paid out is relieved at the account's carrying value and the cash-side difference joins the FX.
-        boolean foreignCash = fxs != null && ForeignCash.of(jdbc, org, cashAccount) != null;
+        ForeignCash.Denomination held = fxs == null ? null : ForeignCash.of(jdbc, org, cashAccount);
+        boolean foreignCash = held != null;
         if (foreignCash && "outbound".equals(direction)) {
             TreasuryGuards.lockAccounts(jdbc, org, List.of(cashAccount));
-            BigDecimal relieved = ForeignCash.relieve(ForeignCash.balance(jdbc, org, cashAccount, payCurrency),
-                    r6(amount), fxs.rate().rate());
+            ForeignCash.Balance cashBalance = ForeignCash.balance(jdbc, org, cashAccount, payCurrency);
+            // FX-1: like treasury and deposit refunds, a foreign payment cannot overdraw the account it is paid from.
+            ForeignCash.assertFunds(cashBalance, r6(amount), held.name(), payCurrency);
+            BigDecimal relieved = ForeignCash.relieve(cashBalance, r6(amount), fxs.rate().rate());
             fxs = new FxSettlement(fxs.rate(), fxs.carrying(), fxs.counterBase(), relieved,
                     fxs.counterBase().subtract(relieved), fxs.counterCurrency(), fxs.amount());
         }

@@ -287,6 +287,29 @@ class LandedCostAuditIT extends LandedCostFixtures {
     }
 
     @Test
+    @DisplayName("6c foreign freight without a stated rate: capitalised at the table rate, its bill clears 2155")
+    void foreignChargeWithoutRateUsesTable() {
+        String functional = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(demoOrg)
+                .query(String.class).single();
+        String foreign = "QL" + (char) ('A' + (int) (Math.random() * 26));
+        while (jdbc.sql("SELECT count(*) FROM \"Currency\" WHERE code = ?").param(foreign).query(Long.class).single() > 0) {
+            foreign = "QL" + (char) ('A' + (int) (Math.random() * 26));
+        }
+        ok(201, "POST", "/currencies", Map.of("code", foreign, "symbol", foreign, "name", "LC " + foreign));
+        ok(201, "POST", "/currencies/rates", Map.of("fromCode", foreign, "toCode", functional, "asOf",
+                java.time.LocalDate.now().minusDays(1).toString(), "rate", 3650));
+        String p = product("AVCO", false, 0);
+        String grn = receive(p, 100, 50_000);
+        Snap s = snap();
+        String v = voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 100, "currencyCode", foreign,
+                "supplierId", forwarder, "supplierInvoiceRef", "LCA-QL-" + suffix())));
+        approveAndPost(v);
+        assertThat(balance(mapped("stock_valuation")).subtract(s.balances().get("stock")))
+                .as("100 × 3,650, not 100 × 1").isEqualByComparingTo("365000");
+        assertThat(balance(code("2155")).subtract(s.balances().get("clearing"))).isEqualByComparingTo("0");
+    }
+
+    @Test
     @DisplayName("6 USD bill paid at 3,750: 5,000 realised FX loss, nothing to stock / COGS / WIP")
     void realisedFxOnSettlement() {
         String p = product("AVCO", false, 0);

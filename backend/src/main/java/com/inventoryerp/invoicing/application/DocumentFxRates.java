@@ -29,11 +29,27 @@ public class DocumentFxRates {
     private final JdbcClient jdbc;
     private final PostingService posting;
     private final AccountDeterminationService determination;
+    private final com.inventoryerp.accounting.application.CurrencyService currency;
 
-    public DocumentFxRates(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination) {
+    public DocumentFxRates(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
+            com.inventoryerp.accounting.application.CurrencyService currency) {
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
+        this.currency = currency;
+    }
+
+    /**
+     * FX-1: the rate a document posts at on {@code date}, resolved like {@code PostingService} does (stated rate, the
+     * stored default 1 meaning "not stated", else the rate table; refused when there is none); 1 for base documents.
+     * Documents created through the API store rate 1, so their stored rate is not the rate they post at.
+     */
+    public BigDecimal effectiveRate(Map<String, Object> doc, java.time.Instant date) {
+        String cur = currencyOf(doc);
+        if (cur.equals(base())) {
+            return BigDecimal.ONE;
+        }
+        return currency.resolve(cur, base(), doc.get("exchangeRate"), date).rate();
     }
 
     /** The organisation's base currency. */
@@ -80,17 +96,24 @@ public class DocumentFxRates {
      * Lines realising {@code fx} (base currency) on a partner's receivable: positive = the receivable was
      * over-credited at settlement (Dr receivable / Cr FX gain), negative = under-credited (Dr FX loss / Cr receivable).
      */
-    public List<Line> realiseOnReceivable(BigDecimal fx, String receivableAccount, String partnerId, String description) {
+    public List<Line> realiseOnReceivable(BigDecimal fx, String receivableAccount, String partnerId, String description,
+            String currency) {
         BigDecimal v = fx.abs();
         if (v.signum() == 0) {
             return List.of();
         }
         String amount = JsNumbers.dec(v);
-        if (fx.signum() > 0) {
-            return List.of(new Line(receivableAccount, amount, null, partnerId, description, null, null, null),
-                    Line.credit(determination.mapped("fx_gain"), amount, description));
+        // FX-1: the receivable line keeps the document currency with a zero foreign amount, so the base adjustment
+        // stays in that currency's bucket; untagged, period-end revaluation re-counted it.
+        Line receivable = fx.signum() > 0
+                ? new Line(receivableAccount, amount, null, partnerId, description, null, null, null)
+                : new Line(receivableAccount, null, amount, partnerId, description, null, null, null);
+        if (currency != null && !currency.equals(base())) {
+            receivable = receivable.inCurrency(currency, "0");
         }
-        return List.of(Line.debit(determination.mapped("fx_loss"), amount, description),
-                new Line(receivableAccount, null, amount, partnerId, description, null, null, null));
+        if (fx.signum() > 0) {
+            return List.of(receivable, Line.credit(determination.mapped("fx_gain"), amount, description));
+        }
+        return List.of(Line.debit(determination.mapped("fx_loss"), amount, description), receivable);
     }
 }

@@ -14,22 +14,25 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   useCurrencies, useCurrencyRates, useCreateCurrencyRate,
 } from '@/features/accounting/api';
+import { useAuthStore } from '@/stores/auth.store';
 import { format } from 'date-fns';
 import { tx } from '@/lib/i18n/tx';
 
 export function CurrencyPage() {
   const { data: currencies, isLoading: currLoading } = useCurrencies();
-  const { data: rates, isLoading: ratesLoading, refetch } = useCurrencyRates();
+  // Rates are entered as 1 FROM = rate TO; the default pair is USD → the organisation's functional currency.
+  const baseCode = useAuthStore((s) => s.organization?.currencyCode) || 'USD';
+  const [fromCode, setFromCode] = useState(baseCode === 'USD' ? 'SSP' : 'USD');
+  const [toCode, setToCode] = useState(baseCode);
+  const [rate, setRate] = useState('');
+  const [asOf, setAsOf] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const { data: rates, isLoading: ratesLoading, refetch } = useCurrencyRates({ fromCode, toCode });
   const createRate = useCreateCurrencyRate();
 
-  const [fromCode, setFromCode] = useState('USD');
-  const [toCode, setToCode] = useState('IDR');
-  const [rate, setRate] = useState('');
-  const [dialogOpen, setDialogOpen] = useState(false);
-
   const handleAddRate = async () => {
-    if (!fromCode || !toCode || !rate) return;
-    await createRate.mutateAsync({ fromCode, toCode, rate: Number(rate) });
+    if (!fromCode || !toCode || !rate || !asOf || Number(rate) <= 0) return;
+    await createRate.mutateAsync({ fromCode, toCode, rate: Number(rate), asOf });
     setRate('');
     setDialogOpen(false);
   };
@@ -79,14 +82,23 @@ export function CurrencyPage() {
                     </select>
                   </div>
                 </div>
-                <div className="space-y-1">
-                  <Label className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Rate')}</Label>
-                  <Input type="number" step="0.00000001" value={rate}
-                    onChange={(e) => setRate(e.target.value)} placeholder="e.g. 15650.50" className="h-9 text-xs" />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Rate')}</Label>
+                    <Input type="number" step="0.00000001" min="0" value={rate}
+                      onChange={(e) => setRate(e.target.value)} placeholder="e.g. 4650.50" className="h-9 text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Effective date')}</Label>
+                    <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-9 text-xs" />
+                  </div>
                 </div>
+                {rate && Number(rate) > 0 && (
+                  <p className="text-xs text-muted-foreground">1 {fromCode} = {rate} {toCode}</p>
+                )}
                 <div className="flex justify-end gap-2 pt-2">
                   <Button variant="outline" size="sm" onClick={() => setDialogOpen(false)}>{tx('Cancel')}</Button>
-                  <Button size="sm" onClick={handleAddRate} disabled={!rate || createRate.isPending}>
+                  <Button size="sm" onClick={handleAddRate} disabled={!rate || Number(rate) <= 0 || !asOf || createRate.isPending}>
                     {createRate.isPending ? tx('Adding...') : tx('Add Rate')}
                   </Button>
                 </div>
@@ -145,7 +157,7 @@ export function CurrencyPage() {
         <Card>
           <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg">
             <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              {tx('Exchange Rates')}
+              {tx('Exchange Rates')} · {fromCode} → {toCode}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -173,11 +185,11 @@ export function CurrencyPage() {
                   </TableRow>
                 ) : (
                   rates.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="text-xs font-bold font-mono">{r.fromCode}</TableCell>
-                      <TableCell className="text-xs font-bold font-mono">{r.toCode}</TableCell>
+                    <TableRow key={`${r.asOf}-${r.source}`}>
+                      <TableCell className="text-xs font-bold font-mono">{fromCode}</TableCell>
+                      <TableCell className="text-xs font-bold font-mono">{toCode}</TableCell>
                       <TableCell className="text-right text-xs font-semibold">
-                        {Number(r.rate).toFixed(typeof r.rate === 'number' && r.rate % 1 !== 0 ? 4 : 0)}
+                        {Number(r.rate).toLocaleString(undefined, { maximumFractionDigits: 8 })}
                       </TableCell>
                       <TableCell className="text-right text-xs text-muted-foreground pr-4">
                         {format(new Date(r.asOf), 'MMM d, yyyy')}

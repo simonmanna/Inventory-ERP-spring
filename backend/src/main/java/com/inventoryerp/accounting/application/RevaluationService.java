@@ -90,6 +90,9 @@ public class RevaluationService {
     @Transactional
     public Result run(Instant asOf) {
         String organizationId = TenantContext.organizationId();
+        // FX-1: one revaluation at a time per organisation; two concurrent runs both saw nothing booked and both posted.
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?))::text").param("fx-revaluation:" + organizationId)
+                .query(String.class).single();
         String fxGainAcct = determination.mapped("fx_gain");
         String fxLossAcct = determination.mapped("fx_loss");
         ZoneId zone = AccountingDay.zone(jdbc, organizationId);
@@ -165,7 +168,9 @@ public class RevaluationService {
                         + " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\""
                         + " JOIN \"Account\" a ON a.id = l.\"accountId\" JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
                         + " WHERE l.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed')"
-                        + " AND e.\"postingDate\" <= ? AND (c.\"allowReconciliation\" OR c.\"isCashEquivalent\") AND l.\"currencyId\" IS NOT"
+                        + " AND e.\"postingDate\" <= ? AND (c.\"allowReconciliation\" OR c.\"isCashEquivalent\")"
+                        // FX-1 (IAS 21.16): prepaid expenses are reconcilable but non-monetary, never revalued.
+                        + " AND c.key <> 'prepaid_expense' AND l.\"currencyId\" IS NOT"
                         + " NULL AND l.\"currencyId\" <> ? GROUP BY l.\"accountId\", a.code, l.\"currencyId\""
                         + " ORDER BY a.code, l.\"currencyId\"")
                 .params(organizationId, FiscalPeriodControl.ts(asOf), baseCode))) {

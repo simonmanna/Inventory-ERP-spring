@@ -155,6 +155,7 @@ public class LandedCostVoucherService {
     private final LandedCostCustomsService customs;
     private final LandedCostBillGuard billGuard;
     private final SegregationOfDutiesService sod;
+    private final com.inventoryerp.accounting.application.CurrencyService currency;
 
     public LandedCostVoucherService(JdbcClient jdbc, SequenceService seq, AuditService audit,
             StockPostingService stockPosting, PostingService posting, AccountDeterminationService determination,
@@ -162,7 +163,9 @@ public class LandedCostVoucherService {
             ShipmentService shipments, VendorBillService bills, PlatformTransactionManager txm,
             CostLineageService lineage, AccountingPolicyService policies, SettingResolverService settings,
             ApprovalLimitService limits, LandedCostCustomsService customs, CostingReversals reversals,
-            LandedCostBillGuard billGuard, SegregationOfDutiesService sod) {
+            LandedCostBillGuard billGuard, SegregationOfDutiesService sod,
+            com.inventoryerp.accounting.application.CurrencyService currency) {
+        this.currency = currency;
         this.billGuard = billGuard;
         this.sod = sod;
         this.jdbc = jdbc;
@@ -1315,6 +1318,16 @@ public class LandedCostVoucherService {
             BigDecimal rate = c.exchangeRate() == null ? BigDecimal.ONE : c.exchangeRate();
             if (rate.signum() <= 0) {
                 throw ApiException.badRequest("exchangeRate must be greater than zero");
+            }
+            String chargeCurrency = blank(c.currencyCode());
+            if (chargeCurrency != null && !chargeCurrency.equalsIgnoreCase(posting.baseCurrency())
+                    && rate.compareTo(BigDecimal.ONE) == 0) {
+                // FX-1: a foreign charge without a stated rate used to be capitalised at 1 while its generated bill
+                // posted at the table rate. Resolve it like a posting does (table rate on the invoice date, else
+                // refused) so the voucher and its bill share one rate.
+                java.time.Instant on = c.invoiceDate() == null ? java.time.Instant.now()
+                        : com.inventoryerp.kernel.crud.EntityPatch.toInstant(c.invoiceDate());
+                rate = currency.resolve(chargeCurrency.toUpperCase(), posting.baseCurrency(), null, on).rate();
             }
             if (c.supplierId() != null) {
                 long s = jdbc.sql("SELECT count(*) FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")

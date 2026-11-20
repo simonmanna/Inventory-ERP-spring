@@ -398,8 +398,11 @@ public class InvoicingWorkflowsInitializer {
             }
         }
         Map<String, BillLineMatch> matchByLine = new HashMap<>();
-        BigDecimal documentRate = full.get("exchangeRate") == null || d(full.get("exchangeRate")).signum() <= 0
-                ? BigDecimal.ONE : d(full.get("exchangeRate"));
+        // FX-1: the rate the bill actually posts at, not its stored column (1 for API-created bills), so the receipt
+        // variance and the vouchered-payable remeasurement see the real bill rate.
+        BigDecimal documentRate = fxRates != null ? fxRates.effectiveRate(full, instant(full.get("issueDate")))
+                : full.get("exchangeRate") == null || d(full.get("exchangeRate")).signum() <= 0
+                        ? BigDecimal.ONE : d(full.get("exchangeRate"));
         List<Map<String, Object>> postable = new ArrayList<>();
         BigDecimal postableTotal = Money.ZERO;
         BigDecimal priceVariance = Money.ZERO;

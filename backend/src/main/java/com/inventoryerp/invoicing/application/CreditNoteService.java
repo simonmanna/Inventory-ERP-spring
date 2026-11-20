@@ -99,7 +99,7 @@ public class CreditNoteService {
         }
         BigDecimal fx = reduce.multiply(cnRate.subtract(invRate)).setScale(6, java.math.RoundingMode.HALF_UP);
         List<Line> lines = fxRates.realiseOnReceivable(fx, receivable, partnerId, "Realised FX · credit note "
-                + cn.get("documentNumber") + " on " + inv.get("documentNumber"));
+                + cn.get("documentNumber") + " on " + inv.get("documentNumber"), cur);
         if (!lines.isEmpty()) {
             posting.post(PostingRequest.of("SALES", date, "Realised FX · credit note " + cn.get("documentNumber"),
                     "credit_note_fx", (String) cn.get("id"), "credit_note_fx:" + cn.get("id"), lines));
@@ -295,6 +295,14 @@ public class CreditNoteService {
             throw ApiException.badRequest("Only a posted credit note can be refunded");
         }
         BigDecimal open = Money.dec(cn.get("amountResidual"));
+        String currency = fxRates.currencyOf(cn);
+        if (open.signum() > 0 && !currency.equals(fxRates.base())) {
+            // FX-1: the refund path pays in the functional currency only; refunding a foreign credit there paid its
+            // face value in the wrong currency. Foreign refunds are refused until a currency-aware refund exists.
+            throw ApiException.badRequest("Credit note " + cn.get("documentNumber") + " is in " + currency
+                    + "; a foreign-currency credit cannot be refunded here yet. Allocate it to a " + currency
+                    + " invoice instead");
+        }
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .param(creditNoteId).update();
         return open;

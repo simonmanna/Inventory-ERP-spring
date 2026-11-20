@@ -296,6 +296,40 @@ class ProcurementIntegrityIT extends ApiTestSupport {
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("74000");
     }
 
+    @Test
+    @DisplayName("FX-1: PO receipt at 3,700 then the bill at the table rate 3,800 moves AP to the bill rate via FX")
+    void poReceiptThenForeignBillAtAnotherRate() {
+        String functional = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(demoOrg)
+                .query(String.class).single();
+        String foreign = "QP" + (char) ('A' + (int) (Math.random() * 26));
+        while (jdbc.sql("SELECT count(*) FROM \"Currency\" WHERE code = ?").param(foreign).query(Long.class).single() > 0) {
+            foreign = "QP" + (char) ('A' + (int) (Math.random() * 26));
+        }
+        ok(201, "POST", "/currencies", Map.of("code", foreign, "symbol", foreign, "name", "FX1 " + foreign));
+        ok(201, "POST", "/currencies/rates", Map.of("fromCode", foreign, "toCode", functional, "asOf",
+                LocalDate.now().minusDays(1).toString(), "rate", 3800));
+        String own = partner("FX1 PO supplier");
+        String product = stockProduct();
+        String poId = createPo(Map.of("partnerId", own, "currencyCode", foreign, "exchangeRate", 3700), product, 10, 2)
+                .get("id").asString();
+        receive(poId, product, 10);
+        String ap = mapped("accounts_payable");
+        BigDecimal stock0 = balance(mapped("stock_valuation"));
+        Res created = call("POST", "/vendor-bills", Map.of("partnerId", own, "issueDate", today, "currencyId", foreign,
+                "lines", List.of(Map.of("productId", product, "description", "Cement", "quantity", 10, "unitPrice", 2))),
+                adminToken);
+        assertThat(created.status()).as(created.raw().body()).isEqualTo(200);
+        String bill = created.body().get("id").asString();
+        Res posted = call("POST", "/vendor-bills/" + bill + "/post", Map.of(), adminToken);
+        assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
+        assertThat(net(mapped("fx_loss"), "vendor_bill", bill)).as("20 × (3,800 − 3,700)").isEqualByComparingTo("2000");
+        BigDecimal partnerAp = jdbc.sql("SELECT coalesce(sum(\"baseDebit\" - \"baseCredit\"), 0) FROM \"JournalLine\""
+                + " WHERE \"organizationId\" = ? AND \"accountId\" = ? AND \"partnerId\" = ?").params(demoOrg, ap, own)
+                .query(BigDecimal.class).single();
+        assertThat(partnerAp).as("AP now at the bill rate: 20 × 3,800").isEqualByComparingTo("-76000");
+        assertThat(balance(mapped("stock_valuation"))).as("stock keeps its receipt cost").isEqualByComparingTo(stock0);
+    }
+
     // ------------------------------------------------------------------ P0-6
 
     @Test
