@@ -107,6 +107,31 @@
   - `ReportingIT`: a EUR bank;
   - `FxTreasuryIT.twoCurrenciesOneAccount`: a partner.
 
+## D. Deposits: advance vs refundable (decision 3) — built
+
+- `CustomerDeposit.kind` (`advance|refundable`, nullable), plus `classifiedAt`, `classifiedById` and
+  `classificationReason` (V587). Existing rows stay **NULL (unclassified)**: there is no blanket classification.
+- New deposits always get a kind. `POST /customer-deposits` gains an optional `kind`, defaulting to `advance`, so
+  existing clients are unchanged. Sales-order, down-payment and cash-sale deposits are always advances. A sales-order
+  deposit cannot be refundable.
+- Refundable deposits post to account 2176 "Refundable Customer Deposits" (mapping `customer_refundable_deposit`,
+  category current liability, created on first use). Being monetary, they are revalued per partner by C.
+- A refundable deposit cannot be applied: "Deposit X is a refundable deposit; classify it as an advance before applying
+  it to an invoice". Refunds relieve the deposit's own account at its rate; the cash side is relieved at carrying
+  value, with realised FX as before.
+- Review and classification:
+  - `GET /customer-deposits/classification-review` lists unclassified deposits.
+  - `POST /customer-deposits/{id}/classify {kind, reason}` (`sales:deposit:classify`, idempotent, audited) moves an
+    open balance between the advance and refundable accounts at carrying value. Source `deposit_classification`, no
+    FX. A closed deposit is classified for reporting only.
+  - Reclassifying is the way back. A reason is required. Cash-sale deposits stay advances.
+- An unclassified open foreign deposit adds a revaluation warning.
+- Permission name: `sales:deposit:classify`, granted to Administrator in V587. The spec said `deposit:classify`; the
+  deposit permissions already live under `sales:deposit:*`.
+- Web, Customer deposits: a kind choice when recording, a kind line in the list, a "Needs classification" filter and
+  count, a Classify dialog, and Apply hidden for refundable deposits.
+- Not done: the rental module's `RentalDeposit` (subledger only, `double` math) is a follow-up, as the spec says.
+
 ## Tests
 
 - `FunctionalCurrencyIT`: clearing refused; changeable before and locked after the first posting; blank refused by
@@ -121,3 +146,8 @@
   - a loan revalued while prepaid and a non-monetary override are not;
   - engine refusals;
   - legacy partnerless lines block the run until acknowledged.
+- `FxDepositKindIT`: refundable vs advance (own account, apply refused, revalued per partner, refund clears at
+  carrying value; advance never revalued); review queue, warning, reason required, classification transfer with no
+  FX, reclassification back.
+- Deposit regression unchanged and green: `FxDepositsIT`, `CashSaleIT`, `SalesBillingIT`, `SalesDeliveryIT`,
+  `SalesOrderPolicyIT`, `CustomerDepositReceiptPdfTest`.

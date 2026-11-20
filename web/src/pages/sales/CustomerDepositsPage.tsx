@@ -26,6 +26,8 @@ export interface Deposit {
   status: string; receivedDate: string; reference: string | null; notes: string | null;
   /** ADR-S080: the deposit's currency (functional filled in), its rate and the functional value still held. */
   currency?: string; currencyCode?: string | null; exchangeRate?: number; availableBase?: number;
+  /** FX-2 D: advance (contract liability) or refundable (monetary); null = not yet classified (pre-FX-2 row). */
+  kind?: 'advance' | 'refundable' | null;
 }
 interface Application { id: string; kind: string; amount: number; documentId: string; documentNumber: string | null; paymentId: string; reversedAt: string | null; createdAt: string }
 
@@ -34,12 +36,14 @@ const th = 'px-3 py-2';
 const selectCls = 'h-9 w-full rounded-md border bg-background px-2 text-sm';
 const METHODS: Array<[string, string]> = [['bank', 'Bank transfer'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['mobile_money', 'Mobile money (recorded)']];
 
-type Action = { kind: 'apply' | 'refund' | 'void' | 'detail'; deposit: Deposit } | { kind: 'new' } | null;
+type Action = { kind: 'apply' | 'refund' | 'void' | 'detail' | 'classify'; deposit: Deposit } | { kind: 'new' } | null;
 
 /** Customer deposits / advances: take an advance (with or without an order), apply it to invoices, refund or void it. */
 export function CustomerDepositsPage() {
   const [params, setParams] = useSearchParams();
   const status = params.get('status') ?? 'open';
+  const { data: review } = useQuery({ queryKey: ['customer-deposits', 'classification-review'],
+    queryFn: async () => (await api.get<Array<{ id: string }>>('/customer-deposits/classification-review')).data });
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Wallet} title={tx('Customer Deposits')}
@@ -47,24 +51,32 @@ export function CustomerDepositsPage() {
       <div className="flex gap-2">
         <select className="h-9 rounded-md border bg-background px-2 text-sm" value={status} onChange={(e) => setParams((p) => { const n = new URLSearchParams(p); n.set('status', e.target.value); return n; }, { replace: true })}>
           <option value="open">{tx('Open')}</option><option value="closed">{tx('Closed')}</option><option value="void">{tx('Void')}</option><option value="all">{tx('All')}</option>
+          <option value="unclassified">{tx('Needs classification')}</option>
         </select>
+        {!!review?.length && status !== 'unclassified' && (
+          <p className="self-center text-sm text-amber-700 dark:text-amber-400">
+            {tx('{{v1}} deposit(s) need classification as advance or refundable', { v1: review.length })}
+          </p>
+        )}
       </div>
-      <CustomerDepositsList partnerId={params.get('partnerId') ?? undefined} status={status === 'all' ? undefined : status} />
+      <CustomerDepositsList partnerId={params.get('partnerId') ?? undefined}
+        status={status === 'all' || status === 'unclassified' ? undefined : status} unclassifiedOnly={status === 'unclassified'} />
     </div>
   );
 }
 
 /** Deposit table with its actions; used on the deposits page and on a customer's page (`partnerId` fixed). */
-export function CustomerDepositsList({ partnerId, partnerName, status }: { partnerId?: string; partnerName?: string; status?: string }) {
+export function CustomerDepositsList({ partnerId, partnerName, status, unclassifiedOnly }: { partnerId?: string; partnerName?: string; status?: string; unclassifiedOnly?: boolean }) {
   const qc = useQueryClient();
   const has = useAuthStore((s) => s.hasPermission);
   const canRecord = has(PERMISSIONS.sales.depositRecord);
   const canRefund = has(PERMISSIONS.sales.depositRefund);
+  const canClassify = has(PERMISSIONS.sales.depositClassify);
   const qk = ['customer-deposits', partnerId ?? null, status ?? null];
   const { data } = useQuery({ queryKey: qk, queryFn: async () => (await api.get<Deposit[]>('/customer-deposits', { params: { partnerId, status } })).data });
   const [action, setAction] = useState<Action>(null);
   const done = () => { void qc.invalidateQueries({ queryKey: ['customer-deposits'] }); void qc.invalidateQueries({ queryKey: ['sales'] }); setAction(null); };
-  const rows = [...(data ?? [])].reverse();
+  const rows = [...(data ?? [])].reverse().filter((d) => !unclassifiedOnly || !d.kind);
   const base = useBaseCurrency();
   // functional value at each deposit's own rate, so foreign deposits are not added up at face value
   const totalOpen = rows.filter((d) => d.status === 'open').reduce((a, d) => a + Number(d.availableBase ?? d.available), 0);
@@ -91,7 +103,8 @@ export function CustomerDepositsList({ partnerId, partnerName, status }: { partn
                   <td className={th}><button className="font-medium text-primary hover:underline" onClick={() => setAction({ kind: 'detail', deposit: d })}>{d.number}</button></td>
                   {!partnerId && <td className={th}><Link className="hover:underline" to={`/crm/customers/${d.partnerId}`}>{d.partnerName}</Link></td>}
                   <td className={th}>{date(d.receivedDate)}</td>
-                  <td className={th}>{d.salesOrderId ? <Link className="text-primary hover:underline" to={`/sales/orders/${d.salesOrderId}`}>{tx(sourceLabel(d.source))}</Link> : tx(sourceLabel(d.source))}</td>
+                  <td className={th}>{d.salesOrderId ? <Link className="text-primary hover:underline" to={`/sales/orders/${d.salesOrderId}`}>{tx(sourceLabel(d.source))}</Link> : tx(sourceLabel(d.source))}
+                    <div className={`text-xs ${d.kind ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}`}>{tx(kindLabel(d.kind))}</div></td>
                   <td className={`${th} text-right tabular-nums`}>{cm(d, d.amount)}{d.currencyCode && <div className="text-xs text-muted-foreground">@ {Number(d.exchangeRate)}</div>}</td>
                   <td className={`${th} text-right tabular-nums`}>{cm(d, d.appliedAmount)}</td>
                   <td className={`${th} text-right tabular-nums`}>{cm(d, d.refundedAmount)}</td>
@@ -99,7 +112,8 @@ export function CustomerDepositsList({ partnerId, partnerName, status }: { partn
                   <td className={th}>{tx(d.status)}</td>
                   <td className={`${th} whitespace-nowrap text-right`}>
                     <Button size="sm" variant="ghost" title={tx('Print receipt')} onClick={() => void printDepositReceipt(d)}><Printer className="h-4 w-4" /></Button>{' '}
-                    {open && canRecord && !cashSale && <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'apply', deposit: d })}>{tx('Apply')}</Button>}{' '}
+                    {open && canRecord && !cashSale && d.kind !== 'refundable' && <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'apply', deposit: d })}>{tx('Apply')}</Button>}{' '}
+                    {canClassify && !cashSale && d.status !== 'void' && <Button size="sm" variant="ghost" onClick={() => setAction({ kind: 'classify', deposit: d })}>{tx('Classify')}</Button>}{' '}
                     {open && canRefund && !cashSale && <Button size="sm" variant="outline" onClick={() => setAction({ kind: 'refund', deposit: d })}><Undo2 className="mr-1 h-3 w-3" />{tx('Refund')}</Button>}{' '}
                     {untouched && canRefund && <Button size="sm" variant="ghost" onClick={() => setAction({ kind: 'void', deposit: d })}><Ban className="h-4 w-4" /></Button>}
                   </td>
@@ -115,7 +129,37 @@ export function CustomerDepositsList({ partnerId, partnerName, status }: { partn
       {action?.kind === 'refund' && <RefundDialog deposit={action.deposit} onClose={() => setAction(null)} onDone={done} />}
       {action?.kind === 'void' && <VoidDialog deposit={action.deposit} onClose={() => setAction(null)} onDone={done} />}
       {action?.kind === 'detail' && <DetailDialog depositId={action.deposit.id} onClose={() => setAction(null)} />}
+      {action?.kind === 'classify' && <ClassifyDialog deposit={action.deposit} onClose={() => setAction(null)} onDone={done} />}
     </div>
+  );
+}
+
+function kindLabel(kind?: string | null) {
+  return kind === 'refundable' ? 'Refundable deposit' : kind === 'advance' ? 'Advance' : 'Not classified';
+}
+
+/** FX-2 D: classify a deposit; an open balance moves between the advance and refundable accounts at carrying value. */
+function ClassifyDialog({ deposit, onClose, onDone }: { deposit: Deposit; onClose: () => void; onDone: () => void }) {
+  const [kind, setKind] = useState<'advance' | 'refundable'>(deposit.kind === 'advance' ? 'refundable' : 'advance');
+  const [reason, setReason] = useState('');
+  const m = useAction(onDone, 'Deposit classified');
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>{tx('Classify deposit')} {deposit.number}</DialogTitle></DialogHeader>
+        <div className="grid gap-3">
+          <p className="text-sm text-muted-foreground">{tx('An advance is settled by future sales and keeps its receipt rate. A refundable deposit (security, rental) is money owed back and is revalued at period end.')}</p>
+          <Field label={tx('Kind')}><select className={selectCls} value={kind} onChange={(e) => setKind(e.target.value as 'advance' | 'refundable')}>
+            <option value="advance">{tx('Advance')}</option><option value="refundable">{tx('Refundable deposit')}</option></select></Field>
+          <Field label={tx('Reason')}><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={tx('Contract, lease or order reference')} /></Field>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
+          <Button disabled={!reason.trim() || kind === deposit.kind || m.isPending}
+            onClick={() => m.mutate({ url: `/customer-deposits/${deposit.id}/classify`, body: { kind, reason } })}>{tx('Confirm')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -140,6 +184,7 @@ function NewDepositDialog({ partnerId: fixed, partnerName: fixedName, onClose, o
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
   const [fx, setFx] = useState<DepositCurrency>({ currency: '', accountId: '', rate: '' });
+  const [kind, setKind] = useState<'advance' | 'refundable'>('advance');
   const base = useBaseCurrency();
   const m = useAction(onDone, 'Deposit recorded');
   return (
@@ -149,6 +194,8 @@ function NewDepositDialog({ partnerId: fixed, partnerName: fixedName, onClose, o
         <div className="grid gap-3">
           {!fixed && <Field label={tx('Customer')}><PartnerPicker value={partnerId} label={partnerName} onPick={(i, n) => { setPartnerId(i); setPartnerName(n || null); }} /></Field>}
           <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
+          <Field label={tx('Kind')}><select className={selectCls} value={kind} onChange={(e) => setKind(e.target.value as 'advance' | 'refundable')}>
+            <option value="advance">{tx('Advance (settled by future sales)')}</option><option value="refundable">{tx('Refundable deposit (security, rental)')}</option></select></Field>
           <Field label={tx('Method')}><select className={selectCls} value={method} onChange={(e) => setMethod(e.target.value)}>{METHODS.map(([v, l]) => <option key={v} value={v}>{tx(l)}</option>)}</select></Field>
           <DepositCurrencyFields value={fx} onChange={setFx} />
           <Field label={tx('Received on')}><Input type="date" value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} /></Field>
@@ -158,7 +205,7 @@ function NewDepositDialog({ partnerId: fixed, partnerName: fixedName, onClose, o
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
           <Button disabled={!partnerId || !(Number(amount) > 0) || depositCurrencyIncomplete(fx, base) || m.isPending} onClick={() => m.mutate({ url: '/customer-deposits', body: {
-            partnerId, amount: Number(amount), paymentMethod: method, receivedDate, reference: reference || undefined, notes: notes || undefined, ...depositCurrencyBody(fx, base) } })}>{tx('Confirm')}</Button>
+            partnerId, amount: Number(amount), kind, paymentMethod: method, receivedDate, reference: reference || undefined, notes: notes || undefined, ...depositCurrencyBody(fx, base) } })}>{tx('Confirm')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -85,14 +85,26 @@ public class CustomerDepositService {
      */
     public record DepositInput(String partnerId, String salesOrderId, BigDecimal amount, String paymentMethod,
             String accountId, String receivedDate, String reference, String notes, String currencyCode,
-            BigDecimal exchangeRate) {
+            BigDecimal exchangeRate, String kind) {
 
         /** A functional-currency receipt. */
         public DepositInput(String partnerId, String salesOrderId, BigDecimal amount, String paymentMethod,
                 String accountId, String receivedDate, String reference, String notes) {
-            this(partnerId, salesOrderId, amount, paymentMethod, accountId, receivedDate, reference, notes, null, null);
+            this(partnerId, salesOrderId, amount, paymentMethod, accountId, receivedDate, reference, notes, null, null,
+                    null);
+        }
+
+        /** A receipt in {@code currencyCode}; an advance (FX-2 D default). */
+        public DepositInput(String partnerId, String salesOrderId, BigDecimal amount, String paymentMethod,
+                String accountId, String receivedDate, String reference, String notes, String currencyCode,
+                BigDecimal exchangeRate) {
+            this(partnerId, salesOrderId, amount, paymentMethod, accountId, receivedDate, reference, notes, currencyCode,
+                    exchangeRate, null);
         }
     }
+
+    /** FX-2 D: deposit kinds. An advance is a contract liability (IFRIC 22); a refundable deposit is monetary. */
+    public static final List<String> KINDS = List.of("advance", "refundable");
 
     /** The deposit's currency (functional when not stated). */
     private String currencyOf(Map<String, Object> d) {
@@ -113,6 +125,17 @@ public class CustomerDepositService {
         return accounts.ensureByCode("2350", "Customer Deposits", "current_liabilities", "customer_deposit");
     }
 
+    /** FX-2 D: the refundable-deposit liability account (created on first use, mapping customer_refundable_deposit). */
+    public String refundableAccount() {
+        return accounts.ensureByCode("2176", "Refundable Customer Deposits", "current_liability",
+                "customer_refundable_deposit");
+    }
+
+    /** FX-2 D: the liability account a deposit of {@code kind} sits on (unclassified = the advance account). */
+    private String liabilityAccount(Object kind) {
+        return "refundable".equals(kind) ? refundableAccount() : depositAccount();
+    }
+
     // ------------------------------------------------------------------ receipt / down payment
 
     /** Deposit received (P2): Dr tender / Cr Customer Deposits. */
@@ -130,6 +153,14 @@ public class CustomerDepositService {
         String method = in.paymentMethod() == null ? "bank" : in.paymentMethod();
         if ("store_credit".equals(method) || PaymentService.DEPOSIT_METHOD.equals(method)) {
             throw ApiException.badRequest("Unsupported payment method");
+        }
+        // FX-2 D: every new deposit has a kind; a sales-order deposit or a receipt without one is an advance.
+        String kind = in.kind() == null || in.kind().isBlank() ? "advance" : in.kind().trim().toLowerCase();
+        if (!KINDS.contains(kind)) {
+            throw ApiException.badRequest("kind must be one of the following values: advance, refundable");
+        }
+        if ("refundable".equals(kind) && in.salesOrderId() != null) {
+            throw ApiException.badRequest("A sales-order deposit is an advance, not a refundable deposit");
         }
         String base = fxRates.base();
         String cur = in.currencyCode() == null || in.currencyCode().isBlank() ? base
@@ -156,7 +187,7 @@ public class CustomerDepositService {
         BigDecimal baseAmount = foreign ? r6(amount.multiply(rate)) : amount;
         String id = UUID.randomUUID().toString();
         String number = sequence.next("customer_deposit:" + date.getYear(), "DEP-" + date.getYear() + "-", 5);
-        String depositAccount = depositAccount();
+        String depositAccount = liabilityAccount(kind);
         Line cash = Line.debit(tender.accountId(), baseAmount, "Deposit " + number);
         Line liability = new Line(depositAccount, null, baseAmount, in.partnerId(), "Deposit " + number, null, null, null);
         String fx = JsNumbers.dec(amount);
@@ -165,14 +196,14 @@ public class CustomerDepositService {
                 foreign ? List.of(cash.inCurrency(cur, fx), liability.inCurrency(cur, fx)) : List.of(cash, liability)));
         jdbc.sql("INSERT INTO \"CustomerDeposit\" (id, \"organizationId\", number, \"partnerId\", \"salesOrderId\", source,"
                 + " \"paymentMethod\", \"accountId\", amount, \"receivedDate\", \"journalEntryId\", reference, notes,"
-                + " \"createdById\", \"currencyCode\", \"exchangeRate\", \"rateSource\") VALUES (?, ?, ?, ?, ?,"
-                + " 'receipt', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                + " \"createdById\", \"currencyCode\", \"exchangeRate\", \"rateSource\", kind) VALUES (?, ?, ?, ?, ?,"
+                + " 'receipt', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(id, org, number, in.partnerId(), in.salesOrderId(), method, tender.accountId(), amount,
                         java.sql.Date.valueOf(date), entry.get("id"), in.reference(), in.notes(), TenantContext.userId(),
-                        foreign ? cur : null, rate, rateSource)
+                        foreign ? cur : null, rate, rateSource, kind)
                 .update();
         audit.record(AuditInput.of("CustomerDeposit", id, "create", null, Obj.of("number", number, "amount", amount,
-                "currencyCode", cur, "exchangeRate", rate, "salesOrderId", in.salesOrderId())));
+                "currencyCode", cur, "exchangeRate", rate, "salesOrderId", in.salesOrderId(), "kind", kind)));
         return get(id);
     }
 
@@ -217,7 +248,7 @@ public class CustomerDepositService {
         String number = sequence.next("customer_deposit:" + date.getYear(), "DEP-" + date.getYear() + "-", 5);
         jdbc.sql("INSERT INTO \"CustomerDeposit\" (id, \"organizationId\", number, \"partnerId\", source, \"cashSaleId\","
                 + " \"branchId\", \"paymentMethod\", \"accountId\", amount, \"receivedDate\", \"journalEntryId\", reference,"
-                + " notes, \"createdById\") VALUES (?, ?, ?, ?, 'cash_sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+                + " notes, \"createdById\", kind) VALUES (?, ?, ?, ?, 'cash_sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'advance')")
                 .params(id, org, number, in.partnerId(), in.cashSaleId(), in.branchId(), in.paymentMethod(),
                         tender.accountId(), amount, java.sql.Date.valueOf(date), entry.get("id"), in.reference(),
                         "Cash sale " + in.cashSaleNumber(), TenantContext.userId())
@@ -325,7 +356,7 @@ public class CustomerDepositService {
         String number = sequence.next("customer_deposit:" + date.getYear(), "DEP-" + date.getYear() + "-", 5);
         jdbc.sql("INSERT INTO \"CustomerDeposit\" (id, \"organizationId\", number, \"partnerId\", \"salesOrderId\", source,"
                 + " \"documentId\", amount, \"receivedDate\", reference, \"createdById\", \"currencyCode\", \"exchangeRate\","
-                + " \"rateSource\") VALUES (?, ?, ?, ?, ?, 'down_payment_invoice', ?, ?, ?, ?, ?, ?, ?, ?)")
+                + " \"rateSource\", kind) VALUES (?, ?, ?, ?, ?, 'down_payment_invoice', ?, ?, ?, ?, ?, ?, ?, ?, 'advance')")
                 .params(id, org, number, doc.get("partnerId"), doc.get("orderId"), documentId, net,
                         java.sql.Date.valueOf(date), doc.get("documentNumber"), TenantContext.userId(), foreign ? cur : null,
                         rate, foreign ? "document" : null).update();
@@ -342,6 +373,10 @@ public class CustomerDepositService {
         Map<String, Object> d = lock(depositId);
         if (!"open".equals(d.get("status"))) {
             throw ApiException.badRequest("Deposit " + d.get("number") + " is " + d.get("status"));
+        }
+        if ("refundable".equals(d.get("kind"))) {
+            throw ApiException.badRequest("Deposit " + d.get("number") + " is a refundable deposit; classify it as an"
+                    + " advance before applying it to an invoice");
         }
         Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT id, \"partnerId\", \"amountResidual\", status::text AS status,"
                 + " data->>'downPaymentFor' AS dp, \"currencyId\", \"documentNumber\" FROM \"Document\" WHERE id = ? AND"
@@ -430,8 +465,8 @@ public class CustomerDepositService {
         String label = "Refund " + d.get("number");
         List<Line> lines;
         if (!foreign) {
-            lines = List.of(new Line(depositAccount(), amount, null, (String) d.get("partnerId"), label, null, null,
-                    null), Line.credit(tender.accountId(), amount, label));
+            lines = List.of(new Line(liabilityAccount(d.get("kind")), amount, null, (String) d.get("partnerId"), label,
+                    null, null, null), Line.credit(tender.accountId(), amount, label));
         } else {
             lines = foreignRefundLines(d, cur, amount, tender.accountId(), exchangeRate.get(), label);
         }
@@ -471,8 +506,8 @@ public class CustomerDepositService {
                 "exchangeRate")));
         String fx = JsNumbers.dec(amount);
         List<Line> lines = new ArrayList<>();
-        lines.add(new Line(depositAccount(), depositBase, null, (String) d.get("partnerId"), label, null, null, null)
-                .inCurrency(cur, fx));
+        lines.add(new Line(liabilityAccount(d.get("kind")), depositBase, null, (String) d.get("partnerId"), label, null,
+                null, null).inCurrency(cur, fx));
         lines.add(Line.credit(cashAccount, cashBase, label).inCurrency(cur, fx));
         BigDecimal diff = depositBase.subtract(cashBase);
         String fxLabel = "Realised FX · " + cur + " deposit " + d.get("number");
@@ -569,6 +604,67 @@ public class CustomerDepositService {
     }
 
     // ------------------------------------------------------------------ queries
+
+    /**
+     * FX-2 D: open-or-closed deposits not yet classified, oldest first, for one-by-one review (no blanket
+     * classification). Each row carries its source, order, currency and open amount.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> classificationReview() {
+        return SqlRows.list(jdbc.sql("SELECT d.id, d.number, d.\"partnerId\", p.name AS \"partnerName\", d.source,"
+                + " d.\"salesOrderId\", d.status, coalesce(d.\"currencyCode\", o.\"currencyCode\") AS currency,"
+                + " d.amount, d.amount - d.\"appliedAmount\" - d.\"refundedAmount\" AS available, d.\"receivedDate\""
+                + " FROM \"CustomerDeposit\" d JOIN \"Organization\" o ON o.id = d.\"organizationId\" LEFT JOIN"
+                + " \"Partner\" p ON p.id = d.\"partnerId\" WHERE d.\"organizationId\" = ? AND d.kind IS NULL"
+                + " ORDER BY d.\"receivedDate\", d.number").param(org()));
+    }
+
+    /**
+     * FX-2 D: classify a deposit as {@code advance} or {@code refundable} (audited, with a reason). When the open part
+     * moves between the advance account and the refundable account it is transferred at its carrying value through
+     * the posting engine (source {@code deposit_classification}): no FX. A closed deposit is classified for reporting
+     * only. Reclassifying is the only way back.
+     */
+    @Transactional
+    public Map<String, Object> classify(String depositId, String kind, String reason) {
+        if (kind == null || !KINDS.contains(kind)) {
+            throw ApiException.badRequest("kind must be one of the following values: advance, refundable");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw ApiException.badRequest("A reason is required to classify a deposit");
+        }
+        Map<String, Object> d = lock(depositId);
+        Object current = d.get("kind");
+        if (kind.equals(current)) {
+            throw ApiException.badRequest("Deposit " + d.get("number") + " is already classified as " + kind);
+        }
+        if ("refundable".equals(kind) && "cash_sale".equals(d.get("source"))) {
+            throw ApiException.badRequest("A cash-sale deposit is an advance on its own sale");
+        }
+        String from = liabilityAccount(current);
+        String to = liabilityAccount(kind);
+        BigDecimal available = available(d);
+        String entryId = null;
+        if ("open".equals(d.get("status")) && available.signum() > 0 && !from.equals(to)) {
+            String cur = currencyOf(d);
+            boolean foreign = !cur.equals(fxRates.base());
+            BigDecimal carrying = foreign ? remainingBase(d) : available;
+            String label = "Deposit " + d.get("number") + " classified " + kind;
+            Line out = new Line(from, carrying, null, (String) d.get("partnerId"), label, null, null, null);
+            Line in = new Line(to, null, carrying, (String) d.get("partnerId"), label, null, null, null);
+            String fx = JsNumbers.dec(available);
+            Map<String, Object> entry = posting.post(PostingRequest.of("GEN", Instant.now(), label,
+                    "deposit_classification", depositId, "deposit_classification:" + depositId + ":" + UUID.randomUUID(),
+                    foreign ? List.of(out.inCurrency(cur, fx), in.inCurrency(cur, fx)) : List.of(out, in)));
+            entryId = (String) entry.get("id");
+        }
+        jdbc.sql("UPDATE \"CustomerDeposit\" SET kind = ?, \"classifiedAt\" = now(), \"classifiedById\" = ?,"
+                + " \"classificationReason\" = ?, \"updatedAt\" = now() WHERE id = ?")
+                .params(kind, TenantContext.userId(), reason.trim(), depositId).update();
+        audit.record(AuditInput.of("CustomerDeposit", depositId, "update", Obj.of("kind", current), Obj.of("kind", kind,
+                "reason", reason.trim(), "transferEntryId", entryId)));
+        return get(depositId);
+    }
 
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {

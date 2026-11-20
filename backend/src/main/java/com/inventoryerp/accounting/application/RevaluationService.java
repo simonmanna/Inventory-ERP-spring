@@ -130,6 +130,13 @@ public class RevaluationService {
                         + " line(s) on " + rs.getString("code") + " have no partner and are revalued as one balance",
                         rs.getString("id"), rs.getString("code"))))
                 .list();
+        // FX-2 D: an unclassified open foreign deposit may be a refundable (monetary) one that should be revalued.
+        jdbc.sql("SELECT count(*) AS n FROM \"CustomerDeposit\" WHERE \"organizationId\" = ? AND kind IS NULL AND status ="
+                        + " 'open' AND \"currencyCode\" IS NOT NULL AND upper(\"currencyCode\") <> upper(?) AND amount -"
+                        + " \"appliedAmount\" - \"refundedAmount\" > 0")
+                .params(org, base).query(Long.class).optional().filter(n -> n > 0)
+                .ifPresent(n -> out.add(new Warning("unclassified_foreign_deposits", n + " open foreign-currency"
+                        + " deposit(s) are not yet classified as advance or refundable", null, null)));
         jdbc.sql("SELECT a.id, a.code FROM \"Account\" a WHERE a.\"organizationId\" = ? AND a.\"fxRevaluation\" ="
                         + " 'monetary' AND a.\"deletedAt\" IS NULL AND NOT EXISTS (SELECT 1 FROM \"JournalLine\" l WHERE"
                         + " l.\"accountId\" = a.id AND l.\"currencyId\" IS NOT NULL AND upper(l.\"currencyId\") <> upper(?))"

@@ -86,6 +86,10 @@ FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owne
   `POST /fx-revaluations/warnings`, `GET /fx-revaluations/accounts` and `PUT /fx-revaluations/accounts/{id}`.
 - The posting engine refuses a foreign-currency line on a functional cash, bank or mobile-money account, and a foreign
   receivable or payable line without a partner.
+- Customer deposits have a kind: `advance` (default) or `refundable` (account 2176, revalued). A refundable deposit
+  cannot be applied to an invoice. Additive: `kind` on `POST /customer-deposits`,
+  `GET /customer-deposits/classification-review` and `POST /customer-deposits/{id}/classify`
+  (`sales:deposit:classify`).
 
 FX gain/loss correctness (FX-1, [ADR-S081](../adr/ADR-S081-fx-gain-loss-correctness.md), owner-approved 2026-11-20):
 

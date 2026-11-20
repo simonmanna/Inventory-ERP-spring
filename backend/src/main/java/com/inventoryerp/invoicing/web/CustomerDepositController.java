@@ -79,7 +79,22 @@ public class CustomerDepositController {
     public Map<String, Object> receive(@RequestBody Map<String, Object> b) {
         return deposits.receive(new DepositInput(s(b, "partnerId"), s(b, "salesOrderId"), d(b, "amount"),
                 s(b, "paymentMethod"), s(b, "accountId"), s(b, "receivedDate"), s(b, "reference"), s(b, "notes"),
-                s(b, "currencyCode"), d(b, "exchangeRate")));
+                s(b, "currencyCode"), d(b, "exchangeRate"), s(b, "kind")));
+    }
+
+    /** FX-2 D: unclassified deposits for one-by-one review. */
+    @GetMapping("/customer-deposits/classification-review")
+    @RequirePermissions(Permissions.PAYMENT__READ)
+    public List<Map<String, Object>> classificationReview() {
+        return deposits.classificationReview();
+    }
+
+    /** FX-2 D: classify a deposit as advance or refundable ({@code {kind, reason}}). */
+    @PostMapping("/customer-deposits/{id}/classify")
+    @Idempotent
+    @RequirePermissions(Permissions.SALES__DEPOSIT_CLASSIFY)
+    public Map<String, Object> classify(@PathVariable String id, @RequestBody Map<String, Object> b) {
+        return deposits.classify(id, s(b, "kind"), s(b, "reason"));
     }
 
     @PostMapping("/customer-deposits/{id}/apply")
