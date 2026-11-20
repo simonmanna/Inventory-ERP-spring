@@ -185,13 +185,16 @@ const KEY = ['loss-prevention'] as const;
 const BASE = '/loss-prevention';
 const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
-export const useLpDashboard = () => useQuery({
+/** `refetchInterval` (ms) keeps a live screen moving; off by default. */
+export const useLpDashboard = (refetchInterval?: number) => useQuery({
   queryKey: [...KEY, 'dashboard'],
+  refetchInterval,
   queryFn: async () => (await api.get<Dashboard>(`${BASE}/dashboard`)).data,
 });
 
-export const useLpCases = (filters: Filters) => useQuery({
+export const useLpCases = (filters: Filters, refetchInterval?: number) => useQuery({
   queryKey: [...KEY, 'cases', filters],
+  refetchInterval,
   queryFn: async () => (await api.get<Paged<LpCase>>(`${BASE}/cases`, { params: filters })).data,
 });
 

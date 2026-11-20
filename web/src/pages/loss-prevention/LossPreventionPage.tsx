@@ -20,7 +20,7 @@ import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
 import { useOrgFeatures } from '@/lib/use-org-features';
 import {
-  CAUSE_CODES, OUTCOMES, useLpBarVariance, useLpByCashier, useLpCase, useLpCaseAction, useLpCases, useLpDashboard,
+  CAUSE_CODES, OUTCOMES, useLpBarVariance, useLpByCashier, useLpCase, useLpCaseAction, useLpCases,
   useLpPerformance, useLpReplay, useLpRules, useLpRunComparison, useLpRuns, useLpSync, useSaveLpRule,
   type BarRow, type CashierRow, type Finding, type LpCase, type Rule, type Run, type Severity, type Summary,
 } from '@/features/loss-prevention/api';
@@ -28,6 +28,7 @@ import { CamerasTab } from './CamerasTab';
 import { CaseEvidence, EvidenceTab } from './EvidenceTab';
 import { ViewFootageButton } from './FootageDialog';
 import { InsightsTab } from './InsightsTab';
+import { IntelligenceOverview } from './IntelligenceOverview';
 import { MetersTab } from './MetersTab';
 import { ResearchTab } from './ResearchTab';
 
@@ -82,6 +83,8 @@ export function LossPreventionPage() {
   const vision = !!license && featureAvailable(orgFeatures, license.features, 'lpVision');
   // Operations insights (LP6a) are a licence feature of their own too.
   const insights = !!license && featureAvailable(orgFeatures, license.features, 'lpInsights');
+  const [tab, setTab] = useState('overview');
+  const [overviewCase, setOverviewCase] = useState<string | null>(null);
   const sync = useLpSync();
   const onSync = () => sync.mutate(undefined, {
     onSuccess: (r) => notify.success(`${tx('Records read')}. ${r.windowsReconciled} ${tx('day(s) reconciled')}`),
@@ -96,7 +99,7 @@ export function LossPreventionPage() {
             <RefreshCw className="mr-1.5 h-4 w-4" />{tx('Read records now')}
           </Button>
         ) : undefined} />
-      <Tabs defaultValue="overview">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="overview">{tx('Overview')}</TabsTrigger>
           <TabsTrigger value="cases">{tx('Cases')}</TabsTrigger>
@@ -109,7 +112,14 @@ export function LossPreventionPage() {
           {vision && canEvidence && <TabsTrigger value="evidence">{tx('Evidence')}</TabsTrigger>}
           {vision && canInvestigate && <TabsTrigger value="research">{tx('Research')}</TabsTrigger>}
         </TabsList>
-        <TabsContent value="overview" className="mt-4 space-y-4"><OverviewTab /></TabsContent>
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          <IntelligenceOverview vision={vision} canEvidence={canEvidence} insights={insights} engineLabels={ENGINE_LABELS}
+            onOpenCase={setOverviewCase} onViewAll={() => setTab('cases')} />
+          {overviewCase && (
+            <CaseDialog id={overviewCase} canInvestigate={canInvestigate} canConfigure={canConfigure}
+              showEvidence={vision && canEvidence} onClose={() => setOverviewCase(null)} />
+          )}
+        </TabsContent>
         <TabsContent value="cases" className="mt-4 space-y-4">
           <CasesTab canInvestigate={canInvestigate} canConfigure={canConfigure} vision={vision} canEvidence={canEvidence} />
         </TabsContent>
@@ -149,52 +159,6 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
         {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       </CardContent>
     </Card>
-  );
-}
-
-function OverviewTab() {
-  const { data, isLoading, isError } = useLpDashboard();
-  if (isLoading) return <p className="text-muted-foreground">{tx('Loading…')}</p>;
-  if (isError || !data) return <p className="text-destructive">{tx('Could not load the overview.')}</p>;
-  const t = data.totals;
-  const peak = Math.max(1, ...data.trend.map((d) => Number(d.cases)));
-  return (
-    <>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Stat label={tx('Open cases')} value={t.open} />
-        <Stat label={tx('Not started')} value={t.notStarted} />
-        <Stat label={tx('In review')} value={t.reviewing} />
-        <Stat label={tx('Escalated')} value={t.escalated} />
-        <Stat label={tx('Exposure of open cases')} value={num(t.exposure)} hint={tx('An estimate; see each case for its method')} />
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Card>
-          <CardContent className="space-y-2 p-4">
-            <p className="font-medium">{tx('Open cases by rule')}</p>
-            {data.byRule.length === 0 && <p className="text-sm text-muted-foreground">{tx('Nothing open.')}</p>}
-            {data.byRule.map((r) => (
-              <div key={r.ruleCode} className="flex items-center justify-between gap-3 text-sm">
-                <span><span className="mr-2 font-mono text-xs text-muted-foreground">{r.ruleCode}</span>{r.title}</span>
-                <span className="font-medium tabular-nums">{r.cases}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="space-y-2 p-4">
-            <p className="font-medium">{tx('Cases per day, last 30 days')}</p>
-            {data.trend.length === 0 && <p className="text-sm text-muted-foreground">{tx('No cases in this period.')}</p>}
-            <div className="flex h-28 items-end gap-0.5">
-              {data.trend.map((d) => (
-                <div key={d.day} className="flex-1 rounded-t bg-primary/70" title={`${d.day}: ${d.cases}`}
-                  style={{ height: `${Math.max(4, (Number(d.cases) / peak) * 100)}%` }} />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      <p className="text-xs text-muted-foreground">{data.disclaimer}</p>
-    </>
   );
 }
 

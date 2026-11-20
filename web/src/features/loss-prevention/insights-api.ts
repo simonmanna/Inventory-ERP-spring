@@ -150,8 +150,8 @@ const BASE = '/loss-prevention/insights';
 
 const get = async <T,>(path: string, params: Filters) => (await api.get<T>(`${BASE}${path}`, { params })).data;
 
-export const useInsightsSummary = (f: Filters) =>
-  useQuery({ queryKey: [...KEY, 'summary', f], queryFn: () => get<InsightsSummary>('/summary', f) });
+export const useInsightsSummary = (f: Filters, enabled = true) =>
+  useQuery({ queryKey: [...KEY, 'summary', f], enabled, queryFn: () => get<InsightsSummary>('/summary', f) });
 export const useInsightsHourly = (f: Filters) =>
   useQuery({ queryKey: [...KEY, 'hourly', f], queryFn: () => get<{ rows: HourRow[] }>('/hourly', f) });
 export const useInsightsKitchen = (f: Filters) =>
