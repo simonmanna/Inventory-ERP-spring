@@ -596,7 +596,8 @@ public class PostingService {
         String orgId = TenantContext.organizationId();
         return Optional.ofNullable(ReadMemo.get(() -> jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\""
                 + " WHERE id = ?").param(orgId).query(String.class).optional().orElse(null), "org.currencyCode", orgId))
-                .orElse("USD");
+                // FX-2 A: no silent "USD" — a company posts only once its functional currency is set (V584 NOT NULL).
+                .orElseThrow(() -> ApiException.badRequest("Set the company's functional currency before posting"));
     }
 
     /**

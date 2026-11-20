@@ -13,8 +13,12 @@ public final class FunctionalCurrencyLock {
 
     /** Refuse a change of {@code Organization.currencyCode} to {@code newCode} once journal entries are posted. */
     public static void assertChangeable(JdbcClient jdbc, String organizationId, Object newCode) {
-        if (newCode == null || organizationId == null) {
+        if (organizationId == null) {
             return;
+        }
+        if (newCode == null || String.valueOf(newCode).isBlank()) {
+            // FX-2 A: the functional currency is mandatory; it can be changed (before posting) but never cleared.
+            throw ApiException.badRequest("The functional currency is required");
         }
         String current = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(organizationId)
                 .query(String.class).optional().orElse(null);

@@ -47,7 +47,8 @@ public final class ForeignCash {
     /** The organisation's functional currency. */
     public static String functional(JdbcClient jdbc, String organizationId) {
         return jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(organizationId)
-                .query(String.class).optional().orElse("USD");
+                .query(String.class).optional()
+                .orElseThrow(() -> ApiException.badRequest("Set the company's functional currency before posting"));
     }
 
     /**
