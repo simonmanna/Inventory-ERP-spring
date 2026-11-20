@@ -82,15 +82,22 @@ public final class RentalMath {
      * release, else {@code applied}; in between {@code partially_applied}.
      */
     public static String depositStatus(double collected, double applied, double refunded, double forfeited) {
-        if (collected == 0) {
+        return depositStatus(java.math.BigDecimal.valueOf(collected), java.math.BigDecimal.valueOf(applied),
+                java.math.BigDecimal.valueOf(refunded), java.math.BigDecimal.valueOf(forfeited));
+    }
+
+    /** FX-5: as above in exact decimal arithmetic (the deposit ledger's own totals). */
+    public static String depositStatus(java.math.BigDecimal collected, java.math.BigDecimal applied,
+            java.math.BigDecimal refunded, java.math.BigDecimal forfeited) {
+        if (collected.signum() == 0) {
             return "held";
         }
-        double consumed = applied + refunded + forfeited;
-        if (consumed >= collected) {
-            if (refunded > 0 && applied == 0 && forfeited == 0) {
+        java.math.BigDecimal consumed = applied.add(refunded).add(forfeited);
+        if (consumed.compareTo(collected) >= 0) {
+            if (refunded.signum() > 0 && applied.signum() == 0 && forfeited.signum() == 0) {
                 return "refunded";
             }
-            if (forfeited > 0 && applied == 0 && refunded == 0) {
+            if (forfeited.signum() > 0 && applied.signum() == 0 && refunded.signum() == 0) {
                 return "forfeited";
             }
             return "applied";

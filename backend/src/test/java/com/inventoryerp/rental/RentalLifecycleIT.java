@@ -441,6 +441,6 @@ class RentalLifecycleIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every rental route answers 401 without a token and 403 without its permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.rental")).isEqualTo(47);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.rental")).isEqualTo(49);
     }
 }

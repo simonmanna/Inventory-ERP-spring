@@ -300,7 +300,9 @@ public class RentalAgreementService {
         for (Map<String, Object> line : lines) {
             posting.checkoutTransfer(id, (String) line.get("productId"), line.get("quantity"));
         }
-        deposit.createForAgreement(id, partnerId);
+        // FX-5: the deposit's kind (refundable security deposit unless stated as prepaid rent)
+        deposit.createForAgreement(id, partnerId, dto.get("depositKind") == null ? null
+                : String.valueOf(dto.get("depositKind")));
         if (depositAmount > 0) {
             Map<String, Object> collect = new LinkedHashMap<>();
             collect.put("method", dto.get("depositMethod") != null ? dto.get("depositMethod") : "cash");

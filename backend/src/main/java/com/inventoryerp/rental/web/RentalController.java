@@ -306,6 +306,23 @@ public class RentalController {
         return deposit.collect(agreementId(id, b), b);
     }
 
+    /** FX-5: deposits not yet classified as advance or refundable. */
+    @GetMapping("/deposits/classification-review")
+    @RequirePermissions(Permissions.RENTAL__MANAGE)
+    public List<Map<String, Object>> depositClassificationReview() {
+        return deposit.classificationReview();
+    }
+
+    /** FX-5: classify an agreement's deposit ({@code {kind, reason}}). */
+    @PostMapping("/agreements/{id}/deposit/classify")
+    @RequirePermissions(Permissions.RENTAL__MANAGE)
+    public Map<String, Object> classifyDeposit(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
+        Map<String, Object> b = body(dto);
+        return deposit.classify(id, b.get("kind") == null ? null : String.valueOf(b.get("kind")),
+                b.get("reason") == null ? null : String.valueOf(b.get("reason")));
+    }
+
     @PostMapping("/agreements/{id}/deposit/refund")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.RENTAL__MANAGE)

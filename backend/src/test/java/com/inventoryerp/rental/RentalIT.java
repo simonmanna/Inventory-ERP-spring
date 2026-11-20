@@ -28,7 +28,7 @@ import tools.jackson.databind.JsonNode;
  * per-unit overlap, reservations and their expiry, the agreement lifecycle (confirm, score gate, checkout with stock
  * transfer + deposit + fee invoice, deposits collect / refund / forfeit, extension, swap, return, inspection,
  * settlement) with balanced journals, service orders, scores, reports, location bootstrap, idempotency on the money
- * routes, tenant isolation and the 401/403 matrix (47 routes).
+ * routes, tenant isolation and the 401/403 matrix (49 routes).
  */
 class RentalIT extends ApiTestSupport {
 
@@ -621,6 +621,18 @@ class RentalIT extends ApiTestSupport {
         assertThat(deposit.get("status").asString()).isEqualTo("partially_applied");
         assertThat(deposit.get("movements")).hasSize(1);
         assertThat(deposit.get("movements").get(0).get("type").asString()).isEqualTo("collected");
+        // FX-5: a rental deposit is a refundable security deposit unless classified otherwise, with a reason
+        assertThat(deposit.get("kind").asString()).isEqualTo("refundable");
+        assertThat(as("POST", dep + "/classify", Map.of("kind", "advance")).status()).isEqualTo(400);
+        assertThat(as("POST", dep + "/classify", Map.of("kind", "loan", "reason", "x")).status()).isEqualTo(400);
+        JsonNode reclassified = ok(200, "POST", dep + "/classify", Map.of("kind", "advance", "reason",
+                "Prepaid rent per the agreement"));
+        assertThat(reclassified.get("kind").asString()).isEqualTo("advance");
+        assertThat(reclassified.get("classificationReason").asString()).isEqualTo("Prepaid rent per the agreement");
+        ok(200, "POST", dep + "/classify", Map.of("kind", "refundable", "reason", "Security deposit after all"));
+        jdbc.sql("UPDATE \"RentalDeposit\" SET kind = NULL WHERE id = ?").param(depositId).update();
+        assertThat(ok(200, "GET", "/rental/deposits/classification-review", null).toString()).contains(depositId);
+        jdbc.sql("UPDATE \"RentalDeposit\" SET kind = 'refundable' WHERE id = ?").param(depositId).update();
         assertThat(deposit.get("movements").get(0).get("method").asString()).isEqualTo("card");
         assertThat(deposit.get("movements").get(0).get("note").asString()).isEqualTo("Deposit collected at checkout");
         assertError(as("GET", "/rental/agreements/" + UUID.randomUUID() + "/deposit", null), 404,
@@ -1035,7 +1047,7 @@ class RentalIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization: every rental route is 401 without a token and 403 without its permission")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.rental")).isEqualTo(47);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.rental")).isEqualTo(49);
     }
 
     @Test
