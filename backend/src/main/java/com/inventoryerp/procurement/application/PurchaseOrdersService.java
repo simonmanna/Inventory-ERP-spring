@@ -702,7 +702,10 @@ public class PurchaseOrdersService {
         if (po == null || !"cash".equals(po.get("paymentType"))) {
             return;
         }
-        BigDecimal rate = functionalRate(po);
+        // FX-2 G: the settlement is in this receipt's functional value, at the rate the receipt was valued at
+        BigDecimal grnRate = jdbc.sql("SELECT \"exchangeRate\" FROM \"GoodsReceiptNote\" WHERE id = ?").param(grnId)
+                .query(BigDecimal.class).optional().orElse(null);
+        BigDecimal rate = grnRate != null && grnRate.signum() > 0 ? grnRate : functionalRate(po);
         BigDecimal poAmount = rate.compareTo(BigDecimal.ONE) == 0 ? settleAmount : Money.div(settleAmount, rate);
         BigDecimal newTotalPaid = Money.dec(po.get("totalPaid")).add(poAmount);
         jdbc.sql("UPDATE \"PurchaseOrder\" SET \"totalPaid\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\", \"updatedAt\" = "
@@ -838,7 +841,8 @@ public class PurchaseOrdersService {
             // 4. Stock-in per stockable line: Dr Stock Valuation / Cr GRNI, accumulating the capitalised value + tax.
             BigDecimal receiptNet = Money.ZERO;
             BigDecimal receiptTax = Money.ZERO;
-            BigDecimal rate = functionalRate(po);
+            // FX-2 G: valued at the receipt-date rate (the PO rate is a commitment value and is not rewritten)
+            BigDecimal rate = receiptRate(po, grnId, date);
             for (Resolved r : resolved) {
                 ReceiveLineInput rln = r.line();
                 if (rln.productId() == null) {
@@ -918,6 +922,45 @@ public class PurchaseOrdersService {
         }
         BigDecimal rate = Money.dec(po.get("exchangeRate"));
         return rate.signum() > 0 ? rate : BigDecimal.ONE;
+    }
+
+    /**
+     * FX-2 G (owner decision 2): the rate a foreign PO receipt is valued at, recorded on the receipt: the rate table on
+     * the receipt date under the company's {@code goods_receipt} rate policy, else the PO rate (source {@code po}).
+     * Functional-currency POs: 1, nothing recorded.
+     */
+    BigDecimal receiptRate(Map<String, Object> po, String grnId, Instant receivedAt) {
+        BigDecimal poRate = functionalRate(po);
+        Object code = po.get("currencyCode");
+        String functional = functionalCurrency();
+        if (code == null || functional == null || functional.equalsIgnoreCase(String.valueOf(code))) {
+            return poRate;
+        }
+        String ccy = String.valueOf(code).toUpperCase();
+        CurrencyService.Policy policy = currencies.policy("goods_receipt");
+        BigDecimal table = currencies.findRate(ccy, functional, receivedAt == null ? Instant.now() : receivedAt,
+                policy.rateType(), policy.requireApprovedRate());
+        BigDecimal rate = table != null && table.signum() > 0 ? table : poRate;
+        jdbc.sql("UPDATE \"GoodsReceiptNote\" SET \"currencyCode\" = ?, \"exchangeRate\" = ?, \"rateSource\" = ?"
+                + " WHERE id = ?").params(ccy, rate, table != null && table.signum() > 0 ? "table" : "po", grnId).update();
+        return rate;
+    }
+
+    /**
+     * FX-2 G: the functional value per order-currency unit at which this PO's received goods sit on AP: the
+     * value-weighted rate of its posted receipts, else the PO rate.
+     */
+    BigDecimal carryingRate(Map<String, Object> po) {
+        BigDecimal poRate = functionalRate(po);
+        if (poRate.compareTo(BigDecimal.ONE) == 0) {
+            return poRate;
+        }
+        BigDecimal weighted = jdbc.sql("SELECT sum(l.quantity * l.\"unitCost\" * g.\"exchangeRate\") / nullif(sum(l.quantity"
+                        + " * l.\"unitCost\"), 0) FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g ON g.id ="
+                        + " l.\"goodsReceiptId\" WHERE g.\"purchaseOrderId\" = ? AND g.status = 'posted' AND"
+                        + " g.\"exchangeRate\" IS NOT NULL")
+                .param(po.get("id")).query(BigDecimal.class).optional().orElse(null);
+        return weighted == null || weighted.signum() <= 0 ? poRate : weighted.setScale(8, RoundingMode.HALF_UP);
     }
 
     /** The organization's functional currency, or {@code null} when it has none. */
@@ -1072,7 +1115,7 @@ public class PurchaseOrdersService {
         // applied to bills no longer count against the PO.
         BigDecimal received = Money.min(Money.dec(po.get("totalAmount")), vouchered(id, orgId));
         BigDecimal billed = billedVouchered(id, orgId);
-        BigDecimal rate = functionalRate(po);
+        BigDecimal rate = carryingRate(po); // FX-2 G: AP sits at the receipts' rates
         // Blocker fix 2026-11-17 (B2): a settled claim on this order or its receipts already credited the payable.
         BigDecimal claimed = Money.div(claimCredits(id, orgId, (String) po.get("partnerId")), rate);
         BigDecimal payable = received.subtract(billed);

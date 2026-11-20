@@ -731,7 +731,9 @@ public class InvoicingWorkflowsInitializer {
                 if (!c.vouchered()) {
                     continue;
                 }
-                Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT po.\"exchangeRate\" AS rate, po.\"currencyCode\" AS code,"
+                // FX-2 G: the receipt's own rate (receipt-date valuation), else the PO rate for older receipts
+                Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT coalesce(g.\"exchangeRate\", po.\"exchangeRate\") AS rate,"
+                        + " po.\"currencyCode\" AS code,"
                         + " coalesce(pl.\"taxRate\", 0) AS \"taxRate\" FROM \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" g"
                         + " ON g.id = l.\"goodsReceiptId\" JOIN \"PurchaseOrder\" po ON po.id = g.\"purchaseOrderId\""
                         + " LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = l.\"purchaseOrderLineId\" WHERE l.id = ?")

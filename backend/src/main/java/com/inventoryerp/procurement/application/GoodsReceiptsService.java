@@ -472,7 +472,8 @@ public class GoodsReceiptsService {
             BigDecimal receiptNet = Money.ZERO;
             BigDecimal receiptTax = Money.ZERO;
             // P0-5: a PO-backed receipt is priced in the PO currency; stock / GRNI / AP carry the functional value.
-            BigDecimal rate = po != null ? purchaseOrders.functionalRate(po) : BigDecimal.ONE;
+            // FX-2 G: valued at the receipt-date rate, recorded on the receipt
+            BigDecimal rate = po != null ? purchaseOrders.receiptRate(po, id, date) : BigDecimal.ONE;
             for (Map<String, Object> ln : StockMove.inLockOrder(updatedLines)) { // audit S-2: engine lock order
                 if (ln.get("productId") == null || ((String) ln.get("productId")).isEmpty()) {
                     continue;

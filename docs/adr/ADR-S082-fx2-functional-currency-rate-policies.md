@@ -160,6 +160,29 @@
   engine now refuses that ("Foreign-currency payable lines need a partner"), so a foreign credit expense needs a
   supplier or an employee claimant.
 
+## G. Goods receipt at the receipt-date rate (decision 2) — built (core)
+
+- A foreign PO receipt values stock, GRNI and the vouchered AP at the **receipt-date rate**. That is the rate table on
+  the receipt date under the `goods_receipt` rate policy, **else the PO rate** (`rateSource = 'po'`), so receiving is
+  never blocked by a missing rate. Both receive paths apply it: `POST /purchase-orders/{id}/receive` and the
+  goods-receipt post.
+- The PO's own rate is not rewritten. Stock is never revalued afterwards.
+- V588 adds `GoodsReceiptNote.currencyCode`, `exchangeRate` and `rateSource`. Existing posted foreign receipts are
+  backfilled from their PO (`rateSource = 'po'`): the rate they were actually costed at, so history is recorded and no
+  value changes.
+- At the bill, `remeasureVoucheredPayable` uses the receipt's stored rate (PO rate for older receipts). The difference
+  to the bill rate goes to FX on AP, never to stock.
+- A cash-PO settlement at receipt converts at the receipt's rate. The PO pay route measures what is owed at the
+  receipts' value-weighted carrying rate (`carryingRate`) instead of the PO rate, so AP raised at receipt rates clears
+  without residue.
+- **Not done in G:**
+  - the PO pay route still credits cash at that carrying rate. It has no payment-date rate and no realised FX
+    (`PurchasePayment` rate columns). Paying through a vendor bill and `/supplier-payments` realises FX as before.
+  - receipts without a PO cannot state a currency.
+- Test changed: `ProcurementIntegrityIT.poReceiptThenForeignBillAtAnotherRate` now covers the G case. PO at 3,700, the
+  receipt at the table rate 3,750 (stock +75,000, receipt rate recorded, PO rate unchanged), the bill at 3,800 (FX
+  loss 1,000, AP 76,000, stock unchanged).
+
 ## Tests
 
 - `FunctionalCurrencyIT`: clearing refused; changeable before and locked after the first posting; blank refused by
@@ -190,3 +213,9 @@
 - Expense regression green: `ExpensesFlowIT`, `ExpenseAccrualIT`, `ExpenseClaimsIT`, `ExpenseControlsIT` (on a
   fresh DB), `ExpenseTreasuryIT`, `FleetFuelIT`, `FleetIncidentsIT`, `InvoicingIT` (authorization count +2 for the
   D routes), `Acc0PostingDateIT`, `ControlAccountRoutesIT`, `BankLedgerMatchIT`.
+- Procurement regression green for G (fresh DB): `ProcurementIntegrityIT`, `ProcurementIT`, `ProcurementControlIT`,
+  `PoBillApplicationIT`, `ProcureToPayGapsIT`, `SourceToPayEndToEndIT`, `ReceivingQualityIT`, `LandedCostVoucherIT`,
+  `LandedCostGapsIT`, `LandedCostAuditIT`, `ImportLandedScenarioIT`, `SupplierClaimSettlementIT`,
+  `SupplierPaymentScheduleIT`, `ValuationGapsIT`, `ValuationIntegrityIT`, `VendorBillListIT`, `IntercompanyIT`,
+  `ReadinessBlockersIT`, `SharedFxIT`, `FxPaymentsIT`, `FxGainLossFx1IT`, `Acc0ArApIT`, `Acc0LifecycleIT`,
+  `Acc0MoneyPrecisionIT`, `Acc0ReversalIT`, `Acc8PostingIntegrityIT`, `DocumentReversalIT`.

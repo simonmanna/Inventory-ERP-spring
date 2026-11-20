@@ -93,6 +93,8 @@ FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owne
 - Expense payments may come from an account held in the expense's currency (realised FX at carrying value). A foreign
   accrued expense paid from a functional account realises FX at the payment-date rate. `POST /expenses/{id}/pay` gains
   `exchangeRate` and `foreignAmount`. Paying from an account held in another currency is refused.
+- A foreign PO receipt is valued at the receipt-date rate (table, else the PO rate) and records it on the receipt.
+  Bills remeasure AP from the receipt's rate. The PO pay route measures what is owed at the receipts' carrying rate.
 
 FX gain/loss correctness (FX-1, [ADR-S081](../adr/ADR-S081-fx-gain-loss-correctness.md), owner-approved 2026-11-20):
 
