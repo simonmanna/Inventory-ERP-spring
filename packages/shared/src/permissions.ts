@@ -76,6 +76,12 @@ export const PERMISSIONS = {
     read: 'currency:read',
     update: 'currency:update',
     delete: 'currency:delete',
+    /// Approve or reject exchange rates entered by someone else (FX-2 B, maker-checker).
+    approve: 'currency:approve',
+    /// State a transaction rate outside the company's rate-policy tolerance (with a reason).
+    rateOverride: 'currency:rate_override',
+    /// Configure the company's exchange-rate policies per transaction context.
+    policy: 'currency:policy',
   },
   fiscalPeriod: {
     create: 'fiscal_period:create',
@@ -826,6 +832,8 @@ export const PERMISSIONS = {
     /// Record customer deposits (advances) and apply them to invoices.
     depositRecord: 'sales:deposit:record',
     depositRefund: 'sales:deposit:refund',
+    /// Classify a deposit as an advance or a refundable (monetary) deposit (FX-2 D).
+    depositClassify: 'sales:deposit:classify',
     /// Returns (RMA) and customer complaints (ADR-S011 S7).
     returnRead: 'sales:return:read',
     returnWrite: 'sales:return:write',

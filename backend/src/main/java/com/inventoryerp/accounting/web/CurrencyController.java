@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -43,7 +44,13 @@ public class CurrencyController {
             @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String asOf,
             @NotNull(message = "must be a number conforming to the specified constraints")
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal rate,
-            String source) {}
+            String source,
+            String rateType) {}
+
+    /** FX-2 B: {@code PUT /fx-rate-policies/{context}} body. */
+    public record RatePolicyRequest(String rateType, Boolean requireApprovedRate,
+            @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal statedRateTolerancePct,
+            Boolean allowStatedRate) {}
 
     private final CurrencyService svc;
 
@@ -60,8 +67,22 @@ public class CurrencyController {
     @GetMapping("/rates")
     @RequirePermissions(Permissions.CURRENCY__READ)
     public List<Map<String, Object>> rates(@RequestParam(required = false) String fromCode,
-            @RequestParam(required = false) String toCode, @RequestParam(required = false) String limit) {
-        return svc.listRates(fromCode, toCode, limit == null || limit.isEmpty() ? 30 : (int) JsNumbers.number(limit));
+            @RequestParam(required = false) String toCode, @RequestParam(required = false) String limit,
+            @RequestParam(required = false) String rateType, @RequestParam(required = false) String status) {
+        return svc.listRates(fromCode, toCode, limit == null || limit.isEmpty() ? 30 : (int) JsNumbers.number(limit),
+                rateType, status);
+    }
+
+    @PostMapping("/rates/{id}/approve")
+    @RequirePermissions(Permissions.CURRENCY__APPROVE)
+    public Map<String, Object> approveRate(@PathVariable String id) {
+        return svc.decideRate(id, true);
+    }
+
+    @PostMapping("/rates/{id}/reject")
+    @RequirePermissions(Permissions.CURRENCY__APPROVE)
+    public Map<String, Object> rejectRate(@PathVariable String id) {
+        return svc.decideRate(id, false);
     }
 
     @GetMapping("/rate")
@@ -89,6 +110,6 @@ public class CurrencyController {
     @RequirePermissions(Permissions.CURRENCY__UPDATE)
     public void createRate(@Valid @RequestBody UpsertRateRequest dto) {
         svc.upsertRate(dto.fromCode(), dto.toCode(), EntityPatch.toInstant(dto.asOf()), dto.rate(),
-                dto.source() == null ? "manual" : dto.source());
+                dto.source() == null ? "manual" : dto.source(), dto.rateType());
     }
 }

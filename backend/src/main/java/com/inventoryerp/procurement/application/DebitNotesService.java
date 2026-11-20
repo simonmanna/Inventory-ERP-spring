@@ -145,7 +145,7 @@ public class DebitNotesService {
         Instant rateDate = ProcurementSql.date(input.issueDate());
         BigDecimal rate = currency.equalsIgnoreCase(functional) ? BigDecimal.ONE
                 : currencies.resolveStated(currency, functional, input.exchangeRate(),
-                        rateDate != null ? rateDate : Instant.now()).rate();
+                        rateDate != null ? rateDate : Instant.now(), "purchase").rate();
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
         String prefix = "outbound".equals(input.direction()) ? "DBN-OUT-" + year + "-" : "DBN-IN-" + year + "-";
         String noteNumber = sequence.next("debitnote:" + year, prefix, 5);

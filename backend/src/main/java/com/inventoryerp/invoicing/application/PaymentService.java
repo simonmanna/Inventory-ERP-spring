@@ -487,9 +487,10 @@ public class PaymentService {
             }
         }
         String verb = "inbound".equals(direction) ? "Receipt" : "Payment";
+        // FX-2 B: a foreign payment snapshots the rate it settled at (type, context, policy rate, override reason).
         Map<String, Object> entry = posting.post(PostingRequest.of(journalCode, EntityPatch.toInstant(dto.paymentDate()),
                 verb + " " + paymentNumber + " · " + partner.get("name"), "payment", paymentId, "payment:" + paymentId,
-                lines));
+                lines), fxs == null ? null : List.of(fxs.rate()));
         jdbc.sql("UPDATE \"Payment\" SET \"journalEntryId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(entry.get("id"), paymentId).update();
         if (withholding.signum() > 0 && withholdingCertificates != null) {
@@ -613,7 +614,7 @@ public class PaymentService {
     private FxSettlement fxSettlement(PaymentInput dto, String direction, String payCurrency, String baseCode,
             BigDecimal amount, List<AllocationInput> allocations, String org) {
         CurrencyService.Resolution rate = currency.resolveStated(payCurrency, baseCode, dto.exchangeRate(),
-                EntityPatch.toInstant(dto.paymentDate()));
+                EntityPatch.toInstant(dto.paymentDate()), "inbound".equals(direction) ? "payment_in" : "payment_out");
         Map<String, BigDecimal> carrying = new HashMap<>();
         BigDecimal relieved = Money.ZERO;
         BigDecimal allocatedSum = Money.ZERO;

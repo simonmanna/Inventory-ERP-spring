@@ -49,7 +49,8 @@ public class DocumentFxRates {
         if (cur.equals(base())) {
             return BigDecimal.ONE;
         }
-        return currency.resolve(cur, base(), doc.get("exchangeRate"), date).rate();
+        return currency.resolve(cur, base(), doc.get("exchangeRate"), date,
+                "vendor_bill".equals(String.valueOf(doc.get("documentType"))) ? "purchase" : "sales").rate();
     }
 
     /** The organisation's base currency. */

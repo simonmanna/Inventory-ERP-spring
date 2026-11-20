@@ -448,7 +448,7 @@ public class BankMatchingService {
             BigDecimal tax, String taxAccount, String counter, String partner) {
         ForeignCash.requireDesignated(fx);
         Instant at = (Instant) line.get("postedAt");
-        CurrencyService.Resolution rate = currency.resolve(fx.currency(), ForeignCash.functional(jdbc, org), null, at);
+        CurrencyService.Resolution rate = currency.resolve(fx.currency(), ForeignCash.functional(jdbc, org), null, at, "treasury");
         BigDecimal netBase = net.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
         BigDecimal taxBase = tax.multiply(rate.rate()).setScale(6, java.math.RoundingMode.HALF_UP);
         BigDecimal valued = netBase.add(taxBase);

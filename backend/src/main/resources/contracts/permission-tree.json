@@ -67,7 +67,10 @@
     "create": "currency:create",
     "read": "currency:read",
     "update": "currency:update",
-    "delete": "currency:delete"
+    "delete": "currency:delete",
+    "approve": "currency:approve",
+    "rateOverride": "currency:rate_override",
+    "policy": "currency:policy"
   },
   "fiscalPeriod": {
     "create": "fiscal_period:create",
@@ -704,6 +707,7 @@
     "invoiceCreate": "sales:invoice:create",
     "depositRecord": "sales:deposit:record",
     "depositRefund": "sales:deposit:refund",
+    "depositClassify": "sales:deposit:classify",
     "returnRead": "sales:return:read",
     "returnWrite": "sales:return:write",
     "returnApprove": "sales:return:approve",

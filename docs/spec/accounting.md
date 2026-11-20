@@ -70,6 +70,17 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
+FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; in progress):
+
+- Posting refuses when the company has no functional currency (no USD fallback). `PATCH /organizations/me/settings`
+  refuses clearing `currencyCode`: "The functional currency is required".
+- Exchange rates carry a type (`official|bank|cash|market`) and an approval status. Additive routes:
+  `POST /currencies/rates/{id}/approve|reject` and `GET|PUT /fx-rate-policies[/{context}]`. `GET /currencies/rates`
+  rows gain id, type, status, createdBy, approvedBy and shared.
+- A company rate policy per context can require approved rates, forbid stated rates, or bound them by a tolerance.
+  Beyond the tolerance, the caller needs `currency:rate_override` and the header `X-Fx-Rate-Override-Reason`.
+  Without policies, behaviour is unchanged.
+
 FX gain/loss correctness (FX-1, [ADR-S081](../adr/ADR-S081-fx-gain-loss-correctness.md), owner-approved 2026-11-20):
 
 - `POST /currencies/rates` refuses a rate ≤ 0: "rate must be greater than zero" (Nest accepted 0).

@@ -1048,11 +1048,16 @@ export interface Currency {
 
 export interface CurrencyRate {
   id: string;
-  fromCode: string;
-  toCode: string;
+  fromCode?: string;
+  toCode?: string;
   asOf: string;
   rate: number;
   source: string;
+  rateType?: string;
+  status?: 'pending' | 'approved' | 'rejected';
+  createdBy?: string | null;
+  approvedBy?: string | null;
+  shared?: boolean;
 }
 
 export function useCurrencies() {
@@ -1085,7 +1090,59 @@ export function useAccountingMoney(): (value?: string | number | null) => string
   return (value) => money(value, undefined, decimals);
 }
 
-export function useCurrencyRates(params?: { fromCode?: string; toCode?: string }) {
+export type RateType = 'official' | 'bank' | 'cash' | 'market';
+export const RATE_TYPES: RateType[] = ['official', 'bank', 'cash', 'market'];
+
+export interface FxRatePolicy {
+  context: string;
+  rateType: RateType;
+  requireApprovedRate: boolean;
+  statedRateTolerancePct: number | string | null;
+  allowStatedRate: boolean;
+  configured: boolean;
+}
+
+/** FX-2 B: rates waiting for a second person's approval. */
+export function usePendingRates() {
+  return useQuery({
+    queryKey: ['currency-rates', 'pending'],
+    queryFn: async () => (await api.get<CurrencyRate[]>('/currencies/rates', { params: { status: 'pending' } })).data,
+  });
+}
+
+export function useDecideRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, approve }: { id: string; approve: boolean }) =>
+      (await api.post(`/currencies/rates/${id}/${approve ? 'approve' : 'reject'}`)).data,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['currency-rates'] }); notify.success(tx('Saved')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+  });
+}
+
+export function useFxRatePolicies() {
+  return useQuery({
+    queryKey: ['fx-rate-policies'],
+    queryFn: async () => (await api.get<FxRatePolicy[]>('/fx-rate-policies')).data,
+  });
+}
+
+export function useSaveFxRatePolicy() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (p: Omit<FxRatePolicy, 'configured'>) =>
+      (await api.put<FxRatePolicy>(`/fx-rate-policies/${p.context}`, {
+        rateType: p.rateType,
+        requireApprovedRate: p.requireApprovedRate,
+        statedRateTolerancePct: p.statedRateTolerancePct === '' ? null : p.statedRateTolerancePct,
+        allowStatedRate: p.allowStatedRate,
+      })).data,
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['fx-rate-policies'] }); notify.success(tx('Policy saved')); },
+    onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),
+  });
+}
+
+export function useCurrencyRates(params?: { fromCode?: string; toCode?: string; rateType?: string }) {
   return useQuery({
     queryKey: ['currency-rates', params],
     queryFn: async () =>
@@ -1096,7 +1153,7 @@ export function useCurrencyRates(params?: { fromCode?: string; toCode?: string }
 export function useCreateCurrencyRate() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { fromCode: string; toCode: string; rate: number; asOf?: string }) =>
+    mutationFn: async (input: { fromCode: string; toCode: string; rate: number; asOf?: string; rateType?: RateType }) =>
       (await api.post<CurrencyRate>('/currencies/rates', input)).data,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['currency-rates'] }); notify.success(tx('Rate added')); },
     onError: (e: any) => notify.error(tx('Failed'), e?.response?.data?.message ?? e.message),

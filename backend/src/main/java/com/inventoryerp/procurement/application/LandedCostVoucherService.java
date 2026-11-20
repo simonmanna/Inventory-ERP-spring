@@ -1327,7 +1327,7 @@ public class LandedCostVoucherService {
                 // refused) so the voucher and its bill share one rate.
                 java.time.Instant on = c.invoiceDate() == null ? java.time.Instant.now()
                         : com.inventoryerp.kernel.crud.EntityPatch.toInstant(c.invoiceDate());
-                rate = currency.resolve(chargeCurrency.toUpperCase(), posting.baseCurrency(), null, on).rate();
+                rate = currency.resolve(chargeCurrency.toUpperCase(), posting.baseCurrency(), null, on, "purchase").rate();
             }
             if (c.supplierId() != null) {
                 long s = jdbc.sql("SELECT count(*) FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?")

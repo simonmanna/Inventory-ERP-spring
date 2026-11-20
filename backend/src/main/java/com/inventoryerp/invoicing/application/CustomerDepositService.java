@@ -149,7 +149,7 @@ public class CustomerDepositService {
             }
             ForeignCash.assertDecimals(jdbc, cur, amount);
             CurrencyService.Resolution r = currency.resolveStated(cur, base, in.exchangeRate(), date.atStartOfDay()
-                    .toInstant(ZoneOffset.UTC));
+                    .toInstant(ZoneOffset.UTC), "deposit");
             rate = r.rate();
             rateSource = r.source();
         }
@@ -465,7 +465,7 @@ public class CustomerDepositService {
         com.inventoryerp.accounting.application.TreasuryGuards.lockAccounts(jdbc, org, List.of(cashAccount));
         ForeignCash.Balance bal = ForeignCash.balance(jdbc, org, cashAccount, cur);
         ForeignCash.assertFunds(bal, amount, held.name(), cur);
-        BigDecimal spot = currency.resolveStated(cur, fxRates.base(), statedRate, Instant.now()).rate();
+        BigDecimal spot = currency.resolveStated(cur, fxRates.base(), statedRate, Instant.now(), "deposit").rate();
         BigDecimal cashBase = ForeignCash.relieve(bal, amount, spot);
         BigDecimal depositBase = available(d).compareTo(amount) == 0 ? remainingBase(d) : r6(amount.multiply(SqlRows.dec(d,
                 "exchangeRate")));

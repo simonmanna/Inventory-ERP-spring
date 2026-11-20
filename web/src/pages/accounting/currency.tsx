@@ -12,8 +12,11 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  useCurrencies, useCurrencyRates, useCreateCurrencyRate,
+  useCurrencies, useCurrencyRates, useCreateCurrencyRate, usePendingRates, useDecideRate,
+  RATE_TYPES, type RateType,
 } from '@/features/accounting/api';
+import { PERMISSIONS } from '@erp/shared';
+import { FxRatePoliciesCard } from './fx-rate-policies-card';
 import { useAuthStore } from '@/stores/auth.store';
 import { format } from 'date-fns';
 import { tx } from '@/lib/i18n/tx';
@@ -26,13 +29,18 @@ export function CurrencyPage() {
   const [toCode, setToCode] = useState(baseCode);
   const [rate, setRate] = useState('');
   const [asOf, setAsOf] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [rateType, setRateType] = useState<RateType>('official');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const { data: rates, isLoading: ratesLoading, refetch } = useCurrencyRates({ fromCode, toCode });
+  const { data: rates, isLoading: ratesLoading, refetch } = useCurrencyRates({ fromCode, toCode, rateType });
   const createRate = useCreateCurrencyRate();
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+  const canApprove = hasPermission(PERMISSIONS.currency.approve);
+  const { data: pending } = usePendingRates();
+  const decide = useDecideRate();
 
   const handleAddRate = async () => {
     if (!fromCode || !toCode || !rate || !asOf || Number(rate) <= 0) return;
-    await createRate.mutateAsync({ fromCode, toCode, rate: Number(rate), asOf });
+    await createRate.mutateAsync({ fromCode, toCode, rate: Number(rate), asOf, rateType });
     setRate('');
     setDialogOpen(false);
   };
@@ -92,6 +100,13 @@ export function CurrencyPage() {
                     <Label className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Effective date')}</Label>
                     <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-9 text-xs" />
                   </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[10px] font-bold text-muted-foreground uppercase">{tx('Rate type')}</Label>
+                  <select value={rateType} onChange={(e) => setRateType(e.target.value as RateType)}
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs">
+                    {RATE_TYPES.map((t) => <option key={t} value={t}>{tx(t)}</option>)}
+                  </select>
                 </div>
                 {rate && Number(rate) > 0 && (
                   <p className="text-xs text-muted-foreground">1 {fromCode} = {rate} {toCode}</p>
@@ -157,7 +172,7 @@ export function CurrencyPage() {
         <Card>
           <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg">
             <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              {tx('Exchange Rates')} · {fromCode} → {toCode}
+              {tx('Exchange Rates')} · {fromCode} → {toCode} · {tx(rateType)}
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -202,6 +217,43 @@ export function CurrencyPage() {
           </CardContent>
         </Card>
       </div>
+
+      {pending && pending.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg">
+            <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+              {tx('Rates waiting for approval')}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableBody>
+                {pending.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="text-xs font-mono">{r.rateType}</TableCell>
+                    <TableCell className="text-xs font-semibold">
+                      {Number(r.rate).toLocaleString(undefined, { maximumFractionDigits: 8 })}
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{format(new Date(r.asOf), 'MMM d, yyyy')}</TableCell>
+                    <TableCell className="text-right pr-4">
+                      {canApprove && (
+                        <div className="flex justify-end gap-2">
+                          <Button size="sm" variant="outline" disabled={decide.isPending}
+                            onClick={() => decide.mutate({ id: r.id, approve: false })}>{tx('Reject')}</Button>
+                          <Button size="sm" disabled={decide.isPending}
+                            onClick={() => decide.mutate({ id: r.id, approve: true })}>{tx('Approve')}</Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      <FxRatePoliciesCard />
     </div>
   );
 }

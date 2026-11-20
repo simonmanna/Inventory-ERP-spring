@@ -611,7 +611,46 @@ public class PostingService {
             return new CurrencyService.Resolution(baseCode, baseCode,
                     Money.dec(request.exchangeRate() == null ? 1 : request.exchangeRate()), "base", date);
         }
-        return currency.resolve(request.currencyId(), baseCode, request.exchangeRate(), date);
+        return currency.resolve(request.currencyId(), baseCode, request.exchangeRate(), date,
+                fxContext(request.sourceType()));
+    }
+
+    /**
+     * FX-2 B: the rate-policy context of a posting, from its source. Sources a module resolves itself (payments,
+     * treasury moves, deposits) carry their context on the leg rates they pass; unknown sources use the defaults.
+     */
+    static String fxContext(String sourceType) {
+        if (sourceType == null) {
+            return null;
+        }
+        String s = sourceType.toLowerCase();
+        if (s.startsWith("vendor_bill") || s.startsWith("debit_note") || s.startsWith("purchase")
+                || s.startsWith("landed_cost") || s.startsWith("supplier_claim")) {
+            return "purchase";
+        }
+        if (s.equals("invoice") || s.startsWith("sales_invoice") || s.startsWith("credit_note") || s.startsWith("pos_")
+                || s.startsWith("cash_sale")) {
+            return "sales";
+        }
+        if (s.startsWith("goods_receipt") || s.startsWith("receipt_voucher") || s.startsWith("direct_stock_in")) {
+            return "goods_receipt";
+        }
+        if (s.startsWith("expense")) {
+            return "expense";
+        }
+        if (s.startsWith("customer_deposit") || s.startsWith("deposit")) {
+            return "deposit";
+        }
+        if (s.startsWith("cash_flow") || s.startsWith("treasury") || s.startsWith("bank_")) {
+            return "treasury";
+        }
+        if (s.equals("fx_revaluation")) {
+            return "revaluation";
+        }
+        if (s.startsWith("opening_balance")) {
+            return "opening_balance";
+        }
+        return null;
     }
 
     /** Resolved lines of an entry about to be written, and whether their cost centres are final. */
@@ -717,9 +756,11 @@ public class PostingService {
             return;
         }
         jdbc.sql("INSERT INTO \"JournalEntryFxRate\" (id, \"organizationId\", \"journalEntryId\", \"fromCode\","
-                        + " \"toCode\", rate, \"rateDate\", source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                        + " \"toCode\", rate, \"rateDate\", source, \"rateType\", context, \"policyRate\","
+                        + " \"overrideReason\", \"approvedBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(UUID.randomUUID().toString(), organizationId, entryId, fx.fromCode(), fx.toCode(), fx.rate(),
-                        FiscalPeriodControl.ts(fx.rateDate()), fx.source())
+                        FiscalPeriodControl.ts(fx.rateDate()), fx.source(), fx.rateType(), fx.context(),
+                        fx.policyRate(), fx.overrideReason(), fx.overrideReason() == null ? null : TenantContext.userId())
                 .update();
     }
 

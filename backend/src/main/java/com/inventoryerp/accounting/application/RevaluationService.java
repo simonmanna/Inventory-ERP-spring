@@ -188,7 +188,7 @@ public class RevaluationService {
                     continue;
                 }
                 String ccy = byCurrency.getKey();
-                BigDecimal rate = currency.getRate(ccy, baseCode, asOf);
+                BigDecimal rate = currency.policyRate(ccy, baseCode, asOf, "revaluation");
                 BigDecimal revaluedBase = foreign.multiply(rate).setScale(6, RoundingMode.HALF_UP);
                 BigDecimal adjustment = revaluedBase.subtract(base);
                 BigDecimal booked = booked(organizationId, sourceId(acct.getKey(), ccy, asOf), acct.getKey());

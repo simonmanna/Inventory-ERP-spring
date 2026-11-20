@@ -232,7 +232,7 @@ public class PurchaseOrdersService {
             throw ApiException.badRequest("exchangeRate must be greater than zero");
         }
         BigDecimal rate = functional == null || functional.equalsIgnoreCase(currency) ? BigDecimal.ONE
-                : currencies.resolveStated(currency, functional, dto.exchangeRate(), Instant.now()).rate();
+                : currencies.resolveStated(currency, functional, dto.exchangeRate(), Instant.now(), "purchase").rate();
 
         // ADR-PROCUREMENT-001 policies (no active policy = the behaviour before policies existed).
         SupplierService.Eligibility eligibility = suppliers.eligibilityForProducts(dto.partnerId(), dto.branchId(),

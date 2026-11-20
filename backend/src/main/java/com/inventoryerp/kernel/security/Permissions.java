@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (731 permissions). Constant name = GROUP__ACTION.
+ * exactly (735 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -57,6 +57,9 @@ public final class Permissions {
     public static final String CURRENCY__READ = "currency:read";
     public static final String CURRENCY__UPDATE = "currency:update";
     public static final String CURRENCY__DELETE = "currency:delete";
+    public static final String CURRENCY__APPROVE = "currency:approve";
+    public static final String CURRENCY__RATE_OVERRIDE = "currency:rate_override";
+    public static final String CURRENCY__POLICY = "currency:policy";
     public static final String FISCAL_PERIOD__CREATE = "fiscal_period:create";
     public static final String FISCAL_PERIOD__READ = "fiscal_period:read";
     public static final String FISCAL_PERIOD__UPDATE = "fiscal_period:update";
@@ -497,6 +500,7 @@ public final class Permissions {
     public static final String SALES__INVOICE_CREATE = "sales:invoice:create";
     public static final String SALES__DEPOSIT_RECORD = "sales:deposit:record";
     public static final String SALES__DEPOSIT_REFUND = "sales:deposit:refund";
+    public static final String SALES__DEPOSIT_CLASSIFY = "sales:deposit:classify";
     public static final String SALES__RETURN_READ = "sales:return:read";
     public static final String SALES__RETURN_WRITE = "sales:return:write";
     public static final String SALES__RETURN_APPROVE = "sales:return:approve";
@@ -791,6 +795,9 @@ public final class Permissions {
             "currency:read",
             "currency:update",
             "currency:delete",
+            "currency:approve",
+            "currency:rate_override",
+            "currency:policy",
             "fiscal_period:create",
             "fiscal_period:read",
             "fiscal_period:update",
@@ -1231,6 +1238,7 @@ public final class Permissions {
             "sales:invoice:create",
             "sales:deposit:record",
             "sales:deposit:refund",
+            "sales:deposit:classify",
             "sales:return:read",
             "sales:return:write",
             "sales:return:approve",

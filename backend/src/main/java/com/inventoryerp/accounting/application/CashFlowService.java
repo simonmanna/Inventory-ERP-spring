@@ -351,7 +351,7 @@ public class CashFlowService {
         String ccy = foreign.currency();
         ForeignCash.assertDecimals(jdbc, ccy, amount);
         String functional = ForeignCash.functional(jdbc, orgId);
-        CurrencyService.Resolution rate = currency.resolveStated(ccy, functional, dto.exchangeRate(), postingDate);
+        CurrencyService.Resolution rate = currency.resolveStated(ccy, functional, dto.exchangeRate(), postingDate, "treasury");
         BigDecimal valued = amount.multiply(rate.rate()).setScale(6, RoundingMode.HALF_UP);
         boolean deposit = "deposit".equals(direction);
         BigDecimal cashBase = valued;
