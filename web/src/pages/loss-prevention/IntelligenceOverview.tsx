@@ -84,7 +84,7 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
   const rootRef = useRef<HTMLDivElement>(null);
   const [full, setFull] = useState(false);
   const dash = useLpDashboard(LIVE_MS);
-  const cases = useLpCases({ page: 1, pageSize: 25 }, LIVE_MS);
+  const cases = useLpCases({ page: 1, pageSize: 100 }, LIVE_MS);
   // The critical ones may be older than the latest page: read them on their own so the alert card never misses one.
   const critical = useLpCases({ severity: 'critical', page: 1, pageSize: 25 }, LIVE_MS);
   const open = (cases.data?.data ?? []).filter((c) => c.state !== 'closed');
@@ -191,7 +191,7 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">{tx('No open alerts.')}</p>
           )}
           <ul className="divide-y">
-            {listed.slice(0, 8).map((c) => {
+            {listed.slice(0, videoOnly ? 50 : 8).map((c) => {
               const t = TONE[c.severity];
               const top = c.id === featured?.id;
               return (
@@ -414,11 +414,13 @@ function EvidenceMedia({ evidence, loading, c, tone, engineLabel }: {
   if (url && evidence) {
     return (
       <div className="relative h-full w-full">
+        {evidence.kind === 'snapshot' && (
+          <img src={url} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-xl" />
+        )}
         {evidence.kind === 'snapshot'
-          ? <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          ? <img src={url} alt="" className="absolute inset-0 h-full w-full object-contain drop-shadow-2xl" />
           : <video src={url} controls autoPlay className="absolute inset-0 h-full w-full bg-black object-contain" />}
-        <Brackets frame={tone.frame} />
-        <span className={cn('absolute bottom-3 left-3 rounded-md px-2.5 py-1 text-sm font-semibold text-white shadow', tone.tag)}>
+        <span className={cn('absolute left-3 top-12 rounded-md px-2.5 py-1 text-sm font-semibold text-white shadow', tone.tag)}>
           {c.ruleCode}: {engineLabel}
         </span>
       </div>
