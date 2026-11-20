@@ -15,7 +15,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,7 +33,13 @@ public class FxRevaluationController {
     /** {@code asOf}: the revaluation date (end of day); defaults to today. */
     public record RevaluationRequest(
             @NotNull(message = "must be a valid ISO 8601 date string")
-            @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String asOf) {}
+            @Pattern(regexp = AccountingDtos.ISO_DATE, message = "must be a valid ISO 8601 date string") String asOf,
+            Boolean acknowledgeWarnings) {}
+
+    /** FX-2 C: {@code PUT /fx-revaluations/accounts/{id}} body. */
+    public record AccountTreatmentRequest(
+            @NotNull(message = "must be a string")
+            @com.inventoryerp.shared.validation.OneOf({"inherit", "monetary", "non_monetary"}) String fxRevaluation) {}
 
     private final RevaluationService revaluation;
 
@@ -51,11 +59,32 @@ public class FxRevaluationController {
         return revaluation.preview(revaluation.endOfDay(dto.asOf()));
     }
 
+    /** FX-2 C: conditions the run refuses on unless acknowledged. */
+    @PostMapping("/warnings")
+    @RequirePermissions(Permissions.CURRENCY__READ)
+    public List<RevaluationService.Warning> warnings(@Valid @RequestBody RevaluationRequest dto) {
+        return revaluation.warnings(revaluation.endOfDay(dto.asOf()));
+    }
+
+    /** FX-2 C: balance-sheet accounts with their monetary setting and effective treatment. */
+    @GetMapping("/accounts")
+    @RequirePermissions(Permissions.CURRENCY__READ)
+    public List<Map<String, Object>> accounts() {
+        return revaluation.accountTreatments();
+    }
+
+    @PutMapping("/accounts/{id}")
+    @RequirePermissions(Permissions.CURRENCY__POLICY)
+    public Map<String, Object> setAccount(@PathVariable String id, @Valid @RequestBody AccountTreatmentRequest dto) {
+        return revaluation.setAccountTreatment(id, dto.fxRevaluation());
+    }
+
     @PostMapping
     @Idempotent // posts to the ledger: a retried run replays instead of running again (review 2026-11-15); answers 200
     @RequirePermissions(Permissions.CURRENCY__UPDATE)
     public Map<String, Object> run(@Valid @RequestBody RevaluationRequest dto) {
-        RevaluationService.Result r = revaluation.run(revaluation.endOfDay(dto.asOf()));
+        RevaluationService.Result r = revaluation.run(revaluation.endOfDay(dto.asOf()),
+                Boolean.TRUE.equals(dto.acknowledgeWarnings()));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("revalued", r.revalued());
         out.put("totalGain", r.totalGain());

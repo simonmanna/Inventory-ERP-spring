@@ -190,10 +190,14 @@ class ReportingIT extends ApiTestSupport {
     void fxRevaluationAndWorkflow() {
         String base = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(demoOrg).query(String.class).single();
         Instant now = Instant.now();
+        // FX-2 C: a functional bank never carries foreign lines; the EUR balance sits on a EUR bank account.
+        String eurBank = ok(201, "POST", "/accounts/cash-flow", Map.of("code", "12" + java.util.UUID.randomUUID()
+                .toString().substring(0, 6), "name", "Reporting EUR bank", "accountType", "bank", "currencyId", "EUR"))
+                .get("id").asString();
         RevaluationService.Result result = TenantContext.run(TenantContext.TenantStore.organization(demoOrg), () -> {
             currency.upsertRate("EUR", base, now.minus(Duration.ofDays(2)), new BigDecimal("2"), "test");
             posting.post(new PostingRequest("GEN", now.minus(Duration.ofDays(1)), "EUR deposit", "EUR", 2, "test", null, null,
-                    null, null, null, null, List.of(PostingRequest.Line.debit(accountId("BANK-DEFAULT"), 100, "EUR in"),
+                    null, null, null, null, List.of(PostingRequest.Line.debit(eurBank, 100, "EUR in"),
                             PostingRequest.Line.credit(accountId("3100"), 100, "EUR in"))));
             currency.upsertRate("EUR", base, now.minus(Duration.ofMinutes(1)), new BigDecimal("2.5"), "test");
             return revaluation.run(now);
@@ -204,10 +208,11 @@ class ReportingIT extends ApiTestSupport {
         // ACC-2: the row is keyed by the real fiscal period of asOf (was the constant 'adhoc').
         BigDecimal fxGain = jdbc.sql("SELECT \"fxGain\" FROM \"FxRevaluation\" WHERE \"organizationId\" = ? AND"
                         + " \"accountId\" = ? ORDER BY \"asOf\" DESC LIMIT 1")
-                .params(demoOrg, accountId("BANK-DEFAULT")).query(BigDecimal.class).single();
+                .params(demoOrg, eurBank).query(BigDecimal.class).single();
         assertThat(fxGain).isEqualByComparingTo("50");
-        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = 'fx_revaluation'")
-                .param(demoOrg).query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"JournalEntry\" e WHERE e.\"organizationId\" = ? AND e.\"sourceType\" ="
+                + " 'fx_revaluation' AND EXISTS (SELECT 1 FROM \"JournalLine\" l WHERE l.\"journalEntryId\" = e.id AND"
+                + " l.\"accountId\" = ?)").params(demoOrg, eurBank).query(Long.class).single()).isEqualTo(1);
 
         assertThat(workflows.get("journal_entry").transitions().get(0).action()).isEqualTo("reverse");
     }

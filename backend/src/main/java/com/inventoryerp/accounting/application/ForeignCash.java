@@ -228,6 +228,56 @@ public final class ForeignCash {
         }
     }
 
+    /**
+     * FX-2 C, transaction-level validation of foreign-tagged lines ({accountId, currency, partnerId}):
+     * <ul>
+     *   <li>a functional-currency cash, bank or mobile-money account never carries a foreign-currency line (the FX-1
+     *       expense defect class: revaluation would revalue a functional account);</li>
+     *   <li>a foreign line on a receivable or payable account names its partner, so it can be revalued and settled per
+     *       partner.</li>
+     * </ul>
+     * Revaluation and designation entries are exempt.
+     */
+    static void assertForeignLines(JdbcClient jdbc, String organizationId, List<String[]> lines, String sourceType) {
+        if (sourceType != null && BASE_ONLY_SOURCES.contains(sourceType)) {
+            return;
+        }
+        String functional = functional(jdbc, organizationId);
+        List<String> ids = new ArrayList<>();
+        for (String[] l : lines) {
+            if (l[1] != null && !l[1].equalsIgnoreCase(functional)) {
+                ids.add(l[0]);
+            }
+        }
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<String, String[]> kinds = new LinkedHashMap<>();
+        jdbc.sql("SELECT a.id, a.code, CASE WHEN c.\"isCashEquivalent\" AND (a.\"currencyId\" IS NULL OR"
+                        + " upper(a.\"currencyId\") = upper(?)) THEN 'functional_cash' WHEN c.key IN ('receivable',"
+                        + " 'payable') THEN c.key END AS kind FROM \"Account\" a JOIN \"AccountCategory\" c ON c.id ="
+                        + " a.\"categoryId\" WHERE a.\"organizationId\" = ? AND a.id = ANY(?::text[])")
+                .params(functional, organizationId, ids.toArray(String[]::new))
+                .query((rs, n) -> kinds.put(rs.getString("id"), new String[] {rs.getString("code"),
+                        rs.getString("kind")}))
+                .list();
+        for (String[] l : lines) {
+            String[] k = kinds.get(l[0]);
+            if (k == null || k[1] == null || l[1] == null || l[1].equalsIgnoreCase(functional)) {
+                continue;
+            }
+            if ("functional_cash".equals(k[1])) {
+                throw ApiException.badRequest("Account " + k[0] + " is held in " + functional + "; a " + l[1].toUpperCase()
+                        + " line cannot post to it");
+            }
+            if (l.length > 2 && (l[2] == null || l[2].isBlank())) {
+                throw ApiException.badRequest("receivable".equals(k[1])
+                        ? "Foreign-currency receivable lines need a partner"
+                        : "Foreign-currency payable lines need a partner");
+            }
+        }
+    }
+
     private static BigDecimal r6(BigDecimal v) {
         return v.setScale(6, RoundingMode.HALF_UP);
     }

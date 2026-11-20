@@ -61,6 +61,52 @@
 - Web, Currency page: a rate-type selector for entry and list, a pending-approval card with Approve and Reject, and a
   policies table. Money dialogs do not yet show the resolved rate type or ask for a reason; that is left for later.
 
+## C. Monetary scope and partner-level revaluation (decision 6) — built
+
+- `Account.fxRevaluation` (`inherit|monetary|non_monetary`, V586).
+- **Category defaults live in code**, because the global category catalog is seeded at startup, after migrations
+  (`RevaluationService.MONETARY_CATEGORIES`): cash, bank, mobile money, petty cash, receivable, payable, tax, current
+  and non-current liability. Everything else is non-monetary.
+- `NON_MONETARY_MAPPINGS` makes three accounts inherit as non-monetary whatever their category:
+  - `customer_deposit` (advance, IFRIC 22);
+  - `grni_accrued`;
+  - `landed_cost_clearing`.
+
+  The two clearing accounts mix receipt-time base lines with bill-time foreign lines; their open payable is revalued
+  on AP. Workstream G revisits GRNI once receipts are valued at the receipt-date rate.
+- Change from the old scope (reconcilable or cash-equivalent categories, minus prepaid): foreign **liabilities**
+  (loans, accruals) are now revalued. Prepaid stays out.
+- Revaluation groups by (account, currency, partner):
+  - one entry per (account, currency), with one line per partner (`partnerId`) plus one gain line and one loss line;
+  - `FxRevaluation.partnerId` and its unique key include the partner;
+  - `booked()` filters by partner, so a re-run is idempotent per partner.
+
+  History is not restated.
+- Engine validation (`ForeignCash.assertForeignLines`, called by `PostingService`), revaluation and designation
+  entries exempt:
+  - a functional cash, bank or mobile-money account refuses a foreign-currency line: "Account X is held in UGX; a USD
+    line cannot post to it";
+  - a foreign line on a receivable or payable account needs a partner.
+- Warnings, which block the run unless the run is sent with `acknowledgeWarnings: true`:
+  - partnerless foreign lines on AR/AP;
+  - accounts set monetary that have no foreign lines.
+
+  Unclassified deposits are added in D.
+- Routes:
+  - `POST /fx-revaluations/warnings`;
+  - `GET /fx-revaluations/accounts`;
+  - `PUT /fx-revaluations/accounts/{id}` (`currency:policy`);
+  - `POST /fx-revaluations` gains `acknowledgeWarnings`;
+  - preview lines gain `partnerId` / `partnerName`.
+- Web, period end: warnings with an acknowledge checkbox, and a partner column. There is no web editor yet for the
+  per-account setting (the API only).
+- Tests changed because they posted foreign lines onto a functional bank, or onto AR/AP without a partner, which the
+  engine now refuses:
+  - `Acc0FxIT`: AR/AP with partners;
+  - `Acc0FinancialReportingIT`: a bank held in the currency;
+  - `ReportingIT`: a EUR bank;
+  - `FxTreasuryIT.twoCurrenciesOneAccount`: a partner.
+
 ## Tests
 
 - `FunctionalCurrencyIT`: clearing refused; changeable before and locked after the first posting; blank refused by
@@ -70,3 +116,8 @@
   stated rates forbidden; validation.
 - Unchanged and green: `CurrencyServiceResolveTest`, `FxGainLossFx1IT`, `SharedFxIT`, `FxPaymentsIT`, `FxDepositsIT`,
   `FxTreasuryIT`, `Acc0FxIT`, `ForeignCashTest`, `LandedCostAuditIT`, `ProcurementIntegrityIT`.
+- `FxRevaluationPartnerIT`:
+  - two customers revalued per partner, with subledger per partner = GL, idempotent re-run and reversal;
+  - a loan revalued while prepaid and a non-monetary override are not;
+  - engine refusals;
+  - legacy partnerless lines block the run until acknowledged.

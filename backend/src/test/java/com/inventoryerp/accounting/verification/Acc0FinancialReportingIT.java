@@ -80,7 +80,11 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
                 "monthly")).get("id").asString();
         String day = LocalDate.now().minusDays(1).toString();
         // Foreign sale 1,000 ccy @2 = 2,000 base; base-currency expense 500.
-        postJe(b, "GEN", day, ccy, "2", null, null, List.of(dr(c.cash(), 1000), cr(c.revenue(), 1000)));
+        // FX-2 C: the foreign receipt lands on a bank held in that currency, not the functional cash account.
+        String fxBank = "12" + java.util.UUID.randomUUID().toString().substring(0, 6);
+        okAs(b, 201, "POST", "/accounts/cash-flow", Map.of("code", fxBank, "name", "ACC-1 bank " + ccy, "accountType",
+                "bank", "currencyId", ccy));
+        postJe(b, "GEN", day, ccy, "2", null, null, List.of(dr(fxBank, 1000), cr(c.revenue(), 1000)));
         postJe(b, day, List.of(dr(c.opex(), 500), cr(c.cash(), 500)));
         LedgerInvariants.fxLinesValid(jdbc, b.org(), base, null);
         for (String pid : jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ?"
@@ -99,7 +103,9 @@ class Acc0FinancialReportingIT extends AccountingFixtures {
         for (JsonNode a : okAs(b, 200, "GET", "/fiscal-years/" + fyId + "/closing-balances", null).get("accounts")) {
             byCode.put(a.get("code").asString(), new BigDecimal(a.get("balance").asString()));
         }
-        assertThat(byCode.get(c.cash())).as("closing cash balance (base)").isEqualByComparingTo("1500");
+        assertThat(byCode.get(fxBank).add(byCode.get(c.cash()))).as("closing cash + foreign bank balance (base)")
+                .isEqualByComparingTo("1500");
+        assertThat(byCode.get(fxBank)).as("foreign bank in base (1,000 @ 2)").isEqualByComparingTo("2000");
         assertThat(byCode.get(c.re())).as("closing retained earnings (base)").isEqualByComparingTo("1500");
     }
 

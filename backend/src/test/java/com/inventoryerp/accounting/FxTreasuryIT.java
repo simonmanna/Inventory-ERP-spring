@@ -352,8 +352,13 @@ class FxTreasuryIT extends AccountingFixtures {
         rate(b, c2, base, LocalDate.now().minusDays(10).toString(), "4000");
         String ar = mappedCode(b.org(), "accounts_receivable");
         String revenue = accountCodeOfSection(b.org(), "revenue");
-        postJe(b, "GEN", day, c1, 3600, null, null, List.of(JeLine.dr(ar, 10), JeLine.cr(revenue, 10)));
-        postJe(b, "GEN", day, c2, 3900, null, null, List.of(JeLine.dr(ar, 10), JeLine.cr(revenue, 10)));
+        // FX-2 C: foreign receivable lines name their partner.
+        String customer = okAs(b, 201, "POST", "/partners", Map.of("code", "R8-" + UUID.randomUUID().toString()
+                .substring(0, 6), "name", "R8 two-currency customer", "isCustomer", true)).get("id").asString();
+        postJe(b, "GEN", day, c1, 3600, null, null, List.of(JeLine.dr(ar, 10).partner(customer),
+                JeLine.cr(revenue, 10)));
+        postJe(b, "GEN", day, c2, 3900, null, null, List.of(JeLine.dr(ar, 10).partner(customer),
+                JeLine.cr(revenue, 10)));
         assertThat(moneyAs(b, "POST", "/fx-revaluations", Map.of("asOf", day)).status()).isEqualTo(200);
         List<String> rows = jdbc.sql("SELECT \"currencyCode\" FROM \"FxRevaluation\" WHERE \"organizationId\" = ? AND"
                 + " \"accountId\" = ? ORDER BY 1").params(b.org(), account(b.org(), ar)).query(String.class).list();

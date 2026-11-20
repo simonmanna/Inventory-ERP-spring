@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/table';
 import {
   useFxRevaluationPreview,
+  useFxRevaluationWarnings,
   useRunFxRevaluation,
   useSettleTax,
   useTaxSettlementPreview,
@@ -52,8 +53,12 @@ function FxRevaluationCard() {
   const [asOf, setAsOf] = useState(today());
   const preview = useFxRevaluationPreview(asOf);
   const run = useRunFxRevaluation();
+  const warnings = useFxRevaluationWarnings(asOf);
+  const [acknowledged, setAcknowledged] = useState(false);
   const canRun = useHasPermission(PERMISSIONS.currency.update);
   const pending = (preview.data ?? []).filter((l) => Number(l.toPost) !== 0).length;
+  const warningList = warnings.data ?? [];
+  const blocked = warningList.length > 0 && !acknowledged;
 
   return (
     <Card>
@@ -70,11 +75,21 @@ function FxRevaluationCard() {
             <Input id="fx-asof" type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-9" />
           </div>
           {canRun && (
-            <Button onClick={() => run.mutate(asOf)} disabled={run.isPending || pending === 0}>
+            <Button onClick={() => run.mutate({ asOf, acknowledgeWarnings: acknowledged })}
+              disabled={run.isPending || pending === 0 || blocked}>
               {tx('Post revaluation')}
             </Button>
           )}
         </div>
+        {warningList.length > 0 && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 space-y-1 text-sm">
+            {warningList.map((w) => <p key={w.code + w.accountId}>{w.message}</p>)}
+            <label className="flex items-center gap-2 pt-1 text-xs font-medium">
+              <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} />
+              {tx('I have reviewed these warnings; revalue anyway')}
+            </label>
+          </div>
+        )}
         {preview.isError ? (
           <p className="text-sm text-destructive">{tx('Could not compute the revaluation (check the closing rates).')}</p>
         ) : (
@@ -84,6 +99,7 @@ function FxRevaluationCard() {
                 <TableRow>
                   <TableHead>{tx('Account')}</TableHead>
                   <TableHead>{tx('Currency')}</TableHead>
+                  <TableHead>{tx('Partner')}</TableHead>
                   <TableHead className="text-right">{tx('Foreign balance')}</TableHead>
                   <TableHead className="text-right">{tx('Carrying value')}</TableHead>
                   <TableHead className="text-right">{tx('Rate')}</TableHead>
@@ -94,19 +110,20 @@ function FxRevaluationCard() {
               <TableBody>
                 {preview.isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={7}><Skeleton className="h-4 w-full" /></TableCell>
+                    <TableCell colSpan={8}><Skeleton className="h-4 w-full" /></TableCell>
                   </TableRow>
                 ) : (preview.data ?? []).length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-16 text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="h-16 text-center text-muted-foreground">
                       {tx('No foreign-currency monetary balances.')}
                     </TableCell>
                   </TableRow>
                 ) : (
                   preview.data!.map((l) => (
-                    <TableRow key={l.accountId + l.currencyCode}>
+                    <TableRow key={l.accountId + l.currencyCode + (l.partnerId ?? '')}>
                       <TableCell>{l.accountCode}</TableCell>
                       <TableCell>{l.currencyCode}</TableCell>
+                      <TableCell>{l.partnerName ?? '—'}</TableCell>
                       <TableCell className="text-right">{money(l.foreignBalance)}</TableCell>
                       <TableCell className="text-right">{money(l.carryingBase)}</TableCell>
                       <TableCell className="text-right">{String(l.rate)}</TableCell>

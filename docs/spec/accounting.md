@@ -80,6 +80,12 @@ FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owne
 - A company rate policy per context can require approved rates, forbid stated rates, or bound them by a tolerance.
   Beyond the tolerance, the caller needs `currency:rate_override` and the header `X-Fx-Rate-Override-Reason`.
   Without policies, behaviour is unchanged.
+- FX revaluation follows each account's monetary setting (default by category), so foreign liabilities such as loans
+  are now revalued. AR/AP are revalued per partner, with `partnerId` on revaluation lines and rows.
+- The run refuses while warnings exist unless sent with `acknowledgeWarnings: true` (additive field). Additive routes:
+  `POST /fx-revaluations/warnings`, `GET /fx-revaluations/accounts` and `PUT /fx-revaluations/accounts/{id}`.
+- The posting engine refuses a foreign-currency line on a functional cash, bank or mobile-money account, and a foreign
+  receivable or payable line without a partner.
 
 FX gain/loss correctness (FX-1, [ADR-S081](../adr/ADR-S081-fx-gain-loss-correctness.md), owner-approved 2026-11-20):
 

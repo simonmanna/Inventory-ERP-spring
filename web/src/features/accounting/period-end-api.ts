@@ -16,6 +16,24 @@ export interface FxRevaluationLine {
   adjustment: string | number;
   alreadyBooked: string | number;
   toPost: string | number;
+  partnerId?: string | null;
+  partnerName?: string | null;
+}
+
+/** FX-2 C: a condition the revaluation run refuses on unless acknowledged. */
+export interface FxRevaluationWarning {
+  code: string;
+  message: string;
+  accountId: string;
+  accountCode: string;
+}
+
+export function useFxRevaluationWarnings(asOf: string) {
+  return useQuery({
+    queryKey: ['fx-revaluation-warnings', asOf],
+    enabled: !!asOf,
+    queryFn: async () => (await api.post<FxRevaluationWarning[]>('/fx-revaluations/warnings', { asOf })).data,
+  });
 }
 
 export function useFxRevaluationPreview(asOf: string) {
@@ -29,11 +47,12 @@ export function useFxRevaluationPreview(asOf: string) {
 export function useRunFxRevaluation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (asOf: string) =>
-      await idempotentPost<{ revalued: number; totalGain: string }>('/fx-revaluations', { asOf }),
+    mutationFn: async ({ asOf, acknowledgeWarnings }: { asOf: string; acknowledgeWarnings?: boolean }) =>
+      await idempotentPost<{ revalued: number; totalGain: string }>('/fx-revaluations', { asOf, acknowledgeWarnings }),
     onSuccess: (r) => {
       notify.success(tx('FX revaluation posted'), tx('{{v1}} balances revalued, net {{v2}}', { v1: r.revalued, v2: r.totalGain }));
       qc.invalidateQueries({ queryKey: ['fx-revaluation-preview'] });
+      qc.invalidateQueries({ queryKey: ['fx-revaluation-warnings'] });
     },
     onError: (e) => notify.error(tx('FX revaluation failed'), apiMessage(e, tx('Please try again'))),
   });

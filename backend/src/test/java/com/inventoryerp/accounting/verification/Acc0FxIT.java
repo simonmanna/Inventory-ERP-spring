@@ -27,9 +27,17 @@ class Acc0FxIT extends AccountingFixtures {
     /** A postable, active, monetary ("allowReconciliation") account of the given classification, by code. */
     String monetary(Books b, String classification) {
         return jdbc.sql("SELECT a.code FROM \"Account\" a JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\" WHERE"
-                        + " a.\"organizationId\" = ? AND c.\"allowReconciliation\" = true AND c.classification::text = ?"
+                        // FX-2 C: the receivable / payable control account (a functional bank never holds foreign lines).
+                        + " a.\"organizationId\" = ? AND c.key IN ('receivable', 'payable') AND c.classification::text = ?"
                         + " AND a.\"isPostable\" AND a.\"isActive\" AND a.\"deletedAt\" IS NULL ORDER BY a.code LIMIT 1")
                 .params(b.org(), classification).query(String.class).optional().orElse(null);
+    }
+
+    /** FX-2 C: foreign receivable / payable lines name their partner. */
+    String partner(Books b, boolean customer) {
+        return okAs(b, 201, "POST", "/partners", Map.of("code", "ACC2-" + java.util.UUID.randomUUID().toString()
+                .substring(0, 6), "name", "ACC-2 partner", customer ? "isCustomer" : "isSupplier", true))
+                .get("id").asString();
     }
 
     /**
@@ -62,7 +70,7 @@ class Acc0FxIT extends AccountingFixtures {
         String revenue = accountCodeOfSection(b.org(), "revenue");
         // EUR-style receivable 10,000 @1.08 = 10,800 base.
         String sale = postJe(b, "GEN", d0.plusDays(1).toString(), ccy, "1.08", null, null,
-                List.of(dr(asset, 10000), cr(revenue, 10000)));
+                List.of(dr(asset, 10000).partner(partner(b, true)), cr(revenue, 10000)));
         LedgerInvariants.fxLinesValid(jdbc, b.org(), base, List.of(sale));
 
         LocalDate d1 = LocalDate.now().minusDays(5);
@@ -96,7 +104,7 @@ class Acc0FxIT extends AccountingFixtures {
         assertThat(liability).as("a monetary (revaluable) liability account exists in the template").isNotNull();
         String expense = accountCodeOfSection(b.org(), "operating_expense");
         postJe(b, "GEN", d0.plusDays(1).toString(), ccy, "1.08", null, null,
-                List.of(dr(expense, 5000), cr(liability, 5000)));
+                List.of(dr(expense, 5000), cr(liability, 5000).partner(partner(b, false))));
         LocalDate d1 = LocalDate.now().minusDays(5);
         rate(b, ccy, base, d1.toString(), "1.12");
         run(b, d1);

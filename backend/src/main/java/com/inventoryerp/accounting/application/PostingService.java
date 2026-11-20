@@ -745,9 +745,10 @@ public class PostingService {
         for (NormalizedLine l : lines) {
             String c = PostingMath.BASE_ONLY.equals(l.currencyId()) ? null
                     : l.overridesCurrency() ? l.currencyId() : entryCurrency;
-            perLine.add(new String[] {l.accountId(), c});
+            perLine.add(new String[] {l.accountId(), c, l.partnerId()});
         }
         ForeignCash.assertDenominated(jdbc, organizationId, perLine, sourceType);
+        ForeignCash.assertForeignLines(jdbc, organizationId, perLine, sourceType);
     }
 
     /** Snapshot of the rate a foreign-currency entry was posted at: pair, rate, date and source. */
