@@ -70,7 +70,7 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
-FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; in progress):
+FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; built on branch phase/fx2, not merged):
 
 - Posting refuses when the company has no functional currency (no USD fallback). `PATCH /organizations/me/settings`
   refuses clearing `currencyCode`: "The functional currency is required".
@@ -93,6 +93,9 @@ FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owne
 - Expense payments may come from an account held in the expense's currency (realised FX at carrying value). A foreign
   accrued expense paid from a functional account realises FX at the payment-date rate. `POST /expenses/{id}/pay` gains
   `exchangeRate` and `foreignAmount`. Paying from an account held in another currency is refused.
+- Additive route `POST /payments/{id}/allocations` allocates a payment's unallocated advance to open documents with
+  realised FX. Credit-note allocation realises FX. Foreign loans and foreign opening balances (`currencyCode`,
+  `exchangeRate` on `/opening-balances` lines) carry their currency.
 - A foreign PO receipt is valued at the receipt-date rate (table, else the PO rate) and records it on the receipt.
   Bills remeasure AP from the receipt's rate. The PO pay route measures what is owed at the receipts' carrying rate.
 

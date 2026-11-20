@@ -16,6 +16,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
@@ -45,14 +46,19 @@ public class FinanceExtensionsController {
             @NotNull(message = "must be a string") String accountId,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal debit,
             @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal credit,
-            String description) {}
+            String description,
+            /* FX-2 F: a foreign balance, in this currency at this (else the table) rate. */
+            String currencyCode,
+            @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate) {}
 
     /** One customer / supplier opening balance. */
     public record PartnerLineRequest(
             @NotNull(message = "must be a string") String partnerId,
             @NotNull(message = NUM) @DecimalMin(value = "0.01", message = "must not be less than 0.01") BigDecimal amount,
             @Pattern(regexp = DATE, message = DATE_MSG) String dueDate,
-            @Size(max = 120, message = "must be shorter than or equal to 120 characters") String reference) {}
+            @Size(max = 120, message = "must be shorter than or equal to 120 characters") String reference,
+            String currencyCode,
+            @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate) {}
 
     /** {@code POST /opening-balances}. */
     public record OpeningBalanceRequest(
@@ -101,13 +107,15 @@ public class FinanceExtensionsController {
     public Map<String, Object> postOpeningBalances(@Valid @RequestBody OpeningBalanceRequest dto) {
         return openings.post(new OpeningInput(dto.date(), dto.reference(),
                 dto.accounts() == null ? null : dto.accounts().stream()
-                        .map(a -> new AccountLine(a.accountId(), a.debit(), a.credit(), a.description())).toList(),
+                        .map(a -> new AccountLine(a.accountId(), a.debit(), a.credit(), a.description(),
+                                a.currencyCode(), a.exchangeRate())).toList(),
                 partners(dto.customers()), partners(dto.suppliers())));
     }
 
     private static List<PartnerLine> partners(List<PartnerLineRequest> in) {
         return in == null ? null : in.stream()
-                .map(p -> new PartnerLine(p.partnerId(), p.amount(), p.dueDate(), p.reference())).toList();
+                .map(p -> new PartnerLine(p.partnerId(), p.amount(), p.dueDate(), p.reference(), p.currencyCode(),
+                        p.exchangeRate())).toList();
     }
 
     // ------------------------------------------------------------------ tax

@@ -6,6 +6,7 @@ import com.inventoryerp.accounting.application.AccountResolverService.AccountMet
 import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
+import com.inventoryerp.accounting.application.CurrencyService;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.InvoiceService.InvoiceInput;
@@ -41,10 +42,24 @@ import org.springframework.transaction.annotation.Transactional;
 public class OpeningBalanceService {
 
     /** GL line: exactly one of debit / credit positive. */
-    public record AccountLine(String accountId, BigDecimal debit, BigDecimal credit, String description) {}
+    public record AccountLine(String accountId, BigDecimal debit, BigDecimal credit, String description,
+            String currencyCode, BigDecimal exchangeRate) {
+
+        /** A functional-currency line. */
+        public AccountLine(String accountId, BigDecimal debit, BigDecimal credit, String description) {
+            this(accountId, debit, credit, description, null, null);
+        }
+    }
 
     /** Customer or supplier open balance. */
-    public record PartnerLine(String partnerId, BigDecimal amount, String dueDate, String reference) {}
+    public record PartnerLine(String partnerId, BigDecimal amount, String dueDate, String reference,
+            String currencyCode, BigDecimal exchangeRate) {
+
+        /** A functional-currency balance. */
+        public PartnerLine(String partnerId, BigDecimal amount, String dueDate, String reference) {
+            this(partnerId, amount, dueDate, reference, null, null);
+        }
+    }
 
     /** Whole request. */
     public record OpeningInput(String date, String reference, List<AccountLine> accounts,
@@ -59,11 +74,13 @@ public class OpeningBalanceService {
     private final InvoiceService invoices;
     private final VendorBillService bills;
     private final InventoryValuationService valuation;
+    private final CurrencyService currency;
 
     public OpeningBalanceService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, InvoiceService invoices, VendorBillService bills,
-            InventoryValuationService valuation) {
+            InventoryValuationService valuation, CurrencyService currency) {
         this.valuation = valuation;
+        this.currency = currency;
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
@@ -147,6 +164,20 @@ public class OpeningBalanceService {
                             + " (account " + a.code() + ")");
                 }
                 String desc = l.description() == null || l.description().isBlank() ? label : l.description();
+                // FX-2 F: a foreign balance (e.g. a USD bank) is entered in its currency and valued at the opening
+                // rate (stated, else the table on the opening date, context opening_balance); equity takes the value.
+                String ccy = foreignCode(l.currencyCode());
+                if (ccy != null) {
+                    BigDecimal rate = currency.resolveStated(ccy, posting.baseCurrency(), l.exchangeRate(), date,
+                            "opening_balance").rate();
+                    BigDecimal fd = d.multiply(rate).setScale(6, java.math.RoundingMode.HALF_UP);
+                    BigDecimal fc = c.multiply(rate).setScale(6, java.math.RoundingMode.HALF_UP);
+                    lines.add((d.signum() > 0 ? Line.debit(a.id(), PostingService.plain(fd), desc)
+                            : Line.credit(a.id(), PostingService.plain(fc), desc))
+                            .inCurrency(ccy, PostingService.plain(d.signum() > 0 ? d : c)));
+                    net = net.add(fd).subtract(fc);
+                    continue;
+                }
                 lines.add(d.signum() > 0 ? Line.debit(a.id(), PostingService.plain(d), desc)
                         : Line.credit(a.id(), PostingService.plain(c), desc));
                 net = net.add(d).subtract(c);
@@ -163,8 +194,11 @@ public class OpeningBalanceService {
         List<Map<String, Object>> invoiceOut = new ArrayList<>();
         for (PartnerLine c : customers) {
             assertPartner(c, "Customer");
+            // FX-2 F: a foreign customer balance is an invoice in its currency at the opening rate
+            String ccy = foreignCode(c.currencyCode());
             Map<String, Object> doc = invoices.create(new InvoiceInput(c.partnerId(), in.date(), c.dueDate(), null, null,
-                    null, null, null, null, null, null, null, null, null, null, ref(c, label), label,
+                    null, null, null, null, null, null, null, null, ccy, ccy == null ? null : c.exchangeRate(),
+                    ref(c, label), label,
                     List.of(LineInput.of(null, equity, label, BigDecimal.ONE, c.amount(), BigDecimal.ZERO, null,
                             null))));
             String id = (String) doc.get("id");
@@ -176,11 +210,17 @@ public class OpeningBalanceService {
         List<Map<String, Object>> billOut = new ArrayList<>();
         for (PartnerLine s : suppliers) {
             assertPartner(s, "Supplier");
-            Map<String, Object> doc = bills.create(new BillInput(s.partnerId(), in.date(), s.dueDate(), null,
+            String ccy = foreignCode(s.currencyCode());
+            Map<String, Object> doc = bills.create(new BillInput(s.partnerId(), in.date(), s.dueDate(), ccy,
                     ref(s, label), label, null, List.of(), List.of(LineInput.of(null, equity, label, BigDecimal.ONE,
                             s.amount(), BigDecimal.ZERO, null, null))));
             String id = (String) doc.get("id");
             tag(id, batchId);
+            if (ccy != null && s.exchangeRate() != null) {
+                // a bill takes no stated rate on create; the opening rate is stated on the document before posting
+                jdbc.sql("UPDATE \"Document\" SET \"exchangeRate\" = ? WHERE id = ? AND \"organizationId\" = ?")
+                        .params(s.exchangeRate(), id, org()).update();
+            }
             Map<String, Object> posted = bills.post(id, false, false);
             billOut.add(Obj.of("id", id, "documentNumber", posted.get("documentNumber"), "partnerId", s.partnerId(),
                     "amount", PostingService.plain(s.amount())));
@@ -203,6 +243,15 @@ public class OpeningBalanceService {
         if (n == 0) {
             throw ApiException.badRequest(kind + " " + l.partnerId() + " not found");
         }
+    }
+
+    /** The upper-cased currency code when it is not the functional currency, else {@code null}. */
+    private String foreignCode(String code) {
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        String c = code.trim().toUpperCase();
+        return c.equals(posting.baseCurrency()) ? null : c;
     }
 
     private static String ref(PartnerLine l, String label) {

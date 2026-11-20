@@ -98,6 +98,25 @@ public class PaymentController {
         return payments.createReceipt(dto.toInput(), false, false);
     }
 
+    /** FX-2 F: allocate a payment's unallocated remainder (advance) to open documents ({@code {allocations}}). */
+    @PostMapping("/payments/{id}/allocations")
+    @Idempotent
+    @RequirePermissions(Permissions.PAYMENT__ALLOCATE)
+    public Map<String, Object> allocate(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        List<PaymentService.AllocationInput> in = new java.util.ArrayList<>();
+        Object raw = body == null ? null : body.get("allocations");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m) {
+                    Object amount = m.get("amount");
+                    in.add(new PaymentService.AllocationInput((String) m.get("documentId"), null,
+                            amount == null ? null : new java.math.BigDecimal(amount.toString())));
+                }
+            }
+        }
+        return payments.allocateAdvance(id, in);
+    }
+
     @PostMapping("/payments/{id}/void")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.PAYMENT__VOID)

@@ -360,16 +360,27 @@ public class CashFlowService {
             ForeignCash.assertFunds(bal, amount, account.name(), ccy);
             cashBase = ForeignCash.relieve(bal, amount, rate.rate());
         }
-        BigDecimal fx = deposit ? BigDecimal.ZERO : valued.subtract(cashBase);
+        // FX-2 F: a loan received into / repaid from a currency account is a monetary liability in that currency. The
+        // liability line carries the currency (so it is revalued); a repayment relieves it at its carrying value.
+        boolean loan = LOAN_OPERATIONS.contains(op.key());
+        BigDecimal counterBase = valued;
+        if (loan && !deposit) {
+            ForeignCash.Balance owed = ForeignCash.balance(jdbc, orgId, counterpart.id(), ccy);
+            counterBase = ForeignCash.relieve(new ForeignCash.Balance(owed.foreign().negate(), owed.base().negate()),
+                    amount, rate.rate());
+        }
+        BigDecimal fx = deposit ? BigDecimal.ZERO : counterBase.subtract(cashBase);
         String id = TreasuryGuards.operationId();
         String description = op.label() + ": " + dto.description().trim();
         String fxLabel = "Realised FX · " + ccy + " @ " + plain(rate.rate());
         List<PostingRequest.Line> lines = new ArrayList<>();
         if (deposit) {
             lines.add(PostingRequest.Line.debit(account.id(), plain(cashBase), null).inCurrency(ccy, plain(amount)));
-            lines.add(PostingRequest.Line.credit(counterpart.id(), plain(valued), null));
+            PostingRequest.Line counter = PostingRequest.Line.credit(counterpart.id(), plain(valued), null);
+            lines.add(loan ? counter.inCurrency(ccy, plain(amount)) : counter);
         } else {
-            lines.add(PostingRequest.Line.debit(counterpart.id(), plain(valued), null));
+            PostingRequest.Line counter = PostingRequest.Line.debit(counterpart.id(), plain(counterBase), null);
+            lines.add(loan ? counter.inCurrency(ccy, plain(amount)) : counter);
             lines.add(PostingRequest.Line.credit(account.id(), plain(cashBase), null).inCurrency(ccy, plain(amount)));
             if (fx.signum() > 0) {
                 lines.add(PostingRequest.Line.credit(determination.mapped("fx_gain"), plain(fx), fxLabel));
@@ -383,12 +394,15 @@ public class CashFlowService {
                 null, null, Map.of("treasuryOperation", op.key()), lines), List.of(rate));
         Map<String, Object> values = body("direction", direction, "operationType", op.key(), "accountId", account.id(),
                 "counterpartAccountId", counterpart.id(), "amount", plain(amount), "currencyCode", ccy, "exchangeRate",
-                plain(rate.rate()), "rateSource", rate.source(), "functionalAmount", plain(valued), "fxAmount",
+                plain(rate.rate()), "rateSource", rate.source(), "functionalAmount", plain(counterBase), "fxAmount",
                 plain(fx), "journalEntryId", entry.get("id"), "description", description);
         audit.recordInTx(AuditInput.of("TreasuryOperation", id, "create", null, values));
         BusinessOutcome.record(jdbc, entry, true);
         return entry;
     }
+
+    /** FX-2 F: operations whose counterpart is a loan liability held in the account's currency. */
+    private static final java.util.Set<String> LOAN_OPERATIONS = java.util.Set.of("loan_received", "loan_repayment");
 
     /** One account's lines (newest first) with authoritative running balances. */
     @Transactional(readOnly = true)

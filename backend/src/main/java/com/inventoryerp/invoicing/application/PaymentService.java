@@ -651,6 +651,104 @@ public class PaymentService {
                 counterCurrency != null ? counterCurrency : payCurrency, r6(amount));
     }
 
+    /**
+     * FX-2 F: allocate the unallocated remainder of a posted payment (an advance) to open documents of the same partner
+     * and currency. The advance was booked at the payment rate and each document sits at its carrying rate: the
+     * difference is realised FX, posted as a base-only adjustment of the partner's AR / AP against FX gain / loss
+     * (source {@code payment_allocation}, reversed when the payment is voided). A functional-currency advance posts
+     * nothing: the AR / AP line already carries the partner.
+     */
+    @Transactional
+    public Map<String, Object> allocateAdvance(String paymentId, List<AllocationInput> allocations) {
+        String org = org();
+        jdbc.sql("SELECT id FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(paymentId, org)
+                .query().listOfRows();
+        Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT * FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(paymentId, org));
+        if (p == null) {
+            throw ApiException.notFound("Payment not found");
+        }
+        if (!"posted".equals(String.valueOf(p.get("status"))) || DEPOSIT_METHOD.equals(p.get("paymentMethod"))
+                || p.get("refundOfId") != null) {
+            throw ApiException.badRequest("Only a posted receipt or supplier payment can be allocated");
+        }
+        if (allocations == null || allocations.isEmpty()) {
+            throw ApiException.badRequest("allocations should not be empty");
+        }
+        String direction = String.valueOf(p.get("direction"));
+        String base = fxRates.base();
+        String payCurrency = p.get("currencyId") == null ? base : p.get("currencyId").toString().toUpperCase();
+        boolean foreign = !payCurrency.equals(base);
+        BigDecimal payRate = foreign ? Money.dec(p.get("exchangeRate")) : BigDecimal.ONE;
+        BigDecimal open = Money.dec(p.get("unallocatedAmount"));
+        BigDecimal total = Money.ZERO;
+        BigDecimal fxTotal = Money.ZERO;
+        String partnerId = (String) p.get("partnerId");
+        String docType = "inbound".equals(direction) ? "sales_invoice" : "vendor_bill";
+        for (AllocationInput a : allocations) {
+            BigDecimal amt = r6(Money.dec(a.amount()));
+            if (amt.signum() <= 0) {
+                throw ApiException.badRequest("Allocation amount must be positive");
+            }
+            jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                    .params(a.documentId(), org).query().listOfRows();
+            Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(a.documentId(), org));
+            if (doc == null || !docType.equals(String.valueOf(doc.get("documentType")))
+                    || !partnerId.equals(doc.get("partnerId")) || !"posted".equals(String.valueOf(doc.get("status")))) {
+                throw ApiException.badRequest("Document " + a.documentId() + " is not an open "
+                        + ("inbound".equals(direction) ? "invoice" : "bill") + " of this partner");
+            }
+            if (!payCurrency.equals(fxRates.currencyOf(doc))) {
+                throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is in "
+                        + fxRates.currencyOf(doc) + "; this payment is in " + payCurrency);
+            }
+            if (amt.compareTo(Money.dec(doc.get("amountResidual"))) > 0) {
+                throw ApiException.badRequest("Allocation to document " + doc.get("documentNumber") + " exceeds its"
+                        + " residual of " + JsNumbers.dec(Money.dec(doc.get("amountResidual"))));
+            }
+            total = total.add(amt);
+            if (total.compareTo(open) > 0) {
+                throw ApiException.badRequest("Allocated amount exceeds the payment's unallocated "
+                        + JsNumbers.dec(open));
+            }
+            BigDecimal carrying = foreign ? fxRates.documentRate(doc) : null;
+            BigDecimal allocFx = foreign ? fxAmount(direction, amt, carrying, payRate) : Money.ZERO;
+            fxTotal = fxTotal.add(allocFx);
+            jdbc.sql("INSERT INTO \"PaymentAllocation\" (id, \"organizationId\", \"paymentId\", \"documentId\", amount,"
+                            + " \"carryingRate\", \"settlementRate\", \"fxAmount\", \"createdAt\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                            + " ?, " + NOW + ")")
+                    .params(UUID.randomUUID().toString(), org, paymentId, doc.get("id"), amt, carrying,
+                            foreign ? payRate : null, allocFx).update();
+            apply("Document", "DocumentStatus", doc, amt);
+            allocatedEvent(org, paymentId, (String) doc.get("id"), amt);
+        }
+        if (foreign && fxTotal.signum() != 0) {
+            String counter = jdbc.sql("SELECT l.\"accountId\" FROM \"JournalLine\" l JOIN \"Account\" a ON a.id ="
+                    + " l.\"accountId\" JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\" WHERE l.\"journalEntryId\" = ?"
+                    + " AND l.\"partnerId\" = ? AND c.key IN ('receivable', 'payable') ORDER BY l.\"lineNumber\" LIMIT 1")
+                    .params(p.get("journalEntryId"), partnerId)
+                    .query(String.class).optional()
+                    .orElseThrow(() -> ApiException.badRequest("The payment's receivable / payable line was not found"));
+            String amount = JsNumbers.dec(fxTotal.abs());
+            String label = "Realised FX · advance " + p.get("paymentNumber") + " allocated";
+            // inbound gain: the advance (credit) exceeded the invoices' carrying value → Dr AR; payable mirror-image
+            boolean debitCounter = "inbound".equals(direction) == (fxTotal.signum() > 0);
+            Line counterLine = new Line(counter, debitCounter ? amount : null, debitCounter ? null : amount, partnerId,
+                    label, null, null, null).inCurrency(payCurrency, "0");
+            Line fxLine = fxTotal.signum() > 0 ? Line.credit(determination.mapped("fx_gain"), amount, label)
+                    : Line.debit(determination.mapped("fx_loss"), amount, label);
+            posting.post(PostingRequest.of("GEN", Instant.now(), label, "payment_allocation", paymentId,
+                    "payment_allocation:" + paymentId + ":" + UUID.randomUUID(), List.of(counterLine, fxLine)));
+        }
+        BigDecimal allocated = Money.dec(p.get("allocatedAmount")).add(total);
+        jdbc.sql("UPDATE \"Payment\" SET \"allocatedAmount\" = ?, \"unallocatedAmount\" = ?, \"updatedAt\" = " + NOW
+                + " WHERE id = ?").params(allocated, open.subtract(total), paymentId).update();
+        audit.recordInTx(AuditInput.of("Payment", paymentId, "update", null, Obj.of("allocated", JsNumbers.dec(total),
+                "fxAmount", JsNumbers.dec(fxTotal))));
+        return findOne(paymentId);
+    }
+
     /** Realised FX of one allocation in base currency (positive = gain). */
     private static BigDecimal fxAmount(String direction, BigDecimal alloc, BigDecimal carryingRate,
             BigDecimal settlementRate) {

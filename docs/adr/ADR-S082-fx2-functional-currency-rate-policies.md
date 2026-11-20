@@ -160,6 +160,39 @@
   engine now refuses that ("Foreign-currency payable lines need a partner"), so a foreign credit expense needs a
   supplier or an employee claimant.
 
+## F. Advances, credits, loans and opening balances — built (refunds excepted)
+
+- **Advance allocation.** New route `POST /payments/{id}/allocations` with body
+  `{allocations: [{documentId, amount}]}`, permission `payment:allocate`, idempotent. It allocates a posted receipt's
+  or supplier payment's unallocated remainder to open invoices or bills of the same partner and currency.
+  - Each allocation records its carrying rate, settlement rate and FX on `PaymentAllocation`.
+  - For a foreign payment, the realised difference between the advance (at the payment rate) and the documents' carrying
+    value posts as a base-only adjustment on the partner's AR / AP line against FX gain / loss
+    (source `payment_allocation`). The line is tagged with the currency and a zero foreign amount, so the currency
+    bucket ties.
+  - Voiding the payment also reverses these entries.
+- **Credit-note allocation.** `POST /credit-notes/{id}/allocate` now realises FX when a foreign credit settles an
+  invoice carried at another rate (`credit_note_fx`, one entry per allocation). Credit-note reversal already reverses
+  every `credit_note_fx` entry.
+- **Foreign loans.** A `loan_received` / `loan_repayment` cash-flow operation on a currency account tags the liability
+  line with the currency, so the loan is a USD liability and revalued under C. A repayment relieves the liability at its
+  carrying value. The difference from the cash's carrying value is realised FX.
+- **Foreign opening balances.** `POST /opening-balances` account, customer and supplier lines accept `currencyCode` and
+  `exchangeRate` (additive). The value is taken at the stated rate, else the table on the opening date (context
+  `opening_balance`). Account lines are tagged with the currency. Customer and supplier balances are invoices / bills
+  in that currency.
+- **Not done in F:**
+  - foreign credit refunds. The FX-1 refusal stays: a foreign credit must be allocated, not refunded, until a
+    currency-aware refund path exists.
+  - a loan paid from a functional account against a foreign liability.
+  - web screens for the allocation route and the opening-balance currency fields (API only).
+- Test: `fx2/FxAdvancesIT`:
+  - advance $100 at 3,700 on an invoice at 3,800 → loss 10,000, AR clear in both currencies, void restores FX;
+  - credit $40 at 3,800 on an invoice at 3,700 → 4,000, AR 60 / 222,000;
+  - loan 1,000 at 3,700, repay 400 from a bank carried at 3,750 → loss 20,000, loan 600 / 2,220,000;
+  - opening bank 500 @3,700, customer 200 @3,700, supplier 300 @3,750.
+- `InvoicingIT` route matrix 79 → 80.
+
 ## G. Goods receipt at the receipt-date rate (decision 2) — built (core)
 
 - A foreign PO receipt values stock, GRNI and the vouchered AP at the **receipt-date rate**. That is the rate table on

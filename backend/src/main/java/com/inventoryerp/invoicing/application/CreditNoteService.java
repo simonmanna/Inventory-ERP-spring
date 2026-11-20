@@ -88,6 +88,11 @@ public class CreditNoteService {
      */
     private void realiseFx(Map<String, Object> cn, Map<String, Object> inv, BigDecimal reduce, String cnEntryId,
             String receivable, String partnerId, Instant date) {
+        realiseFx(cn, inv, reduce, cnEntryId, receivable, partnerId, date, "credit_note_fx:" + cn.get("id"));
+    }
+
+    private void realiseFx(Map<String, Object> cn, Map<String, Object> inv, BigDecimal reduce, String cnEntryId,
+            String receivable, String partnerId, Instant date, String postingKey) {
         String cur = fxRates.currencyOf(cn);
         if (cur.equals(fxRates.base()) || !cur.equals(fxRates.currencyOf(inv))) {
             return;
@@ -102,7 +107,7 @@ public class CreditNoteService {
                 + cn.get("documentNumber") + " on " + inv.get("documentNumber"), cur);
         if (!lines.isEmpty()) {
             posting.post(PostingRequest.of("SALES", date, "Realised FX · credit note " + cn.get("documentNumber"),
-                    "credit_note_fx", (String) cn.get("id"), "credit_note_fx:" + cn.get("id"), lines));
+                    "credit_note_fx", (String) cn.get("id"), postingKey, lines));
         }
     }
 
@@ -276,6 +281,19 @@ public class CreditNoteService {
         applyTo(creditNoteId, inv, amount);
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(open.subtract(amount), creditNoteId).update();
+        // FX-2 F: a foreign credit settling an invoice carried at another rate realises the difference
+        String cnEntry = (String) cn.get("journalEntryId");
+        if (cnEntry != null && !fxRates.currencyOf(cn).equals(fxRates.base())) {
+            String partnerId = String.valueOf(cn.get("partnerId"));
+            String receivable = jdbc.sql("SELECT l.\"accountId\" FROM \"JournalLine\" l JOIN \"Account\" a ON a.id ="
+                    + " l.\"accountId\" JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\" WHERE l.\"journalEntryId\" = ?"
+                    + " AND l.\"partnerId\" = ? AND c.key = 'receivable' ORDER BY l.\"lineNumber\" LIMIT 1")
+                    .params(cnEntry, partnerId).query(String.class).optional().orElse(null);
+            if (receivable != null) {
+                realiseFx(cn, inv, amount, cnEntry, receivable, partnerId, Instant.now(), "credit_note_fx:"
+                        + creditNoteId + ":allocation:" + java.util.UUID.randomUUID());
+            }
+        }
         return builder.document(creditNoteId);
     }
 

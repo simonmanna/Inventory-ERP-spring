@@ -896,6 +896,12 @@ public class InvoicingWorkflowsInitializer {
             reversal = posting.reverse((String) payment.get("journalEntryId"), null,
                     "Void of " + payment.get("paymentNumber") + ": " + reason);
         }
+        // FX-2 F: later allocations of the advance posted their realised FX separately; reverse those too
+        for (String fxEntry : jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
+                + " 'payment_allocation' AND \"sourceId\" = ? AND status = 'posted'").params(payment.get("organizationId"),
+                        payment.get("id")).query(String.class).list()) {
+            posting.reverse(fxEntry, null, "Void of " + payment.get("paymentNumber") + ": " + reason);
+        }
         for (Target t : targets) {
             BigDecimal amount = d(t.movement().get("amount"));
             jdbc.sql("INSERT INTO \"CashMovement\" (id, \"organizationId\", \"cashSessionId\", \"movementType\", amount,"
