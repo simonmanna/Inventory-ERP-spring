@@ -85,8 +85,11 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
   const [full, setFull] = useState(false);
   const dash = useLpDashboard(LIVE_MS);
   const cases = useLpCases({ page: 1, pageSize: 25 }, LIVE_MS);
+  // The critical ones may be older than the latest page: read them on their own so the alert card never misses one.
+  const critical = useLpCases({ severity: 'critical', page: 1, pageSize: 25 }, LIVE_MS);
   const open = (cases.data?.data ?? []).filter((c) => c.state !== 'closed');
-  const featured = [...open].sort((a, b) => RANK[a.severity] - RANK[b.severity]
+  const candidates = [...(critical.data?.data ?? []).filter((c) => c.state !== 'closed'), ...open];
+  const featured = candidates.sort((a, b) => RANK[a.severity] - RANK[b.severity]
     || (a.state === 'escalated' ? -1 : 0) - (b.state === 'escalated' ? -1 : 0)
     || b.openedAt.localeCompare(a.openedAt))[0];
   const branches = Object.fromEntries((dash.data?.byBranch ?? []).map((b) => [b.branchId, b.branchName]));
@@ -138,7 +141,7 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
       </div>
 
       {/* The alert up front */}
-      {cases.isLoading ? (
+      {cases.isLoading || critical.isLoading ? (
         <div className="h-[26rem] animate-pulse rounded-2xl border bg-muted/40" />
       ) : cases.isError ? (
         <div className="rounded-2xl border border-destructive/40 p-6 text-destructive">{tx('Could not load the cases. Try again.')}</div>
@@ -300,7 +303,7 @@ function FeaturedAlert({ c, now, branchName, engineLabel, showEvidence, onOpen }
               </p>
             </div>
           </div>
-          <div className="mt-auto grid gap-2 sm:grid-cols-3">
+          <div className="mt-auto flex flex-wrap gap-2 [&>*]:min-w-[10rem] [&>*]:flex-1">
             <ActionButton className="bg-red-600 text-white hover:bg-red-700" icon={<Eye className="h-5 w-5" />}
               title={tx('Review case')} sub={c.caseNumber} onClick={onOpen} />
             {showEvidence && camera ? (
@@ -344,7 +347,7 @@ function ActionButton({ icon, title, sub, onClick, className }: {
       className={cn('flex items-center gap-3 rounded-xl px-4 py-3 text-left shadow-sm transition active:scale-[0.98]', className)}>
       {icon}
       <span className="leading-tight">
-        <span className="block font-semibold">{title}</span>
+        <span className="block whitespace-nowrap font-semibold">{title}</span>
         {sub && <span className="block text-xs opacity-80">{sub}</span>}
       </span>
     </button>
