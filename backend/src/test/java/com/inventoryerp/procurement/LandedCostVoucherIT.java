@@ -470,6 +470,15 @@ class LandedCostVoucherIT extends ApiTestSupport {
         assertThat(avg(light)).isEqualByComparingTo("110");
         assertThat(balance(mapped("stock_valuation")).subtract(stock0)).isEqualByComparingTo("400");
         assertBalanced(posted.get("journalEntryId").asString());
+
+        // The posted voucher still shows each row's goods value (landed cost per product: 3,000 + 100 / 3,000 + 300).
+        JsonNode detail = ok(200, "GET", "/procurement/landed-cost-vouchers/" + id, null);
+        Map<String, String[]> byProduct = new LinkedHashMap<>();
+        detail.get("allocations").forEach(a -> byProduct.put(a.get("productId").asString(), new String[] {
+                a.get("originalValue").asString(), a.get("originalUnitCost").asString(),
+                a.get("allocatedAmount").asString()}));
+        assertThat(byProduct.get(heavy)).containsExactly("3000", "300", "100");
+        assertThat(byProduct.get(light)).containsExactly("3000", "100", "300");
     }
 
     @Test

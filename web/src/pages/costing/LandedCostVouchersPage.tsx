@@ -536,7 +536,14 @@ export function LandedCostVoucherDetailPage() {
   // Resulting landed cost per product (all charges), from the preview / posted allocation rows.
   const byProduct = Array.from(allocations.reduce((m: Map<string, any>, a: any) => {
     const k = `${a.productId}:${a.goodsReceiptId ?? ''}`;
-    const row = m.get(k) ?? { productName: a.productName, receiptNumber: v.receipts.find((r: any) => r.id === a.goodsReceiptId)?.receiptNumber, qty: Number(a.receivedQty), original: Number(a.originalValue ?? 0), allocated: 0 };
+    const row = m.get(k) ?? { productName: a.productName, receiptNumber: v.receipts.find((r: any) => r.id === a.goodsReceiptId)?.receiptNumber, qty: 0, original: 0, allocated: 0, groups: new Set<string>() };
+    // Every charge repeats its receipt group's qty and value: count each group (line, location, lot) once.
+    const group = `${a.goodsReceiptLineId ?? ''}:${a.locationId ?? ''}:${a.batchId ?? ''}`;
+    if (!row.groups.has(group)) {
+      row.groups.add(group);
+      row.qty += Number(a.receivedQty ?? 0);
+      row.original += Number(a.originalValue ?? 0);
+    }
     row.allocated += Number(a.allocatedAmount);
     m.set(k, row);
     return m;

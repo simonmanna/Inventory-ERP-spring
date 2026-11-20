@@ -286,8 +286,39 @@ public class LandedCostVoucherService {
             productNames.put((String) r.get("id"), (String) r.get("name"));
         }
         allocs.forEach(a -> a.put("productName", productNames.get(a.get("productId"))));
+        addReceiptValues(id, allocs);
         out.put("allocations", allocs);
         return out;
+    }
+
+    /**
+     * Stored allocation rows keep no goods value, so a posted voucher's "landed cost per product" had nothing to add
+     * the charges to. Read it back the way the preview computes it ({@link #units}): the receipt's stock-ledger value
+     * for the row's product, location, lot and (when the receipt line has one) variant. Rows with no receipt keep
+     * {@code null}, as before.
+     */
+    private void addReceiptValues(String voucherId, List<Map<String, Object>> allocs) {
+        Map<String, BigDecimal> values = new HashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT a.id, SUM(l.\"totalValue\") AS value"
+                + " FROM \"LandedCostAllocation\" a"
+                + " LEFT JOIN \"GoodsReceiptLine\" gl ON gl.id = a.\"goodsReceiptLineId\""
+                + " JOIN \"InventoryLedger\" l ON l.\"organizationId\" = a.\"organizationId\""
+                + " AND l.\"referenceType\" = 'goods_receipt' AND l.\"referenceId\" = a.\"goodsReceiptId\""
+                + " AND l.\"quantityChange\" > 0 AND l.\"productId\" = a.\"productId\""
+                + " AND l.\"locationId\" = a.\"locationId\" AND l.\"batchId\" IS NOT DISTINCT FROM a.\"batchId\""
+                + " AND (gl.\"variantId\" IS NULL OR l.\"variantId\" = gl.\"variantId\")"
+                + " WHERE a.\"landedCostId\" = ? AND a.\"organizationId\" = ? GROUP BY a.id").params(voucherId, org()))) {
+            values.put((String) r.get("id"), Money.dec(r.get("value")));
+        }
+        for (Map<String, Object> a : allocs) {
+            BigDecimal value = values.get(a.get("id"));
+            if (value == null) {
+                continue;
+            }
+            BigDecimal qty = a.get("receivedQty") == null ? Money.ZERO : Money.dec(a.get("receivedQty"));
+            a.put("originalValue", JsNumbers.dec(value));
+            a.put("originalUnitCost", JsNumbers.dec(dp6(qty.signum() == 0 ? Money.ZERO : Money.div(value, qty))));
+        }
     }
 
     /**
