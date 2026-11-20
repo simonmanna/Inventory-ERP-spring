@@ -23,6 +23,8 @@ public final class LpVisionCatalog {
     public static final List<String> STREAM_STATES = List.of("ok", "connecting", "lost", "disabled");
     public static final List<String> CONTENT_TYPES = List.of("video/mp4", "video/webm", "video/x-matroska",
             "image/jpeg");
+    /** What a frame saved from the player may be (LP1c). */
+    public static final List<String> FRAME_CONTENT_TYPES = List.of("image/jpeg", "image/png");
     public static final List<String> EVIDENCE_STATES = List.of("on_agent", "requested", "uploading", "uploaded",
             "missing", "integrity_failed", "deleted");
 
@@ -64,6 +66,14 @@ public final class LpVisionCatalog {
     /** Seconds before and after a POS event of a clip cut for a case (ADR-S077 §8). */
     public static final int CASE_CLIP_BEFORE_SECONDS = 20;
     public static final int CASE_CLIP_AFTER_SECONDS = 30;
+
+    /** The largest frame saved from the player (LP1c): a full-HD PNG fits. */
+    public static final int MAX_FRAME_BYTES = 8 * 1024 * 1024;
+    /** The footage view around a moment (LP1c): this many seconds before and after it. */
+    public static final int FOOTAGE_BEFORE_SECONDS = 30;
+    public static final int FOOTAGE_AFTER_SECONDS = 60;
+    /** How far after now a still may be asked for: the box waits for the frame to reach its buffer. */
+    public static final int STILL_FUTURE_SLACK_SECONDS = 5;
 
     private static final BigDecimal HALF = new BigDecimal("0.5");
 

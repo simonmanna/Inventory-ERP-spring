@@ -1,5 +1,8 @@
 """Clips kept on this box until an investigator asks for them.
 
+A **still** (LP1c) is the buffered frame nearest a moment, time-stamped and uploaded as ``image/jpeg``; it is made
+when asked and not kept on the box (the frame stays in the ring buffer).
+
 A **flagged** clip belongs to an observation (a drawer opening, a long dwell): its id goes out with the observation at
 once, and when its post-roll has passed it is cut from the ring buffer, encoded, hashed (SHA-256 at capture) and
 registered with ``POST /agents/clips``. A **range** clip is cut on request for an evidence record
@@ -30,7 +33,7 @@ from lp_edge.files import ensure_private_dir, safe_name
 from lp_edge.ringbuffer import RingBuffer
 from lp_edge.store import Store
 from lp_edge.timeutil import Clock, SystemClock, iso
-from lp_edge.video import MAX_CLIP_BYTES, EncodedClip, NoFrames, encode_clip
+from lp_edge.video import MAX_CLIP_BYTES, EncodedClip, NoFrames, encode_clip, stamp_jpeg
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +44,8 @@ LENGTH = struct.Struct(">I")
 SETTLE_SECONDS = 3.0
 
 Encoder = Callable[..., EncodedClip]
+StillEncoder = Callable[[bytes, float], bytes]
+STILL_WINDOW_SECONDS = 2.0
 
 
 class ClipUnavailable(Exception):
@@ -103,6 +108,7 @@ class ClipStore:
         clock: Clock | None = None,
         encode: Encoder = encode_clip,
         max_bytes: int = MAX_CLIP_BYTES,
+        still_encode: StillEncoder = stamp_jpeg,
     ) -> None:
         self._store = store
         self._root = root
@@ -113,6 +119,7 @@ class ClipStore:
         self._clock = clock or SystemClock()
         self._encode = encode
         self.max_bytes = max_bytes
+        self._still_encode = still_encode
         ensure_private_dir(root)
 
     # -- planning and production ---------------------------------------------------------------------------------
@@ -241,6 +248,18 @@ class ClipStore:
             self._store.execute("DELETE FROM clips WHERE clip_id = ?", (clip_id,))
             raise ClipUnavailable(produced.reason or "no video in the buffer for that period")
         return produced
+
+    # -- stills (LP1c) ---------------------------------------------------------------------------------------------
+
+    def still(self, camera_id: str, at: float, window: float = STILL_WINDOW_SECONDS) -> tuple[float, bytes]:
+        """The buffered frame of ``camera_id`` nearest ``at`` (within ``window`` seconds), time-stamped, and its time."""
+        best: tuple[float, bytes] | None = None
+        for ts, jpeg in self._ring.frames(camera_id, at - window, at + window):
+            if best is None or abs(ts - at) < abs(best[0] - at):
+                best = (ts, jpeg)
+        if best is None:
+            raise ClipUnavailable("no video in the buffer for that moment")
+        return best[0], self._still_encode(best[1], best[0])
 
     # -- registration ------------------------------------------------------------------------------------------------
 

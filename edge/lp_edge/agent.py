@@ -847,6 +847,9 @@ class Agent:
         evidence_id = str(payload.get("evidenceId") or "")
         if not evidence_id:
             raise CommandError("evidenceId is missing")
+        if payload.get("kind") == "still":
+            self._upload_still(evidence_id, payload)
+            return
         clip_id = payload.get("clipId")
         if clip_id:
             row = self._flagged_clip(str(clip_id))
@@ -871,6 +874,37 @@ class Agent:
             raise CommandError(str(exc), code="not_found") from None
         self.clips.mark_uploaded(row.clip_id, evidence_id)
         log.info("clip %s uploaded for evidence %s", row.clip_id, evidence_id)
+
+    def _upload_still(self, evidence_id: str, payload: Mapping[str, Any]) -> None:
+        """The buffered frame nearest ``at``, uploaded as a still (LP1c); waits for the frame when ``at`` is now."""
+        camera_id = str(payload.get("cameraId") or "")
+        try:
+            at = parse_iso(str(payload.get("at")))
+        except ValueError:
+            raise CommandError("at must be an ISO-8601 instant") from None
+        wait = at + SETTLE_SECONDS - self.clock.time()
+        if 0 < wait <= 120:
+            self._stop.wait(wait)
+        try:
+            _, data = self.clips.still(camera_id, at)
+        except ClipUnavailable as exc:
+            raise CommandError(str(exc), code="not_found") from None
+        except Exception as exc:  # noqa: BLE001 - a frame that cannot be decoded fails this command only
+            raise CommandError(f"the still could not be made: {type(exc).__name__}") from None
+        try:
+            upload(
+                self.api,
+                evidence_id,
+                total=len(data),
+                sha256=hashlib.sha256(data).hexdigest(),
+                read=lambda offset, length: data[offset : offset + length],
+                content_type="image/jpeg",
+                chunk_size=self.config.chunk_bytes if self.config else CHUNK,
+                stop=self._stop,
+            )
+        except UploadFailed as exc:
+            raise CommandError(exc.message, code=exc.code) from None
+        log.info("still of %s uploaded for evidence %s", camera_id, evidence_id)
 
     def _flagged_clip(self, clip_id: str) -> Any:
         row = self.clips.find(clip_id)

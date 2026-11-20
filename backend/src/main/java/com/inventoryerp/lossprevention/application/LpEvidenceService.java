@@ -8,6 +8,8 @@ import com.inventoryerp.lossprevention.application.LpEvidenceCipher.IntegrityExc
 import com.inventoryerp.lossprevention.application.LpVisionCommands.ClipInput;
 import com.inventoryerp.lossprevention.application.LpVisionCommands.EvidenceQuery;
 import com.inventoryerp.lossprevention.application.LpVisionCommands.EvidenceRangeInput;
+import com.inventoryerp.lossprevention.application.LpVisionCommands.EvidenceStillInput;
+import com.inventoryerp.lossprevention.application.LpVisionCommands.FootageQuery;
 import com.inventoryerp.lossprevention.application.LpVisionDirectory.AgentRef;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.PageResult;
@@ -37,6 +39,10 @@ import org.springframework.transaction.annotation.Transactional;
  * box uploads it in chunks, the backend checks it against the SHA-256 registered at capture, encrypts it and keeps it
  * in the file storage. Every view, download, export and request is written to {@code LpEvidenceAccess}.
  *
+ * <p>Still images (LP1c) are evidence of kind {@code snapshot}: the box takes the buffered frame of a moment and
+ * uploads it like a clip, or an investigator saves a frame of an uploaded clip from the player. The footage view puts
+ * a POS sale or a ledger record next to the cameras that saw it.
+ *
  * <p>Nobody sees a clip linked to a case about themselves, nor one of a branch outside their data scope.
  */
 @Service
@@ -48,13 +54,16 @@ public class LpEvidenceService {
     static final Duration STALE_UPLOAD = Duration.ofDays(1);
     private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
     private static final String RANGE_CONTENT_TYPE = "video/mp4";
+    private static final String STILL = "snapshot";
+    private static final List<String> KINDS = List.of("clip", STILL);
 
     private static final String COLUMNS = "e.id, e.\"branchId\", b.name AS \"branchName\", e.\"agentId\", a.name AS"
             + " \"agentName\", e.\"cameraId\", c.name AS \"cameraName\", e.\"zoneId\", z.name AS \"zoneName\","
             + " z.\"zoneType\", e.\"clipId\", e.kind, e.origin, e.\"startedAt\", e.\"endedAt\", e.sha256, e.\"byteSize\","
             + " e.\"contentType\", e.state, e.\"observationEventIds\", e.\"requestedAt\", e.\"requestedBy\","
             + " e.\"requestReason\", e.\"receivedBytes\", e.\"uploadedAt\", e.encryption, e.\"retainUntil\","
-            + " e.\"deletedAt\", e.\"deleteReason\", e.\"createdAt\", e.\"updatedAt\", coalesce((SELECT"
+            + " e.\"deletedAt\", e.\"deleteReason\", e.\"sourceEvidenceId\", e.\"frameOffsetMs\", e.\"createdAt\","
+            + " e.\"updatedAt\", coalesce((SELECT"
             + " array_agg(ec.\"caseId\" ORDER BY ec.\"linkedAt\") FROM \"LpEvidenceCase\" ec WHERE ec.\"evidenceId\" ="
             + " e.id), ARRAY[]::text[]) AS \"caseIds\"";
     private static final String FROM = " FROM \"LpEvidence\" e JOIN \"LpCamera\" c ON c.id = e.\"cameraId\" JOIN"
@@ -142,6 +151,13 @@ public class LpEvidenceService {
         if (LpScope.has(q.state()) && !LpVisionCatalog.EVIDENCE_STATES.contains(q.state())) {
             throw ApiException.badRequest("state must be one of: " + String.join(", ", LpVisionCatalog.EVIDENCE_STATES));
         }
+        if (LpScope.has(q.kind())) {
+            if (!KINDS.contains(q.kind())) {
+                throw ApiException.badRequest("kind must be one of: " + String.join(", ", KINDS));
+            }
+            w.append(" AND e.kind = ?");
+            params.add(q.kind());
+        }
         if (LpScope.has(q.from())) {
             w.append(" AND e.\"endedAt\" >= ?");
             params.add(SqlRows.ts(bound(q.from(), "from", false)));
@@ -201,6 +217,7 @@ public class LpEvidenceService {
             case "video/webm" -> "webm";
             case "video/x-matroska" -> "mkv";
             case "image/jpeg" -> "jpg";
+            case "image/png" -> "png";
             default -> "mp4";
         };
     }
@@ -264,7 +281,7 @@ public class LpEvidenceService {
         byte[] clip = readStored(e);
         access.record(id, (String) e.get("cameraId"), null, LpAccessLog.EXPORT, Obj.of("sha256", e.get("sha256")));
         Map<String, Object> full = get(id);
-        String clipName = "clip." + extension((String) e.get("contentType"));
+        String clipName = (STILL.equals(e.get("kind")) ? "still." : "clip.") + extension((String) e.get("contentType"));
         Map<String, Object> manifest = new LinkedHashMap<>();
         manifest.put("format", "inventory-erp-lp-evidence/1");
         manifest.put("exportedAt", clock.instant().toString());
@@ -378,16 +395,27 @@ public class LpEvidenceService {
                     + " \"requestedAt\" = CURRENT_TIMESTAMP, \"requestedBy\" = ?, \"requestReason\" = coalesce(?,"
                     + " \"requestReason\"), \"updatedAt\" = CURRENT_TIMESTAMP WHERE id = ?")
                     .params(java.util.Arrays.asList(TenantContext.userId(), reason, id)).update();
+            if ("frame".equals(e.get("origin"))) {
+                throw ApiException.conflict("This frame was saved from the player; save it again from its clip");
+            }
             if (!commands.uploadPending(id)) {
-                commands.queue((String) e.get("agentId"), "clip_upload", Obj.of("evidenceId", id, "cameraId",
-                        e.get("cameraId"), "clipId", e.get("clipId"), "from", iso(e.get("startedAt")), "to",
-                        iso(e.get("endedAt"))), UPLOAD_TTL);
+                commands.queue((String) e.get("agentId"), "clip_upload", uploadPayload(e), UPLOAD_TTL);
             }
         } else {
             retain(id);
         }
         access.record(id, (String) e.get("cameraId"), LpScope.has(caseId) ? caseId : null, LpAccessLog.REQUEST,
                 Obj.of("reason", reason, "auto", auto));
+    }
+
+    /** What the box needs to upload an evidence row: a flagged clip by its id, or a period or moment of its buffer. */
+    private static Map<String, Object> uploadPayload(Map<String, Object> e) {
+        if (STILL.equals(e.get("kind"))) {
+            return Obj.of("evidenceId", e.get("id"), "cameraId", e.get("cameraId"), "clipId", null, "kind", "still",
+                    "at", iso(e.get("startedAt")));
+        }
+        return Obj.of("evidenceId", e.get("id"), "cameraId", e.get("cameraId"), "clipId", e.get("clipId"), "from",
+                iso(e.get("startedAt")), "to", iso(e.get("endedAt")));
     }
 
     private static String iso(Object v) {
@@ -400,16 +428,235 @@ public class LpEvidenceService {
         if (LpScope.has(dto.caseId())) {
             assertCase(dto.caseId());
         }
+        Map<String, Object> cam = visibleCamera(dto.cameraId());
+        String id = cut(cam, instant(dto.from(), "from"), instant(dto.to(), "to"), dto.caseId(), dto.reason(), false);
+        return get(id);
+    }
+
+    /** A camera of the caller's branches that is not deleted; otherwise 404. */
+    private Map<String, Object> visibleCamera(String cameraId) {
         List<Object> params = new ArrayList<>();
         String w = scope.where("c", params) + " AND c.id = ? AND c.\"deletedAt\" IS NULL";
-        params.add(dto.cameraId());
+        params.add(cameraId);
         Map<String, Object> cam = SqlRows.one(jdbc.sql("SELECT c.id, c.\"agentId\", c.\"branchId\" FROM \"LpCamera\" c"
                 + w).params(params));
         if (cam == null) {
             throw ApiException.notFound("Camera not found");
         }
-        String id = cut(cam, instant(dto.from(), "from"), instant(dto.to(), "to"), dto.caseId(), dto.reason(), false);
+        return cam;
+    }
+
+    // ------------------------------------------------------------------ stills (LP1c)
+
+    /**
+     * A still of one camera at a moment ({@code at}, default now), taken by the box from its buffer and uploaded
+     * with the SHA-256 it computed. A moment a few seconds ahead is allowed: the box waits for the frame.
+     */
+    @Transactional
+    public Map<String, Object> still(EvidenceStillInput dto) {
+        if (LpScope.has(dto.caseId())) {
+            assertCase(dto.caseId());
+        }
+        Map<String, Object> cam = visibleCamera(dto.cameraId());
+        Instant at = LpScope.has(dto.at()) ? instant(dto.at(), "at") : clock.instant();
+        return get(cutStill(cam, at, dto.caseId(), dto.reason(), false));
+    }
+
+    private String cutStill(Map<String, Object> cam, Instant at, String caseId, String reason, boolean auto) {
+        Instant now = clock.instant();
+        if (at.isAfter(now.plusSeconds(LpVisionCatalog.STILL_FUTURE_SLACK_SECONDS))) {
+            throw ApiException.badRequest("at must not be in the future");
+        }
+        int bufferDays = settings.effective((String) cam.get("branchId")).get(LpSettingsService.EVIDENCE_BUFFER_DAYS);
+        if (at.isBefore(now.minus(Duration.ofDays(bufferDays)))) {
+            throw ApiException.badRequest("The edge box keeps video for " + bufferDays + " days only");
+        }
+        assertAgentUsable((String) cam.get("agentId"));
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"LpEvidence\" (id, \"organizationId\", \"branchId\", \"agentId\", \"cameraId\", kind,"
+                + " origin, \"startedAt\", \"endedAt\", \"contentType\", state, \"requestedAt\", \"requestedBy\","
+                + " \"requestReason\") VALUES (?, ?, ?, ?, ?, 'snapshot', 'range', ?, ?, 'image/jpeg', 'requested',"
+                + " CURRENT_TIMESTAMP, ?, ?)")
+                .params(java.util.Arrays.asList(id, LpScope.org(), cam.get("branchId"), cam.get("agentId"),
+                        cam.get("id"), SqlRows.ts(at), SqlRows.ts(at), TenantContext.userId(), reason))
+                .update();
+        if (LpScope.has(caseId)) {
+            link(id, caseId, auto);
+        }
+        commands.queue((String) cam.get("agentId"), "clip_upload", Obj.of("evidenceId", id, "cameraId", cam.get("id"),
+                "clipId", null, "kind", "still", "at", at.toString()), UPLOAD_TTL);
+        access.record(id, (String) cam.get("id"), LpScope.has(caseId) ? caseId : null, LpAccessLog.REQUEST,
+                Obj.of("reason", reason, "auto", auto, "at", at.toString(), "kind", STILL));
+        return id;
+    }
+
+    /** A still of a camera's buffer for a case, as the system; {@code null} when it cannot be taken. */
+    @Transactional
+    public String stillForCase(String cameraId, Instant at, String caseId, String reason) {
+        Map<String, Object> cam = SqlRows.one(jdbc.sql("SELECT c.id, c.\"agentId\", c.\"branchId\" FROM \"LpCamera\" c"
+                + " JOIN \"LpAgent\" a ON a.id = c.\"agentId\" WHERE c.\"organizationId\" = ? AND c.id = ? AND"
+                + " c.enabled AND c.\"deletedAt\" IS NULL AND a.status = 'active'").params(LpScope.org(), cameraId));
+        if (cam == null) {
+            return null;
+        }
+        try {
+            return cutStill(cam, at, caseId, reason, true);
+        } catch (ApiException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * Keeps a frame of an uploaded clip that an investigator saved from the player, as a still: checked to be a JPEG
+     * or PNG, hashed on receipt, encrypted and stored, and linked to the clip's cases. {@code offsetMs} is where in
+     * the clip it was taken.
+     */
+    @Transactional
+    public Map<String, Object> frame(String sourceId, long offsetMs, byte[] image, String contentType,
+            String reason) {
+        Map<String, Object> src = load(sourceId);
+        if (STILL.equals(src.get("kind"))) {
+            throw ApiException.badRequest("A frame is saved from a video clip, not from a still");
+        }
+        if (!"uploaded".equals(src.get("state"))) {
+            throw ApiException.conflict("The clip is not uploaded yet");
+        }
+        Instant started = (Instant) src.get("startedAt");
+        Instant ended = (Instant) src.get("endedAt");
+        long lengthMs = Duration.between(started, ended).toMillis();
+        // The player's clock can run a little past the recorded end (the last frame is shown for its duration).
+        if (offsetMs < 0 || offsetMs > lengthMs + 2_000) {
+            throw ApiException.badRequest("offsetMs must be between 0 and " + lengthMs);
+        }
+        String type = frameType(image, contentType);
+        Instant at = started.plusMillis(Math.min(offsetMs, lengthMs));
+        String id = UUID.randomUUID().toString();
+        String sha = LpEvidenceCipher.sha256(image);
+        String key = "lp-evidence/" + LpScope.org() + "/" + id;
+        storage.put(key, cipher.encrypt(id, image), "application/octet-stream");
+        jdbc.sql("INSERT INTO \"LpEvidence\" (id, \"organizationId\", \"branchId\", \"agentId\", \"cameraId\","
+                + " \"zoneId\", kind, origin, \"startedAt\", \"endedAt\", sha256, \"byteSize\", \"contentType\", state,"
+                + " \"observationEventIds\", \"requestedAt\", \"requestedBy\", \"requestReason\", \"receivedBytes\","
+                + " \"uploadedAt\", \"storageKey\", encryption, \"sourceEvidenceId\", \"frameOffsetMs\") SELECT ?, ?,"
+                + " \"branchId\", \"agentId\", \"cameraId\", \"zoneId\", 'snapshot', 'frame', ?, ?, ?, ?, ?, 'uploaded',"
+                + " \"observationEventIds\", CURRENT_TIMESTAMP, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, id, ? FROM"
+                + " \"LpEvidence\" WHERE id = ?")
+                .params(java.util.Arrays.asList(id, LpScope.org(), SqlRows.ts(at), SqlRows.ts(at), sha,
+                        (long) image.length, type, TenantContext.userId(), reason, (long) image.length, key,
+                        LpEvidenceCipher.FORMAT + ";key=" + cipher.keyId(), offsetMs, sourceId))
+                .update();
+        for (String caseId : jdbc.sql("SELECT \"caseId\" FROM \"LpEvidenceCase\" WHERE \"evidenceId\" = ? ORDER BY"
+                + " \"linkedAt\"").param(sourceId).query(String.class).list()) {
+            link(id, caseId, false);
+        }
+        retain(id);
+        access.record(sourceId, (String) src.get("cameraId"), null, LpAccessLog.SNAPSHOT,
+                Obj.of("frameEvidenceId", id, "offsetMs", offsetMs));
+        access.record(id, (String) src.get("cameraId"), null, LpAccessLog.UPLOADED,
+                Obj.of("sha256", sha, "byteSize", image.length, "sourceEvidenceId", sourceId, "offsetMs", offsetMs,
+                        "reason", reason));
         return get(id);
+    }
+
+    /** The image's type, read from its first bytes; it must agree with the type it was sent as. */
+    static String frameType(byte[] image, String contentType) {
+        if (image == null || image.length == 0) {
+            throw ApiException.badRequest("file is required");
+        }
+        if (image.length > LpVisionCatalog.MAX_FRAME_BYTES) {
+            throw ApiException.badRequest("The image is larger than " + LpVisionCatalog.MAX_FRAME_BYTES + " bytes");
+        }
+        String actual = image.length > 3 && (image[0] & 0xff) == 0xff && (image[1] & 0xff) == 0xd8
+                && (image[2] & 0xff) == 0xff ? "image/jpeg"
+                : image.length > 8 && (image[0] & 0xff) == 0x89 && image[1] == 'P' && image[2] == 'N' && image[3] == 'G'
+                        ? "image/png" : null;
+        String declared = contentType == null ? null : contentType.split(";")[0].trim().toLowerCase();
+        if (actual == null || (LpScope.has(declared) && !"application/octet-stream".equals(declared)
+                && !actual.equals(declared))) {
+            throw ApiException.badRequest("The image must be a JPEG or PNG");
+        }
+        return actual;
+    }
+
+    // ------------------------------------------------------------------ footage (LP1c)
+
+    /**
+     * The footage around a POS sale, a ledger record or a branch and moment: the moment and window, the cameras of
+     * that branch (those watching the sale's till first) and the evidence already kept for that window. Nothing is
+     * asked of the box here; the caller asks for a clip or a still of the window.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> footage(FootageQuery q) {
+        String org = LpScope.org();
+        Map<String, Object> source;
+        if (LpScope.has(q.invoiceId())) {
+            Map<String, Object> inv = SqlRows.one(jdbc.sql("SELECT i.id, i.\"invoiceNumber\", i.\"branchId\","
+                    + " coalesce(i.\"postedAt\", i.\"createdAt\") AS at, cs.\"cashRegisterId\" AS \"tillId\" FROM"
+                    + " \"Invoice\" i LEFT JOIN \"CashSession\" cs ON cs.id = i.\"cashSessionId\" WHERE"
+                    + " i.\"organizationId\" = ? AND i.id = ?").params(org, q.invoiceId()));
+            if (inv == null) {
+                throw ApiException.notFound("Sale not found");
+            }
+            source = Obj.of("type", "invoice", "id", inv.get("id"), "label", inv.get("invoiceNumber"), "branchId",
+                    inv.get("branchId"), "tillId", inv.get("tillId"), "at", inv.get("at"));
+        } else if (LpScope.has(q.eventId())) {
+            Map<String, Object> ev = SqlRows.one(jdbc.sql("SELECT e.id, e.type, e.\"branchId\", e.\"occurredAt\" AS at,"
+                    + " coalesce(e.payload ->> 'tillId', (SELECT s.payload ->> 'tillId' FROM \"LpEvent\" s WHERE"
+                    + " s.\"organizationId\" = e.\"organizationId\" AND s.type = 'cash_session.opened' AND"
+                    + " s.\"sessionId\" = e.\"sessionId\" ORDER BY s.\"occurredAt\" LIMIT 1)) AS \"tillId\","
+                    + " e.payload ->> 'cameraId' AS \"cameraId\" FROM \"LpEvent\" e WHERE e.\"organizationId\" = ? AND"
+                    + " e.id = ?").params(org, q.eventId()));
+            if (ev == null) {
+                throw ApiException.notFound("Record not found");
+            }
+            source = Obj.of("type", "event", "id", ev.get("id"), "label", ev.get("type"), "branchId",
+                    ev.get("branchId"), "tillId", ev.get("tillId"), "cameraId", ev.get("cameraId"), "at",
+                    ev.get("at"));
+        } else if (LpScope.has(q.branchId()) && LpScope.has(q.at())) {
+            source = Obj.of("type", "moment", "id", null, "label", null, "branchId", q.branchId(), "tillId", null,
+                    "at", instant(q.at(), "at"));
+        } else {
+            throw ApiException.badRequest("Give invoiceId, eventId, or branchId and at");
+        }
+        String branchId = (String) source.get("branchId");
+        if (branchId == null) {
+            throw ApiException.badRequest("The record has no branch, so no camera can be found for it");
+        }
+        // 404 rather than 403: a sale of a branch outside the caller's scope is not theirs to know about.
+        try {
+            scope.assertBranch(branchId);
+        } catch (ApiException ex) {
+            throw ApiException.notFound("invoice".equals(source.get("type")) ? "Sale not found" : "Record not found");
+        }
+        Instant at = (Instant) source.get("at");
+        Instant from = at.minusSeconds(LpVisionCatalog.FOOTAGE_BEFORE_SECONDS);
+        Instant to = at.plusSeconds(LpVisionCatalog.FOOTAGE_AFTER_SECONDS);
+        Instant now = clock.instant();
+        int bufferDays = settings.effective(branchId).get(LpSettingsService.EVIDENCE_BUFFER_DAYS);
+        List<Map<String, Object>> cameras = SqlRows.list(jdbc.sql("SELECT c.id, c.name, c.enabled, a.status AS"
+                + " \"agentStatus\", coalesce(c.id = ?, false) OR EXISTS (SELECT 1 FROM \"LpZone\" z WHERE z.\"cameraId\" ="
+                + " c.id AND z.\"linkedType\" = 'till' AND z.\"linkedId\" = ? AND z.\"retiredAt\" IS NULL) AS watches FROM"
+                + " \"LpCamera\" c JOIN \"LpAgent\" a ON a.id = c.\"agentId\" WHERE c.\"organizationId\" = ? AND"
+                + " c.\"branchId\" = ? AND c.\"deletedAt\" IS NULL ORDER BY 5 DESC, c.name, c.id")
+                .params(java.util.Arrays.asList(source.get("cameraId"), source.get("tillId"), org, branchId)));
+        List<Object> params = new ArrayList<>();
+        String w = visible(params) + " AND e.\"branchId\" = ? AND e.\"endedAt\" >= ? AND e.\"startedAt\" <= ? AND"
+                + " e.state <> 'deleted'";
+        params.add(branchId);
+        params.add(SqlRows.ts(from));
+        params.add(SqlRows.ts(to));
+        List<Map<String, Object>> kept = SqlRows.list(jdbc.sql("SELECT " + COLUMNS + FROM + w + " ORDER BY"
+                + " e.\"startedAt\", e.id LIMIT 50").params(params));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("source", source);
+        out.put("at", at);
+        out.put("from", from);
+        out.put("to", to.isAfter(now) ? now : to);
+        out.put("bufferDays", bufferDays);
+        out.put("inBuffer", !from.isBefore(now.minus(Duration.ofDays(bufferDays))));
+        out.put("cameras", cameras);
+        out.put("evidence", kept);
+        return out;
     }
 
     private String cut(Map<String, Object> cam, Instant from, Instant to, String caseId, String reason, boolean auto) {
@@ -494,12 +741,14 @@ public class LpEvidenceService {
     static final int MAX_CASE_CLIPS = 6;
     static final int MAX_CASE_CAMERAS = 4;
     static final int MAX_CASE_POS_EVENTS = 3;
+    static final int MAX_CASE_STILLS = 6;
 
     /**
      * Gathers the video for a case that just opened, as the system: the clips registered for the observations behind
      * its finding, and for a finding about a POS event at a till with cameras, a clip of each such camera from
      * {@value LpVisionCatalog#CASE_CLIP_BEFORE_SECONDS} s before to {@value LpVisionCatalog#CASE_CLIP_AFTER_SECONDS} s
-     * after the event. Each clip is linked to the case. Returns how many were linked.
+     * after the event, plus a still of each such camera at the moment of the event (LP1c), and a still of the moment
+     * each observation behind the finding was seen. Each is linked to the case. Returns how many were linked.
      */
     @Transactional
     public int forNewCase(String caseId) {
@@ -522,6 +771,17 @@ public class LpEvidenceService {
         for (String id : clips) {
             linked += requestForCase(id, caseId, reason) ? 1 : 0;
         }
+        // A still of the moment each observation behind the finding was seen, on the camera of its clip.
+        int stills = 0;
+        for (Map<String, Object> o : SqlRows.list(jdbc.sql("SELECT DISTINCT ON (e.\"occurredAt\", v.\"cameraId\")"
+                + " v.\"cameraId\", e.\"occurredAt\" FROM \"LpEvidence\" v JOIN \"LpEvent\" e ON e.\"organizationId\" ="
+                + " v.\"organizationId\" AND e.id = ANY(v.\"observationEventIds\") WHERE v.\"organizationId\" = ? AND"
+                + " v.id = ANY(?::text[]) AND e.id = ANY(?::text[]) ORDER BY e.\"occurredAt\", v.\"cameraId\" LIMIT "
+                + MAX_CASE_STILLS).params(org, textArray(clips), events))) {
+            String id = stillForCase((String) o.get("cameraId"), (Instant) o.get("occurredAt"), caseId, reason);
+            stills += id == null ? 0 : 1;
+        }
+        linked += stills;
         if (!TILL_RULES.contains((String) c.get("ruleCode"))) {
             return linked;
         }
@@ -550,6 +810,11 @@ public class LpEvidenceService {
                 String id = rangeForCase(camera, at.minusSeconds(LpVisionCatalog.CASE_CLIP_BEFORE_SECONDS),
                         at.plusSeconds(LpVisionCatalog.CASE_CLIP_AFTER_SECONDS), caseId, reason);
                 linked += id == null ? 0 : 1;
+                if (stills < MAX_CASE_STILLS) {
+                    String still = stillForCase(camera, at, caseId, reason);
+                    stills += still == null ? 0 : 1;
+                    linked += still == null ? 0 : 1;
+                }
             }
         }
         return linked;

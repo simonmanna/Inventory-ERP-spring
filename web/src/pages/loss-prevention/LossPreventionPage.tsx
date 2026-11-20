@@ -26,6 +26,7 @@ import {
 } from '@/features/loss-prevention/api';
 import { CamerasTab } from './CamerasTab';
 import { CaseEvidence, EvidenceTab } from './EvidenceTab';
+import { ViewFootageButton } from './FootageDialog';
 import { InsightsTab } from './InsightsTab';
 import { MetersTab } from './MetersTab';
 import { ResearchTab } from './ResearchTab';
@@ -330,9 +331,12 @@ function CaseDialog({ id, canInvestigate, canConfigure, showEvidence, onClose }:
               <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-2 text-xs">
                 {c.events.length === 0 && <p className="text-muted-foreground">{tx('This rule compares totals; it has no single record.')}</p>}
                 {c.events.map((e) => (
-                  <div key={e.id} className="flex justify-between gap-2">
+                  <div key={e.id} className="flex items-center justify-between gap-2">
                     <span>{dateTime(e.occurredAt)} · {e.type}</span>
-                    <span className="text-muted-foreground">{e.evidenceSource} · {e.evidenceLevel} · {e.observationStatus}</span>
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      {e.evidenceSource} · {e.evidenceLevel} · {e.observationStatus}
+                      {showEvidence && <ViewFootageButton variant="link" query={{ eventId: e.id }} label={e.type} />}
+                    </span>
                   </div>
                 ))}
               </div>

@@ -146,7 +146,23 @@ public final class LpVisionCommands {
             String caseId,
             @Size(max = 1000, message = "reason must hold at most 1000 characters") String reason) {}
 
+    /**
+     * {@code POST /loss-prevention/evidence/still} (LP1c): a still of one camera at a moment, taken by the edge box
+     * from its buffer. {@code at} absent = now.
+     */
+    public record EvidenceStillInput(
+            @NotBlank(message = "cameraId is required") String cameraId,
+            String at,
+            String caseId,
+            @Size(max = 1000, message = "reason must hold at most 1000 characters") String reason) {}
+
     /** Filters of the evidence list. */
     public record EvidenceQuery(String caseId, String cameraId, String zoneId, String state, String from, String to,
-            Integer page, Integer pageSize) {}
+            Integer page, Integer pageSize, String kind) {}
+
+    /**
+     * {@code GET /loss-prevention/footage} (LP1c): the cameras and evidence around a POS sale ({@code invoiceId}), a
+     * ledger record ({@code eventId}) or a branch and moment ({@code branchId} + {@code at}).
+     */
+    public record FootageQuery(String invoiceId, String eventId, String branchId, String at) {}
 }
