@@ -96,6 +96,35 @@ class SalesReturnsIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("refund of a foreign-currency receipt (rate 2) posts its journal at the receipt's rate: 1 × 500 → 1000"
+            + " base")
+    void refundJournalAtReceiptRate() {
+        String invoiceId = sale(2);
+        String base = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(demoOrg)
+                .query(String.class).single();
+        String currency = jdbc.sql("SELECT id FROM \"Currency\" WHERE code <> ? ORDER BY code LIMIT 1").param(base)
+                .query(String.class).single();
+        // a legacy / imported receipt: POS checkout itself only issues base-currency receipts
+        jdbc.sql("UPDATE \"Invoice\" SET \"currencyId\" = ?, \"exchangeRate\" = 2 WHERE id = ?").params(currency,
+                invoiceId).update();
+        String lineId = jdbc.sql("SELECT id FROM \"InvoiceItem\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                .query(String.class).single();
+        Res refund = keyed("POST", "/pos/invoices/" + invoiceId + "/refund", Map.of("reason", "Cracked",
+                "overrideById", adminId, "overridePin", PIN, "stockDisposition", "no_return", "cashSessionId", sessionId,
+                "lines", List.of(Map.of("lineId", lineId, "quantity", 1))));
+        assertThat(refund.status()).as(refund.raw().body()).isEqualTo(200);
+        String refundId = refund.body().get("refundId").asString();
+        Map<String, Object> je = jdbc.sql("SELECT e.\"currencyId\", max(l.\"exchangeRate\") AS \"exchangeRate\","
+                + " sum(l.\"baseDebit\") AS debit, sum(l.\"baseCredit\") AS credit FROM \"JournalEntry\" e JOIN \"JournalLine\" l ON"
+                + " l.\"journalEntryId\" = e.id WHERE e.\"organizationId\" = ? AND e.\"sourceType\" = 'pos_refund' AND"
+                + " e.\"sourceId\" = ? GROUP BY 1").params(demoOrg, refundId).query().singleRow();
+        assertThat(je.get("currencyId")).isEqualTo(currency);
+        assertThat((java.math.BigDecimal) je.get("exchangeRate")).isEqualByComparingTo("2");
+        assertThat((java.math.BigDecimal) je.get("debit")).isEqualByComparingTo("1000");
+        assertThat((java.math.BigDecimal) je.get("credit")).isEqualByComparingTo("1000");
+    }
+
+    @Test
     @DisplayName("returns are tenant-isolated and fully refunded sales drop out of the returnable list")
     void isolationAndExhaustion() {
         String invoiceId = sale(1);

@@ -1186,8 +1186,11 @@ public class PosInvoiceService {
             String refundId = (String) refund.get("id");
             journal.add(new PostingRequest.Line((String) inv.get("receivableAccountId"), null, JsNumbers.dec(total), partnerId,
                     null, null, null, null));
+            // Post-parity: the refund reverses revenue, tax and AR in the sale's currency at the sale's rate, as the
+            // sale journal posted them (Nest booked it with no currency, i.e. nominal = base, on every receipt).
             Map<String, Object> entry = posting.post(new PostingRequest("SALES", Instant.now(),
-                    "Refund " + inv.get("invoiceNumber") + ": " + reason, null, null, "pos_refund", refundId, null,
+                    "Refund " + inv.get("invoiceNumber") + ": " + reason, (String) inv.get("currencyId"),
+                    PosSql.js(inv.get("exchangeRate")), "pos_refund", refundId, null,
                     "pos_refund:" + refundId, (String) inv.get("branchId"), null, null, journal));
             BigDecimal residual = SqlRows.dec(inv, "amountResidual");
             BigDecimal arReduction = residual.compareTo(total) < 0 ? residual : total;

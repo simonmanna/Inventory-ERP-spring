@@ -99,6 +99,14 @@ Approved by the owner 2026-11-17 (accounting and costing review,
     - 409 `Stock posting job changed while abandoning (now <status>)`
   - Web: the Posting Monitor's Abandon dialog and an `abandoned` filter.
 
+Approved by the owner 2026-11-20 (landed-cost report corrections, discrepancy 2):
+
+- **POS refund journal in the receipt's currency.** `POST /pos/invoices/:id/refund` posts its journal (`pos_refund`)
+  with the receipt's `currencyId` and `exchangeRate`, as the sale journal (`pos_invoice`) does. Nest posted it with no
+  currency, so a foreign-currency receipt's refund reversed revenue, tax and AR at nominal = base. POS checkout only
+  issues base-currency receipts (rate 1), so the change only affects legacy or imported receipts; the payout payments
+  are unchanged. Test: `SalesReturnsIT.refundJournalAtReceiptRate`.
+
 Pending owner approval:
 
 1. **Invoice-item unit snapshot (ADR-S003, V5).** `InvoiceItem` gains `uomId` + `uomFactor` (the product's
