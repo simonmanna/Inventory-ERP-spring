@@ -26,7 +26,7 @@ class CustomerDepositReceiptPdfTest {
                         new CustomerDepositReceiptPdf.HistoryRow("2026-11-20", "Applied to invoice INV-2026-00010",
                                 new BigDecimal("12000000"), false),
                         new CustomerDepositReceiptPdf.HistoryRow("2026-11-21", "Refund", new BigDecimal("5000000"),
-                                false)));
+                                false)), null);
     }
 
     private static String text(byte[] pdf) throws Exception {

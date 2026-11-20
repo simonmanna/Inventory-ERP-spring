@@ -354,7 +354,9 @@ public class PaymentService {
         String payCurrency = dto.currencyCode() == null || dto.currencyCode().isBlank() ? baseCode
                 : dto.currencyCode().trim().toUpperCase();
         boolean foreign = !payCurrency.equals(baseCode);
-        if (foreign && (withholding.signum() > 0 || "store_credit".equals(method) || DEPOSIT_METHOD.equals(method)
+        // ADR-S080: a deposit application may be foreign (the deposit's currency, at the deposit's own rate)
+        if (foreign && (withholding.signum() > 0 || "store_credit".equals(method)
+                || (DEPOSIT_METHOD.equals(method) && !Boolean.TRUE.equals(DEPOSIT_APPLICATION.get()))
                 || dto.cashSessionId() != null || dto.refundOfId() != null
                 || allocations.stream().anyMatch(a -> a.invoiceId() != null && !a.invoiceId().isEmpty()))) {
             throw ApiException.badRequest("A foreign-currency payment settles documents only: no withholding, store"
@@ -460,7 +462,8 @@ public class PaymentService {
         }
         List<Line> lines = new ArrayList<>();
         if (fxs != null) {
-            lines.addAll(fxLines(fxs, direction, counterAccount, cashAccount, dto.partnerId(), payCurrency, foreignCash));
+            lines.addAll(fxLines(fxs, direction, counterAccount, cashAccount, dto.partnerId(), payCurrency, foreignCash,
+                    DEPOSIT_METHOD.equals(method)));
         } else if ("inbound".equals(direction) && withholding.signum() > 0) {
             // ADR-S071: Dr cash (net) + Dr withholding receivable / Cr AR (gross).
             lines.add(new Line(cashAccount, JsNumbers.dec(netCash), null, null, null, null, null, null));
@@ -653,14 +656,16 @@ public class PaymentService {
 
     /** Base-currency lines of a foreign-currency payment, realised FX on the designated FX accounts only. */
     private List<Line> fxLines(FxSettlement fxs, String direction, String counterAccount, String cashAccount,
-            String partnerId, String payCurrency, boolean foreignCash) {
+            String partnerId, String payCurrency, boolean foreignCash, boolean depositApplication) {
         List<Line> lines = new ArrayList<>();
         String label = "Realised FX · " + payCurrency + " @ " + JsNumbers.dec(fxs.rate().rate());
         // the AR / AP line relieves the open items in their own currency (the payment amount), at their carrying base
         String foreign = JsNumbers.dec(fxs.amount());
         if ("inbound".equals(direction)) {
-            Line cash = new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, null, null, null, null, null);
-            lines.add(foreignCash ? cash.inCurrency(payCurrency, foreign) : cash);
+            // a deposit application relieves the customer's deposit liability (ADR-S080): partner and currency kept
+            Line cash = new Line(cashAccount, JsNumbers.dec(fxs.cashBase()), null, depositApplication ? partnerId : null,
+                    null, null, null, null);
+            lines.add(foreignCash || depositApplication ? cash.inCurrency(payCurrency, foreign) : cash);
             lines.add(new Line(counterAccount, null, JsNumbers.dec(fxs.counterBase()), partnerId, null, null, null,
                     null).inCurrency(fxs.counterCurrency(), foreign));
         } else {

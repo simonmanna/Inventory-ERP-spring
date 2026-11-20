@@ -65,7 +65,8 @@ currency. There was no correct way to hold, move or reconcile foreign currency.
 | Bank reconciliation | A designated foreign account reconciles in its own currency: book, ledger and statement balances. Statement lines in another currency are refused on import. Responses gain `currencyCode` and `currencyState`. |
 | Expenses, expense advances, petty-cash replenishment, shift banking | Refused from or to a foreign account (owner decision 4): "… cannot use account X, which is held in USD; transfer the funds to a UGX account through treasury first". |
 | PO pay (`/purchase-orders/:id/pay`) | It cannot choose an account (it uses the method's mapped account), so it keeps refusing foreign accounts. Pay a foreign PO's bill through `/supplier-payments` from the foreign account (owner decision 5). |
-| POS, register shifts, store credit, customer deposits | Functional only, unchanged. |
+| POS, register shifts, store credit | Functional only, unchanged. |
+| Customer deposits | Superseded by ADR-S080: held in their own currency at their receipt rate, never revalued, applied to same-currency invoices with realised FX. |
 
 ### Legacy accounts (no silent conversion)
 A foreign account whose ledger holds untagged lines from before this change is **undesignated**. FX treasury, payments

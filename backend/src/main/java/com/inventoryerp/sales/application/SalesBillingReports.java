@@ -541,7 +541,7 @@ class SalesBillingReports implements SalesReportSet {
                        COALESCE((SELECT sum(pm."unallocatedAmount" * pm."exchangeRate") FROM "Payment" pm WHERE
                            pm."organizationId" = p."organizationId" AND pm."partnerId" = p.id AND pm.direction = 'inbound'
                            AND pm."voidedAt" IS NULL AND pm.status NOT IN ('draft', 'cancelled')), 0) AS unallocated,
-                       COALESCE((SELECT sum(cd.amount - cd."appliedAmount" - cd."refundedAmount") FROM "CustomerDeposit" cd
+                       COALESCE((SELECT sum((cd.amount - cd."appliedAmount" - cd."refundedAmount") * cd."exchangeRate") FROM "CustomerDeposit" cd
                            WHERE cd."organizationId" = p."organizationId" AND cd."partnerId" = p.id
                            AND cd.status = 'open'), 0) AS deposits
                   FROM "Partner" p LEFT JOIN "User" u ON u.id = p."salespersonId"
@@ -692,8 +692,11 @@ class SalesBillingReports implements SalesReportSet {
     Report deposits(Filter f) {
         Sql s = new Sql("""
                 SELECT cd.id, cd.number, cd."receivedDate" AS date, p.name AS customer, so.number AS "order",
-                       cd."paymentMethod" AS method, cd.amount, cd."appliedAmount", cd."refundedAmount",
-                       cd.amount - cd."appliedAmount" - cd."refundedAmount" AS balance, cd.status, cd.source,
+                       cd."paymentMethod" AS method, round(cd.amount * cd."exchangeRate", 6) AS amount,
+                       round(cd."appliedAmount" * cd."exchangeRate", 6) AS "appliedAmount",
+                       round(cd."refundedAmount" * cd."exchangeRate", 6) AS "refundedAmount",
+                       round((cd.amount - cd."appliedAmount" - cd."refundedAmount") * cd."exchangeRate", 6) AS balance,
+                       CASE WHEN cd."currencyCode" IS NULL THEN NULL ELSE cd."currencyCode" || ' ' || to_char(cd.amount, 'FM999,999,999,990.00') || ' @ ' || trim_scale(cd."exchangeRate")::text END AS fx, cd.status, cd.source,
                        cd."salesOrderId"
                   FROM "CustomerDeposit" cd
                   LEFT JOIN "Partner" p ON p.id = cd."partnerId"
@@ -710,7 +713,7 @@ class SalesBillingReports implements SalesReportSet {
             }
         });
         Report rep = table(rows, "number|Deposit|text", "date|Received|date", "customer|Customer|text",
-                "order|Sales order|text", "methodLabel|Method|text", "amount|Amount|money",
+                "order|Sales order|text", "methodLabel|Method|text", "fx|Currency|text", "amount|Amount|money",
                 "appliedAmount|Applied|money", "refundedAmount|Refunded|money", "balance|Balance held|money",
                 "status|Status|status").sumTotals("amount", "appliedAmount", "refundedAmount", "balance");
         rep.total("number", "Total");

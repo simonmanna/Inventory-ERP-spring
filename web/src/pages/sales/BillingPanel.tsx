@@ -15,6 +15,8 @@ import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import type { SalesOrder } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
+import { DepositCurrencyFields } from './DepositCurrencyFields';
+import { depositCurrencyBody, depositCurrencyIncomplete, useBaseCurrency, type DepositCurrency } from '@/features/sales/deposits';
 
 interface Billing {
   /** Phase A A4: historical Fleet goods invoices awaiting a two-person review block goods invoicing. */
@@ -22,7 +24,7 @@ interface Billing {
   legacyFleetInvoices?: Array<{ deliveryOrderCode: string; documentId: string; documentNumber: string | null; status: string }>;
   lines: Array<{ lineId: string; description: string; policy: string; quantity: number; amount: number }>;
   amount: number;
-  deposits: Array<{ id: string; number: string; amount: number; available: number; status: string; source: string; receivedDate: string; paymentMethod: string | null }>;
+  deposits: Array<{ id: string; number: string; amount: number; available: number; status: string; source: string; receivedDate: string; paymentMethod: string | null; currencyCode?: string | null }>;
   invoices: Array<{ id: string; documentNumber: string; status: string; totalAmount: number; amountResidual: number; downPayment: boolean }>;
 }
 
@@ -70,7 +72,11 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
   const [method, setMethod] = useState('bank');
   const [phone, setPhone] = useState('');
   const [target, setTarget] = useState<Record<string, string>>({});
+  const base = useBaseCurrency();
+  const [fx, setFx] = useState<DepositCurrency>({ currency: '', accountId: '', rate: '' });
   if (!data) return null;
+  // a deposit for a foreign-currency order defaults to the order's currency, so it can settle the order's invoices
+  const orderFx = (): DepositCurrency => ({ currency: order.currencyCode && order.currencyCode !== base ? order.currencyCode : '', accountId: '', rate: '' });
   const canInvoice = has(PERMISSIONS.sales.invoiceCreate);
   const canDeposit = has(PERMISSIONS.sales.depositRecord);
   const canRefund = has(PERMISSIONS.sales.depositRefund);
@@ -91,7 +97,7 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
       <div className="mt-2 flex flex-wrap gap-2">
         {canInvoice && data.lines.length > 0 && !data.blocked && <Button data-tour="sales.order.invoice" size="sm" disabled={invoice.isPending} onClick={() => invoice.mutate({ mode: 'regular' })}><FileText className="mr-1 h-3.5 w-3.5" />{tx('Create invoice')}</Button>}
         {canInvoice && <Button size="sm" variant="outline" onClick={() => setDialog('down')}>{tx('Down payment invoice')}</Button>}
-        {canDeposit && <Button size="sm" variant="outline" onClick={() => { setAmount(0); setDialog('deposit'); }}><Wallet className="mr-1 h-3.5 w-3.5" />{tx('Record deposit')}</Button>}
+        {canDeposit && <Button size="sm" variant="outline" onClick={() => { setAmount(0); setFx(orderFx()); setDialog('deposit'); }}><Wallet className="mr-1 h-3.5 w-3.5" />{tx('Record deposit')}</Button>}
       </div>
       {data.invoices.length > 0 && <ul className="mt-3 space-y-1 text-xs">
         {data.invoices.map((i) => (
@@ -103,7 +109,7 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
         <ul className="space-y-1 text-xs">
           {data.deposits.map((d) => (
             <li key={d.id} className="flex flex-wrap items-center gap-2">
-              <span>{d.number} · {date(d.receivedDate)} · {money(d.amount)} · {tx('available')} {money(d.available)} · {d.status}</span>
+              <span>{d.number} · {date(d.receivedDate)} · {money(d.amount, d.currencyCode || undefined)} · {tx('available')} {money(d.available, d.currencyCode || undefined)} · {d.status}</span>
               <Button size="sm" variant="ghost" title={tx('Print receipt')} onClick={() => void printDepositReceipt(d)}><Printer className="h-3.5 w-3.5" /></Button>
               {d.status === 'open' && Number(d.available) > 0 && postedOpen.length > 0 && canDeposit && <>
                 <select className="h-7 rounded border bg-background px-1" value={target[d.id] ?? ''} onChange={(e) => setTarget({ ...target, [d.id]: e.target.value })}>
@@ -111,7 +117,7 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
                 </select>
                 <Button size="sm" variant="ghost" disabled={!target[d.id]} onClick={() => apply.mutate({ depositId: d.id, documentId: target[d.id] })}>{tx('Apply')}</Button>
               </>}
-              {d.status === 'open' && Number(d.available) > 0 && d.source !== 'cash_sale' && canRefund && <Button size="sm" variant="ghost" onClick={() => { setAmount(Number(d.available)); setMethod('bank'); setRefunding(d); }}>{tx('Refund')}</Button>}
+              {d.status === 'open' && Number(d.available) > 0 && d.source !== 'cash_sale' && canRefund && <Button size="sm" variant="ghost" onClick={() => { setAmount(Number(d.available)); setMethod('bank'); setFx({ currency: d.currencyCode ?? '', accountId: '', rate: '' }); setRefunding(d); }}>{tx('Refund')}</Button>}
               {d.source === 'receipt' && d.status === 'open' && Number(d.available) === Number(d.amount) && canRefund && <Button size="sm" variant="ghost" onClick={() => setVoiding(d)}>{tx('Void')}</Button>}
             </li>
           ))}
@@ -121,18 +127,19 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>{refunding ? `${tx('Refund')} ${refunding.number}` : `${tx('Void')} ${voiding?.number ?? ''}`}</DialogTitle></DialogHeader>
           {refunding && <div className="grid gap-3">
-            <p className="text-xs text-muted-foreground">{tx('Available')}: {money(refunding.available)}</p>
+            <p className="text-xs text-muted-foreground">{tx('Available')}: {money(refunding.available, refunding.currencyCode || undefined)}</p>
             <Field label={tx('Amount')}><Input type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></Field>
             <Field label={tx('Method')}>
               <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value)}>
                 <option value="bank">{tx('Bank transfer')}</option><option value="cash">{tx('Cash')}</option><option value="cheque">{tx('Cheque')}</option><option value="mobile_money">{tx('Mobile money (recorded)')}</option>
               </select></Field>
+            {refunding.currencyCode && <DepositCurrencyFields value={fx} onChange={setFx} lockCurrency />}
           </div>}
           <Field label={tx('Reason')}><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setRefunding(null); setVoiding(null); }}>{tx('Cancel')}</Button>
-            <Button variant={voiding ? 'destructive' : 'default'} disabled={settle.isPending || (voiding ? !reason.trim() : !(amount > 0))} onClick={() => {
-              if (refunding) settle.mutate({ url: `/customer-deposits/${refunding.id}/refund`, body: { amount, paymentMethod: method === 'momo_request' ? 'mobile_money' : method, reason: reason || undefined } });
+            <Button variant={voiding ? 'destructive' : 'default'} disabled={settle.isPending || (voiding ? !reason.trim() : !(amount > 0) || depositCurrencyIncomplete(fx, base))} onClick={() => {
+              if (refunding) settle.mutate({ url: `/customer-deposits/${refunding.id}/refund`, body: { amount, paymentMethod: method === 'momo_request' ? 'mobile_money' : method, reason: reason || undefined, accountId: fx.accountId || undefined, exchangeRate: Number(fx.rate) > 0 ? Number(fx.rate) : undefined } });
               else if (voiding) settle.mutate({ url: `/customer-deposits/${voiding.id}/void`, body: { reason } });
             }}>{tx('Confirm')}</Button>
           </DialogFooter>
@@ -150,14 +157,15 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
                 <option value="bank">{tx('Bank transfer')}</option><option value="cash">{tx('Cash')}</option><option value="cheque">{tx('Cheque')}</option>
                 <option value="mobile_money">{tx('Mobile money (recorded)')}</option><option value="momo_request">{tx('Mobile money — request on phone')}</option>
               </select></Field>
+            {method !== 'momo_request' && <DepositCurrencyFields value={fx} onChange={setFx} />}
             {method === 'momo_request' && <Field label={tx('Customer phone')}><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+2567…" /></Field>}
           </div>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>{tx('Cancel')}</Button>
-            <Button onClick={() => {
+            <Button disabled={dialog === 'deposit' && method !== 'momo_request' && depositCurrencyIncomplete(fx, base)} onClick={() => {
               if (dialog === 'down') { invoice.mutate({ mode: 'down_payment', percent }); setDialog(null); }
               else if (method === 'momo_request') momo.mutate({ provider: 'mock', partnerId: order.partnerId, phone, amount, purpose: 'deposit', salesOrderId: order.id });
-              else deposit.mutate({ amount, paymentMethod: method });
+              else deposit.mutate({ amount, paymentMethod: method, ...depositCurrencyBody(fx, base) });
             }}>{tx('Confirm')}</Button>
           </DialogFooter>
         </DialogContent>

@@ -78,7 +78,8 @@ public class CustomerDepositController {
     @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
     public Map<String, Object> receive(@RequestBody Map<String, Object> b) {
         return deposits.receive(new DepositInput(s(b, "partnerId"), s(b, "salesOrderId"), d(b, "amount"),
-                s(b, "paymentMethod"), s(b, "accountId"), s(b, "receivedDate"), s(b, "reference"), s(b, "notes")));
+                s(b, "paymentMethod"), s(b, "accountId"), s(b, "receivedDate"), s(b, "reference"), s(b, "notes"),
+                s(b, "currencyCode"), d(b, "exchangeRate")));
     }
 
     @PostMapping("/customer-deposits/{id}/apply")
@@ -92,7 +93,8 @@ public class CustomerDepositController {
     @Idempotent
     @RequirePermissions(Permissions.SALES__DEPOSIT_REFUND)
     public Map<String, Object> refund(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
-        return deposits.refund(id, d(b, "amount"), s(b, "paymentMethod"), s(b, "accountId"), s(b, "reason"));
+        return deposits.refund(id, d(b, "amount"), s(b, "paymentMethod"), s(b, "accountId"), s(b, "reason"),
+                d(b, "exchangeRate"));
     }
 
     @PostMapping("/customer-deposits/{id}/void")

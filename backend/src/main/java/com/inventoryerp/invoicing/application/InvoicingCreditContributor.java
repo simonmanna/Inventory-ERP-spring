@@ -49,7 +49,9 @@ public class InvoicingCreditContributor implements CreditExposureContributor {
         BigDecimal onAccount = jdbc.sql("SELECT COALESCE(sum(\"unallocatedAmount\"), 0) FROM \"Payment\" WHERE"
                 + " \"organizationId\" = ? AND \"partnerId\" = ? AND direction::text = 'inbound' AND status::text ="
                 + " 'posted'").params(org, partnerId).query(BigDecimal.class).single();
-        BigDecimal deposits = jdbc.sql("SELECT COALESCE(sum(amount - \"appliedAmount\" - \"refundedAmount\"), 0) FROM"
+        // functional value at each deposit's own rate (ADR-S080; functional deposits have rate 1)
+        BigDecimal deposits = jdbc.sql("SELECT COALESCE(sum((amount - \"appliedAmount\" - \"refundedAmount\") *"
+                + " \"exchangeRate\"), 0) FROM"
                 + " \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'open'")
                 .params(org, partnerId).query(BigDecimal.class).single();
         return new Contribution(BigDecimal.ZERO, BigDecimal.ZERO, d(r.get("receivables")), d(r.get("other")),

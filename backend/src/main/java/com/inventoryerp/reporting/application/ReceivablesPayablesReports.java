@@ -592,13 +592,18 @@ public class ReceivablesPayablesReports implements ReportProvider {
             p.add(ctx.request().partnerIds().toArray(String[]::new));
         }
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT d.id, d.number, d.\"receivedDate\","
-                + " pt.name AS partner, d.\"partnerId\", d.source, d.\"paymentMethod\", d.amount, d.\"appliedAmount\","
-                + " d.\"refundedAmount\", d.amount - coalesce(d.\"appliedAmount\", 0) - coalesce(d.\"refundedAmount\", 0)"
-                + " AS open, d.status FROM \"CustomerDeposit\" d LEFT JOIN \"Partner\" pt ON pt.id = d.\"partnerId\""
+                + " pt.name AS partner, d.\"partnerId\", d.source, d.\"paymentMethod\", round(d.amount * d.\"exchangeRate\", 6)"
+                + " AS amount, round(d.\"appliedAmount\" * d.\"exchangeRate\", 6) AS \"appliedAmount\","
+                + " round(d.\"refundedAmount\" * d.\"exchangeRate\", 6) AS \"refundedAmount\", round((d.amount -"
+                + " d.\"appliedAmount\" - d.\"refundedAmount\") * d.\"exchangeRate\", 6) AS open, CASE WHEN d.\"currencyCode\" IS NULL THEN NULL"
+                + " ELSE d.\"currencyCode\" || ' ' || to_char(d.amount, 'FM999,999,999,990.00') || ' @ ' ||"
+                + " trim_scale(d.\"exchangeRate\")::text END AS fx, d.status FROM \"CustomerDeposit\" d LEFT JOIN \"Partner\" pt"
+                + " ON pt.id = d.\"partnerId\""
                 + " WHERE d.\"organizationId\" = ? AND d.\"receivedDate\" <= ?" + f + " ORDER BY pt.name,"
                 + " d.\"receivedDate\"").params(p));
         Tables.Builder t = new Tables.Builder(ctx.zone(), text("partner", "Customer"), text("number", "Deposit"),
                 date("receivedDate", "Received"), text("source", "Source"), text("paymentMethod", "Method"),
+                text("fx", "Currency"),
                 money("amount", "Amount"), money("appliedAmount", "Applied"), money("refundedAmount", "Refunded"),
                 money("open", "Open"), text("status", "Status"));
         rows.forEach(t::line);

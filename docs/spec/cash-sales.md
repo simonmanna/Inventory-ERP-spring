@@ -309,7 +309,8 @@ and register under Cash & Banking. Tested in `CashSaleIT.branchCashSalesReports`
 
 1. **Base currency only.**
    - Cash sales are recorded in the organization currency; another `currencyCode` returns 400.
-   - Reason: `PaymentService` refuses deposit applications in a foreign currency, and `CustomerDeposit` has no currency column.
+   - Reason (original): `PaymentService` refused foreign deposit applications and `CustomerDeposit` had no currency column.
+     ADR-S080 now supports foreign receipt deposits; cash-sale deposits are still functional only.
    - Result: the FX freeze holds trivially (rate 1). Foreign-currency showroom sales need a currency-aware deposit first (CS-5 or later).
 2. **MoMo verification.**
    - Verification goes through a verifier user (`verify_payment`) only.

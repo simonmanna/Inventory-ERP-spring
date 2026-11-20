@@ -207,7 +207,10 @@ date. Void deposits are left out. It also adds `netBalance` = AR closing − dep
 money on account). The statement PDF (sales, AR report, portal, e-mailed) prints the section with "Deposits held"
 and "Net amount due after deposits" whenever there is anything to show. A filtered sales statement (branch / currency /
 type) omits both fields, because deposits are not split that way.
-Known gaps: no foreign-currency deposits, no deposit tender at POS/Android.
+Foreign-currency deposits (ADR-S080): `currencyCode` / `exchangeRate` on receipt, received into a designated account held
+in that currency, never revalued, applied only to invoices in the same currency (realised FX at application and
+refund). Statement, credit and report totals are in functional value at each deposit's own rate.
+Known gaps: no deposit tender at POS/Android; cash-sale and mobile-money deposits are functional only.
 
 ## 12. Returns (S7), collections (S8), agreements / rebates / commissions / targets (S9), analytics / portal / AI (S10)
 As in the approved plan; detailed here when each phase is authorised.

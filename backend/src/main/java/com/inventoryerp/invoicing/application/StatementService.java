@@ -151,6 +151,17 @@ public class StatementService {
         }
     }
 
+    /** " (USD 1,000.00 @ 3700)" for a foreign deposit, else "". */
+    private static String fxNote(Map<String, Object> d, BigDecimal foreignAmount) {
+        Object c = d.get("currencyCode");
+        if (c == null || c.toString().isBlank()) {
+            return "";
+        }
+        return " (" + c + " " + new java.text.DecimalFormat("#,##0.00", java.text.DecimalFormatSymbols.getInstance(
+                java.util.Locale.US)).format(foreignAmount) + " @ " + SqlRows.dec(d, "exchangeRate").stripTrailingZeros()
+                        .toPlainString() + ")";
+    }
+
     private record Movement(Instant at, int order, String reference, String description, BigDecimal received,
             BigDecimal used) {}
 
@@ -164,8 +175,8 @@ public class StatementService {
     private Deposits deposits(String partnerId, Instant from, Instant to) {
         java.time.ZoneId zone = AccountingDay.zone(jdbc);
         List<Movement> moves = new ArrayList<>();
-        for (Map<String, Object> d : SqlRows.list(jdbc.sql("SELECT number, \"receivedDate\", amount, source, reference"
-                + " FROM \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status <> 'void'")
+        for (Map<String, Object> d : SqlRows.list(jdbc.sql("SELECT number, \"receivedDate\", amount, source, reference,"
+                + " \"currencyCode\", \"exchangeRate\", round(amount * \"exchangeRate\", 6) AS \"baseAmount\" FROM \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status <> 'void'")
                 .params(org(), partnerId))) {
             Object day = d.get("receivedDate");
             java.time.LocalDate date = day instanceof java.time.LocalDate l ? l : java.time.LocalDate.parse(
@@ -176,25 +187,28 @@ public class StatementService {
                 case "cash_sale" -> "Cash sale payment";
                 default -> "Advance received";
             };
-            moves.add(new Movement(AccountingDay.start(date, zone), 0, (String) d.get("number"), what.strip(),
-                    SqlRows.dec(d, "amount"), BigDecimal.ZERO));
+            moves.add(new Movement(AccountingDay.start(date, zone), 0, (String) d.get("number"), what.strip()
+                    + fxNote(d, SqlRows.dec(d, "amount")), SqlRows.dec(d, "baseAmount"), BigDecimal.ZERO));
         }
         for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.kind, a.amount, a.\"createdAt\", a.\"reversedAt\","
-                + " d.number, doc.\"documentNumber\" FROM \"DepositApplication\" a JOIN \"CustomerDeposit\" d ON d.id ="
+                + " d.number, doc.\"documentNumber\", d.\"currencyCode\", d.\"exchangeRate\" FROM \"DepositApplication\" a JOIN \"CustomerDeposit\" d ON d.id ="
                 + " a.\"depositId\" LEFT JOIN \"Document\" doc ON doc.id = a.\"documentId\" WHERE a.\"organizationId\" = ?"
                 + " AND d.\"partnerId\" = ? AND d.status <> 'void'").params(org(), partnerId))) {
-            BigDecimal amount = SqlRows.dec(a, "amount");
+            // functional value at the deposit's own rate (ADR-S080: an advance is never revalued)
+            BigDecimal foreignAmount = SqlRows.dec(a, "amount");
+            BigDecimal amount = foreignAmount.multiply(SqlRows.dec(a, "exchangeRate")).setScale(6, RoundingMode.HALF_UP);
+            String note = fxNote(a, foreignAmount);
             String number = (String) a.get("number");
             if ("refund".equals(a.get("kind"))) {
-                moves.add(new Movement((Instant) a.get("createdAt"), 1, number, "Refunded to customer", BigDecimal.ZERO,
-                        amount));
+                moves.add(new Movement((Instant) a.get("createdAt"), 1, number, "Refunded to customer" + note,
+                        BigDecimal.ZERO, amount));
                 continue;
             }
             String invoice = a.get("documentNumber") == null ? "invoice" : "invoice " + a.get("documentNumber");
-            moves.add(new Movement((Instant) a.get("createdAt"), 1, number, "Applied to " + invoice, BigDecimal.ZERO,
-                    amount));
+            moves.add(new Movement((Instant) a.get("createdAt"), 1, number, "Applied to " + invoice + note,
+                    BigDecimal.ZERO, amount));
             if (a.get("reversedAt") instanceof Instant back) {
-                moves.add(new Movement(back, 2, number, "Application to " + invoice + " reversed", amount,
+                moves.add(new Movement(back, 2, number, "Application to " + invoice + " reversed" + note, amount,
                         BigDecimal.ZERO));
             }
         }

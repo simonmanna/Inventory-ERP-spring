@@ -16,12 +16,16 @@ import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { useAuthStore } from '@/stores/auth.store';
 import { printDepositReceipt } from '@/features/sales/deposits';
+import { DepositCurrencyFields } from './DepositCurrencyFields';
+import { depositCurrencyBody, depositCurrencyIncomplete, useBaseCurrency, type DepositCurrency } from '@/features/sales/deposits';
 
 /** A customer deposit (advance) as returned by `GET /customer-deposits`. */
 export interface Deposit {
   id: string; number: string; partnerId: string; partnerName: string | null; salesOrderId: string | null; source: string;
   paymentMethod: string | null; amount: number; appliedAmount: number; refundedAmount: number; available: number;
   status: string; receivedDate: string; reference: string | null; notes: string | null;
+  /** ADR-S080: the deposit's currency (functional filled in), its rate and the functional value still held. */
+  currency?: string; currencyCode?: string | null; exchangeRate?: number; availableBase?: number;
 }
 interface Application { id: string; kind: string; amount: number; documentId: string; documentNumber: string | null; paymentId: string; reversedAt: string | null; createdAt: string }
 
@@ -61,11 +65,14 @@ export function CustomerDepositsList({ partnerId, partnerName, status }: { partn
   const [action, setAction] = useState<Action>(null);
   const done = () => { void qc.invalidateQueries({ queryKey: ['customer-deposits'] }); void qc.invalidateQueries({ queryKey: ['sales'] }); setAction(null); };
   const rows = [...(data ?? [])].reverse();
-  const totalOpen = rows.filter((d) => d.status === 'open').reduce((a, d) => a + Number(d.available), 0);
+  const base = useBaseCurrency();
+  // functional value at each deposit's own rate, so foreign deposits are not added up at face value
+  const totalOpen = rows.filter((d) => d.status === 'open').reduce((a, d) => a + Number(d.availableBase ?? d.available), 0);
+  const cm = (d: Deposit, v: number) => (d.currencyCode ? money(v, d.currencyCode) : money(v));
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{tx('Open balance')}: <strong className="text-foreground">{money(totalOpen)}</strong></p>
+        <p className="text-sm text-muted-foreground">{tx('Open balance')}: <strong className="text-foreground">{money(totalOpen, base || undefined)}</strong></p>
         {canRecord && <Button size="sm" onClick={() => setAction({ kind: 'new' })}><Plus className="mr-1 h-4 w-4" />{tx('Record advance')}</Button>}
       </div>
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
@@ -85,10 +92,10 @@ export function CustomerDepositsList({ partnerId, partnerName, status }: { partn
                   {!partnerId && <td className={th}><Link className="hover:underline" to={`/crm/customers/${d.partnerId}`}>{d.partnerName}</Link></td>}
                   <td className={th}>{date(d.receivedDate)}</td>
                   <td className={th}>{d.salesOrderId ? <Link className="text-primary hover:underline" to={`/sales/orders/${d.salesOrderId}`}>{tx(sourceLabel(d.source))}</Link> : tx(sourceLabel(d.source))}</td>
-                  <td className={`${th} text-right tabular-nums`}>{money(d.amount)}</td>
-                  <td className={`${th} text-right tabular-nums`}>{money(d.appliedAmount)}</td>
-                  <td className={`${th} text-right tabular-nums`}>{money(d.refundedAmount)}</td>
-                  <td className={`${th} text-right font-medium tabular-nums`}>{money(d.available)}</td>
+                  <td className={`${th} text-right tabular-nums`}>{cm(d, d.amount)}{d.currencyCode && <div className="text-xs text-muted-foreground">@ {Number(d.exchangeRate)}</div>}</td>
+                  <td className={`${th} text-right tabular-nums`}>{cm(d, d.appliedAmount)}</td>
+                  <td className={`${th} text-right tabular-nums`}>{cm(d, d.refundedAmount)}</td>
+                  <td className={`${th} text-right font-medium tabular-nums`}>{cm(d, d.available)}</td>
                   <td className={th}>{tx(d.status)}</td>
                   <td className={`${th} whitespace-nowrap text-right`}>
                     <Button size="sm" variant="ghost" title={tx('Print receipt')} onClick={() => void printDepositReceipt(d)}><Printer className="h-4 w-4" /></Button>{' '}
@@ -132,6 +139,8 @@ function NewDepositDialog({ partnerId: fixed, partnerName: fixedName, onClose, o
   const [receivedDate, setReceivedDate] = useState(new Date().toISOString().slice(0, 10));
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
+  const [fx, setFx] = useState<DepositCurrency>({ currency: '', accountId: '', rate: '' });
+  const base = useBaseCurrency();
   const m = useAction(onDone, 'Deposit recorded');
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
@@ -141,14 +150,15 @@ function NewDepositDialog({ partnerId: fixed, partnerName: fixedName, onClose, o
           {!fixed && <Field label={tx('Customer')}><PartnerPicker value={partnerId} label={partnerName} onPick={(i, n) => { setPartnerId(i); setPartnerName(n || null); }} /></Field>}
           <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
           <Field label={tx('Method')}><select className={selectCls} value={method} onChange={(e) => setMethod(e.target.value)}>{METHODS.map(([v, l]) => <option key={v} value={v}>{tx(l)}</option>)}</select></Field>
+          <DepositCurrencyFields value={fx} onChange={setFx} />
           <Field label={tx('Received on')}><Input type="date" value={receivedDate} onChange={(e) => setReceivedDate(e.target.value)} /></Field>
           <Field label={tx('Reference')}><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>
           <Field label={tx('Notes')}><Input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
-          <Button disabled={!partnerId || !(Number(amount) > 0) || m.isPending} onClick={() => m.mutate({ url: '/customer-deposits', body: {
-            partnerId, amount: Number(amount), paymentMethod: method, receivedDate, reference: reference || undefined, notes: notes || undefined } })}>{tx('Confirm')}</Button>
+          <Button disabled={!partnerId || !(Number(amount) > 0) || depositCurrencyIncomplete(fx, base) || m.isPending} onClick={() => m.mutate({ url: '/customer-deposits', body: {
+            partnerId, amount: Number(amount), paymentMethod: method, receivedDate, reference: reference || undefined, notes: notes || undefined, ...depositCurrencyBody(fx, base) } })}>{tx('Confirm')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -158,9 +168,13 @@ function NewDepositDialog({ partnerId: fixed, partnerName: fixedName, onClose, o
 function ApplyDialog({ deposit, onClose, onDone }: { deposit: Deposit; onClose: () => void; onDone: () => void }) {
   const { data } = useQuery({
     queryKey: ['customer-deposits', 'open-invoices', deposit.partnerId],
-    queryFn: async () => (await api.get<{ data: Array<{ id: string; documentNumber: string; amountResidual: number; status: string; documentType?: string }> }>('/invoices', { params: { partnerId: deposit.partnerId, status: 'posted', pageSize: 100 } })).data.data,
+    queryFn: async () => (await api.get<{ data: Array<{ id: string; documentNumber: string; amountResidual: number; status: string; documentType?: string; currencyId?: string | null }> }>('/invoices', { params: { partnerId: deposit.partnerId, status: 'posted', pageSize: 100 } })).data.data,
   });
-  const open = (data ?? []).filter((i) => i.status === 'posted' && Number(i.amountResidual) > 0 && (!i.documentType || i.documentType === 'sales_invoice'));
+  const base = useBaseCurrency();
+  const depCur = deposit.currencyCode || base;
+  // ADR-S080: a deposit settles invoices in its own currency only (the server enforces it too)
+  const sameCurrency = (i: { currencyId?: string | null }) => !('currencyId' in i) || (i.currencyId || base).toUpperCase() === depCur;
+  const open = (data ?? []).filter((i) => i.status === 'posted' && Number(i.amountResidual) > 0 && (!i.documentType || i.documentType === 'sales_invoice') && sameCurrency(i));
   const [documentId, setDocumentId] = useState('');
   const [amount, setAmount] = useState('');
   const m = useAction(onDone, 'Deposit applied');
@@ -173,11 +187,11 @@ function ApplyDialog({ deposit, onClose, onDone }: { deposit: Deposit; onClose: 
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>{tx('Apply')} {deposit.number}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">{tx('Available')}: {money(deposit.available)}</p>
+        <p className="text-sm text-muted-foreground">{tx('Available')}: {money(deposit.available, deposit.currencyCode || undefined)}</p>
         <Field label={tx('Invoice')}><select className={selectCls} value={documentId} onChange={(e) => pick(e.target.value)}>
           <option value="">{tx('Choose…')}</option>{open.map((i) => <option key={i.id} value={i.id}>{i.documentNumber} · {tx('open')} {money(i.amountResidual)}</option>)}
         </select></Field>
-        {data && !open.length && <p className="text-xs text-muted-foreground">{tx('This customer has no posted, unpaid invoice.')}</p>}
+        {data && !open.length && <p className="text-xs text-muted-foreground">{tx('This customer has no posted, unpaid invoice in this currency.')}</p>}
         <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
@@ -192,22 +206,31 @@ function RefundDialog({ deposit, onClose, onDone }: { deposit: Deposit; onClose:
   const [amount, setAmount] = useState(String(deposit.available));
   const [method, setMethod] = useState('bank');
   const [reason, setReason] = useState('');
+  const base = useBaseCurrency();
+  const [fx, setFx] = useState<DepositCurrency>({ currency: deposit.currencyCode ?? '', accountId: '', rate: '' });
   const m = useAction(onDone, 'Refunded');
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>{tx('Refund')} {deposit.number}</DialogTitle></DialogHeader>
-        <p className="text-sm text-muted-foreground">{tx('Available')}: {money(deposit.available)}</p>
+        <p className="text-sm text-muted-foreground">{tx('Available')}: {money(deposit.available, deposit.currencyCode || undefined)}</p>
         <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></Field>
         <Field label={tx('Method')}><select className={selectCls} value={method} onChange={(e) => setMethod(e.target.value)}>{METHODS.map(([v, l]) => <option key={v} value={v}>{tx(l)}</option>)}</select></Field>
+        {deposit.currencyCode && <DepositCurrencyFields value={fx} onChange={setFx} lockCurrency />}
         <Field label={tx('Reason')}><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
-          <Button disabled={!(Number(amount) > 0) || m.isPending} onClick={() => m.mutate({ url: `/customer-deposits/${deposit.id}/refund`, body: { amount: Number(amount), paymentMethod: method, reason: reason || undefined } })}>{tx('Refund')}</Button>
+          <Button disabled={!(Number(amount) > 0) || depositCurrencyIncomplete(fx, base) || m.isPending} onClick={() => m.mutate({ url: `/customer-deposits/${deposit.id}/refund`, body: { amount: Number(amount), paymentMethod: method, reason: reason || undefined, ...refundFx(fx, base) } })}>{tx('Refund')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Refund body: the account (and optional rate) only; the currency is the deposit's own. */
+function refundFx(fx: DepositCurrency, base: string) {
+  const { currencyCode: _c, ...rest } = depositCurrencyBody(fx, base);
+  return rest;
 }
 
 function VoidDialog({ deposit, onClose, onDone }: { deposit: Deposit; onClose: () => void; onDone: () => void }) {
@@ -241,7 +264,8 @@ function DetailDialog({ depositId, onClose }: { depositId: string; onClose: () =
         <DialogHeader><DialogTitle className="flex items-center gap-2">{tx('Deposit')} {d?.number}{d && <Button size="sm" variant="outline" onClick={() => void printDepositReceipt(d)}><Printer className="mr-1 h-3.5 w-3.5" />{tx('Print receipt')}</Button>}</DialogTitle></DialogHeader>
         {d && <div className="space-y-3 text-sm">
           <p>{d.partnerName} · {date(d.receivedDate)} · {tx(sourceLabel(d.source))}{d.paymentMethod ? ` · ${d.paymentMethod}` : ''}{d.reference ? ` · ${d.reference}` : ''}</p>
-          <p>{tx('Amount')} {money(d.amount)} · {tx('Applied')} {money(d.appliedAmount)} · {tx('Refunded')} {money(d.refundedAmount)} · <strong>{tx('Available')} {money(d.available)}</strong></p>
+          <p>{tx('Amount')} {money(d.amount, d.currencyCode || undefined)} · {tx('Applied')} {money(d.appliedAmount, d.currencyCode || undefined)} · {tx('Refunded')} {money(d.refundedAmount, d.currencyCode || undefined)} · <strong>{tx('Available')} {money(d.available, d.currencyCode || undefined)}</strong></p>
+          {d.currencyCode && <p className="text-xs text-muted-foreground">{tx('Exchange rate')} 1 {d.currencyCode} = {Number(d.exchangeRate)} · {tx('held at')} {money(d.availableBase)}</p>}
           {d.notes && <p className="text-muted-foreground">{d.notes}</p>}
           <div>
             <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">{tx('History')}</p>

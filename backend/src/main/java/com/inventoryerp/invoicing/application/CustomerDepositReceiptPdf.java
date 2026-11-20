@@ -34,7 +34,7 @@ final class CustomerDepositReceiptPdf {
     record Receipt(DepositReceiptBranding.Branding branding, String number, String receivedDate, String status, String customerName,
             String customerCode, String customerTaxNumber, String salesOrderNumber, String source, String method,
             String reference, String notes, String currency, BigDecimal amount, BigDecimal applied, BigDecimal refunded,
-            BigDecimal available, String receivedBy, List<HistoryRow> history) {}
+            BigDecimal available, String receivedBy, List<HistoryRow> history, String exchangeNote) {}
 
     private CustomerDepositReceiptPdf() {}
 
@@ -96,6 +96,9 @@ final class CustomerDepositReceiptPdf {
         }
         if (!blank(r.reference())) {
             fact(facts, "Reference", r.reference(), bold, small);
+        }
+        if (!blank(r.exchangeNote())) {
+            fact(facts, "Exchange rate", r.exchangeNote(), bold, small);
         }
         pdf.add(facts);
 

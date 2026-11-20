@@ -341,7 +341,9 @@ public final class SalesController {
             Object amount = in.get("amount");
             return deposits.receive(new CustomerDepositService.DepositInput(String.valueOf(o.get("partnerId")), id,
                     amount == null ? null : new java.math.BigDecimal(amount.toString()), text(b, "paymentMethod"),
-                    text(b, "accountId"), text(b, "receivedDate"), text(b, "reference"), text(b, "notes")));
+                    text(b, "accountId"), text(b, "receivedDate"), text(b, "reference"), text(b, "notes"),
+                    text(b, "currencyCode"), in.get("exchangeRate") == null ? null : new java.math.BigDecimal(in.get(
+                            "exchangeRate").toString())));
         }
 
         @PostMapping("/{id}/apply-deposits")

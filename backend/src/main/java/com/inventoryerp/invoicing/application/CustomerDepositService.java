@@ -2,6 +2,8 @@ package com.inventoryerp.invoicing.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.AccountResolverService;
+import com.inventoryerp.accounting.application.CurrencyService;
+import com.inventoryerp.accounting.application.ForeignCash;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -57,10 +59,15 @@ public class CustomerDepositService {
     private final AuditService audit;
     private final WorkflowService workflow;
     private final ObjectProvider<DepositReceiptBranding> branding;
+    private final CurrencyService currency;
+    private final DocumentFxRates fxRates;
 
     public CustomerDepositService(JdbcClient jdbc, PostingService posting, PaymentService payments,
             AccountResolverService accounts, AccountDeterminationService determination, SequenceService sequence,
-            AuditService audit, WorkflowService workflow, ObjectProvider<DepositReceiptBranding> branding) {
+            AuditService audit, WorkflowService workflow, ObjectProvider<DepositReceiptBranding> branding,
+            CurrencyService currency, DocumentFxRates fxRates) {
+        this.currency = currency;
+        this.fxRates = fxRates;
         this.workflow = workflow;
         this.branding = branding;
         this.jdbc = jdbc;
@@ -72,9 +79,30 @@ public class CustomerDepositService {
         this.audit = audit;
     }
 
-    /** Receipt input. */
+    /**
+     * Receipt input. {@code currencyCode} null / blank = the functional currency; a foreign deposit (ADR-S080) is
+     * received into an account held in that currency, at {@code exchangeRate} (functional per unit) or the rate table.
+     */
     public record DepositInput(String partnerId, String salesOrderId, BigDecimal amount, String paymentMethod,
-            String accountId, String receivedDate, String reference, String notes) {}
+            String accountId, String receivedDate, String reference, String notes, String currencyCode,
+            BigDecimal exchangeRate) {
+
+        /** A functional-currency receipt. */
+        public DepositInput(String partnerId, String salesOrderId, BigDecimal amount, String paymentMethod,
+                String accountId, String receivedDate, String reference, String notes) {
+            this(partnerId, salesOrderId, amount, paymentMethod, accountId, receivedDate, reference, notes, null, null);
+        }
+    }
+
+    /** The deposit's currency (functional when not stated). */
+    private String currencyOf(Map<String, Object> d) {
+        Object c = d.get("currencyCode");
+        return c == null || c.toString().isBlank() ? fxRates.base() : c.toString().trim().toUpperCase();
+    }
+
+    private static BigDecimal r6(BigDecimal v) {
+        return v.setScale(6, RoundingMode.HALF_UP);
+    }
 
     private static String org() {
         return TenantContext.organizationId();
@@ -103,23 +131,48 @@ public class CustomerDepositService {
         if ("store_credit".equals(method) || PaymentService.DEPOSIT_METHOD.equals(method)) {
             throw ApiException.badRequest("Unsupported payment method");
         }
-        TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org, method, in.accountId(), null);
+        String base = fxRates.base();
+        String cur = in.currencyCode() == null || in.currencyCode().isBlank() ? base
+                : in.currencyCode().trim().toUpperCase();
+        boolean foreign = !cur.equals(base);
         LocalDate date = in.receivedDate() == null ? LocalDate.now() : LocalDate.parse(in.receivedDate().substring(0, 10));
+        TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org, method, in.accountId(), null,
+                foreign ? cur : null);
+        BigDecimal rate = BigDecimal.ONE;
+        String rateSource = null;
+        if (foreign) {
+            // ADR-S080: foreign money is received into an account held in that currency, never booked as functional
+            ForeignCash.Denomination held = ForeignCash.of(jdbc, org, tender.accountId());
+            if (held == null || !held.currency().equals(cur)) {
+                throw ApiException.badRequest("A " + cur + " deposit must be received into a bank, cash or mobile-money"
+                        + " account held in " + cur);
+            }
+            ForeignCash.assertDecimals(jdbc, cur, amount);
+            CurrencyService.Resolution r = currency.resolveStated(cur, base, in.exchangeRate(), date.atStartOfDay()
+                    .toInstant(ZoneOffset.UTC));
+            rate = r.rate();
+            rateSource = r.source();
+        }
+        BigDecimal baseAmount = foreign ? r6(amount.multiply(rate)) : amount;
         String id = UUID.randomUUID().toString();
         String number = sequence.next("customer_deposit:" + date.getYear(), "DEP-" + date.getYear() + "-", 5);
         String depositAccount = depositAccount();
+        Line cash = Line.debit(tender.accountId(), baseAmount, "Deposit " + number);
+        Line liability = new Line(depositAccount, null, baseAmount, in.partnerId(), "Deposit " + number, null, null, null);
+        String fx = JsNumbers.dec(amount);
         Map<String, Object> entry = posting.post(PostingRequest.of(tender.journalCode(), date.atStartOfDay()
                 .toInstant(ZoneOffset.UTC), "Customer deposit " + number, "customer_deposit", id, "customer_deposit:" + id,
-                List.of(Line.debit(tender.accountId(), amount, "Deposit " + number),
-                        new Line(depositAccount, null, amount, in.partnerId(), "Deposit " + number, null, null, null))));
+                foreign ? List.of(cash.inCurrency(cur, fx), liability.inCurrency(cur, fx)) : List.of(cash, liability)));
         jdbc.sql("INSERT INTO \"CustomerDeposit\" (id, \"organizationId\", number, \"partnerId\", \"salesOrderId\", source,"
                 + " \"paymentMethod\", \"accountId\", amount, \"receivedDate\", \"journalEntryId\", reference, notes,"
-                + " \"createdById\") VALUES (?, ?, ?, ?, ?, 'receipt', ?, ?, ?, ?, ?, ?, ?, ?)")
+                + " \"createdById\", \"currencyCode\", \"exchangeRate\", \"rateSource\") VALUES (?, ?, ?, ?, ?,"
+                + " 'receipt', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .params(id, org, number, in.partnerId(), in.salesOrderId(), method, tender.accountId(), amount,
-                        java.sql.Date.valueOf(date), entry.get("id"), in.reference(), in.notes(), TenantContext.userId())
+                        java.sql.Date.valueOf(date), entry.get("id"), in.reference(), in.notes(), TenantContext.userId(),
+                        foreign ? cur : null, rate, rateSource)
                 .update();
         audit.record(AuditInput.of("CustomerDeposit", id, "create", null, Obj.of("number", number, "amount", amount,
-                "salesOrderId", in.salesOrderId())));
+                "currencyCode", cur, "exchangeRate", rate, "salesOrderId", in.salesOrderId())));
         return get(id);
     }
 
@@ -248,8 +301,8 @@ public class CustomerDepositService {
     public Map<String, Object> registerDownPayment(String documentId) {
         String org = org();
         Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", \"partnerId\", status::text AS status,"
-                + " \"issueDate\", data->>'downPaymentFor' AS \"orderId\" FROM \"Document\" WHERE id = ? AND"
-                + " \"organizationId\" = ?").params(documentId, org));
+                + " \"issueDate\", data->>'downPaymentFor' AS \"orderId\", \"currencyId\", \"exchangeRate\","
+                + " \"journalEntryId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(documentId, org));
         if (doc == null || doc.get("orderId") == null || !List.of("posted", "paid").contains(doc.get("status"))) {
             return null;
         }
@@ -264,13 +317,18 @@ public class CustomerDepositService {
             return null;
         }
         LocalDate date = doc.get("issueDate") instanceof Instant i ? i.atZone(ZoneOffset.UTC).toLocalDate() : LocalDate.now();
+        // ADR-S080: a foreign down-payment invoice holds the deposit in its currency at the invoice's carrying rate
+        String cur = fxRates.currencyOf(doc);
+        boolean foreign = !cur.equals(fxRates.base());
+        BigDecimal rate = foreign ? fxRates.documentRate(doc) : BigDecimal.ONE;
         String id = UUID.randomUUID().toString();
         String number = sequence.next("customer_deposit:" + date.getYear(), "DEP-" + date.getYear() + "-", 5);
         jdbc.sql("INSERT INTO \"CustomerDeposit\" (id, \"organizationId\", number, \"partnerId\", \"salesOrderId\", source,"
-                + " \"documentId\", amount, \"receivedDate\", reference, \"createdById\") VALUES (?, ?, ?, ?, ?,"
-                + " 'down_payment_invoice', ?, ?, ?, ?, ?)").params(id, org, number, doc.get("partnerId"),
-                        doc.get("orderId"), documentId, net, java.sql.Date.valueOf(date), doc.get("documentNumber"),
-                        TenantContext.userId()).update();
+                + " \"documentId\", amount, \"receivedDate\", reference, \"createdById\", \"currencyCode\", \"exchangeRate\","
+                + " \"rateSource\") VALUES (?, ?, ?, ?, ?, 'down_payment_invoice', ?, ?, ?, ?, ?, ?, ?, ?)")
+                .params(id, org, number, doc.get("partnerId"), doc.get("orderId"), documentId, net,
+                        java.sql.Date.valueOf(date), doc.get("documentNumber"), TenantContext.userId(), foreign ? cur : null,
+                        rate, foreign ? "document" : null).update();
         audit.record(AuditInput.of("CustomerDeposit", id, "create", null, Obj.of("number", number, "downPaymentInvoice",
                 doc.get("documentNumber"))));
         return get(id);
@@ -286,8 +344,8 @@ public class CustomerDepositService {
             throw ApiException.badRequest("Deposit " + d.get("number") + " is " + d.get("status"));
         }
         Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT id, \"partnerId\", \"amountResidual\", status::text AS status,"
-                + " data->>'downPaymentFor' AS dp FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? AND"
-                + " \"documentType\" = 'sales_invoice'").params(documentId, org()));
+                + " data->>'downPaymentFor' AS dp, \"currencyId\", \"documentNumber\" FROM \"Document\" WHERE id = ? AND"
+                + " \"organizationId\" = ? AND \"documentType\" = 'sales_invoice'").params(documentId, org()));
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
         }
@@ -305,6 +363,13 @@ public class CustomerDepositService {
         if (doc.get("dp") != null && "down_payment_invoice".equals(d.get("source"))) {
             throw ApiException.badRequest("A down-payment deposit cannot settle a down-payment invoice");
         }
+        String cur = currencyOf(d);
+        if (!cur.equals(fxRates.currencyOf(doc))) {
+            // ADR-S080: no silent conversion; a deposit settles invoices in its own currency only
+            throw ApiException.badRequest("Deposit " + d.get("number") + " is in " + cur + "; it can only settle "
+                    + cur + " invoices (" + doc.get("documentNumber") + " is in " + fxRates.currencyOf(doc) + ")");
+        }
+        boolean foreign = !cur.equals(fxRates.base());
         BigDecimal available = available(d);
         BigDecimal residual = SqlRows.dec(doc, "amountResidual");
         BigDecimal amount = amountIn == null ? available.min(residual) : amountIn.setScale(6, RoundingMode.HALF_UP);
@@ -318,10 +383,12 @@ public class CustomerDepositService {
         if (amount.compareTo(residual) > 0) {
             throw ApiException.badRequest("The invoice has only " + JsNumbers.dec(residual) + " left to pay");
         }
+        // a foreign deposit is relieved at its own rate (non-monetary, IFRIC 22); the gap to the invoice rate is
+        // realised FX, computed by the payment's FX settlement exactly as for a foreign receipt
         Map<String, Object> pay = payments.createDepositApplication(new PaymentInput((String) d.get("partnerId"),
                 LocalDate.now().toString(), amount, PaymentService.DEPOSIT_METHOD, depositAccount(), "Deposit "
                         + d.get("number"), null, List.of(new AllocationInput(documentId, null, amount)), null, false, null,
-                null));
+                null, foreign ? cur : null, foreign ? SqlRows.dec(d, "exchangeRate") : null, null, null));
         jdbc.sql("INSERT INTO \"DepositApplication\" (id, \"organizationId\", \"depositId\", \"documentId\", \"paymentId\","
                 + " amount, kind, \"createdById\") VALUES (?, ?, ?, ?, ?, ?, 'application', ?)").params(UUID.randomUUID()
                         .toString(), org(), depositId, documentId, pay.get("id"), amount, TenantContext.userId()).update();
@@ -355,12 +422,21 @@ public class CustomerDepositService {
         if ("store_credit".equals(m) || PaymentService.DEPOSIT_METHOD.equals(m)) {
             throw ApiException.badRequest("Unsupported payment method");
         }
-        TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org(), m, accountId, null);
+        String cur = currencyOf(d);
+        boolean foreign = !cur.equals(fxRates.base());
+        TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org(), m, accountId, null,
+                foreign ? cur : null);
         String key = "customer_deposit_refund:" + depositId + ":" + UUID.randomUUID();
+        String label = "Refund " + d.get("number");
+        List<Line> lines;
+        if (!foreign) {
+            lines = List.of(new Line(depositAccount(), amount, null, (String) d.get("partnerId"), label, null, null,
+                    null), Line.credit(tender.accountId(), amount, label));
+        } else {
+            lines = foreignRefundLines(d, cur, amount, tender.accountId(), exchangeRate.get(), label);
+        }
         Map<String, Object> entry = posting.post(PostingRequest.of(tender.journalCode(), Instant.now(), "Deposit refund "
-                + d.get("number"), "customer_deposit", depositId, key, List.of(new Line(depositAccount(), amount, null,
-                        (String) d.get("partnerId"), "Refund " + d.get("number"), null, null, null), Line.credit(
-                                tender.accountId(), amount, "Refund " + d.get("number")))));
+                + d.get("number"), "customer_deposit", depositId, key, lines));
         jdbc.sql("INSERT INTO \"DepositApplication\" (id, \"organizationId\", \"depositId\", \"documentId\", \"paymentId\","
                 + " amount, kind, \"createdById\") VALUES (?, ?, ?, ?, ?, ?, 'refund', ?)").params(UUID.randomUUID()
                         .toString(), org(), depositId, depositId, entry.get("id"), amount, TenantContext.userId()).update();
@@ -368,6 +444,63 @@ public class CustomerDepositService {
         audit.record(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("refunded", amount, "reason",
                 reason)));
         return get(depositId);
+    }
+
+    /** Spot rate stated on a foreign refund (only used beyond the account's balance; else the rate table). */
+    private static final ThreadLocal<BigDecimal> exchangeRate = new ThreadLocal<>();
+
+    /**
+     * Refund of a foreign deposit (ADR-S080): the liability is relieved at the deposit's own rate, the money leaves the
+     * account held in that currency at its carrying value (R-8 relief, funds checked in the currency), and the
+     * difference is realised FX.
+     */
+    private List<Line> foreignRefundLines(Map<String, Object> d, String cur, BigDecimal amount, String cashAccount,
+            BigDecimal statedRate, String label) {
+        String org = org();
+        ForeignCash.Denomination held = ForeignCash.of(jdbc, org, cashAccount);
+        if (held == null || !held.currency().equals(cur)) {
+            throw ApiException.badRequest("A " + cur + " deposit is refunded from a bank, cash or mobile-money account"
+                    + " held in " + cur);
+        }
+        com.inventoryerp.accounting.application.TreasuryGuards.lockAccounts(jdbc, org, List.of(cashAccount));
+        ForeignCash.Balance bal = ForeignCash.balance(jdbc, org, cashAccount, cur);
+        ForeignCash.assertFunds(bal, amount, held.name(), cur);
+        BigDecimal spot = currency.resolveStated(cur, fxRates.base(), statedRate, Instant.now()).rate();
+        BigDecimal cashBase = ForeignCash.relieve(bal, amount, spot);
+        BigDecimal depositBase = available(d).compareTo(amount) == 0 ? remainingBase(d) : r6(amount.multiply(SqlRows.dec(d,
+                "exchangeRate")));
+        String fx = JsNumbers.dec(amount);
+        List<Line> lines = new ArrayList<>();
+        lines.add(new Line(depositAccount(), depositBase, null, (String) d.get("partnerId"), label, null, null, null)
+                .inCurrency(cur, fx));
+        lines.add(Line.credit(cashAccount, cashBase, label).inCurrency(cur, fx));
+        BigDecimal diff = depositBase.subtract(cashBase);
+        String fxLabel = "Realised FX · " + cur + " deposit " + d.get("number");
+        if (diff.signum() > 0) {
+            lines.add(Line.credit(determination.mapped("fx_gain"), diff, fxLabel));
+        } else if (diff.signum() < 0) {
+            lines.add(Line.debit(determination.mapped("fx_loss"), diff.negate(), fxLabel));
+        }
+        return lines;
+    }
+
+    /** Functional value still on the liability for this deposit (exact on the last relief, no rounding residue). */
+    private BigDecimal remainingBase(Map<String, Object> d) {
+        BigDecimal rate = SqlRows.dec(d, "exchangeRate");
+        BigDecimal used = SqlRows.dec(d, "appliedAmount").add(SqlRows.dec(d, "refundedAmount"));
+        return r6(SqlRows.dec(d, "amount").multiply(rate)).subtract(r6(used.multiply(rate)));
+    }
+
+    /** Refund with a stated spot rate for a foreign deposit (see {@link #refund}). */
+    @Transactional
+    public Map<String, Object> refund(String depositId, BigDecimal amountIn, String method, String accountId,
+            String reason, BigDecimal statedRate) {
+        exchangeRate.set(statedRate);
+        try {
+            return refund(depositId, amountIn, method, accountId, reason);
+        } finally {
+            exchangeRate.remove();
+        }
     }
 
     /** Void an untouched receipt deposit (reverses its journal entry). */
@@ -440,8 +573,12 @@ public class CustomerDepositService {
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> d = SqlRows.one(jdbc.sql("SELECT d.*, p.name AS \"partnerName\", d.amount - d.\"appliedAmount\""
-                + " - d.\"refundedAmount\" AS available FROM \"CustomerDeposit\" d LEFT JOIN \"Partner\" p ON p.id ="
-                + " d.\"partnerId\" WHERE d.id = ? AND d.\"organizationId\" = ?").params(id, org()));
+                + " - d.\"refundedAmount\" AS available, round((d.amount - d.\"appliedAmount\" - d.\"refundedAmount\") *"
+                + " d.\"exchangeRate\", 6) AS \"availableBase\", round(d.amount * d.\"exchangeRate\", 6)"
+                + " AS \"baseAmount\", coalesce(d.\"currencyCode\", o.\"currencyCode\") AS currency FROM"
+                + " \"Organization\" o, \"CustomerDeposit\" d LEFT JOIN \"Partner\" p ON p.id ="
+                + " d.\"partnerId\" WHERE d.id = ? AND d.\"organizationId\" = ? AND o.id = d.\"organizationId\"").params(id,
+                        org()));
         if (d == null) {
             throw ApiException.notFound("Deposit not found");
         }
@@ -454,7 +591,7 @@ public class CustomerDepositService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String partnerId, String salesOrderId, String status) {
         List<Object> params = new ArrayList<>(List.of(org()));
-        StringBuilder where = new StringBuilder(" WHERE d.\"organizationId\" = ?");
+        StringBuilder where = new StringBuilder(" WHERE d.\"organizationId\" = ? AND o.id = d.\"organizationId\"");
         if (partnerId != null) {
             where.append(" AND d.\"partnerId\" = ?");
             params.add(partnerId);
@@ -468,7 +605,10 @@ public class CustomerDepositService {
             params.add(status);
         }
         return SqlRows.list(jdbc.sql("SELECT d.*, p.name AS \"partnerName\", d.amount - d.\"appliedAmount\" -"
-                + " d.\"refundedAmount\" AS available FROM \"CustomerDeposit\" d LEFT JOIN \"Partner\" p ON p.id ="
+                + " d.\"refundedAmount\" AS available, round((d.amount - d.\"appliedAmount\" - d.\"refundedAmount\") *"
+                + " d.\"exchangeRate\", 6) AS \"availableBase\", round(d.amount * d.\"exchangeRate\", 6)"
+                + " AS \"baseAmount\", coalesce(d.\"currencyCode\", o.\"currencyCode\") AS currency FROM"
+                + " \"Organization\" o, \"CustomerDeposit\" d LEFT JOIN \"Partner\" p ON p.id ="
                 + " d.\"partnerId\"" + where + " ORDER BY d.\"receivedDate\", d.\"createdAt\"").params(params));
     }
 
@@ -503,7 +643,7 @@ public class CustomerDepositService {
                 "Advance / deposit", "Bank transfer", "TRX-0000", null, currency, new BigDecimal("1000000"),
                 new BigDecimal("400000"), BigDecimal.ZERO, new BigDecimal("600000"), null, List.of(
                         new CustomerDepositReceiptPdf.HistoryRow(LocalDate.now().toString(), "Applied to invoice"
-                                + " INV-0000-000000", new BigDecimal("400000"), false))));
+                                + " INV-0000-000000", new BigDecimal("400000"), false)), null));
     }
 
     private DepositReceiptBranding.Branding branding(Object unsavedLayout) {
@@ -524,8 +664,6 @@ public class CustomerDepositService {
 
     private CustomerDepositReceiptPdf.Receipt receipt(Map<String, Object> d, DepositReceiptBranding.Branding b) {
         String org = org();
-        Map<String, Object> o = SqlRows.one(jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?")
-                .param(org));
         Map<String, Object> partner = SqlRows.one(jdbc.sql("SELECT name, code, \"taxNumber\" FROM \"Partner\" WHERE id = ? AND"
                 + " \"organizationId\" = ?").params(d.get("partnerId"), org));
         String order = d.get("salesOrderId") == null ? null : jdbc.sql("SELECT number FROM \"SalesOrder\" WHERE id = ? AND"
@@ -545,14 +683,22 @@ public class CustomerDepositService {
             case "cash_sale" -> "Cash sale payment";
             default -> "Advance / deposit";
         };
+        String cur = currencyOf(d);
+        String exchangeNote = null;
+        if (!cur.equals(fxRates.base())) {
+            java.text.DecimalFormat f = new java.text.DecimalFormat("#,##0.##", java.text.DecimalFormatSymbols.getInstance(
+                    java.util.Locale.US));
+            exchangeNote = "1 " + cur + " = " + f.format(SqlRows.dec(d, "exchangeRate")) + " " + fxRates.base() + " ("
+                    + fxRates.base() + " " + f.format(SqlRows.dec(d, "baseAmount")) + ")";
+        }
         return new CustomerDepositReceiptPdf.Receipt(b, str(d.get("number")), day(d.get("receivedDate")),
                 str(d.get("status")), partner == null ? "" : str(partner.get("name")), partner == null ? null
                         : (String) partner.get("code"), partner == null ? null : (String) partner.get("taxNumber"), order,
                 source, methodLabel((String) d.get("paymentMethod")), "down_payment_invoice".equals(d.get("source"))
-                        ? null : (String) d.get("reference"), (String) d.get("notes"), o == null || o.get("currencyCode")
-                                == null ? "" : str(o.get("currencyCode")), SqlRows.dec(d, "amount"), SqlRows.dec(d,
+                        ? null : (String) d.get("reference"), (String) d.get("notes"), cur, SqlRows.dec(d, "amount"),
+                SqlRows.dec(d,
                                         "appliedAmount"), SqlRows.dec(d, "refundedAmount"), SqlRows.dec(d, "available"),
-                receivedBy, history);
+                receivedBy, history, exchangeNote);
     }
 
     private static CustomerDepositReceiptPdf.Header header(Map<String, Object> o) {
@@ -608,8 +754,10 @@ public class CustomerDepositService {
     /** Unapplied deposit balance of a customer (credit exposure bucket D). */
     @Transactional(readOnly = true)
     public BigDecimal openBalance(String partnerId) {
-        return jdbc.sql("SELECT COALESCE(sum(amount - \"appliedAmount\" - \"refundedAmount\"), 0) FROM \"CustomerDeposit\""
-                + " WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'open'").params(org(), partnerId)
+        // functional value at each deposit's own rate (ADR-S080)
+        return jdbc.sql("SELECT COALESCE(sum((amount - \"appliedAmount\" - \"refundedAmount\") * \"exchangeRate\"), 0) FROM"
+                + " \"CustomerDeposit\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status = 'open'").params(org(),
+                        partnerId)
                 .query(BigDecimal.class).single();
     }
 

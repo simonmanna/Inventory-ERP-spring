@@ -482,7 +482,14 @@ public class SalesBillingService {
     @Transactional
     public List<Map<String, Object>> applyDeposits(String orderId, String documentId) {
         List<Map<String, Object>> out = new ArrayList<>();
+        Map<String, Object> inv = db.row("SELECT upper(coalesce(NULLIF(d.\"currencyId\", ''), o.\"currencyCode\")) AS ccy"
+                + " FROM \"Document\" d JOIN \"Organization\" o ON o.id = d.\"organizationId\" WHERE d.id = ?", documentId);
+        String invCurrency = inv == null ? null : str(inv.get("ccy"));
         for (Map<String, Object> d : deposits.list(null, orderId, "open")) {
+            // ADR-S080: only deposits in the invoice's currency settle it (the list fills in the functional code)
+            if (invCurrency != null && !invCurrency.equalsIgnoreCase(str(d.get("currency")))) {
+                continue;
+            }
             Map<String, Object> doc = db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?", documentId);
             BigDecimal residual = doc == null ? BigDecimal.ZERO : dec(doc.get("amountResidual"));
             if (residual.signum() <= 0) {
