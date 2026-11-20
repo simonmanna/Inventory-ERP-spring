@@ -336,4 +336,31 @@ class LandedCostProfitabilityIT extends LandedCostFixtures {
         assertThat(num(row, "goodsValue")).isEqualByComparingTo("5000");
         assertThat(num(row, "pctOfGoods")).isEqualByComparingTo("5");
     }
+
+    @Test
+    @DisplayName("freight history: two freight charges of 100 from one carrier on the same 100 × 50 receipt → goods 5000"
+            + " and qty 100 counted once: 4 % of goods, 2 per unit")
+    void freightHistoryGoodsCountedOnce() {
+        String carrier = partner("LCP carrier");
+        String name = jdbc.sql("SELECT name FROM \"Partner\" WHERE id = ?").param(carrier).query(String.class).single();
+        String p = product("AVCO", false, 0);
+        String grn = receive(p, 100, 50);
+        approveAndPost(voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 100, "supplierId", carrier,
+                "allocationMethod", "quantity", "billMode", "none"), charge("kind", "freight", "amount", 100,
+                "supplierId", carrier, "allocationMethod", "value", "billMode", "none"))));
+        JsonNode row = null;
+        for (JsonNode r : ok(200, "GET", "/procurement/landed-cost-reports/analysis/freight-history?from=" + today
+                + "&to=" + today, null)) {
+            if (name.equals(r.get("supplier").asString())) {
+                row = r;
+            }
+        }
+        assertThat(row).isNotNull();
+        assertThat(row.get("charges").asInt()).isEqualTo(2);
+        assertThat(num(row, "amount")).isEqualByComparingTo("200");
+        assertThat(num(row, "quantity")).isEqualByComparingTo("100");
+        assertThat(num(row, "goodsValue")).isEqualByComparingTo("5000");
+        assertThat(num(row, "pctOfGoods")).isEqualByComparingTo("4");
+        assertThat(num(row, "perUnit")).isEqualByComparingTo("2");
+    }
 }

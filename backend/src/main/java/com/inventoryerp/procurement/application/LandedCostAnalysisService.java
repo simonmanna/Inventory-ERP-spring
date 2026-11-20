@@ -252,16 +252,20 @@ public class LandedCostAnalysisService {
     /**
      * Freight and supplier cost history (LC-7): per month, supplier and charge kind — charges, base amount, the goods
      * value and quantity they landed on, and the cost per unit and as % of goods value. Goods value is the value basis
-     * for value-allocated charges and the receipt's stock-ledger value for every other basis.
+     * for value-allocated charges and the receipt's stock-ledger value for every other basis; goods value and quantity
+     * count each received unit once per row, however many of the row's charges landed on it.
      */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> freightHistory(LocalDate from, LocalDate to) {
-        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT to_char(l.date, 'YYYY-MM') AS month,"
-                + " coalesce(pt.name, '(none)') AS supplier, c.kind, count(DISTINCT c.id) AS charges,"
-                + " sum(a.\"allocatedAmount\") AS amount, sum(a.\"receivedQty\") AS quantity, sum(CASE WHEN"
-                + " a.\"basisMethod\" = 'value' THEN a.\"basisValue\" ELSE gv.value END) AS \"goodsValue\" FROM"
-                + " \"LandedCostCharge\" c JOIN \"LandedCost\" l ON l.id = c.\"landedCostId\" JOIN \"LandedCostAllocation\" a"
-                + " ON a.\"chargeId\" = c.id LEFT JOIN \"Partner\" pt ON pt.id = c.\"supplierId\""
+        // One row per allocation (charge × received unit); the goods a group of charges landed on are counted once per
+        // received unit — receipt, line, product, location, lot — however many charges or vouchers hit it.
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("WITH al AS (SELECT to_char(l.date, 'YYYY-MM') AS"
+                + " month, coalesce(pt.name, '(none)') AS supplier, c.kind, c.id AS \"chargeId\", a.\"allocatedAmount\","
+                + " a.\"receivedQty\", CASE WHEN a.\"basisMethod\" = 'value' THEN a.\"basisValue\" ELSE gv.value END AS"
+                + " goods, concat_ws('|', a.\"goodsReceiptId\", a.\"goodsReceiptLineId\", a.\"productId\","
+                + " a.\"locationId\", a.\"batchId\") AS unit FROM \"LandedCostCharge\" c JOIN \"LandedCost\" l ON l.id ="
+                + " c.\"landedCostId\" JOIN \"LandedCostAllocation\" a ON a.\"chargeId\" = c.id LEFT JOIN \"Partner\" pt"
+                + " ON pt.id = c.\"supplierId\""
                 // quantity / weight / volume bases keep no goods value: read it from the receipt's stock ledger, as the
                 // voucher detail does (product, location, lot and the receipt line's variant)
                 + " LEFT JOIN LATERAL (SELECT sum(il.\"totalValue\") AS value FROM \"InventoryLedger\" il LEFT JOIN"
@@ -270,8 +274,14 @@ public class LandedCostAnalysisService {
                 + " a.\"goodsReceiptId\" AND il.\"quantityChange\" > 0 AND il.\"productId\" = a.\"productId\" AND"
                 + " il.\"locationId\" = a.\"locationId\" AND il.\"batchId\" IS NOT DISTINCT FROM a.\"batchId\" AND"
                 + " (gl.\"variantId\" IS NULL OR il.\"variantId\" = gl.\"variantId\")) gv ON a.\"basisMethod\" IS DISTINCT"
-                + " FROM 'value'"
-                + " WHERE" + POSTED + " GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
+                + " FROM 'value' WHERE" + POSTED + "),"
+                + " units AS (SELECT DISTINCT ON (month, supplier, kind, unit) month, supplier, kind, \"receivedQty\", goods"
+                + " FROM al ORDER BY month, supplier, kind, unit, goods IS NULL),"
+                + " goods AS (SELECT month, supplier, kind, sum(\"receivedQty\") AS quantity, sum(goods) AS \"goodsValue\""
+                + " FROM units GROUP BY 1, 2, 3)"
+                + " SELECT al.month, al.supplier, al.kind, count(DISTINCT al.\"chargeId\") AS charges,"
+                + " sum(al.\"allocatedAmount\") AS amount, g.quantity, g.\"goodsValue\" FROM al JOIN goods g ON g.month ="
+                + " al.month AND g.supplier = al.supplier AND g.kind = al.kind GROUP BY 1, 2, 3, 6, 7 ORDER BY 1, 2, 3")
                 .params(period(from, to)));
         for (Map<String, Object> r : rows) {
             BigDecimal amount = SqlRows.dec(r, "amount");
