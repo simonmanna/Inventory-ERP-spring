@@ -96,7 +96,14 @@ public class PurchaseOrdersService {
 
     /** {@code PayPODto}. */
     public record PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
-            String cashRegisterId) {}
+            String cashRegisterId, BigDecimal exchangeRate) {
+
+        /** A payment without a stated exchange rate. */
+        public PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
+                String cashRegisterId) {
+            this(amount, paidAt, reference, notes, method, cashRegisterId, null);
+        }
+    }
 
     /** {@code UpdatePODto}. */
     public record UpdateInput(String description, String expectedDeliveryDate, String notes, String terms) {}
@@ -1062,15 +1069,37 @@ public class PurchaseOrdersService {
             if ("cash".equals(method) && session == null) {
                 throw ApiException.badRequest("Select an open register for this cash payment");
             }
+            // FX-3: a foreign PO is settled at the payment-date rate (stated, else the table under the payment_out
+            // policy). AP is relieved at the receipts' carrying rate; the functional cash paid differs by realised FX.
+            Instant payDate = paidAt != null ? paidAt : nowMs();
+            String poCcy = po.get("currencyCode") == null ? null : String.valueOf(po.get("currencyCode")).toUpperCase();
+            String functional = functionalCurrency();
+            boolean foreignPo = poCcy != null && functional != null && !functional.equals(poCcy);
+            // like receipts, a missing rate never blocks: with no stated and no table rate the payment settles at the
+            // carrying rate (no FX), as before FX-3
+            CurrencyService.Policy payPolicy = foreignPo && dto.exchangeRate() == null ? currencies.policy("payment_out")
+                    : null;
+            boolean rateKnown = foreignPo && (dto.exchangeRate() != null || currencies.findRate(poCcy, functional,
+                    payDate, payPolicy.rateType(), payPolicy.requireApprovedRate()) != null);
+            CurrencyService.Resolution payRate = rateKnown ? currencies.resolveStated(poCcy, functional,
+                    dto.exchangeRate(), payDate, "payment_out") : null;
+            BigDecimal cashAmount = payRate == null ? functionalAmount
+                    : payAmount.multiply(payRate.rate()).setScale(6, RoundingMode.HALF_UP);
+            BigDecimal fx = functionalAmount.subtract(cashAmount);
+            if (payRate != null) {
+                jdbc.sql("UPDATE \"PurchasePayment\" SET \"currencyCode\" = ?, \"exchangeRate\" = ?, \"carryingRate\" = ?,"
+                        + " \"fxAmount\" = ? WHERE id = ?").params(poCcy, payRate.rate(), rate, fx, payment.get("id"))
+                        .update();
+            }
             Map<String, Object> paymentJournal = stockPosting.postPurchasePayment(
                     session == null ? null : (String) session.get("id"), (String) po.get("partnerId"), functionalAmount,
-                    method,
-                    paidAt != null ? paidAt : nowMs(), "purchase_order", id,
+                    method, payDate, "purchase_order", id,
                     "Payment PO " + po.get("orderNumber") + (dto.reference() != null && !dto.reference().isEmpty()
                             ? " · " + dto.reference() : ""),
-                    "purchase_payment:" + payment.get("id"), (String) po.get("currencyCode"), payAmount);
+                    "purchase_payment:" + payment.get("id"), (String) po.get("currencyCode"), payAmount, cashAmount,
+                    payRate);
             if ("cash".equals(method)) {
-                cashSession.recordExternalPayOut((String) session.get("id"), functionalAmount,
+                cashSession.recordExternalPayOut((String) session.get("id"), cashAmount,
                         "Payment PO " + po.get("orderNumber"), (String) paymentJournal.get("id"));
             }
             audit.recordInTx(AuditInput.of("PurchaseOrder", id, "update", null, Obj.of("paymentStatus",

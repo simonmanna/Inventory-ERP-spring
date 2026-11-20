@@ -290,6 +290,25 @@ public class PaymentService {
         return record(dto, "outbound", "receivable", allowSessionOwnerMismatch, nested);
     }
 
+    private static final ThreadLocal<BigDecimal> REFUND_CARRYING_RATE = new ThreadLocal<>();
+
+    /**
+     * FX-3: refund a foreign-currency credit in its own currency ({@code dto.currencyCode}). The receivable is relieved
+     * at the credit's carrying rate; the cash at the refund rate (functional account) or at the foreign account's
+     * carrying value; the difference is realised FX. Runs in the caller's transaction.
+     */
+    public Map<String, Object> createForeignCreditRefund(PaymentInput dto, BigDecimal carryingRate) {
+        if (dto.currencyCode() == null || carryingRate == null || carryingRate.signum() <= 0) {
+            throw ApiException.badRequest("A foreign credit refund needs the credit's currency and carrying rate");
+        }
+        REFUND_CARRYING_RATE.set(carryingRate);
+        try {
+            return record(dto, "outbound", "receivable", true, true);
+        } finally {
+            REFUND_CARRYING_RATE.remove();
+        }
+    }
+
     private Map<String, Object> record(PaymentInput dto, String direction, String counterOverride,
             boolean allowSessionOwnerMismatch, boolean nested) {
         String org = org();
@@ -643,7 +662,9 @@ public class PaymentService {
             relieved = relieved.add(alloc.multiply(docRate));
             allocatedSum = allocatedSum.add(alloc);
         }
-        BigDecimal advance = amount.subtract(allocatedSum).max(Money.ZERO).multiply(rate.rate());
+        // FX-3: a foreign credit refund relieves the receivable at the credit's carrying rate, not the refund rate
+        BigDecimal unallocatedRate = REFUND_CARRYING_RATE.get() != null ? REFUND_CARRYING_RATE.get() : rate.rate();
+        BigDecimal advance = amount.subtract(allocatedSum).max(Money.ZERO).multiply(unallocatedRate);
         BigDecimal counterBase = r6(relieved.add(advance));
         BigDecimal cashBase = r6(amount.multiply(rate.rate()));
         BigDecimal fx = "inbound".equals(direction) ? cashBase.subtract(counterBase) : counterBase.subtract(cashBase);
@@ -676,6 +697,13 @@ public class PaymentService {
             throw ApiException.badRequest("allocations should not be empty");
         }
         String direction = String.valueOf(p.get("direction"));
+        // a customer refund (outbound on the receivable) or supplier refund is not an advance
+        if (jdbc.sql("SELECT count(*) FROM \"JournalLine\" l JOIN \"Account\" a ON a.id = l.\"accountId\" JOIN"
+                + " \"AccountCategory\" c ON c.id = a.\"categoryId\" WHERE l.\"journalEntryId\" = ? AND l.\"partnerId\" = ?"
+                + " AND c.key = ?").params(p.get("journalEntryId"), p.get("partnerId"), "inbound".equals(direction)
+                        ? "receivable" : "payable").query(Long.class).single() == 0) {
+            throw ApiException.badRequest("Only a posted receipt or supplier payment can be allocated");
+        }
         String base = fxRates.base();
         String payCurrency = p.get("currencyId") == null ? base : p.get("currencyId").toString().toUpperCase();
         boolean foreign = !payCurrency.equals(base);
@@ -726,8 +754,8 @@ public class PaymentService {
         if (foreign && fxTotal.signum() != 0) {
             String counter = jdbc.sql("SELECT l.\"accountId\" FROM \"JournalLine\" l JOIN \"Account\" a ON a.id ="
                     + " l.\"accountId\" JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\" WHERE l.\"journalEntryId\" = ?"
-                    + " AND l.\"partnerId\" = ? AND c.key IN ('receivable', 'payable') ORDER BY l.\"lineNumber\" LIMIT 1")
-                    .params(p.get("journalEntryId"), partnerId)
+                    + " AND l.\"partnerId\" = ? AND c.key = ? ORDER BY l.\"lineNumber\" LIMIT 1")
+                    .params(p.get("journalEntryId"), partnerId, "inbound".equals(direction) ? "receivable" : "payable")
                     .query(String.class).optional()
                     .orElseThrow(() -> ApiException.badRequest("The payment's receivable / payable line was not found"));
             String amount = JsNumbers.dec(fxTotal.abs());

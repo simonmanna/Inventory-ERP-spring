@@ -402,10 +402,11 @@ public class SalesReturnService {
                 // Posting already applied the credit to the invoice's open balance; only what is left is paid in cash.
                 BigDecimal refundable = creditNotes.takeOpenCredit(creditNoteId).setScale(2, RoundingMode.HALF_UP);
                 if (refundable.signum() > 0) {
-                    refundId = str(payments.createCustomerRefund(new PaymentInput(str(r.get("partnerId")), LocalDate.now()
-                            .toString(), refundable, blank(str(in.get("paymentMethod"))) ? "bank"
-                                    : str(in.get("paymentMethod")), str(in.get("accountId")), "Refund " + r.get("number"),
-                            null, List.of(), null, true, null, null), true, true).get("id"));
+                    // FX-3: a foreign credit is refunded in its own currency at its carrying rate
+                    refundId = str(creditFlow.payOut(creditNoteId, str(r.get("partnerId")), refundable,
+                            str(in.get("paymentMethod")), str(in.get("accountId")), in.get("exchangeRate") == null ? null
+                                    : new BigDecimal(in.get("exchangeRate").toString()), "Refund " + r.get("number"))
+                            .get("id"));
                 }
             }
         }

@@ -313,17 +313,32 @@ public class CreditNoteService {
             throw ApiException.badRequest("Only a posted credit note can be refunded");
         }
         BigDecimal open = Money.dec(cn.get("amountResidual"));
-        String currency = fxRates.currencyOf(cn);
-        if (open.signum() > 0 && !currency.equals(fxRates.base())) {
-            // FX-1: the refund path pays in the functional currency only; refunding a foreign credit there paid its
-            // face value in the wrong currency. Foreign refunds are refused until a currency-aware refund exists.
-            throw ApiException.badRequest("Credit note " + cn.get("documentNumber") + " is in " + currency
-                    + "; a foreign-currency credit cannot be refunded here yet. Allocate it to a " + currency
-                    + " invoice instead");
-        }
+        // FX-3: a foreign credit is taken in its own currency; the caller refunds it through
+        // PaymentService#createForeignCreditRefund at the credit's carrying rate (see foreignCredit).
         jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .param(creditNoteId).update();
         return open;
+    }
+
+    /** A foreign credit's currency and carrying rate. */
+    public record ForeignCredit(String currency, BigDecimal carryingRate) {}
+
+    /**
+     * FX-3: the currency and carrying rate (the rate its journal entry was posted at) of a foreign-currency credit note,
+     * or {@code null} for a functional-currency one.
+     */
+    @Transactional(readOnly = true)
+    public ForeignCredit foreignCredit(String creditNoteId) {
+        Map<String, Object> cn = builder.document(creditNoteId, "credit_note");
+        if (cn == null) {
+            throw ApiException.notFound("Credit note not found");
+        }
+        String currency = fxRates.currencyOf(cn);
+        if (currency.equals(fxRates.base())) {
+            return null;
+        }
+        BigDecimal rate = cn.get("journalEntryId") == null ? null : fxRates.entryRate((String) cn.get("journalEntryId"));
+        return new ForeignCredit(currency, rate != null && rate.signum() > 0 ? rate : fxRates.documentRate(cn));
     }
 
     /** Lower an invoice's residual by {@code amount} of a credit and record the allocation. */

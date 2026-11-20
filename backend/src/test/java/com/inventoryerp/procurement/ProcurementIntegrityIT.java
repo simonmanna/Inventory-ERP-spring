@@ -342,6 +342,41 @@ class ProcurementIntegrityIT extends ApiTestSupport {
         assertThat(balance(mapped("stock_valuation"))).as("stock keeps its receipt cost").isEqualByComparingTo(stock0);
     }
 
+    @Test
+    @DisplayName("FX-3: PO received at 3,750 and paid on the PO at 3,820: AP relieved at 75,000, cash 76,400, loss 1,400")
+    void poPayRealisesFx() {
+        String functional = jdbc.sql("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?").param(demoOrg)
+                .query(String.class).single();
+        String foreign = "QR" + (char) ('A' + (int) (Math.random() * 26));
+        while (jdbc.sql("SELECT count(*) FROM \"Currency\" WHERE code = ?").param(foreign).query(Long.class).single() > 0) {
+            foreign = "QR" + (char) ('A' + (int) (Math.random() * 26));
+        }
+        ok(201, "POST", "/currencies", Map.of("code", foreign, "symbol", foreign, "name", "FX3 " + foreign));
+        ok(201, "POST", "/currencies/rates", Map.of("fromCode", foreign, "toCode", functional, "asOf",
+                LocalDate.now().minusDays(1).toString(), "rate", 3750));
+        String own = partner("FX3 PO supplier");
+        String product = stockProduct();
+        String poId = createPo(Map.of("partnerId", own, "currencyCode", foreign, "exchangeRate", 3700), product, 10, 2)
+                .get("id").asString();
+        receive(poId, product, 10);
+        String ap = mapped("accounts_payable");
+        BigDecimal fx0 = balance(mapped("fx_loss"));
+        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
+                "amount", 20, "exchangeRate", 3820));
+        Map<String, Object> row = jdbc.sql("SELECT \"exchangeRate\", \"carryingRate\", \"fxAmount\" FROM"
+                + " \"PurchasePayment\" WHERE id = ?").param(pay.get("id").asString()).query().singleRow();
+        assertThat((BigDecimal) row.get("exchangeRate")).isEqualByComparingTo("3820");
+        assertThat((BigDecimal) row.get("carryingRate")).isEqualByComparingTo("3750");
+        assertThat((BigDecimal) row.get("fxAmount")).isEqualByComparingTo("-1400");
+        assertThat(balance(mapped("fx_loss")).subtract(fx0)).as("20 × (3,820 − 3,750)").isEqualByComparingTo("1400");
+        BigDecimal[] apBucket = jdbc.sql("SELECT coalesce(sum(debit - credit), 0), coalesce(sum(\"baseDebit\" -"
+                        + " \"baseCredit\"), 0) FROM \"JournalLine\" WHERE \"organizationId\" = ? AND \"accountId\" = ?"
+                        + " AND \"partnerId\" = ? AND upper(\"currencyId\") = ?").params(demoOrg, ap, own, foreign)
+                .query((rs, n) -> new BigDecimal[] {rs.getBigDecimal(1), rs.getBigDecimal(2)}).single();
+        assertThat(apBucket[0]).as("AP cleared in " + foreign).isEqualByComparingTo("0");
+        assertThat(apBucket[1]).as("AP cleared in base").isEqualByComparingTo("0");
+    }
+
     // ------------------------------------------------------------------ P0-6
 
     @Test

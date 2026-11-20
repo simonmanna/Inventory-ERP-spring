@@ -131,11 +131,32 @@ public class SalesCreditFlowService {
         if (open.signum() <= 0) {
             throw ApiException.badRequest("This credit note has no credit left to refund");
         }
-        Map<String, Object> p = payments.createCustomerRefund(new PaymentInput(str(cn.get("partnerId")), LocalDate.now().toString(),
-                open, blank(str(in.get("paymentMethod"))) ? "bank" : str(in.get("paymentMethod")), str(in.get("accountId")),
-                "Refund of credit note " + cn.get("documentNumber"), null, List.of(), null, true, null, null), true, true);
+        Map<String, Object> p = payOut(id, str(cn.get("partnerId")), open, str(in.get("paymentMethod")),
+                str(in.get("accountId")), decimal(in.get("exchangeRate")), "Refund of credit note " + cn.get("documentNumber"));
         audit.record(AuditInput.of("Document", id, "update", null, Obj.of("refund", JsNumbers.js(open), "paymentId", p.get("id"))));
         return Obj.of("creditNoteId", id, "refunded", JsNumbers.js(open), "paymentId", p.get("id"));
+    }
+
+    /**
+     * Pay {@code amount} of a credit note's taken credit back to the customer. FX-3: a foreign credit is refunded in its
+     * own currency (stated {@code exchangeRate}, else the table), relieving the receivable at the credit's carrying rate
+     * with realised FX; a functional credit is refunded as before.
+     */
+    public Map<String, Object> payOut(String creditNoteId, String partnerId, BigDecimal amount, String method,
+            String accountId, BigDecimal exchangeRate, String reference) {
+        String m = blank(method) ? "bank" : method;
+        CreditNoteService.ForeignCredit fc = creditNotes.foreignCredit(creditNoteId);
+        if (fc == null) {
+            return payments.createCustomerRefund(new PaymentInput(partnerId, LocalDate.now().toString(), amount, m,
+                    accountId, reference, null, List.of(), null, true, null, null), true, true);
+        }
+        return payments.createForeignCreditRefund(new PaymentInput(partnerId, LocalDate.now().toString(), amount, m,
+                accountId, reference, null, List.of(), null, true, null, null, fc.currency(), exchangeRate),
+                fc.carryingRate());
+    }
+
+    private static BigDecimal decimal(Object v) {
+        return v == null || v.toString().isBlank() ? null : new BigDecimal(v.toString());
     }
 
     /**

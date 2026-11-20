@@ -139,20 +139,35 @@ class FxGainLossFx1IT extends AccountingFixtures {
     }
 
     @Test
-    @DisplayName("an open foreign-currency credit is not refunded at face value in the functional currency")
-    void foreignCreditRefundRefused() {
+    @DisplayName("FX-3: a $30 credit at 3,800 refunded at 3,900 pays 117,000, relieves AR at 114,000, loss 3,000")
+    void foreignCreditRefundInItsCurrency() {
         String ccy = demoRate(testCurrency(), 3800);
-        String customer = demoPartner("FX1 refund customer", false);
+        String customer = demoPartner("FX3 refund customer", false);
         String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today(), "currencyId",
                 ccy, "lines", List.of(Map.of("productId", serviceProduct(), "quantity", 1, "unitPrice", 30))))
                 .get("id").asString();
         ok(200, "POST", "/credit-notes/" + cn + "/post", null);
-        Res r = call("POST", "/sales/credit-notes/" + cn + "/refund", Map.of("paymentMethod", "bank"), demoKey());
-        assertThat(r.status()).as(r.raw().body()).isEqualTo(400);
-        assertThat(r.body().get("message").asString()).contains("is in " + ccy)
-                .contains("cannot be refunded here yet");
+        Res r = call("POST", "/sales/credit-notes/" + cn + "/refund", Map.of("paymentMethod", "bank",
+                "exchangeRate", 3900), demoKey());
+        assertThat(r.status()).as(r.raw().body()).isIn(200, 201);
+        String paymentId = r.body().get("paymentId").asString();
+        Map<String, Object> pay = jdbc.sql("SELECT upper(\"currencyId\") AS ccy, amount, \"exchangeRate\", \"fxAmount\","
+                + " \"journalEntryId\" FROM \"Payment\" WHERE id = ?").param(paymentId).query().singleRow();
+        assertThat(pay.get("ccy")).as("refunded in the credit's currency").isEqualTo(ccy);
+        assertThat((BigDecimal) pay.get("amount")).isEqualByComparingTo("30");
+        assertThat((BigDecimal) pay.get("fxAmount")).as("30 × (3,800 − 3,900)").isEqualByComparingTo("-3000");
+        List<Map<String, Object>> lines = lines((String) pay.get("journalEntryId"));
+        assertThat(lines).filteredOn(l -> l.get("currencyId") == null && ((BigDecimal) l.get("baseCredit")).signum() > 0)
+                .extracting(l -> (BigDecimal) l.get("baseCredit")).as("functional bank pays 30 × 3,900")
+                .anySatisfy(v -> assertThat(v).isEqualByComparingTo("117000"));
+        String ar = mapped(demoOrg, "accounts_receivable");
+        BigDecimal[] bucket = taggedOnPartner(demoOrg, ar, customer, ccy);
+        assertThat(bucket[0]).as("credit cleared in " + ccy).isEqualByComparingTo("0");
+        assertThat(bucket[1]).as("credit cleared in base").isEqualByComparingTo("0");
         assertThat(jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?").param(cn).query(BigDecimal.class)
-                .single()).as("credit still open").isEqualByComparingTo("30");
+                .single()).isEqualByComparingTo("0");
+        Res again = call("POST", "/sales/credit-notes/" + cn + "/refund", Map.of("paymentMethod", "bank"), demoKey());
+        assertThat(again.status()).as("nothing left to refund").isEqualTo(400);
     }
 
     // ------------------------------------------------------------------ foreign cash

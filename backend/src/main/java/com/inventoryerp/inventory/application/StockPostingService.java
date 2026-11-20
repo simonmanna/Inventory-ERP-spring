@@ -236,6 +236,22 @@ public class StockPostingService {
         if (amount.signum() <= 0) {
             return null;
         }
+        return postPurchasePayment(cashSessionId, partnerId, amount, method, date, sourceType, sourceId, description,
+                postingKey, currencyCode, foreignAmount, amount, null);
+    }
+
+    /**
+     * FX-3: as above, the AP line relieving {@code amount} (carrying value) and the functional funds paying
+     * {@code cashAmount} (payment-date value); the difference is realised FX on the designated FX accounts and the rate
+     * is snapshotted on the entry.
+     */
+    public Map<String, Object> postPurchasePayment(String cashSessionId, String partnerId, BigDecimal amount,
+            String method, Instant date, String sourceType, String sourceId, String description, String postingKey,
+            String currencyCode, BigDecimal foreignAmount, BigDecimal cashAmount,
+            com.inventoryerp.accounting.application.CurrencyService.Resolution rate) {
+        if (amount.signum() <= 0) {
+            return null;
+        }
         String apAccount = determination.payableAccount(partnerPayable(partnerId));
         String funds = TenderAccount.resolve(jdbc, determination, TenantContext.organizationId(), method, null,
                 cashSessionId).accountId();
@@ -245,8 +261,17 @@ public class StockPostingService {
         if (currencyCode != null && foreignAmount != null && foreignAmount.compareTo(amount) != 0) {
             ap = ap.inCurrency(currencyCode, JsNumbers.dec(foreignAmount));
         }
-        return posting.post(PostingRequest.of("cash".equals(method) ? "CASH" : "BANK", date, label, sourceType,
-                sourceId, postingKey, List.of(ap, Line.credit(funds, v, label))));
+        BigDecimal fx = amount.subtract(cashAmount);
+        List<Line> lines = new java.util.ArrayList<>(List.of(ap, Line.credit(funds, JsNumbers.dec(cashAmount), label)));
+        String fxLabel = "Realised FX · " + label;
+        if (fx.signum() > 0) {
+            lines.add(Line.credit(determination.mapped("fx_gain"), JsNumbers.dec(fx), fxLabel));
+        } else if (fx.signum() < 0) {
+            lines.add(Line.debit(determination.mapped("fx_loss"), JsNumbers.dec(fx.negate()), fxLabel));
+        }
+        PostingRequest req = PostingRequest.of("cash".equals(method) ? "CASH" : "BANK", date, label, sourceType,
+                sourceId, postingKey, lines);
+        return rate == null ? posting.post(req) : posting.post(req, List.of(rate));
     }
 
     /** Negative-stock cost correction (AVCO): amount &gt; 0 → Dr COGS / Cr Stock Valuation, else the reverse. */
