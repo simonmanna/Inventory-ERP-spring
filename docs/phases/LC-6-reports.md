@@ -11,3 +11,17 @@
 | Operational cost structure per output unit with yield | `productionStructure` |
 
 UI: six tabs on *Landed Cost Reports*, CSV export on each. Endpoint: `GET /procurement/landed-cost-reports/analysis/{kind}`.
+
+## Correction 2026-11-20 — revenue, post-sale COGS, freight goods value
+
+Shared source: `procurement/application/ProfitabilitySources` (used by `analysis/profitability` and
+`product-profitability`). Tests: `LandedCostProfitabilityIT` + the corrected `profitabilityLateCharge`.
+
+| Fix | Rule | Test |
+|---|---|---|
+| Revenue | POS receipts (`Invoice` posted/paid/refunded, by issue date) − POS refunds (`PosRefund`, by refund date) + sales invoices − credit notes (`Document` posted/paid, by issue date); line subtotal × document rate (base); a document whose `sourceId` is a POS receipt is skipped | `salesInvoiceRevenueAndStatuses`, `creditNotes`, `posAndInvoiceCountedOnce`, `foreignCurrencyInBase` |
+| COGS | issue value + cost-value adjustment lines on units already issued, dated at posting (JE → voucher date → recorded) and taken back at `reversedAt` | `profitabilityLateCharge`, `lateChargeExactlyOnce`, `lateChargeReversed`, `cementAcceptance` |
+| Freight history | goods value = value basis for value-allocated charges, receipt stock-ledger value for every other basis | `freightHistoryQuantityAllocation` |
+
+Rows now cover every product with revenue, an issue or a post-sale adjustment in the period (before: issue products
+only in `analysis/profitability`, POS-invoiced products only in `product-profitability`).

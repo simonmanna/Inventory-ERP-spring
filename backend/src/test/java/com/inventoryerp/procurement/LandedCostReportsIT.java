@@ -73,7 +73,8 @@ class LandedCostReportsIT extends LandedCostFixtures {
     }
 
     @Test
-    @DisplayName("profitability: a late charge on 40 already sold → landed 400 in those units' COGS line")
+    @DisplayName("profitability: a late charge on 40 already sold → COGS 2400 = purchase 2000 (issue) + landed 400"
+            + " (posted to COGS after the sale)")
     void profitabilityLateCharge() {
         String p = product("AVCO", false, 0);
         String grn = receive(p, 100, 50);
@@ -81,7 +82,9 @@ class LandedCostReportsIT extends LandedCostFixtures {
         approveAndPost(voucher(List.of(grn), List.of(charge("kind", "freight", "amount", 1000))));
         JsonNode r = row(report("profitability").get("products"), "productId", p);
         assertThat(new BigDecimal(r.get("landed").asString())).isEqualByComparingTo("400");
-        assertThat(new BigDecimal(r.get("cogs").asString())).isEqualByComparingTo("2000");
+        assertThat(new BigDecimal(r.get("purchase").asString())).isEqualByComparingTo("2000");
+        assertThat(new BigDecimal(r.get("cogs").asString())).isEqualByComparingTo("2400");
+        assertThat(new BigDecimal(r.get("grossProfit").asString())).isEqualByComparingTo("-2400");
     }
 
     @Test

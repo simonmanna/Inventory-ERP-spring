@@ -29,10 +29,12 @@ public class LandedCostReportService {
 
     private final JdbcClient jdbc;
     private final AccountResolverService accounts;
+    private final ProfitabilitySources sources;
 
-    public LandedCostReportService(JdbcClient jdbc, AccountResolverService accounts) {
+    public LandedCostReportService(JdbcClient jdbc, AccountResolverService accounts, ProfitabilitySources sources) {
         this.jdbc = jdbc;
         this.accounts = accounts;
+        this.sources = sources;
     }
 
     private static String dec(Object v) {
@@ -157,42 +159,47 @@ public class LandedCostReportService {
     }
 
     /**
-     * Product profitability: invoiced revenue (net of discount, excl. tax), COGS from stock issues (which carry the
-     * landed cost already in the layers) plus late landed cost expensed to COGS, gross profit and margin.
+     * Product profitability: net revenue (POS receipts less refunds plus sales invoices less credit notes, net of
+     * discount, excl. tax, base currency — {@link ProfitabilitySources#revenue}), COGS = the period's stock issues (which
+     * carry the landed cost already in the layers) plus the later adjustments that reached units already sold, posted
+     * in the period ({@link ProfitabilitySources#postSale}); {@code landedCostInCogs} is the landed part of those, gross
+     * profit and margin.
      */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> productProfitability(LocalDate from, LocalDate to) {
-        Map<String, Map<String, Object>> byProduct = new LinkedHashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT i.\"productId\", p.name, p.sku, SUM(i.quantity) AS qty,"
-                + " SUM(i.subtotal) AS revenue FROM \"InvoiceItem\" i JOIN \"Invoice\" v ON v.id = i.\"invoiceId\""
-                + " JOIN \"Product\" p ON p.id = i.\"productId\" WHERE v.\"organizationId\" = ? AND v.status IN ('posted',"
-                + " 'paid') AND v.\"issueDate\" >= ? AND v.\"issueDate\" < ? GROUP BY 1, 2, 3")
-                .params(org(), from, to.plusDays(1)))) {
-            byProduct.put((String) r.get("productId"), r);
-        }
+        LocalDate end = to.plusDays(1);
+        Map<String, ProfitabilitySources.Revenue> revenue = sources.revenue(from, end);
         Map<String, BigDecimal> cogs = new LinkedHashMap<>();
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", -SUM(\"totalValue\") AS cogs FROM"
                 + " \"InventoryLedger\" WHERE \"organizationId\" = ? AND type = 'issue' AND \"createdAt\" >= ?"
-                + " AND \"createdAt\" < ? GROUP BY 1").params(org(), from, to.plusDays(1)))) {
+                + " AND \"createdAt\" < ? GROUP BY 1").params(org(), from, end))) {
             cogs.put((String) r.get("productId"), Money.dec(r.get("cogs")).abs());
         }
-        Map<String, BigDecimal> landed = new LinkedHashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT a.\"productId\", SUM(a.\"expensedAmount\") AS v FROM"
-                + " \"LandedCostAllocation\" a JOIN \"LandedCost\" l ON l.id = a.\"landedCostId\" WHERE" + POSTED
-                + " GROUP BY 1").params(org(), from, to.plusDays(1)))) {
-            landed.put((String) r.get("productId"), Money.dec(r.get("v")));
+        Map<String, Map<String, BigDecimal>> postSale = sources.postSale(from, end);
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>(revenue.keySet());
+        ids.addAll(cogs.keySet());
+        ids.addAll(postSale.keySet());
+        Map<String, Map<String, Object>> products = new LinkedHashMap<>();
+        if (!ids.isEmpty()) {
+            for (Map<String, Object> p : SqlRows.list(jdbc.sql("SELECT id, name, sku FROM \"Product\" WHERE"
+                    + " \"organizationId\" = :org AND id IN (:ids)").param("org", org()).param("ids", List.copyOf(ids)))) {
+                products.put((String) p.get("id"), p);
+            }
         }
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> r : byProduct.values()) {
-            String id = (String) r.get("productId");
-            BigDecimal revenue = Money.dec(r.get("revenue"));
-            BigDecimal c = cogs.getOrDefault(id, Money.ZERO).add(landed.getOrDefault(id, Money.ZERO));
-            BigDecimal gp = revenue.subtract(c);
-            out.add(Obj.of("productId", id, "name", r.get("name"), "sku", r.get("sku"), "quantity", dec(r.get("qty")),
-                    "revenue", JsNumbers.dec(revenue), "cogs", JsNumbers.dec(c), "landedCostInCogs",
-                    JsNumbers.dec(landed.getOrDefault(id, Money.ZERO)), "grossProfit", JsNumbers.dec(gp),
-                    "marginPct", revenue.signum() == 0 ? "0" : JsNumbers.dec(gp.multiply(BigDecimal.valueOf(100))
-                            .divide(revenue, 2, RoundingMode.HALF_UP))));
+        for (String id : ids) {
+            Map<String, Object> p = products.getOrDefault(id, Map.of());
+            ProfitabilitySources.Revenue rv = revenue.get(id);
+            BigDecimal rev = rv == null ? Money.ZERO : rv.amount();
+            Map<String, BigDecimal> later = postSale.getOrDefault(id, Map.of());
+            BigDecimal landed = later.getOrDefault("landed", Money.ZERO);
+            BigDecimal c = cogs.getOrDefault(id, Money.ZERO).add(ProfitabilitySources.total(later));
+            BigDecimal gp = rev.subtract(c);
+            out.add(Obj.of("productId", id, "name", p.get("name"), "sku", p.get("sku"), "quantity", JsNumbers.dec(
+                    rv == null ? Money.ZERO : Money.dec(rv.quantity())), "revenue", JsNumbers.dec(rev), "cogs",
+                    JsNumbers.dec(c), "landedCostInCogs", JsNumbers.dec(landed), "grossProfit", JsNumbers.dec(gp),
+                    "marginPct", rev.signum() == 0 ? "0" : JsNumbers.dec(gp.multiply(BigDecimal.valueOf(100))
+                            .divide(rev, 2, RoundingMode.HALF_UP))));
         }
         out.sort((a, b) -> new BigDecimal((String) b.get("grossProfit")).compareTo(new BigDecimal((String) a.get(
                 "grossProfit"))));

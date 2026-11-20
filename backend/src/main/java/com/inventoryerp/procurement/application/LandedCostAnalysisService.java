@@ -32,8 +32,9 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li><b>valuation impact</b> and <b>by warehouse</b>: what posted vouchers put into stock / adjunct / WIP / COGS per
  *       warehouse, product and costing method;</li>
  *   <li><b>by cost centre</b>: charges by the cost centre they carry (charge, else voucher);</li>
- *   <li><b>profitability</b>: the same units sold in the period, cost of sales split by the cost layers those units
- *       carried (purchase, landed, conversion, distribution); selling and admin expenses shown apart;</li>
+ *   <li><b>profitability</b>: the units sold in the period plus the later adjustments that reached units already sold,
+ *       cost of sales split by cost layer (purchase, landed, conversion, distribution); revenue from POS receipts and
+ *       sales invoices net of refunds and credit notes; selling and admin expenses shown apart;</li>
  *   <li><b>operational cost structure</b>: per completed production run — input, good output in the output unit, yield,
  *       materials (of which landed), conversion, cost per output unit.</li>
  * </ul>
@@ -47,12 +48,14 @@ public class LandedCostAnalysisService {
     private final JdbcClient jdbc;
     private final AccountDeterminationService determination;
     private final LineageFollower follower;
+    private final ProfitabilitySources sources;
 
     public LandedCostAnalysisService(JdbcClient jdbc, AccountDeterminationService determination,
-            LineageFollower follower) {
+            LineageFollower follower, ProfitabilitySources sources) {
         this.jdbc = jdbc;
         this.determination = determination;
         this.follower = follower;
+        this.sources = sources;
     }
 
     private static String d(BigDecimal v) {
@@ -172,11 +175,14 @@ public class LandedCostAnalysisService {
     }
 
     /**
-     * Profitability before / after landed cost: the units sold in the period, cost of sales from their issue rows,
-     * split by the later cost adjustments those very units carried (lineage lines whose consumption is the sale):
-     * landed (vouchers, receipt landed cost, accruals), conversion (overhead settlement, cost adjustment runs),
-     * distribution (branch transfer freight); purchase = the rest. Selling and admin expenses are reported apart and
-     * never added to product cost.
+     * Profitability before / after landed cost: the units sold in the period with the cost of sales of their issue rows,
+     * plus the later cost adjustments that reached units already sold (posted in the period, taken back when reversed —
+     * {@link ProfitabilitySources#postSale}). Layers: landed (vouchers, receipt landed cost, accruals — posted after the
+     * sale, or carried inside the running average of units sold after the charge), conversion (overhead settlement,
+     * cost adjustment runs), distribution (branch transfer freight); purchase = the issue value less the landed cost it
+     * carried, plus any other later price correction. Revenue is net of credit notes and POS refunds, in base currency
+     * ({@link ProfitabilitySources#revenue}). Selling and admin expenses are reported apart and never added to product
+     * cost.
      */
     @Transactional(readOnly = true)
     public Map<String, Object> profitability(LocalDate from, LocalDate to) {
@@ -188,24 +194,9 @@ public class LandedCostAnalysisService {
                 + " l.\"createdAt\" < ? GROUP BY 1, 2").params(p))) {
             byProduct.put((String) r.get("productId"), new LinkedHashMap<>(r));
         }
-        Map<String, Map<String, BigDecimal>> layers = new LinkedHashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"productId\", a.\"adjustmentType\", sum(cl.amount)"
-                + " AS amount FROM \"CostValueAdjustmentLine\" cl JOIN \"CostValueAdjustment\" a ON a.id = cl.\"adjustmentId\""
-                + " JOIN \"InventoryLedger\" l ON l.id = cl.\"consumptionLedgerId\" WHERE l.\"organizationId\" = ? AND"
-                + " l.type = 'issue' AND l.\"createdAt\" >= ? AND l.\"createdAt\" < ? AND a.\"reversedAt\" IS NULL GROUP BY"
-                + " 1, 2").params(p))) {
-            String layer = switch ((String) r.get("adjustmentType")) {
-                case "landed_cost", "std_price_difference", "landed_accrual" -> "landed";
-                case "overhead_settlement", "cost_adjustment", "stripping_amortisation", "rehab_production" ->
-                        "conversion";
-                case "transfer_freight" -> "distribution";
-                default -> "other";
-            };
-            layers.computeIfAbsent((String) r.get("productId"), k -> new LinkedHashMap<>()).merge(layer,
-                    SqlRows.dec(r, "amount"), BigDecimal::add);
-        }
-        // Units sold after the charge posted carry it inside the running average: follow each landed value row (the
-        // same lineage the reversal uses) and take the share of this period's sales.
+        // Units sold after the charge posted carry it inside the running average (already in the issue value): follow
+        // each landed value row (the same lineage the reversal uses) and take the share of this period's sales.
+        Map<String, BigDecimal> carried = new LinkedHashMap<>();
         for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT a.\"productId\", a.\"onHandAmount\", g.* FROM"
                 + " \"CostValueAdjustment\" a JOIN \"InventoryLedger\" g ON g.id = a.\"anchorLedgerId\" WHERE"
                 + " a.\"organizationId\" = ? AND a.\"reversedAt\" IS NULL AND a.\"valuationComponent\" IS NULL AND"
@@ -224,29 +215,29 @@ public class LandedCostAnalysisService {
                         + " id = ? AND \"createdAt\" >= ? AND \"createdAt\" < ?").params(placement.consumptionLedgerId(),
                         p[1], p[2]));
                 if (issue != null) {
-                    layers.computeIfAbsent((String) issue.get("productId"), k -> new LinkedHashMap<>()).merge("landed",
-                            placement.amount(), BigDecimal::add);
+                    carried.merge((String) issue.get("productId"), placement.amount(), BigDecimal::add);
                 }
             }
         }
-        Map<String, BigDecimal> revenue = new LinkedHashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT i.\"productId\", sum(i.subtotal) AS revenue FROM"
-                + " \"InvoiceItem\" i JOIN \"Invoice\" v ON v.id = i.\"invoiceId\" WHERE v.\"organizationId\" = ? AND"
-                + " v.status IN ('posted', 'paid') AND v.\"issueDate\" >= ? AND v.\"issueDate\" < ? GROUP BY 1")
-                .params(p))) {
-            revenue.put((String) r.get("productId"), SqlRows.dec(r, "revenue"));
-        }
+        Map<String, Map<String, BigDecimal>> postSale = sources.postSale(p[1], p[2]);
+        Map<String, ProfitabilitySources.Revenue> revenue = sources.revenue(p[1], p[2]);
+        Map<String, String> names = names(byProduct, postSale.keySet(), revenue.keySet());
         List<Map<String, Object>> rows = new ArrayList<>();
-        for (Map<String, Object> r : byProduct.values()) {
-            String id = (String) r.get("productId");
-            Map<String, BigDecimal> l = layers.getOrDefault(id, Map.of());
-            BigDecimal cogs = SqlRows.dec(r, "cogs").abs();
-            BigDecimal landed = l.getOrDefault("landed", BigDecimal.ZERO);
+        for (Map.Entry<String, String> e : names.entrySet()) {
+            String id = e.getKey();
+            Map<String, Object> r = byProduct.get(id);
+            Map<String, BigDecimal> l = postSale.getOrDefault(id, Map.of());
+            BigDecimal issued = r == null ? BigDecimal.ZERO : SqlRows.dec(r, "cogs").abs();
+            BigDecimal inLayer = carried.getOrDefault(id, BigDecimal.ZERO);
+            BigDecimal landed = inLayer.add(l.getOrDefault("landed", BigDecimal.ZERO));
             BigDecimal conversion = l.getOrDefault("conversion", BigDecimal.ZERO);
             BigDecimal distribution = l.getOrDefault("distribution", BigDecimal.ZERO);
-            BigDecimal purchase = cogs.subtract(landed).subtract(conversion).subtract(distribution);
-            BigDecimal rev = revenue.getOrDefault(id, BigDecimal.ZERO);
-            rows.add(Obj.of("productId", id, "name", r.get("name"), "unitsSold", JsNumbers.dec(SqlRows.dec(r, "units")),
+            BigDecimal purchase = issued.subtract(inLayer).add(l.getOrDefault("other", BigDecimal.ZERO));
+            BigDecimal cogs = issued.add(ProfitabilitySources.total(l));
+            ProfitabilitySources.Revenue rv = revenue.get(id);
+            BigDecimal rev = rv == null ? BigDecimal.ZERO : rv.amount();
+            rows.add(Obj.of("productId", id, "name", e.getValue(), "unitsSold", JsNumbers.dec(r == null
+                    ? BigDecimal.ZERO : SqlRows.dec(r, "units")),
                     "revenue", d(rev), "purchase", d(purchase), "landed", d(landed), "conversion", d(conversion),
                     "distribution", d(distribution), "cogs", d(cogs), "grossProfitBeforeLanded",
                     d(rev.subtract(cogs).add(landed)), "grossProfit", d(rev.subtract(cogs))));
@@ -260,18 +251,48 @@ public class LandedCostAnalysisService {
                 "Selling and administrative expenses are period costs, shown apart and never added into product cost");
     }
 
+    /** Product names of every product with an issue, a post-sale adjustment or revenue, issue rows first. */
+    private Map<String, String> names(Map<String, Map<String, Object>> issued, java.util.Set<String> adjusted,
+            java.util.Set<String> sold) {
+        Map<String, String> out = new LinkedHashMap<>();
+        issued.forEach((id, r) -> out.put(id, (String) r.get("name")));
+        java.util.Set<String> missing = new java.util.LinkedHashSet<>(adjusted);
+        missing.addAll(sold);
+        missing.removeAll(out.keySet());
+        if (!missing.isEmpty()) {
+            Map<String, String> found = new LinkedHashMap<>();
+            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT id, name FROM \"Product\" WHERE"
+                    + " \"organizationId\" = :org AND id IN (:ids)").param("org", org()).param("ids", List.copyOf(missing)))) {
+                found.put((String) r.get("id"), (String) r.get("name"));
+            }
+            missing.forEach(id -> out.put(id, found.get(id)));
+        }
+        return out;
+    }
+
     /**
      * Freight and supplier cost history (LC-7): per month, supplier and charge kind — charges, base amount, the goods
-     * value and quantity they landed on, and the cost per unit and as % of goods value.
+     * value and quantity they landed on, and the cost per unit and as % of goods value. Goods value is the value basis
+     * for value-allocated charges and the receipt's stock-ledger value for every other basis.
      */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> freightHistory(LocalDate from, LocalDate to) {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT to_char(l.date, 'YYYY-MM') AS month,"
                 + " coalesce(pt.name, '(none)') AS supplier, c.kind, count(DISTINCT c.id) AS charges,"
-                + " sum(a.\"allocatedAmount\") AS amount, sum(a.\"receivedQty\") AS quantity, sum(a.\"basisValue\") FILTER"
-                + " (WHERE a.\"basisMethod\" = 'value') AS \"goodsValue\" FROM \"LandedCostCharge\" c JOIN \"LandedCost\" l ON"
-                + " l.id = c.\"landedCostId\" JOIN \"LandedCostAllocation\" a ON a.\"chargeId\" = c.id LEFT JOIN \"Partner\" pt"
-                + " ON pt.id = c.\"supplierId\" WHERE" + POSTED + " GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
+                + " sum(a.\"allocatedAmount\") AS amount, sum(a.\"receivedQty\") AS quantity, sum(CASE WHEN"
+                + " a.\"basisMethod\" = 'value' THEN a.\"basisValue\" ELSE gv.value END) AS \"goodsValue\" FROM"
+                + " \"LandedCostCharge\" c JOIN \"LandedCost\" l ON l.id = c.\"landedCostId\" JOIN \"LandedCostAllocation\" a"
+                + " ON a.\"chargeId\" = c.id LEFT JOIN \"Partner\" pt ON pt.id = c.\"supplierId\""
+                // quantity / weight / volume bases keep no goods value: read it from the receipt's stock ledger, as the
+                // voucher detail does (product, location, lot and the receipt line's variant)
+                + " LEFT JOIN LATERAL (SELECT sum(il.\"totalValue\") AS value FROM \"InventoryLedger\" il LEFT JOIN"
+                + " \"GoodsReceiptLine\" gl ON gl.id = a.\"goodsReceiptLineId\" WHERE il.\"organizationId\" ="
+                + " a.\"organizationId\" AND il.\"referenceType\" = 'goods_receipt' AND il.\"referenceId\" ="
+                + " a.\"goodsReceiptId\" AND il.\"quantityChange\" > 0 AND il.\"productId\" = a.\"productId\" AND"
+                + " il.\"locationId\" = a.\"locationId\" AND il.\"batchId\" IS NOT DISTINCT FROM a.\"batchId\" AND"
+                + " (gl.\"variantId\" IS NULL OR il.\"variantId\" = gl.\"variantId\")) gv ON a.\"basisMethod\" IS DISTINCT"
+                + " FROM 'value'"
+                + " WHERE" + POSTED + " GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
                 .params(period(from, to)));
         for (Map<String, Object> r : rows) {
             BigDecimal amount = SqlRows.dec(r, "amount");
