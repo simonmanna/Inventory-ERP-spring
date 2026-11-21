@@ -148,9 +148,14 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   (409 `SEQ_REUSED`, dead letter, not retryable; V598 index). Protocol-1 clients are exempt. Android now sends
   protocol 2 (rotation, tombstones, S1 retries, corrections with `supersedesOpId`). Web/Android parity fixtures:
   `contract-tests/sync-protocol/parity/`. See ADR-S083 "O6 as built".
+- **Branch relay node (O7):** `erp.sync.mode=branch` serves `/sync/pull`, `/sync/snapshot*` and `/sync/push` to a
+  branch's tills from a mirror of HQ and a relay outbox, and forwards ops to HQ. New routes: `GET /sync/relay/feed`
+  (HQ, branch devices only), `GET /sync/branch/status` and `GET /sync/branch/shift-report` (branch node only; 404 at
+  HQ). Device platform `branch` (requires `branchId`; token not rotated). Failure codes `ORIGIN_NOT_ALLOWED` (HQ) and
+  `SYNC_DEAD_LETTERS_OPEN` (branch close). Pull response member `relay` at a branch. V599. See ADR-S083 "O7 as built".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
   `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`, `SyncSalesIT`, `SyncSeqReuseIT`,
-  `SyncClientParityIT`; the `SyncIT` authorization matrix now covers 19 routes.
+  `SyncClientParityIT`, `SyncBranchRelayIT`; the `SyncIT` authorization matrix now covers 22 routes.
 
 ## Notes
 

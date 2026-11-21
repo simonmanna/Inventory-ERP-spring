@@ -66,6 +66,10 @@ public class SyncDevicesService {
         if (name.isEmpty()) {
             throw ApiException.badRequest("A device name is required");
         }
+        // ADR-S083 O7: a branch node relays one branch's tills, so it is always bound to that branch.
+        if ("branch".equals(platform) && (branchId == null || branchId.isBlank())) {
+            throw ApiException.badRequest("A branch server must be registered with its branchId");
+        }
         // A terminal is a licensed seat, so the cap is checked before one is issued a token.
         licenseLimits.assertCanAddDevice();
         String token = newToken();
@@ -150,6 +154,12 @@ public class SyncDevicesService {
         String orgId = (String) device.get("organizationId");
         int ttl = policy.tokenTtlDays(orgId);
         Map<String, Object> extra = new java.util.LinkedHashMap<>();
+        // ADR-S083 O7: a branch node's token is a server credential (set in its configuration, revocable here); it is
+        // not rotated on pull, so a branch restored from a backup still authenticates. Its expiry is renewed instead.
+        if (rotate && "branch".equals(db.jdbc().sql("SELECT platform FROM \"PosDevice\" WHERE id = ?").param(id)
+                .query(String.class).optional().orElse(null))) {
+            rotate = false;
+        }
         if (rotate) {
             String token = newToken();
             boolean viaCurrent = Boolean.TRUE.equals(device.get("currentToken"));

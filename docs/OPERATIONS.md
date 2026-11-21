@@ -6,9 +6,25 @@
 |---|---|
 | Single café (LAN server / mini-PC) | `docker compose up -d --build` → Postgres 16 + API + nginx web on :8080; terminals use the server's LAN IP (`CORS_ALLOW_LAN=true`) |
 | Hosted (VPS) | same images behind Caddy (TLS, zstd/gzip) — see `docs/legacy/DEPLOYMENT.md` and `deployment/demo` in the legacy repo |
+| Branch relay node (ADR-S083 O7) | same image on a branch mini-PC with its own Postgres, `ERP_SYNC_MODE=branch` (see §1a); the branch's tills sync to it over the LAN; HQ stays the system of record |
 | Cloud read replica | logical replication of the LAN DB + API with `READ_ONLY_MODE=true` (`docs/legacy/architecture`) |
 
 Minimum server: 2 vCPU, 4 GB RAM, SSD. Recommended: 4 vCPU, 8 GB. JVM heap = 75 % of container RAM.
+
+## 1a. Branch relay node (ADR-S083 O7)
+
+1. At HQ, register the branch server as a device: Settings → Devices, or `POST /sync/devices/register` with
+   `{"name": "...", "platform": "branch", "branchId": "<branch>"}`. Keep the returned token. Register the branch's tills
+   at HQ too, bound to the same branch.
+2. On the branch machine run the API with its own database and:
+   `ERP_SYNC_MODE=branch`, `ERP_SYNC_SERVER_ID=<unique, e.g. branch-arusha>`, `ERP_SYNC_BRANCH_HQ_URL=https://<hq>/api/v1`,
+   `ERP_SYNC_BRANCH_TOKEN=<token>`, `ERP_SYNC_BRANCH_ORGANIZATION_ID=<org id>`, `APP_JOBS_ENABLED=false`
+   (Spring relaxed binding of `erp.sync.*`). Optional: `ERP_SYNC_BRANCH_INTERVAL` (PT10S), `ERP_SYNC_BRANCH_PULL_INTERVAL`
+   (PT30S), `ERP_SYNC_BRANCH_TIMEOUT` (PT10S).
+3. Point the tills at the branch server's LAN address. Within a minute the branch has HQ's master data and the tills.
+4. Watch `GET /sync/branch/status` (any till token): `pendingHqPosting` should drain whenever the WAN is up;
+   `lastError` says why it does not. Rejections appear at HQ under Sync dead letters (device = the branch server).
+5. Back up the branch database nightly with WAL (§7c). After a restore just start it: it reads HQ's feed first.
 
 ## 2. Configuration
 
@@ -248,3 +264,6 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 | An Android till says "has not synced for more than N hours" and refuses sales | The offline window (`sync.offlineWindowHours`, default 72, or the device policy) has lapsed since its last pull, or its clock reads earlier than the last sync. Connect it and sync (More → Sync); fix the date and time if it was wound back. Queued sales are still pushed (ADR-S083 O6) |
 | An Android till says "This device's token expired" | The token passed `sync.deviceTokenTtlDays` without a pull. Nothing on the till was deleted; its queued work is pushed and held as `DEVICE_TOKEN_EXPIRED` dead letters. Re-enroll the device, then recover the held ops under Sync dead letters |
 | A dead letter with code `SEQ_REUSED` | A protocol-2 client sent a device sequence it had already used for another op (an old copy of its data, or a bug). Nothing was applied. Check the device's other op with that sequence; discard the duplicate unless it is a genuine, different sale — then re-enter it as a new sale |
+| A branch server's `pendingHqPosting` keeps growing | HQ unreachable or refusing the branch token: `GET /sync/branch/status` → `lastError`. Fix the WAN / URL; a 401 means the branch device was revoked at HQ — register a new branch device and update `ERP_SYNC_BRANCH_TOKEN`. Tills keep selling meanwhile; nothing is lost |
+| A dead letter with code `ORIGIN_NOT_ALLOWED` | A branch server relayed an op that names no till of its own branch (a till moved to another branch, or a misconfigured branch). Nothing was applied; move the till back or re-enter the sale at the right branch |
+| A branch till cannot close its shift: "rejected sync operation(s) involving money" | A money op of that shift was rejected at HQ. Resolve or discard its dead letter at HQ; the branch learns it within one relay cycle and the close goes through. At HQ, any open money rejection from that branch blocks closing that branch's shifts (ADR-S083 O7 deviation 5) |

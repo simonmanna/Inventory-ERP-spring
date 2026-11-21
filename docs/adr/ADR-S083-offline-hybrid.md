@@ -1,7 +1,7 @@
 # ADR-S083 — Offline / online hybrid (one sync protocol for web, Android and branch servers)
 
-- Status: accepted by the owner (2026-11-20, plan revision 3). **O0 is built** on branch `phase/O0-sync-foundations`.
-  O1–O7 are not started; each needs separate owner approval.
+- Status: accepted by the owner (2026-11-20, plan revision 3). O0–O7 are built on stacked branches
+  (`phase/O0-sync-foundations` … `phase/O7-branch-server`), none merged; see each "as built" section.
 - Plan: phases O0 (foundations) → O1 (web sync engine) → O2 (web POS on `/sync`) → O3 (read-only cache of the whole web
   app) → O4 (inventory) → O5 (sales and field orders) → O6 (Android alignment) → O7 (branch server).
 - Extension: no NestJS counterpart. Every `/sync` route and response member that Nest has is unchanged; O0 adds 6
@@ -492,7 +492,7 @@ The close answers 409 `SYNC_DEAD_LETTERS_OPEN` with the dead-letter ids.
 This restores the rule the plan agreed. Before O0 the close only logged a warning (Nest parity); the block is a
 deliberate, owner-requested deviation, recorded in `docs/spec/sync.md`.
 
-## S6 / C3 — Branch identity, authority, relay contract (contract only; built in O7)
+## S6 / C3 — Branch identity, authority, relay contract (built in O7 as a relay node — see "O7 as built")
 
 | Data | Authority |
 |---|---|
@@ -727,6 +727,61 @@ Backend `SyncSeqReuseIT` (3), `SyncClientParityIT`, the full `*Sync*` suite. Web
 **Not done in O6:** running the app on a phone against DEMO; Android snapshot staging; native O4/O5 screens; the
 on-device `MigrationTest` (its dependencies are not in this machine's offline Gradle cache).
 
+### O7 as built (branch `phase/O7-branch-server`) — branch server as a relay node
+
+Owner decision (2026-11-21): a branch server is a **relay node**, not a full ERP with GL switched off. It is the same
+application started with `erp.sync.mode=branch` on its own PostgreSQL; no business module changed. HQ stays the only
+place that applies ops and posts GL (invariant 2).
+
+```
+till / browser ──LAN──▶ BRANCH (erp.sync.mode=branch)             HQ
+                         mirror of HQ pull scopes  ◀── /sync/pull ──
+                         relay outbox (accepted_local)
+                         /sync/push answered after commit ── /sync/push (original opIds) ──▶ ledger dedup, GL
+                         outbox states, devices, watermark ◀── /sync/relay/feed ──
+```
+
+| Part | As built |
+|---|---|
+| Configuration | `erp.sync.mode=branch`, `erp.sync.server-id` (distinct from `hq`), `erp.sync.branch.hq-url`, `erp.sync.branch.token`, `erp.sync.branch.organization-id`; `app.jobs.enabled=false`. Startup fails if one is missing. |
+| Branch identity at HQ | A device of platform `branch`, bound to its branch (`POST /sync/devices/register` with `platform=branch` requires `branchId`). Its token is a server credential: **not rotated on pull** (expiry renewed), so a restored branch still authenticates; revoke it like any device. |
+| Tills | Registered at HQ as usual, bound to the branch. The branch mirrors them (token hashes, expiry, revocation, offline-window override) from the feed and authenticates them locally with the existing filter. **No token rotation through a branch**; HQ renews the expiry of tills the branch reports as seen. A till HQ no longer lists for the branch stops authenticating there. |
+| Master data (S6) | `SyncBranchMirror` holds every pull scope except messages; a pull at the branch is answered from it with the normal envelope (full sets whole, deltas by storage time with the 5 s overlap, tombstones to protocol-2 clients), HQ's `currency`, `offlinePolicy` and `license`. Snapshots (C5) work on the mirror unchanged. Messages are not relayed. |
+| Push at the branch | Every op is committed to `SyncRelayOutbox` (`accepted_local`) before the till is answered; same opId + same payload replays, different payload `OP_ID_REUSED`. The branch then relays at once: **when HQ answers, the till gets HQ's own result** (mapping, final numbers, rejection); **when HQ is unreachable**, `status: applied`, `relayState: accepted_local`, no mapping — the branch now owns delivery. |
+| Relay (C3) | `SyncBranchJob` (ShedLock, `erp.sync.branch.interval`, default 10 s): feed → pending ops → mirror pull (`pull-interval`, 30 s). Ops go in acceptance order under their original opIds; `deviceSeq` = the branch's own relay sequence; `originChain` = `device:<till>`, `server:<branch>` (HQ adds its hops). States: `accepted_local` → `pending_hq` → `hq_posted` (HQ result stored) / `hq_rejected` (HQ dead letter; its later status comes back by the feed). Retryable HQ failures and an unreachable HQ back off 2 s → 5 min; once HQ answers again, ops that never reached it go at once. |
+| HQ feed | `GET /sync/relay/feed` (branch devices only, else 403): ledger rows and dead letters of the branch device changed since the cursor (outcomes survive lost responses), `maxDeviceSeq` (relay watermark), the branch's tills. |
+| HQ checks on relayed ops | Each op must name a till of the same branch (`ORIGIN_NOT_ALLOWED` otherwise, dead letter). A `hold:<code>` hop the branch adds is dead-lettered under that code: `DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED` (the branch received the op after the till's cut-off — the branch's receive time decides, as HQ's does for direct pushes) and `SEQ_REUSED` (a protocol-2 till reused a sequence, detected at the branch). The till is told the same failure at once. |
+| Branch shift close (C3) | Allowed while ops are pending HQ; refused at the branch (`SYNC_DEAD_LETTERS_OPEN`, the HQ wording) while a money op of that shift is `hq_rejected` with its HQ dead letter still open or investigating. HQ's own close check applies again when the close arrives. |
+| Branch reports (C3) | `GET /sync/branch/status` (any till of the branch): outbox counts, pending HQ posting, open rejections, last HQ contact and error. `GET /sync/branch/shift-report?cashSessionId=<client id>`: opening float, cash sales, pay-ins/outs, expected cash, "Includes N operation(s) pending HQ posting". GL and P&L stay HQ-only. |
+| Back office at a branch | Every route except the sync protocol, `/sync/branch/*` and health answers 503 ("use HQ for back-office work"). |
+| Crash / restore (S8) | Tills keep queuing while the branch is down. A branch restored from an older backup reads HQ's feed before sending anything: it recovers outcomes and HQ's relay watermark; rows never sent from the restored database get sequences above the watermark (no `SEQ_REUSED`); tills re-push unacknowledged ops and HQ's ledger replays the ones it already applied (no double posting). |
+| Cross-branch transfers | Unchanged S4 two-step ops (`transfer.dispatch` / `transfer.receive`), relayed to HQ like any op; HQ coordinates. |
+| Migration | `V599__sync_o7_branch_relay.sql`: `SyncRelayOutbox`, `SyncBranchMirror`, `SyncBranchState` (RLS like the other sync tables; empty at HQ) and a ledger index for the feed. |
+
+**O7 as built — deviations to approve:**
+1. **Relay node, not a full branch ERP** (owner decision above): branch users do back-office work at HQ; a branch
+   offers tills (Android and browser devices) only.
+2. **Final numbers while HQ is down:** a sale relayed later keeps its provisional number on the till; the final
+   number and invoice id exist at HQ (and in the branch outbox) but are not pushed back to the till.
+3. **Tokens through a branch are not rotated.** HQ renews their expiry while the branch reports the till as seen; a
+   till idle past the token TTL needs re-enrolling. Rotation stays in force for tills that pull from HQ directly.
+4. **Messages** (staff chat) are not relayed through a branch.
+5. **Branch-wide close block at HQ:** HQ's existing close check matches open money dead letters by the shift's
+   device, which for relayed shifts is the branch device. A rejected money op from one till therefore blocks closing
+   any shift of that branch at HQ until it is resolved (safe, stricter than per till). The branch's own check is per
+   shift.
+6. **Not built:** the C2 post-restore reconciliation job (manual runbook remains), S9 branch dashboard tiles, a
+   docker-compose HQ + branch stack (the IT runs both in one JVM on two databases).
+
+**Tests:** `SyncBranchRelayIT` (a second application context on its own database as the branch, HQ = the test
+server): mirror served to the till without rotation; inline pass-through with HQ's result and originChain; HQ
+unreachable → `accepted_local`, pending counts and shift report, relayed on reconnect with exactly one posting; HQ
+rejection blocking the branch close until the dead letter is discarded at HQ, then the close posts with
+`closingExpected` 190; restore from an empty backup (watermark, no `SEQ_REUSED`, replay not re-post); a till revoked
+at HQ held as `DEVICE_REVOKED`; boundaries (feed 403/401, branch registration needs `branchId`, `ORIGIN_NOT_ALLOWED`,
+503 for back office, branch routes 404 at HQ). Plus the full `*Sync*` suite, cash sessions, tenant RLS, schema
+validation, modularity and architecture tests.
+
 ## Additive wire changes in O0
 
 | Where | Change |
@@ -759,6 +814,7 @@ checked against the live API by `SyncProtocolContractIT` on every CI run.
 | Item | Where it lands |
 |---|---|
 | S9 `/sync/status` dashboard and Micrometer metrics | after O2 (needs the web engine's pending counts) |
-| C2 post-restore reconciliation job (device/branch watermarks vs ledger, GL and stock checks, report) | before O7; runbook already in `docs/OPERATIONS.md` §7c |
+| C2 post-restore reconciliation job (device/branch watermarks vs ledger, GL and stock checks, report) | still deferred after O7 (the branch's own relay watermark is recovered automatically, see "O7 as built"); manual runbook in `docs/OPERATIONS.md` §7c |
+| S9 branch tiles on the sync dashboard | with S9 (the branch exposes `GET /sync/branch/status` meanwhile) |
 | Web and Android clients (snapshot staging, token rotation, `supersedesOpId`, quarantine UX) | O1, O2, O6 |
 | Refusing sequence regressions from active devices | done in O6 as `SEQ_REUSED` for protocol-2 clients (sequence reuse; a regression alone stays legitimate) |
