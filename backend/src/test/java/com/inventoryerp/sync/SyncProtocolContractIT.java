@@ -195,8 +195,13 @@ class SyncProtocolContractIT extends ApiTestSupport {
         List<String> sums = new ArrayList<>();
         long rows = 0;
         while (true) {
-            JsonNode page = dev("GET", "/sync/snapshot/" + id + "/page?scope=taxes&after=" + after, null, null).body();
+            Res served = dev("GET", "/sync/snapshot/" + id + "/page?scope=taxes&after=" + after, null, null);
+            JsonNode page = served.body();
             conforms("snapshotPage", page);
+            // ADR-S083 O1: the web client verifies the RAW bytes of `rows` in the response (re-serializing parsed JSON
+            // in a browser does not reproduce Jackson's output), so the served bytes must hash to pageChecksum.
+            assertThat(com.inventoryerp.sync.application.SyncSnapshotService.sha256(rawRows(served.raw().body())))
+                    .as("raw rows bytes hash to pageChecksum").isEqualTo(page.get("pageChecksum").asString());
             sums.add(page.get("pageChecksum").asString());
             rows += page.get("rows").size();
             if (!page.get("hasMore").asBoolean()) {
@@ -232,6 +237,30 @@ class SyncProtocolContractIT extends ApiTestSupport {
         JsonNode rec = ok(201, "POST", "/sync/dead-letters/" + item.get("id").asString() + "/recover", Map.of("note",
                 "Contract recovery"));
         conforms("recoverResponse", rec);
+    }
+
+    /** The raw text of the top-level {@code rows} array (it precedes any nested value in a page body). */
+    static String rawRows(String body) {
+        int start = body.indexOf("\"rows\":") + "\"rows\":".length();
+        int depth = 0;
+        boolean inString = false;
+        for (int i = start; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (inString) {
+                if (c == '\\') {
+                    i++;
+                } else if (c == '"') {
+                    inString = false;
+                }
+            } else if (c == '"') {
+                inString = true;
+            } else if (c == '[' || c == '{') {
+                depth++;
+            } else if ((c == ']' || c == '}') && --depth == 0) {
+                return body.substring(start, i + 1);
+            }
+        }
+        throw new AssertionError("no rows array in " + body);
     }
 
     String[] registerAndRevoke() {

@@ -43,7 +43,7 @@ public class SyncSnapshotService {
         this.pull = pull;
     }
 
-    static String sha256(String s) {
+    public static String sha256(String s) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(s.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
@@ -135,7 +135,10 @@ public class SyncSnapshotService {
             rows.add(r);
         }
         String next = more ? String.valueOf(rows.getLast().get("id")) : null;
-        String checksum = pageChecksum(rows);
+        // ADR-S083 O1: serialize once and serve exactly these bytes (RawValue), so a client can verify the checksum
+        // against the raw body — the HTTP mapper's own output of the rows would differ from the hashed bytes.
+        String rowsJson = EntityJson.toJson(rows);
+        String checksum = sha256(rowsJson);
         jdbc.sql("INSERT INTO \"SyncSnapshotPage\" (id, \"organizationId\", \"snapshotId\", scope, \"afterKey\", \"nextAfter\","
                         + " \"rowCount\", checksum) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (\"snapshotId\", scope, \"afterKey\")"
                         + " DO UPDATE SET \"nextAfter\" = EXCLUDED.\"nextAfter\", \"rowCount\" = EXCLUDED.\"rowCount\","
@@ -146,7 +149,7 @@ public class SyncSnapshotService {
         out.put("snapshotId", id);
         out.put("scope", scope);
         out.put("after", after);
-        out.put("rows", rows);
+        out.put("rows", new tools.jackson.databind.util.RawValue(rowsJson));
         out.put("nextAfter", next);
         out.put("hasMore", more);
         out.put("pageChecksum", checksum);

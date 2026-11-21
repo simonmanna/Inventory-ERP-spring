@@ -211,11 +211,55 @@ its old sequence); `lastAcceptedSeq` is recorded for evidence only until O6 alig
 
 ### Browser storage (O1)
 
-The token and PIN hashes are encrypted with a non-extractable WebCrypto key. Script running on our own origin can
+The device token is encrypted with a non-extractable AES-GCM WebCrypto key kept in IndexedDB (`lib/offline/vault.ts`).
+PIN hashes are bcrypt hashes from the `staff` scope; the PIN itself is never stored. The key defends against reading the
+IndexedDB files and copying them to another profile. Script running on our own origin can
 still *use* that key. The mitigations are the strict CSP, no third-party script on POS routes, and the short offline
 window.
 
 PINs and tokens are never logged (the existing redaction rules apply).
+
+## O1 — Web sync engine (`web/src/lib/offline/`)
+
+Built on branch `phase/O1-web-sync-engine` (stacked on O0). Engine only: no screen uses it yet (POS moves onto it in
+O2), so O1 changes no existing behaviour.
+
+| File | Role |
+|---|---|
+| `store.ts` | IndexedDB per organization (`erp-offline:<orgId>`): `ops` outbox, `rows`, `staging`, `idmap`, `meta`. Enqueue + sequence counter, pull rows + cursor, snapshot activation are each one transaction. |
+| `engine.ts` | One pass = push, then pull (snapshot first when there is no cursor). Web Locks (`ifAvailable`) so one tab syncs; BroadcastChannel tells the others. |
+| `retry.ts` | S1 rules: same opId on no answer / 5xx / 429 / `retryable`; `rejected` never retried; `held` for quarantine; exponential backoff with jitter (2 s → 5 min); device order kept (a not-yet-due op holds back later ops). |
+| `snapshot.ts` + `checksum.ts` | C5 client: verified pages (raw bytes) staged with their progress; resume after a break; 410/409/404 restart once; activation only after `complete`. |
+| `session.ts` | C4: offline PIN login (bcrypt), persisted throttling (failures → lockout, doubling), offline window from the last sync (clock rolled back → read-only), idle timeout, permission snapshot stamped with the sync time. |
+| `vault.ts` | Encrypted device token. |
+| `storage.ts` | `navigator.storage.persist()`; eviction detected by a `localStorage` marker without a `device` entry. |
+| `web.ts` | Browser wiring: engine per org, `registerThisBrowser`, `startAutoSync` (online, visible, after enqueue, interval). |
+
+Crash rules:
+- An op is marked `in_flight` before it is sent; a pass that dies leaves it `in_flight` and the next pass (any tab)
+  re-sends it under the same opId, so the server ledger replays it.
+- The batch `Idempotency-Key` is sha256 of device, opIds and attempt round: an identical re-send replays the stored
+  batch; a retry after a failure gets a fresh key (per-op dedup still applies).
+- A 400 for a whole batch is narrowed to single ops, so one malformed op is rejected locally (`VALIDATION`) and the
+  rest still sync.
+- A rotated token is stored before the pulled rows; the replaced token stays valid for the server's grace period.
+
+Device states:
+- **token expired** (401 "expired" on pull): pull stops, queued ops are still pushed (the server holds them), local data kept.
+- **revoked** (401 on pull, token still recognised — checked with an empty push, which the server authenticates
+  before validating): every op not applied is exported to `meta.revokedExport` for supervisor import, then the store
+  is wiped.
+- **unknown token** (401 on both): `unregistered`, nothing wiped.
+- **426** on pull: `upgrade_required`; the push before it still ran.
+
+Browser support: Chrome / Edge 69+, Android WebView (Chrome 69+), Safari 16+ (Web Locks 15.4, BroadcastChannel
+15.4, non-extractable CryptoKey in IndexedDB). Firefox 96+ works but is not a supported POS browser. Missing Web Locks
+falls back to an in-tab lock; missing BroadcastChannel only loses cross-tab status.
+
+Tests: Vitest with `fake-indexeddb` (`web/src/lib/offline/__tests__/`, 41 tests) against a fake server with an
+applied-op ledger: lost response, crash mid-push, batch replay, retryable vs rejected vs held, 400 isolation, multi-tab
+lock, token expiry, revocation export + wipe, unknown token, 426, offline; snapshot checksum retry, resume, 410/409
+restart, failed completion; PIN throttling, offline window, clock rollback, idle timeout; vault; store atomicity.
 
 ## S3 — Cache policy (O3)
 
@@ -334,8 +378,10 @@ Delta pulls are unchanged. Two additions:
    pageCount}`. `messages` is excluded; it pages by its own sequence cursor.
 2. `GET /sync/snapshot/{id}/page?scope&after=` → `{rows, nextAfter, hasMore, pageChecksum}`.
    - Keyset by `id`.
-   - The checksum is computed by the server over the page's rows. The client keeps it as the page's identity and
-     echoes it back.
+   - The checksum is sha256 of the page's `rows` exactly as served: the server serializes the rows once and writes
+     those bytes into the response (O1 fix — the HTTP mapper's own output differed from the hashed bytes, so no
+     client could verify a page). The web client hashes the raw `rows` text of the body; re-serializing parsed JSON
+     in a browser does not reproduce Jackson's output. `SyncProtocolContractIT` asserts the byte equality.
    - Resumable from the last `after`.
    - An expired snapshot is 410.
 3. `POST /sync/snapshot/{id}/complete {scopes: {name: {rowCount, checksum}}}`.
