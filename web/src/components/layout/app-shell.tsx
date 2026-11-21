@@ -152,6 +152,7 @@ import { useOrgFeatures, useSidebarTagline } from '@/lib/use-org-features';
 import { featureAvailable, posModeAllows, sectionEnabled } from '@/lib/features';
 import { usePosSettings, type PosNavVisibility } from '@/features/pos/api';
 import { LicenseBanner } from '@/components/license/LicenseBanner';
+import { OfflineDataBanner } from '@/components/offline/OfflineDataBanner';
 import { LicenseBlockedDialog } from '@/components/license/LicenseBlockedDialog';
 import { useLicense } from '@/features/license/api';
 import { api } from '@/lib/api';
@@ -1471,6 +1472,7 @@ export function AppShell() {
         >
           {/* Above the content, not over it: a licence notice must be impossible
               to miss and equally impossible to be in the way of a sale. */}
+          <OfflineDataBanner />
           <LicenseBanner />
           <PageSuspense>
             <Outlet />

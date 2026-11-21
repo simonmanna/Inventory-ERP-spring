@@ -333,6 +333,40 @@ refunds/voids, reservations and expenses stay online-only on the web (their ops 
 - Keys carry org and user. The cache is wiped on logout, org switch, a permission-snapshot change and device revoke.
 - Size cap with LRU eviction.
 
+### O3 as built (branch `phase/O3-web-readonly-cache`)
+
+- **Policy:** `cache-policy.ts`, ordered rules (exact names and patterns), first match wins. Retention: `cache`
+  7 days, `cache-permissioned` 3 days, `cache-strict` 24 h. Besides auth, licence and secrets, `never` also holds live
+  state that is wrong when stale (open shift, tabs, holds, kitchen tickets, approvals, store credit), previews and
+  pickers, signed file URLs, personal messages and alerts. `cache-policy.test.ts` scans `src/` and fails on any
+  literal query-key family (and `*KEY` / `*Key` constants) without a rule, and on dead or contradictory entries.
+  Keys built at run time with no literal are not seen by the scan; they fall to `never`.
+- **Storage:** `query-cache.ts`. One IndexedDB entry per organization + user (`erp-query-cache:<org>:<user>`),
+  stamped with a permission fingerprint. The pre-O3 single entry (`pos-query-cache`) is deleted.
+  - Sign-out or an organization/user switch deletes the old entry and clears memory.
+  - A permission change drops `cache-permissioned` and `cache-strict` from memory (the next save rewrites the disk);
+    a restore under different permissions keeps catalogue only.
+  - Device revocation clears everything.
+  - Size cap (20 M characters serialized): the most recently fetched results are kept; "LRU" is approximated by
+    fetch time.
+- **Reachability:** `reachability.ts`, one sticky answer. Unreachable from a request with no answer until any
+  answered request or a health probe (every 10 s while unreachable) succeeds. `navigator.onLine` events only trigger a
+  probe. `serverUnreachable()` (used by the POS routing of O2) now reads this sticky state instead of a 15 s window.
+- **React Query follows it** (`onlineManager`): while unreachable, queries pause and keep the cached data on screen
+  instead of turning into error screens; they refetch when the server answers. Mutations run with
+  `networkMode: 'always'`, so every write reports its outcome. This also fixes a latent O2 issue: with the browser
+  offline, React Query used to pause POS writes and offline reads silently. The POS queries that read local data
+  themselves (menu, payment methods and accounts, POS settings, open shift) use `networkMode: 'always'`.
+- **Write guard** (axios): while unreachable, a back-office write is refused at once with
+  `503 NEEDS_CONNECTION` "Needs connection — changes cannot be saved while the server is unreachable" (one toast),
+  instead of a timeout. Exempt so their behaviour is unchanged: the POS screens (`/pos/*`, which have O2's offline
+  handling), sign-in, and requests whose caller set its own `Idempotency-Key` (checkout, settle, the replay queue).
+- **Screens:** `OfflineDataBanner` above every back-office page: "Offline: data as of HH:MM" (the oldest result on
+  the current screen). Form submit buttons (`<Button type="submit">`) are disabled with "Needs connection" while
+  unreachable, outside the POS. Other write buttons rely on the guard; disabling them per screen is incremental work.
+- **Not in O3:** no new server routes. The offline view is only as complete as what the user opened while online
+  (no prefetch of the whole app).
+
 ## S4 — Inventory conflict and reconciliation (O4)
 
 - A physical fact that happened offline is always kept (`recordedOffline`, `occurredAt`).

@@ -131,6 +131,7 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   resolves through the applied-op ledger when the creating op was applied in an earlier batch (its `opId`, or a
   `cash_session.open` mapping key; same organization and device). Index: V595. Test: `SyncCrossBatchIT`.
 - **Web POS (O2):** see ADR-S083 "O2 — Web POS on the protocol".
+- **Read-only cached web app (O3):** client only, no wire change; see ADR-S083 "O3 as built" under S3.
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
   `SyncProtocolContractIT`, `SyncOpCatalogTest`; the `SyncIT` authorization matrix now covers 15 routes.
 

@@ -1,19 +1,11 @@
-import { QueryClient } from '@tanstack/react-query';
-import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { QueryClient, onlineManager } from '@tanstack/react-query';
 import { get, set, del } from 'idb-keyval';
-
-/** Query keys whose data must survive a reload while the server is unreachable. */
-const OFFLINE_CACHED_KEYS = [
-  'products',
-  'product-categories',
-  'menu-items',
-  'menu-categories',
-  'pos-tables',
-  'pos-lookup',
-  'partners',
-  'receipt-settings',
-  'taxes',
-];
+import { useAuthStore } from '@/stores/auth.store';
+import { isReachable, subscribeReachability } from '@/lib/offline/reachability';
+import {
+  createScopedPersister, dropPermissionBound, scopeWatcher, type CacheScope, type KeyValue,
+} from '@/lib/offline/query-cache';
+import { classify } from '@/lib/offline/cache-policy';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,45 +14,68 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       staleTime: 30_000,
       refetchIntervalInBackground: false,
-      // Cached catalog must outlive the tab. The default 5-minute gcTime would
-      // evict it long before a cashier reopens the terminal mid-outage.
+      // Cached data must outlive the tab. The default 5-minute gcTime would
+      // evict it long before someone reopens a screen mid-outage.
       gcTime: 7 * 24 * 60 * 60 * 1000,
+    },
+    mutations: {
+      // A write always runs, online or not, so its caller sees the outcome (the POS offline paths and the offline
+      // write guard depend on it). Paused mutations would sit silently until reconnect.
+      networkMode: 'always',
     },
   },
 });
 
-/**
- * Offline catalog cache (P3).
- *
- * IndexedDB — not localStorage: a full menu with images/modifiers can exceed
- * the ~5MB localStorage budget, and blowing that quota throws mid-service.
- *
- * Only catalog-ish reads are persisted. Money and session state are
- * deliberately excluded: a stale cached invoice or cash session shown as
- * current would be worse than an empty screen. Queued sales live in the
- * offline-queue's own IndexedDB store, not here.
+/*
+ * ADR-S083 O3 — React Query follows the server's reachability, not navigator.onLine: while the server is
+ * unreachable, queries pause and keep showing what was cached (no error screens); they resume and refetch when it
+ * answers again. Queries that read local offline data themselves (the POS) use `networkMode: 'always'`.
  */
-export const queryPersister = createAsyncStoragePersister({
-  storage: {
-    getItem: async (key) => (await get(key)) ?? null,
-    setItem: async (key, value) => set(key, value),
-    removeItem: async (key) => del(key),
-  },
-  key: 'pos-query-cache',
-  throttleTime: 2_000,
+onlineManager.setEventListener((setOnline) => {
+  setOnline(isReachable());
+  return subscribeReachability(() => setOnline(isReachable()));
 });
+
+const storage: KeyValue = {
+  get: (k) => get(k),
+  set: (k, v) => set(k, v),
+  del: (k) => del(k),
+};
+
+function currentScope(): CacheScope | null {
+  const s = useAuthStore.getState();
+  if (!s.user?.id || !s.organization?.id) return null;
+  return { organizationId: s.organization.id, userId: s.user.id, permissions: s.permissions ?? [] };
+}
+
+/**
+ * The on-device copy behind the read-only offline view: IndexedDB, one entry per organization + user, only what
+ * `lib/offline/cache-policy.ts` allows, with per-class retention and a size cap (`lib/offline/query-cache.ts`).
+ */
+export const queryPersister = createScopedPersister(storage, currentScope);
 
 export const persistOptions = {
   persister: queryPersister,
   maxAge: 7 * 24 * 60 * 60 * 1000,
   // Bump when cached shapes change, so old entries are dropped rather than
   // rehydrated into a UI that no longer understands them.
-  buster: 'v1',
+  buster: 'v2',
   dehydrateOptions: {
-    shouldDehydrateQuery: (query: { queryKey: readonly unknown[]; state: { status: string } }) => {
-      if (query.state.status !== 'success') return false;
-      const root = String(query.queryKey[0] ?? '');
-      return OFFLINE_CACHED_KEYS.includes(root);
-    },
+    shouldDehydrateQuery: (query: { queryKey: readonly unknown[]; state: { status: string } }) =>
+      query.state.status === 'success' && classify(query.queryKey) !== 'never',
   },
 };
+
+/* Wipe on sign-out, organization or user switch; drop permission-bound results when permissions change. */
+const watch = scopeWatcher(storage, () => queryClient.clear(), () => dropPermissionBound(queryClient));
+void watch(currentScope());
+useAuthStore.subscribe(() => void watch(currentScope()));
+
+// The single pre-O3 entry (catalogue for every user of the browser) is replaced by the scoped ones.
+void del('pos-query-cache').catch(() => undefined);
+
+/** Device revoked (ADR-S083 S2): the engine wipes its own store; the query cache goes with it. */
+export async function wipeQueryCache(): Promise<void> {
+  queryClient.clear();
+  await queryPersister.removeClient();
+}

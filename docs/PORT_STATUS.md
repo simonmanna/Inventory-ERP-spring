@@ -1031,6 +1031,7 @@ additions and behaviour changes are listed in `docs/spec/pos.md` "Post-parity ha
 - [ ] Deferred (tracked in ADR-S083): S9 sync status dashboard + metrics; C2 post-restore reconciliation job
 - [x] O1 web sync engine (`web/src/lib/offline/`, branch `phase/O1-web-sync-engine`, not merged): outbox, retry rules, snapshot client, offline PIN sessions, encrypted token, multi-tab lock — Vitest `src/lib/offline/__tests__` (41); snapshot pages now served as the exact hashed bytes (`SyncProtocolContractIT`)
 - [x] O2 web POS on the protocol (branch `phase/O2-web-pos-sync`, not merged): offline sales / tab settle / shifts / drawer / customers as ops with provisional numbers, offline reads and PIN login, offline shift close, "This browser" registration; server resolves client ids across push batches (V595) — `SyncCrossBatchIT`, Vitest `src/features/pos/__tests__`
+- [x] O3 read-only cached web app (branch `phase/O3-web-readonly-cache`, not merged): S3 cache policy with source-scan test, per org+user IndexedDB cache with retention, size cap and permission/sign-out/org-switch/revoke wipes, sticky server reachability driving React Query, offline write guard (`NEEDS_CONNECTION`), "Offline: data as of" banner — Vitest `src/lib/offline/__tests__/{cache-policy,query-cache}.test.ts`
 
 ## backup
 

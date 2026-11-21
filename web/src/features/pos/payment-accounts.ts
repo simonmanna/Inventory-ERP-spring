@@ -10,7 +10,7 @@ export function accountsForMethod(accounts: PaymentAccount[], method: string) {
 }
 export function usePaymentAccounts() {
   const org = useAuthStore((s) => s.organization?.id);
-  return useQuery({ queryKey: ['pos-payment-accounts', org], queryFn: () => offlineRead('pos-payment-accounts', async () => (await api.get<PaymentAccount[]>('/pos/payment-accounts')).data), staleTime: 60_000 });
+  return useQuery({ queryKey: ['pos-payment-accounts', org], queryFn: () => offlineRead('pos-payment-accounts', async () => (await api.get<PaymentAccount[]>('/pos/payment-accounts')).data), staleTime: 60_000, networkMode: 'always' });
 }
 
 /**
@@ -41,6 +41,7 @@ export function usePosPaymentMethods() {
   const org = useAuthStore((s) => s.organization?.id);
   return useQuery({
     queryKey: ['pos-payment-methods', org],
+    networkMode: 'always', // offlineRead serves the synced copy (ADR-S083 O2)
     queryFn: () => offlineRead('pos-payment-methods', async () => (await api.get<PosPaymentMethod[]>('/pos/payment-methods')).data,
       (e) => paymentMethodsFromScopes<PosPaymentMethod[]>(e)),
     staleTime: 60_000,
