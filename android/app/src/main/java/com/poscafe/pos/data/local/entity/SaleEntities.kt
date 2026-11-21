@@ -157,10 +157,14 @@ data class OpQueueEntity(
     val actorUserId: String,
     val occurredAt: Long,
     val payloadJson: String,
-    val status: String, // queued | pushed | failed | discarded
+    val status: String, // queued | pushed | failed | discarded | superseded
     val attempts: Int,
     val lastError: String?,
-    /** Idempotency key sent to the server; null = [opId]. Replaced when a rejected op is resent. */
+    /**
+     * Legacy (before protocol 2 / Room v15): the key a rejected op was re-sent under. No longer set — an opId is
+     * never re-minted (ADR-S083 S1) — but a queued op re-keyed by an older build keeps going out under it, because
+     * that is the key the server knows.
+     */
     val wireOpId: String? = null,
     /**
      * HTTP status of a definitive rejection (4xx: the server committed nothing).
@@ -168,4 +172,17 @@ data class OpQueueEntity(
      * Null for transient/ambiguous failures, which must keep their key.
      */
     val rejectedStatus: Int? = null,
+    /** ADR-S083 S1: the rejected op this one corrects (a person resubmitted it); sent as `supersedesOpId`. */
+    val supersedesOpId: String? = null,
+    /**
+     * The local row (sale, refund, expense, …) this op reports on, when it differs from [opId]: a correction keeps
+     * the row id of the op it supersedes, so its result lands on the same sale. Null = [opId].
+     */
+    val rowId: String? = null,
+    /** Server failure code of the last answer (BUSINESS_RULE, SERVER_ERROR, DEVICE_TOKEN_EXPIRED, …). */
+    val failureCode: String? = null,
+    /** The server said the same opId may run again (5xx, a dependency, an op still in flight). */
+    val retryable: Boolean = false,
+    /** Epoch ms before which a retryable op is not re-sent (backoff); 0 = now. */
+    val nextAttemptAt: Long = 0,
 )

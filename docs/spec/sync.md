@@ -144,9 +144,13 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   `GET /sync/payment-reconciliation`. V597: `recordedOffline` / `occurredAt` on `SalesOrder`, `SalesQuotation`,
   `Payment` (+ `offlineActorId`), table `SyncReviewItem`, `guard_payment` allows the one-time stamp. See ADR-S083
   "O5 as built".
+- **Android alignment (O6):** a protocol-2 push refuses a `deviceSeq` already used by another opId of the same device
+  (409 `SEQ_REUSED`, dead letter, not retryable; V598 index). Protocol-1 clients are exempt. Android now sends
+  protocol 2 (rotation, tombstones, S1 retries, corrections with `supersedesOpId`). Web/Android parity fixtures:
+  `contract-tests/sync-protocol/parity/`. See ADR-S083 "O6 as built".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
-  `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`, `SyncSalesIT`; the `SyncIT` authorization
-  matrix now covers 19 routes.
+  `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`, `SyncSalesIT`, `SyncSeqReuseIT`,
+  `SyncClientParityIT`; the `SyncIT` authorization matrix now covers 19 routes.
 
 ## Notes
 

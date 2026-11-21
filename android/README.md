@@ -15,6 +15,14 @@ Protocol: [`docs/legacy/sync-protocol.md`](../docs/legacy/sync-protocol.md) ·
 contract: [`docs/CONTRACT.md`](../docs/CONTRACT.md) §10.
 Setup on a real phone: [`docs/legacy/lan-deployment.md`](../docs/legacy/lan-deployment.md).
 
+## Sync protocol 2 (ADR-S083 O6)
+
+The app sends `X-Sync-Protocol: 2.0`. A rejected op is never re-sent under a new key: a retryable failure goes again
+under the same opId (backoff, then **Retry** on the Sync screen); a definitive one is **Discarded** or **Resubmitted**
+as a correction (manager PIN) that names it in `supersedesOpId`. The token rotates on every pull; an expired token
+stops the pull without wiping anything (re-enroll). Past the org's offline window (default 72 h without a pull) the
+till stops taking sales until it syncs; PIN lockout and the idle sign-out follow the org's offline policy.
+
 ## Server URL
 
 Point the setup screen at the API base including `/api/v1`:

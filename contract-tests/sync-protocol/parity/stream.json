@@ -1,0 +1,22 @@
+{
+  "$comment": "ADR-S083 O6 web/Android parity stream. Each client's protocol layer (Android SyncRepository, web SyncEngine) turns these logical ops into its own wire batch: android.json and web.json, golden files written and checked by the clients' own unit tests (SyncParityGoldenTest, parity.test.ts). Backend SyncClientParityIT pushes both batches from two devices and asserts identical server state. Placeholders: $name = a client-minted id (fresh per device in the IT), {{actor}}, {{registerId}}, {{productId}}, {{suffix}}, {{counterAccountId}} = per-device values the IT supplies. The close's uncountedAccounts / approval is added by the IT (it depends on the org's tracked tenders).",
+  "ops": [
+    { "opId": "$open", "type": "cash_session.open", "occurredAt": "2026-11-21T09:00:00.000Z",
+      "payload": { "clientId": "$open", "cashRegisterId": "{{registerId}}", "openingFloat": 0 } },
+    { "opId": "$sale1", "type": "sale.checkout", "occurredAt": "2026-11-21T09:05:00.000Z",
+      "payload": { "clientId": "$sale1", "cashSessionId": "$open", "expectedTotal": 60,
+        "lines": [{ "productId": "{{productId}}", "description": "Parity tea", "quantity": 1, "unitPrice": 60 }],
+        "tenders": [{ "method": "cash", "amount": 60 }] } },
+    { "opId": "$cust", "type": "customer.upsert", "occurredAt": "2026-11-21T09:06:00.000Z",
+      "payload": { "clientId": "$cust", "name": "Parity customer {{suffix}}", "phone": "+255700000001" } },
+    { "opId": "$sale2", "type": "sale.checkout", "occurredAt": "2026-11-21T09:10:00.000Z",
+      "payload": { "clientId": "$sale2", "cashSessionId": "$open", "partnerId": "$cust", "expectedTotal": 120,
+        "lines": [{ "productId": "{{productId}}", "description": "Parity tea", "quantity": 2, "unitPrice": 60 }],
+        "tenders": [{ "method": "cash", "amount": 120 }] } },
+    { "opId": "$move", "type": "cash_session.movement", "occurredAt": "2026-11-21T09:20:00.000Z",
+      "payload": { "sessionId": "$open", "movementType": "pay_in", "amount": 10, "reason": "Parity top-up",
+        "counterpartAccountId": "{{counterAccountId}}" } },
+    { "opId": "$close", "type": "cash_session.close", "occurredAt": "2026-11-21T09:30:00.000Z",
+      "payload": { "sessionId": "$open", "closingCounted": 190 } }
+  ]
+}

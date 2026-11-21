@@ -36,6 +36,7 @@ class MigrationTest {
             PosDatabase.MIGRATION_5_6, PosDatabase.MIGRATION_6_7, PosDatabase.MIGRATION_7_8,
             PosDatabase.MIGRATION_8_9, PosDatabase.MIGRATION_9_10, PosDatabase.MIGRATION_10_11,
             PosDatabase.MIGRATION_11_12, PosDatabase.MIGRATION_12_13, PosDatabase.MIGRATION_13_14,
+            PosDatabase.MIGRATION_14_15,
         )
         // Unsynced sales survive the upgrade.
         db.query("SELECT COUNT(*) FROM op_queue WHERE status = 'queued'").use { c ->
@@ -44,8 +45,24 @@ class MigrationTest {
         }
     }
 
+    /** ADR-S083 O6: an op an older build re-keyed gets a fresh sequence above everything queued; others keep theirs. */
+    @Test
+    fun migrate14To15RenumbersReKeyedOps() {
+        helper.createDatabase(DB, 14).apply {
+            execSQL("INSERT INTO op_queue (opId, deviceSeq, type, actorUserId, occurredAt, payloadJson, status, attempts, lastError, wireOpId, rejectedStatus) VALUES ('a', 1, 'sale.checkout', 'u', 0, '{}', 'queued', 1, NULL, 'a-2', NULL)")
+            execSQL("INSERT INTO op_queue (opId, deviceSeq, type, actorUserId, occurredAt, payloadJson, status, attempts, lastError, wireOpId, rejectedStatus) VALUES ('b', 2, 'sale.checkout', 'u', 0, '{}', 'queued', 0, NULL, NULL, NULL)")
+            close()
+        }
+        val db = helper.runMigrationsAndValidate(DB, 15, true, PosDatabase.MIGRATION_14_15)
+        db.query("SELECT opId, deviceSeq, retryable, nextAttemptAt FROM op_queue ORDER BY opId").use { c ->
+            c.moveToFirst(); check(c.getString(0) == "a" && c.getLong(1) == 3L) { "re-keyed op not renumbered" }
+            check(c.getInt(2) == 0 && c.getLong(3) == 0L)
+            c.moveToNext(); check(c.getString(0) == "b" && c.getLong(1) == 2L) { "plain op renumbered" }
+        }
+    }
+
     private companion object {
         const val DB = "migration-test.db"
-        const val LATEST = 14
+        const val LATEST = 15
     }
 }

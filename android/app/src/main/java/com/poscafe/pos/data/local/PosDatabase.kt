@@ -55,7 +55,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         StockLocationEntity::class,
         StockLevelEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 abstract class PosDatabase : RoomDatabase() {
@@ -337,6 +337,24 @@ abstract class PosDatabase : RoomDatabase() {
             }
         }
 
+        /** v14 → v15 (ADR-S083 O6, protocol 2): an opId is never re-minted. Corrections link the op they
+         *  supersede and keep its row id; the server's failure code and retryability drive automatic retries with
+         *  backoff. Ops an older build re-keyed (wireOpId) and are not finished get a fresh
+         *  sequence above everything else queued, so the server does not see a used sequence under a new id. */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `supersedesOpId` TEXT")
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `rowId` TEXT")
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `failureCode` TEXT")
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `retryable` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `op_queue` ADD COLUMN `nextAttemptAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL(
+                    "UPDATE `op_queue` SET deviceSeq = deviceSeq + (SELECT COALESCE(MAX(deviceSeq), 0) FROM `op_queue`) " +
+                        "WHERE wireOpId IS NOT NULL AND status IN ('queued', 'failed')",
+                )
+            }
+        }
+
         /** SQLCipher-encrypted. Passphrase stored in EncryptedSharedPreferences
          *  (Android Keystore-backed) — stolen device yields ciphertext only. */
         fun build(context: Context, passphrase: ByteArray): PosDatabase {
@@ -346,7 +364,7 @@ abstract class PosDatabase : RoomDatabase() {
                 .addMigrations(
                     MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6,
                     MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
-                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
+                    MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
                 )
                 .build()
         }

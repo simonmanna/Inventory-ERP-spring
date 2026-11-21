@@ -1,0 +1,107 @@
+{
+  "deviceId": "{{deviceId}}",
+  "ops": [
+    {
+      "opId": "$open",
+      "deviceSeq": 1,
+      "type": "cash_session.open",
+      "actorUserId": "{{actor}}",
+      "occurredAt": "2026-11-21T09:00:00.000Z",
+      "payload": {
+        "clientId": "$open",
+        "cashRegisterId": "{{registerId}}",
+        "openingFloat": 0
+      }
+    },
+    {
+      "opId": "$sale1",
+      "deviceSeq": 2,
+      "type": "sale.checkout",
+      "actorUserId": "{{actor}}",
+      "occurredAt": "2026-11-21T09:05:00.000Z",
+      "payload": {
+        "clientId": "$sale1",
+        "cashSessionId": "$open",
+        "expectedTotal": 60,
+        "lines": [
+          {
+            "productId": "{{productId}}",
+            "description": "Parity tea",
+            "quantity": 1,
+            "unitPrice": 60
+          }
+        ],
+        "tenders": [
+          {
+            "method": "cash",
+            "amount": 60
+          }
+        ]
+      }
+    },
+    {
+      "opId": "$cust",
+      "deviceSeq": 3,
+      "type": "customer.upsert",
+      "actorUserId": "{{actor}}",
+      "occurredAt": "2026-11-21T09:06:00.000Z",
+      "payload": {
+        "clientId": "$cust",
+        "name": "Parity customer {{suffix}}",
+        "phone": "+255700000001"
+      }
+    },
+    {
+      "opId": "$sale2",
+      "deviceSeq": 4,
+      "type": "sale.checkout",
+      "actorUserId": "{{actor}}",
+      "occurredAt": "2026-11-21T09:10:00.000Z",
+      "payload": {
+        "clientId": "$sale2",
+        "cashSessionId": "$open",
+        "partnerId": "$cust",
+        "expectedTotal": 120,
+        "lines": [
+          {
+            "productId": "{{productId}}",
+            "description": "Parity tea",
+            "quantity": 2,
+            "unitPrice": 60
+          }
+        ],
+        "tenders": [
+          {
+            "method": "cash",
+            "amount": 120
+          }
+        ]
+      }
+    },
+    {
+      "opId": "$move",
+      "deviceSeq": 5,
+      "type": "cash_session.movement",
+      "actorUserId": "{{actor}}",
+      "occurredAt": "2026-11-21T09:20:00.000Z",
+      "payload": {
+        "sessionId": "$open",
+        "movementType": "pay_in",
+        "amount": 10,
+        "reason": "Parity top-up",
+        "counterpartAccountId": "{{counterAccountId}}"
+      }
+    },
+    {
+      "opId": "$close",
+      "deviceSeq": 6,
+      "type": "cash_session.close",
+      "actorUserId": "{{actor}}",
+      "occurredAt": "2026-11-21T09:30:00.000Z",
+      "payload": {
+        "sessionId": "$open",
+        "closingCounted": 190
+      }
+    }
+  ]
+}

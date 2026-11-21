@@ -196,6 +196,7 @@ private fun TabContent(
         // Above everything, on every tab: whether this till may still take money is not something
         // a cashier should have to go looking for.
         LicenseBanner(terminalVm.config)
+        SyncHealthBanner(terminalVm.config)
         Crossfade(targetState = tab, animationSpec = tween(200), label = "homeTab", modifier = Modifier.weight(1f)) { t ->
             Column(Modifier.fillMaxSize()) {
                 when (t) {

@@ -401,9 +401,10 @@ public class SyncController {
             cutoff = exp;
             code = "DEVICE_TOKEN_EXPIRED";
         }
-        devices.touch((String) d.get("id"), SyncProtocol.of(request.getHeader(SyncProtocol.HEADER)));
+        String version = SyncProtocol.of(request.getHeader(SyncProtocol.HEADER));
+        devices.touch((String) d.get("id"), version);
         return new Device((String) d.get("id"), (String) d.get("organizationId"), (String) d.get("branchId"), cutoff,
-                code);
+                code, SyncProtocol.atLeast2(version));
     }
 
     private static Map<?, ?> attached(HttpServletRequest request) {

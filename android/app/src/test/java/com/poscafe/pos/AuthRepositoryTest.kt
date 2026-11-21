@@ -11,6 +11,7 @@ import com.poscafe.pos.data.repo.AuthRepository
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -54,7 +55,7 @@ class AuthRepositoryTest {
     @Test
     fun `backoff blocks even the right PIN until it expires`() = runBlocking {
         val (auth, _) = freshProcess()
-        repeat(AuthRepository.BACKOFF_AFTER) { auth.loginWithPin("u1", "0000") }
+        repeat(5) { auth.loginWithPin("u1", "0000") } // the default policy: 5 failures
 
         val blocked = auth.loginWithPin("u1", "1234")
         assertTrue(blocked.exceptionOrNull()?.message.orEmpty().startsWith("Too many wrong PINs"))
@@ -73,10 +74,35 @@ class AuthRepositoryTest {
     }
 
     @Test
-    fun `backoff doubles and is capped`() {
-        assertEquals(0L, AuthRepository.backoffMs(AuthRepository.BACKOFF_AFTER - 1))
-        assertEquals(15_000L, AuthRepository.backoffMs(AuthRepository.BACKOFF_AFTER))
-        assertEquals(30_000L, AuthRepository.backoffMs(AuthRepository.BACKOFF_AFTER + 1))
-        assertEquals(15_000L shl 6, AuthRepository.backoffMs(100))
+    fun `backoff follows the org offline policy, doubles and is capped`() {
+        // ADR-S083 C4 defaults: 5 failures, then 5 minutes doubling.
+        assertEquals(0L, AuthRepository.backoffMs(4))
+        assertEquals(300_000L, AuthRepository.backoffMs(5))
+        assertEquals(600_000L, AuthRepository.backoffMs(6))
+        assertEquals(300_000L shl 6, AuthRepository.backoffMs(100))
+        // A stricter org policy: 3 failures, 2 minutes.
+        assertEquals(0L, AuthRepository.backoffMs(2, maxAttempts = 3, lockoutMinutes = 2))
+        assertEquals(120_000L, AuthRepository.backoffMs(3, maxAttempts = 3, lockoutMinutes = 2))
+    }
+
+    @Test
+    fun `the policy pulled from the server sets when the lockout starts`() = runBlocking {
+        val (auth, config) = freshProcess()
+        config.applyOfflinePolicy(null, null, 2, 1)
+        repeat(2) { auth.loginWithPin("u1", "0000") }
+        assertTrue(auth.loginWithPin("u1", "1234").exceptionOrNull()?.message.orEmpty().startsWith("Too many wrong PINs"))
+    }
+
+    @Test
+    fun `a signed-in session expires after the idle timeout`() = runBlocking {
+        val (auth, config) = freshProcess()
+        config.applyOfflinePolicy(null, 30, null, null)
+        assertTrue(auth.loginWithPin("u1", "1234").isSuccess)
+        val now = System.currentTimeMillis()
+        auth.touch(now)
+        assertFalse(auth.idleExpired(now + 29 * 60_000L))
+        assertTrue(auth.idleExpired(now + 31 * 60_000L))
+        config.applyOfflinePolicy(null, 0, null, null)
+        assertFalse("0 disables it", auth.idleExpired(now + 999 * 60_000L))
     }
 }

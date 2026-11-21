@@ -307,8 +307,80 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
         set(v) = prefs.edit().putString("lastBackupError", v).apply()
 
     /** Revocation wipe: forget enrollment (DB wipe is handled by the caller). */
+    // ---- ADR-S083 protocol 2 (O6) ----
+
+    /** A rotated token from a protocol-2 pull: committed before the pulled rows are applied (the old one has 24 h grace). */
+    fun storeRotatedToken(token: String, expiresAt: String?) {
+        prefs.edit().putString("deviceToken", token).putString("deviceTokenExpiresAt", expiresAt).commit()
+    }
+
+    val deviceTokenExpiresAt: String? get() = prefs.getString("deviceTokenExpiresAt", null)
+
+    var serverId: String?
+        get() = prefs.getString("serverId", null)
+        set(v) = prefs.edit().putString("serverId", v).apply()
+
+    /** ADR-S083 C4 user offline-session rules, from the last pull (defaults until the first one). */
+    data class OfflinePolicy(
+        val offlineWindowHours: Int = 72,
+        val idleTimeoutMinutes: Int = 30,
+        val pinMaxAttempts: Int = 5,
+        val pinLockoutMinutes: Int = 5,
+    )
+
+    val offlinePolicy: OfflinePolicy
+        get() = OfflinePolicy(
+            offlineWindowHours = prefs.getInt("policy.offlineWindowHours", 72),
+            idleTimeoutMinutes = prefs.getInt("policy.idleTimeoutMinutes", 30),
+            pinMaxAttempts = prefs.getInt("policy.pinMaxAttempts", 5),
+            pinLockoutMinutes = prefs.getInt("policy.pinLockoutMinutes", 5),
+        )
+
+    fun applyOfflinePolicy(windowHours: Int?, idleMinutes: Int?, pinMaxAttempts: Int?, pinLockoutMinutes: Int?) {
+        val e = prefs.edit()
+        windowHours?.let { e.putInt("policy.offlineWindowHours", it) }
+        idleMinutes?.let { e.putInt("policy.idleTimeoutMinutes", it) }
+        pinMaxAttempts?.let { e.putInt("policy.pinMaxAttempts", it) }
+        pinLockoutMinutes?.let { e.putInt("policy.pinLockoutMinutes", it) }
+        e.commit()
+    }
+
+    /**
+     * Why sync cannot complete right now, as the sync screen shows it: `token_expired` (the server stopped accepting
+     * this device's token for pull — queued work is still pushed and held for a supervisor; re-enroll) or
+     * `upgrade_required` (426: this app's protocol is too old for the server). Null when sync is healthy.
+     */
+    private val _syncProblem = MutableStateFlow(prefs.getString("syncProblem", null))
+    val syncProblem: StateFlow<String?> = _syncProblem
+
+    fun setSyncProblem(value: String?) {
+        if (_syncProblem.value == value) return
+        prefs.edit().putString("syncProblem", value).commit()
+        _syncProblem.value = value
+    }
+
+    /**
+     * Highest device sequence ever sent to the server. Kept outside the database so a restored backup (older op
+     * queue) cannot hand out a sequence the server already saw under another opId (`SEQ_REUSED`).
+     */
+    var seqHighWater: Long
+        get() = prefs.getLong("seqHighWater", 0L)
+        set(v) { prefs.edit().putLong("seqHighWater", v).commit() }
+
+    /** When the last pull completed (epoch ms), read synchronously by the offline-window check (ADR-S083 C4). */
+    var lastPullAt: Long?
+        get() = prefs.getLong("lastPullAt", 0L).takeIf { it > 0 }
+        set(v) { prefs.edit().putLong("lastPullAt", v ?: 0L).commit() }
+
+    /** Set by a backup restore: the next push renumbers unsent ops above [seqHighWater] once. */
+    var renumberPending: Boolean
+        get() = prefs.getBoolean("renumberPending", false)
+        set(v) { prefs.edit().putBoolean("renumberPending", v).commit() }
+
     fun clearEnrollment() {
-        prefs.edit().remove("deviceId").remove("deviceToken").remove("prefix").commit()
+        prefs.edit().remove("deviceId").remove("deviceToken").remove("prefix").remove("deviceTokenExpiresAt")
+            .remove("syncProblem").commit()
+        _syncProblem.value = null
     }
 
     private companion object {

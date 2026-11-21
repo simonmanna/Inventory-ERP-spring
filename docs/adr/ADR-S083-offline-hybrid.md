@@ -206,8 +206,9 @@ before revocation but delivered after it. The server checks its own state, not t
 5. The note, the evidence (sequence state, `revokedAt`, `receivedAt`, the device-claimed `occurredAt`, missing
    sequences) and the outcome are audited. The dead letter becomes `resolved` with `recoveredById` / `recoveredAt`.
 
-Active devices are not refused for sequence regressions (current Android re-sends a rejected op under a new id with
-its old sequence); `lastAcceptedSeq` is recorded for evidence only until O6 aligns Android.
+Active devices are not refused for sequence *regressions* (an earlier op retried after later ones applied is legitimate).
+Since O6, a protocol-2 client's sequence *reuse* — the same `deviceSeq` under another opId — is refused (`SEQ_REUSED`,
+see "O6 as built"); protocol-1 clients (older Android builds, which re-key) are not.
 
 ### Browser storage (O1)
 
@@ -675,6 +676,57 @@ authorization matrix (19 routes); Vitest `features/sales-field/__tests__/offline
 customer from the field page (`customer.upsert` exists but the page does not offer it); a sales-review alert to
 supervisors through the alerts module.
 
+### O6 as built (branch `phase/O6-android-alignment`) — Android alignment
+
+**Android now speaks protocol 2** (`X-Sync-Protocol: 2.0` on every request, `SyncApi.kt` / `AppModule`):
+
+| Area | Change (`android/app/.../data/repo/SyncRepository.kt` unless noted) |
+|---|---|
+| S1 retries | A failed result with `retryable` (or, from an older server, 5xx / 424 / 429 / 409 "being processed") stays **queued under the same opId** with exponential backoff (2 s → 5 min); queued ops behind it wait (device order, as on the web). After 8 automatic attempts it is parked for a person, who may **Retry** it — same opId. |
+| S1 rejections | A definitive failure is marked failed with its `failureCode`; it is **never re-sent or re-keyed**. The sync screen offers **Resubmit…** (manager PIN, `pos:override`): a correction op with a new opId, the next sequence, the same payload and `supersedesOpId`; the rejected op stays as `superseded`, and the result lands on the original sale/refund/expense row (`rowId`). Held codes (`DEVICE_REVOKED`, `DEVICE_TOKEN_EXPIRED`, `OPERATION_INCOMPLETE`, `PARTIAL_COMMIT`) are not offered: a supervisor recovers them. Discard is unchanged. |
+| Legacy re-keyed ops | An op an older build re-keyed (`wireOpId`) keeps going out under that key; Room v15 gives the unfinished ones a fresh sequence above everything queued, so the server does not see a used sequence under a new id. |
+| Sequences | `DeviceConfig.seqHighWater` records the highest sequence sent. After a backup restore (`renumberPending`), unsent ops are renumbered above it once. |
+| Token (C4) | A protocol-2 pull's rotated `deviceToken` is committed **before** the rows are applied. A 401 whose message says the token **expired** no longer wipes the till: nothing is deleted, the push before the pull still runs (the server holds those ops), and the till shows "re-enroll". Any other 401 after a first sync is still revocation (wipe of staff + enrolment; unsynced data kept). |
+| Version (S8) | A 426 on pull is reported ("update the app"); pushes still go through. |
+| Tombstones (S7) | Protocol-2 deltas carry soft-deleted rows: menu items (with their children) and cash registers are now removed on a tombstone; the other scopes already were. |
+| Offline session (C4) | `offlinePolicy` from every pull is stored. **Offline window:** past `offlineWindowHours` since the last pull — or with the clock earlier than the last pull — the terminal refuses new sales ("sync first"); the queue still pushes (`OfflineWindow.kt`, checkout in `TerminalViewModel`, banner `SyncHealthBanner`). **PIN throttling** follows `pinMaxAttempts` / `pinLockoutMinutes` (was a fixed 3 failures / 15 s doubling); the permanent lock at 10 (server parity) stays. **Idle timeout:** a signed-in cashier idle past `idleTimeoutMinutes` returns to the PIN screen (`MainActivity`). |
+| Room v15 | `op_queue`: `supersedesOpId`, `rowId`, `failureCode`, `retryable`, `nextAttemptAt` (additive; `MIGRATION_14_15`, schema `15.json`). |
+
+**Server — `SEQ_REUSED`** (`SyncPushService`, V598 index): for a protocol-2 device, an op whose `deviceSeq` was already
+used by another opId of the same device (in the applied-op ledger or the dead letters) is refused 409 `SEQ_REUSED`,
+dead-lettered, never applied, not retryable. Checked after the ledger, so a retry of the same opId still replays.
+Protocol-1 devices are exempt. The web client already never reuses a sequence (persistent counter).
+
+**Web/Android parity:** `contract-tests/sync-protocol/parity/stream.json` is one logical op stream (shift open, cash
+sale, customer, credit-customer sale, pay-in, close). Each client's own unit test turns it into that client's real
+wire batch and keeps a golden file current — `android.json` (`SyncParityGoldenTest`, through Room + `SyncRepository`)
+and `web.json` (`parity.test.ts`, through `SyncStore` + `SyncEngine`). `SyncClientParityIT` pushes both from two devices
+and asserts identical invoices, payments, GL by account, shift totals, cash movements and customer. (The goldens
+differ, for example `occurredAt` precision: Android sends seconds, the web milliseconds.)
+
+**O6 as built — deviations to approve:**
+1. **No new ops or scopes on the Android till.** The O4 warehouse and O5 field-sales flows are web pages that work
+   offline in a browser registered as a device (including Chrome on Android tablets). The till keeps its POS op set;
+   Room v15 carries only the protocol-2 fields. Building native warehouse / field-sales screens is a separate phase.
+2. **No snapshot protocol on Android yet** (C5). The first sync remains a cursor-less full pull (still served,
+   protocol unchanged); paged, checksummed snapshot staging stays web-only for now.
+3. **The parity test covers the protocol layer**, not each client's screen code: both clients wrap the same
+   payloads. The payload builders are covered by each client's own tests.
+4. **Behaviour changes on the till**: PIN lockout now starts after 5 failures for 5 minutes (org policy) instead of
+   15 s after 3; a signed-in cashier is signed out after 30 idle minutes (org policy; 0 disables); sales stop after
+   72 h without a sync (org policy).
+5. **`SEQ_REUSED` applies to the web client too** (it declares protocol 2). It never reuses a sequence, so nothing
+   changes for it, but an IndexedDB restored from an old copy would be refused rather than applied twice.
+
+**Tests:** Android `SyncRepositoryTest` (S1 retry/backoff/order, parking + manual retry, resubmit as a correction,
+legacy re-keyed op, restore renumbering, token expiry without wipe, 426, rotation + policy, tombstones),
+`AuthRepositoryTest` (policy lockout, idle timeout), `OfflineWindowTest`, `SyncParityGoldenTest`; all Android unit
+tests pass (`./gradlew :app:testDebugUnitTest`). `MigrationTest` gained a 14→15 case (on-device; not run here).
+Backend `SyncSeqReuseIT` (3), `SyncClientParityIT`, the full `*Sync*` suite. Web `parity.test.ts`, full Vitest.
+
+**Not done in O6:** running the app on a phone against DEMO; Android snapshot staging; native O4/O5 screens; the
+on-device `MigrationTest` (its dependencies are not in this machine's offline Gradle cache).
+
 ## Additive wire changes in O0
 
 | Where | Change |
@@ -709,4 +761,4 @@ checked against the live API by `SyncProtocolContractIT` on every CI run.
 | S9 `/sync/status` dashboard and Micrometer metrics | after O2 (needs the web engine's pending counts) |
 | C2 post-restore reconciliation job (device/branch watermarks vs ledger, GL and stock checks, report) | before O7; runbook already in `docs/OPERATIONS.md` §7c |
 | Web and Android clients (snapshot staging, token rotation, `supersedesOpId`, quarantine UX) | O1, O2, O6 |
-| Refusing sequence regressions from active devices | O6 (after Android stops re-keying) |
+| Refusing sequence regressions from active devices | done in O6 as `SEQ_REUSED` for protocol-2 clients (sequence reuse; a regression alone stays legitimate) |
