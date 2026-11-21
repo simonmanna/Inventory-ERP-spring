@@ -214,6 +214,10 @@ class SyncDeviceIntegrityIT extends ApiTestSupport {
 
         // The shortfall invoice is on account, so it does not block the close (expected cash 160 + 200 + 200).
         releaseHeldOrders();
+        // ADR-S083 S5: rejected money ops of this device (other tests of this class) block its shifts' close;
+        // a back office resolves them first.
+        jdbc.sql("UPDATE \"SyncOpDeadLetter\" SET status = 'discarded' WHERE \"deviceId\" = ? AND status IN ('open',"
+                + " 'investigating')").param(deviceId).update();
         JsonNode close = push(List.of(op("cash_session.close", withUncountedTenders(Map.of("sessionId", session,
                 "closingCounted", 560)))));
         assertThat(close.get("results").get(0).get("status").asString()).as(close.toString()).isEqualTo("applied");

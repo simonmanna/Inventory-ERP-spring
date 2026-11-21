@@ -84,10 +84,13 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 ## Extensions (ADR-S083 O0, owner-approved 2026-11-20)
 
 Spring-only, additive. Every Nest route and member is unchanged. Full rules are in
-`docs/adr/ADR-S083-offline-hybrid.md`; migration `V593__sync_o0_foundations.sql`.
+`docs/adr/ADR-S083-offline-hybrid.md`; migrations `V593__sync_o0_foundations.sql`, `V594__sync_o0_corrections.sql`
+(owner review corrections, 2026-11-21).
 
-- **Applied-op ledger** `SyncAppliedOp` (permanent, unique per org + opId), anchored to each op's first business
-  commit (`SyncLedger`).
+- **Applied-op ledger** `SyncAppliedOp` (permanent, unique per org + opId). Every op type is classified in
+  `SyncOpCatalog`: 23 run in one op transaction with the ledger row (result staged before commit), 18 call services
+  that own their transactions and anchor the row on their first business commit (`SyncLedger`). The ADR lists all 41.
+  - The payload hash is key-order independent; pre-O0 idempotency records still replay.
   - Replays survive the loss of idempotency records.
   - The same opId with a different payload → `OP_ID_REUSED`.
   - A failed attempt that committed nothing frees its key, so the same opId can run again.
@@ -96,12 +99,15 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   - A batch `Idempotency-Key` is honoured.
   - A `stock.count` 409 is `COUNT_CONFLICT`, definitive.
 - **Dead-letter workflow** `open → investigating → resolved | retried | discarded`.
-  - New routes `POST /sync/dead-letters/{id}/investigate` and `/retry` (POS__OVERRIDE).
+  - New routes `POST /sync/dead-letters/{id}/investigate`, `/retry` and `/recover` (POS__OVERRIDE).
+  - Dead letters written before V593 are `LEGACY_UNKNOWN` (never retried server-side).
   - Additive list and count members.
 - **Device lifecycle.**
   - Token expiry (`sync.deviceTokenTtlDays`, default 30): an expired token cannot pull.
   - Protocol-2 rotation on pull, with a 24 h grace for the previous token.
-  - Revoked or expired devices may still push ops recorded before the cut-off.
+  - A revoked or expired device's pushes are never applied on its word (`occurredAt` is not evidence): already-applied
+    ops replay, everything else is quarantined (`DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED`) for supervisor recovery,
+    which checks server sequence state (`lastAcceptedSeq`, gaps) and is audited.
   - `POST /sync/devices/{id}/policy` lowers the offline window per device.
 - **Pull** adds `protocolVersion`, `serverId`, `offlinePolicy`, `deviceTokenExpiresAt`, `deviceBranchId`, and
   `deviceToken` (protocol 2 only).
@@ -112,9 +118,15 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   checksummed, resumable, and expiring after 1 h. Completion returns the delta cursor.
 - **Menu-child triggers** bump `MenuItem.updatedAt` when its variants, modifier or accompaniment links, modifiers or
   options change.
-- Tests: `SyncLedgerIT`, `SyncO0IT`; the `SyncIT` authorization matrix now covers 14 routes.
+- **Cash-session close (deviation, owner-requested 2026-11-21):** an open or investigating dead letter of a money op
+  that belongs to the shift (payload names it, or it came from the shift's device) blocks `POST /cash-sessions/close`
+  and `/{id}/force-close` with 409 `SYNC_DEAD_LETTERS_OPEN`. Nest only logged a warning. Override: optional
+  `syncOverrideReason` with `pos:override`, audited. Client-reported pending ops still only warn.
+- **Contract:** `contract-tests/sync-protocol/contract.json`, checked by `SyncProtocolContractIT` (no Nest
+  counterpart).
+- Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
+  `SyncProtocolContractIT`, `SyncOpCatalogTest`; the `SyncIT` authorization matrix now covers 15 routes.
 
-## Notes
 ## Notes
 
 - Push ops run in a tenant context built from the verified actor (current role permissions) and through

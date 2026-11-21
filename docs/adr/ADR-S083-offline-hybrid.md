@@ -83,35 +83,78 @@ Columns: `opId`, `payloadHash`, `opType`, `deviceId`, `deviceSeq`, `serverId`, `
 `state` (`committed` | `applied`), `httpStatus`, `resultJson`. Unique on `(organizationId, opId)`. RLS uses the V214
 tenant policy.
 
-### Atomicity (owner decision 2026-11-20)
+### Atomicity (owner decision 2026-11-20; O0 correction 1, 2026-11-21)
 
-The ledger row is anchored to the op's **first business commit**, not to one transaction per op.
+Every op type is classified in `SyncOpCatalog`. An unclassified type is refused before its handler runs, and
+`SyncOpCatalogTest` fails if the dispatch switch, the push DTO's type list and the catalog ever disagree (41 types).
 
-Sync ops call the online services, and those services deliberately commit in more than one transaction. ADR-S072 R-B
-commits each stock line on its own, so one bad line can't undo a sale. Approvals use retry-safe REQUIRES_NEW
-transactions. Wrapping each op in one transaction would bring back the bug R-B fixed.
+| Boundary | How the ledger row commits |
+|---|---|
+| `OP_TRANSACTION` (23 types) | The push service opens one transaction (`erp.sync.op`) around the whole handler. The business rows and the ledger row commit or roll back together, and the row commits as `applied` **with the original result** (staged before commit). A failure leaves nothing; a crash after commit replays the original result. |
+| `SERVICE_TRANSACTIONS` (18 types) | The handler calls an online service that owns its transactions (some commit in several steps on purpose: ADR-S072 R-B per-line stock commits, the checkout's order → invoice → payment). The ledger row rides on the **first business commit** (`state = committed`) and is completed with the result when the op returns. A failure after that first commit is `PARTIAL_COMMIT`; a crash before completion is `OPERATION_INCOMPLETE`. Either way the op is **never run again automatically**. |
 
-How it works (`SyncLedger`):
+How the commit hook works (`SyncLedger`):
 - A `TransactionExecutionListener` registers a `beforeCommit` callback on every new write transaction that starts while
   an op runs. Read-only transactions and `BusinessOutcome.RETRY_SAFE_TX` are excluded.
-- The first such transaction to commit inserts the row with `state = committed`, on the same connection. If the insert
-  fails, the business commit fails with it.
-- When the op returns, the row is completed with the original result (`state = applied`).
+- The first such transaction to commit inserts the row on the same connection. If the insert fails, the business commit
+  fails with it.
+- Idempotent pre-work that is safe to run again (the claimed stock-posting drain before `cash_session.close`) runs
+  under `SyncLedger.outside(...)` so its commits do not anchor the row.
+
+The payload hash is **key-order independent** (maps sorted at every depth). A stored dead-letter payload comes back from
+`jsonb` with its keys reordered, and a supervisor retry or recovery must still be recognised as the same op when the
+device later re-pushes it. An idempotency record written before O0 (as-sent hash) is still accepted, so ops pushed
+across the deploy replay.
 
 What the ledger tells the server:
-- **Row present:** something committed, so the op never runs again. An `applied` row is replayed. A `committed` row is
-  `OPERATION_INCOMPLETE`, listed for reconciliation.
-- **No row:** nothing committed through a transaction. The idempotency key of a failed attempt is released at once, or
-  after two minutes if an attempt may still be in flight, so the same `opId` can run again.
+- **Row present:** something committed, so the op never runs again. An `applied` row is replayed (and a dead letter left
+  by a crash after commit is closed as `retried`). A `committed` row is `OPERATION_INCOMPLETE`, listed for
+  reconciliation.
+- **No row:** nothing committed. The idempotency key of a failed attempt is released at once, or after two minutes if
+  an attempt may still be in flight, so the same `opId` can run again.
 - **Same `opId`, different payload hash:** refused (`OP_ID_REUSED`), dead-lettered, never applied.
-- **Concurrent pushes of one `opId`:** the existing idempotency lock plus the unique index mean exactly one applies.
-  The others are `replayed`, or `OPERATION_PENDING` (retry).
+- **Concurrent pushes of one `opId`:** the idempotency lock plus the unique index mean exactly one applies. The others
+  are `replayed`, or `OPERATION_PENDING` (retry).
 
-Limits, stated plainly:
-- Writes a handler makes in auto-commit outside any transaction (a few thin master-data upserts, `stamp()` metadata)
-  are not covered by the commit hook. For those ops the row is written when the op completes.
-- Ops dead-lettered before V593 have no ledger evidence, so they cannot be retried server-side. They must be corrected
-  and resubmitted.
+#### Handler audit (all 41 op types)
+
+"Side effects" lists everything outside the database transaction. Domain events go through the transactional outbox
+(they publish only if the business commit does). No handler calls an external service (no HTTP, printer, fiscal device
+or e-mail) during the op.
+
+| Op type | Boundary | Before O0 correction 1 | Side effects outside the transaction |
+|---|---|---|---|
+| `cash_session.open` | service (`CashSessionService.open`, one tx) | transactional | `deviceId` stamp after commit (idempotent metadata) |
+| `cash_session.close` | service (`close`, one tx) | drain anchored the row before the close | stock-posting drain first (claimed per job, keyed per line; now outside the ledger) |
+| `cash_session.movement` | service (one tx) | transactional | — |
+| `cash_drawer.open` | service (`PosCashDrawerService.record`, one tx) | transactional | — |
+| `sale.checkout` | service (order, invoice, payment: several txs) | transactional, multi-commit | outbox events; `deviceId`/provisional stamp after commit (idempotent); crash recovery by the existing sale recovery (`clientOperationKey`) |
+| `tab.settle` | service (several txs) | transactional, multi-commit | as `sale.checkout` |
+| `sale.refund`, `sale.void` | service (`PosInvoiceService.refund`) | transactional | outbox events |
+| `reservation.create/seat/cancel/noShow` (4) | service (one tx each) | transactional | — |
+| `product.upsert`, `product.delete` | service (`@Transactional`) | transactional | — |
+| `cashRegister.delete` | service (`@Transactional`) | transactional | — |
+| `stock.in`, `stock.out` | service (`DirectStockService`, `@Transactional`) | transactional | — |
+| `expense.create` | service (`@Transactional`) | transactional | — |
+| `stock.count` | op transaction (already one tx, audit S-5) | transactional | — |
+| `kitchen.void` | op transaction; waste lines stay REQUIRES_NEW, keyed per line (retry-safe) | **audit row and failure rows in auto-commit** | — |
+| `setting.set` | op transaction | **two upserts in auto-commit** | — |
+| `customer.upsert`, `customer.delete` | op transaction | **auto-commit** (duplicate-key retry now `ON CONFLICT`) | — |
+| `menuCategory.upsert/delete`, `modifierGroup.upsert/delete`, `accompanimentGroup.upsert/delete`, `tax.upsert/delete`, `menuItem.upsert/delete`, `productCategory.upsert/delete`, `posTable.upsert/delete` (14) | op transaction | **auto-commit** (a `menuItem.upsert` failing on a variant left the item behind) | — |
+| `cashRegister.upsert` | op transaction | **auto-commit on update** | — |
+| `staff.pinChange` | op transaction | **auto-commit** | — |
+| `message.send` | op transaction | **auto-commit** (duplicate id now `ON CONFLICT`) | — |
+| `message.markRead` | op transaction | **auto-commit** | — |
+
+After the correction no handler has a known duplicate-execution path. Remaining, stated plainly:
+- A `SERVICE_TRANSACTIONS` op that crashes between its first and last commit is not re-run; it waits for reconciliation
+  (`OPERATION_INCOMPLETE`) rather than replaying. `sale.checkout` / `tab.settle` recover at once through the existing
+  sale recovery.
+- The internal stock-posting drain inside `CashSessionService.close` (as opposed to the push service's own drain) can
+  still anchor the row before the close validates. The op is then reported as `PARTIAL_COMMIT` instead of
+  `BUSINESS_RULE`: conservative (never run twice), but a less precise code.
+- Ops dead-lettered before V593 are classified `LEGACY_UNKNOWN` (V594). They have no ledger evidence and are never
+  retried server-side: resolve, discard, or correct and resubmit.
 
 ### Batch idempotency
 
@@ -136,16 +179,35 @@ Three separate concepts, each configured, enforced and tested on its own.
 - **Protocol 1 clients** (current Android, which cannot store a new token): the expiry slides forward on each pull.
 - Devices registered before V593 get their first expiry on their first pull.
 
-### Cut-off for revoked or expired devices
+### Cut-off for revoked or expired devices (O0 correction 2, 2026-11-21)
 
-Such a device can no longer pull. It can still **push**:
-- ops whose `occurredAt` is at or before the cut-off are applied
-- later ops are dead-lettered as `DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED` for a supervisor
+The device clock is never evidence. Five separate values:
 
-Risk accepted: a stolen token could push back-dated ops until the cut-off. Mitigations:
-- the existing `occurredAt` window (no older than 7 days, no more than 5 minutes in the future)
-- the LP `late_sync` signal
-- the audit trail
+| Value | Controlled by | Use |
+|---|---|---|
+| `occurredAt` | device | business event time only (reports, dating); never acceptance |
+| `receivedAt` | server | first arrival (`SyncAppliedOp`, `SyncOpDeadLetter`) |
+| `revokedAt` | server | revocation time |
+| `deviceSeq` | device | monotonic op sequence |
+| `lastAcceptedSeq` / `revokedAtSeq` | server (`PosDevice`) | highest applied sequence; frozen at revocation |
+
+Such a device can no longer pull. Every push it makes arrives after its cut-off (`receivedAt > revokedAt`, or after
+`tokenExpiresAt`), so **nothing new is applied**, whatever `occurredAt` claims:
+- an op the server already applied (ledger row, same payload) replays its stored result: no new effect
+- anything else is quarantined: dead letter `DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED`, not retryable
+
+**Supervisor recovery** (`POST /sync/dead-letters/{id}/recover`, POS__OVERRIDE, note required) for genuine ops recorded
+before revocation but delivered after it. The server checks its own state, not the device clock:
+1. The op's `deviceSeq` must be above the device's `lastAcceptedSeq` (an op the server has never seen).
+2. Held ops are recovered in device order (no earlier held op of that device still open).
+3. Every sequence between `lastAcceptedSeq` and the op must have reached the server (applied or dead-lettered). A gap is
+   refused unless the supervisor sends `acknowledgeGap: true`; the acknowledgement is stored on the dead letter.
+4. The op runs once under its original `opId`, with the actor's **current** permissions re-checked.
+5. The note, the evidence (sequence state, `revokedAt`, `receivedAt`, the device-claimed `occurredAt`, missing
+   sequences) and the outcome are audited. The dead letter becomes `resolved` with `recoveredById` / `recoveredAt`.
+
+Active devices are not refused for sequence regressions (current Android re-sends a rejected op under a new id with
+its old sequence); `lastAcceptedSeq` is recorded for evidence only until O6 aligns Android.
 
 ### Browser storage (O1)
 
@@ -190,12 +252,17 @@ Columns (additive):
 - `branchId`
 - `resolvedByOpId`
 - `investigatingById` / `investigatingAt` / `investigationNote`
+- `receivedAt`, `recoveredById`, `recoveredAt`, `recoveryGapAcknowledged` (V594)
+
+List items also carry `legacy` (failure code `LEGACY_UNKNOWN`) and `recoverable` (quarantined).
 
 Routes:
 - `POST /sync/dead-letters/{id}/investigate` — note required; POS__OVERRIDE.
 - `POST /sync/dead-letters/{id}/retry` — note required; POS__OVERRIDE. Re-runs the stored op under its original
-  `opId`. Only for retryable failures. Refused when a PIN/password was redacted from the stored payload, and for
-  pre-ledger dead letters.
+  `opId`. Only for retryable failures. Refused when a PIN/password was redacted from the stored payload (now also
+  `approverPin`), and for `LEGACY_UNKNOWN` dead letters.
+- `POST /sync/dead-letters/{id}/recover` — note required; POS__OVERRIDE. Only for quarantined ops
+  (`DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED`); see S2.
 - `POST /sync/dead-letters/{id}/resolve` — the Nest route, unchanged. It now also accepts `investigating`. Discard
   needs a note.
 
@@ -203,8 +270,21 @@ Automatic transitions:
 - An op that finally applies (retried with the same `opId`) closes its own dead letter as `retried`.
 - An op carrying `supersedesOpId` closes the superseded one as `resolved`.
 
-**Correction to plan revision 3:** open dead letters do **not** block cash-session close today. `CashSessionService`
-logs a warning only (Nest parity). Making it block would be a separate, owner-approved change.
+### Cash-session close (O0 correction 3, 2026-11-21)
+
+A shift does not close while a **money** op that belongs to it was rejected by sync: a dead letter `open` or
+`investigating` whose type is in `SyncOpCatalog.moneyTypes()` (`sale.checkout`, `tab.settle`, `sale.refund`,
+`sale.void`, `cash_session.movement`, `expense.create`), legacy and quarantined ones included. It belongs to the shift
+when its payload names the shift (`cashSessionId` / `sessionId`) or it came from the device that opened the shift.
+The close answers 409 `SYNC_DEAD_LETTERS_OPEN` with the dead-letter ids.
+
+- **Pending** ops (not yet pushed; `pendingSyncCount` reported by the client) are not failures: they only warn.
+- **Supervisor override:** `syncOverrideReason` on `POST /cash-sessions/close` or `/{id}/force-close` (and on the
+  `cash_session.close` sync op). Needs `pos:override` and a non-blank reason. The override is audited on the cash
+  session with the reason, the approver and every dead letter it passed. The dead letters stay open for follow-up.
+
+This restores the rule the plan agreed. Before O0 the close only logged a warning (Nest parity); the block is a
+deliberate, owner-requested deviation, recorded in `docs/spec/sync.md`.
 
 ## S6 / C3 — Branch identity, authority, relay contract (contract only; built in O7)
 
@@ -306,7 +386,7 @@ The post-restore reconciliation job (designed here, built with O7) lists:
   protocol versions.
 - Micrometer metrics: `sync_push_ops_total{status}`, `sync_lag_seconds{device}`, `sync_deadletters_open`.
 
-Not built in O0.
+Not built in O0 — **deferred, tracked** (see "Deferred work").
 
 ## C6 — Variance tolerances
 
@@ -322,9 +402,10 @@ Not built in O0.
 | `POST /sync/push` result | `code`, `retryable` on failed ops; optional request fields `originChain[]`, `supersedesOpId` per op; `Idempotency-Key` honoured |
 | `GET /sync/pull` | `protocolVersion`, `serverId`, `offlinePolicy`, `deviceTokenExpiresAt`, `deviceBranchId`; `deviceToken` on protocol 2; tombstones on protocol 2; 426 for unsupported versions; 401 for an expired token |
 | `GET /sync/devices` | `serverId`, `tokenExpiresAt`, `protocolVersion`, `lastPullAt`, `offlineWindowHours` |
-| `GET /sync/dead-letters` | `failureCode`, `retryable`, `attempts`, `lastAttemptAt`, `branchId`, `resolvedByOpId`, `investigationNote`, `investigatingAt` |
+| `GET /sync/dead-letters` | `failureCode`, `retryable`, `attempts`, `lastAttemptAt`, `branchId`, `resolvedByOpId`, `investigationNote`, `investigatingAt`, `receivedAt`, `legacy`, `recoverable`, `recoveredById`, `recoveredAt`, `recoveryGapAcknowledged` |
+| `POST /cash-sessions/close`, `/{id}/force-close` | optional `syncOverrideReason`; new 409 `SYNC_DEAD_LETTERS_OPEN` (behaviour change, S5) |
 | `GET /sync/dead-letters/counts` | `investigating`, `retried` |
-| New routes | `POST /sync/devices/{id}/policy`; `POST /sync/dead-letters/{id}/investigate`; `POST /sync/dead-letters/{id}/retry`; `POST /sync/snapshot`; `GET /sync/snapshot/{id}/page`; `POST /sync/snapshot/{id}/complete` |
+| New routes | `POST /sync/devices/{id}/policy`; `POST /sync/dead-letters/{id}/investigate`; `POST /sync/dead-letters/{id}/retry`; `POST /sync/dead-letters/{id}/recover`; `POST /sync/snapshot`; `GET /sync/snapshot/{id}/page`; `POST /sync/snapshot/{id}/complete` |
 | Config | `erp.sync.server-id` (default `hq`) |
 
 ## Consequences
@@ -332,6 +413,20 @@ Not built in O0.
 - Android keeps working unchanged: the new members are ignored (`ignoreUnknownKeys`), and protocol-1 behaviour is
   preserved, with no rotation and no tombstones.
 - A device offline for longer than the token TTL must be re-registered before it can pull again. Its queued ops can
-  still be pushed.
-- The plan's statement that open dead letters block cash-session close was wrong. It is corrected here, not changed in
-  code.
+  still be pushed, but they are held for supervisor recovery (S2), never applied on the device's word.
+- Rejected money ops now block a shift close (S5) unless a supervisor overrides with a reason.
+
+## Contract tests
+
+The protocol-2 extensions have no Nest counterpart, so the Nest parity harness cannot cover them. The wire contract
+lives in `contract-tests/sync-protocol/contract.json` (shapes, failure codes, protocol header and versions) and is
+checked against the live API by `SyncProtocolContractIT` on every CI run.
+
+## Deferred work (tracked; not in O0)
+
+| Item | Where it lands |
+|---|---|
+| S9 `/sync/status` dashboard and Micrometer metrics | after O2 (needs the web engine's pending counts) |
+| C2 post-restore reconciliation job (device/branch watermarks vs ledger, GL and stock checks, report) | before O7; runbook already in `docs/OPERATIONS.md` §7c |
+| Web and Android clients (snapshot staging, token rotation, `supersedesOpId`, quarantine UX) | O1, O2, O6 |
+| Refusing sequence regressions from active devices | O6 (after Android stops re-keying) |

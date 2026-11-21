@@ -184,7 +184,8 @@ Rules:
    not seen acknowledged. Normal dedup decides apply or replay:
    - an op whose ledger row was lost with the restore is applied again, because its business rows were lost too
    - an op whose ledger row survived is replayed
-3. **Run the post-restore reconciliation.** Until the O7 job exists, run these by hand:
+3. **Run the post-restore reconciliation.** The automated job is deferred (tracked in ADR-S083 "Deferred work"); until
+   it exists, run these by hand:
    - ledger rows still `state = 'committed'`: `SELECT * FROM "SyncAppliedOp" WHERE state = 'committed'`
    - devices whose `PosDevice.lastPushSeq` is ahead of their highest ledger `deviceSeq`
    - open dead letters by `failureCode`
@@ -192,8 +193,9 @@ Rules:
    - `StockItem` quantities vs the sum of stock movements
 
    Record what you found in the incident note.
-4. **Revoke and re-register a device whose token was in a lost backup window**, if it can no longer pull. Its queued
-   ops can still be pushed before re-registration.
+4. **Revoke and re-register a device whose token was in a lost backup window**, if it can no longer pull. Ops it
+   pushes after revocation are held as `DEVICE_REVOKED` dead letters; recover the genuine ones (see the runbook row
+   "Device revoked or token expired with unsynced sales").
 
 WAL archiving and PITR are infrastructure tasks for the hosting environment. They are not configured by the application.
 
@@ -225,7 +227,8 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 |---|---|
 | POS shows "offline" | `curl /api/v1/health`; check API container; offline queue replays automatically when back |
 | Stock not deducted after sales | `/pos/posting-monitor` → jobs/exceptions; retry; check `stock-posting-drain` lock |
-| Cannot close cash session | open sync dead letters or pending stock postings block close — resolve in `/sync/dead-letters`, posting monitor |
+| Cannot close cash session | 409 `SYNC_DEAD_LETTERS_OPEN`: a money op of this shift was rejected by sync — resolve it in `/sync/dead-letters` (retry, recover, or discard with a note), or a supervisor with `pos:override` closes with `syncOverrideReason` (audited). Pending stock postings: posting monitor |
+| Device revoked or token expired with unsynced sales | its pushes are held as `DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED` dead letters, never applied automatically. Check each against paper receipts, then `POST /sync/dead-letters/{id}/recover` with a note, in device-sequence order. A sequence gap (ops that never arrived) needs `acknowledgeGap: true`. Every recovery is audited |
 | Printer not printing | `pos.printerHost/Port` setting; `nc -vz host 9100`; reprint from receipts screen |
 | Login lockout | `POST /users/:id/unlock` (admin) |
 | Disk full | prune old backups (`/admin/backups/cleanup`), check `var/uploads` |

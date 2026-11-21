@@ -115,7 +115,9 @@ public class SyncDevicesService {
         if (device.get("revokedAt") != null) {
             return Obj.of("id", id, "revokedAt", device.get("revokedAt"));
         }
-        Map<String, Object> updated = db.update(PosDevice.class, Obj.of("revokedAt", PosDb.raw(PosSql.NOW)),
+        Map<String, Object> updated = db.update(PosDevice.class, Obj.of("revokedAt", PosDb.raw(PosSql.NOW),
+                        // ADR-S083 O0 correction 2: freeze the server's sequence state at revocation (evidence).
+                        "revokedAtSeq", PosDb.raw("\"lastAcceptedSeq\"")),
                 "id = ? AND \"organizationId\" = ?", id, orgId);
         audit.record(AuditInput.of("PosDevice", id, "update", null, Obj.of("revoked", true)));
         return Obj.of("id", id, "revokedAt", updated.get("revokedAt"));

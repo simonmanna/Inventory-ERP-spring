@@ -47,7 +47,7 @@ class SyncO0IT extends ApiTestSupport {
 
     @AfterAll
     void cleanup() {
-        // Open dead letters only warn at shift close, but keep the shared DEMO org tidy.
+        // Rejected money ops block shift close (ADR-S083 S5): keep the shared DEMO org tidy.
         for (String id : devices) {
             jdbc.sql("UPDATE \"SyncOpDeadLetter\" SET status = 'discarded' WHERE \"deviceId\" = ? AND status IN"
                     + " ('open', 'investigating')").param(id).update();
@@ -258,7 +258,7 @@ class SyncO0IT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("S2/C4: an expired token cannot pull; its push applies ops before the expiry and holds later ones")
+    @DisplayName("S2/C4: an expired token cannot pull, and every op it pushes is held whatever occurredAt says")
     void expiredToken() {
         String[] d = register("Expired tablet");
         Instant expiry = Instant.now().minusSeconds(60);
@@ -275,28 +275,10 @@ class SyncO0IT extends ApiTestSupport {
                         expiry.minusSeconds(120)),
                 op(after, "tax.upsert", Map.of("id", UUID.randomUUID().toString(), "name", u("Late"), "rate", 1), adminId,
                         Instant.now())));
-        assertThat(r.get(0).get("status").asString()).isEqualTo("applied");
+        // O0 correction 2: the device clock is not evidence; every push after expiry is held (SyncRevocationIT).
+        assertThat(r.get(0).get("code").asString()).isEqualTo("DEVICE_TOKEN_EXPIRED");
         assertThat(r.get(1).get("code").asString()).isEqualTo("DEVICE_TOKEN_EXPIRED");
         assertThat(deadLetter(after).get("failureCode")).isEqualTo("DEVICE_TOKEN_EXPIRED");
-    }
-
-    @Test
-    @DisplayName("S2: a revoked device's ops recorded before revokedAt are accepted, later ones are dead-lettered")
-    void revocationCutoff() {
-        String[] d = register("Stolen tablet");
-        Instant beforeRevoke = Instant.now().minusSeconds(30);
-        ok(201, "POST", "/sync/devices/" + d[1] + "/revoke", null);
-        assertThat(dev(d[0], "GET", "/sync/pull?scopes=taxes", null, Map.of()).status()).isEqualTo(401);
-        String late = "o0-" + UUID.randomUUID();
-        JsonNode r = push(d[0], d[1], List.of(
-                op("o0-" + UUID.randomUUID(), "tax.upsert", Map.of("id", UUID.randomUUID().toString(), "name", u("Pre"),
-                        "rate", 1), adminId, beforeRevoke),
-                op(late, "tax.upsert", Map.of("id", UUID.randomUUID().toString(), "name", u("Post"), "rate", 1), adminId,
-                        Instant.now().plusSeconds(5))));
-        assertThat(r.get(0).get("status").asString()).isEqualTo("applied");
-        assertThat(r.get(1).get("code").asString()).isEqualTo("DEVICE_REVOKED");
-        assertThat(r.get(1).get("retryable").asBoolean()).isFalse();
-        assertThat(deadLetter(late).get("failureCode")).isEqualTo("DEVICE_REVOKED");
     }
 
     @Test

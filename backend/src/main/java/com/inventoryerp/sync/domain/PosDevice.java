@@ -1,4 +1,4 @@
-// Owned by hand since ADR-S083 O0 (additive columns from V593).
+// Owned by hand since ADR-S083 O0 (additive columns from V593, V594).
 package com.inventoryerp.sync.domain;
 
 import com.inventoryerp.shared.persistence.TenancyFilters;
@@ -82,6 +82,13 @@ public class PosDevice {
 
     @Column(name = "offlineWindowHours")
     private Integer offlineWindowHours;
+
+    // ADR-S083 O0 corrections (V594): server-maintained sequence evidence.
+    @Column(name = "lastAcceptedSeq", nullable = false)
+    private Integer lastAcceptedSeq;
+
+    @Column(name = "revokedAtSeq")
+    private Integer revokedAtSeq;
 
     @CreationTimestamp
     @Column(name = "createdAt", nullable = false)

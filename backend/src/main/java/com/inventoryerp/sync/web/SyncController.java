@@ -87,6 +87,9 @@ public class SyncController {
     /** ADR-S083 S5 dead-letter transition with a mandatory note. */
     public record DeadLetterNoteRequest(@NotNull(message = STR) String note) {}
 
+    /** ADR-S083 S2 supervisor recovery of a quarantined op; {@code acknowledgeGap} confirms a sequence gap. */
+    public record DeadLetterRecoverRequest(@NotNull(message = STR) String note, Boolean acknowledgeGap) {}
+
     /** ADR-S083 C4 device policy: lowers the org offline window for one device ({@code null} clears). */
     public record DevicePolicyRequest(@Min(value = 1, message = "must not be less than 1") Integer offlineWindowHours) {}
 
@@ -176,6 +179,14 @@ public class SyncController {
     @RequirePermissions(Permissions.POS__OVERRIDE)
     public Map<String, Object> retryDeadLetter(@PathVariable String id, @Valid @RequestBody DeadLetterNoteRequest dto) {
         return deadLetters.retry(id, dto.note());
+    }
+
+    @PostMapping("/dead-letters/{id}/recover")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.POS__OVERRIDE)
+    public Map<String, Object> recoverDeadLetter(@PathVariable String id,
+            @Valid @RequestBody DeadLetterRecoverRequest dto) {
+        return deadLetters.recover(id, dto.note(), Boolean.TRUE.equals(dto.acknowledgeGap()));
     }
 
     @GetMapping("/dead-letters")

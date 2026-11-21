@@ -1,0 +1,65 @@
+{
+  "$comment": "ADR-S083 sync protocol contract (O0). Spring-only: the protocol-2 extensions have no Nest counterpart, so this is checked against the live API by backend SyncProtocolContractIT, not by the Nest parity harness. Types: string, int, boolean, array, object, iso (ISO-8601 instant), null, any; unions with '|'; 'enum:a,b'. A key listed under 'absent' must not be present.",
+  "protocol": {
+    "header": "X-Sync-Protocol",
+    "current": "2.0",
+    "supportedMajors": [1, 2],
+    "unsupportedPullStatus": 426,
+    "pushAlwaysAccepted": true
+  },
+  "failureCodes": [
+    "ACTOR_NOT_ALLOWED", "BUSINESS_RULE", "COUNT_CONFLICT", "DEPENDENCY_FAILED", "DEVICE_REVOKED",
+    "DEVICE_TOKEN_EXPIRED", "OPERATION_INCOMPLETE", "OPERATION_PENDING", "OP_ID_REUSED", "PARTIAL_COMMIT",
+    "PERMISSION_DENIED", "SERVER_ERROR"
+  ],
+  "retryableCodes": ["DEPENDENCY_FAILED", "SERVER_ERROR", "OPERATION_PENDING", "OPERATION_INCOMPLETE"],
+  "shapes": {
+    "pullV1": {
+      "fields": {
+        "data": "object", "cursor": "string", "serverTime": "iso", "currency": "any", "license": "any",
+        "protocolVersion": "string", "deviceTokenExpiresAt": "iso|null", "offlinePolicy": "object",
+        "serverId": "string", "deviceBranchId": "string|null"
+      },
+      "absent": ["deviceToken"]
+    },
+    "pullV2": {
+      "fields": {
+        "data": "object", "cursor": "string", "serverTime": "iso", "currency": "any", "license": "any",
+        "protocolVersion": "string", "deviceToken": "string", "deviceTokenExpiresAt": "iso", "offlinePolicy": "object",
+        "serverId": "string", "deviceBranchId": "string|null"
+      }
+    },
+    "offlinePolicy": {
+      "fields": {"offlineWindowHours": "int", "idleTimeoutMinutes": "int", "pinMaxAttempts": "int", "pinLockoutMinutes": "int"}
+    },
+    "pushResponse": {
+      "fields": {"results": "array", "lastPushSeq": "int", "serverTime": "iso"}
+    },
+    "pushApplied": {
+      "fields": {"opId": "string", "status": "enum:applied,replayed", "httpStatus": "int", "error": "null"}
+    },
+    "pushFailed": {
+      "fields": {"opId": "string", "status": "enum:failed", "httpStatus": "int", "error": "string", "code": "string", "retryable": "boolean"}
+    },
+    "snapshotOpen": {
+      "fields": {"snapshotId": "string", "snapshotAt": "iso", "expiresAt": "iso", "scopes": "array", "pageSize": "int", "pages": "object", "pageCount": "int"}
+    },
+    "snapshotPage": {
+      "fields": {"snapshotId": "string", "scope": "string", "after": "string", "rows": "array", "nextAfter": "string|null", "hasMore": "boolean", "pageChecksum": "string"}
+    },
+    "snapshotComplete": {
+      "fields": {"snapshotId": "string", "status": "enum:completed", "snapshotAt": "iso", "cursor": "string"}
+    },
+    "deadLetter": {
+      "fields": {
+        "id": "string", "opId": "string", "deviceId": "string", "deviceName": "string", "deviceSeq": "int",
+        "opType": "string", "status": "enum:open,investigating,resolved,retried,discarded", "error": "string",
+        "httpStatus": "int|null", "failureCode": "string", "retryable": "boolean", "attempts": "int",
+        "receivedAt": "iso|null", "legacy": "boolean", "recoverable": "boolean"
+      }
+    },
+    "recoverResponse": {
+      "fields": {"id": "string", "status": "string", "result": "object", "missingSeqs": "array"}
+    }
+  }
+}

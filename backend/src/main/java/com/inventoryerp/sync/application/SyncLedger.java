@@ -48,7 +48,11 @@ public class SyncLedger implements TransactionExecutionListener, SmartInitializi
         final Integer deviceSeq;
         final List<String> originChain;
         final String supersedesOpId;
+        /** Server-controlled arrival time (never the device clock). */
+        final java.time.Instant receivedAt = java.time.Instant.now();
         volatile boolean anchored;
+        /** A result staged inside the op's own transaction (OP_TRANSACTION): it commits with the business rows. */
+        volatile Object stagedResult;
 
         public Context(String organizationId, String opId, String payloadHash, String opType, String deviceId,
                 Integer deviceSeq, List<String> originChain, String supersedesOpId) {
@@ -117,6 +121,33 @@ public class SyncLedger implements TransactionExecutionListener, SmartInitializi
         }
     }
 
+    /**
+     * Run idempotent pre-work of an op (claimed, keyed work that is safe to run again, such as the stock-posting drain
+     * before a shift close) without letting its commits anchor the ledger row.
+     */
+    public <T> T outside(Supplier<T> body) {
+        Context previous = CURRENT.get();
+        CURRENT.remove();
+        try {
+            return body.get();
+        } finally {
+            if (previous != null) {
+                CURRENT.set(previous);
+            }
+        }
+    }
+
+    /**
+     * Stage the op's result inside its single transaction, so the ledger row commits as {@code applied} with the
+     * original result: a crash after that commit still replays the result instead of needing reconciliation.
+     */
+    public void stage(Object result) {
+        Context ctx = CURRENT.get();
+        if (ctx != null) {
+            ctx.stagedResult = result == null ? Map.of() : result;
+        }
+    }
+
     @Override
     public void afterBegin(TransactionExecution transaction, Throwable beginFailure) {
         Context ctx = CURRENT.get();
@@ -132,7 +163,8 @@ public class SyncLedger implements TransactionExecutionListener, SmartInitializi
             public void beforeCommit(boolean readOnly) {
                 if (!ctx.anchored && !readOnly) {
                     // Same connection as the business writes: if this insert fails, the commit fails with it.
-                    wrote = insertCommitted(ctx) > 0;
+                    wrote = (ctx.stagedResult != null ? insertApplied(ctx, 201, ctx.stagedResult) : insertCommitted(ctx))
+                            > 0;
                 }
             }
 
@@ -148,11 +180,12 @@ public class SyncLedger implements TransactionExecutionListener, SmartInitializi
     private int insertCommitted(Context ctx) {
         return jdbc.sql("""
                         INSERT INTO "SyncAppliedOp" (id, "organizationId", "opId", "payloadHash", "opType", "deviceId",
-                          "deviceSeq", "serverId", "originChain", "supersedesOpId", state, "committedAt")
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, 'committed', CURRENT_TIMESTAMP)
+                          "deviceSeq", "serverId", "originChain", "supersedesOpId", state, "committedAt", "receivedAt")
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, 'committed', CURRENT_TIMESTAMP, ?)
                         ON CONFLICT ("organizationId", "opId") DO NOTHING""")
                 .params(UUID.randomUUID().toString(), ctx.organizationId, ctx.opId, ctx.payloadHash, ctx.opType,
-                        ctx.deviceId, ctx.deviceSeq, serverId, EntityJson.toJson(ctx.originChain), ctx.supersedesOpId)
+                        ctx.deviceId, ctx.deviceSeq, serverId, EntityJson.toJson(ctx.originChain), ctx.supersedesOpId,
+                        SqlRows.ts(ctx.receivedAt))
                 .update();
     }
 
@@ -161,12 +194,16 @@ public class SyncLedger implements TransactionExecutionListener, SmartInitializi
      * were all auto-committed, or a replay of a pre-ledger idempotency record).
      */
     public void complete(Context ctx, int httpStatus, Object result) {
-        jdbc.sql("""
+        insertApplied(ctx, httpStatus, result);
+    }
+
+    private int insertApplied(Context ctx, int httpStatus, Object result) {
+        return jdbc.sql("""
                         INSERT INTO "SyncAppliedOp" (id, "organizationId", "opId", "payloadHash", "opType", "deviceId",
                           "deviceSeq", "serverId", "originChain", "supersedesOpId", state, "httpStatus", "resultJson",
-                          "committedAt", "completedAt")
+                          "committedAt", "completedAt", "receivedAt")
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, 'applied', ?, ?::jsonb, CURRENT_TIMESTAMP,
-                          CURRENT_TIMESTAMP)
+                          CURRENT_TIMESTAMP, ?)
                         ON CONFLICT ("organizationId", "opId") DO UPDATE SET state = 'applied',
                           "httpStatus" = EXCLUDED."httpStatus", "resultJson" = EXCLUDED."resultJson",
                           "completedAt" = EXCLUDED."completedAt"
@@ -174,7 +211,7 @@ public class SyncLedger implements TransactionExecutionListener, SmartInitializi
                           AND "SyncAppliedOp".state = 'committed'""")
                 .params(UUID.randomUUID().toString(), ctx.organizationId, ctx.opId, ctx.payloadHash, ctx.opType,
                         ctx.deviceId, ctx.deviceSeq, serverId, EntityJson.toJson(ctx.originChain), ctx.supersedesOpId,
-                        httpStatus, EntityJson.toJson(result == null ? Map.of() : result))
+                        httpStatus, EntityJson.toJson(result == null ? Map.of() : result), SqlRows.ts(ctx.receivedAt))
                 .update();
     }
 

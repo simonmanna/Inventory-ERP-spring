@@ -1,4 +1,4 @@
-// Owned by hand since ADR-S083 O0 (additive columns from V593).
+// Owned by hand since ADR-S083 O0 (additive columns from V593, V594).
 package com.inventoryerp.sync.domain;
 
 import com.inventoryerp.shared.persistence.TenancyFilters;
@@ -99,6 +99,19 @@ public class SyncOpDeadLetter {
 
     @Column(name = "investigationNote")
     private String investigationNote;
+
+    // ADR-S083 O0 corrections (V594): server receipt time and supervisor recovery.
+    @Column(name = "receivedAt")
+    private Instant receivedAt;
+
+    @Column(name = "recoveredById")
+    private String recoveredById;
+
+    @Column(name = "recoveredAt")
+    private Instant recoveredAt;
+
+    @Column(name = "recoveryGapAcknowledged", nullable = false)
+    private Boolean recoveryGapAcknowledged;
 
     @CreationTimestamp
     @Column(name = "createdAt", nullable = false)
