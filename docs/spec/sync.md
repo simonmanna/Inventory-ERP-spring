@@ -81,6 +81,40 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   submitting commit together; a refused count (e.g. "Choose a variant for …") leaves no draft count open. Test
   `SyncIT.stockCountPerVariant`.
 
+## Extensions (ADR-S083 O0, owner-approved 2026-11-20)
+
+Spring-only, additive. Every Nest route and member is unchanged. Full rules are in
+`docs/adr/ADR-S083-offline-hybrid.md`; migration `V593__sync_o0_foundations.sql`.
+
+- **Applied-op ledger** `SyncAppliedOp` (permanent, unique per org + opId), anchored to each op's first business
+  commit (`SyncLedger`).
+  - Replays survive the loss of idempotency records.
+  - The same opId with a different payload → `OP_ID_REUSED`.
+  - A failed attempt that committed nothing frees its key, so the same opId can run again.
+- **Push results** carry `code` and `retryable` on failed ops.
+  - Ops may send `originChain` and `supersedesOpId`.
+  - A batch `Idempotency-Key` is honoured.
+  - A `stock.count` 409 is `COUNT_CONFLICT`, definitive.
+- **Dead-letter workflow** `open → investigating → resolved | retried | discarded`.
+  - New routes `POST /sync/dead-letters/{id}/investigate` and `/retry` (POS__OVERRIDE).
+  - Additive list and count members.
+- **Device lifecycle.**
+  - Token expiry (`sync.deviceTokenTtlDays`, default 30): an expired token cannot pull.
+  - Protocol-2 rotation on pull, with a 24 h grace for the previous token.
+  - Revoked or expired devices may still push ops recorded before the cut-off.
+  - `POST /sync/devices/{id}/policy` lowers the offline window per device.
+- **Pull** adds `protocolVersion`, `serverId`, `offlinePolicy`, `deviceTokenExpiresAt`, `deviceBranchId`, and
+  `deviceToken` (protocol 2 only).
+  - `X-Sync-Protocol` is checked: an unsupported version gets 426 on pull, while push always accepts.
+  - Protocol 2 deltas include tombstones for soft-deleted rows. This supersedes the "kept on purpose" note below for
+    protocol-2 clients only.
+- **Snapshots:** `POST /sync/snapshot`, `GET /sync/snapshot/{id}/page`, `POST /sync/snapshot/{id}/complete`. Paged,
+  checksummed, resumable, and expiring after 1 h. Completion returns the delta cursor.
+- **Menu-child triggers** bump `MenuItem.updatedAt` when its variants, modifier or accompaniment links, modifiers or
+  options change.
+- Tests: `SyncLedgerIT`, `SyncO0IT`; the `SyncIT` authorization matrix now covers 14 routes.
+
+## Notes
 ## Notes
 
 - Push ops run in a tenant context built from the verified actor (current role permissions) and through
@@ -92,7 +126,7 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Status
 
-8/8 routes. `SyncController` + `SyncDevicesService`, `SyncPullService`, `SyncPushService`, `SyncDeadLetterService`
+8/8 Nest routes + 6 ADR-S083 extension routes. `SyncController` + `SyncDevicesService`, `SyncPullService`, `SyncPushService`, `SyncDeadLetterService`
 (`com.inventoryerp.sync.application`). Device-token transport auth reuses the kernel `AuthenticationFilter`
 (`X-Device-Token` → sha256 lookup); the guard (401) runs before push-body validation, as in Nest.
 Tests: `SyncIT` (8 — registry, revoke, pull scopes + cursor + staff revocation (`sync-staff-revocation.spec.ts`),

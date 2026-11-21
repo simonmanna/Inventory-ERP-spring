@@ -12,7 +12,11 @@ import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.sync.application.SyncDeadLetterService;
 import com.inventoryerp.sync.application.SyncDevicesService;
 import com.inventoryerp.sync.application.SyncPullService;
+import com.inventoryerp.sync.application.SyncProtocol;
 import com.inventoryerp.sync.application.SyncPushService;
+import com.inventoryerp.sync.application.SyncSnapshotService;
+import com.inventoryerp.kernel.idempotency.IdempotencyService;
+import java.time.Instant;
 import com.inventoryerp.sync.application.SyncPushService.Device;
 import com.inventoryerp.sync.application.SyncPushService.Op;
 import com.inventoryerp.kernel.web.GlobalExceptionHandler;
@@ -76,7 +80,21 @@ public class SyncController {
             @NotNull(message = STR) String actorUserId,
             @NotNull(message = "must be a valid ISO 8601 date string")
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String occurredAt,
-            @NotNull(message = "must be an object") Map<String, Object> payload) {}
+            @NotNull(message = "must be an object") Map<String, Object> payload,
+            // ADR-S083 (optional, additive): hops the op already travelled, and the dead-lettered op it corrects.
+            List<String> originChain, String supersedesOpId) {}
+
+    /** ADR-S083 S5 dead-letter transition with a mandatory note. */
+    public record DeadLetterNoteRequest(@NotNull(message = STR) String note) {}
+
+    /** ADR-S083 C4 device policy: lowers the org offline window for one device ({@code null} clears). */
+    public record DevicePolicyRequest(@Min(value = 1, message = "must not be less than 1") Integer offlineWindowHours) {}
+
+    /** ADR-S083 C5 snapshot open. */
+    public record SnapshotRequest(String scopes) {}
+
+    /** ADR-S083 C5 snapshot completion: per scope, the row count held and the combined page checksum. */
+    public record SnapshotCompleteRequest(@NotNull(message = "must be an object") Map<String, Map<String, Object>> scopes) {}
 
     static final String OP_TYPES_LIST = "cash_session.open, cash_session.close, cash_session.movement, sale.checkout,"
             + " tab.settle, sale.refund, sale.void, reservation.create, reservation.seat, reservation.cancel,"
@@ -100,6 +118,14 @@ public class SyncController {
     private final SyncDeadLetterService deadLetters;
     private final Validator validator;
     private final LicenseService licenses;
+    private SyncSnapshotService snapshots;
+    private IdempotencyService idempotency;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setO0Collaborators(SyncSnapshotService snapshots, IdempotencyService idempotency) {
+        this.snapshots = snapshots;
+        this.idempotency = idempotency;
+    }
 
     public SyncController(SyncDevicesService devices, SyncPullService pullSvc, SyncPushService pushSvc,
             SyncDeadLetterService deadLetters, Validator validator, LicenseService licenses) {
@@ -129,6 +155,27 @@ public class SyncController {
     @RequirePermissions(Permissions.ORGANIZATION__UPDATE)
     public Map<String, Object> revoke(@PathVariable String id) {
         return devices.revoke(id);
+    }
+
+    @PostMapping("/devices/{id}/policy")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.ORGANIZATION__UPDATE)
+    public Map<String, Object> devicePolicy(@PathVariable String id, @Valid @RequestBody DevicePolicyRequest dto) {
+        return devices.setPolicy(id, dto.offlineWindowHours());
+    }
+
+    @PostMapping("/dead-letters/{id}/investigate")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.POS__OVERRIDE)
+    public Map<String, Object> investigateDeadLetter(@PathVariable String id, @Valid @RequestBody DeadLetterNoteRequest dto) {
+        return deadLetters.investigate(id, dto.note());
+    }
+
+    @PostMapping("/dead-letters/{id}/retry")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.POS__OVERRIDE)
+    public Map<String, Object> retryDeadLetter(@PathVariable String id, @Valid @RequestBody DeadLetterNoteRequest dto) {
+        return deadLetters.retry(id, dto.note());
     }
 
     @GetMapping("/dead-letters")
@@ -161,24 +208,71 @@ public class SyncController {
     @Public
     public Map<String, Object> pull(HttpServletRequest request, @RequestParam(required = false) String cursor,
             @RequestParam(required = false) String scopes) {
-        requireDevice(request);
-        Map<String, Object> body = new java.util.LinkedHashMap<>(pullSvc.pull(cursor, scopes));
+        String version = SyncProtocol.of(request.getHeader(SyncProtocol.HEADER));
+        Map<?, ?> attached = activeDevice(request, version);
+        SyncProtocol.requirePullSupported(version);
+        boolean v2 = SyncProtocol.atLeast2(version);
+        Map<String, Object> body = new java.util.LinkedHashMap<>(pullSvc.pull(cursor, scopes, v2));
         body.put("license", LicenseSyncView.of(licenses.current()));
+        // ADR-S083 (additive): protocol, identity, offline policy, token lifecycle (rotation on protocol 2).
+        body.put("protocolVersion", SyncProtocol.CURRENT);
+        body.putAll(devices.afterPull(attached, v2));
         return body;
+    }
+
+    /** ADR-S083 C5: open a snapshot pinned to now. */
+    @PostMapping("/snapshot")
+    @Public
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> openSnapshot(HttpServletRequest request, @RequestBody(required = false) SnapshotRequest dto) {
+        Device device = requireDevice(request);
+        return snapshots.create(device, dto == null ? null : dto.scopes());
+    }
+
+    @GetMapping("/snapshot/{id}/page")
+    @Public
+    public Map<String, Object> snapshotPage(HttpServletRequest request, @PathVariable String id,
+            @RequestParam(required = false) String scope, @RequestParam(required = false) String after) {
+        Device device = requireDevice(request);
+        return snapshots.page(device, id, scope, after);
+    }
+
+    @PostMapping("/snapshot/{id}/complete")
+    @Public
+    @ResponseStatus(HttpStatus.CREATED)
+    public Map<String, Object> completeSnapshot(HttpServletRequest request, @PathVariable String id,
+            @RequestBody SnapshotCompleteRequest dto) {
+        Device device = requireDevice(request);
+        if (dto == null || dto.scopes() == null) {
+            throw ApiException.badRequest("scopes must be an object");
+        }
+        return snapshots.complete(device, id, dto.scopes());
     }
 
     @PostMapping("/push")
     @Public
     @ResponseStatus(HttpStatus.CREATED)
-    public Map<String, Object> push(HttpServletRequest request, @RequestBody SyncPushRequest dto) {
+    public Object push(HttpServletRequest request, @RequestBody SyncPushRequest dto) {
         // Nest runs DeviceTokenGuard before the ValidationPipe: 401 wins over a 400.
-        Device device = requireDevice(request);
+        // ADR-S083 S2: push is the one route a revoked/expired device may still use, for ops before its cut-off.
+        Device device = pushDevice(request);
         validate(dto);
         List<Op> ops = new ArrayList<>();
         for (SyncOpRequest o : dto.ops()) {
-            ops.add(new Op(o.opId(), o.deviceSeq(), o.type(), o.actorUserId(), o.occurredAt(), o.payload()));
+            ops.add(new Op(o.opId(), o.deviceSeq(), o.type(), o.actorUserId(), o.occurredAt(), o.payload(),
+                    o.originChain(), o.supersedesOpId()));
         }
-        return pushSvc.push(device, ops);
+        String key = IdempotencyService.readKey(request.getHeader("Idempotency-Key"));
+        if (key == null) {
+            return pushSvc.push(device, ops);
+        }
+        // ADR-S083 S1: a resent batch (same Idempotency-Key, same body) returns the stored per-op results.
+        Map<String, Object> hashed = new java.util.LinkedHashMap<>();
+        hashed.put("deviceId", dto.deviceId());
+        hashed.put("ops", dto.ops());
+        return idempotency.executeWithKey("sync-batch:" + device.id() + ":" + key, idempotency.hashPayload(hashed),
+                "SYNC_BATCH", "/sync/push", null, () -> new IdempotencyService.Result(false, 201, pushSvc.push(device, ops)))
+                .body();
     }
 
     private void validate(SyncPushRequest dto) {
@@ -195,11 +289,46 @@ public class SyncController {
 
     /** {@code DeviceTokenGuard}: the filter attached the enrolled device, or 401; heartbeat on success. */
     private Device requireDevice(HttpServletRequest request) {
+        Map<?, ?> d = activeDevice(request, SyncProtocol.of(request.getHeader(SyncProtocol.HEADER)));
+        return new Device((String) d.get("id"), (String) d.get("organizationId"), (String) d.get("branchId"));
+    }
+
+    /** A device that is neither revoked nor past its token expiry (ADR-S083 C4), or 401. */
+    private Map<?, ?> activeDevice(HttpServletRequest request, String version) {
+        Map<?, ?> d = attached(request);
+        if (d.get("revokedAt") != null) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "A valid X-Device-Token is required");
+        }
+        if (d.get("tokenExpiresAt") instanceof Instant exp && exp.isBefore(Instant.now())) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "This device's token expired — register the device again");
+        }
+        devices.touch((String) d.get("id"), version);
+        return d;
+    }
+
+    /** Push: a lapsed device is accepted with a cut-off; its later ops are dead-lettered (ADR-S083 S2). */
+    private Device pushDevice(HttpServletRequest request) {
+        Map<?, ?> d = attached(request);
+        Instant cutoff = null;
+        String code = null;
+        if (d.get("revokedAt") instanceof Instant revoked) {
+            cutoff = revoked;
+            code = "DEVICE_REVOKED";
+        }
+        if (d.get("tokenExpiresAt") instanceof Instant exp && exp.isBefore(Instant.now())
+                && (cutoff == null || exp.isBefore(cutoff))) {
+            cutoff = exp;
+            code = "DEVICE_TOKEN_EXPIRED";
+        }
+        devices.touch((String) d.get("id"), SyncProtocol.of(request.getHeader(SyncProtocol.HEADER)));
+        return new Device((String) d.get("id"), (String) d.get("organizationId"), (String) d.get("branchId"), cutoff,
+                code);
+    }
+
+    private static Map<?, ?> attached(HttpServletRequest request) {
         if (!(request.getAttribute(AuthenticationFilter.DEVICE_ATTRIBUTE) instanceof Map<?, ?> d)) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "A valid X-Device-Token is required");
         }
-        Device device = new Device((String) d.get("id"), (String) d.get("organizationId"), (String) d.get("branchId"));
-        devices.touch(device.id());
-        return device;
+        return d;
     }
 }

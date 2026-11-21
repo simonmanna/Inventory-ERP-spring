@@ -169,15 +169,29 @@ public class AuthenticationFilter extends OncePerRequestFilter {
         if (deviceToken != null) {
             try {
                 String hash = sha256Hex(deviceToken);
+                // ADR-S083 S2/C4: revoked and expired devices are still identified (flagged "lapsed") so /sync/push
+                // can accept the ops they recorded before the cut-off; every other device route refuses them. The
+                // previous token stays valid for a short grace after a rotation (a pull whose response was lost).
                 var device = jdbc.sql("""
-                                SELECT id, "organizationId", "branchId" FROM "PosDevice"
-                                WHERE "tokenHash" = ? AND "revokedAt" IS NULL LIMIT 1""")
-                        .param(hash)
+                                SELECT id, "organizationId", "branchId", "revokedAt", "tokenExpiresAt",
+                                       ("tokenHash" = ?) AS "currentToken"
+                                FROM "PosDevice"
+                                WHERE "tokenHash" = ?
+                                   OR ("previousTokenHash" = ? AND "previousTokenValidUntil" > now())
+                                ORDER BY ("tokenHash" = ?) DESC LIMIT 1""")
+                        .params(hash, hash, hash, hash)
                         .query((rs, n) -> {
                             Map<String, Object> d = new LinkedHashMap<>();
                             d.put("id", rs.getString("id"));
                             d.put("organizationId", rs.getString("organizationId"));
                             d.put("branchId", rs.getString("branchId"));
+                            java.sql.Timestamp revoked = rs.getTimestamp("revokedAt");
+                            java.sql.Timestamp expires = rs.getTimestamp("tokenExpiresAt");
+                            d.put("revokedAt", revoked == null ? null
+                                    : revoked.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC));
+                            d.put("tokenExpiresAt", expires == null ? null
+                                    : expires.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC));
+                            d.put("currentToken", rs.getBoolean("currentToken"));
                             return d;
                         })
                         .optional();

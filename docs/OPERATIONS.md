@@ -166,6 +166,37 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "Invoice_org_open_idx" ON "Invoice" ("or
 restore into a new scratch database → a second API container boots on it → trial balances of live and restored
 system must be identical → scratch database dropped. Run it before every release and quarterly.
 
+## 7c. Disaster recovery for offline sync (ADR-S083 C2)
+
+Targets. These are owner-adjustable defaults:
+
+| | HQ | Branch server (O7) |
+|---|---|---|
+| Backup | Continuous WAL archiving + point-in-time recovery | Nightly base backup + WAL |
+| RPO | ≤ 5 minutes | ≤ 15 minutes |
+| RTO | ≤ 4 hours | ≤ 4 hours |
+
+Rules:
+
+1. **The applied-op ledger (`SyncAppliedOp`) is not a backup.** Lost business records come back only from a database
+   restore, never by re-creating them from the ledger.
+2. **After any restore, keep devices and branches pointed at the restored server.** They re-push every op they have
+   not seen acknowledged. Normal dedup decides apply or replay:
+   - an op whose ledger row was lost with the restore is applied again, because its business rows were lost too
+   - an op whose ledger row survived is replayed
+3. **Run the post-restore reconciliation.** Until the O7 job exists, run these by hand:
+   - ledger rows still `state = 'committed'`: `SELECT * FROM "SyncAppliedOp" WHERE state = 'committed'`
+   - devices whose `PosDevice.lastPushSeq` is ahead of their highest ledger `deviceSeq`
+   - open dead letters by `failureCode`
+   - the trial balance (balanced journals; subledger vs control accounts)
+   - `StockItem` quantities vs the sum of stock movements
+
+   Record what you found in the incident note.
+4. **Revoke and re-register a device whose token was in a lost backup window**, if it can no longer pull. Its queued
+   ops can still be pushed before re-registration.
+
+WAL archiving and PITR are infrastructure tasks for the hosting environment. They are not configured by the application.
+
 ## 7b. Performance
 
 - Load suite: `tests/load/` (k6: checkout, tab edits, Z-report + trial balance, tables SSE fan-out);

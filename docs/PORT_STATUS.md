@@ -1016,6 +1016,17 @@ additions and behaviour changes are listed in `docs/spec/pos.md` "Post-parity ha
 - [x] GET /api/v1/sync/pull — SyncController.pull
 - [x] POST /api/v1/sync/push — SyncController.push
 
+
+### sync — ADR-S083 O0 extensions (Spring-only, branch `phase/O0-sync-foundations`, not merged)
+
+- [x] POST /api/v1/sync/devices/:id/policy — SyncController.devicePolicy
+- [x] POST /api/v1/sync/dead-letters/:id/investigate — SyncController.investigateDeadLetter
+- [x] POST /api/v1/sync/dead-letters/:id/retry — SyncController.retryDeadLetter
+- [x] POST /api/v1/sync/snapshot — SyncController.openSnapshot
+- [x] GET /api/v1/sync/snapshot/:id/page — SyncController.snapshotPage
+- [x] POST /api/v1/sync/snapshot/:id/complete — SyncController.completeSnapshot
+- [x] Applied-op ledger, batch idempotency, protocol versions, token rotation/expiry, revocation cut-off, tombstones (protocol 2), menu-child triggers (V593) — tests `SyncLedgerIT`, `SyncO0IT`
+
 ## backup
 
 - [x] POST /api/v1/admin/backups/cleanup — BackupController.cleanup
