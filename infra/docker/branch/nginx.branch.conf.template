@@ -1,0 +1,71 @@
+# ADR-S083 O7 — the web app at a branch (compose service branch-web). The nginx image renders this template with
+# envsubst into conf.d/default.conf (only defined variables are replaced; nginx's own $vars stay).
+#
+#   /api/v1/sync/{pull,push,snapshot,branch/...}  -> the branch relay node (keeps working while HQ is down)
+#   every other /api/                              -> HQ (sign-in, device registration, back office)
+#
+# When HQ cannot be reached the connection is closed without an answer (444), so the web app sees "no answer",
+# switches to its offline mode (ADR-S083 O3) and the POS keeps selling through the branch. Keep the security
+# headers and buffers in step with infra/docker/nginx.conf.
+server {
+    listen       80;
+    server_name  _;
+    root   /usr/share/nginx/html;
+    index  index.html;
+    large_client_header_buffers 8 64k;
+
+    # Docker's resolver, re-resolved at request time: nginx starts (and recovers) while HQ or the branch API is down.
+    resolver 127.0.0.11 valid=30s ipv6=off;
+
+    location ~ ^/api/v1/sync/(pull|push|snapshot|branch/) {
+        set $branch_upstream ${BRANCH_API_ORIGIN};
+        proxy_pass $branch_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        error_page 502 504 = @unreachable;
+    }
+
+    location /api/ {
+        set $hq_upstream ${BRANCH_HQ_ORIGIN};
+        proxy_pass $hq_upstream;
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        # SSE (KDS stream) needs buffering off and a long read timeout.
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        error_page 502 504 = @unreachable;
+    }
+
+    location @unreachable {
+        return 444;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires 0;
+    }
+}

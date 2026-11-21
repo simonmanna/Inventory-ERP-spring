@@ -4,11 +4,14 @@
  * and close shifts and add customers while the server is unreachable.
  */
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { PERMISSIONS } from '@erp/shared';
 import { Loader2, MonitorSmartphone } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { useAuthStore } from '@/stores/auth.store';
@@ -21,6 +24,14 @@ export function ThisBrowserDeviceCard({ onRegistered }: { onRegistered?: () => v
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [branchId, setBranchId] = useState('');
+  const canReadBranches = useAuthStore((s) => s.hasPermission(PERMISSIONS.branch.read));
+  // ADR-S083 O7: a browser till at a branch server must be registered to that branch (the branch only learns its own).
+  const branches = useQuery({
+    queryKey: ['branches', 'options'],
+    queryFn: async () => (await api.get<{ data: { id: string; code: string; name: string }[] }>('/branches', { params: { pageSize: 200 } })).data.data,
+    enabled: canReadBranches && device === null,
+  });
 
   useEffect(() => {
     if (!org) return;
@@ -33,7 +44,7 @@ export function ThisBrowserDeviceCard({ onRegistered }: { onRegistered?: () => v
     if (!org || !name.trim()) return;
     setBusy(true);
     try {
-      await registerThisBrowser(org, name.trim());
+      await registerThisBrowser(org, name.trim(), branchId || undefined);
       const engine = syncEngineFor(org);
       setDevice((await engine.device()) ?? null);
       const s = await engine.sync();
@@ -70,6 +81,17 @@ export function ThisBrowserDeviceCard({ onRegistered }: { onRegistered?: () => v
               <Input id="browser-device-name" className="w-64" placeholder={tx('e.g. Front counter PC')} value={name}
                 onChange={(e) => setName(e.target.value)} />
             </div>
+            {(branches.data?.length ?? 0) > 0 && (
+              <div className="grid gap-1.5">
+                <Label htmlFor="browser-device-branch">{tx('Branch')}</Label>
+                <select id="browser-device-branch" className="h-9 w-56 rounded-md border bg-background px-2 text-sm" value={branchId}
+                  onChange={(e) => setBranchId(e.target.value)}>
+                  <option value="">{tx('None (syncs with HQ)')}</option>
+                  {branches.data!.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name}</option>)}
+                </select>
+                <p className="text-xs text-muted-foreground">{tx('Choose the branch when this browser works through a branch server.')}</p>
+              </div>
+            )}
             <Button onClick={register} disabled={!name.trim() || busy}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {tx('Register this browser')}

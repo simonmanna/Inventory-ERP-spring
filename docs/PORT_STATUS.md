@@ -1038,6 +1038,7 @@ additions and behaviour changes are listed in `docs/spec/pos.md` "Post-parity ha
 - [x] O7 branch server as a relay node (branch `phase/O7-branch-server`, not merged): `erp.sync.mode=branch` — HQ mirror for tills, relay outbox (accepted_local → pending_hq → hq_posted / hq_rejected) with inline pass-through, HQ `/sync/relay/feed`, `ORIGIN_NOT_ALLOWED` and branch hold markers at HQ, branch shift close / status / shift report, restore-safe relay watermark (V599) — `SyncBranchRelayIT`
 - [x] C2 post-restore reconciliation (watermarks, committed ops, unbalanced journals, AR/AP subledger via `reporting.spi.SubledgerReconciliation`, stock vs movements, dead letters; start-up + nightly + on demand, alerts; V600) and the compose `branch` profile with enrolment and drill scripts — `SyncReconciliationIT`
 - [x] S9 sync status dashboard (`GET /sync/status`, Settings → Sync Status with branch tiles and the reconciliation report; metrics `erp.sync.push.ops`, `erp.sync.lag.seconds.max`, `erp.sync.devices.stale` + alerts) — `SyncStatusIT`
+- [x] Compose `branch-web` for browser tills at a branch (sync to the branch node, sign-in/back office to HQ, 444 when HQ is down) + branch picker on This browser registration
 
 ## backup
 

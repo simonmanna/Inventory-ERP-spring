@@ -31,11 +31,17 @@ Minimum server: 2 vCPU, 4 GB RAM, SSD. Recommended: 4 vCPU, 8 GB. JVM heap = 75 
 ```bash
 # .env: BRANCH_HQ_ADMIN_EMAIL, BRANCH_HQ_ADMIN_PASSWORD, BRANCH_CODE (an HQ branch code), optional BRANCH_HQ_ORG (DEMO),
 #       BRANCH_SERVER_ID (branch-1), BRANCH_PORT (3003; Grafana uses 3002), BRANCH_HQ_URL (default: this file's api service)
-docker compose --profile branch up -d --build          # HQ + branch; tills of the branch use http://<host>:3003
+docker compose --profile branch up -d --build          # HQ + branch; Android tills use http://<host>:3003,
+                                                        # browser tills open http://<host>:8081 (BRANCH_WEB_PORT)
 infra/docker/branch/drill.sh                            # cut the link, restore the branch, compare HQ (needs curl, jq)
 # On a branch machine with a remote HQ:
-BRANCH_HQ_URL=https://hq.example.com/api/v1 docker compose --profile branch up -d branch-db branch-enroll branch-api
+BRANCH_HQ_URL=https://hq.example.com/api/v1 BRANCH_HQ_ORIGIN=https://hq.example.com \
+  docker compose --profile branch up -d branch-db branch-enroll branch-api branch-web
 ```
+
+Browser tills at the branch: open the branch web app (:8081) while HQ is reachable, sign in (sign-in goes to HQ), then
+Settings → Offline Devices → This browser, choose the branch, register. With HQ down the app shows its offline banner
+and the POS keeps selling through the branch server.
 
 `branch-enroll` registers the branch once and keeps its token in the `branchenroll` volume. To re-enrol (token
 revoked at HQ): `docker compose --profile branch run --rm --entrypoint rm branch-enroll /enroll/branch.env`, then start

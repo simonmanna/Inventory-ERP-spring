@@ -8,7 +8,7 @@
 #
 # A branch relay node (ADR-S083 O7) is in the `branch` profile: its own Postgres and an API in erp.sync.mode=branch
 # that relays its tills to HQ (by default the `api` service of this file; set BRANCH_HQ_URL for a remote HQ).
-#   docker compose --profile branch up -d --build    # HQ + branch; the branch API on http://localhost:3003
+#   docker compose --profile branch up -d --build    # HQ + branch; branch API :3003, branch web app :8081
 services:
   db:
     image: postgres:16-alpine
@@ -252,7 +252,7 @@ services:
   # branch-enroll registers the branch at HQ once (BRANCH_HQ_ADMIN_EMAIL / _PASSWORD, BRANCH_CODE = an HQ branch
   # code) and keeps the branch token in the branchenroll volume; branch-api starts with it. Tills of that branch point
   # at http://<this machine>:3003. On a branch machine with a remote HQ start only the branch services:
-  #   BRANCH_HQ_URL=https://hq.example.com/api/v1 docker compose --profile branch up -d branch-db branch-enroll branch-api
+  #   BRANCH_HQ_URL=https://hq.example.com/api/v1 BRANCH_HQ_ORIGIN=https://hq.example.com docker compose --profile branch up -d branch-db branch-enroll branch-api branch-web
   # Drill (cut the link, restore the branch, compare HQ): infra/docker/branch/drill.sh
   branch-db:
     image: postgres:16-alpine
@@ -323,6 +323,26 @@ services:
     entrypoint: ["/bin/sh", "-c", ". /enroll/branch.env && exec /sbin/tini -- java org.springframework.boot.loader.launch.JarLauncher"]
     ports:
       - "${BRANCH_PORT:-3003}:3000"
+
+  # Browser tills at the branch: the web app served locally; sync goes to branch-api, sign-in and back office to HQ.
+  # A browser registered at HQ for this branch (Settings → Offline Devices → This browser, with the branch chosen)
+  # keeps selling through the branch while HQ is down. BRANCH_HQ_ORIGIN = HQ's origin without /api/v1.
+  branch-web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: ierp-branch-web
+    profiles: ["branch"]
+    restart: unless-stopped
+    depends_on:
+      - branch-api
+    environment:
+      BRANCH_API_ORIGIN: http://branch-api:3000
+      BRANCH_HQ_ORIGIN: ${BRANCH_HQ_ORIGIN:-http://api:3000}
+    volumes:
+      - ./infra/docker/branch/nginx.branch.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "${BRANCH_WEB_PORT:-8081}:80"
 
 volumes:
   pgdata:
