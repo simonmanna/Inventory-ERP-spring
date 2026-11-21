@@ -54,6 +54,7 @@ const OfflineSalesReviewPage = lazy(() => import('@/pages/sales/OfflineSalesRevi
 const OfflinePaymentsPage = lazy(() => import('@/pages/sales/OfflinePaymentsPage').then((m) => ({ default: m.OfflinePaymentsPage })));
 const StockTabletPage = lazy(() => import('@/pages/warehouse/StockTabletPage').then((m) => ({ default: m.StockTabletPage })));
 const OfflineDiscrepanciesPage = lazy(() => import('@/pages/warehouse/OfflineDiscrepanciesPage').then((m) => ({ default: m.OfflineDiscrepanciesPage })));
+const SyncStatusPage = lazy(() => import('@/pages/pos/SyncStatusPage').then((m) => ({ default: m.SyncStatusPage })));
 const DeadLettersPage = lazy(() => import('@/pages/pos/DeadLettersPage').then((m) => ({ default: m.DeadLettersPage })));
 const PostingMonitorPage = lazy(() => import('@/pages/pos/PostingMonitorPage').then((m) => ({ default: m.PostingMonitorPage })));
 const ApprovalsPage = lazy(() => import('@/pages/approvals').then((m) => ({ default: m.ApprovalsPage })));
@@ -513,6 +514,7 @@ export function App() {
             <Route path="/settings/report-permissions" element={<RequirePermission permission={PERMISSIONS.role.read}><ReportPermissionsPage /></RequirePermission>} />
             <Route path="/settings/devices" element={<DevicesPage />} />
             <Route path="/settings/devices/rejected" element={<DeadLettersPage />} />
+            <Route path="/settings/sync-status" element={<SyncStatusPage />} />
             <Route path="/inventory/posting-monitor" element={<RequirePermission permission={PERMISSIONS.pos.reports}><PostingMonitorPage /></RequirePermission>} />
             <Route path="/fixed-assets" element={<AssetDashboardPage />} />
             <Route path="/fixed-assets/categories" element={<AssetCategoriesPage />} />

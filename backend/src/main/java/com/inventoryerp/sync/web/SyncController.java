@@ -452,6 +452,20 @@ public class SyncController {
         return reconciliation.report(id);
     }
 
+    private com.inventoryerp.sync.application.SyncStatusService statusService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStatusService(com.inventoryerp.sync.application.SyncStatusService statusService) {
+        this.statusService = statusService;
+    }
+
+    /** ADR-S083 S9 (Extension): the sync status dashboard. */
+    @GetMapping("/status")
+    @RequirePermissions(Permissions.ORGANIZATION__READ)
+    public Map<String, Object> status() {
+        return statusService.status();
+    }
+
     /** HQ's licence view as the branch last pulled it. */
     private Object relayLicense() {
         return mirrorLicense == null ? null : mirrorLicense.get();

@@ -30,8 +30,8 @@ Minimum server: 2 vCPU, 4 GB RAM, SSD. Recommended: 4 vCPU, 8 GB. JVM heap = 75 
 
 ```bash
 # .env: BRANCH_HQ_ADMIN_EMAIL, BRANCH_HQ_ADMIN_PASSWORD, BRANCH_CODE (an HQ branch code), optional BRANCH_HQ_ORG (DEMO),
-#       BRANCH_SERVER_ID (branch-1), BRANCH_PORT (3002), BRANCH_HQ_URL (default: this file's api service)
-docker compose --profile branch up -d --build          # HQ + branch; tills of the branch use http://<host>:3002
+#       BRANCH_SERVER_ID (branch-1), BRANCH_PORT (3003; Grafana uses 3002), BRANCH_HQ_URL (default: this file's api service)
+docker compose --profile branch up -d --build          # HQ + branch; tills of the branch use http://<host>:3003
 infra/docker/branch/drill.sh                            # cut the link, restore the branch, compare HQ (needs curl, jq)
 # On a branch machine with a remote HQ:
 BRANCH_HQ_URL=https://hq.example.com/api/v1 docker compose --profile branch up -d branch-db branch-enroll branch-api
@@ -180,13 +180,15 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "Invoice_org_open_idx" ON "Invoice" ("or
   "Inventory ERP — API" (`docker compose -f docker-compose.yml -f infra/monitoring/docker-compose.monitoring.yml up -d`,
   Grafana on :3002).
 - Metrics: Micrometer HTTP (`http_server_requests_seconds{uri,status}`), JVM, GC, Hikari, process CPU, plus
-  `erp_stock_posting_jobs_pending`, `erp_sync_dead_letters_open`, `erp_event_publications_incomplete`,
+  `erp_stock_posting_jobs_pending`, `erp_sync_dead_letters_open`, `erp_sync_push_ops_total{status}`,
+  `erp_sync_lag_seconds_max` (devices active in the last 7 days), `erp_sync_devices_stale` (not heard from for 24 h),
+  `erp_event_publications_incomplete`,
   `erp_backup_health` (0/1/2), `erp_backup_last_full_age_seconds`, `erp_job_failures_total{task}` (a scheduled job failed
   for one organization: replenishment scan, contract expiry, mobile money poll, alert scans, telematics sync) and
   `erp_provider_failures_total{provider}` (mobile money). These jobs carry on with the next organization, so their
   errors never reach the HTTP metrics.
 - Alerts (`alerts.yml`): API down, 5xx > 2 %, checkout p95 > 1.5 s, Hikari pending, heap > 90 %, GC > 10 %,
-  stock-posting backlog, open sync dead letters, stuck outbox, failing scheduled job, failing external provider, backup
+  stock-posting backlog, open sync dead letters, stale or lagging sync devices, stuck outbox, failing scheduled job, failing external provider, backup
   critical / older than 36 h.
 - `/api/v1/health/ready`: `critical.database` (503 when down) and `advisory.backup` (`degraded`, never 503).
 - Logs: JSON to stdout under `prod`; ship with Loki/Promtail or the Docker logging driver. Search by `requestId`.

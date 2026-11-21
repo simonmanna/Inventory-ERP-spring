@@ -155,9 +155,10 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   `SYNC_DEAD_LETTERS_OPEN` (branch close). Pull response member `relay` at a branch. V599. See ADR-S083 "O7 as built".
 - **Post-restore reconciliation (C2):** `POST /sync/reconciliation/run`, `GET /sync/reconciliation/runs`,
   `GET /sync/reconciliation/runs/{id}`; nightly and at start-up; V600. See ADR-S083 "C2 reconciliation".
+- **Sync status (S9):** `GET /sync/status`; web Settings → Sync Status. See ADR-S083 "S9 as built".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
   `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`, `SyncSalesIT`, `SyncSeqReuseIT`,
-  `SyncClientParityIT`, `SyncBranchRelayIT`, `SyncReconciliationIT`; the `SyncIT` authorization matrix now covers 25 routes.
+  `SyncClientParityIT`, `SyncBranchRelayIT`, `SyncReconciliationIT`, `SyncStatusIT`; the `SyncIT` authorization matrix now covers 26 routes.
 
 ## Notes
 

@@ -76,6 +76,22 @@ groups:
           summary: "Offline sales were refused on sync and await a manager decision"
           description: "Open dead letters block cash-session close. Review them in POS → Sync dead letters."
 
+      - alert: OfflineSyncDevicesStale
+        expr: max(erp_sync_devices_stale{job="inventory-erp-api"}) > 0
+        for: 2h
+        labels: { severity: info }
+        annotations:
+          summary: "Offline devices or branch servers have not synced for 24 hours"
+          description: "Unsynced sales stay on the device. Check Settings → Sync Status; revoke devices no longer in use."
+
+      - alert: OfflineSyncLag
+        expr: max(erp_sync_lag_seconds_max{job="inventory-erp-api"}) > 21600
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "An active offline device or branch server has not synced for 6 hours"
+          description: "A device active this week stopped syncing (network, revoked token, branch HQ link). See Settings → Sync Status."
+
       - alert: EventOutboxStuck
         expr: max(erp_event_publications_incomplete{job="inventory-erp-api"}) > 100
         for: 15m

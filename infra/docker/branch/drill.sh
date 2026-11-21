@@ -7,7 +7,7 @@
 set -eu
 DC=${DC:-docker compose --profile branch}
 HQ=${HQ:-http://127.0.0.1:3001/api/v1}
-BR=${BR:-http://127.0.0.1:3002/api/v1}
+BR=${BR:-http://127.0.0.1:3003/api/v1}
 ORG=${BRANCH_HQ_ORG:-DEMO}
 : "${BRANCH_HQ_ADMIN_EMAIL:?}" "${BRANCH_HQ_ADMIN_PASSWORD:?}"
 uuid() { cat /proc/sys/kernel/random/uuid; }

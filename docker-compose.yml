@@ -8,7 +8,7 @@
 #
 # A branch relay node (ADR-S083 O7) is in the `branch` profile: its own Postgres and an API in erp.sync.mode=branch
 # that relays its tills to HQ (by default the `api` service of this file; set BRANCH_HQ_URL for a remote HQ).
-#   docker compose --profile branch up -d --build    # HQ + branch; the branch API on http://localhost:3002
+#   docker compose --profile branch up -d --build    # HQ + branch; the branch API on http://localhost:3003
 services:
   db:
     image: postgres:16-alpine
@@ -251,7 +251,7 @@ services:
   #
   # branch-enroll registers the branch at HQ once (BRANCH_HQ_ADMIN_EMAIL / _PASSWORD, BRANCH_CODE = an HQ branch
   # code) and keeps the branch token in the branchenroll volume; branch-api starts with it. Tills of that branch point
-  # at http://<this machine>:3002. On a branch machine with a remote HQ start only the branch services:
+  # at http://<this machine>:3003. On a branch machine with a remote HQ start only the branch services:
   #   BRANCH_HQ_URL=https://hq.example.com/api/v1 docker compose --profile branch up -d branch-db branch-enroll branch-api
   # Drill (cut the link, restore the branch, compare HQ): infra/docker/branch/drill.sh
   branch-db:
@@ -322,7 +322,7 @@ services:
     # The token and organisation id come from the enrolment, not from .env.
     entrypoint: ["/bin/sh", "-c", ". /enroll/branch.env && exec /sbin/tini -- java org.springframework.boot.loader.launch.JarLauncher"]
     ports:
-      - "${BRANCH_PORT:-3002}:3000"
+      - "${BRANCH_PORT:-3003}:3000"
 
 volumes:
   pgdata:

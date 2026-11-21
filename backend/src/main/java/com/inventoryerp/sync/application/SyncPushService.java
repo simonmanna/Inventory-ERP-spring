@@ -192,6 +192,14 @@ public class SyncPushService {
         return new ApiException(HttpStatus.valueOf(status), message);
     }
 
+    private SyncMetrics metrics;
+
+    /** ADR-S083 S9: push counters (optional, so unit tests can build the service without a registry). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMetrics(SyncMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     public Map<String, Object> push(Device device, List<Op> opsIn) {
         List<Op> ops = new ArrayList<>(opsIn);
         ops.sort(Comparator.comparingInt(Op::deviceSeq));
@@ -203,6 +211,9 @@ public class SyncPushService {
         for (Op op : ops) {
             Map<String, Object> result = applyOp(device, op, clientIdMap, failedClientIds, actorOk);
             results.add(result);
+            if (metrics != null) {
+                metrics.pushed(result.get("status"));
+            }
             if (!"failed".equals(result.get("status"))) {
                 lastAppliedSeq = op.deviceSeq();
             }

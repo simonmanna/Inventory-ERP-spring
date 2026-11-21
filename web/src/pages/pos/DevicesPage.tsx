@@ -118,12 +118,17 @@ export function DevicesPage() {
             {tx('Android terminals that sell offline and sync when they reconnect.')}
           </p>
         </div>
-        <Link to="/settings/devices/rejected">
-          <Button variant={rejected && rejected.open > 0 ? 'destructive' : 'outline'} size="sm">
-            <Inbox className="h-4 w-4" />
-            {rejected && rejected.open > 0 ? `${rejected.open} rejected` : tx('Rejected sales')}
-          </Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link to="/settings/sync-status">
+            <Button variant="outline" size="sm">{tx('Sync status')}</Button>
+          </Link>
+          <Link to="/settings/devices/rejected">
+            <Button variant={rejected && rejected.open > 0 ? 'destructive' : 'outline'} size="sm">
+              <Inbox className="h-4 w-4" />
+              {rejected && rejected.open > 0 ? `${rejected.open} rejected` : tx('Rejected sales')}
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <ThisBrowserDeviceCard onRegistered={() => qc.invalidateQueries({ queryKey: ['pos-devices'] })} />

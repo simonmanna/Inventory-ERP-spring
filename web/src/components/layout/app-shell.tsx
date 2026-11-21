@@ -431,6 +431,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/settings/payment-methods', label: tx('Payment Methods'), icon: Wallet, permission: PERMISSIONS.account.read, group: 'Configuration' },
       { to: '/settings/registers', label: tx('Registers and Devices'), icon: Banknote, permission: PERMISSIONS.cashRegister.read, group: 'Configuration' },
       { to: '/settings/devices', label: tx('Offline Devices'), icon: Smartphone, permission: PERMISSIONS.organization.read, group: 'Configuration' },
+      { to: '/settings/sync-status', label: tx('Sync Status'), icon: Activity, permission: PERMISSIONS.organization.read, group: 'Configuration' },
     ],
   },
   // ── Buy & Stock ──

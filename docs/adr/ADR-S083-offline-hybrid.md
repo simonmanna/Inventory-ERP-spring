@@ -770,8 +770,8 @@ till / browser ──LAN──▶ BRANCH (erp.sync.mode=branch)             HQ
    device, which for relayed shifts is the branch device. A rejected money op from one till therefore blocks closing
    any shift of that branch at HQ until it is resolved (safe, stricter than per till). The branch's own check is per
    shift.
-6. **Not built:** S9 branch dashboard tiles. (The C2 reconciliation job and the docker-compose HQ + branch stack
-   followed on the same branch; see "C2 reconciliation and the compose stack, as built".)
+6. The C2 reconciliation job, the docker-compose HQ + branch stack and the S9 dashboard with branch tiles followed on
+   the same branch; see "C2 reconciliation and the compose stack, as built" and "S9 as built".
 
 **Tests:** `SyncBranchRelayIT` (a second application context on its own database as the branch, HQ = the test
 server): mirror served to the till without rotation; inline pass-through with HQ's result and originChain; HQ
@@ -806,7 +806,7 @@ run's sends an in-app alert (category `sync`) to up to 20 users with `organizati
 **Compose HQ + branch** (`docker-compose.yml` profile `branch`, `infra/docker/branch/`): `branch-db` (own Postgres,
 host port 5435), `branch-enroll` (one-shot: logs in to HQ, finds the branch by `BRANCH_CODE`, registers a `branch`
 device, keeps the token in the `branchenroll` volume; needs `apk add curl jq`, so internet on first start) and
-`branch-api` (same image, `erp.sync.mode=branch`, jobs off, port `BRANCH_PORT` 3002 on all interfaces for the LAN).
+`branch-api` (same image, `erp.sync.mode=branch`, jobs off, port `BRANCH_PORT` 3003 on all interfaces (3002 is Grafana) for the LAN).
 HQ is this file's `api` by default; `BRANCH_HQ_URL` points a branch machine at a remote HQ.
 `infra/docker/branch/drill.sh` runs the O7 drill on that stack: trade online, back up the branch database, stop HQ and
 trade, restart HQ and drain, restore the branch backup, re-push a lost op and a new one, then run the reconciliation and
@@ -824,6 +824,28 @@ applied twice) and a clean reconciliation. The drill also showed the branch reje
 unbalanced posted journal written with the triggers off as the schema owner, and on-hand with no movements; the run
 reports each, alerts once, does not alert again for the same issues, reports nothing after cleanup, is read-only,
 404 for another organisation, 403 without permission). The `SyncIT` authorization matrix now covers 25 routes.
+
+### S9 as built (branch `phase/O7-branch-server`)
+
+- `GET /sync/status` (Extension, `organization:read`; `SyncStatusService`): summary (devices, online in the last 15
+  minutes, not synced for 24 hours, revoked, ops applied today, dead letters created today, open dead letters), ledger ops
+  today by state, open dead letters by failure code, one tile per branch (its relay node and state, tills, tills
+  online / stale, ops today, open dead letters, last sync), every device (state `online` / `idle` / `stale` / `never` /
+  `revoked`, last sync = later of last push and last pull, ops today, open dead letters, protocol version), protocol
+  version counts, and the last reconciliation run.
+- Web: Settings → Sync Status (`SyncStatusPage`): the tiles, this browser's own queue (pending / sending / rejected
+  from the O1 engine: queues on other devices are only known to those devices), the devices table, and the last
+  reconciliation with its report and "Run now" (`organization:update`). Query keys `sync-status` and
+  `sync-reconciliation` are `never` in the cache policy.
+- Metrics (`SyncMetrics`): `erp.sync.push.ops{status}` counter, `erp.sync.lag.seconds.max`, `erp.sync.devices.stale`;
+  open dead letters stay `erp.sync.dead.letters.open` (BacklogMetrics). **Deviation:** lag is one server-wide gauge
+  over devices active in the last 7 days, not `sync_lag_seconds{device}`, to keep Prometheus cardinality bounded;
+  per-device lag is on the dashboard. Alerts `OfflineSyncDevicesStale` (info) and `OfflineSyncLag` (> 6 h, warning)
+  in `infra/monitoring/alerts.yml`.
+- The compose branch API's default host port moved from 3002 to 3003 (Grafana in `infra/monitoring` uses 3002).
+- Tests: `SyncStatusIT` (device on a branch pushes an op: online, ops today, branch tile, push counter, gauges,
+  another organisation does not see it, 403 without permission); `SyncIT` matrix 26 routes; web typecheck and the
+  Vitest suite. **Not verified in a browser** against this branch's API.
 
 ## Additive wire changes in O0
 
@@ -856,8 +878,8 @@ checked against the live API by `SyncProtocolContractIT` on every CI run.
 
 | Item | Where it lands |
 |---|---|
-| S9 `/sync/status` dashboard and Micrometer metrics | after O2 (needs the web engine's pending counts) |
+| S9 `/sync/status` dashboard and Micrometer metrics | built after O7 (see "S9 as built") |
 | C2 post-restore reconciliation job (device/branch watermarks vs ledger, GL and stock checks, report) | built after O7 (see "C2 reconciliation and the compose stack, as built") |
-| S9 branch tiles on the sync dashboard | with S9 (the branch exposes `GET /sync/branch/status` meanwhile) |
+| S9 branch tiles on the sync dashboard | built with S9 |
 | Web and Android clients (snapshot staging, token rotation, `supersedesOpId`, quarantine UX) | O1, O2, O6 |
 | Refusing sequence regressions from active devices | done in O6 as `SEQ_REUSED` for protocol-2 clients (sequence reuse; a regression alone stays legitimate) |
