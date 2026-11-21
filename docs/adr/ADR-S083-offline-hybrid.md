@@ -812,8 +812,12 @@ HQ is this file's `api` by default; `BRANCH_HQ_URL` points a branch machine at a
 trade, restart HQ and drain, restore the branch backup, re-push a lost op and a new one, then run the reconciliation and
 count HQ invoices (expected 4: every sale once).
 
-**Not verified here:** the compose stack was validated (`docker compose --profile branch config`) but not started, and
-the drill was not run (both need an image build). Browser devices at a branch would need a web container proxying to
+**Drill run 2026-11-21** (isolated compose project, DEMO seed, branch `MAIN`): online open + sale relayed inline
+(`hq_posted`); with HQ stopped two sales were held (`pending_hq`) and drained when HQ came back; the branch database
+was then restored from the pre-outage backup, and the till re-pushed a lost sale (same opId) plus a new one. HQ ended
+with 4 invoices, one balanced `pos_invoice` journal each, 4 `sale.checkout` ledger rows (the re-pushed op was not
+applied twice) and a clean reconciliation. The drill also showed the branch rejects a till reusing a sequence
+(`SEQ_REUSED`), caught when an early version of the drill script did that. Browser devices at a branch would need a web container proxying to
 `branch-api`; not included (Android tills connect to the branch API directly).
 
 **Tests:** `SyncReconciliationIT` (plants a device watermark ahead of the ledger, a stale committed ledger row, an

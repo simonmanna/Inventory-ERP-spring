@@ -25,7 +25,7 @@ TOKEN=$(jq -n --arg o "$HQ_ORG_CODE" --arg e "$HQ_ADMIN_EMAIL" --arg p "$HQ_ADMI
   | curl -fsS -H 'Content-Type: application/json' -d @- "$HQ_URL/auth/login" | jq -r .accessToken)
 [ -n "$TOKEN" ] && [ "$TOKEN" != null ] || { echo "branch-enroll: HQ login failed" >&2; exit 1; }
 
-BRANCH=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$HQ_URL/branches?limit=500" \
+BRANCH=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$HQ_URL/branches?pageSize=100" \
   | jq -c --arg c "$BRANCH_CODE" '[.data[] | select(.code == $c)][0]')
 [ "$BRANCH" != null ] || { echo "branch-enroll: no branch with code $BRANCH_CODE at HQ" >&2; exit 1; }
 BRANCH_ID=$(echo "$BRANCH" | jq -r .id)
