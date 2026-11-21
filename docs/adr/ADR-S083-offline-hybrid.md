@@ -602,6 +602,79 @@ Not built in O0 — **deferred, tracked** (see "Deferred work").
 - **Payments have no pricing tolerance.** `payment.receive` records the amount actually received. Allocation is
   reconciled separately, and any difference stays unallocated or on account; it is never auto-adjusted.
 
+### O5 as built (branch `phase/O5-sales-offline`) — sales and field orders
+
+**Ops** (all `SERVICE_TRANSACTIONS`, each reusing the online service; `payment.receive` is a money op). Code:
+`sync/application/SyncSalesService`.
+
+| Op | Payload | What the server does |
+|---|---|---|
+| `salesOrder.create` | `clientId`, `partnerId`, `lines[{productId, variantId?, uomId?, quantity, discountPercent?, description?, sourceLocationId?}]`, `expectedTotal`, optional `paymentMode`, `paymentTermId`, `requestedDate`, `customerRef`, `notes`, `deliveryAddress`, `locationId`, `currencyCode`, `confirm` (default true) | `SalesOrderService.create` with **server prices** (any device `unitPrice` is dropped; a manual `discountPercent` is kept and its approval rules apply), then the price audit, then `confirm` (approvals, stock policy and credit check as online), then the offline cap |
+| `quote.create` | as above with `validUntil`, `submit` (default true) | `SalesQuotationService.create` with server prices, the price audit, then `submit` (auto-approve or approval) |
+| `payment.receive` | `clientId`, `partnerId`, `amount`, `paymentMethod` (cash, bank, mobile_money, card, cheque), `reference?`, `paymentDate?` (default the `occurredAt` date), `allocations[{documentId, amount}]` | `PaymentService.createReceipt` for the **amount received**. Each allocation is applied up to what is still open on that invoice at sync; the rest stays unallocated (on account). If the posting refuses the allocations (an invoice changed in between), the whole payment is taken on account. No tolerance (C6) |
+
+Permissions per op: `sales:order:write` (+ `sales:order:confirm` to confirm), `sales:quotation:write`,
+`payment:create`. Documents are stamped `recordedOffline` + `occurredAt` (V597); payments also carry
+`offlineActorId` (the rep), because `Payment` has no creator column.
+
+**Outcome** (additive member of the push result): `{state, reason?, total}` with state `confirmed | on_hold |
+pending_approval | credit_approval | draft | price_review` (orders), `approved | pending_approval | draft |
+price_review` (quotes), `posted | partly_unallocated` (+ `allocated`) (payments).
+
+**Review queue** — new table `SyncReviewItem` (V597), kinds `price_variance`, `confirm_refused`, `offline_cap`,
+`payment_allocation`. `GET /sync/sales-reviews` (`sales:order:read`), `POST /sync/sales-reviews/{id}/resolve
+{note}` (`sales:order:hold_release`). Resolving records what a person did; it never changes the document. Web:
+`/sales/offline-review`.
+
+**Payment reconciliation** — `GET /sync/payment-reconciliation?from&to&userId&deviceId` (`payment:read`): per rep
+and day (by `occurredAt`, UTC) the payments, amount received, allocation asked, allocation applied, left on account,
+voided, and `payment.receive` dead letters (count, amount claimed, still open). Web: `/sales/offline-payments`.
+
+**Scopes** — sent only when named, always in full, limited to the device's branch (customers whose home branch it
+is, or none): `priceLists` (active pricelists with current rules), `paymentTerms`, `customerCredit` (per customer:
+pricelist, payment term, salesperson, limit, hold, and where a limit applies the exposure / headroom / overdue at
+pull time), `openSalesOrders` (last 90 days, not done or cancelled, with owner), `openInvoices` (customer invoices
+with a balance). `offlinePolicy` gains `offlineOrderCap` and `varianceTolerance` (additive).
+
+**Web — field sales** `/sales/field` (`sales:order:write`; registered device; offline-capable like the POS):
+New order (customer search with the credit snapshot, product search, the device's price estimate, manual
+discount, payment mode / term, a local credit warning and the cap), Quote, Collect payment (open invoices,
+oldest-due auto-allocation the rep can change), My orders & invoices, and the server outcome of recent work. Pure
+logic: `web/src/features/sales-field/offline-sales.ts`.
+
+**O5 as built — deviations to approve:**
+1. **The device price is an estimate.** It uses the customer's pricelist (else the default) — fixed / discount /
+   surcharge rules by product, category or all, quantity breaks, dates, branch. Agreements, promotions, site
+   pricelists, named price lists, partner-category rules and cost-plus rules are the server's alone; the audit
+   catches the difference. The device's prices are never posted.
+2. **The audit compares document totals (tax included), not lines.** Beyond the tolerance the document is kept as a
+   **draft** (not confirmed / submitted) with a `price_variance` item, rather than confirmed and put on hold.
+3. **The server prices as of the sync**, not as of `occurredAt` (the sales services price "today"). A price change
+   between the two shows up as a variance.
+4. **"The rep's own" orders and invoices are filtered on the device.** A pull is authenticated by the device, not the
+   user, so the scopes cover the device's branch; the page shows the signed-in rep's own (owner / salesperson).
+5. **Offline order cap** (`sync.offlineOrderCap`, org setting, base currency, 0 = none): per rep, the confirmed
+   offline orders whose `occurredAt` is within the offline window. The device refuses to record past it (counting
+   its unsynced orders); the server puts the order on hold with an `offline_cap` item.
+6. **Credit**: confirmation runs the normal credit check — a hold or breach puts the order on hold as online; an
+   org whose policy is `block` gets the order kept as a draft with a `confirm_refused` item; `approve` opens a
+   credit request (`credit_approval`).
+7. **Field payments have no cash session.** An open `payment.receive` dead letter from a device blocks closing a
+   POS shift opened on that device (it is a money op, `CashSessionService.SYNC_MONEY_OP_TYPES`).
+8. **The payment evidence trigger is redefined** (V597, `guard_payment`): everything is as in V1, plus exactly one
+   permitted change — `recordedOffline` false → true with `occurredAt` / `offlineActorId` set from nothing. The
+   stamp is immutable afterwards (tested).
+
+**Tests:** `SyncSalesIT` (10: order confirmed; price variance → draft + review, queue listing and resolve; credit
+hold; offline cap → hold + review + policy on pull; quotes submitted / price review; payment with an invoice settled
+meanwhile → partly on account + review + reconciliation report; payment in full + the stamp immutable; scopes only
+when named; unknown customer → dead letter), `SyncOpCatalogTest` (48 types; money list = cash close), `SyncIT`
+authorization matrix (19 routes); Vitest `features/sales-field/__tests__/offline-sales.test.ts` (7).
+
+**Not done in O5:** a browser run of the field-sales page on DEMO; per-line price variance; offline creation of a new
+customer from the field page (`customer.upsert` exists but the page does not offer it); a sales-review alert to
+supervisors through the alerts module.
+
 ## Additive wire changes in O0
 
 | Where | Change |

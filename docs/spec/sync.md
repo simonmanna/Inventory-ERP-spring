@@ -137,9 +137,16 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   `serials`, `uomConversions` are sent only when named and are limited to the device's branch; `stockLocations` rows
   gain `branchId`. New route `GET /sync/stock-discrepancies` (`inventory:read`). Columns `recordedOffline` /
   `occurredAt` on `StockTransfer`, `StockAdjustment`, `GoodsReceiptNote` (V596). See ADR-S083 "O4 as built".
+- **Field sales (O5):** push op types `salesOrder.create`, `quote.create`, `payment.receive` (money); their result
+  carries `outcome {state, reason?, total}`. Pull scopes `priceLists`, `paymentTerms`, `customerCredit`,
+  `openSalesOrders`, `openInvoices` (named only, full sets, device branch); `offlinePolicy` gains `offlineOrderCap`
+  and `varianceTolerance`. New routes `GET /sync/sales-reviews`, `POST /sync/sales-reviews/{id}/resolve`,
+  `GET /sync/payment-reconciliation`. V597: `recordedOffline` / `occurredAt` on `SalesOrder`, `SalesQuotation`,
+  `Payment` (+ `offlineActorId`), table `SyncReviewItem`, `guard_payment` allows the one-time stamp. See ADR-S083
+  "O5 as built".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
-  `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`; the `SyncIT` authorization matrix now covers 16
-  routes.
+  `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`, `SyncSalesIT`; the `SyncIT` authorization
+  matrix now covers 19 routes.
 
 ## Notes
 

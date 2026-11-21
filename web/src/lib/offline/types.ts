@@ -67,6 +67,10 @@ export interface OfflinePolicy {
   idleTimeoutMinutes: number;
   pinMaxAttempts: number;
   pinLockoutMinutes: number;
+  /** ADR-S083 O5: the most a rep may confirm from offline orders within the window (0 = no cap). */
+  offlineOrderCap?: number;
+  /** ADR-S083 O5: percent the server total may differ from the device's before an order goes to review. */
+  varianceTolerance?: { salesOrder?: number; quote?: number };
 }
 
 export const DEFAULT_POLICY: OfflinePolicy = {
@@ -172,7 +176,9 @@ export interface SyncStatus {
 /** Scopes the server always sends in full (no watermark): replace, never merge. */
 export const FULL_SET_SCOPES = ['paymentMethods', 'ledgerAccounts', 'expenseCategories', 'stockLocations',
   // ADR-S083 O4 warehouse scopes sent in full
-  'openPurchaseOrders', 'transfers', 'uomConversions'] as const;
+  'openPurchaseOrders', 'transfers', 'uomConversions',
+  // ADR-S083 O5 field-sales scopes, all full sets
+  'priceLists', 'paymentTerms', 'customerCredit', 'openSalesOrders', 'openInvoices'] as const;
 
 /** Every pull scope (`SyncPullService.SCOPES`). */
 export const ALL_SCOPES = [
@@ -184,5 +190,8 @@ export const ALL_SCOPES = [
 
 /** ADR-S083 O4: warehouse scopes (`SyncPullService.EXTENDED_SCOPES`), sent only when named; limited to the device's branch. */
 export const WAREHOUSE_SCOPES = ['openPurchaseOrders', 'transfers', 'lots', 'serials', 'uomConversions'] as const;
+
+/** ADR-S083 O5: field-sales scopes (`SyncSalesScopes`), sent only when named; limited to the device's branch. */
+export const SALES_SCOPES = ['priceLists', 'paymentTerms', 'customerCredit', 'openSalesOrders', 'openInvoices'] as const;
 
 export const SYNC_PROTOCOL = '2.0';

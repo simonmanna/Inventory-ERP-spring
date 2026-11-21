@@ -8,7 +8,7 @@ import { wipeQueryCache } from '@/lib/query-client';
 import { SyncEngine } from './engine';
 import { requestPersistence } from './storage';
 import { SyncStore } from './store';
-import { ALL_SCOPES, WAREHOUSE_SCOPES } from './types';
+import { ALL_SCOPES, SALES_SCOPES, WAREHOUSE_SCOPES } from './types';
 import { FetchTransport } from './transport';
 
 const engines = new Map<string, SyncEngine>();
@@ -19,8 +19,8 @@ export function syncEngineFor(organizationId: string): SyncEngine {
     e = new SyncEngine({
       store: SyncStore.forOrganization(organizationId),
       transport: new FetchTransport(getApiBaseUrl()),
-      // Everything a pull without `scopes` returns, plus the warehouse scopes (ADR-S083 O4).
-      scopes: [...ALL_SCOPES, ...WAREHOUSE_SCOPES],
+      // Everything a pull without `scopes` returns, plus the warehouse (O4) and field-sales (O5) scopes (ADR-S083).
+      scopes: [...ALL_SCOPES, ...WAREHOUSE_SCOPES, ...SALES_SCOPES],
     });
     engines.set(organizationId, e);
     // ADR-S083 S2/S3: a revoked device keeps no cached data either.

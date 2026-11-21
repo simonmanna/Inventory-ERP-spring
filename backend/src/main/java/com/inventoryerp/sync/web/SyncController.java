@@ -77,7 +77,8 @@ public class SyncController {
                 "productCategory.upsert", "productCategory.delete", "cashRegister.upsert", "cashRegister.delete",
                 "posTable.upsert", "posTable.delete", "staff.pinChange", "message.send", "message.markRead",
                 "stock.in", "stock.out", "stock.count", "expense.create", "kitchen.void", "cash_drawer.open",
-                "transfer.dispatch", "transfer.receive", "stock.adjust", "grn.receive"}) String type,
+                "transfer.dispatch", "transfer.receive", "stock.adjust", "grn.receive", "salesOrder.create",
+                "quote.create", "payment.receive"}) String type,
             @NotNull(message = STR) String actorUserId,
             @NotNull(message = "must be a valid ISO 8601 date string")
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String occurredAt,
@@ -108,7 +109,8 @@ public class SyncController {
             + " product.delete, productCategory.upsert, productCategory.delete, cashRegister.upsert, cashRegister.delete,"
             + " posTable.upsert, posTable.delete, staff.pinChange, message.send, message.markRead, stock.in, stock.out,"
             + " stock.count, expense.create, kitchen.void, cash_drawer.open, transfer.dispatch, transfer.receive,"
-            + " stock.adjust, grn.receive"; // kitchen.void: Phase I6, cash_drawer.open: LP2b, the last four: ADR-S083 O4
+            + " stock.adjust, grn.receive, salesOrder.create, quote.create, payment.receive";
+    // kitchen.void: Phase I6, cash_drawer.open: LP2b, transfer.dispatch..grn.receive: ADR-S083 O4, the last three: O5
     // (all additive)
 
     /** {@code SyncPushDto}. */
@@ -132,6 +134,16 @@ public class SyncController {
     void setO4Collaborators(com.inventoryerp.sync.application.SyncStockService stockOps) {
         this.stockOps = stockOps;
     }
+
+    private com.inventoryerp.sync.application.SyncSalesService salesOps;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setO5Collaborators(com.inventoryerp.sync.application.SyncSalesService salesOps) {
+        this.salesOps = salesOps;
+    }
+
+    /** {@code POST /sync/sales-reviews/{id}/resolve}. */
+    public record ResolveReviewRequest(@NotNull(message = "should not be empty") String note) {}
 
     @org.springframework.beans.factory.annotation.Autowired
     void setO0Collaborators(SyncSnapshotService snapshots, IdempotencyService idempotency) {
@@ -217,6 +229,39 @@ public class SyncController {
                 "offline_awaiting_dispatch"}) String kind,
             @RequestParam(required = false) @OneOf({"open", "resolved"}) String status) {
         return stockOps.discrepancies(branchId, deviceId, locationId, kind, status);
+    }
+
+    /**
+     * ADR-S083 O5 (Extension): the offline sales review queue — orders and quotes priced beyond the tolerance, orders
+     * the server could not confirm, the offline order cap exceeded, payments whose allocations could not all apply.
+     */
+    @GetMapping("/sales-reviews")
+    @RequirePermissions(Permissions.SALES__ORDER_READ)
+    public List<Map<String, Object>> salesReviews(@RequestParam(required = false) @OneOf({"price_variance",
+        "confirm_refused", "offline_cap", "payment_allocation"}) String kind,
+            @RequestParam(required = false) @OneOf({"open", "resolved"}) String status,
+            @RequestParam(required = false) String deviceId, @RequestParam(required = false) String userId) {
+        return salesOps.reviews(kind, status, deviceId, userId);
+    }
+
+    @PostMapping("/sales-reviews/{id}/resolve")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.SALES__ORDER_HOLD_RELEASE)
+    public Map<String, Object> resolveSalesReview(@PathVariable String id, @Valid @RequestBody ResolveReviewRequest dto) {
+        return salesOps.resolveReview(id, dto.note());
+    }
+
+    /** ADR-S083 O5 (Extension): offline payments per rep and day against what was applied and what was refused. */
+    @GetMapping("/payment-reconciliation")
+    @RequirePermissions(Permissions.PAYMENT__READ)
+    public List<Map<String, Object>> paymentReconciliation(
+            @RequestParam(required = false) @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}") String from,
+            @RequestParam(required = false) @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}") String to,
+            @RequestParam(required = false) String userId, @RequestParam(required = false) String deviceId) {
+        if ((from != null && !from.matches("\\d{4}-\\d{2}-\\d{2}")) || (to != null && !to.matches("\\d{4}-\\d{2}-\\d{2}"))) {
+            throw ApiException.badRequest("from and to must be dates (YYYY-MM-DD)");
+        }
+        return salesOps.paymentReconciliation(from, to, userId, deviceId);
     }
 
     @GetMapping("/dead-letters/counts")
