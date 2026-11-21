@@ -64,7 +64,8 @@ public class CashSessionController {
             String managerPin,
             Map<String, Object> closingDenomination,
             @Pattern(regexp = ISO, message = "must be a valid ISO 8601 date string") String occurredAt,
-            String sessionId) {}
+            String sessionId,
+            String syncOverrideReason) {}
 
     /** {@code RecordMovementDto}. */
     public record RecordMovementRequest(
@@ -88,7 +89,8 @@ public class CashSessionController {
             String varianceReason,
             Map<String, Object> closingAccounts,
             Map<String, Object> uncountedAccounts,
-            Map<String, Object> closingDenomination) {}
+            Map<String, Object> closingDenomination,
+            String syncOverrideReason) {}
 
     /** {@code BankDepositDto}. */
     public record BankDepositRequest(
@@ -252,7 +254,7 @@ public class CashSessionController {
         return sessions.close(new CashSessionService.CloseInput(dto.closingAccounts(), dto.uncountedAccounts(),
                 dto.pendingSyncCount(), dto.closingCounted(), dto.notes(), dto.varianceReason(), dto.varianceStatus(), null,
                 dto.approvedById(), dto.approverEmail(), dto.managerPin(), dto.closingDenomination(), dto.occurredAt(),
-                dto.sessionId()), false);
+                dto.sessionId(), dto.syncOverrideReason()), false);
     }
 
     @PostMapping("/movement")
@@ -270,7 +272,7 @@ public class CashSessionController {
     public Map<String, Object> forceClose(@PathVariable String id, @Valid @RequestBody ForceCloseRequest dto) {
         return sessions.close(new CashSessionService.CloseInput(dto.closingAccounts(), dto.uncountedAccounts(), null,
                 dto.closingCounted(), dto.notes(), dto.varianceReason(), null, null, null, null, null,
-                dto.closingDenomination(), null, id), true);
+                dto.closingDenomination(), null, id, dto.syncOverrideReason()), true);
     }
 
     @PostMapping("/{id}/banking")

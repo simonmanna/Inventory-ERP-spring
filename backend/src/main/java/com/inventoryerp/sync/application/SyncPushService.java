@@ -15,6 +15,7 @@ import com.inventoryerp.inventory.application.DirectStockService;
 import com.inventoryerp.inventory.application.InventoryCountService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.common.OccurredAt;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -76,10 +77,19 @@ public class SyncPushService {
 
     /** One pushed op ({@code SyncOpDto}). */
     public record Op(String opId, int deviceSeq, String type, String actorUserId, String occurredAt,
-            Map<String, Object> payload) {}
+            Map<String, Object> payload, List<String> originChain, String supersedesOpId) {
+        public Op(String opId, int deviceSeq, String type, String actorUserId, String occurredAt,
+                Map<String, Object> payload) {
+            this(opId, deviceSeq, type, actorUserId, occurredAt, payload, null, null);
+        }
+    }
 
     /** The authenticated device ({@code RequestDevice}). */
-    public record Device(String id, String organizationId, String branchId) {}
+    public record Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode) {
+        public Device(String id, String organizationId, String branchId) {
+            this(id, organizationId, branchId, null, null);
+        }
+    }
 
     private final PosDb db;
     private final JdbcClient jdbc;
@@ -100,6 +110,25 @@ public class SyncPushService {
     private final PosCashDrawerService cashDrawer;
     private final AuditService audit;
     private final org.springframework.transaction.support.TransactionTemplate tx;
+    /** ADR-S083 C1: the one transaction an {@link SyncOpCatalog.Boundary#OP_TRANSACTION} handler runs in. */
+    private final org.springframework.transaction.support.TransactionTemplate opTx;
+    private SyncLedger ledger;
+
+    /** ADR-S083 C1 ledger (setter injection keeps the long constructor stable for existing wiring). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLedger(SyncLedger ledger) {
+        this.ledger = ledger;
+    }
+
+    /** Name of the per-op transaction ({@link SyncOpCatalog.Boundary#OP_TRANSACTION}). */
+    public static final String OP_TX = "erp.sync.op";
+
+    /** Quarantine codes: ops a revoked or expired device delivered after its cut-off. */
+    public static final java.util.Set<String> QUARANTINE_CODES = java.util.Set.of("DEVICE_REVOKED",
+            "DEVICE_TOKEN_EXPIRED");
+
+    /** Age after which a pending key with no ledger row is treated as an abandoned attempt (the money rule). */
+    static final long STALE_ATTEMPT_MS = 120_000;
 
     public SyncPushService(PosDb db, JsonMapper mapper, IdempotencyService idempotency, PosService pos,
             PosSettingsService posSettings, PosInvoiceService billing, PosReservationsService reservations,
@@ -113,6 +142,8 @@ public class SyncPushService {
         this.audit = audit;
         this.db = db;
         this.tx = new org.springframework.transaction.support.TransactionTemplate(txm);
+        this.opTx = new org.springframework.transaction.support.TransactionTemplate(txm);
+        this.opTx.setName(OP_TX);
         this.jdbc = db.jdbc();
         this.mapper = mapper;
         this.idempotency = idempotency;
@@ -186,72 +217,336 @@ public class SyncPushService {
     }
 
     private Map<String, Object> failed(Op op, int status, String error) {
+        return failed(op, status, error, failureCode(op, status, null), retryable(status, null));
+    }
+
+    private Map<String, Object> failed(Op op, int status, String error, String code, boolean retryable) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("opId", op.opId());
         r.put("status", "failed");
         r.put("httpStatus", status);
         r.put("error", error);
+        // ADR-S083 S1 (additive): a machine code, and whether the device may retry the SAME opId.
+        r.put("code", code);
+        r.put("retryable", retryable);
         return r;
+    }
+
+    /** ADR-S083 S1/S5 failure code. */
+    static String failureCode(Op op, int status, String apiCode) {
+        if (apiCode != null) {
+            return apiCode;
+        }
+        if (status == 424) {
+            return "DEPENDENCY_FAILED";
+        }
+        if (status >= 500) {
+            return "SERVER_ERROR";
+        }
+        if ("stock.count".equals(op.type()) && status == 409) {
+            return "COUNT_CONFLICT"; // definitive: an open draft count must be finished or cancelled by a person
+        }
+        if (status == 403) {
+            return "PERMISSION_DENIED";
+        }
+        return "BUSINESS_RULE";
+    }
+
+    /** Transient failures and dependency failures may be retried with the same opId; business rejections may not. */
+    static boolean retryable(int status, String code) {
+        return status >= 500 || status == 424 || "OPERATION_PENDING".equals(code) || "OPERATION_INCOMPLETE".equals(code);
     }
 
     private Map<String, Object> applyOp(Device device, Op op, Map<String, String> clientIdMap,
             Set<String> failedClientIds, Map<String, List<String>> actorOk) {
         Map<String, Object> payloadIn = op.payload() == null ? Map.of() : op.payload();
         Object clientId = payloadIn.get("clientId");
-        List<String> permissions = actorMayAct(device, op.actorUserId(), actorOk);
-        if (permissions == null) {
-            String why = "Unknown or inactive actorUserId " + op.actorUserId() + " for this device's organization";
-            deadLetter(device, op, why, 403);
+        Runnable markFailed = () -> {
             if (PosSql.truthy(clientId)) {
                 failedClientIds.add(String.valueOf(clientId));
             }
-            return failed(op, 403, why);
+        };
+        Map<String, Object> hashed = new LinkedHashMap<>();
+        hashed.put("type", op.type());
+        hashed.put("payload", op.payload());
+        // Hash of the payload as sent (key order as received): what idempotency records written before O0 carry.
+        String legacyHash = idempotency.hashPayload(hashed);
+        // ADR-S083 C1: the ledger hash is key-order independent. A stored dead-letter payload comes back from jsonb
+        // with its keys reordered; a supervisor retry or recovery must still be recognised as the same op.
+        Map<String, Object> canonical = new LinkedHashMap<>();
+        canonical.put("type", op.type());
+        canonical.put("payload", canonical(op.payload()));
+        String payloadHash = idempotency.hashPayload(canonical);
+        String[] keyHash = {payloadHash};
+        // ADR-S083 S2 (O0 correction 2): the cut-off is decided by server time only. Every push a revoked or expired
+        // device makes arrives after its cut-off (receivedAt > revokedAt), so nothing new is applied, whatever
+        // occurredAt the device claims. An op the server already applied replays its stored result (no new effect);
+        // anything else is quarantined for supervisor recovery (SyncDeadLetterService#recover).
+        if (device.cutoff() != null) {
+            SyncLedger.Entry seen = ledger.find(device.organizationId(), op.opId());
+            if (seen != null && seen.applied() && seen.payloadHash().equals(payloadHash)) {
+                Map<String, Object> body = asMap(seen.result());
+                remember(clientId, body, clientIdMap);
+                return success(op, true, seen.httpStatus() == null ? 201 : seen.httpStatus(), body);
+            }
+            String why = ("DEVICE_REVOKED".equals(device.cutoffCode()) ? "This device was revoked at "
+                    : "This device's token expired at ") + JsonConfig.toJsIso(device.cutoff())
+                    + "; operations received after that are held for supervisor review";
+            deadLetter(device, op, why, 403, device.cutoffCode(), false);
+            markFailed.run();
+            return failed(op, 403, why, device.cutoffCode(), false);
+        }
+        List<String> permissions = actorMayAct(device, op.actorUserId(), actorOk);
+        if (permissions == null) {
+            String why = "Unknown or inactive actorUserId " + op.actorUserId() + " for this device's organization";
+            deadLetter(device, op, why, 403, "ACTOR_NOT_ALLOWED", false);
+            markFailed.run();
+            return failed(op, 403, why, "ACTOR_NOT_ALLOWED", false);
         }
         String brokenDep = referencedClientIds(payloadIn).stream().filter(failedClientIds::contains).findFirst()
                 .orElse(null);
         if (brokenDep != null) {
             String why = "Depends on failed op (clientId " + brokenDep + ")";
-            deadLetter(device, op, why, 424);
-            if (PosSql.truthy(clientId)) {
-                failedClientIds.add(String.valueOf(clientId));
-            }
+            deadLetter(device, op, why, 424, "DEPENDENCY_FAILED", true);
+            markFailed.run();
             return failed(op, 424, why);
         }
+        List<String> chain = new ArrayList<>(op.originChain() == null ? List.of() : op.originChain());
+        if (device.id() != null && !chain.contains("device:" + device.id())) {
+            chain.add("device:" + device.id());
+        }
+        chain.add("server:" + ledger.serverId());
+        SyncLedger.Context ctx = new SyncLedger.Context(device.organizationId(), op.opId(), payloadHash, op.type(),
+                device.id(), op.deviceSeq(), chain, op.supersedesOpId());
+        TenantStore store = TenantStore.user(device.organizationId(), op.actorUserId());
+        store.setPermissions(permissions);
+        // ADR-S083 C1/S1: the ledger decides first. Same opId + different payload is never applied.
+        SyncLedger.Entry entry = ledger.find(device.organizationId(), op.opId());
+        if (entry != null) {
+            if (!entry.payloadHash().equals(payloadHash)) {
+                String why = "Operation id " + op.opId() + " was already used for a different operation";
+                deadLetter(device, op, why, 409, "OP_ID_REUSED", false);
+                markFailed.run();
+                return failed(op, 409, why, "OP_ID_REUSED", false);
+            }
+            if (!entry.applied()) {
+                String why = "Operation " + op.opId() + " committed on the server but its result was not recorded; it"
+                        + " is listed for reconciliation and will not run again";
+                deadLetter(device, op, why, 409, "OPERATION_INCOMPLETE", false);
+                markFailed.run();
+                return failed(op, 409, why, "OPERATION_INCOMPLETE", true);
+            }
+            Map<String, Object> body = asMap(entry.result());
+            remember(clientId, body, clientIdMap);
+            afterApplied(device, op); // a dead letter left by a crash after commit is closed by the replay
+            return success(op, true, entry.httpStatus() == null ? 201 : entry.httpStatus(), body);
+        }
+        // No ledger row: nothing committed. A key an earlier attempt left pending is released once it is stale, so
+        // the same opId runs again (never a new key); a fresh one is an attempt still in flight.
+        Map<String, Object> pre = TenantContext.run(store, () -> {
+            var key = idempotency.peek(op.opId()).orElse(null);
+            if (key == null) {
+                return null;
+            }
+            if (!key.requestHash().equals(payloadHash)) {
+                if (!key.requestHash().equals(legacyHash)) {
+                    return Map.of("code", "OP_ID_REUSED");
+                }
+                keyHash[0] = legacyHash; // a record from before O0: keep its hash so it still replays
+            }
+            if (("pending".equals(key.status()) || "indeterminate".equals(key.status()))
+                    && !idempotency.releaseStale(op.opId(), STALE_ATTEMPT_MS)) {
+                return Map.of("code", "OPERATION_PENDING");
+            }
+            return null;
+        });
+        if (pre != null && "OP_ID_REUSED".equals(pre.get("code"))) {
+            String why = "Operation id " + op.opId() + " was already used for a different operation";
+            deadLetter(device, op, why, 409, "OP_ID_REUSED", false);
+            markFailed.run();
+            return failed(op, 409, why, "OP_ID_REUSED", false);
+        }
+        if (pre != null) {
+            markFailed.run();
+            return failed(op, 409, "This operation is still being processed; retry with the same operation id",
+                    "OPERATION_PENDING", true);
+        }
         try {
-            TenantStore store = TenantStore.user(device.organizationId(), op.actorUserId());
-            store.setPermissions(permissions);
-            Map<String, Object> hashed = new LinkedHashMap<>();
-            hashed.put("type", op.type());
-            hashed.put("payload", op.payload());
             IdempotencyService.Result outcome = TenantContext.run(store, () -> idempotency.executeWithKey(op.opId(),
-                    idempotency.hashPayload(hashed), "SYNC", op.type(), mapper.valueToTree(payloadIn),
-                    () -> new IdempotencyService.Result(false, 201, runOp(device, op, clientIdMap))));
+                    keyHash[0], "SYNC", op.type(), mapper.valueToTree(payloadIn),
+                    () -> ledger.run(ctx, () -> new IdempotencyService.Result(false, 201, runInBoundary(device, op,
+                            clientIdMap)))));
             Map<String, Object> body = asMap(outcome.body());
-            if (PosSql.truthy(clientId) && body != null && PosSql.truthy(body.get("id"))) {
-                clientIdMap.put(String.valueOf(clientId), String.valueOf(body.get("id")));
-            }
-            Map<String, Object> r = new LinkedHashMap<>();
-            r.put("opId", op.opId());
-            r.put("status", outcome.replayed() ? "replayed" : "applied");
-            r.put("httpStatus", outcome.statusCode());
-            r.put("error", null);
-            if (body != null && body.get("mapping") != null) {
-                r.put("mapping", body.get("mapping"));
-            }
-            if (body != null && body.get("finalNumbers") != null) {
-                r.put("finalNumbers", body.get("finalNumbers"));
-            }
-            return r;
+            ledger.complete(ctx, outcome.statusCode(), body);
+            remember(clientId, body, clientIdMap);
+            afterApplied(device, op);
+            acceptSeq(device, op);
+            return success(op, outcome.replayed(), outcome.statusCode(), body);
         } catch (RuntimeException err) {
             int status = err instanceof ApiException a ? a.status().value() : 500;
             String message = errorMessage(err);
-            log.warn("sync op {} ({}) failed: {}", op.opId(), op.type(), message);
-            deadLetter(device, op, message, status);
-            if (PosSql.truthy(clientId)) {
-                failedClientIds.add(String.valueOf(clientId));
+            String apiCode = apiCode(err);
+            markFailed.run();
+            if ("OPERATION_PENDING".equals(apiCode)
+                    || status == 409 && message != null && message.contains("is being processed concurrently")) {
+                // Another attempt of this same opId holds the key: never a dead letter, retry the same opId.
+                return failed(op, 409, message, "OPERATION_PENDING", true);
             }
-            return failed(op, status, message);
+            String code = failureCode(op, status, ctx.anchored() ? "PARTIAL_COMMIT" : null);
+            log.warn("sync op {} ({}) failed [{}]: {}", op.opId(), op.type(), code, message);
+            if (!ctx.anchored()) {
+                // Nothing committed: free the key now, so a supervisor retry or a corrected resend may run it again.
+                TenantContext.run(store, () -> idempotency.releaseStale(op.opId(), 0));
+            }
+            boolean retry = !ctx.anchored() && retryable(status, code);
+            deadLetter(device, op, message, status, code, retry);
+            return failed(op, status, message, code, retry);
         }
+    }
+
+    /** Maps with their keys sorted, at any depth (a key-order independent form for hashing). */
+    @SuppressWarnings("unchecked")
+    static Object canonical(Object value) {
+        if (value instanceof Map<?, ?> m) {
+            java.util.TreeMap<String, Object> out = new java.util.TreeMap<>();
+            m.forEach((k, v) -> out.put(String.valueOf(k), canonical(v)));
+            return out;
+        }
+        if (value instanceof List<?> l) {
+            return l.stream().map(SyncPushService::canonical).toList();
+        }
+        return value;
+    }
+
+    /** Test hook: runs after an op's business commit, before its ledger row is completed (crash simulation). */
+    static volatile Runnable afterRunHook;
+
+    /**
+     * ADR-S083 C1: run the handler inside the boundary its catalog entry names. An unclassified type is refused, so
+     * no handler can run without durable duplicate protection.
+     */
+    private Map<String, Object> runInBoundary(Device device, Op op, Map<String, String> clientIdMap) {
+        SyncOpCatalog.Entry entry = SyncOpCatalog.of(op.type());
+        if (entry == null) {
+            throw http("Unsupported sync op type: " + op.type(), 400);
+        }
+        Map<String, Object> out = entry.boundary() == SyncOpCatalog.Boundary.OP_TRANSACTION
+                ? opTx.execute(st -> {
+                    Map<String, Object> r = runOp(device, op, clientIdMap);
+                    ledger.stage(r);
+                    return r;
+                })
+                : runOp(device, op, clientIdMap);
+        Runnable hook = afterRunHook;
+        if (hook != null) {
+            hook.run();
+        }
+        return out;
+    }
+
+    /** Server-maintained sequence state: the highest deviceSeq applied for this device. */
+    private void acceptSeq(Device device, Op op) {
+        if (device.id() == null) {
+            return;
+        }
+        try {
+            jdbc.sql("UPDATE \"PosDevice\" SET \"lastAcceptedSeq\" = ? WHERE id = ? AND \"organizationId\" = ?"
+                    + " AND \"lastAcceptedSeq\" < ?").params(op.deviceSeq(), device.id(), device.organizationId(),
+                            op.deviceSeq()).update();
+        } catch (RuntimeException e) {
+            log.warn("lastAcceptedSeq update failed: {}", e.toString());
+        }
+    }
+
+    private void remember(Object clientId, Map<String, Object> body, Map<String, String> clientIdMap) {
+        if (PosSql.truthy(clientId) && body != null && PosSql.truthy(body.get("id"))) {
+            clientIdMap.put(String.valueOf(clientId), String.valueOf(body.get("id")));
+        }
+    }
+
+    private static Map<String, Object> success(Op op, boolean replayed, int status, Map<String, Object> body) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("opId", op.opId());
+        r.put("status", replayed ? "replayed" : "applied");
+        r.put("httpStatus", status);
+        r.put("error", null);
+        if (body != null && body.get("mapping") != null) {
+            r.put("mapping", body.get("mapping"));
+        }
+        if (body != null && body.get("finalNumbers") != null) {
+            r.put("finalNumbers", body.get("finalNumbers"));
+        }
+        return r;
+    }
+
+    /** The {@code code} member of an API error body ({@code OPERATION_PENDING}), if any. */
+    static String apiCode(RuntimeException err) {
+        if (err instanceof ApiException a && a.hasBody()) {
+            Object body = a.body();
+            Object c = body instanceof Map<?, ?> map ? map.get("code")
+                    : body instanceof JsonNode n && n.get("code") != null ? n.get("code").asString() : null;
+            return c == null ? null : String.valueOf(c);
+        }
+        return null;
+    }
+
+    /**
+     * ADR-S083 S5: an op that finally applied closes its own dead letter ({@code retried}); a correction op closes the
+     * dead letter it supersedes ({@code resolved}, linked by {@code resolvedByOpId}). Both are audited.
+     */
+    private void afterApplied(Device device, Op op) {
+        try {
+            int retried = jdbc.sql("UPDATE \"SyncOpDeadLetter\" SET status = 'retried', \"resolvedAt\" = " + PosSql.NOW
+                    + ", \"resolutionNote\" = 'Applied on retry with the same operation id' WHERE \"organizationId\" = ?"
+                    + " AND \"opId\" = ? AND status IN ('open', 'investigating')")
+                    .params(device.organizationId(), op.opId()).update();
+            if (retried > 0) {
+                auditAs(device, op.actorUserId(), "SyncOpDeadLetter", op.opId(), Obj.of("status", "retried",
+                        "opId", op.opId()));
+            }
+            if (PosSql.truthy(op.supersedesOpId())) {
+                int resolved = jdbc.sql("UPDATE \"SyncOpDeadLetter\" SET status = 'resolved', \"resolvedAt\" = "
+                        + PosSql.NOW + ", \"resolvedById\" = ?, \"resolvedByOpId\" = ?, \"resolutionNote\" = ?"
+                        + " WHERE \"organizationId\" = ? AND \"opId\" = ? AND status IN ('open', 'investigating')")
+                        .params(op.actorUserId(), op.opId(), "Corrected by operation " + op.opId(),
+                                device.organizationId(), op.supersedesOpId()).update();
+                if (resolved > 0) {
+                    auditAs(device, op.actorUserId(), "SyncOpDeadLetter", op.supersedesOpId(), Obj.of("status",
+                            "resolved", "resolvedByOpId", op.opId()));
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("dead-letter follow-up for {} failed: {}", op.opId(), e.toString());
+        }
+    }
+
+    private void auditAs(Device device, String actor, String entity, String id, Map<String, Object> data) {
+        TenantContext.run(TenantStore.user(device.organizationId(), actor), () -> {
+            audit.record(AuditInput.of(entity, id, "update", null, data));
+            return null;
+        });
+    }
+
+    /**
+     * ADR-S083 S5 supervisor retry of a dead-lettered op: the stored op runs again under its ORIGINAL opId. Only for
+     * failures marked retryable; the device's revocation cut-off is the supervisor's call, so it is not re-applied.
+     */
+    public Map<String, Object> retry(Device device, Op op) {
+        return applyWithoutCutoff(device, op);
+    }
+
+    /**
+     * ADR-S083 S2 supervisor recovery of a quarantined op: the stored op runs once under its original opId, with the
+     * actor's current permissions re-checked. The sequence and evidence checks are made by the caller.
+     */
+    public Map<String, Object> recover(Device device, Op op) {
+        return applyWithoutCutoff(device, op);
+    }
+
+    private Map<String, Object> applyWithoutCutoff(Device device, Op op) {
+        Map<String, Object> result = applyOp(new Device(device.id(), device.organizationId(), device.branchId()), op,
+                new HashMap<>(), new LinkedHashSet<>(), new HashMap<>());
+        return result;
     }
 
     /** Nest {@code HttpException.message}: the string response, or the response object's {@code message}. */
@@ -344,14 +639,19 @@ public class SyncPushService {
             }
             case "cash_session.close" -> {
                 if (PosSql.truthy(payload.get("sessionId"))) {
-                    drainStockPostings(String.valueOf(payload.get("sessionId")));
+                    // Claimed, per-job/per-line keyed work: safe to run again, so it never anchors the ledger row.
+                    ledger.outside(() -> {
+                        drainStockPostings(String.valueOf(payload.get("sessionId")));
+                        return null;
+                    });
                 }
                 Map<String, Object> closed = cashSessions.close(new CashSessionService.CloseInput(
                         obj(payload.get("closingAccounts")), obj(payload.get("uncountedAccounts")), null,
                         decimal(payload.get("closingCounted")), str(payload.get("notes")), str(payload.get("varianceReason")),
                         str(payload.get("varianceStatus")), null, str(payload.get("approvedById")),
                         str(payload.get("approverEmail")), str(payload.get("managerPin")),
-                        obj(payload.get("closingDenomination")), occurredAt, str(payload.get("sessionId"))), false);
+                        obj(payload.get("closingDenomination")), occurredAt, str(payload.get("sessionId")),
+                        str(payload.get("syncOverrideReason"))), false);
                 m.put("id", closed == null ? null : closed.get("id"));
             }
             case "cash_session.movement" -> {
@@ -970,16 +1270,16 @@ public class SyncPushService {
         }
         String idHex = id.replace("-", "").toUpperCase();
         for (int len : new int[] {8, 16}) {
-            try {
-                db.insert(Partner.class, mapOf("id", id, "organizationId", device.organizationId(),
-                        "code", "POS-" + idHex.substring(0, Math.min(len, idHex.length())), "name", payload.get("name"),
-                        "phone", payload.get("phone"), "email", payload.get("email"), "notes", payload.get("note"),
-                        "isCustomer", true, "isCompany", false, "customFields", PosDb.json(loyalty)));
+            // ON CONFLICT instead of catching a duplicate key: the op runs in one transaction (ADR-S083 C1).
+            int inserted = jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, phone, email, notes,"
+                    + " \"isCustomer\", \"isCompany\", \"customFields\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?,"
+                    + " true, false, ?::jsonb, " + PosSql.NOW + ", " + PosSql.NOW + ") ON CONFLICT DO NOTHING")
+                    .params(id, device.organizationId(), "POS-" + idHex.substring(0, Math.min(len, idHex.length())),
+                            str(payload.get("name")), str(payload.get("phone")), str(payload.get("email")),
+                            str(payload.get("note")), com.inventoryerp.shared.web.EntityJson.toJson(loyalty))
+                    .update();
+            if (inserted > 0 || scopedFind(Partner.class, id) != null) {
                 return id;
-            } catch (org.springframework.dao.DuplicateKeyException e) {
-                if (scopedFind(Partner.class, id) != null) {
-                    return id;
-                }
             }
         }
         throw http("Could not allocate a unique code for customer " + id, 409);
@@ -1003,24 +1303,25 @@ public class SyncPushService {
         if (!Boolean.TRUE.equals(conv.get("syncToDevices"))) {
             throw http("Conversation is not device-visible", 403);
         }
-        try {
-            Map<String, Object> created = SqlRows.one(jdbc.sql("INSERT INTO \"Message\" (id, \"organizationId\","
-                    + " \"conversationId\", \"senderType\", \"senderUserId\", \"contentType\", body, \"occurredAt\")"
-                    + " VALUES (?, ?, ?, 'user', ?, 'text', ?, ?) RETURNING id, seq").params(messageId,
-                    TenantContext.organizationId(), conversationId, op.actorUserId(), body,
-                    SqlRows.ts(jsDate(occurredAt))));
-            scopedUpdate(Conversation.class, conversationId, new LinkedHashMap<>(), null);
-            return mapOf("id", created.get("id"), "mapping", mapOf("messageId", created.get("id")),
-                    "syncSequence", String.valueOf(created.get("seq")));
-        } catch (org.springframework.dao.DuplicateKeyException e) {
+        // ON CONFLICT instead of catching a duplicate key: the op runs in one transaction (ADR-S083 C1), and a failed
+        // statement would abort it.
+        Map<String, Object> created = SqlRows.one(jdbc.sql("INSERT INTO \"Message\" (id, \"organizationId\","
+                + " \"conversationId\", \"senderType\", \"senderUserId\", \"contentType\", body, \"occurredAt\")"
+                + " VALUES (?, ?, ?, 'user', ?, 'text', ?, ?) ON CONFLICT DO NOTHING RETURNING id, seq").params(messageId,
+                TenantContext.organizationId(), conversationId, op.actorUserId(), body,
+                SqlRows.ts(jsDate(occurredAt))));
+        if (created == null) {
             String existing = jdbc.sql("SELECT id FROM \"Message\" WHERE id = ? AND \"organizationId\" = ? AND"
                     + " \"deletedAt\" IS NULL").params(messageId, TenantContext.organizationId()).query(String.class)
                     .optional().orElse(null);
             if (existing != null) {
                 return mapOf("id", existing, "mapping", mapOf("messageId", existing));
             }
-            throw e;
+            throw new org.springframework.dao.DuplicateKeyException("Message id " + messageId + " is already taken");
         }
+        scopedUpdate(Conversation.class, conversationId, new LinkedHashMap<>(), null);
+        return mapOf("id", created.get("id"), "mapping", mapOf("messageId", created.get("id")),
+                "syncSequence", String.valueOf(created.get("seq")));
     }
 
     /** Open (or resume) a spot count over the counted products, enter the device's figures and submit. */
@@ -1123,7 +1424,7 @@ public class SyncPushService {
 
     /** Credential fields never stored in a dead letter (it is listed by {@code GET /sync/dead-letters}). */
     private static final java.util.Set<String> SECRET_KEYS = java.util.Set.of("managerPin", "incomingPin", "overridePin",
-            "pin", "password", "approvalToken");
+            "pin", "password", "approvalToken", "approverPin");
 
     /**
      * The payload with PINs, passwords and approval tokens replaced by {@code "[redacted]"}, at any depth.
@@ -1144,15 +1445,25 @@ public class SyncPushService {
     }
 
     private void deadLetter(Device device, Op op, String error, int httpStatus) {
+        deadLetter(device, op, error, httpStatus, failureCode(op, httpStatus, null), retryable(httpStatus, null));
+    }
+
+    private void deadLetter(Device device, Op op, String error, int httpStatus, String code, boolean retryable) {
         try {
             jdbc.sql("INSERT INTO \"SyncOpDeadLetter\" (id, \"organizationId\", \"deviceId\", \"opId\", \"deviceSeq\","
-                    + " \"opType\", \"actorUserId\", \"occurredAt\", payload, error, \"httpStatus\", \"createdAt\")"
-                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, " + PosSql.NOW + ") ON CONFLICT (\"organizationId\","
-                    + " \"opId\") DO UPDATE SET error = EXCLUDED.error, \"httpStatus\" = EXCLUDED.\"httpStatus\"")
+                    + " \"opType\", \"actorUserId\", \"occurredAt\", payload, error, \"httpStatus\", \"failureCode\","
+                    + " retryable, \"branchId\", attempts, \"lastAttemptAt\", \"createdAt\", \"receivedAt\")"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, 1, " + PosSql.NOW + ", " + PosSql.NOW + ", "
+                    + PosSql.NOW + ")"
+                    + " ON CONFLICT (\"organizationId\", \"opId\") DO UPDATE SET error = EXCLUDED.error,"
+                    + " \"httpStatus\" = EXCLUDED.\"httpStatus\", \"failureCode\" = EXCLUDED.\"failureCode\","
+                    + " retryable = EXCLUDED.retryable, attempts = \"SyncOpDeadLetter\".attempts + 1,"
+                    + " \"lastAttemptAt\" = EXCLUDED.\"lastAttemptAt\"")
                     .params(java.util.UUID.randomUUID().toString(), device.organizationId(), device.id(), op.opId(),
                             op.deviceSeq(), op.type(), op.actorUserId(),
                             op.occurredAt() == null ? null : SqlRows.ts(jsDate(op.occurredAt())),
-                            com.inventoryerp.shared.web.EntityJson.toJson(withoutSecrets(op.payload())), error, httpStatus)
+                            com.inventoryerp.shared.web.EntityJson.toJson(withoutSecrets(op.payload())), error, httpStatus,
+                            code, retryable, device.branchId())
                     .update();
         } catch (RuntimeException e) {
             log.error("FAILED TO DEAD-LETTER sync op {}: {}", op.opId(), e.toString());

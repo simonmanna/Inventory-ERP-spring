@@ -1,5 +1,7 @@
 # Offline sync protocol
 
+> **2026-11-20:** extended by ADR-S083 (offline hybrid): applied-op ledger, stable opIds, the dead-letter workflow, token lifecycle, protocol versions and snapshots. See `docs/adr/ADR-S083-offline-hybrid.md`.
+
 How the Android app and the offline web POS stay usable with no network, and
 reconcile with the server afterwards.
 

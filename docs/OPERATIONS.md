@@ -166,6 +166,39 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "Invoice_org_open_idx" ON "Invoice" ("or
 restore into a new scratch database → a second API container boots on it → trial balances of live and restored
 system must be identical → scratch database dropped. Run it before every release and quarterly.
 
+## 7c. Disaster recovery for offline sync (ADR-S083 C2)
+
+Targets. These are owner-adjustable defaults:
+
+| | HQ | Branch server (O7) |
+|---|---|---|
+| Backup | Continuous WAL archiving + point-in-time recovery | Nightly base backup + WAL |
+| RPO | ≤ 5 minutes | ≤ 15 minutes |
+| RTO | ≤ 4 hours | ≤ 4 hours |
+
+Rules:
+
+1. **The applied-op ledger (`SyncAppliedOp`) is not a backup.** Lost business records come back only from a database
+   restore, never by re-creating them from the ledger.
+2. **After any restore, keep devices and branches pointed at the restored server.** They re-push every op they have
+   not seen acknowledged. Normal dedup decides apply or replay:
+   - an op whose ledger row was lost with the restore is applied again, because its business rows were lost too
+   - an op whose ledger row survived is replayed
+3. **Run the post-restore reconciliation.** The automated job is deferred (tracked in ADR-S083 "Deferred work"); until
+   it exists, run these by hand:
+   - ledger rows still `state = 'committed'`: `SELECT * FROM "SyncAppliedOp" WHERE state = 'committed'`
+   - devices whose `PosDevice.lastPushSeq` is ahead of their highest ledger `deviceSeq`
+   - open dead letters by `failureCode`
+   - the trial balance (balanced journals; subledger vs control accounts)
+   - `StockItem` quantities vs the sum of stock movements
+
+   Record what you found in the incident note.
+4. **Revoke and re-register a device whose token was in a lost backup window**, if it can no longer pull. Ops it
+   pushes after revocation are held as `DEVICE_REVOKED` dead letters; recover the genuine ones (see the runbook row
+   "Device revoked or token expired with unsynced sales").
+
+WAL archiving and PITR are infrastructure tasks for the hosting environment. They are not configured by the application.
+
 ## 7b. Performance
 
 - Load suite: `tests/load/` (k6: checkout, tab edits, Z-report + trial balance, tables SSE fan-out);
@@ -194,7 +227,8 @@ system must be identical → scratch database dropped. Run it before every relea
 |---|---|
 | POS shows "offline" | `curl /api/v1/health`; check API container; offline queue replays automatically when back |
 | Stock not deducted after sales | `/pos/posting-monitor` → jobs/exceptions; retry; check `stock-posting-drain` lock |
-| Cannot close cash session | open sync dead letters or pending stock postings block close — resolve in `/sync/dead-letters`, posting monitor |
+| Cannot close cash session | 409 `SYNC_DEAD_LETTERS_OPEN`: a money op of this shift was rejected by sync — resolve it in `/sync/dead-letters` (retry, recover, or discard with a note), or a supervisor with `pos:override` closes with `syncOverrideReason` (audited). Pending stock postings: posting monitor |
+| Device revoked or token expired with unsynced sales | its pushes are held as `DEVICE_REVOKED` / `DEVICE_TOKEN_EXPIRED` dead letters, never applied automatically. Check each against paper receipts, then `POST /sync/dead-letters/{id}/recover` with a note, in device-sequence order. A sequence gap (ops that never arrived) needs `acknowledgeGap: true`. Every recovery is audited |
 | Printer not printing | `pos.printerHost/Port` setting; `nc -vz host 9100`; reprint from receipts screen |
 | Login lockout | `POST /users/:id/unlock` (admin) |
 | Disk full | prune old backups (`/admin/backups/cleanup`), check `var/uploads` |

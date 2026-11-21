@@ -332,6 +332,36 @@ public class IdempotencyService {
         }
     }
 
+    /** ADR-S083 S1: what a key currently holds, for the sync ledger's pre-checks. */
+    public record KeyState(String requestHash, String status, Instant createdAt) {}
+
+    /** The state of {@code key} in the current organization, if it was ever used. */
+    public Optional<KeyState> peek(String key) {
+        String organizationId = TenantContext.optionalOrganizationId();
+        if (organizationId == null) {
+            return Optional.empty();
+        }
+        return find(organizationId, key).map(r -> new KeyState(r.requestHash(), r.status(), r.createdAt()));
+    }
+
+    /**
+     * ADR-S083 S1: forget a sync op's pending key that saved no outcome and is older than {@code olderThanMs}. The caller
+     * has proved through the applied-op ledger that the earlier attempt committed nothing, so the same opId may run
+     * again; the age guard keeps an attempt that is still in flight from being run twice.
+     */
+    public boolean releaseStale(String key, long olderThanMs) {
+        String organizationId = TenantContext.optionalOrganizationId();
+        if (organizationId == null) {
+            return false;
+        }
+        return jdbc.sql("""
+                        DELETE FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ?
+                          AND status IN ('pending', 'indeterminate') AND "responseJson" = '{}'::jsonb
+                          AND "createdAt" < now() - make_interval(secs => ?)""")
+                .params(organizationId, key, olderThanMs / 1000.0)
+                .update() > 0;
+    }
+
     private record Row(String requestHash, String status, int statusCode, JsonNode responseJson, Instant createdAt) {}
 
     private Optional<Row> find(String organizationId, String key) {

@@ -80,7 +80,55 @@ public class SyncPullService {
         return TenantContext.organizationId();
     }
 
+    /** ADR-S083 S7: protocol-2 pulls also ship soft-deleted rows changed since the watermark, as tombstones. */
+    private static final ThreadLocal<Boolean> TOMBSTONES = new ThreadLocal<>();
+
     public Map<String, Object> pull(String cursorRaw, String scopesRaw) {
+        return pull(cursorRaw, scopesRaw, false);
+    }
+
+    /** Pull; with {@code tombstones} (protocol 2) deltas include soft-deleted rows carrying their {@code deletedAt}. */
+    public Map<String, Object> pull(String cursorRaw, String scopesRaw, boolean tombstones) {
+        TOMBSTONES.set(tombstones);
+        try {
+            return pullInner(cursorRaw, scopesRaw);
+        } finally {
+            TOMBSTONES.remove();
+        }
+    }
+
+    /**
+     * ADR-S083 C5: every row of one scope as a snapshot page source (no watermark), in a stable id order. Messages are
+     * not snapshotted (they page by their own sequence cursor).
+     */
+    public List<Map<String, Object>> snapshotRows(String scope) {
+        if ("messages".equals(scope) || !SCOPES.contains(scope)) {
+            throw ApiException.badRequest("Scope " + scope + " cannot be snapshotted");
+        }
+        Object rows = readScope(scope, null);
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rows instanceof List<?> l) {
+            for (Object o : l) {
+                out.add(PosSql.map(o));
+            }
+        }
+        out.sort(java.util.Comparator.comparing(r -> String.valueOf(r.get("id"))));
+        return out;
+    }
+
+    /** A cursor whose watermarks are all {@code at}: deltas after a completed snapshot start there. */
+    public static String cursorAt(List<String> scopes, Instant at) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        for (String s : scopes) {
+            if (!"messages".equals(s)) {
+                c.put(s, JsonConfig.toJsIso(at));
+            }
+        }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(EntityJson.toJson(c)
+                .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private Map<String, Object> pullInner(String cursorRaw, String scopesRaw) {
         List<String> scopes = parseScopes(scopesRaw);
         Map<String, Object> cursor = parseCursor(cursorRaw);
         Instant serverTime = Instant.now();
@@ -169,7 +217,10 @@ public class SyncPullService {
 
     /** Rows of a model under the tenancy predicate, changed since {@code since}, ordered by {@code updatedAt}. */
     private List<Map<String, Object>> changed(Class<?> entity, Instant since, String extra, Object... extraParams) {
-        StringBuilder where = new StringBuilder(TenancyScope.predicate(entity, null));
+        boolean tombstones = since != null && Boolean.TRUE.equals(TOMBSTONES.get()) && TenancyScope.softDeletes(entity);
+        StringBuilder where = new StringBuilder(tombstones
+                ? (TenancyScope.orgScoped(entity) ? "\"organizationId\" = ?" : "true")
+                : TenancyScope.predicate(entity, null));
         List<Object> params = new ArrayList<>();
         if (TenancyScope.orgScoped(entity)) {
             params.add(org());
@@ -215,7 +266,8 @@ public class SyncPullService {
             }
             case "productCategories" -> changed(ProductCategory.class, since, null);
             case "productPackagings" -> changed(ProductPackaging.class, since, null).stream()
-                    .map(r -> pick(r, "id", "productId", "name", "quantity", "barcode", "isActive", "updatedAt")).toList();
+                    .map(r -> pick(r, "id", "productId", "name", "quantity", "barcode", "isActive", "updatedAt", "deletedAt"))
+                    .toList();
             case "settings" -> changed(Setting.class, since, "\"scopeType\" = 'organization' AND (key LIKE 'pos.%'"
                     + " OR key LIKE 'inventory.%')");
             case "partners" -> changed(Partner.class, since, "\"isCustomer\" = true").stream()
