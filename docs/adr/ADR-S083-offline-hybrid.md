@@ -359,11 +359,14 @@ refunds/voids, reservations and expenses stay online-only on the web (their ops 
   themselves (menu, payment methods and accounts, POS settings, open shift) use `networkMode: 'always'`.
 - **Write guard** (axios): while unreachable, a back-office write is refused at once with
   `503 NEEDS_CONNECTION` "Needs connection — changes cannot be saved while the server is unreachable" (one toast),
-  instead of a timeout. Exempt so their behaviour is unchanged: the POS screens (`/pos/*`, which have O2's offline
-  handling), sign-in, and requests whose caller set its own `Idempotency-Key` (checkout, settle, the replay queue).
+  instead of a timeout. Exempt so their behaviour is unchanged: the POS screens (`/pos/*`; O2's replay queue and
+  sync ops run only there) and sign-in.
 - **Screens:** `OfflineDataBanner` above every back-office page: "Offline: data as of HH:MM" (the oldest result on
   the current screen). Form submit buttons (`<Button type="submit">`) are disabled with "Needs connection" while
-  unreachable, outside the POS. Other write buttons rely on the guard; disabling them per screen is incremental work.
+  unreachable, outside the POS, and so are the confirming actions of `ConfirmDialog` and `AlertDialogAction` (post,
+  approve, delete…), all through `useWritesBlocked()`. Remaining one-click write buttons rely on the guard.
+- **Run-time keys:** in development, a query family with no rule is named once in the console
+  (`[offline cache] … has no rule`), covering keys the source scan cannot see.
 - **Not in O3:** no new server routes. The offline view is only as complete as what the user opened while online
   (no prefetch of the whole app).
 

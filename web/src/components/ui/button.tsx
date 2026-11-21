@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isPosPath, useOnline } from '@/lib/offline/reachability';
+import { useWritesBlocked } from '@/lib/offline/reachability';
 import { tx } from '@/lib/i18n/tx';
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
@@ -38,8 +38,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
     // ADR-S083 O3: a form submit is a write; while the server is unreachable the back office is read-only.
-    const online = useOnline();
-    const blocked = !online && !asChild && props.type === 'submit' && !isPosPath();
+    const blocked = useWritesBlocked() && !asChild && props.type === 'submit';
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}

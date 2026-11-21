@@ -84,9 +84,8 @@ installReachability(async () => {
 
 /* ── Offline write guard (ADR-S083 O3) ───────────────────────────────────────
  * While the server is known unreachable, a write from the back office is refused at once with "Needs connection"
- * instead of waiting for a timeout: the offline view is read-only. Exempt: the POS screens (they have their own
- * offline handling, ADR-S083 O2), sign-in, and requests whose caller set its own Idempotency-Key (checkout, settle,
- * the offline replay queue) — those must reach the network exactly as before.
+ * instead of waiting for a timeout: the offline view is read-only. Exempt: the POS screens (their own offline
+ * handling — the replay queue and sync ops — runs only there, ADR-S083 O2) and sign-in.
  */
 export const NEEDS_CONNECTION_MESSAGE = 'Needs connection — changes cannot be saved while the server is unreachable.';
 
@@ -94,8 +93,7 @@ export function isNeedsConnection(e: unknown): boolean {
   return !!e && typeof e === 'object' && (e as { needsConnection?: unknown }).needsConnection === true;
 }
 
-function guardExempt(config: AxiosRequestConfig): boolean {
-  if (config.headers && (config.headers as Record<string, unknown>)['Idempotency-Key']) return true;
+export function guardExempt(config: AxiosRequestConfig): boolean {
   if ((config.url ?? '').includes('/auth/')) return true;
   return isPosPath();
 }

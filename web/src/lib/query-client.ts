@@ -5,7 +5,7 @@ import { isReachable, subscribeReachability } from '@/lib/offline/reachability';
 import {
   createScopedPersister, dropPermissionBound, scopeWatcher, type CacheScope, type KeyValue,
 } from '@/lib/offline/query-cache';
-import { classify } from '@/lib/offline/cache-policy';
+import { classify, family, ruleFor } from '@/lib/offline/cache-policy';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -54,6 +54,18 @@ function currentScope(): CacheScope | null {
  */
 export const queryPersister = createScopedPersister(storage, currentScope);
 
+/**
+ * Keys built at run time are invisible to the source scan in cache-policy.test.ts. In development, name each
+ * unclassified family once in the console so it gets a rule (until then it is never stored).
+ */
+const warned = new Set<string>();
+function warnUnclassified(queryKey: readonly unknown[]): void {
+  const name = family(queryKey);
+  if (warned.has(name) || ruleFor(name) !== null) return;
+  warned.add(name);
+  console.warn(`[offline cache] query family "${name}" has no rule in lib/offline/cache-policy.ts; it is not kept offline.`);
+}
+
 export const persistOptions = {
   persister: queryPersister,
   maxAge: 7 * 24 * 60 * 60 * 1000,
@@ -61,8 +73,11 @@ export const persistOptions = {
   // rehydrated into a UI that no longer understands them.
   buster: 'v2',
   dehydrateOptions: {
-    shouldDehydrateQuery: (query: { queryKey: readonly unknown[]; state: { status: string } }) =>
-      query.state.status === 'success' && classify(query.queryKey) !== 'never',
+    shouldDehydrateQuery: (query: { queryKey: readonly unknown[]; state: { status: string } }) => {
+      if (query.state.status !== 'success') return false;
+      if (import.meta.env.DEV) warnUnclassified(query.queryKey);
+      return classify(query.queryKey) !== 'never';
+    },
   },
 };
 

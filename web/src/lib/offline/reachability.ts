@@ -88,6 +88,14 @@ export function isPosPath(path = typeof window !== 'undefined' ? window.location
   return path === '/pos' || path.startsWith('/pos/');
 }
 
+/**
+ * True while writes cannot reach the server from this screen: unreachable and outside the POS (which records work
+ * offline itself). Write controls (form submits, confirm actions) disable themselves on it.
+ */
+export function useWritesBlocked(): boolean {
+  return !useOnline() && !isPosPath();
+}
+
 /** Test hook. */
 export function resetReachability(): void {
   stopProbing();
