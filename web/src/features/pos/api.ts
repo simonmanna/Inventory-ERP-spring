@@ -1,4 +1,5 @@
 import { idempotentPost } from '@/lib/idempotent-request';
+import { offlineRead } from './offline-reads';
 import { submitSaleOperation } from '@/features/pos/offline-queue';
 /**
  * POS API hooks + mutations.
@@ -226,7 +227,7 @@ export interface PosNavVisibility {
 export function usePosSettings() {
   return useQuery({
     queryKey: ['pos-settings'],
-    queryFn: async () => (await api.get<{
+    queryFn: () => offlineRead('pos-settings', async () => (await api.get<{
       posMode?: string;
       sharedDrawer?: boolean;
       /** offline = local-only install, no connectivity checks; online = monitor the server link. */
@@ -236,7 +237,7 @@ export function usePosSettings() {
       showClosingAmounts?: boolean;
       /** F-03: the ONE discount-approval threshold. Never hardcode it again. */
       discountApproval?: { tier1: number; tier1Amount?: number };
-    } & PosNavVisibility>('/pos/settings')).data,
+    } & PosNavVisibility>('/pos/settings')).data),
     staleTime: 60_000,
   });
 }

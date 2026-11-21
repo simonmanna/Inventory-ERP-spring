@@ -17,6 +17,7 @@
  *   DELETE /items/:id                disable (isAvailable=false)
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { menuFromScopes, offlineRead } from '@/features/pos/offline-reads';
 import { api } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -199,7 +200,9 @@ export function useRestoreCategory() {
 export function useMenuItemsAvailable() {
   return useQuery({
     queryKey: ['menu-items-available'],
-    queryFn: async () => (await api.get<MenuPayload>('/pos/menu/items/available')).data,
+    // ADR-S083 O2: offline on a registered device, the menu comes from the pulled scopes.
+    queryFn: () => offlineRead('menu-items-available', async () => (await api.get<MenuPayload>('/pos/menu/items/available')).data,
+      (e) => menuFromScopes<MenuPayload>(e)),
     staleTime: 240_000,
     refetchInterval: 300_000,
   });

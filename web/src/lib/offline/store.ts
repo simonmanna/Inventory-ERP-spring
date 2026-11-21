@@ -107,9 +107,11 @@ export class SyncStore {
 
   /**
    * Add an op with a fresh opId and the next deviceSeq, atomically (the counter and the op commit together, so a
-   * sequence number is never reused or skipped by a crash).
+   * sequence number is never reused or skipped by a crash). `decorate` adds payload fields derived from the
+   * sequence (a provisional receipt number) in the same transaction.
    */
-  async enqueue(input: NewOp, now = Date.now(), opId: string = crypto.randomUUID()): Promise<SyncOp> {
+  async enqueue(input: NewOp, now = Date.now(), opId: string = crypto.randomUUID(),
+      decorate?: (deviceSeq: number) => Record<string, unknown>): Promise<SyncOp> {
     const t = await this.tx(['ops', 'meta'], 'readwrite');
     const meta = t.objectStore('meta');
     const current = await req<{ key: string; value: number } | undefined>(meta.get('deviceSeq'));
@@ -121,7 +123,7 @@ export class SyncStore {
       type: input.type,
       actorUserId: input.actorUserId,
       occurredAt: input.occurredAt ?? new Date(now).toISOString(),
-      payload: input.payload,
+      payload: decorate ? { ...input.payload, ...decorate(deviceSeq) } : input.payload,
       supersedesOpId: input.supersedesOpId,
       status: 'queued',
       attempts: 0,

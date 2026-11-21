@@ -1,6 +1,8 @@
 import { api } from '@/lib/api';
 import { operationIdentity } from './offline-queue';
 import { tx } from '@/lib/i18n/tx';
+import { isRecordedOffline } from './pos-ops';
+import { routePosWrite } from './pos-sync';
 
 export function pendingCashOperations(): Array<{ slot: string; endpoint: string; key: string; payload: any }> {
   try {
@@ -25,8 +27,16 @@ export async function recoverCashOperation(slot: string) {
 export async function submitCashOperation(endpoint: string, body: any) {
   const identity = operationIdentity();
   const slot = `pos-cash-operation:${identity.organizationId}:${identity.operatorId}:${endpoint}`;
-  const { managerPin, incomingPin, ...financialPayload } = body;
   const previous = localStorage.getItem(slot);
+  // ADR-S083 O2: on a registered device, known offline → a sync op; the result stands in for the server's answer
+  // (an offline shift, a movement) until it syncs. A write already sent over REST once is finished over REST.
+  try {
+    body = await routePosWrite(endpoint, body, undefined, !!previous);
+  } catch (e) {
+    if (isRecordedOffline(e)) return offlineCashResult(endpoint, body, e.op.clientId);
+    throw e;
+  }
+  const { managerPin, incomingPin, ...financialPayload } = body;
   const saved = previous ? JSON.parse(previous) : { key: crypto.randomUUID(), payload: financialPayload };
   if (JSON.stringify(saved.payload) !== JSON.stringify(financialPayload)) throw new Error('A previous drawer operation is awaiting confirmation. Retry its original amount, register and reason before recording a different operation.');
   localStorage.setItem(slot, JSON.stringify(saved));
@@ -38,4 +48,15 @@ export async function submitCashOperation(endpoint: string, body: any) {
     if (e?.response?.data?.safeToRetry) localStorage.removeItem(slot);
     throw e;
   }
+}
+
+/** What the UI needs back from a cash write recorded offline. */
+function offlineCashResult(endpoint: string, body: any, clientId: string) {
+  const base = { id: clientId, offline: true, recordedOffline: true };
+  if (endpoint === '/cash-sessions/open') {
+    return { ...base, cashRegisterId: body.cashRegisterId, status: 'open', openingFloat: String(body.openingFloat ?? 0),
+      openedAt: new Date().toISOString(), userId: null };
+  }
+  if (endpoint === '/cash-sessions/close') return { ...base, id: body.sessionId, status: 'closed' };
+  return base;
 }

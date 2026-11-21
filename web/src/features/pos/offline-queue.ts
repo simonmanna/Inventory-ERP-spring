@@ -1,6 +1,8 @@
 import { useAuthStore } from '@/stores/auth.store';
 import { usePosAuthStore } from './pos-auth.store';
 import { useCartStore } from './cart.store';
+import { RecordedOfflineError } from './pos-ops';
+import { offlineOp, routePosWrite } from './pos-sync';
 /**
  * POS P11 — Offline mode + retry queue.
  *
@@ -211,9 +213,15 @@ export async function submitSaleOperation(endpoint: string, input: any, key: str
     if (useCartStore.getState().idempotencyKey === key) useCartStore.setState({ operationPending: false });
     return completed.response;
   }
+  // ADR-S083 O2: a write already recorded as a sync op under this key is finished by the sync engine, never REST.
+  const recorded = await offlineOp(key);
+  if (recorded) return offlineOpOutcome(recorded, key);
   const prior = (await idbAll<QueuedSale>()).find((s) => s.idempotencyKey === key);
   const isSale = /\/checkout$|\/settle$/.test(endpoint);
-  const payload = JSON.parse(JSON.stringify({ ...input, ...(isSale ? { occurredAt: prior?.payload?.occurredAt ?? input.occurredAt ?? new Date().toISOString() } : {}) }));
+  let payload = JSON.parse(JSON.stringify({ ...input, ...(isSale ? { occurredAt: prior?.payload?.occurredAt ?? input.occurredAt ?? new Date().toISOString() } : {}) }));
+  // ADR-S083 O2: on a registered device, known offline → recorded as a sync op (throws RecordedOfflineError);
+  // a write already sent over REST once is finished over REST (same key, same body).
+  if (!prior?.payload.approvalToken) payload = await routePosWrite(endpoint, payload, key, !!prior);
   if (prior?.payload.approvalToken) { payload.approvalToken = prior.payload.approvalToken; delete payload.overridePin; }
   if (!prior && payload.overrideById && payload.overridePin) {
     // The grant is bound to WHAT it authorises; the server rejects it on any
@@ -261,7 +269,33 @@ export async function recoverEntitySaleOperation(endpoint: string) {
   catch (e: any) { if (e?.response?.data?.safeToRetry) localStorage.removeItem(slot); throw e; }
 }
 
+/**
+ * ADR-S083 O2: the outcome of a sale recorded as a sync op. Applied → the server's invoice (final number); still
+ * queued → `RecordedOfflineError` (no response: "posts when the connection returns"); rejected or held → the
+ * cart is released, because the sale happened at the till — a supervisor resolves it under Sync dead letters.
+ */
+function offlineOpOutcome(op: import('@/lib/offline/types').SyncOp, key: string) {
+  const provisional = (op.payload as { provisionalNumber?: string }).provisionalNumber;
+  if (op.status === 'applied') {
+    if (useCartStore.getState().idempotencyKey === key) useCartStore.setState({ operationPending: false });
+    return {
+      invoiceId: op.result?.mapping?.invoiceId,
+      orderId: op.result?.mapping?.orderId,
+      invoiceNumber: op.result?.finalNumbers?.invoiceNumber ?? provisional,
+      provisionalNumber: provisional,
+      recordedOffline: true,
+    };
+  }
+  if (op.status === 'rejected' || op.status === 'held') {
+    if (useCartStore.getState().idempotencyKey === key) useCartStore.setState({ idempotencyKey: newKey(), operationPending: false });
+    throw new Error(`Offline sale ${provisional ?? ''} was not accepted by the server (${op.lastError ?? op.code ?? 'rejected'}). A supervisor reviews it under Sync dead letters.`);
+  }
+  throw new RecordedOfflineError({ opId: op.opId, clientId: key, type: op.type, provisionalNumber: provisional });
+}
+
 export async function recoverSaleOperation(key: string) {
+  const recorded = await offlineOp(key);
+  if (recorded) return offlineOpOutcome(recorded, key);
   const sale = [...await idbAll<QueuedSale>(), ...await idbAll<QueuedSale>(COMPLETED_STORE), ...await idbAll<FailedSale>(FAILED_STORE)].find((s) => s.idempotencyKey === key);
   if (!sale) throw new Error('The original operation is missing. Ask a manager to review the payment before starting another sale.');
   const identity = operationIdentity();

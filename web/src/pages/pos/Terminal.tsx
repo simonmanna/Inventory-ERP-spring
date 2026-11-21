@@ -1,4 +1,5 @@
 import { PendingSaleRecovery } from './PendingSaleRecovery';
+import DeviceSyncBadge from './DeviceSyncBadge';
 import { OfflineIndicator } from './OfflineIndicator';
 import { PosLogoffButton } from './PosLogoffButton';
 import { useSaleQuote } from '@/features/pos/use-sale-quote';
@@ -96,6 +97,7 @@ import { OrdersListPanel } from './OrdersListPanel';
 import { useMenuItemsAvailable } from '@/features/menu/api';
 import { useMenuItemBundle, useCombos } from './pos-features-api';
 import { api, resolveAssetUrl, serverUnreachable, noteServerReachable } from '@/lib/api';
+import { isRecordedOffline } from '@/features/pos/pos-ops';
 import { useCartStore, selectSubtotal, selectTotal } from '@/features/pos/cart.store';
 import type { CartLine, DiscountType, PaymentTender } from '@/features/pos/types';
 import { cartReadyToCommit } from '@/features/pos/cart-guard';
@@ -1508,6 +1510,10 @@ const TerminalPage: React.FC = () => {
    * never be given: the write-ahead queue is about to post the sale, so they
    * either release the customer unpaid or take the money a second time. */
   const notifySettleFailure = useCallback((e: any) => {
+    if (isRecordedOffline(e) && e.op.provisionalNumber) {
+      toast.warning(tx('Recorded offline as {{n}} — it posts as soon as the connection returns. Do not ring it again.', { n: e.op.provisionalNumber }));
+      return;
+    }
     if (!e?.response) {
       toast.warning(tx('Saved — this sale posts as soon as the connection returns. Do not ring it again.'));
       return;
@@ -1555,7 +1561,9 @@ const TerminalPage: React.FC = () => {
    * receipt marked as sync-pending, and serve the next customer. */
   const finishUnreachableSale = (finish: () => void, receipt: {
     total: number; discountPercent: number; discountAmount?: number;
-  }) => {
+  }, error?: unknown) => {
+    // ADR-S083 O2: a sale recorded as a sync op prints its provisional number (swapped for the final one on sync).
+    const provisional = isRecordedOffline(error) ? error.op.provisionalNumber : undefined;
     // setState, not the store action: the guarded setter refuses every write
     // while a payment is pending, which is exactly the flag being cleared.
     useCartStore.setState({ operationPending: false });
@@ -1567,6 +1575,7 @@ const TerminalPage: React.FC = () => {
       orderTypeLabel: orderTypeLabel ?? undefined,
       tableLabel: activeTableLabel ?? undefined,
       customerName: customer?.name,
+      invoiceNumber: provisional,
     });
     finish();
   };
@@ -1646,7 +1655,7 @@ const TerminalPage: React.FC = () => {
         const msg = e?.response?.data?.message || e?.message || tx('Settle failed');
         if (await recoverFromPricingRejection(msg, input, onSettle)) return;
         notifySettleFailure(e);
-        if (!e?.response) { finishUnreachableSale(finishSettle, { total, discountPercent: effectiveTxPct }); return; }
+        if (!e?.response) { finishUnreachableSale(finishSettle, { total, discountPercent: effectiveTxPct }, e); return; }
         if (Number(e.response.status) < 500) toast.error(msg);
         throw e;
       }
@@ -1697,7 +1706,7 @@ const TerminalPage: React.FC = () => {
         if (await recoverFromPricingRejection(msg, input, onSettle)) return;
         notifySettleFailure(e);
         if (!e?.response) {
-          finishUnreachableSale(() => { clearCart(); setCustomer(null); setShowPayment(false); }, { total, discountPercent: effectiveTxPct });
+          finishUnreachableSale(() => { clearCart(); setCustomer(null); setShowPayment(false); }, { total, discountPercent: effectiveTxPct }, e);
           return;
         }
         if (Number(e.response.status) < 500) toast.error(msg);
@@ -1780,7 +1789,7 @@ const TerminalPage: React.FC = () => {
         finishUnreachableSale(() => {
           clearCart(); setCustomer(null); setShowPayment(false);
           if (tableId) { tabSyncSig.current = ''; tableCartsRef.current.delete(tableId); setSelectedTableId(null); setTableView('grid'); }
-        }, { total, discountPercent: effectiveTxPct });
+        }, { total, discountPercent: effectiveTxPct }, e);
         return;
       }
       if (Number(e.response.status) < 500) toast.error(msg);
@@ -2005,6 +2014,7 @@ const TerminalPage: React.FC = () => {
           <>
             <PosLogoffButton onLoggedOff={() => { setShowPosLogin(true); refetchSession(); }} />
             <OfflineIndicator />
+            <DeviceSyncBadge />
           </>
         )}
         orderType={orderTypeFromStore ?? 'dine-in'}

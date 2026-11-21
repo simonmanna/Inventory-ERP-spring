@@ -1030,7 +1030,7 @@ additions and behaviour changes are listed in `docs/spec/pos.md` "Post-parity ha
 - [x] O0 corrections (V594): ledger coverage for all 41 op types (`SyncOpCatalog`), server-controlled revocation with supervisor recovery, rejected money ops block cash-session close (override with reason + `pos:override`), `LEGACY_UNKNOWN` dead letters, sync protocol contract — tests `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`, `SyncProtocolContractIT`, `SyncOpCatalogTest`
 - [ ] Deferred (tracked in ADR-S083): S9 sync status dashboard + metrics; C2 post-restore reconciliation job
 - [x] O1 web sync engine (`web/src/lib/offline/`, branch `phase/O1-web-sync-engine`, not merged): outbox, retry rules, snapshot client, offline PIN sessions, encrypted token, multi-tab lock — Vitest `src/lib/offline/__tests__` (41); snapshot pages now served as the exact hashed bytes (`SyncProtocolContractIT`)
-- [ ] O2 web POS on the protocol (not started)
+- [x] O2 web POS on the protocol (branch `phase/O2-web-pos-sync`, not merged): offline sales / tab settle / shifts / drawer / customers as ops with provisional numbers, offline reads and PIN login, offline shift close, "This browser" registration; server resolves client ids across push batches (V595) — `SyncCrossBatchIT`, Vitest `src/features/pos/__tests__`
 
 ## backup
 

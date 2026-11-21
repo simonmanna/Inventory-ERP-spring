@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { ThisBrowserDeviceCard } from './ThisBrowserDeviceCard';
 
 interface PosDevice {
   id: string;
@@ -124,6 +125,8 @@ export function DevicesPage() {
           </Button>
         </Link>
       </div>
+
+      <ThisBrowserDeviceCard onRegistered={() => qc.invalidateQueries({ queryKey: ['pos-devices'] })} />
 
       <Card>
         <CardHeader>

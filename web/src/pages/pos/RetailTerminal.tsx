@@ -1,4 +1,5 @@
 import { PendingSaleRecovery } from './PendingSaleRecovery';
+import DeviceSyncBadge from './DeviceSyncBadge';
 import { useSaleQuote } from '@/features/pos/use-sale-quote';
 import { cartLinePayload, cartSignature, draftPricing, draftRestore, serverLineToCart } from '@/features/pos/cart-payload';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -42,6 +43,7 @@ import {
 import { useCombos } from './pos-features-api';
 import { usePosSettings } from '@/features/pos/api';
 import { useCartStore, selectSubtotal, selectTotal } from '@/features/pos/cart.store';
+import { isRecordedOffline, type RecordedOfflineError } from '@/features/pos/pos-ops';
 import type { CartLine, DiscountType, PaymentTender } from '@/features/pos/types';
 import { cartReadyToCommit } from '@/features/pos/cart-guard';
 import type { Customer, SettleMode } from './types';
@@ -584,6 +586,19 @@ const RetailTerminal: React.FC = () => {
       ? (() => { const sub = selectSubtotal(useCartStore.getState()); return sub > 0 ? Math.min(100, (transactionDiscountAmount / sub) * 100) : 0; })()
       : transactionDiscountPercent;
     const idemKey = useCartStore.getState().idempotencyKey;
+    /* ADR-S083 O2: recorded as a sync op while offline — the sale is done at the till; print its provisional
+     * number and serve the next customer (the final number replaces it once it syncs). */
+    const finishOfflineSale = (e: RecordedOfflineError) => {
+      useCartStore.setState({ operationPending: false });
+      toast.warning(tx('Recorded offline as {{n}} — it posts as soon as the connection returns. Do not ring it again.', { n: e.op.provisionalNumber ?? '' }));
+      setLastCompleted({
+        lines: cartToReceiptLines(lines), total, invoiceNumber: e.op.provisionalNumber,
+        discountPercent: effectiveTxPct, discountAmount: 0, customerName: customer?.name,
+      });
+      clearCart();
+      setCustomer(null);
+      setShowPayment(false);
+    };
 
     // Order-backed settle (Odoo path): the cart is already a live open order, so
     // flush its lines and settle it by id — no second order is created. Falls
@@ -625,6 +640,7 @@ const RetailTerminal: React.FC = () => {
         setShowPayment(false);
         refetchSession();
       } catch (e: any) {
+        if (isRecordedOffline(e)) { finishOfflineSale(e); return; }
         const msg = e?.response?.data?.message || e?.message || tx('Settle failed');
         if (/manager override/i.test(msg) && !input.overrideById) {
           const result = await requestOverride('discount');
@@ -687,6 +703,7 @@ const RetailTerminal: React.FC = () => {
       setShowPayment(false);
       refetchSession();
     } catch (e: any) {
+      if (isRecordedOffline(e)) { finishOfflineSale(e); return; }
       const msg = e?.response?.data?.message || e?.message || tx('Checkout failed');
       if (/manager override/i.test(msg) && !input.overrideById) {
         const result = await requestOverride('discount');
@@ -781,6 +798,7 @@ const RetailTerminal: React.FC = () => {
           <>
             <PosLogoffButton onLoggedOff={() => { setShowPosLogin(true); refetchSession(); }} />
             <OfflineIndicator />
+            <DeviceSyncBadge />
           </>
         )}
       />
