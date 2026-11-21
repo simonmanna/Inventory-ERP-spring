@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { refusalFromResponse, useLicenseStore } from '@/features/license/license.store';
-import { installReachability, isPosPath, isReachable, markReachable, markUnreachable } from '@/lib/offline/reachability';
+import { installReachability, isOfflineCapablePath, isReachable, markReachable, markUnreachable } from '@/lib/offline/reachability';
 
 function getApiBaseUrl(): string {
   const raw = import.meta.env.VITE_API_URL;
@@ -95,7 +95,7 @@ export function isNeedsConnection(e: unknown): boolean {
 
 export function guardExempt(config: AxiosRequestConfig): boolean {
   if ((config.url ?? '').includes('/auth/')) return true;
-  return isPosPath();
+  return isOfflineCapablePath();
 }
 
 function needsConnectionError(config: AxiosRequestConfig): AxiosError {

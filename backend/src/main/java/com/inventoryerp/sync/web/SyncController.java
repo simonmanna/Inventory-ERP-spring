@@ -76,7 +76,8 @@ public class SyncController {
                 "accompanimentGroup.delete", "tax.upsert", "tax.delete", "product.upsert", "product.delete",
                 "productCategory.upsert", "productCategory.delete", "cashRegister.upsert", "cashRegister.delete",
                 "posTable.upsert", "posTable.delete", "staff.pinChange", "message.send", "message.markRead",
-                "stock.in", "stock.out", "stock.count", "expense.create", "kitchen.void", "cash_drawer.open"}) String type,
+                "stock.in", "stock.out", "stock.count", "expense.create", "kitchen.void", "cash_drawer.open",
+                "transfer.dispatch", "transfer.receive", "stock.adjust", "grn.receive"}) String type,
             @NotNull(message = STR) String actorUserId,
             @NotNull(message = "must be a valid ISO 8601 date string")
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String occurredAt,
@@ -106,8 +107,9 @@ public class SyncController {
             + " accompanimentGroup.upsert, accompanimentGroup.delete, tax.upsert, tax.delete, product.upsert,"
             + " product.delete, productCategory.upsert, productCategory.delete, cashRegister.upsert, cashRegister.delete,"
             + " posTable.upsert, posTable.delete, staff.pinChange, message.send, message.markRead, stock.in, stock.out,"
-            + " stock.count, expense.create, kitchen.void, cash_drawer.open"; // kitchen.void: Phase I6, cash_drawer.open:
-    // LP2b (both additive)
+            + " stock.count, expense.create, kitchen.void, cash_drawer.open, transfer.dispatch, transfer.receive,"
+            + " stock.adjust, grn.receive"; // kitchen.void: Phase I6, cash_drawer.open: LP2b, the last four: ADR-S083 O4
+    // (all additive)
 
     /** {@code SyncPushDto}. */
     public record SyncPushRequest(
@@ -123,6 +125,13 @@ public class SyncController {
     private final LicenseService licenses;
     private SyncSnapshotService snapshots;
     private IdempotencyService idempotency;
+
+    private com.inventoryerp.sync.application.SyncStockService stockOps;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setO4Collaborators(com.inventoryerp.sync.application.SyncStockService stockOps) {
+        this.stockOps = stockOps;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void setO0Collaborators(SyncSnapshotService snapshots, IdempotencyService idempotency) {
@@ -195,6 +204,21 @@ public class SyncController {
         return deadLetters.list(status == null ? "open" : status);
     }
 
+    /**
+     * ADR-S083 O4 / S4 (Extension): the inventory discrepancy report — every movement recorded offline that went
+     * below zero, was held for a supervisor, or waits for its dispatch. Resolved in the Posting Monitor
+     * ({@code /pos/posting-monitor/exceptions/{id}/resolve}).
+     */
+    @GetMapping("/stock-discrepancies")
+    @RequirePermissions(Permissions.INVENTORY__READ)
+    public List<Map<String, Object>> stockDiscrepancies(@RequestParam(required = false) String branchId,
+            @RequestParam(required = false) String deviceId, @RequestParam(required = false) String locationId,
+            @RequestParam(required = false) @OneOf({"offline_negative_stock", "offline_held_posting",
+                "offline_awaiting_dispatch"}) String kind,
+            @RequestParam(required = false) @OneOf({"open", "resolved"}) String status) {
+        return stockOps.discrepancies(branchId, deviceId, locationId, kind, status);
+    }
+
     @GetMapping("/dead-letters/counts")
     @RequirePermissions(Permissions.POS__REPORTS)
     public Map<String, Object> deadLetterCounts() {
@@ -223,7 +247,8 @@ public class SyncController {
         Map<?, ?> attached = activeDevice(request, version);
         SyncProtocol.requirePullSupported(version);
         boolean v2 = SyncProtocol.atLeast2(version);
-        Map<String, Object> body = new java.util.LinkedHashMap<>(pullSvc.pull(cursor, scopes, v2));
+        Map<String, Object> body = new java.util.LinkedHashMap<>(pullSvc.pull(cursor, scopes, v2,
+                attached.get("branchId") instanceof String b ? b : null));
         body.put("license", LicenseSyncView.of(licenses.current()));
         // ADR-S083 (additive): protocol, identity, offline policy, token lifecycle (rotation on protocol 2).
         body.put("protocolVersion", SyncProtocol.CURRENT);

@@ -62,6 +62,23 @@ public class SyncPullService {
             "partners", "reservations", "conversations", "messages", "paymentMethods", "ledgerAccounts",
             "expenseCategories", "stockLocations", "stockLevels", "suppliers", "productVariants");
 
+    /**
+     * ADR-S083 O4 (Extension): warehouse scopes, sent only when asked for by name — a pull without {@code scopes}
+     * keeps returning {@link #SCOPES} exactly. Limited to the device's branch when it has one.
+     * {@code openPurchaseOrders}, {@code transfers} and {@code uomConversions} are full sets; {@code lots} and
+     * {@code serials} are deltas (a snapshot sends only stock on hand; later deltas include rows that reached zero).
+     */
+    public static final List<String> EXTENDED_SCOPES = List.of("openPurchaseOrders", "transfers", "lots", "serials",
+            "uomConversions");
+
+    /** Every scope a device may name. */
+    public static boolean known(String scope) {
+        return SCOPES.contains(scope) || EXTENDED_SCOPES.contains(scope);
+    }
+
+    /** The pulling device's branch (null = every location), for the warehouse scopes. */
+    private static final ThreadLocal<String> BRANCH = new ThreadLocal<>();
+
     static final long OVERLAP_MS = 5_000;
     static final int MESSAGE_PAGE = 200;
     static final long SEQ_COMMIT_LAG_MS = 2_000;
@@ -89,11 +106,18 @@ public class SyncPullService {
 
     /** Pull; with {@code tombstones} (protocol 2) deltas include soft-deleted rows carrying their {@code deletedAt}. */
     public Map<String, Object> pull(String cursorRaw, String scopesRaw, boolean tombstones) {
+        return pull(cursorRaw, scopesRaw, tombstones, null);
+    }
+
+    /** Pull for a device bound to {@code branchId} (warehouse scopes are limited to that branch's locations). */
+    public Map<String, Object> pull(String cursorRaw, String scopesRaw, boolean tombstones, String branchId) {
         TOMBSTONES.set(tombstones);
+        BRANCH.set(branchId);
         try {
             return pullInner(cursorRaw, scopesRaw);
         } finally {
             TOMBSTONES.remove();
+            BRANCH.remove();
         }
     }
 
@@ -102,10 +126,21 @@ public class SyncPullService {
      * not snapshotted (they page by their own sequence cursor).
      */
     public List<Map<String, Object>> snapshotRows(String scope) {
-        if ("messages".equals(scope) || !SCOPES.contains(scope)) {
+        return snapshotRows(scope, null);
+    }
+
+    /** Snapshot rows for a device bound to {@code branchId}. */
+    public List<Map<String, Object>> snapshotRows(String scope, String branchId) {
+        if ("messages".equals(scope) || !known(scope)) {
             throw ApiException.badRequest("Scope " + scope + " cannot be snapshotted");
         }
-        Object rows = readScope(scope, null);
+        BRANCH.set(branchId);
+        Object rows;
+        try {
+            rows = readScope(scope, null);
+        } finally {
+            BRANCH.remove();
+        }
         List<Map<String, Object>> out = new ArrayList<>();
         if (rows instanceof List<?> l) {
             for (Object o : l) {
@@ -184,7 +219,7 @@ public class SyncPullService {
                 requested.add(s.trim());
             }
         }
-        List<String> invalid = requested.stream().filter(s -> !SCOPES.contains(s)).toList();
+        List<String> invalid = requested.stream().filter(s -> !known(s)).toList();
         if (!invalid.isEmpty()) {
             throw ApiException.badRequest("Unknown sync scope(s): " + String.join(", ", invalid));
         }
@@ -279,10 +314,16 @@ public class SyncPullService {
                     .map(PosPaymentMethodService.View::toMap).toList();
             case "ledgerAccounts" -> ledgerAccounts();
             case "expenseCategories" -> expenseCategories();
-            case "stockLocations" -> SqlRows.list(jdbc.sql("SELECT id, code, name, type::text AS type FROM"
+            // branchId: ADR-S083 O4 (additive), so a warehouse device offers its own branch's locations.
+            case "stockLocations" -> SqlRows.list(jdbc.sql("SELECT id, code, name, type::text AS type, \"branchId\" FROM"
                     + " \"InventoryLocation\" WHERE \"organizationId\" = ? AND \"isActive\" = true AND \"deletedAt\" IS NULL"
                     + " AND type::text <> 'transit' ORDER BY code ASC").param(org()));
             case "stockLevels" -> stockLevels(since);
+            case "openPurchaseOrders" -> openPurchaseOrders();
+            case "transfers" -> openTransfers();
+            case "lots" -> lots(since);
+            case "serials" -> serials(since);
+            case "uomConversions" -> uomConversions();
             case "productVariants" -> productVariants(since);
             case "suppliers" -> changed(Partner.class, since, "\"isSupplier\" = true").stream()
                     .map(r -> pick(r, "id", "name", "phone", "notes", "updatedAt", "deletedAt")).toList();
@@ -398,6 +439,122 @@ public class SyncPullService {
             r.put("price", PosSql.js(r.get("price")));
             out.add(r);
         }
+        return out;
+    }
+
+    // ---- ADR-S083 O4 warehouse scopes ----
+
+    /** SQL fragment: the location column belongs to the device's branch (or any location without a branch filter). */
+    private String inBranch(String column, List<Object> params) {
+        String branch = BRANCH.get();
+        if (branch == null) {
+            return "true";
+        }
+        params.add(branch);
+        return column + " IN (SELECT id FROM \"InventoryLocation\" WHERE \"branchId\" = ? OR \"branchId\" IS NULL)";
+    }
+
+    private static Object jsNum(Object v) {
+        return v == null ? null : PosSql.js(v);
+    }
+
+    /** Purchase orders that can still be received (branch's, or without a branch), with their lines. */
+    private List<Map<String, Object>> openPurchaseOrders() {
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String branch = BRANCH.get();
+        String branchSql = "";
+        if (branch != null) {
+            branchSql = " AND (po.\"branchId\" = ? OR po.\"branchId\" IS NULL)";
+            params.add(branch);
+        }
+        List<Map<String, Object>> orders = SqlRows.list(jdbc.sql("SELECT po.id, po.\"orderNumber\", po.\"partnerId\","
+                + " p.name AS \"partnerName\", po.\"branchId\", po.status::text AS status, po.\"expectedDeliveryDate\","
+                + " po.\"updatedAt\" FROM \"PurchaseOrder\" po LEFT JOIN \"Partner\" p ON p.id = po.\"partnerId\""
+                + " WHERE po.\"organizationId\" = ? AND po.\"deletedAt\" IS NULL AND po.status::text IN ('approved', 'sent',"
+                + " 'acknowledged', 'partially_received')" + branchSql + " ORDER BY po.\"orderDate\" DESC LIMIT 500")
+                .params(params));
+        if (orders.isEmpty()) {
+            return orders;
+        }
+        Map<Object, List<Map<String, Object>>> lines = new LinkedHashMap<>();
+        for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT id, \"purchaseOrderId\", \"productId\", \"variantId\","
+                + " description, quantity, \"receivedQuantity\", \"cancelledQuantity\", \"unitOfMeasureId\", \"uomFactor\","
+                + " \"lineNumber\" FROM \"PurchaseOrderLine\" WHERE \"organizationId\" = ? AND \"purchaseOrderId\" ="
+                + " ANY(?::text[]) ORDER BY \"lineNumber\" ASC").params(org(),
+                        orders.stream().map(o -> String.valueOf(o.get("id"))).toArray(String[]::new)))) {
+            for (String k : List.of("quantity", "receivedQuantity", "cancelledQuantity", "uomFactor")) {
+                l.put(k, jsNum(l.get(k)));
+            }
+            lines.computeIfAbsent(l.remove("purchaseOrderId"), x -> new ArrayList<>()).add(l);
+        }
+        orders.forEach(o -> o.put("lines", lines.getOrDefault(o.get("id"), List.of())));
+        return orders;
+    }
+
+    /** Transit transfers not yet fully received that touch the branch, with their lines. */
+    private List<Map<String, Object>> openTransfers() {
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String from = inBranch("t.\"fromLocId\"", params);
+        String to = inBranch("t.\"toLocId\"", params);
+        List<Map<String, Object>> transfers = SqlRows.list(jdbc.sql("SELECT t.id, t.\"transferCode\", t.status::text AS"
+                + " status, t.\"fromLocId\", t.\"toLocId\", t.\"dispatchedAt\", t.notes, t.\"updatedAt\" FROM"
+                + " \"StockTransfer\" t WHERE t.\"organizationId\" = ? AND t.mode = 'transit' AND t.status::text IN"
+                + " ('approved', 'in_transit', 'partially_received') AND (" + from + " OR " + to + ")"
+                + " ORDER BY t.\"createdAt\" DESC LIMIT 500").params(params));
+        if (transfers.isEmpty()) {
+            return transfers;
+        }
+        Map<Object, List<Map<String, Object>>> items = new LinkedHashMap<>();
+        for (Map<String, Object> i : SqlRows.list(jdbc.sql("SELECT id, \"transferId\", \"productId\", \"variantId\","
+                + " \"productName\", unit, \"batchNumber\", \"qtyRequested\", \"qtyDispatched\", \"qtyReceived\","
+                + " \"qtyDamaged\", \"qtyShort\", \"qtyRecalled\" FROM \"StockTransferItem\" WHERE \"organizationId\" = ?"
+                + " AND \"transferId\" = ANY(?::text[])").params(org(),
+                        transfers.stream().map(t -> String.valueOf(t.get("id"))).toArray(String[]::new)))) {
+            for (String k : List.of("qtyRequested", "qtyDispatched", "qtyReceived", "qtyDamaged", "qtyShort",
+                    "qtyRecalled")) {
+                i.put(k, jsNum(i.get(k)));
+            }
+            items.computeIfAbsent(i.remove("transferId"), x -> new ArrayList<>()).add(i);
+        }
+        transfers.forEach(t -> t.put("items", items.getOrDefault(t.get("id"), List.of())));
+        return transfers;
+    }
+
+    /** Lots at the branch's locations: on hand for a snapshot, every change for a delta. */
+    private List<Map<String, Object>> lots(Instant since) {
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String where = since == null ? " AND quantity > 0 AND \"isActive\" = true" : " AND \"updatedAt\" > ?";
+        if (since != null) {
+            params.add(SqlRows.ts(since));
+        }
+        String branch = inBranch("\"locationId\"", params);
+        List<Map<String, Object>> out = SqlRows.list(jdbc.sql("SELECT id, \"productId\", \"variantId\", \"locationId\","
+                + " \"batchNumber\", quantity, \"expiryDate\", \"isActive\", \"updatedAt\" FROM \"InventoryBatch\" WHERE"
+                + " \"organizationId\" = ?" + where + " AND " + branch + " ORDER BY \"updatedAt\" ASC").params(params));
+        out.forEach(r -> r.put("quantity", jsNum(r.get("quantity"))));
+        return out;
+    }
+
+    /** Serial numbers at the branch's locations: in stock for a snapshot, every change for a delta. */
+    private List<Map<String, Object>> serials(Instant since) {
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String where = since == null ? " AND status::text = 'in_stock'" : " AND \"updatedAt\" > ?";
+        if (since != null) {
+            params.add(SqlRows.ts(since));
+        }
+        String branch = inBranch("\"locationId\"", params);
+        return SqlRows.list(jdbc.sql("SELECT id, \"productId\", \"variantId\", \"locationId\", \"serialNumber\","
+                + " status::text AS status, \"updatedAt\" FROM \"InventorySerial\" WHERE \"organizationId\" = ?" + where
+                + " AND " + branch + " ORDER BY \"updatedAt\" ASC").params(params));
+    }
+
+    /** Active product units with their factor to the product's base unit. */
+    private List<Map<String, Object>> uomConversions() {
+        List<Map<String, Object>> out = SqlRows.list(jdbc.sql("SELECT pu.id, pu.\"productId\", pu.\"uomId\", u.code AS"
+                + " \"uomCode\", u.name AS \"uomName\", pu.factor, pu.\"isPurchase\", pu.\"isSales\" FROM \"ProductUom\" pu"
+                + " JOIN \"UnitOfMeasure\" u ON u.id = pu.\"uomId\" WHERE pu.\"organizationId\" = ? AND pu.\"isActive\" = true"
+                + " ORDER BY pu.\"productId\", u.code").param(org()));
+        out.forEach(r -> r.put("factor", jsNum(r.get("factor"))));
         return out;
     }
 

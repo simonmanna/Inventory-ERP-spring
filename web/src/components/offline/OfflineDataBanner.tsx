@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { WifiOff } from 'lucide-react';
-import { isPosPath, useOnline } from '@/lib/offline/reachability';
+import { isOfflineCapablePath, useOnline } from '@/lib/offline/reachability';
 import { tx } from '@/lib/i18n/tx';
 
 /** The oldest `dataUpdatedAt` among the queries mounted on screen, or null when none has data. */
@@ -33,7 +33,7 @@ export function OfflineDataBanner() {
   }, [online, qc]);
 
   // The POS screens work offline (ADR-S083 O2) and show their own connection indicator.
-  if (online || isPosPath()) return null;
+  if (online || isOfflineCapablePath()) return null;
   const time = asOf ? new Date(asOf) : null;
   const sameDay = time && time.toDateString() === new Date().toDateString();
   const label = time

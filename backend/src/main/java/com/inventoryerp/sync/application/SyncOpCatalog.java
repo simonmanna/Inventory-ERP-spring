@@ -53,6 +53,12 @@ public final class SyncOpCatalog {
         svc(m, "stock.in", false, "");
         svc(m, "stock.out", false, "");
         svc(m, "expense.create", true, "");
+        // ADR-S083 O4: each calls inventory / procurement services that own their transactions (create, then post).
+        // A later step the server refuses is held for a supervisor instead of failing the op (S4).
+        svc(m, "transfer.dispatch", false, "");
+        svc(m, "transfer.receive", false, "");
+        svc(m, "stock.adjust", false, "");
+        svc(m, "grn.receive", false, "");
         // Thin writes and services that write in auto-commit: one op transaction.
         op(m, "stock.count", false);
         op(m, "kitchen.void", false); // per-line waste commits stay REQUIRES_NEW, keyed per line (retry-safe)
@@ -99,6 +105,10 @@ public final class SyncOpCatalog {
     public static Set<String> types() {
         return ENTRIES.keySet();
     }
+
+    /** Op types that move stock: their unresolved dead letters block a fiscal-period close (ADR-S083 S4/S5). */
+    public static final Set<String> STOCK_TYPES = Set.of("stock.in", "stock.out", "stock.count", "kitchen.void",
+            "transfer.dispatch", "transfer.receive", "stock.adjust", "grn.receive");
 
     /** Op types whose unresolved dead letters block a cash-session close (ADR-S083 S5). */
     public static Set<String> moneyTypes() {

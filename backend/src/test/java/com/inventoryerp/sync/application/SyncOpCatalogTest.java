@@ -15,7 +15,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * ADR-S083 C1 (O0 correction 1): every op type the push handler dispatches, and every type the push DTO accepts, is
- * classified in {@link SyncOpCatalog} (41 types), and the cash-close money list matches the catalog.
+ * classified in {@link SyncOpCatalog} (45 types: 41 + the four O4 warehouse ops), and the cash-close money list
+ * matches the catalog.
  */
 class SyncOpCatalogTest {
 
@@ -31,7 +32,7 @@ class SyncOpCatalogTest {
     }
 
     @Test
-    @DisplayName("the catalog classifies exactly the 41 dispatched op types")
+    @DisplayName("the catalog classifies exactly the 45 dispatched op types")
     void catalogMatchesDispatch() throws IOException {
         String push = Files.readString(SRC.resolve("application/SyncPushService.java"));
         String body = push.substring(push.indexOf("private Map<String, Object> runOp("),
@@ -42,7 +43,7 @@ class SyncOpCatalogTest {
             dispatched.addAll(quoted(m.group(1)));
         }
         assertThat(dispatched).containsExactlyInAnyOrderElementsOf(SyncOpCatalog.types());
-        assertThat(SyncOpCatalog.types()).hasSize(41);
+        assertThat(SyncOpCatalog.types()).hasSize(45);
     }
 
     @Test
@@ -65,5 +66,13 @@ class SyncOpCatalogTest {
     void moneyTypesMatchCashClose() {
         assertThat(CashSessionService.SYNC_MONEY_OP_TYPES).containsExactlyInAnyOrderElementsOf(
                 SyncOpCatalog.moneyTypes());
+    }
+
+    @Test
+    @DisplayName("period close blocks on the catalog's stock op types (ADR-S083 S4)")
+    void stockTypesMatchPeriodClose() {
+        assertThat(com.inventoryerp.accounting.application.PeriodCloseService.SYNC_STOCK_OP_TYPES)
+                .containsExactlyInAnyOrderElementsOf(SyncOpCatalog.STOCK_TYPES);
+        assertThat(SyncOpCatalog.types()).containsAll(SyncOpCatalog.STOCK_TYPES);
     }
 }

@@ -35,7 +35,13 @@ export interface SyncOp {
   code?: string;
   httpStatus?: number;
   /** `mapping` / `finalNumbers` returned when applied. */
-  result?: { mapping?: Record<string, unknown>; finalNumbers?: Record<string, unknown> };
+  result?: { mapping?: Record<string, unknown>; finalNumbers?: Record<string, unknown>; outcome?: OpOutcome };
+}
+
+/** ADR-S083 O4: what became of warehouse work on the server (posted, held for a supervisor, waiting). */
+export interface OpOutcome {
+  state: string;
+  reason?: string;
 }
 
 /** Input to enqueue: the engine mints opId, deviceSeq, occurredAt and timestamps. */
@@ -80,6 +86,7 @@ export interface PushResult {
   retryable?: boolean;
   mapping?: Record<string, unknown>;
   finalNumbers?: Record<string, unknown>;
+  outcome?: OpOutcome;
 }
 
 export interface PushResponse {
@@ -163,7 +170,9 @@ export interface SyncStatus {
 }
 
 /** Scopes the server always sends in full (no watermark): replace, never merge. */
-export const FULL_SET_SCOPES = ['paymentMethods', 'ledgerAccounts', 'expenseCategories', 'stockLocations'] as const;
+export const FULL_SET_SCOPES = ['paymentMethods', 'ledgerAccounts', 'expenseCategories', 'stockLocations',
+  // ADR-S083 O4 warehouse scopes sent in full
+  'openPurchaseOrders', 'transfers', 'uomConversions'] as const;
 
 /** Every pull scope (`SyncPullService.SCOPES`). */
 export const ALL_SCOPES = [
@@ -172,5 +181,8 @@ export const ALL_SCOPES = [
   'paymentMethods', 'ledgerAccounts', 'expenseCategories', 'stockLocations', 'stockLevels', 'suppliers',
   'productVariants',
 ] as const;
+
+/** ADR-S083 O4: warehouse scopes (`SyncPullService.EXTENDED_SCOPES`), sent only when named; limited to the device's branch. */
+export const WAREHOUSE_SCOPES = ['openPurchaseOrders', 'transfers', 'lots', 'serials', 'uomConversions'] as const;
 
 export const SYNC_PROTOCOL = '2.0';

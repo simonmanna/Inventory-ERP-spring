@@ -49,6 +49,8 @@ const CompanySettingsPage = lazy(() => import('@/pages/settings/CompanySettingsP
 const LicensePage = lazy(() => import('@/pages/settings/LicensePage').then((m) => ({ default: m.LicensePage })));
 const ReceiptSettingsPage = lazy(() => import('@/pages/pos/ReceiptSettingsPage').then((m) => ({ default: m.ReceiptSettingsPage })));
 const DevicesPage = lazy(() => import('@/pages/pos/DevicesPage').then((m) => ({ default: m.DevicesPage })));
+const StockTabletPage = lazy(() => import('@/pages/warehouse/StockTabletPage').then((m) => ({ default: m.StockTabletPage })));
+const OfflineDiscrepanciesPage = lazy(() => import('@/pages/warehouse/OfflineDiscrepanciesPage').then((m) => ({ default: m.OfflineDiscrepanciesPage })));
 const DeadLettersPage = lazy(() => import('@/pages/pos/DeadLettersPage').then((m) => ({ default: m.DeadLettersPage })));
 const PostingMonitorPage = lazy(() => import('@/pages/pos/PostingMonitorPage').then((m) => ({ default: m.PostingMonitorPage })));
 const ApprovalsPage = lazy(() => import('@/pages/approvals').then((m) => ({ default: m.ApprovalsPage })));
@@ -628,6 +630,8 @@ export function App() {
             <Route path="/inventory/locations" element={<RequirePermission permission={PERMISSIONS.inventoryLocation.read}><LocationsPage /></RequirePermission>} />
             <Route path="/inventory/reservations" element={<RequirePermission permission={PERMISSIONS.inventory.read}><StockReservationsPage /></RequirePermission>} />
             <Route path="/inventory/replenishment" element={<RequirePermission permission={PERMISSIONS.inventory.read}><ReplenishmentPage /></RequirePermission>} />
+            <Route path="/warehouse/tablet" element={<RequirePermission permission={PERMISSIONS.inventory.move}><StockTabletPage /></RequirePermission>} />
+            <Route path="/inventory/offline-discrepancies" element={<RequirePermission permission={PERMISSIONS.inventory.read}><OfflineDiscrepanciesPage /></RequirePermission>} />
             <Route path="/inventory/warehouse" element={<RequirePermission permission={PERMISSIONS.warehouse.read}><WarehousePage /></RequirePermission>} />
             <Route path="/procurement/budgets" element={<RequirePermission permission={PERMISSIONS.procurement.budget.read}><ProcurementBudgetsPage /></RequirePermission>} />
             <Route path="/procurement/delegations" element={<RequirePermission permission={PERMISSIONS.procurement.delegation.read}><ProcurementDelegationsPage /></RequirePermission>} />

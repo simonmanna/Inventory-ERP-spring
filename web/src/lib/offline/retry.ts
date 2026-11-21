@@ -46,7 +46,7 @@ export function applyResult(op: SyncOp, r: PushResult, now: number, random?: () 
       ...base,
       status: 'applied',
       lastError: undefined,
-      result: { mapping: r.mapping, finalNumbers: r.finalNumbers },
+      result: { mapping: r.mapping, finalNumbers: r.finalNumbers, outcome: r.outcome },
     };
   }
   if (r.code && HELD_CODES.has(r.code)) {

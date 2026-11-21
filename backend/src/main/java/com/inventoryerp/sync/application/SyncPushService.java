@@ -103,6 +103,7 @@ public class SyncPushService {
     private final CashRegisterService cashRegisters;
     private final ProductService products;
     private final DirectStockService directStock;
+    private final SyncStockService stockOps;
     private final InventoryCountService counts;
     private final ExpensesService expenses;
     private final PosOverridesService overrides;
@@ -135,7 +136,8 @@ public class SyncPushService {
             CashSessionService cashSessions, CashRegisterService cashRegisters, ProductService products,
             DirectStockService directStock, InventoryCountService counts, ExpensesService expenses,
             org.springframework.transaction.PlatformTransactionManager txm, PosOverridesService overrides,
-            KitchenWaste kitchenWaste, AuditService audit, PosCashDrawerService cashDrawer) {
+            KitchenWaste kitchenWaste, AuditService audit, PosCashDrawerService cashDrawer, SyncStockService stockOps) {
+        this.stockOps = stockOps;
         this.cashDrawer = cashDrawer;
         this.overrides = overrides;
         this.kitchenWaste = kitchenWaste;
@@ -476,6 +478,10 @@ public class SyncPushService {
         if (body != null && body.get("finalNumbers") != null) {
             r.put("finalNumbers", body.get("finalNumbers"));
         }
+        // ADR-S083 O4 (additive): what became of warehouse work — posted, held for a supervisor, or waiting.
+        if (body != null && body.get("outcome") != null) {
+            r.put("outcome", body.get("outcome"));
+        }
         return r;
     }
 
@@ -584,7 +590,7 @@ public class SyncPushService {
         List<String> refs = new ArrayList<>();
         Object session = payload.get("cashSessionId") != null ? payload.get("cashSessionId") : payload.get("sessionId");
         for (Object ref : new Object[] {session, payload.get("partnerId"), payload.get("invoiceId"),
-            payload.get("reservationId")}) {
+            payload.get("reservationId"), payload.get("transferId")}) {
             if (ref instanceof String s && !s.isEmpty()) {
                 refs.add(s);
             }
@@ -627,7 +633,8 @@ public class SyncPushService {
         return out;
     }
 
-    static final List<String> REF_KEYS = List.of("cashSessionId", "sessionId", "invoiceId", "reservationId");
+    static final List<String> REF_KEYS = List.of("cashSessionId", "sessionId", "invoiceId", "reservationId",
+            "transferId"); // transferId: ADR-S083 O4 (a receive behind its own device's dispatch)
 
     /** Swap client-minted ids for server ids created earlier in the batch. */
     static Map<String, Object> resolveRefs(Map<String, Object> payload, Map<String, String> clientIdMap) {
@@ -967,12 +974,24 @@ public class SyncPushService {
                         str(payload.get("approvedById")), str(payload.get("approverPin")), items, str(payload.get("notes")));
                 Map<String, Object> doc = "stock.in".equals(op.type()) ? directStock.directIn(req) : directStock.directOut(req);
                 Object docId = doc == null ? null : doc.get("id");
+                if ("stock.out".equals(op.type())) {
+                    // ADR-S083 S4: an offline issue that takes the location below zero is flagged, not refused.
+                    List<Map<String, Object>> lines = new ArrayList<>();
+                    PosSql.list(payload.get("items")).forEach(o -> lines.add(PosSql.map(o)));
+                    stockOps.flagNegativeLines(stockCtx(device, op), str(payload.get("locationId")), lines,
+                            "direct_stock_out", doc == null ? null : str(doc.get("code")));
+                }
                 m.put("id", docId);
                 m.put("mapping", mapOf("stockDocId", docId == null ? "" : String.valueOf(docId)));
             }
             // Audit S-5: opening the count, entering the figures and submitting are one transaction, so a refused
             // count leaves no open count behind.
-            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(payload)));
+            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(payload, op.occurredAt())));
+            // ADR-S083 O4 (S4): warehouse work recorded offline.
+            case "transfer.dispatch" -> m.putAll(stockOps.dispatch(stockCtx(device, op), payload));
+            case "transfer.receive" -> m.putAll(stockOps.receive(stockCtx(device, op), payload));
+            case "stock.adjust" -> m.putAll(stockOps.adjust(stockCtx(device, op), payload));
+            case "grn.receive" -> m.putAll(stockOps.receiveGoods(stockCtx(device, op), payload));
             case "kitchen.void" -> m.putAll(kitchenVoid(device, op, payload));
             case "expense.create" -> {
                 Map<String, Object> e = expenses.create(new ExpensesService.CreateInput(str(payload.get("title")),
@@ -1363,7 +1382,12 @@ public class SyncPushService {
     }
 
     /** Open (or resume) a spot count over the counted products, enter the device's figures and submit. */
-    private Map<String, Object> applyStockCount(Map<String, Object> payload) {
+    private static SyncStockService.OpContext stockCtx(Device device, Op op) {
+        return new SyncStockService.OpContext(op.opId(), op.type(), device.id(), device.branchId(), op.actorUserId(),
+                op.occurredAt());
+    }
+
+    private Map<String, Object> applyStockCount(Map<String, Object> payload, String occurredAt) {
         List<Map<String, Object>> lines = new ArrayList<>();
         if (payload.get("lines") instanceof List<?> l) {
             l.forEach(o -> lines.add(PosSql.map(o)));
@@ -1405,8 +1429,15 @@ public class SyncPushService {
         for (Map<String, Object> l : lines) {
             String reason = l.get("reason") instanceof String r && !r.trim().isEmpty() ? r.trim()
                     : payload.get("reason") instanceof String pr && !pr.trim().isEmpty() ? pr.trim() : "Device count";
+            // ADR-S083 S4 (deviation, owner-approved): the variance is counted − on-hand when the device counted.
+            // The session compares with today's on-hand, so movements posted after the count carry the figure forward.
+            BigDecimal counted = PosSql.dec(l.get("countedQty"));
+            if (counted != null) {
+                counted = counted.add(stockOps.movedSince(str(payload.get("locationId")), str(l.get("productId")),
+                        PosSql.truthy(l.get("variantId")) ? str(l.get("variantId")) : null, occurredAt));
+            }
             draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByCell.get(countCell(l.get("productId"),
-                    l.get("variantId"))).get("id")), PosSql.dec(l.get("countedQty")), reason));
+                    l.get("variantId"))).get("id")), counted, reason));
         }
         String sessionId = String.valueOf(session.get("id"));
         counts.saveDraft(sessionId, draft, null, null);
