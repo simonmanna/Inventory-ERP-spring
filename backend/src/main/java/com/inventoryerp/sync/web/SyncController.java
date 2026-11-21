@@ -423,6 +423,35 @@ public class SyncController {
         return relay.shiftReport(cashSessionId);
     }
 
+    private com.inventoryerp.sync.application.SyncReconciliationService reconciliation;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReconciliation(com.inventoryerp.sync.application.SyncReconciliationService reconciliation) {
+        this.reconciliation = reconciliation;
+    }
+
+    /** ADR-S083 C2 (Extension): run the post-restore reconciliation now for the caller's organisation. */
+    @PostMapping("/reconciliation/run")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.ORGANIZATION__UPDATE)
+    public Map<String, Object> runReconciliation() {
+        return reconciliation.runForCurrent();
+    }
+
+    /** ADR-S083 C2 (Extension): recent reconciliation runs (no reports). */
+    @GetMapping("/reconciliation/runs")
+    @RequirePermissions(Permissions.ORGANIZATION__READ)
+    public List<Map<String, Object>> reconciliationRuns() {
+        return reconciliation.runs();
+    }
+
+    /** ADR-S083 C2 (Extension): one reconciliation run's report. */
+    @GetMapping("/reconciliation/runs/{id}")
+    @RequirePermissions(Permissions.ORGANIZATION__READ)
+    public Map<String, Object> reconciliationRun(@PathVariable String id) {
+        return reconciliation.report(id);
+    }
+
     /** HQ's licence view as the branch last pulled it. */
     private Object relayLicense() {
         return mirrorLicense == null ? null : mirrorLicense.get();

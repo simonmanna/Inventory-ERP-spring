@@ -26,6 +26,21 @@ Minimum server: 2 vCPU, 4 GB RAM, SSD. Recommended: 4 vCPU, 8 GB. JVM heap = 75 
    `lastError` says why it does not. Rejections appear at HQ under Sync dead letters (device = the branch server).
 5. Back up the branch database nightly with WAL (§7c). After a restore just start it: it reads HQ's feed first.
 
+### Compose: HQ and a branch on one machine (demo, drill) or a branch machine
+
+```bash
+# .env: BRANCH_HQ_ADMIN_EMAIL, BRANCH_HQ_ADMIN_PASSWORD, BRANCH_CODE (an HQ branch code), optional BRANCH_HQ_ORG (DEMO),
+#       BRANCH_SERVER_ID (branch-1), BRANCH_PORT (3002), BRANCH_HQ_URL (default: this file's api service)
+docker compose --profile branch up -d --build          # HQ + branch; tills of the branch use http://<host>:3002
+infra/docker/branch/drill.sh                            # cut the link, restore the branch, compare HQ (needs curl, jq)
+# On a branch machine with a remote HQ:
+BRANCH_HQ_URL=https://hq.example.com/api/v1 docker compose --profile branch up -d branch-db branch-enroll branch-api
+```
+
+`branch-enroll` registers the branch once and keeps its token in the `branchenroll` volume. To re-enrol (token
+revoked at HQ): `docker compose --profile branch run --rm --entrypoint rm branch-enroll /enroll/branch.env`, then start
+the profile again.
+
 ## 2. Configuration
 
 All configuration is environment variables (`.env.example` documents every key). Profiles:
@@ -200,13 +215,16 @@ Rules:
    not seen acknowledged. Normal dedup decides apply or replay:
    - an op whose ledger row was lost with the restore is applied again, because its business rows were lost too
    - an op whose ledger row survived is replayed
-3. **Run the post-restore reconciliation.** The automated job is deferred (tracked in ADR-S083 "Deferred work"); until
-   it exists, run these by hand:
-   - ledger rows still `state = 'committed'`: `SELECT * FROM "SyncAppliedOp" WHERE state = 'committed'`
-   - devices whose `PosDevice.lastPushSeq` is ahead of their highest ledger `deviceSeq`
-   - open dead letters by `failureCode`
-   - the trial balance (balanced journals; subledger vs control accounts)
-   - `StockItem` quantities vs the sum of stock movements
+3. **Run the post-restore reconciliation.** It runs by itself a few minutes after the API starts and nightly; to run it
+   now: `POST /sync/reconciliation/run` (needs `organization:update`), then read `GET /sync/reconciliation/runs/{id}`.
+   Administrators get an in-app alert when its findings change. Its checks: device and branch watermarks ahead of the
+   ledger, stale `committed` ledger rows, unbalanced posted journals, AR/AP subledger vs control accounts, `StockItem`
+   vs stock movements, open dead letters. What to do with each finding:
+   - `watermarks`: the device acknowledged ops the restore lost; make sure it is online and syncing (it re-pushes them),
+     then run again
+   - `committedOps`: verify the business rows of each op; it is also an `OPERATION_INCOMPLETE` dead letter
+   - `unbalancedJournals`, `receivables`, `payables`: hand to accounting before the period is closed
+   - `stock`: rebuild or count the listed cells (Inventory → reconciliation)
 
    Record what you found in the incident note.
 4. **Revoke and re-register a device whose token was in a lost backup window**, if it can no longer pull. Ops it

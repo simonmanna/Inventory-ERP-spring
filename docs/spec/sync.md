@@ -153,9 +153,11 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   (HQ, branch devices only), `GET /sync/branch/status` and `GET /sync/branch/shift-report` (branch node only; 404 at
   HQ). Device platform `branch` (requires `branchId`; token not rotated). Failure codes `ORIGIN_NOT_ALLOWED` (HQ) and
   `SYNC_DEAD_LETTERS_OPEN` (branch close). Pull response member `relay` at a branch. V599. See ADR-S083 "O7 as built".
+- **Post-restore reconciliation (C2):** `POST /sync/reconciliation/run`, `GET /sync/reconciliation/runs`,
+  `GET /sync/reconciliation/runs/{id}`; nightly and at start-up; V600. See ADR-S083 "C2 reconciliation".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
   `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`, `SyncSalesIT`, `SyncSeqReuseIT`,
-  `SyncClientParityIT`, `SyncBranchRelayIT`; the `SyncIT` authorization matrix now covers 22 routes.
+  `SyncClientParityIT`, `SyncBranchRelayIT`, `SyncReconciliationIT`; the `SyncIT` authorization matrix now covers 25 routes.
 
 ## Notes
 
