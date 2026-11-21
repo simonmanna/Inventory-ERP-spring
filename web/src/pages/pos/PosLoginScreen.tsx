@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 import { Coffee, Loader2, AlertCircle } from 'lucide-react';
 import { api } from '@/lib/api';
 import { usePosAuthStore } from '@/features/pos/pos-auth.store';
+import { offlineStaff } from '@/features/pos/pos-sync';
 import { tx } from '@/lib/i18n/tx';
 
 interface Props {
@@ -29,13 +30,17 @@ const PosLoginScreen: React.FC<Props> = ({ onLoggedIn, onBeforeSubmit, onExit })
   const [localError, setLocalError] = useState<string | null>(null);
   const [staff, setStaff] = useState<any[]>([]);
   const [staffLoading, setStaffLoading] = useState(true);
+  const [offlineLogin, setOfflineLogin] = useState(false);
 
   useEffect(() => {
     (async () => {
       try {
         const res = await api.get('/pos/auth/staff');
         setStaff(res.data);
-      } catch {
+      } catch (e: any) {
+        // ADR-S083 O2: no answer on a registered device → the synced staff list; the PIN is checked on the device.
+        const synced = e?.response ? null : await offlineStaff();
+        if (synced) { setStaff(synced); setOfflineLogin(true); return; }
         console.warn('Failed to load POS staff list');
       } finally {
         setStaffLoading(false);
@@ -138,6 +143,9 @@ const PosLoginScreen: React.FC<Props> = ({ onLoggedIn, onBeforeSubmit, onExit })
           </div>
           <h1 className="text-2xl font-bold text-white">{tx('POS Terminal')}</h1>
           <p className="text-slate-400 text-sm mt-1">{tx('Select your name to start')}</p>
+          {offlineLogin && (
+            <p className="text-amber-300 text-xs mt-2">{tx('Offline — signing in with the PIN saved on this device')}</p>
+          )}
         </div>
 
         {staffLoading ? (

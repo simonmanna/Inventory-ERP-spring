@@ -592,10 +592,47 @@ public class SyncPushService {
         return refs;
     }
 
+    /**
+     * ADR-S083 O2: swap client-minted ids for server ids created earlier in the batch, else by an op this device had
+     * applied in an EARLIER batch (the applied-op ledger keeps each result). Without the ledger fallback an op retried
+     * in a later batch than the op that created its reference — a sale after the offline shift-open it belongs to —
+     * could never resolve it. The client never rewrites a sent payload (its hash must stay stable), so the server
+     * resolves. A reference matches the creating op's {@code opId} (result {@code id}) or a {@code mapping} key
+     * (e.g. {@code cash_session.open}'s clientId); same organization and device only.
+     */
+    Map<String, Object> resolveRefsDurable(Device device, Map<String, Object> payload, Map<String, String> clientIdMap) {
+        Map<String, Object> out = resolveRefs(payload, clientIdMap);
+        if (device.id() == null) {
+            return out;
+        }
+        for (String key : REF_KEYS) {
+            if (!(out.get(key) instanceof String s) || s.isEmpty() || clientIdMap.containsValue(s)) {
+                continue;
+            }
+            // 1. The creating op's own id (web client: clientId == opId) — unique index on (organizationId, opId).
+            String id = jdbc.sql("SELECT COALESCE(\"resultJson\"->'mapping'->>?, \"resultJson\"->>'id') FROM \"SyncAppliedOp\""
+                    + " WHERE \"organizationId\" = ? AND \"opId\" = ? AND \"deviceId\" = ? AND state = 'applied'")
+                    .params(s, device.organizationId(), s, device.id()).query(String.class).optional().orElse(null);
+            if (id == null || id.isEmpty()) {
+                // 2. A shift-open's clientId (Android mints it apart from the opId) — partial index (V595).
+                id = jdbc.sql("SELECT \"resultJson\"->'mapping'->>? FROM \"SyncAppliedOp\" WHERE \"organizationId\" = ?"
+                        + " AND \"deviceId\" = ? AND \"opType\" = 'cash_session.open' AND state = 'applied'"
+                        + " AND jsonb_exists(\"resultJson\"->'mapping', ?) LIMIT 1")
+                        .params(s, device.organizationId(), device.id(), s).query(String.class).optional().orElse(null);
+            }
+            if (id != null && !id.isEmpty()) {
+                out.put(key, id);
+            }
+        }
+        return out;
+    }
+
+    static final List<String> REF_KEYS = List.of("cashSessionId", "sessionId", "invoiceId", "reservationId");
+
     /** Swap client-minted ids for server ids created earlier in the batch. */
     static Map<String, Object> resolveRefs(Map<String, Object> payload, Map<String, String> clientIdMap) {
         Map<String, Object> out = new LinkedHashMap<>(payload);
-        for (String key : List.of("cashSessionId", "sessionId", "invoiceId", "reservationId")) {
+        for (String key : REF_KEYS) {
             Object v = out.get(key);
             if (v instanceof String s && clientIdMap.containsKey(s)) {
                 out.put(key, clientIdMap.get(s));
@@ -619,7 +656,8 @@ public class SyncPushService {
 
     private Map<String, Object> runOp(Device device, Op op, Map<String, String> clientIdMap) {
         OccurredAt.resolve(op.occurredAt());
-        Map<String, Object> payload = resolveRefs(op.payload() == null ? Map.of() : op.payload(), clientIdMap);
+        Map<String, Object> payload = resolveRefsDurable(device, op.payload() == null ? Map.of() : op.payload(),
+                clientIdMap);
         String occurredAt = op.occurredAt();
         Map<String, Object> m = new LinkedHashMap<>();
         switch (op.type()) {

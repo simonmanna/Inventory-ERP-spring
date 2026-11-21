@@ -19,6 +19,8 @@ export interface PosAuthUser {
   permissions: string[];
   /** Short-lived POS token sent on `X-Pos-User` for server-side attribution. */
   posToken?: string;
+  /** ADR-S083 O2: signed in offline (PIN checked on the device); signs in again once the server is back. */
+  offline?: boolean;
 }
 
 interface PosAuthState {
@@ -53,6 +55,20 @@ export const usePosAuthStore = create<PosAuthState>()(
           set({ user, loading: false, error: null });
           return user;
         } catch (e: any) {
+          // ADR-S083 O2: server unreachable on a registered device → check the PIN against the synced staff list.
+          if (!e?.response) {
+            const { offlinePinLogin } = await import('./pos-sync');
+            const offline = await offlinePinLogin(userId, pin);
+            if (offline.ok) {
+              setPosToken(null);
+              set({ user: offline.user, loading: false, error: null });
+              return offline.user;
+            }
+            if (offline.message) {
+              set({ loading: false, error: offline.message });
+              throw new Error(offline.message);
+            }
+          }
           const msg = e?.response?.data?.message || tx('Invalid PIN or user not found');
           set({ loading: false, error: msg });
           throw new Error(msg);

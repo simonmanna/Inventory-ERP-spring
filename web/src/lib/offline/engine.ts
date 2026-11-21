@@ -108,8 +108,9 @@ export class SyncEngine {
 
   // ── outbox ────────────────────────────────────────────────────────────────
 
-  async enqueue(op: NewOp): Promise<SyncOp> {
-    const created = await this.store.enqueue(op, this.clock());
+  async enqueue(op: NewOp, opts: { opId?: string; decorate?: (deviceSeq: number) => Record<string, unknown> } = {}):
+      Promise<SyncOp> {
+    const created = await this.store.enqueue(op, this.clock(), opts.opId ?? crypto.randomUUID(), opts.decorate);
     this.channel?.postMessage({ kind: 'enqueued' } satisfies Msg);
     await this.refreshStatus(this.status.state);
     return created;
@@ -206,8 +207,11 @@ export class SyncEngine {
       });
       await this.store.putOps(updated);
       await this.store.putIdMappings(updated.flatMap((o) => {
-        const clientId = o.payload?.clientId;
-        const mapped = typeof clientId === 'string' ? o.result?.mapping?.[clientId] : undefined;
+        const clientId = o.payload?.clientId ?? o.opId;
+        const m = o.result?.mapping;
+        // cash_session.open maps the clientId itself; a sale / reservation / customer names its server id.
+        const mapped = typeof clientId === 'string'
+          ? (m?.[clientId] ?? m?.invoiceId ?? m?.reservationId ?? m?.customerId) : undefined;
         return o.status === 'applied' && typeof mapped === 'string'
           ? [{ clientId: clientId as string, serverId: mapped, key: 'clientId', opId: o.opId }] : [];
       }));

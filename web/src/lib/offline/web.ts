@@ -54,8 +54,8 @@ export function startAutoSync(engine: SyncEngine, intervalMs = 30_000): () => vo
   const interval = setInterval(run, intervalMs);
   const unsubscribe = engine.subscribe(() => undefined);
   const enqueue = engine.enqueue.bind(engine);
-  engine.enqueue = async (op) => {
-    const created = await enqueue(op);
+  engine.enqueue = async (op, opts) => {
+    const created = await enqueue(op, opts);
     soon();
     return created;
   };

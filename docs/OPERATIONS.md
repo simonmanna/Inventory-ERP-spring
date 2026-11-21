@@ -236,3 +236,5 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 | Backup fails with `transaction_timeout` | `PG_BIN` points at newer client tools than the server — use the server's major version |
 | Upgrade did not come up | `scripts/upgrade.sh` already rolled the images back; read `docker compose logs api`, fix, retry |
 | Offline device sales missing | `/sync/dead-letters` (open items block shift close); device registry `/sync/devices` |
+| Web till must sell through an outage | Register it once while online: Settings → Offline devices → "This browser" (needs `organization:update`); it must sync once before it can work offline (ADR-S083 O2) |
+| Offline receipt shows `OFF-XXXX-000123` | Provisional number of a sale recorded offline; the POS sync badge shows the final invoice number once it posts |

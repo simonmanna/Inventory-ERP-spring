@@ -36,7 +36,8 @@ import { useCloseShift } from './api';
 import {
   buildClosingStatementHtml, buildClosingStatementText, type ClosingStatementInput,
 } from './closing-statement';
-import { api } from '@/lib/api';
+import { api, serverUnreachable } from '@/lib/api';
+import { OfflineShiftCloseDialog } from './OfflineShiftCloseDialog';
 import {
   useSessionReconciliation, closeBlockers, blockerCount, tenderAccountRows,
 } from '@/features/pos/session-reconciliation';
@@ -354,7 +355,20 @@ export function decodeError(body: unknown): Decoded {
 
 /* ------------------------------------------------------------------ dialog */
 
-export const ShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onClosed }) => {
+/**
+ * ADR-S083 O2: with the server unreachable (or a shift opened offline that has not synced), the offline close is used;
+ * the full close needs the server's reconciliation.
+ */
+export const ShiftCloseDialog: React.FC<Props> = (props) => {
+  // Decided when the dialog opens (not in an effect), so the online dialog never mounts and fires requests offline.
+  const offline = useMemo(
+    () => props.open && (serverUnreachable() || !!(props.session as { offline?: boolean } | null)?.offline),
+    [props.open, props.session],
+  );
+  return offline ? <OfflineShiftCloseDialog {...props} /> : <OnlineShiftCloseDialog {...props} />;
+};
+
+const OnlineShiftCloseDialog: React.FC<Props> = ({ open, session, onClose, onClosed }) => {
   const [step, setStep] = useState<Step>('check');
   const [counted, setCounted] = useState('');
   const [notes, setNotes] = useState('');
