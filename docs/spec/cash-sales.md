@@ -23,7 +23,9 @@ Until then, the defaults below ship and the fiscal trigger stays unset.
 2. **HO:**
    1. **Start review**.
    2. Then **return** (for correction), **reject**, or **approve**.
-   3. After approval, **generate invoice**. This is a separate action, not automatic.
+   3. **Approve & invoice** in one step (deviation 10): approve, then generate, post and settle the invoice and copy
+      the delivery, in one transaction. Or **approve only** and **generate invoice** later (always the case on a
+      branch with segregation of duties).
 3. **Showroom:** sees the status, the timeline, and the invoice and its PDF.
 
 ## 2. States
@@ -34,6 +36,7 @@ execution:   draft ──confirm──▶ confirmed ──void──▶ voided
 processing:  not_submitted ──submit──▶ submitted ──start-review──▶ under_review
              under_review ──return──▶ returned_for_correction ──resubmit──▶ submitted
              under_review ──approve──▶ approved ──generate-invoice──▶ invoiced
+             submitted | under_review ──approve-and-invoice──▶ invoiced      (start-review + approve + generate-invoice)
              invoiced ──cancel-invoice──▶ approved            (attempt kept, replacement allowed)
              under_review ──reject──▶ rejected ──reopen──▶ under_review
 ```
@@ -48,7 +51,8 @@ processing:  not_submitted ──submit──▶ submitted ──start-review─
 | approve | `under_review`; segregation | none |
 | reject | `under_review`; reason; sets `ownerUserId` | none (exception queue) |
 | reopen | `rejected`; `sales:cash_sale:approve` | none |
-| generate-invoice | `approved`; no active invoice; `Idempotency-Key` | P4 + P5 (one tx) |
+| generate-invoice | `approved`; no active invoice; `Idempotency-Key` | P4 + P5 (one tx); delivery copied to the invoice |
+| approve-and-invoice | `submitted` (also needs `review`) or `under_review`; no segregation on the branch; `Idempotency-Key` | P4 + P5 (one tx); delivery copied to the invoice |
 | cancel-invoice | `invoiced`; fiscal gate | P7 (one tx) |
 | void | execution `confirmed`, processing ≠ `invoiced`; reason + goods-returned attestation; fiscal gate; `Idempotency-Key` | P6 (one tx) |
 | discard | execution `draft` | none |
@@ -205,6 +209,8 @@ A rejected sale stays fully posted: revenue, VAT, COGS and deposit stand.
 | POST | `/{id}/start-review`, `/{id}/return` | `review` | |
 | POST | `/{id}/approve`, `/{id}/reject`, `/{id}/reopen` | `approve` | |
 | POST | `/{id}/generate-invoice` | `invoice` | Idempotency-Key |
+| POST | `/{id}/approve-and-invoice` | `approve` + `invoice` | Idempotency-Key; deviation 10 |
+| GET | `/sales/invoices/{invoiceId}/cash-sale` | `invoice:read` | the sale behind an invoice: header + payment lines (tender, reference, payer, verification, deposit, receipts); 404 for other invoices |
 | POST | `/{id}/cancel-invoice` | `invoice` | Idempotency-Key; reason |
 | POST | `/{id}/void` | `void` | Idempotency-Key; reason + attestation |
 | POST | `/{id}/discard` | `create` | draft only |
@@ -354,3 +360,18 @@ and register under Cash & Banking. Tested in `CashSaleIT.branchCashSalesReports`
    - Confirm no longer forces `requireAvailable(true)`; the issue obeys `inventory.allowNegativeStock` (default on) and,
      when that is off, the product `stockPolicy` (`block` refuses, `warn` logs) — same as POS / invoices.
    - T7 now covers both: strict org + `block` → 400 nothing posted; default → confirm succeeds, location goes negative.
+10. **Approve & invoice in one step; payment and delivery carried onto the invoice (2026-11-22, owner request).**
+   - Replaces "generate invoice is a separate action, not automatic" (§ 1). `POST /{id}/approve-and-invoice`
+     (`approve` + `invoice`, plus `review` from `submitted`) starts the review if needed, approves, then generates,
+     posts and settles the invoice — one transaction, so a failure (e.g. missing `invoice:post`) leaves the sale where
+     it was. Refused with 403 on a branch with `requireSegregation` (approver ≠ invoicer stays). "Approve only" and
+     "Generate invoice" keep working; the `actions` list offers `approve_and_invoice` when allowed.
+   - **Payment.** Each P5 application payment (one per verified payment line) now carries the cash sale's branch and
+     the reference `<tender> · ref <reference> · <payer> · <CSS number> · <DEP number>` (was `Deposit DEP-…`, no
+     branch). Method stays `customer_deposit`: the money was received and posted at confirm (P2), so nothing posts
+     twice. The invoice screen lists the sale's payment lines (`GET /sales/invoices/{id}/cash-sale`).
+   - **Delivery.** At invoicing the sale's delivery (method, status, address, contact, dates, driver, vehicle, site
+     details, receiver, delivered-at / by, location) is written to the invoice handover, and the invoice
+     `deliveryAddress` / `deliveryDate` come from it. Later delivery updates on the sale follow onto the active
+     invoice. The invoice handover of a cash-sale invoice is read-only: `PATCH /sales/invoices/{id}/handover` → 400
+     `The delivery of this invoice is managed on cash sale <number>`. A replacement invoice gets a fresh copy.

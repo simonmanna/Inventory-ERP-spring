@@ -109,6 +109,13 @@ public class CashSaleService {
     private final ProductVariantService variants;
     private ProductSizingService sizing;
     private SalesLetterhead letterhead;
+    private SalesHandoverService handovers;
+
+    /** The head-office invoice mirrors the sale's delivery. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setHandovers(SalesHandoverService handovers) {
+        this.handovers = handovers;
+    }
 
     /** Sell by size (ADR-S066). */
     @org.springframework.beans.factory.annotation.Autowired
@@ -232,7 +239,7 @@ public class CashSaleService {
         s.put("fiscalDocuments", db.rows("SELECT id, operation, provider, \"requestRef\", status, attempts, \"lastError\","
                 + " \"externalRef\", \"fiscalNumber\", reason, \"createdAt\", \"updatedAt\" FROM \"FiscalDocument\" WHERE"
                 + " \"submissionId\" = ? ORDER BY \"createdAt\"", id));
-        s.put("actions", actions(s));
+        s.put("actions", actions(s, segregated(s)));
         return s;
     }
 
@@ -319,7 +326,7 @@ public class CashSaleService {
     }
 
     /** The transitions open to the caller now (drives the buttons of the web screens). */
-    private static List<String> actions(Map<String, Object> s) {
+    private static List<String> actions(Map<String, Object> s, boolean segregated) {
         String ex = str(s.get("executionStatus"));
         String pr = str(s.get("processingStatus"));
         List<String> out = new ArrayList<>();
@@ -347,6 +354,12 @@ public class CashSaleService {
             if (TenantContext.has(Permissions.SALES__CASH_SALE_APPROVE)) {
                 out.addAll(List.of("approve", "reject"));
             }
+        }
+        // one step: approve (starting the review when needed), invoice, apply the payments, copy the delivery
+        if (("under_review".equals(pr) || "submitted".equals(pr) && TenantContext.has(Permissions.SALES__CASH_SALE_REVIEW))
+                && TenantContext.has(Permissions.SALES__CASH_SALE_APPROVE)
+                && TenantContext.has(Permissions.SALES__CASH_SALE_INVOICE) && !segregated) {
+            out.add("approve_and_invoice");
         }
         if ("rejected".equals(pr) && TenantContext.has(Permissions.SALES__CASH_SALE_APPROVE)) {
             out.addAll(List.of("reopen", "assign"));
@@ -1026,7 +1039,16 @@ public class CashSaleService {
         }
         patch.put("version", ((Number) s.get("version")).intValue() + 1);
         db.patch("SalesSubmission", id, patch, true);
+        mirrorDelivery(id);
         return get(id);
+    }
+
+    /** Copy the sale's delivery onto its active head-office invoice, if it has one. */
+    private void mirrorDelivery(String id) {
+        Map<String, Object> s = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ? AND \"organizationId\" = ?", id, org());
+        if (s != null && s.get("currentInvoiceId") != null) {
+            handovers.mirrorCashSale(str(s.get("currentInvoiceId")), s);
+        }
     }
 
     /** Non-financial corrections while returned (audited one row per changed field). */
@@ -1147,6 +1169,33 @@ public class CashSaleService {
      */
     @Transactional
     public Map<String, Object> generateInvoice(String id) {
+        return invoice(id);
+    }
+
+    /**
+     * Approve and invoice in one step (owner request 2026-11-22): a submitted sale's review is started, the sale is
+     * approved, and its invoice is generated, posted and settled by the sale's payments, with the delivery copied —
+     * one transaction, so nothing is left half done. Not on a branch with segregation of duties, where the approver may
+     * not invoice.
+     */
+    @Transactional
+    public Map<String, Object> approveAndInvoice(String id) {
+        Map<String, Object> s = lock(id);
+        if (segregated(s)) {
+            throw ApiException.forbidden("Segregation of duties: on this branch the sale is approved and invoiced by"
+                    + " different users");
+        }
+        if ("submitted".equals(s.get("processingStatus"))) {
+            if (!TenantContext.has(Permissions.SALES__CASH_SALE_REVIEW)) {
+                throw ApiException.forbidden("Missing required permission(s): " + Permissions.SALES__CASH_SALE_REVIEW);
+            }
+            startReview(id);
+        }
+        approve(id);
+        return invoice(id);
+    }
+
+    private Map<String, Object> invoice(String id) {
         Map<String, Object> s = lock(id);
         requireProcessing(s, "approved");
         requireExecution(s, "confirmed");
@@ -1168,8 +1217,12 @@ public class CashSaleService {
                     ProductSizingService.Sizing.stored(l), l.get("uomFactor") == null ? null : dec(l.get("uomFactor"))));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
+        boolean delivery = "delivery".equals(s.get("deliveryMethod")) && !blank(str(s.get("deliveryAddress")));
+        String deliveryDate = s.get("deliveryScheduledDate") == null ? issue
+                : s.get("deliveryScheduledDate").toString().substring(0, 10);
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,
-                "cash", null, null, str(s.get("salespersonId")), issue, str(s.get("customerAddress")), null, null, number,
+                "cash", null, null, str(s.get("salespersonId")), deliveryDate,
+                str(s.get(delivery ? "deliveryAddress" : "customerAddress")), null, null, number,
                 null, null, number, "Cash sale " + number + (s.get("customerName") == null ? "" : " — "
                         + s.get("customerName")), lines), str(s.get("branchId")), id, number,
                 str(s.get("accrualJournalEntryId")));
@@ -1177,13 +1230,20 @@ public class CashSaleService {
         invoices.post(docId);
         BigDecimal residual = dec(db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?", docId)
                 .get("amountResidual"));
+        Map<String, Map<String, Object>> paidBy = new HashMap<>();
+        for (Map<String, Object> p : db.rows("SELECT * FROM \"SalesSubmissionPayment\" WHERE \"submissionId\" = ? AND"
+                + " \"customerDepositId\" IS NOT NULL", id)) {
+            paidBy.put(str(p.get("customerDepositId")), p);
+        }
         for (Map<String, Object> dep : deposits.cashSaleDeposits(id)) {
             BigDecimal available = dec(dep.get("available"));
             if (residual.signum() <= 0 || available.signum() <= 0 || !"open".equals(dep.get("status"))) {
                 continue;
             }
             BigDecimal amount = available.min(residual);
-            deposits.apply(str(dep.get("id")), docId, amount);
+            // the invoice payment carries the sale's tender, reference and payer, and the sale's branch
+            deposits.apply(str(dep.get("id")), docId, amount, paymentReference(number, paidBy.get(str(dep.get("id"))),
+                    str(dep.get("number"))), str(s.get("branchId")));
             residual = residual.subtract(amount);
         }
         int attempt = (int) db.count("SELECT count(*) FROM \"SalesSubmissionInvoice\" WHERE \"submissionId\" = ?",
@@ -1196,6 +1256,7 @@ public class CashSaleService {
         }
         Map<String, Object> out = processing(id, s, "generate_invoice", "invoiced", Map.of("invoicedAt", Instant.now(),
                 "invoicedById", user(), "currentInvoiceId", docId), null, DomainEvents.SALES_CASH_SALE_INVOICED);
+        mirrorDelivery(id);
         Map<String, Object> profile = profiles.get(str(s.get("profileId")));
         if ("at_invoice".equals(str(profile.get("fiscalTrigger")))) {
             fiscal.request(db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?", id), "issue", docId,
@@ -1205,6 +1266,68 @@ public class CashSaleService {
         notify(str(s.get("submittedById")), "Cash sale " + number + " invoiced", "Invoice " + doc.get("documentNumber"),
                 id);
         return out;
+    }
+
+    /**
+     * Reference of the invoice payment that applies one payment line's deposit, e.g.
+     * {@code MTN MoMo · ref 77812 · Jane Doe · CSS-MAIN-2026-00004 · DEP-2026-00011}.
+     */
+    static String paymentReference(String saleNumber, Map<String, Object> p, String depositNumber) {
+        List<String> parts = new ArrayList<>();
+        if (p != null) {
+            String label = str(p.get("paymentModeLabel"));
+            if (blank(label)) {
+                String method = str(p.get("method"));
+                String provider = str(p.get("provider"));
+                label = "mobile_money".equals(method) ? (blank(provider) ? "" : provider.toUpperCase() + " ") + "Mobile money"
+                        : "bank".equals(method) ? "Bank" : "Cash";
+            }
+            parts.add(label);
+            if (!blank(str(p.get("reference")))) {
+                parts.add("ref " + str(p.get("reference")).trim());
+            }
+            if (!blank(str(p.get("payerName")))) {
+                parts.add(str(p.get("payerName")).trim());
+            }
+        }
+        parts.add(saleNumber);
+        if (!blank(depositNumber)) {
+            parts.add(depositNumber);
+        }
+        return String.join(" · ", parts);
+    }
+
+    /**
+     * The branch cash sale behind a head-office invoice, for the invoice screen: sale header, its payment lines (tender,
+     * reference, payer, verification, receipts) and its delivery; 404 when the invoice is not a cash sale's.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> forInvoice(String invoiceId) {
+        Map<String, Object> s = db.row("SELECT s.id, s.number, s.\"branchId\", b.name AS \"branchName\", s.\"saleDate\","
+                + " s.\"customerName\", s.\"grandTotal\", s.\"paidTotal\", s.\"executionStatus\", s.\"processingStatus\","
+                + " s.\"deliveryMethod\", s.\"deliveryStatus\", s.\"currentInvoiceId\","
+                + " COALESCE(NULLIF(trim(concat_ws(' ', u.\"firstName\", u.\"lastName\")), ''), u.email) AS \"salespersonName\""
+                + " FROM \"Document\" d JOIN \"SalesSubmission\" s ON s.id = d.\"sourceId\" AND s.\"organizationId\" ="
+                + " d.\"organizationId\" LEFT JOIN \"Branch\" b ON b.id = s.\"branchId\" LEFT JOIN \"User\" u ON u.id ="
+                + " s.\"salespersonId\" WHERE d.id = ? AND d.\"organizationId\" = ? AND d.\"sourceType\" = 'cash_sale'",
+                invoiceId, org());
+        if (s == null) {
+            throw ApiException.notFound("This invoice is not from a branch cash sale");
+        }
+        s.put("payments", db.rows("SELECT y.id, y.method, y.provider, y.\"paymentModeLabel\", y.amount, y.reference,"
+                + " y.\"paymentDate\", y.\"payerName\", y.\"payerAccount\", y.notes, y.\"verificationStatus\","
+                + " y.\"verificationSource\", y.\"verifiedAt\", y.\"collectedAt\", a.code AS \"accountCode\","
+                + " a.name AS \"accountName\", dep.number AS \"depositNumber\","
+                + " COALESCE(NULLIF(trim(concat_ws(' ', c.\"firstName\", c.\"lastName\")), ''), c.email) AS \"collectedByName\","
+                + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\","
+                + " (SELECT COALESCE(json_agg(json_build_object('id', m.id, 'name', m.name, 'contentType', m.\"contentType\")"
+                + " ORDER BY m.name), '[]'::json) FROM \"DmsDocument\" m WHERE m.\"organizationId\" = y.\"organizationId\""
+                + " AND m.id = ANY(y.\"attachmentIds\")) AS attachments"
+                + " FROM \"SalesSubmissionPayment\" y LEFT JOIN \"Account\" a ON a.id = y.\"accountId\" LEFT JOIN"
+                + " \"CustomerDeposit\" dep ON dep.id = y.\"customerDepositId\" LEFT JOIN \"User\" c ON c.id ="
+                + " y.\"collectedById\" LEFT JOIN \"User\" v ON v.id = y.\"verifiedById\" WHERE y.\"submissionId\" = ?"
+                + " ORDER BY y.\"createdAt\"", s.get("id")));
+        return s;
     }
 
     /**

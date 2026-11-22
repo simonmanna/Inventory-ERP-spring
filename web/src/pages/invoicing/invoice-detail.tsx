@@ -1,7 +1,8 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
-import { ArrowLeft, BookOpen, ChevronDown, FileDown, Mail, Wallet, XCircle } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { ArrowLeft, BookOpen, ChevronDown, FileDown, Mail, Receipt, Wallet, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,6 +27,26 @@ import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { Field } from '@/pages/crm/crm-ui';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { InvoiceLinesTable } from './InvoiceLinesTable';
+import { api } from '@/lib/api';
+
+/** The branch cash sale behind a head-office invoice (GET /sales/invoices/:id/cash-sale). */
+interface InvoiceCashSale {
+  id: string; number: string; branchName: string | null; saleDate: string | null; salespersonName: string | null;
+  deliveryMethod: string | null; deliveryStatus: string | null;
+  payments: Array<{
+    id: string; method: string; provider: string | null; paymentModeLabel: string | null; amount: string | number;
+    reference: string | null; paymentDate: string | null; collectedAt: string | null; payerName: string | null;
+    payerAccount: string | null; notes: string | null; verificationStatus: string; verifiedByName: string | null;
+    collectedByName: string | null; accountCode: string | null; accountName: string | null; depositNumber: string | null;
+    attachments: Array<{ id: string; name: string }>;
+  }>;
+}
+
+function tenderLabel(p: InvoiceCashSale['payments'][number]): string {
+  if (p.paymentModeLabel) return p.paymentModeLabel;
+  if (p.method === 'mobile_money') return `${p.provider ? `${p.provider.toUpperCase()} ` : ''}${tx('Mobile money')}`;
+  return p.method === 'bank' ? tx('Bank') : tx('Cash');
+}
 
 /** Display labels for the back-office invoice payment method (InvoicePaymentMode). */
 const PAYMENT_MODE_LABELS: Record<string, string> = {
@@ -94,6 +115,11 @@ export function InvoiceDetailPage() {
   const [payError, setPayError] = useState<string | null>(null);
 
   const entry = useJournalEntry(inv?.journalEntryId ?? undefined);
+  const fromCashSale = (inv as { sourceType?: string | null } | undefined)?.sourceType === 'cash_sale';
+  const { data: cashSale } = useQuery({
+    queryKey: ['invoice-cash-sale', id], enabled: !!id && fromCashSale,
+    queryFn: async () => (await api.get<InvoiceCashSale>(`/sales/invoices/${id}/cash-sale`)).data,
+  });
 
   const receiptRows = (inv?.allocations ?? [])
     .filter(a => a.payment?.direction === 'inbound')
@@ -249,6 +275,7 @@ export function InvoiceDetailPage() {
           )}
         </div>
         <div className="flex flex-wrap gap-2">
+          {cashSale && <SmartButton icon={<Receipt className="h-4 w-4" />} count={1} label={`${tx('Cash sale')} ${cashSale.number}`} onClick={() => navigate(`/sales/cash-sales/${cashSale.id}`)} />}
           <SmartButton icon={<Wallet className="h-4 w-4" />} count={receiptRows.length} label={tx('Payments')} disabled={!receiptRows.length} onClick={() => setActiveTab('payments')} />
           <SmartButton icon={<BookOpen className="h-4 w-4" />} count={inv.journalEntryId ? 1 : 0} label={tx('Journal Items')} disabled={!inv.journalEntryId} onClick={() => setActiveTab('journal')} />
         </div>
@@ -401,6 +428,7 @@ export function InvoiceDetailPage() {
                     <tr>
                       <th className={cn(th, 'w-16')}>{tx('Sr.')}</th>
                       <th className={th}>{tx('Date')}</th>
+                      <th className={th}>{tx('Payment')}</th>
                       <th className={th}>{tx('Method')}</th>
                       <th className={th}>{tx('Ref.')}</th>
                       <th className={cn(th, 'w-36 text-right')}>{tx('Amount')}</th>
@@ -411,13 +439,60 @@ export function InvoiceDetailPage() {
                       <tr key={p.id} className="border-b">
                         <td className="py-2 pr-2 font-mono text-xs text-muted-foreground">{i + 1}</td>
                         <td className="py-2 pr-2">{date(p.paymentDate || '')}</td>
+                        <td className="py-2 pr-2 font-mono text-xs">{p.paymentNumber ?? '-'}</td>
                         <td className="py-2 pr-2 capitalize">{p.paymentMethod?.replace(/_/g, ' ') ?? p.paymentMethod}</td>
-                        <td className="py-2 pr-2 font-mono text-xs">{p.paymentNumber ?? p.reference ?? '-'}</td>
+                        <td className="py-2 pr-2 text-xs">{p.reference ?? '-'}</td>
                         <td className="py-2 pr-2 text-right font-medium tabular-nums">{money(p.amount)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {cashSale && cashSale.payments.length > 0 && (
+              <div className="space-y-2 rounded-lg border p-3">
+                <p className="text-sm font-semibold">
+                  {tx('Paid at the branch')} — <Link to={`/sales/cash-sales/${cashSale.id}`} className="text-primary hover:underline">{cashSale.number}</Link>
+                  {cashSale.branchName ? <span className="font-normal text-muted-foreground"> · {cashSale.branchName}</span> : null}
+                </p>
+                <p className="text-xs text-muted-foreground">{tx('Collected and verified on the cash sale; applied to this invoice when it was generated.')}</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="border-b">
+                      <tr>
+                        <th className={th}>{tx('Method')}</th>
+                        <th className={th}>{tx('Ref.')}</th>
+                        <th className={th}>{tx('Payer')}</th>
+                        <th className={th}>{tx('Paid on')}</th>
+                        <th className={th}>{tx('Received into')}</th>
+                        <th className={th}>{tx('Verified')}</th>
+                        <th className={th}>{tx('Deposit')}</th>
+                        <th className={cn(th, 'w-32 text-right')}>{tx('Amount')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cashSale.payments.map((p) => (
+                        <tr key={p.id} className="border-b align-top">
+                          <td className="py-2 pr-2">{tenderLabel(p)}</td>
+                          <td className="py-2 pr-2 font-mono text-xs">{p.reference ?? '-'}</td>
+                          <td className="py-2 pr-2">{p.payerName ?? '-'}{p.payerAccount ? <span className="block text-xs text-muted-foreground">{p.payerAccount}</span> : null}</td>
+                          <td className="py-2 pr-2">{date(p.paymentDate || p.collectedAt || '')}</td>
+                          <td className="py-2 pr-2 text-xs">{p.accountCode ? `${p.accountCode} ${p.accountName ?? ''}` : '-'}</td>
+                          <td className="py-2 pr-2 text-xs">{statusLabel(p.verificationStatus)}{p.verifiedByName ? ` · ${p.verifiedByName}` : ''}</td>
+                          <td className="py-2 pr-2 font-mono text-xs">{p.depositNumber ?? '-'}</td>
+                          <td className="py-2 pr-2 text-right font-medium tabular-nums">{money(p.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {cashSale.payments.some((p) => p.attachments?.length || p.notes) && (
+                  <ul className="space-y-0.5 text-xs text-muted-foreground">
+                    {cashSale.payments.filter((p) => p.attachments?.length || p.notes).map((p) => (
+                      <li key={p.id}>{tenderLabel(p)}: {[p.notes, p.attachments?.length ? `${tx('Receipts')}: ${p.attachments.map((a) => a.name).join(', ')}` : null].filter(Boolean).join(' · ')}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
             <div className="ml-auto w-full max-w-[320px] border-t pt-3 text-sm">

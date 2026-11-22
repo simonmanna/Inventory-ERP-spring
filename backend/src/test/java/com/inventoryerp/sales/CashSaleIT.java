@@ -432,6 +432,110 @@ class CashSaleIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Approve & invoice in one step: invoice posted and paid with the sale's payment details, delivery copied"
+            + " and kept in sync")
+    void approveAndInvoiceCarriesPaymentAndDelivery() {
+        String c = partner("Direct Invoice " + sfx);
+        String id = draft(c, 2); // 2 × 35,000 × 1.18 = 82,600
+        ok(201, "POST", "/sales/cash-sales/" + id + "/payments", Map.of("method", "cash", "amount", 50_000,
+                "payerName", "Peter Cash"));
+        ok(201, "POST", "/sales/cash-sales/" + id + "/payments", Map.of("method", "mobile_money", "provider", "mtn",
+                "amount", 32_600, "reference", "MTN-DI-" + sfx, "payerName", "Jane Momo", "payerAccount", "0772123456"));
+        money("/sales/cash-sales/" + id + "/confirm", null, 200);
+        ok(200, "PATCH", "/sales/cash-sales/" + id + "/delivery", Map.of("deliveryMethod", "delivery",
+                "deliveryAddress", "Plot 4, Bugolobi", "deliveryStatus", "dispatched", "deliveryDriver", "Okello",
+                "deliveryVehicle", "UBB 456Y", "deliveryLandmark", "Opposite the mosque"));
+        JsonNode submitted = ok(200, "POST", "/sales/cash-sales/" + id + "/submit", null);
+        assertThat(submitted.get("actions").toString()).contains("approve_and_invoice");
+        // a branch with segregation of duties keeps approve and invoice apart; nothing changes
+        jdbc.sql("UPDATE \"BranchSalesProfile\" SET \"requireSegregation\" = true WHERE id = ?").param(profile).update();
+        try {
+            assertThat(ok(200, "GET", "/sales/cash-sales/" + id, null).get("actions").toString())
+                    .doesNotContain("approve_and_invoice");
+            assertThat(call("POST", "/sales/cash-sales/" + id + "/approve-and-invoice", null, key()).status())
+                    .isEqualTo(403);
+            assertThat(ok(200, "GET", "/sales/cash-sales/" + id, null).get("processingStatus").asString())
+                    .isEqualTo("submitted");
+        } finally {
+            jdbc.sql("UPDATE \"BranchSalesProfile\" SET \"requireSegregation\" = false WHERE id = ?").param(profile)
+                    .update();
+        }
+        // straight from submitted: review started, approved, invoiced, paid — one call
+        JsonNode done = money("/sales/cash-sales/" + id + "/approve-and-invoice", null, 200);
+        assertThat(done.get("processingStatus").asString()).isEqualTo("invoiced");
+        assertThat(done.get("approvedById").isNull()).isFalse();
+        String invoiceId = done.get("currentInvoiceId").asString();
+        String number = done.get("number").asString();
+        List<String> actions = new ArrayList<>();
+        ok(200, "GET", "/sales/cash-sales/" + id + "/timeline", null).forEach(e -> actions.add(e.get("action").asString()));
+        assertThat(actions).containsSubsequence("submit", "start_review", "approve", "generate_invoice");
+        // a second click is refused: the sale is no longer awaiting approval, still one invoice
+        assertThat(call("POST", "/sales/cash-sales/" + id + "/approve-and-invoice", null, key()).status()).isEqualTo(400);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"SalesSubmissionInvoice\" WHERE \"submissionId\" = ?").param(id)
+                .query(Long.class).single()).isEqualTo(1);
+
+        // the invoice is paid, and each payment carries the sale's tender, reference, payer and branch
+        JsonNode doc = ok(200, "GET", "/invoices/" + invoiceId, null);
+        assertThat(doc.get("amountResidual").asDouble()).isZero();
+        assertThat(doc.get("deliveryAddress").asString()).isEqualTo("Plot 4, Bugolobi");
+        List<Map<String, Object>> pays = jdbc.sql("SELECT p.reference, p.\"branchId\", a.amount FROM \"PaymentAllocation\" a"
+                + " JOIN \"Payment\" p ON p.id = a.\"paymentId\" WHERE a.\"documentId\" = ? ORDER BY a.amount DESC")
+                .param(invoiceId).query().listOfRows();
+        assertThat(pays).hasSize(2);
+        assertThat(pays.get(0).get("reference").toString()).startsWith("Cash · Peter Cash · " + number + " · DEP-");
+        assertThat(pays.get(1).get("reference").toString())
+                .startsWith("MTN Mobile money · ref MTN-DI-" + sfx + " · Jane Momo · " + number + " · DEP-");
+        assertThat(pays).allSatisfy(p -> assertThat(p.get("branchId")).isEqualTo(branch));
+        JsonNode src = ok(200, "GET", "/sales/invoices/" + invoiceId + "/cash-sale", null);
+        assertThat(src.get("number").asString()).isEqualTo(number);
+        assertThat(src.get("payments").size()).isEqualTo(2);
+        assertThat(src.get("payments").get(1).get("payerAccount").asString()).isEqualTo("0772123456");
+        assertThat(src.get("payments").get(1).get("depositNumber").asString()).startsWith("DEP-");
+        String plain = jdbc.sql("SELECT id FROM \"Document\" WHERE \"organizationId\" = ? AND \"documentType\" ="
+                + " 'sales_invoice' AND \"sourceType\" IS DISTINCT FROM 'cash_sale' LIMIT 1").param(demoOrg)
+                .query(String.class).optional().orElse(UUID.randomUUID().toString());
+        assertThat(as("GET", "/sales/invoices/" + plain + "/cash-sale", null).status()).isEqualTo(404);
+
+        // the invoice's delivery is the sale's delivery; it is edited on the sale and follows it
+        String handover = "/sales/invoices/" + invoiceId + "/handover";
+        JsonNode h = ok(200, "GET", handover, null);
+        assertThat(h.get("saved").asBoolean()).isTrue();
+        assertThat(h.get("method").asString()).isEqualTo("delivery");
+        assertThat(h.get("status").asString()).isEqualTo("dispatched");
+        assertThat(h.get("address").asString()).isEqualTo("Plot 4, Bugolobi");
+        assertThat(h.get("driver").asString()).isEqualTo("Okello");
+        assertThat(h.get("vehicle").asString()).isEqualTo("UBB 456Y");
+        assertThat(h.get("landmark").asString()).isEqualTo("Opposite the mosque");
+        assertThat(h.get("locationId").asString()).isEqualTo(location);
+        assertThat(h.get("contactName").asString()).isEqualTo("ABC Construction");
+        assertThat(h.get("cashSaleNumber").asString()).isEqualTo(number);
+        Res edit = as("PATCH", handover, Map.of("driver", "Someone else"));
+        assertThat(edit.status()).isEqualTo(400);
+        assertThat(edit.body().get("message").asString())
+                .isEqualTo("The delivery of this invoice is managed on cash sale " + number);
+        ok(200, "PATCH", "/sales/cash-sales/" + id + "/delivery", Map.of("deliveryStatus", "delivered",
+                "deliveryReceivedBy", "Site foreman"));
+        JsonNode delivered = ok(200, "GET", handover, null);
+        assertThat(delivered.get("status").asString()).isEqualTo("delivered");
+        assertThat(delivered.get("receivedBy").asString()).isEqualTo("Site foreman");
+        assertThat(delivered.get("deliveredAt").isNull()).isFalse();
+        assertThat(delivered.get("lines").get(0).get("handedOverQty").asDouble()).isEqualTo(2);
+
+        // cancel → the replacement invoice gets the delivery and the payment details again
+        money("/sales/cash-sales/" + id + "/cancel-invoice", Map.of("reason", "Wrong TIN"), 200);
+        String second = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200).get("currentInvoiceId")
+                .asString();
+        assertThat(ok(200, "GET", "/sales/invoices/" + second + "/handover", null).get("status").asString())
+                .isEqualTo("delivered");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"PaymentAllocation\" a JOIN \"Payment\" p ON p.id = a.\"paymentId\""
+                + " WHERE a.\"documentId\" = ? AND p.reference LIKE ?").params(second, "%" + number + "%")
+                .query(Long.class).single()).isEqualTo(2);
+        assertThat(partnerBalance("accounts_receivable", c)).isEqualByComparingTo("0");
+        assertThat(unbilled(c)).isEqualByComparingTo("0");
+        ledger.trialBalanceZero();
+    }
+
+    @Test
     @DisplayName("T14/T15/T16: return → amend TIN → resubmit; reject keeps stock and GL; reopen → invoice")
     void returnRejectReopen() {
         String c = partner("Returned cust " + sfx);
@@ -823,7 +927,8 @@ class CashSaleIT extends ApiTestSupport {
         String id = draft(null, 1);
         assertThat(call("GET", "/sales/cash-sales/" + id, null, otherToken).status()).isEqualTo(404);
         assertThat(as("POST", "/sales/cash-sales/" + id + "/confirm", null).status()).isEqualTo(400);
-        assertThat(assertAuthorizationMatrix(CashSaleController.Submissions.class, CashSaleController.Profiles.class))
+        assertThat(assertAuthorizationMatrix(CashSaleController.Submissions.class, CashSaleController.Profiles.class,
+                CashSaleController.InvoiceSource.class))
                 .isGreaterThan(20);
     }
 }

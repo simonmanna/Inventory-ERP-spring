@@ -165,7 +165,7 @@ reversals of one entry yield exactly one — `Acc8PostingIntegrityIT`.
 - Financial sign-off by the owner 2026-11-16; merged into main.
 - 2026-11-16; full build not run.
 
-**Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner.
+**Branch cash sales → head-office invoicing** (Spring-native, ADR-S056, [spec](spec/cash-sales.md), [phases](spec/sales-phases.md#cs--branch-cash-sales--head-office-invoicing-adr-s056); not counted above): CS-0..CS-4 done 2026-11-04 (V340, 29 routes under `/sales/cash-sales` + `/sales/branch-profiles`, `CashSaleIT`); CS-5/6 deferred; 6 deviations await owner. Approve & invoice in one step (deviation 10, 2026-11-22): `POST /sales/cash-sales/{id}/approve-and-invoice`, `GET /sales/invoices/{id}/cash-sale`; invoice payments carry the sale's tender / reference / payer / branch; the invoice delivery mirrors the sale (`CashSaleIT`).
 
 **Accounting remediation (Spring-native; [verification](accounting/ACC-0-verification.md), [plan](accounting/ACC-EXECUTION-PLAN.md), [tests](accounting/ACCOUNTING-TEST-STRATEGY.md)):**
 

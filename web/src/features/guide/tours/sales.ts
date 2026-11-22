@@ -417,14 +417,14 @@ const headOfficeSteps = (): TourStep[] => [
     route: '/sales/cash-sales/:id',
     anchor: 'sales.cash.actions',
     title: tx('Approve, return or reject'),
-    body: tx('"Approve" when everything is right. "Return for correction" sends it back to the branch with a reason; "Reject" refuses it (the posting stays until the sale is reopened or returned).'),
+    body: tx('"Approve & invoice" when everything is right: one click approves the sale, posts its invoice, applies the branch payments (method, reference, payer) and copies the delivery onto the invoice. "Approve only" leaves invoicing for later. "Return for correction" sends it back to the branch with a reason; "Reject" refuses it (the posting stays until the sale is reopened or returned).'),
     advanceOn: 'next',
   },
   {
     route: '/sales/cash-sales/:id',
     anchor: 'sales.cash.generate-invoice',
     title: tx('Generate the invoice'),
-    body: tx('Once approved, click "Generate invoice". It moves the sale to receivables and applies the payments; nothing is posted twice. Not approved yet? Press Skip.'),
+    body: tx('Approved with "Approve only"? Click "Generate invoice". It moves the sale to receivables, applies the payments and copies the delivery; nothing is posted twice. Already invoiced? Press Skip.'),
     advanceOn: { click: 'sales.cash.generate-invoice' },
   },
   {

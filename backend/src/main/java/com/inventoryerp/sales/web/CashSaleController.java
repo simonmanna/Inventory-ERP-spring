@@ -227,6 +227,14 @@ public final class CashSaleController {
             return svc.assign(id, text(b, "ownerUserId"));
         }
 
+        /** Approve and invoice in one step: invoice posted, payments applied, delivery copied (one transaction). */
+        @PostMapping("/{id}/approve-and-invoice")
+        @Idempotent
+        @RequirePermissions({Permissions.SALES__CASH_SALE_APPROVE, Permissions.SALES__CASH_SALE_INVOICE})
+        public Map<String, Object> approveAndInvoice(@PathVariable String id) {
+            return svc.approveAndInvoice(id);
+        }
+
         @PostMapping("/{id}/generate-invoice")
         @Idempotent
         @RequirePermissions(Permissions.SALES__CASH_SALE_INVOICE)
@@ -284,6 +292,23 @@ public final class CashSaleController {
         @RequirePermissions(Permissions.SALES__BRANCH_PROFILE_MANAGE)
         public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
             return svc.update(id, body(b));
+        }
+    }
+
+    /** The branch cash sale behind a head-office invoice (payment details and delivery for the invoice screen). */
+    @RestController
+    public static class InvoiceSource {
+
+        private final CashSaleService svc;
+
+        public InvoiceSource(CashSaleService svc) {
+            this.svc = svc;
+        }
+
+        @GetMapping("/sales/invoices/{id}/cash-sale")
+        @RequirePermissions(Permissions.INVOICE__READ)
+        public Map<String, Object> cashSale(@PathVariable String id) {
+            return svc.forInvoice(id);
         }
     }
 }
