@@ -124,6 +124,9 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   `syncOverrideReason` with `pos:override`, audited. Client-reported pending ops still only warn.
 - **Contract:** `contract-tests/sync-protocol/contract.json`, checked by `SyncProtocolContractIT` (no Nest
   counterpart).
+- **Snapshot page bytes (O1):** `rows` is written into the page response as the exact bytes the checksum was computed
+  over, so a client can verify a page against the raw body.
+- **Web client (O1):** `web/src/lib/offline/` — see ADR-S083 "O1 — Web sync engine".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
   `SyncProtocolContractIT`, `SyncOpCatalogTest`; the `SyncIT` authorization matrix now covers 15 routes.
 
