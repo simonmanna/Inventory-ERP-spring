@@ -106,7 +106,7 @@ function StageRow({ s, teamName, onEdit, onDelete }: { s: Stage; teamName?: stri
       <span className={cn('h-3 w-3 rounded-full', colorOf(s.color).dot)} />
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 font-medium">{s.name}{s.isWon && <Trophy className="h-3.5 w-3.5 text-emerald-600" />}{s.fold && <span className="text-xs text-muted-foreground">({tx('folded')})</span>}</p>
-        <p className="text-xs text-muted-foreground">{Number(s.probability)}% · {s.openCount ?? 0} {tx('open')}{teamName ? ` · ${teamName}` : ''}{s.rottingDays ? ` · ${tx('rots after')} ${s.rottingDays}d` : ''}</p>
+        <p className="text-xs text-muted-foreground">{Number(s.probability)}% · {s.openCount ?? 0} {tx('open')}{teamName ? ` · ${teamName}` : ''}{s.rottingDays ? ` · ${tx('rots after')} ${s.rottingDays}d` : ''}{s.requiredFields?.length ? ` · ${s.requiredFields.length} ${tx('required')}` : ''}{s.followUpType ? ` · ${tx('auto follow-up')}` : ''}</p>
       </div>
       <Button size="sm" variant="ghost" onClick={onEdit}><Pencil className="h-4 w-4" /></Button>
       <Button size="sm" variant="ghost" className="text-destructive" onClick={onDelete}><Trash2 className="h-4 w-4" /></Button>
@@ -119,17 +119,28 @@ const LEGACY = [
   { value: 'negotiation', label: tx('Negotiation') },
 ];
 
+const STAGE_FIELDS = [
+  { value: 'amount', label: tx('Expected revenue') }, { value: 'expectedClose', label: tx('Expected closing') },
+  { value: 'partnerId', label: tx('Customer') }, { value: 'contactName', label: tx('Contact') },
+  { value: 'email', label: tx('Email') }, { value: 'phone', label: tx('Phone') },
+];
+const FOLLOW_UP = [
+  { value: 'call', label: tx('Call') }, { value: 'email', label: tx('Email') }, { value: 'meeting', label: tx('Meeting') }, { value: 'task', label: tx('To-do') },
+];
+
 function StageDialog({ stage, teams, onClose }: { stage: Partial<Stage>; teams: Team[]; onClose: () => void }) {
   const [s, setS] = useState(stage);
   const set = (p: Partial<Stage>) => setS((x) => ({ ...x, ...p }));
   const save = useCrmMutation(async () => {
     const body: Partial<Stage> = { name: s.name, probability: Number(s.probability ?? 0), color: s.color, isWon: !!s.isWon, fold: !!s.fold, isActive: s.isActive ?? true,
-      requirements: s.requirements ?? null, teamId: s.teamId ?? null, rottingDays: s.rottingDays ? Number(s.rottingDays) : null, legacyStage: s.isWon ? 'won' : s.legacyStage };
+      requirements: s.requirements ?? null, teamId: s.teamId ?? null, rottingDays: s.rottingDays ? Number(s.rottingDays) : null, legacyStage: s.isWon ? 'won' : s.legacyStage,
+      requiredFields: s.requiredFields ?? [], followUpType: s.followUpType || null, followUpTitle: s.followUpTitle || null,
+      followUpDays: s.followUpType ? Number(s.followUpDays ?? 1) : null };
     return s.id ? crmApi.updateStage({ id: s.id, ...body }) : crmApi.createStage(body);
   });
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto">
         <DialogHeader><DialogTitle>{s.id ? tx('Edit stage') : tx('New stage')}</DialogTitle></DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={tx('Name')} className="sm:col-span-2"><Input autoFocus value={s.name ?? ''} onChange={(e) => set({ name: e.target.value })} /></Field>
@@ -145,6 +156,26 @@ function StageDialog({ stage, teams, onClose }: { stage: Partial<Stage>; teams: 
             <OptionalSelect value={s.teamId ?? ''} onChange={(v) => set({ teamId: v || null })} options={teams.map((t) => ({ value: t.id, label: t.name }))} placeholder={tx('All teams')} noneLabel={tx('All teams')} />
           </Field>
           <Field label={tx('Requirements')} className="sm:col-span-2" hint={tx('Shown as a tooltip on the column')}><Textarea rows={2} value={s.requirements ?? ''} onChange={(e) => set({ requirements: e.target.value })} /></Field>
+          <fieldset className="sm:col-span-2 rounded-lg border p-3">
+            <legend className="px-1 text-sm font-medium">{tx('Required before entering this stage')}</legend>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+              {STAGE_FIELDS.map((f) => (
+                <label key={f.value} className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="accent-primary" checked={(s.requiredFields ?? []).includes(f.value)}
+                    onChange={(e) => set({ requiredFields: e.target.checked ? [...(s.requiredFields ?? []), f.value] : (s.requiredFields ?? []).filter((x) => x !== f.value) })} />
+                  {f.label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <fieldset className="sm:col-span-2 grid gap-3 rounded-lg border p-3 sm:grid-cols-3">
+            <legend className="px-1 text-sm font-medium">{tx('Automatic follow-up')}</legend>
+            <Field label={tx('Activity')}>
+              <OptionalSelect value={s.followUpType ?? ''} onChange={(v) => set({ followUpType: (v || null) as Stage['followUpType'] })} options={FOLLOW_UP} placeholder={tx('None')} noneLabel={tx('None')} />
+            </Field>
+            <Field label={tx('Title')}><Input disabled={!s.followUpType} value={s.followUpTitle ?? ''} placeholder={`${tx('Follow up')}: ${s.name ?? ''}`} onChange={(e) => set({ followUpTitle: e.target.value })} /></Field>
+            <Field label={tx('Due after (days)')}><Input type="number" min={0} max={365} disabled={!s.followUpType} value={s.followUpDays ?? 1} onChange={(e) => set({ followUpDays: Number(e.target.value) })} /></Field>
+          </fieldset>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!s.isWon} onChange={(e) => set({ isWon: e.target.checked, probability: e.target.checked ? 100 : s.probability })} />{tx('Won stage')}</label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!s.fold} onChange={(e) => set({ fold: e.target.checked })} />{tx('Folded in kanban')}</label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={s.isActive ?? true} onChange={(e) => set({ isActive: e.target.checked })} />{tx('Active')}</label>

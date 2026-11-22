@@ -235,6 +235,10 @@ public class CrmConfigService {
                 + " sequence DESC LIMIT 1", org());
     }
 
+    /** Deal fields a stage may require (CRM enhancements T2b), with their labels for the error message. */
+    static final List<String> STAGE_FIELDS = List.of("amount", "expectedClose", "partnerId", "contactName", "email",
+            "phone");
+
     private Map<String, Object> stageData(Map<String, Object> in) {
         Map<String, Object> d = new LinkedHashMap<>();
         if (in.containsKey("probability")) {
@@ -254,6 +258,32 @@ public class CrmConfigService {
         }
         if (in.containsKey("requirements")) {
             d.put("requirements", blank(str(in.get("requirements"))) ? null : str(in.get("requirements")));
+        }
+        if (in.containsKey("requiredFields")) {
+            List<String> fields = in.get("requiredFields") == null ? List.of() : strings(in.get("requiredFields"));
+            for (String f : fields) {
+                if (!STAGE_FIELDS.contains(f)) {
+                    throw ApiException.badRequest("requiredFields must be among: " + String.join(", ", STAGE_FIELDS));
+                }
+            }
+            d.put("requiredFields", fields.stream().distinct().toList());
+        }
+        if (in.containsKey("followUpType")) {
+            String t = str(in.get("followUpType"));
+            if (!blank(t) && !List.of("call", "email", "meeting", "task").contains(t)) {
+                throw ApiException.badRequest("followUpType must be one of: call, email, meeting, task");
+            }
+            d.put("followUpType", blank(t) ? null : t);
+        }
+        if (in.containsKey("followUpTitle")) {
+            d.put("followUpTitle", blank(str(in.get("followUpTitle"))) ? null : str(in.get("followUpTitle")).trim());
+        }
+        if (in.containsKey("followUpDays")) {
+            Object r = in.get("followUpDays");
+            if (r != null && (!(r instanceof Number n) || n.intValue() < 0 || n.intValue() > 365)) {
+                throw ApiException.badRequest("followUpDays must be between 0 and 365");
+            }
+            d.put("followUpDays", r == null ? null : ((Number) r).intValue());
         }
         if (in.containsKey("teamId")) {
             String team = str(in.get("teamId"));

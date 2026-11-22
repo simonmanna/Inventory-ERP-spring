@@ -33,7 +33,7 @@ public class CrmQuotationPorts implements QuotationOpportunityPort {
         Map<String, Object> deal = db.row("SELECT status, kind FROM \"Deal\" WHERE id = ? AND \"organizationId\" = ?"
                 + " AND \"deletedAt\" IS NULL", dealId, org());
         if (deal != null && "open".equals(deal.get("status")) && "opportunity".equals(deal.get("kind"))) {
-            pipeline.won(dealId);
+            pipeline.wonByQuotation(dealId);
         }
     }
 

@@ -103,7 +103,18 @@ public class CrmPlannerService {
                 params.add(SqlRows.ts(end));
             }
             case "open" -> where.append(" AND a.status::text IN ('todo', 'in_progress')");
-            default -> throw ApiException.badRequest("state must be one of: overdue, today, upcoming, open, done");
+            case "range" -> {
+                // Calendar (T2b): everything not cancelled that is due between two business dates, inclusive.
+                LocalDate from = CrmDb.date(p.get("from"));
+                LocalDate to = CrmDb.date(p.get("to"));
+                if (from == null || to == null || to.isBefore(from) || to.isAfter(from.plusDays(62))) {
+                    throw ApiException.badRequest("from and to are required (YYYY-MM-DD, at most 62 days apart)");
+                }
+                where.append(" AND a.status::text <> 'cancelled' AND a.\"dueAt\" >= ? AND a.\"dueAt\" < ?");
+                params.add(SqlRows.ts(from.atStartOfDay(zone).toInstant()));
+                params.add(SqlRows.ts(to.plusDays(1).atStartOfDay(zone).toInstant()));
+            }
+            default -> throw ApiException.badRequest("state must be one of: overdue, today, upcoming, open, done, range");
         }
         if (!blank(p.get("type"))) {
             where.append(" AND a.type::text = ?");
@@ -115,7 +126,8 @@ public class CrmPlannerService {
         }
         String order = "done".equals(state) ? " ORDER BY a.\"completedAt\" DESC NULLS LAST" : " ORDER BY a.\"dueAt\""
                 + " NULLS LAST";
-        List<Map<String, Object>> rows = db.rows(SELECT + where + order + " LIMIT 300", params);
+        List<Map<String, Object>> rows = db.rows(SELECT + where + order + ("range".equals(state) ? " LIMIT 1000"
+                : " LIMIT 300"), params);
         for (Map<String, Object> r : rows) {
             Instant due = r.get("dueAt") instanceof Instant i ? i : null;
             boolean open = "todo".equals(r.get("status")) || "in_progress".equals(r.get("status"));
