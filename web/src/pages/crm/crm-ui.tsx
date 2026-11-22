@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
-import { CalendarClock, CheckSquare, Clock, Mail, PhoneCall, StickyNote, Star, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, ArrowRight, CalendarClock, CheckSquare, Clock, Inbox, Mail, PhoneCall, RotateCw, StickyNote, Star, Users, type LucideIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { StatusPill, type Tone } from '@/components/list';
 import { cn } from '@/lib/utils';
@@ -150,7 +152,8 @@ export function Field({ label, children, className, hint }: { label: string; chi
 }
 
 export function typeLabel(t: string): string {
-  return ACTIVITY_TYPE_LABEL[t as PlannedType] ?? t;
+  if (t === 'deal_stage_change') return tx('Stage change');
+  return ACTIVITY_TYPE_LABEL[t as PlannedType] ?? t.replace(/_/g, ' ');
 }
 
 /** Compact amount: 12.3k / 1.2M. */
@@ -161,21 +164,112 @@ export function compact(n: number | null | undefined): string {
   return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-export function KpiCard({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'danger' | 'success' }) {
+const KPI_TONE = {
+  danger: { value: 'text-rose-600 dark:text-rose-400', icon: 'bg-rose-500/10 text-rose-600 dark:text-rose-400' },
+  success: { value: 'text-emerald-600 dark:text-emerald-400', icon: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+  default: { value: '', icon: 'bg-primary/10 text-primary' },
+} as const;
+
+/**
+ * Headline number. With {@code to} the whole card is a link that lifts on hover; {@code icon} adds a tinted badge.
+ * Keeps the original (label, value, sub, tone) API for the report screens.
+ */
+export function KpiCard({ label, value, sub, tone, icon: Icon, to, className }: {
+  label: string; value: ReactNode; sub?: ReactNode; tone?: 'danger' | 'success'; icon?: LucideIcon; to?: string; className?: string;
+}) {
+  const t = KPI_TONE[tone ?? 'default'];
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+        {Icon && <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-transform duration-300 group-hover:scale-110', t.icon)}><Icon className="h-4 w-4" /></span>}
+      </div>
+      <p className={cn('mt-1 text-2xl font-semibold tracking-tight tabular-nums', t.value)}>{value}</p>
+      {sub && <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>}
+    </>
+  );
+  const cls = cn('group block h-full rounded-2xl border bg-card p-4 shadow-sm', className);
+  return to
+    ? <Link to={to} className={cn(cls, 'press transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:hover:translate-y-0')}>{body}</Link>
+    : <div className={cls}>{body}</div>;
+}
+
+/** Fade-and-rise on first paint, staggered by {@code delay} (ms); off under reduced motion. */
+export function Reveal({ delay = 0, className, children }: { delay?: number; className?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn('mt-1 text-2xl font-bold tabular-nums', tone === 'danger' && 'text-rose-600', tone === 'success' && 'text-emerald-600')}>{value}</p>
-      {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
+    <div className={cn('animate-in fade-in slide-in-from-bottom-2 fill-mode-both duration-500 motion-reduce:animate-none', className)} style={{ animationDelay: `${delay}ms` }}>
+      {children}
     </div>
   );
 }
 
-/** Horizontal meter used in report tables. */
+/** Card section with a title, optional icon, hint and a "see all" link. */
+export function Panel({ title, icon: Icon, hint, href, action, className, children }: {
+  title: string; icon?: LucideIcon; hint?: string; href?: string; action?: string; className?: string; children: ReactNode;
+}) {
+  return (
+    <section className={cn('flex h-full flex-col rounded-2xl border bg-card p-5 shadow-sm', className)}>
+      <header className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 font-semibold">{Icon && <Icon className="h-4 w-4 text-primary" />}{title}</h2>
+          {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+        </div>
+        {href && <Link to={href} className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline">{action ?? tx('See all')}<ArrowRight className="h-3 w-3" /></Link>}
+      </header>
+      <div className="min-h-0 flex-1">{children}</div>
+    </section>
+  );
+}
+
+/** Friendly empty state for a list or panel. */
+export function EmptyState({ icon: Icon = Inbox, title, hint, action, className }: {
+  icon?: LucideIcon; title: string; hint?: string; action?: ReactNode; className?: string;
+}) {
+  return (
+    <div className={cn('flex flex-col items-center justify-center gap-2 px-6 py-10 text-center animate-in fade-in duration-500', className)}>
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-muted text-muted-foreground"><Icon className="h-5 w-5" /></span>
+      <p className="text-sm font-medium">{title}</p>
+      {hint && <p className="max-w-sm text-xs text-muted-foreground">{hint}</p>}
+      {action}
+    </div>
+  );
+}
+
+/** Load failure with a retry; used instead of rendering a blank screen. */
+export function ErrorState({ message, onRetry, className }: { message?: string; onRetry?: () => void; className?: string }) {
+  return (
+    <div role="alert" className={cn('flex flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-rose-300/60 px-6 py-10 text-center dark:border-rose-500/30', className)}>
+      <span className="flex h-11 w-11 items-center justify-center rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400"><AlertTriangle className="h-5 w-5" /></span>
+      <p className="text-sm font-medium">{message ?? tx('Could not load this page.')}</p>
+      {onRetry && <Button size="sm" variant="outline" onClick={onRetry}><RotateCw className="mr-1.5 h-3.5 w-3.5" />{tx('Try again')}</Button>}
+    </div>
+  );
+}
+
+/** Circular progress (0–100) that animates its arc; {@code children} sit in the middle. */
+export function ProgressRing({ percent, size = 112, stroke = 10, className, trackClass = 'stroke-muted', barClass = 'stroke-primary', children }: {
+  percent: number; size?: number; stroke?: number; className?: string; trackClass?: string; barClass?: string; children?: ReactNode;
+}) {
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(100, Math.max(0, percent || 0));
+  return (
+    <div className={cn('relative shrink-0', className)} style={{ width: size, height: size }}>
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-full w-full -rotate-90" aria-hidden>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className={trackClass} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round" className={cn('transition-[stroke-dasharray] duration-1000 ease-out', barClass)}
+          strokeDasharray={`${(p / 100) * c} ${c}`} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">{children}</div>
+    </div>
+  );
+}
+
+/** Horizontal meter used in report tables; the bar grows in on first paint. */
 export function Meter({ value, max, className }: { value: number; max: number; className?: string }) {
   return (
     <div className="h-2 w-full min-w-[60px] overflow-hidden rounded-full bg-muted">
-      <div className={cn('h-full rounded-full bg-primary', className)} style={{ width: `${max ? Math.max(2, (value / max) * 100) : 0}%` }} />
+      <div className={cn('h-full origin-left rounded-full bg-primary grow-x transition-[width] duration-700 ease-out', className)} style={{ width: `${max ? Math.max(2, (value / max) * 100) : 0}%` }} />
     </div>
   );
 }

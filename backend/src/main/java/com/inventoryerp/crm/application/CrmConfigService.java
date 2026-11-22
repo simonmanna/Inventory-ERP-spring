@@ -164,6 +164,11 @@ public class CrmConfigService {
             if (open > 0) {
                 throw ApiException.badRequest("Move the " + open + " open opportunities out of this stage first");
             }
+            // Same floor as delete: deactivating the last active stage would leave nowhere to put a new deal.
+            if (db.count("SELECT count(*) FROM \"CrmStage\" WHERE \"organizationId\" = ? AND \"isActive\"",
+                    List.of(org())) <= 1) {
+                throw ApiException.badRequest("The pipeline needs at least one stage");
+            }
         }
         db.patch("CrmStage", id, data, true);
         boolean won = in.containsKey("isWon") ? Boolean.TRUE.equals(in.get("isWon"))

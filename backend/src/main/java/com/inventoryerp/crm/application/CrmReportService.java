@@ -205,13 +205,13 @@ public class CrmReportService {
         List<Map<String, Object>> byStatus = db.rows("SELECT q.status AS key, count(*) AS count, COALESCE(sum(q.total),"
                 + " 0) AS value FROM \"SalesQuotation\" q" + where + " GROUP BY 1 ORDER BY 2 DESC", params);
         long count = 0;
-        double value = 0;
+        java.math.BigDecimal value = java.math.BigDecimal.ZERO;
         long accepted = 0;
         long decided = 0;
         for (Map<String, Object> r : byStatus) {
             long n = ((Number) r.get("count")).longValue();
             count += n;
-            value += ((Number) r.get("value")).doubleValue();
+            value = value.add(CrmDb.dec(r.get("value")));
             String st = str(r.get("key"));
             if (List.of("accepted", "converted").contains(st)) {
                 accepted += n;
@@ -220,7 +220,7 @@ public class CrmReportService {
                 decided += n;
             }
         }
-        return Obj.of("count", count, "value", JsNumbers.js(Math.round(value * 100) / 100.0), "acceptanceRate",
+        return Obj.of("count", count, "value", JsNumbers.js(value, 2), "acceptanceRate",
                 pct(accepted, decided), "byStatus", byStatus);
     }
 
@@ -343,6 +343,10 @@ public class CrmReportService {
             case "lastActivity" -> "\"lastActivityAt\" DESC NULLS LAST";
             default -> "pa.name";
         };
+        // Pipeline totals per customer count only the deals the caller may see (same rule as the pipeline).
+        List<Object> rowParams = new ArrayList<>();
+        String dealVis = CrmDealQuery.visibleSql("dl", rowParams);
+        rowParams.addAll(params);
         List<Map<String, Object>> rows = db.rows("SELECT pa.id, pa.code, pa.name, pa.email, pa.phone, pa.\"isCompany\","
                 + " pa.\"isCustomer\", pa.\"creditLimit\", pa.\"creditHold\", pc.name AS \"categoryName\","
                 + " COALESCE(dd.open, 0) AS \"openOpportunities\", COALESCE(dd.\"openValue\", 0) AS \"openValue\","
@@ -351,14 +355,15 @@ public class CrmReportService {
                 + " \"Partner\" pa LEFT JOIN \"PartnerCategory\" pc ON pc.id = pa.\"categoryId\" LEFT JOIN LATERAL"
                 + " (SELECT count(*) FILTER (WHERE status = 'open') AS open, sum(amount) FILTER (WHERE status = 'open') AS"
                 + " \"openValue\", sum(amount) FILTER (WHERE status = 'won') AS \"wonValue\", count(*) FILTER (WHERE"
-                + " status = 'won') AS won FROM \"Deal\" WHERE \"partnerId\" = pa.id AND \"deletedAt\" IS NULL) dd ON true"
+                + " status = 'won') AS won FROM \"Deal\" dl WHERE dl.\"partnerId\" = pa.id AND dl.\"deletedAt\" IS NULL" + dealVis
+                + ") dd ON true"
                 + " LEFT JOIN LATERAL (SELECT COALESCE(sum(\"amountResidual\"), 0) AS open, COALESCE(sum("
                 + "\"amountResidual\") FILTER (WHERE \"dueDate\" < now()), 0) AS overdue FROM \"Document\" WHERE"
                 + " \"partnerId\" = pa.id AND \"organizationId\" = pa.\"organizationId\" AND \"documentType\"::text ="
                 + " 'sales_invoice' AND status::text NOT IN ('draft', 'cancelled', 'rejected')) ar ON true LEFT JOIN"
                 + " LATERAL (SELECT max(\"occurredAt\") AS at FROM \"Activity\" WHERE \"partnerId\" = pa.id AND"
                 + " \"deletedAt\" IS NULL) la ON true" + where + " ORDER BY " + sort + " OFFSET " + (long) (page - 1)
-                * pageSize + " LIMIT " + pageSize, params);
+                * pageSize + " LIMIT " + pageSize, rowParams);
         long total = db.count("SELECT count(*) FROM \"Partner\" pa" + where, params);
         return Obj.of("data", rows, "meta", Obj.of("page", page, "pageSize", pageSize, "total", total, "totalPages",
                 Math.max(1, (long) Math.ceil((double) total / pageSize))));

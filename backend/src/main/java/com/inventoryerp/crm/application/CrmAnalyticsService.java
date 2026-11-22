@@ -31,6 +31,8 @@ public class CrmAnalyticsService {
 
     private static final Map<String, Double> STAGE_WEIGHTS = Map.of("lead", 0.1, "qualified", 0.25, "proposal", 0.5,
             "negotiation", 0.8);
+    /** Deal visibility (ADR-S010 §7) on the unaliased {@code "Deal"} table, same rule as the pipeline. */
+    private static final String DEAL = "\"Deal\"";
     private static final String OPEN = "stage::text IN ('lead', 'qualified', 'proposal', 'negotiation')";
 
     private final JdbcClient jdbc;
@@ -43,29 +45,31 @@ public class CrmAnalyticsService {
         return TenantContext.organizationId();
     }
 
-    private static double num(Object v) {
-        return v == null ? 0 : new BigDecimal(v.toString()).doubleValue();
+    private static BigDecimal num(Object v) {
+        return v == null ? BigDecimal.ZERO : new BigDecimal(v.toString());
     }
 
     /** Per-stage counts + totals for open stages, plus open and weighted pipeline value. */
     public Map<String, Object> getPipeline() {
         Map<String, Map<String, Object>> rows = new HashMap<>();
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String vis = CrmDealQuery.visibleSql(DEAL, params);
         for (Map<String, Object> r : jdbc.sql("SELECT stage::text AS stage, count(*) AS n, SUM(amount) AS total FROM"
-                + " \"Deal\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND " + OPEN + " GROUP BY stage")
-                .param(org()).query().listOfRows()) {
+                + " \"Deal\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND " + OPEN + vis + " GROUP BY stage")
+                .params(params).query().listOfRows()) {
             rows.put((String) r.get("stage"), r);
         }
         List<Map<String, Object>> stages = new ArrayList<>();
-        double open = 0;
-        double weighted = 0;
+        BigDecimal open = BigDecimal.ZERO;
+        BigDecimal weighted = BigDecimal.ZERO;
         for (String stage : CrmService.OPEN_STAGES) {
             Map<String, Object> row = rows.get(stage);
-            double total = row == null ? 0 : num(row.get("total"));
+            BigDecimal total = row == null ? BigDecimal.ZERO : num(row.get("total"));
             double weight = STAGE_WEIGHTS.getOrDefault(stage, 0d);
             stages.add(Obj.of("stage", stage, "count", row == null ? 0 : ((Number) row.get("n")).longValue(),
                     "totalAmount", JsNumbers.js(total), "weight", weight));
-            open += total;
-            weighted += total * weight;
+            open = open.add(total);
+            weighted = weighted.add(total.multiply(BigDecimal.valueOf(weight)));
         }
         return Obj.of("stages", stages, "openPipelineValue", JsNumbers.js(open), "weightedValue",
                 JsNumbers.js(weighted));
@@ -84,6 +88,7 @@ public class CrmAnalyticsService {
             where.append(" AND \"updatedAt\" <= ?");
             params.add(SqlRows.ts(EntityPatch.toInstant(to)));
         }
+        where.append(CrmDealQuery.visibleSql(DEAL, params));
         long won = 0;
         long lost = 0;
         for (Map<String, Object> r : jdbc.sql("SELECT stage::text AS stage, count(*) AS n FROM \"Deal\" WHERE" + where
@@ -112,20 +117,22 @@ public class CrmAnalyticsService {
         Instant nowInstant = now.toInstant();
         Instant horizon = Double.isNaN(limit) ? null : now.withDayOfMonth(1).toLocalDate()
                 .plusMonths((long) Math.floor(limit)).atStartOfDay(BusinessZone.get()).toInstant();
-        Map<String, Double> buckets = new LinkedHashMap<>();
+        Map<String, BigDecimal> buckets = new LinkedHashMap<>();
         for (int i = 0; i < limit; i++) {
-            buckets.put(now.getYear() + "-" + pad(now.getMonthValue() + i), 0d);
+            buckets.put(now.getYear() + "-" + pad(now.getMonthValue() + i), BigDecimal.ZERO);
         }
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String vis = CrmDealQuery.visibleSql(DEAL, params);
         for (Map<String, Object> d : jdbc.sql("SELECT amount, \"expectedClose\" FROM \"Deal\" WHERE \"organizationId\" = ?"
-                + " AND \"deletedAt\" IS NULL AND " + OPEN + " AND \"expectedClose\" IS NOT NULL").param(org()).query()
-                .listOfRows()) {
+                + " AND \"deletedAt\" IS NULL AND " + OPEN + " AND \"expectedClose\" IS NOT NULL" + vis).params(params)
+                .query().listOfRows()) {
             Instant close = ((Timestamp) d.get("expectedClose")).toLocalDateTime().toInstant(ZoneOffset.UTC);
             if (close.isBefore(nowInstant) || (horizon != null && !close.isBefore(horizon))) {
                 continue;
             }
             ZonedDateTime local = close.atZone(BusinessZone.get());
             String key = local.getYear() + "-" + pad(local.getMonthValue());
-            buckets.put(key, buckets.getOrDefault(key, 0d) + num(d.get("amount")));
+            buckets.put(key, buckets.getOrDefault(key, BigDecimal.ZERO).add(num(d.get("amount"))));
         }
         List<Map<String, Object>> out = new ArrayList<>();
         buckets.forEach((month, amount) -> out.add(Obj.of("month", month, "expectedAmount", JsNumbers.js(amount))));
@@ -139,9 +146,11 @@ public class CrmAnalyticsService {
     /** Top partners by total open-deal value. */
     public List<Map<String, Object>> getTopCustomers(int limit) {
         int take = Math.min(50, Math.max(1, limit));
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String vis = CrmDealQuery.visibleSql(DEAL, params);
         List<Map<String, Object>> rows = jdbc.sql("SELECT \"partnerId\", count(*) AS n, SUM(amount) AS total FROM \"Deal\""
-                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND " + OPEN + " GROUP BY \"partnerId\""
-                + " ORDER BY SUM(amount) DESC LIMIT " + take).param(org()).query().listOfRows();
+                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND " + OPEN + vis + " GROUP BY \"partnerId\""
+                + " ORDER BY SUM(amount) DESC LIMIT " + take).params(params).query().listOfRows();
         Map<String, Map<String, Object>> partners = new HashMap<>();
         if (!rows.isEmpty()) {
             for (Map<String, Object> p : jdbc.sql("SELECT id, name, code FROM \"Partner\" WHERE id IN (:ids) AND"

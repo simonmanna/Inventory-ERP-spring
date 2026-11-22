@@ -197,6 +197,13 @@ export interface GroupRow { key: string | null; label: string | null; count: num
 /** Sales users work through /sales/quotations, which needs no CRM switch; CRM-only roles keep the facade. */
 export const quoteBase = () => (useAuthStore.getState().hasPermission(PERMISSIONS.sales.quotationRead) ? '/sales/quotations' : '/crm/quotations');
 
+/** Screen (not API) path for quotations: /crm/quotations for CRM users, /sales/quotations for sales-only users. */
+export const quoteUi = () => (useAuthStore.getState().hasPermission(PERMISSIONS.crm.quotationRead) ? '/crm/quotations' : '/sales/quotations');
+
+/** May the user open / create quotations through either the CRM or the sales permissions? */
+export const canReadQuotes = (has: (p: string) => boolean) => has(PERMISSIONS.crm.quotationRead) || has(PERMISSIONS.sales.quotationRead);
+export const canWriteQuotes = (has: (p: string) => boolean) => has(PERMISSIONS.crm.quotationWrite) || has(PERMISSIONS.sales.quotationWrite);
+
 export interface QuoteLine {
   id?: string;
   /** Section heading or free note row between priced lines (no amounts); null for a priced line. */
@@ -396,18 +403,24 @@ export function useGrouped(groupBy: string, params: Record<string, string | unde
   });
 }
 
-export function useOpportunity(id: string | undefined) {
+/** Record routes of a lead (crm:lead:*) or an opportunity (crm:deal:*). */
+export const dealBase = (kind?: string | null) => (kind === 'lead' ? '/crm/leads' : '/crm/opportunities');
+
+type DealRef = string | { id: string; kind?: string | null };
+const refOf = (r: DealRef) => (typeof r === 'string' ? { id: r, kind: undefined } : r);
+
+export function useOpportunity(id: string | undefined, kind?: 'lead' | 'opportunity') {
   return useQuery({
     queryKey: ['crm-suite', 'opportunity', id],
-    queryFn: async () => (await api.get<OpportunityDetail>(`/crm/opportunities/${id}`)).data,
+    queryFn: async () => (await api.get<OpportunityDetail>(`${dealBase(kind)}/${id}`)).data,
     enabled: !!id,
   });
 }
 
-export function useTimeline(id: string | undefined) {
+export function useTimeline(id: string | undefined, kind?: 'lead' | 'opportunity') {
   return useQuery({
     queryKey: ['crm-suite', 'timeline', id],
-    queryFn: async () => (await api.get<TimelineItem[]>(`/crm/opportunities/${id}/timeline`)).data,
+    queryFn: async () => (await api.get<TimelineItem[]>(`${dealBase(kind)}/${id}/timeline`)).data,
     enabled: !!id,
   });
 }
@@ -417,6 +430,7 @@ export function useCrmMutation<TVars, TOut = unknown>(fn: (v: TVars) => Promise<
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
+    // Every CRM screen (the partner page's CRM tab included) reads through the 'crm-suite' tree.
     onSuccess: () => qc.invalidateQueries({ queryKey: ['crm-suite'] }),
   });
 }
@@ -424,18 +438,19 @@ export function useCrmMutation<TVars, TOut = unknown>(fn: (v: TVars) => Promise<
 export const crmApi = {
   createOpportunity: async (body: Record<string, unknown>) => (await api.post<OpportunityDetail>('/crm/opportunities', body)).data,
   createLead: async (body: Record<string, unknown>) => (await api.post<OpportunityDetail>('/crm/leads', body)).data,
-  update: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.patch<OpportunityDetail>(`/crm/opportunities/${id}`, body)).data,
+  update: async ({ id, kind, ...body }: { id: string; kind?: string | null } & Record<string, unknown>) =>
+    (await api.patch<OpportunityDetail>(`${dealBase(kind)}/${id}`, body)).data,
   move: async ({ id, stageId, index }: { id: string; stageId: string; index?: number }) =>
     (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/move`, { stageId, index })).data,
   won: async (id: string) => (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/won`)).data,
-  lost: async ({ id, ...body }: { id: string; lostReasonId?: string; lostNote?: string }) =>
-    (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/lost`, body)).data,
-  reopen: async (id: string) => (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/reopen`)).data,
+  lost: async ({ id, kind, ...body }: { id: string; kind?: string | null; lostReasonId?: string; lostNote?: string }) =>
+    (await api.post<OpportunityDetail>(`${dealBase(kind)}/${id}/lost`, body)).data,
+  reopen: async (r: DealRef) => { const { id, kind } = refOf(r); return (await api.post<OpportunityDetail>(`${dealBase(kind)}/${id}/reopen`)).data; },
   convert: async ({ id, ...body }: { id: string } & Record<string, unknown>) =>
     (await api.post<OpportunityDetail>(`/crm/leads/${id}/convert`, body)).data,
   assign: async ({ id, ownerId }: { id: string; ownerId?: string | null }) =>
     (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/assign`, { ownerId })).data,
-  archive: async (id: string) => (await api.delete(`/crm/opportunities/${id}`)).data,
+  archive: async (r: DealRef) => { const { id, kind } = refOf(r); return (await api.delete(`${dealBase(kind)}/${id}`)).data; },
 
   schedule: async (body: Record<string, unknown>) => (await api.post<PlannedActivity>('/crm/planner', body)).data,
   updateActivity: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.patch<PlannedActivity>(`/crm/planner/${id}`, body)).data,
@@ -602,7 +617,8 @@ export interface ProductOption extends UnitAwareProduct { id: string; name: stri
 
 export function useProductOptions() {
   return useQuery({
-    queryKey: ['crm-suite', 'products'],
+    // Outside the 'crm-suite' tree: CRM writes must not refetch the whole product catalogue.
+    queryKey: ['crm-products'],
     queryFn: async () => (await api.get<{ data: ProductOption[] }>('/products', { params: { pageSize: 500 } })).data.data,
     staleTime: 5 * 60_000,
   });
@@ -621,7 +637,7 @@ export function usePartnerOptions(search: string, enabled = true) {
 
 export function useTaxOptions() {
   return useQuery({
-    queryKey: ['crm-suite', 'taxes'],
+    queryKey: ['crm-taxes'],
     queryFn: async () => {
       const res = await api.get<Array<{ id: string; name: string; rate: number | string }> | { data: Array<{ id: string; name: string; rate: number | string }> }>('/taxes', { params: { pageSize: 200 } });
       return Array.isArray(res.data) ? res.data : res.data.data;
@@ -639,5 +655,23 @@ export function useCategoryOptions(kind: 'partner' | 'product') {
       return Array.isArray(res.data) ? res.data : res.data.data;
     },
     staleTime: 5 * 60_000,
+  });
+}
+
+/** A user of the organization for owner / salesperson pickers (moved from the removed legacy CRM API module). */
+export interface CrmUser { id: string; email: string; name: string }
+
+export function useCrmUsers() {
+  return useQuery<CrmUser[]>({
+    queryKey: ['crm-users'],
+    queryFn: async () => {
+      const res = await api.get('/users');
+      const rows: Array<Record<string, unknown>> = Array.isArray(res.data) ? res.data : (res.data?.data ?? []);
+      return rows.map((u) => ({
+        id: String(u.id),
+        email: String(u.email ?? ''),
+        name: [u.firstName, u.lastName].filter(Boolean).join(' ') || String(u.email ?? ''),
+      }));
+    },
   });
 }

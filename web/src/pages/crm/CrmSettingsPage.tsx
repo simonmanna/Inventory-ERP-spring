@@ -72,8 +72,10 @@ function StagesTab({ stages, teams }: { stages: Stage[]; teams: Team[] }) {
   const onDragEnd = (e: DragEndEvent) => {
     if (!e.over || e.active.id === e.over.id) return;
     const next = arrayMove(order, order.findIndex((s) => s.id === e.active.id), order.findIndex((s) => s.id === e.over!.id));
+    const before = order;
     setOrder(next);
-    reorder.mutate(next.map((s) => s.id), { onError: onErr(tx('Could not reorder')) });
+    // Optimistic: put the old order back if the server refuses.
+    reorder.mutate(next.map((s) => s.id), { onError: (err) => { setOrder(before); onErr(tx('Could not reorder'))(err); } });
   };
   return (
     <div className="space-y-3">
@@ -171,7 +173,7 @@ function TeamsTab({ teams, users }: { teams: Team[]; users: Array<{ id: string; 
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 font-semibold"><span className={cn('h-3 w-3 rounded-full', colorOf(t.color).dot)} />{t.name}</p>
               <div><Button size="sm" variant="ghost" onClick={() => setEditing(t)}><Pencil className="h-4 w-4" /></Button>
-                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => confirm(tx('Delete this team?')) && del.mutate(t.id)}><Trash2 className="h-4 w-4" /></Button></div>
+                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => confirm(tx('Delete this team?')) && del.mutate(t.id, { onError: onErr(tx('Could not delete')) })}><Trash2 className="h-4 w-4" /></Button></div>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">{tx('Leader')}: {name(t.leaderId)}</p>
             <p className="text-sm text-muted-foreground">{t.memberIds.length} {tx('members')} · {tx('Target')} {money(t.monthlyTarget)}/{tx('month')}</p>
@@ -239,7 +241,7 @@ function LookupTab({ kind, rows, withColor }: { kind: 'tags' | 'sources' | 'lost
             {!withColor && <span className={cn('flex-1', !r.isActive && 'text-muted-foreground line-through')}>{r.name}</span>}
             {withColor && <span className="flex-1" />}
             {!withColor && (
-              <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={r.isActive} onChange={(e) => save.mutate({ kind, id: r.id, isActive: e.target.checked })} />{tx('Active')}</label>
+              <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={r.isActive} onChange={(e) => save.mutate({ kind, id: r.id, isActive: e.target.checked }, { onError: onErr(tx('Could not save')) })} />{tx('Active')}</label>
             )}
             <Button size="sm" variant="ghost" className="text-destructive" onClick={() => confirm(tx('Delete?')) && del.mutate({ kind, id: r.id }, { onError: onErr(tx('Could not delete')) })}><Trash2 className="h-4 w-4" /></Button>
           </div>

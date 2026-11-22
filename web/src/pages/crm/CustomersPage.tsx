@@ -9,10 +9,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataTablePagination, ListPageHeader, SearchInput } from '@/components/list';
 import { useAuthStore } from '@/stores/auth.store';
 import { date, money, relativeTime, statusLabel } from '@/lib/format';
+import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
-import { crmApi, useCategoryOptions, useCrmMutation, useCustomer, useCustomers, useSavedFilters } from '@/features/crm/suite-api';
-import { DealStatusPill, KpiCard, QuoteStatusPill, typeLabel } from './crm-ui';
+import { canWriteQuotes, crmApi, quoteUi, useCategoryOptions, useCrmMutation, useCustomer, useCustomers, useSavedFilters } from '@/features/crm/suite-api';
+import { DealStatusPill, ErrorState, KpiCard, QuoteStatusPill, typeLabel } from './crm-ui';
 import { OpportunityDialog, ScheduleDialog } from './crm-dialogs';
 import { CustomerDepositsList } from '@/pages/sales/CustomerDepositsPage';
 
@@ -21,7 +23,7 @@ export function CustomersPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const set = (k: string, v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); if (k !== 'page') n.delete('page'); return n; }, { replace: true });
-  const { data, isLoading } = useCustomers({ q: params.get('q') || undefined, sort: params.get('sort') || undefined, creditHold: params.get('creditHold') || undefined, categoryId: params.get('categoryId') || undefined, page: Number(params.get('page') ?? 1), pageSize: 50 });
+  const { data, isLoading, isError, refetch } = useCustomers({ q: params.get('q') || undefined, sort: params.get('sort') || undefined, creditHold: params.get('creditHold') || undefined, categoryId: params.get('categoryId') || undefined, page: Number(params.get('page') ?? 1), pageSize: 50 });
   const { data: categories } = useCategoryOptions('partner');
   const { data: segments } = useSavedFilters('customers');
   const saveSegment = useCrmMutation(crmApi.saveFilter);
@@ -41,7 +43,7 @@ export function CustomersPage() {
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Users} title={tx('Customers')} description={tx('Customers and contacts with their pipeline, revenue and open receivables.')}
-        actions={<Button variant="outline" asChild><Link to="/partners/new"><Plus className="mr-1 h-4 w-4" />{tx('New customer')}</Link></Button>} />
+        actions={<Button variant="outline" asChild><Link to="/customers/new"><Plus className="mr-1 h-4 w-4" />{tx('New customer')}</Link></Button>} />
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput value={params.get('q') ?? ''} onChange={(v) => set('q', v)} placeholder={tx('Name, code, email, phone…')} />
         <select className="h-9 rounded-md border bg-background px-2 text-sm" value={params.get('sort') ?? ''} onChange={(e) => set('sort', e.target.value)}>
@@ -59,7 +61,7 @@ export function CustomersPage() {
         </select>
         <Input className="h-9 w-40" placeholder={tx('Segment name')} value={segmentName} onChange={(e) => setSegmentName(e.target.value)} />
         <Button size="sm" variant="outline" disabled={!segmentName.trim() || saveSegment.isPending}
-          onClick={() => saveSegment.mutate({ scope: 'customers', name: segmentName.trim(), filters: currentFilters(), shared: true }, { onSuccess: () => setSegmentName('') })}>
+          onClick={() => saveSegment.mutate({ scope: 'customers', name: segmentName.trim(), filters: currentFilters(), shared: true }, { onSuccess: () => setSegmentName(''), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not save'))) })}>
           {tx('Save segment')}
         </Button>
       </div>
@@ -72,6 +74,7 @@ export function CustomersPage() {
           </thead>
           <tbody>
             {isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
+            {isError && <tr><td colSpan={8} className="p-3"><ErrorState message={tx('Could not load the customers.')} onRetry={() => refetch()} /></td></tr>}
             {data?.data.map((c) => (
               <tr key={c.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/crm/customers/${c.id}`)}>
                 <td className="px-3 py-2"><span className="flex items-center gap-2">{c.isCompany ? <Building2 className="h-4 w-4 text-muted-foreground" /> : <Users className="h-4 w-4 text-muted-foreground" />}<span className="font-medium">{c.name}</span></span>
@@ -101,12 +104,14 @@ export function CustomersPage() {
 export function CustomerDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, isLoading } = useCustomer(id);
+  const { data, isLoading, isError, refetch } = useCustomer(id);
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
-  const canQuote = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite));
+  const canQuote = useAuthStore((s) => canWriteQuotes(s.hasPermission));
+  const canActivity = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.activityWrite));
   const canDeposits = useAuthStore((s) => s.hasPermission(PERMISSIONS.payment.read));
   const [dialog, setDialog] = useState<'opp' | 'activity' | null>(null);
   if (isLoading) return <Skeleton className="h-96 w-full" />;
+  if (isError) return <ErrorState message={tx('Could not load this customer.')} onRetry={() => refetch()} />;
   if (!data) return <p className="text-sm text-muted-foreground">{tx('Customer not found.')}</p>;
   const p = data.partner;
   const open = data.opportunities.filter((o) => o.status === 'open');
@@ -121,9 +126,9 @@ export function CustomerDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {canWrite && <Button onClick={() => setDialog('opp')}><Plus className="mr-1 h-4 w-4" />{tx('New opportunity')}</Button>}
-          {canQuote && <Button variant="secondary" onClick={() => navigate(`/crm/quotations/new?partnerId=${p.id}&partnerName=${encodeURIComponent(p.name)}`)}><FileText className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>}
-          <Button variant="outline" onClick={() => setDialog('activity')}><CalendarPlus className="mr-1 h-4 w-4" />{tx('Activity')}</Button>
-          <Button variant="outline" asChild><Link to={`/partners/${p.id}`}>{tx('Edit contact')}</Link></Button>
+          {canQuote && <Button variant="secondary" onClick={() => navigate(`${quoteUi()}/new?partnerId=${p.id}&partnerName=${encodeURIComponent(p.name)}`)}><FileText className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>}
+          {canActivity && <Button variant="outline" onClick={() => setDialog('activity')}><CalendarPlus className="mr-1 h-4 w-4" />{tx('Activity')}</Button>}
+          <Button variant="outline" asChild><Link to={`/customers/${p.id}`}>{tx('Edit contact')}</Link></Button>
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -145,7 +150,7 @@ export function CustomerDetailPage() {
           <TabsTrigger value="activity">{tx('Activity')}</TabsTrigger>
         </TabsList>
         <TabsContent value="opps"><SimpleTable rows={data.opportunities.map((o) => ({ key: o.id, link: `/crm/opportunities/${o.id}`, cells: [o.name, o.stageName ?? '', <DealStatusPill key="s" status={o.status} />, o.ownerName ?? '', money(o.amount, o.currencyCode)] }))} /></TabsContent>
-        <TabsContent value="quotes"><SimpleTable rows={data.quotations.map((q) => ({ key: q.id, link: `/crm/quotations/${q.id}`, cells: [q.number, date(q.issueDate), <QuoteStatusPill key="s" status={q.status} />, q.dealName ?? '', money(q.total, q.currencyCode)] }))} /></TabsContent>
+        <TabsContent value="quotes"><SimpleTable rows={data.quotations.map((q) => ({ key: q.id, link: `${quoteUi()}/${q.id}`, cells: [q.number, date(q.issueDate), <QuoteStatusPill key="s" status={q.status} />, q.dealName ?? '', money(q.total, q.currencyCode)] }))} /></TabsContent>
         <TabsContent value="orders"><SimpleTable rows={data.orders.map((o) => ({ key: o.id, link: `/orders/${o.id}`, cells: [o.orderNumber, date(o.createdAt), statusLabel(o.status), o.invoiceId ? tx('Invoiced') : '', money(o.total)] }))} /></TabsContent>
         <TabsContent value="invoices"><SimpleTable rows={data.invoices.map((d) => ({ key: d.id, link: `/invoices/${d.id}`, cells: [d.documentNumber, date(d.issueDate), statusLabel(d.documentType), statusLabel(d.paymentStatus), money(d.amountResidual) + ' / ' + money(d.totalAmount)] }))} /></TabsContent>
         {canDeposits && <TabsContent value="deposits"><CustomerDepositsList partnerId={p.id} partnerName={p.name} /></TabsContent>}

@@ -62,11 +62,25 @@ consumes `invoice.created`.
 - **Sales suite (ADR-S010, pending owner approval)** — additive: `Deal` gains suite columns (`kind`, `stageId`,
   `status`, …; `partnerId` nullable for leads) that the parity JSON does not expose; legacy stage writes keep
   `status` / `stageId` in sync. No parity route, verb, status code or response field changed.
+- **Legacy `/crm/deals` follows the pipeline (CRM review, 2026-11-22; owner approved "discard the old if not
+  needed")** — the legacy routes stay (same paths, verbs and JSON) but no longer bypass the suite rules:
+  - `PATCH /crm/deals/:id/stage` and a `stage` in `PATCH /crm/deals/:id` go through `CrmPipelineService`
+    (`won` / `lost` / `reopen` / `move` to the first active stage mapped to that legacy stage). So a lead cannot be
+    marked won ("Convert the lead to an opportunity before marking it won"), a won deal cannot go straight to lost
+    ("A won opportunity cannot be marked lost; reopen it first"), and stage history / `wonAt` / `CRM_DEAL_WON` are
+    written as on the kanban. An unknown or missing stage is a 400 ("stage must be one of the following values: …")
+    instead of the 500 Nest gives.
+  - `GET/PATCH/DELETE /crm/deals[/:id]`, `/deleted`, `/restore` and `/crm/analytics/*` apply the
+    `crm:deal:view_all` visibility rule (own + unassigned + teams led); a hidden deal is 404 "Deal not found".
+  - `POST /crm/deals` and `PATCH /crm/deals/:id` validate `ownerId` ("User not found") and the create writes the first
+    `CrmStageHistory` row. Analytics sums use `BigDecimal`.
+  - The web client no longer calls the legacy routes (old `features/crm/api.ts` and `deal-form.tsx` removed; the
+    partner page's CRM tab uses `/crm/customers/:id`). Android has no CRM screens.
 
 Same as Nest, kept on purpose:
 
-- `PATCH /crm/deals/:id/stage` takes an untyped body (no DTO validation): an unknown stage fails in the
-  database cast (500).
+- `PATCH /crm/deals/:id/stage` takes an untyped body (no DTO validation) — but see the deviation above: an unknown
+  stage is now a 400, not a 500.
 - `restore` audit rows use an action outside the `AuditAction` enum; the fire-and-forget audit write fails
   and is only logged, as in Nest.
 - `GET /crm/analytics/forecast` builds prefilled month keys as `month + i + 1` without year roll-over
@@ -108,3 +122,36 @@ cancelled with a reason, resolved can reopen. Screens: `/crm/cases`, `/crm/cases
 
 Tests in `CrmCustomerDataIT`. Segments are `CrmSavedFilter` rows with scope `customers` (V95); `/crm/customers` already
 filters by category. `CrmReminderJob` is exercised directly, since scheduled jobs may be off in tests.
+
+## CRM review fixes (2026-11-22)
+
+Spring-native suite behaviour only; no parity route, JSON field or error message changed.
+
+- **Stale approvals:** `SalesQuotationService.applyDecision` / `SalesOrderService.applyDecision` lock the row and ignore a
+  decision whose `requestId` is not the record's current `approvalRequestId`. Revise, cancel and a direct
+  approve / reject withdraw the pending kernel request (`ApprovalsService.withdraw`). Engine approvals now publish
+  `crm.quotation.approved` like the manual route.
+- **Expired quotes:** `convert` refuses a quote past `validUntil` ("Quotation has expired; revise it first", as `accept`).
+  Quote dates (issue date, revise validity, expiry checks) use the business time zone (`APP_TIMEZONE`), not UTC.
+- **Owner on create:** `POST /crm/opportunities` and `/crm/leads` validate `ownerId` like update / assign ("User not found").
+- **Price rules:** PATCH checks the resulting rule (stored values + changes) for the customer/category and
+  product/category pairs, the 100 % discount cap after a `kind` flip, and `validTo` ≥ `validFrom` — 400 instead of a
+  stored conflicting rule or a 500 from the DB check.
+- **Lookups:** `GET /crm/config/lookups` accepts any CRM read permission (or `sales:quotation:read`) via the new
+  `@RequirePermissions(anyOf = true)`; the 403 message is unchanged.
+- **New routes:** `GET /crm/quotations/{id}/pdf` (`crm:quotation:read`) and `POST /crm/quotations/{id}/email`
+  (`crm:quotation:write`), delegating to the sales quotation PDF / email.
+- **Lead-scoped record routes:** `GET /crm/leads/{id}`, `GET /crm/leads/{id}/timeline` (`crm:lead:read`),
+  `PATCH /crm/leads/{id}`, `POST /crm/leads/{id}/lost`, `POST /crm/leads/{id}/reopen`, `DELETE /crm/leads/{id}`
+  (`crm:lead:write`) — same JSON as the `/crm/opportunities/{id}` routes, refused with 404 "Lead not found" for an
+  opportunity id; a `stageId` in the PATCH is ignored. A user with only lead permissions can now open and work a
+  lead (web route `/crm/leads/:id`). Authorization matrix: 104 routes.
+- **Events after commit:** CRM pipeline, legacy deal and quotation events use `publishOnCommit`, so a rolled-back
+  request no longer announces a change that never happened.
+- **Concurrency:** case update / assign / status lock the case row (`FOR UPDATE`); creating a case from a delivery
+  discrepancy takes a per-discrepancy advisory lock so a double click cannot open two cases.
+- **Report totals:** CRM report / analytics money sums use `BigDecimal`; the customer list's deal totals honour
+  deal visibility and skip archived deals.
+- **Stages:** deactivating the last active stage is refused ("The pipeline needs at least one stage"), as deleting it is.
+- **Pipeline filters:** `priorityExact` and `wonFrom` / `wonTo` so the "group by priority / won month" rows open.
+- Tests: `CrmReviewFixesIT`.

@@ -32,6 +32,7 @@ export const crmRoutes = (
     <Route path="/crm" element={<RequirePermission permission={P.dashboardRead}><CrmDashboardPage /></RequirePermission>} />
     <Route path="/crm/pipeline" element={<RequirePermission permission={P.dealRead}><PipelinePage /></RequirePermission>} />
     <Route path="/crm/leads" element={<RequirePermission permission={P.leadRead}><LeadsPage /></RequirePermission>} />
+    <Route path="/crm/leads/:id" element={<RequirePermission permission={P.leadRead}><OpportunityDetailPage kind="lead" /></RequirePermission>} />
     <Route path="/crm/opportunities/:id" element={<RequirePermission permission={P.dealRead}><OpportunityDetailPage /></RequirePermission>} />
     <Route path="/crm/activities" element={<RequirePermission permission={P.activityRead}><ActivitiesPage /></RequirePermission>} />
     <Route path="/crm/quotations" element={<RequirePermission permission={P.quotationRead}><QuotationsPage /></RequirePermission>} />

@@ -1127,13 +1127,15 @@ export function AppShell() {
   useEffect(() => setMobileOpen(false), [location.pathname]);
 
   const allItems = sections.flatMap((s) => s.items);
+  // Pages with no menu entry of their own, titled by the menu item they belong to.
+  const titlePath = location.pathname.replace(/^\/crm\/opportunities(?=\/|$)/, '/crm/pipeline');
   // Longest matching link wins, so a nested item (a report category) titles the page over its parent.
   const current =
     allItems
       .filter(
         (n) =>
           n.to !== '/' &&
-          (location.pathname === n.to || location.pathname.startsWith(`${n.to}/`)),
+          (titlePath === n.to || titlePath.startsWith(`${n.to}/`)),
       )
       .sort((a, b) => b.to.length - a.to.length)[0]?.label ?? (location.pathname === '/' ? tx('Dashboard') : '');
 

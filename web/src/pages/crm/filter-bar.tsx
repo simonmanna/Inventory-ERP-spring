@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { apiErrorMessage } from '@/lib/api-error';
+import { localDateInput } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
@@ -60,7 +61,7 @@ export function useCrmFilters(defaults: FilterState = {}) {
   };
 }
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+const iso = (d: Date) => localDateInput(d);
 function rangeOf(kind: 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'thisYear' | 'last30') {
   const now = new Date();
   const y = now.getFullYear();

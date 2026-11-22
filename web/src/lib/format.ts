@@ -89,14 +89,17 @@ export function relativeTime(value?: string | Date | null): string {
   if (!value) return '-';
   const d = typeof value === 'string' ? new Date(value) : value;
   const diffMs = Date.now() - d.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return `${sec}s ago`;
+  // A future time (a due date) reads "in 3h", not "-10800s ago".
+  const future = diffMs < 0;
+  const fmt = (n: number, unit: string) => (future ? `in ${n}${unit}` : `${n}${unit} ago`);
+  const sec = Math.floor(Math.abs(diffMs) / 1000);
+  if (sec < 60) return future ? 'in <1m' : `${sec}s ago`;
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return fmt(min, 'm');
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return fmt(hr, 'h');
   const days = Math.floor(hr / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return fmt(days, 'd');
   return d.toLocaleDateString();
 }
 
@@ -118,4 +121,16 @@ export function formatBytes(n: number | null | undefined): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** `YYYY-MM-DD` in the browser's local time (an `<input type="date">` value; `toISOString` would give the UTC day). */
+export function localDateInput(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** `YYYY-MM-DDTHH:mm` in local time, for `<input type="datetime-local">` defaults. */
+export function localDateTimeInput(d: Date = new Date()): string {
+  return `${localDateInput(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }

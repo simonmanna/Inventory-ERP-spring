@@ -7,13 +7,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListPageHeader } from '@/components/list';
-import { money } from '@/lib/format';
+import { localDateInput, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { QUOTE_STATUS_LABEL, useCrmLookups, useCrmReport, type Breakdown, type CrmReport } from '@/features/crm/suite-api';
-import { KpiCard, Meter, colorOf, compact, typeLabel } from './crm-ui';
+import { ErrorState, KpiCard, Meter, colorOf, compact, typeLabel } from './crm-ui';
 
-const iso = (d: Date) => d.toISOString().slice(0, 10);
+const iso = (d: Date) => localDateInput(d);
 const PRESETS: Array<{ days: number; label: string }> = [
   { days: 30, label: tx('30 days') }, { days: 90, label: tx('90 days') }, { days: 180, label: tx('6 months') }, { days: 365, label: tx('1 year') },
 ];
@@ -29,7 +29,7 @@ export function CrmReportsPage() {
     ownerId: get('ownerId') || undefined, teamId: get('teamId') || undefined, sourceId: get('sourceId') || undefined,
     tagId: get('tagId') || undefined, kind: get('kind') || undefined, country: get('country') || undefined,
   };
-  const { data, isLoading, isFetching } = useCrmReport(filters);
+  const { data, isLoading, isFetching, isError, refetch } = useCrmReport(filters);
   const cur = data?.currency;
   const sel = 'h-9 rounded-md border bg-background px-2 text-sm';
 
@@ -50,6 +50,7 @@ export function CrmReportsPage() {
       </div>
 
       {isLoading && <Skeleton className="h-96 w-full" />}
+      {isError && <ErrorState message={tx('Could not load the report.')} onRetry={() => refetch()} />}
       {data && (
         <div className={cn('space-y-4', isFetching && 'opacity-70')}>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
@@ -213,12 +214,14 @@ function BreakdownTable({ rows, first, cur, compactCols }: { rows: Breakdown[]; 
 }
 
 function exportCsv(r: CrmReport) {
-  const lines: string[][] = [['Section', 'Key', 'Deals', 'Open', 'Won', 'Lost', 'Win rate %', 'Won value', 'Open value']];
+  const lines: string[][] = [[tx('Section'), tx('Key'), tx('Deals'), tx('Open'), tx('Won'), tx('Lost'), tx('Win rate %'), tx('Won value'), tx('Open value')]];
   const add = (section: string, rows: Breakdown[]) => rows.forEach((b) => lines.push([section, b.label, String(b.total), String(b.open), String(b.won), String(b.lost), String(b.winRate), String(b.wonValue), String(b.openValue)]));
-  add('Salesperson', r.byOwner); add('Source', r.bySource); add('Team', r.byTeam); add('Tag', r.byTag); add('Country', r.byCountry);
-  lines.push([]); lines.push(['KPI', 'Value']);
+  add(tx('Salesperson'), r.byOwner); add(tx('Source'), r.bySource); add(tx('Team'), r.byTeam); add(tx('Tag'), r.byTag); add(tx('Country'), r.byCountry);
+  lines.push([]); lines.push([tx('KPI'), tx('Value')]);
   for (const [k, v] of Object.entries(r.kpis)) lines.push([k, String(v)]);
-  const csv = lines.map((l) => l.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  // A label typed by a user (tag, source, team) that starts with = + - @ would run as a formula in a spreadsheet.
+  const cell = (c: string) => (/^[=+\-@\t\r]/.test(c) && Number.isNaN(Number(c)) ? `'${c}` : c);
+  const csv = lines.map((l) => l.map((c) => `"${cell(String(c ?? '')).replace(/"/g, '""')}"`).join(',')).join('\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   const a = document.createElement('a');
   a.href = url; a.download = `crm-report-${r.range.from}-${r.range.to}.csv`; a.click();

@@ -54,7 +54,7 @@ export function PriceRulesPage() {
                 <td className="px-3 py-2 text-right">
                   {canManage && <>
                     <Button size="sm" variant="ghost" onClick={() => setEditing(r)}><Pencil className="h-4 w-4" /></Button>
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => confirm(tx('Delete this rule?')) && del.mutate(r.id)}><Trash2 className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => confirm(tx('Delete this rule?')) && del.mutate(r.id, { onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) })}><Trash2 className="h-4 w-4" /></Button>
                   </>}
                 </td>
               </tr>

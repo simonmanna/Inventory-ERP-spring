@@ -81,11 +81,8 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
             }
             List<String> granted = permissions.permissionsOf(auth.organizationId(), auth.sub());
             TenantContext.setPermissions(granted);
-            for (String perm : required.value()) {
-                if (!granted.contains(perm)) {
-                    throw ApiException.forbidden(
-                            "Missing required permission(s): " + String.join(", ", required.value()));
-                }
+            if (!satisfied(granted, required)) {
+                throw ApiException.forbidden("Missing required permission(s): " + String.join(", ", required.value()));
             }
         }
 
@@ -112,6 +109,12 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
         return true;
     }
 
+    /** All of the listed permissions, or one of them for {@code anyOf}. */
+    private static boolean satisfied(List<String> granted, RequirePermissions required) {
+        return required.anyOf() ? java.util.Arrays.stream(required.value()).anyMatch(granted::contains)
+                : granted.containsAll(java.util.Arrays.asList(required.value()));
+    }
+
     /** API client (ADR-S029 §5): only permission-protected routes, only the token's scopes the client still holds. */
     private boolean clientAllowed(HttpServletRequest request, HandlerMethod method, AuthUser auth,
             RequirePermissions required) {
@@ -126,10 +129,8 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
         List<String> granted = live.stream()
                 .filter(s -> tokenScopes instanceof List<?> l && l.contains(s)).toList();
         TenantContext.setPermissions(granted);
-        for (String perm : required.value()) {
-            if (!granted.contains(perm)) {
-                throw ApiException.forbidden("Missing required permission(s): " + String.join(", ", required.value()));
-            }
+        if (!satisfied(granted, required)) {
+            throw ApiException.forbidden("Missing required permission(s): " + String.join(", ", required.value()));
         }
         RequiresModule module = find(method, RequiresModule.class);
         if (module != null && !moduleAllowed(auth.organizationId(), module.value())) {

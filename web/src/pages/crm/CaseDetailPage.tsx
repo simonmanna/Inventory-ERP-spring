@@ -12,7 +12,7 @@ import { notify } from '@/lib/notify';
 import { apiErrorMessage } from '@/lib/api-error';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
-import { CASE_STATUS_TONE, PRIORITY_TONE, caseApi, useCase, useCaseMutation } from '@/features/crm/cases-api';
+import { CASE_STATUS_TONE, PRIORITY_TONE, caseApi, caseLabel, useCase, useCaseMutation } from '@/features/crm/cases-api';
 import { useCrmLookups } from '@/features/crm/suite-api';
 
 const NEXT: Record<string, { to: string; label: () => string; note?: 'required' }[]> = {
@@ -55,9 +55,9 @@ export function CaseDetailPage() {
         <div className="space-y-4 md:col-span-2">
           <div className="rounded-xl border bg-card p-4 text-sm shadow-sm">
             <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Badge className={CASE_STATUS_TONE[c.status]}>{c.status.replace(/_/g, ' ')}</Badge>
-              <Badge className={PRIORITY_TONE[c.priority]}>{c.priority}</Badge>
-              <span className="text-muted-foreground">{c.caseType.replace(/_/g, ' ')} · {c.category}</span>
+              <Badge className={CASE_STATUS_TONE[c.status]}>{caseLabel(c.status)}</Badge>
+              <Badge className={PRIORITY_TONE[c.priority]}>{caseLabel(c.priority)}</Badge>
+              <span className="text-muted-foreground">{caseLabel(c.caseType)} · {caseLabel(c.category)}</span>
               {c.overdue ? <span className="font-medium text-rose-600">{tx('Overdue')}</span> : null}
             </div>
             <p className="whitespace-pre-wrap">{c.description ?? '—'}</p>

@@ -18,6 +18,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.events.EventBus;
@@ -36,6 +37,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,6 +63,8 @@ public class SalesQuotationService {
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
     static final Set<String> EDITABLE = Set.of("draft", "rejected");
     static final Set<String> DISPLAY_TYPES = Set.of("line_section", "line_note");
+
+    private static final Logger log = LoggerFactory.getLogger(SalesQuotationService.class);
 
     private final SalesDb db;
     private final SalesSettingsService config;
@@ -285,7 +290,7 @@ public class SalesQuotationService {
         }
         db.requireActivePartner(partnerId);
         Map<String, Object> settings = config.settings();
-        LocalDate issue = in.get("issueDate") == null ? LocalDate.now() : SalesDb.date(str(in.get("issueDate")));
+        LocalDate issue = in.get("issueDate") == null ? today() : SalesDb.date(str(in.get("issueDate")));
         LocalDate valid = in.get("validUntil") == null
                 ? issue.plusDays(((Number) settings.get("quoteValidityDays")).longValue())
                 : SalesDb.date(str(in.get("validUntil")));
@@ -649,8 +654,9 @@ public class SalesQuotationService {
         }
         db.patch("SalesQuotation", id, Obj.of("status", "approved", "approvedById", user(), "approvedAt",
                 java.time.Instant.now()), true);
+        withdrawApproval(q, "Approved directly on the quotation");
         audit.record(AuditInput.of("SalesQuotation", id, "approve", null, Obj.of("comment", comment)));
-        events.publish(DomainEvents.CRM_QUOTATION_APPROVED, Obj.of("organizationId", org(), "quotationId", id,
+        events.publishOnCommit(DomainEvents.CRM_QUOTATION_APPROVED, Obj.of("organizationId", org(), "quotationId", id,
                 "number", q.get("number")));
         return get(id);
     }
@@ -663,16 +669,25 @@ public class SalesQuotationService {
         }
         db.patch("SalesQuotation", id, Obj.of("status", "rejected", "rejectedById", user(), "rejectionReason",
                 blank(reason) ? "Rejected" : reason), true);
+        withdrawApproval(q, "Rejected directly on the quotation");
         audit.record(AuditInput.of("SalesQuotation", id, "reject", null, Obj.of("reason", reason)));
         return get(id);
     }
 
-    /** Apply a kernel approval-engine decision (idempotent: ignored unless still pending). */
+    /**
+     * Apply a kernel approval-engine decision (idempotent: ignored unless still pending). A decision on a request that
+     * is no longer the quote's current one (the quote was revised, edited or cancelled and resubmitted since) is
+     * ignored, so a late answer on an old request never approves a revision nobody reviewed.
+     */
     @Transactional
-    public void applyDecision(String id, boolean approved, String comment) {
-        Map<String, Object> q = db.row("SELECT status FROM \"SalesQuotation\" WHERE id = ? AND \"organizationId\" = ?", id,
-                org());
+    public void applyDecision(String id, String requestId, boolean approved, String comment) {
+        Map<String, Object> q = db.row("SELECT status, number, \"approvalRequestId\" FROM \"SalesQuotation\" WHERE id = ?"
+                + " AND \"organizationId\" = ? FOR UPDATE", id, org());
         if (q == null || !"pending_approval".equals(q.get("status"))) {
+            return;
+        }
+        if (!blank(requestId) && !requestId.equals(str(q.get("approvalRequestId")))) {
+            log.info("Ignoring decision of stale approval request {} for quotation {}", requestId, id);
             return;
         }
         db.patch("SalesQuotation", id, approved ? Obj.of("status", "approved", "approvedById", user(), "approvedAt",
@@ -680,6 +695,18 @@ public class SalesQuotationService {
                 blank(comment) ? "Rejected in approval workflow" : comment), true);
         audit.record(AuditInput.of("SalesQuotation", id, approved ? "approve" : "reject", null, Obj.of("via",
                 "approval_engine")));
+        if (approved) {
+            events.publishOnCommit(DomainEvents.CRM_QUOTATION_APPROVED, Obj.of("organizationId", org(), "quotationId", id,
+                    "number", q.get("number")));
+        }
+    }
+
+    /** Cancel the quote's still-pending engine request: the decision it asks for no longer applies. */
+    private void withdrawApproval(Map<String, Object> q, String reason) {
+        String requestId = str(q.get("approvalRequestId"));
+        if (!blank(requestId)) {
+            approvals.withdraw(requestId, reason);
+        }
     }
 
     // ------------------------------------------------------------------ customer lifecycle
@@ -702,7 +729,7 @@ public class SalesQuotationService {
         if (!Set.of("approved", "sent").contains(q.get("status"))) {
             throw ApiException.badRequest("Only approved or sent quotations can be accepted");
         }
-        if (q.get("validUntil") instanceof LocalDate v && v.isBefore(LocalDate.now())) {
+        if (expired(q)) {
             throw ApiException.badRequest("Quotation has expired; revise it first");
         }
         db.patch("SalesQuotation", id, Obj.of("status", "accepted", "acceptedAt", java.time.Instant.now()), true);
@@ -739,6 +766,7 @@ public class SalesQuotationService {
             throw ApiException.badRequest("Quotation cannot be cancelled");
         }
         db.patch("SalesQuotation", id, Obj.of("status", "cancelled"), true);
+        withdrawApproval(q, "Quotation cancelled");
         audit.record(AuditInput.of("SalesQuotation", id, "cancel"));
         return get(id);
     }
@@ -751,13 +779,24 @@ public class SalesQuotationService {
             throw ApiException.badRequest("A converted quotation cannot be revised");
         }
         snapshot(q, "revise");
+        withdrawApproval(q, "Quotation revised");
         Map<String, Object> s = config.settings();
         db.patch("SalesQuotation", id, Obj.of("status", "draft", "revision", ((Number) q.get("revision")).intValue() + 1,
                 "approvalReasons", List.of(), "approvalRequestId", null, "approvedById", null, "approvedAt", null,
-                "rejectionReason", null, "sentAt", null, "acceptedAt", null, "validUntil", LocalDate.now().plusDays(
+                "rejectionReason", null, "sentAt", null, "acceptedAt", null, "validUntil", today().plusDays(
                         ((Number) s.get("quoteValidityDays")).longValue())), true);
         audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("revision", "new")));
         return get(id);
+    }
+
+    /** Past {@code validUntil} on the business calendar (the quote is valid through that day). */
+    private static boolean expired(Map<String, Object> q) {
+        return q.get("validUntil") instanceof LocalDate v && v.isBefore(today());
+    }
+
+    /** Today in the business time zone, not the JVM's UTC. */
+    static LocalDate today() {
+        return LocalDate.now(BusinessZone.get());
     }
 
     /** Hard-delete a draft that was never submitted. */
@@ -789,6 +828,9 @@ public class SalesQuotationService {
         }
         if (!Set.of("approved", "sent", "accepted").contains(q.get("status"))) {
             throw ApiException.badRequest("Only approved, sent or accepted quotations can be converted");
+        }
+        if (expired(q)) {
+            throw ApiException.badRequest("Quotation has expired; revise it first");
         }
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.\"trackInventory\" FROM \"SalesQuotationLine\" l LEFT"
                 + " JOIN \"Product\" pr ON pr.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND l.\"displayType\" IS NULL"
@@ -840,7 +882,7 @@ public class SalesQuotationService {
                         "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")), null,
                         null, ProductSizingService.Sizing.stored(l)));
             }
-            HeaderInput h = new HeaderInput(str(q.get("partnerId")), LocalDate.now().toString(), q.get("validUntil") == null
+            HeaderInput h = new HeaderInput(str(q.get("partnerId")), today().toString(), q.get("validUntil") == null
                     ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),
                     null, null, null, null, null, str(q.get("number")), null, null, str(q.get("number")),
                     str(q.get("notes")), null, "crm_quotation", str(q.get("branchId")));
@@ -854,7 +896,7 @@ public class SalesQuotationService {
                 "convertedNumber", convertedNumber, "convertedAt", java.time.Instant.now()), true);
         audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("status", "converted", "target", target,
                 "convertedId", convertedId)));
-        events.publish(DomainEvents.CRM_QUOTATION_CONVERTED, Obj.of("organizationId", org(), "quotationId", id,
+        events.publishOnCommit(DomainEvents.CRM_QUOTATION_CONVERTED, Obj.of("organizationId", org(), "quotationId", id,
                 "convertedType", target, "convertedId", convertedId));
         String dealId = str(q.get("dealId"));
         if (!blank(dealId) && Boolean.TRUE.equals(config.settings().get("autoWinOnConversion"))) {

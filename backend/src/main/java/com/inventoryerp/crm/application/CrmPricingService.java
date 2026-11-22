@@ -102,6 +102,8 @@ public class CrmPricingService {
 
     @Transactional
     public Map<String, Object> saveRule(String id, Map<String, Object> in) {
+        // A PATCH is checked against the rule it produces (stored values + changes), not only the keys it sends.
+        Map<String, Object> stored = id == null ? Map.of() : db.require("CrmPriceRule", id, "Price rule not found");
         Map<String, Object> d = new LinkedHashMap<>();
         if (id == null || in.containsKey("name")) {
             if (blank(str(in.get("name")))) {
@@ -113,10 +115,10 @@ public class CrmPricingService {
         ref(in, d, "partnerCategoryId", "PartnerCategory", "Customer category not found");
         ref(in, d, "productId", "Product", "Product not found");
         ref(in, d, "productCategoryId", "ProductCategory", "Product category not found");
-        if (d.get("partnerId") != null && d.get("partnerCategoryId") != null) {
+        if (merged(d, stored, "partnerId") != null && merged(d, stored, "partnerCategoryId") != null) {
             throw ApiException.badRequest("Choose a customer or a customer category, not both");
         }
-        if (d.get("productId") != null && d.get("productCategoryId") != null) {
+        if (merged(d, stored, "productId") != null && merged(d, stored, "productCategoryId") != null) {
             throw ApiException.badRequest("Choose a product or a product category, not both");
         }
         if (id == null || in.containsKey("kind")) {
@@ -131,12 +133,12 @@ public class CrmPricingService {
             if (v.signum() < 0) {
                 throw ApiException.badRequest("value must not be less than 0");
             }
-            String kind = str(d.getOrDefault("kind", id == null ? "discount_percent"
-                    : db.require("CrmPriceRule", id, "Price rule not found").get("kind")));
-            if ("discount_percent".equals(kind) && v.compareTo(HUNDRED) > 0) {
-                throw ApiException.badRequest("A discount cannot exceed 100%");
-            }
             d.put("value", v);
+        }
+        // Also catches a kind flip to discount_percent on a rule whose stored value is above 100.
+        if ("discount_percent".equals(str(merged(d, stored, "kind"))) && merged(d, stored, "value") != null
+                && dec(merged(d, stored, "value")).compareTo(HUNDRED) > 0) {
+            throw ApiException.badRequest("A discount cannot exceed 100%");
         }
         if (in.containsKey("minQuantity")) {
             BigDecimal q = dec(in.get("minQuantity"));
@@ -151,7 +153,8 @@ public class CrmPricingService {
         if (in.containsKey("validTo")) {
             d.put("validTo", CrmDb.date(str(in.get("validTo"))));
         }
-        if (d.get("validFrom") instanceof LocalDate f && d.get("validTo") instanceof LocalDate t && t.isBefore(f)) {
+        if (merged(d, stored, "validFrom") instanceof LocalDate f && merged(d, stored, "validTo") instanceof LocalDate t
+                && t.isBefore(f)) {
             throw ApiException.badRequest("validTo must be on or after validFrom");
         }
         if (in.containsKey("priority")) {
@@ -171,7 +174,6 @@ public class CrmPricingService {
             d.put("createdById", user());
             row = db.insert("CrmPriceRule", d);
         } else {
-            db.require("CrmPriceRule", id, "Price rule not found");
             row = db.patch("CrmPriceRule", id, d, true);
         }
         audit.record(AuditInput.of("CrmPriceRule", str(row.get("id")), id == null ? "create" : "update", null, in));
@@ -248,6 +250,11 @@ public class CrmPricingService {
                     name);
         }
         return new Price(productId, qty, list, list, BigDecimal.ZERO, "list", null, null, taxId, incl, name);
+    }
+
+    /** The value {@code key} will have after the save: the change if sent, else the stored one. */
+    private static Object merged(Map<String, Object> changes, Map<String, Object> stored, String key) {
+        return changes.containsKey(key) ? changes.get(key) : stored.get(key);
     }
 
     private void ref(Map<String, Object> in, Map<String, Object> d, String key, String table, String message) {

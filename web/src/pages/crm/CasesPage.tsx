@@ -19,9 +19,9 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import {
-  CASE_STATUS_TONE, PRIORITY_TONE, caseApi, useCaseMutation, useCases, type CrmCase,
+  CASE_STATUS_TONE, PRIORITY_TONE, caseApi, caseLabel, useCaseMutation, useCases, type CrmCase,
 } from '@/features/crm/cases-api';
-import { useCustomers } from '@/features/crm/suite-api';
+import { PartnerPicker } from './crm-dialogs';
 import { Field } from './crm-ui';
 
 const FILTERS = { status: '', caseType: '', priority: '', overdue: '', partnerId: '' };
@@ -42,14 +42,14 @@ export function CasesPage() {
     { key: 'code', header: tx('Case'), render: (c) => <span className="font-medium">{c.code}</span> },
     { key: 'customer', header: tx('Customer'), render: (c) => c.partnerName ?? '—' },
     { key: 'subject', header: tx('Subject'), render: (c) => c.subject },
-    { key: 'type', header: tx('Type'), render: (c) => c.caseType.replace(/_/g, ' ') },
-    { key: 'priority', header: tx('Priority'), render: (c) => <Badge className={PRIORITY_TONE[c.priority]}>{c.priority}</Badge> },
+    { key: 'type', header: tx('Type'), render: (c) => caseLabel(c.caseType) },
+    { key: 'priority', header: tx('Priority'), render: (c) => <Badge className={PRIORITY_TONE[c.priority]}>{caseLabel(c.priority)}</Badge> },
     { key: 'owner', header: tx('Owner'), render: (c) => c.assigneeName ?? '—' },
     {
       key: 'due', header: tx('Due'),
       render: (c) => <span className={c.overdue ? 'whitespace-nowrap font-medium text-rose-600' : 'whitespace-nowrap'}>{c.dueAt ? dateTime(c.dueAt) : '—'}</span>,
     },
-    { key: 'status', header: tx('Status'), render: (c) => <Badge className={CASE_STATUS_TONE[c.status]}>{c.status.replace(/_/g, ' ')}</Badge> },
+    { key: 'status', header: tx('Status'), render: (c) => <Badge className={CASE_STATUS_TONE[c.status]}>{caseLabel(c.status)}</Badge> },
   ];
 
   return (
@@ -88,12 +88,12 @@ export function CasesPage() {
 
 function NewCaseDialog({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
-  const { data: customers } = useCustomers({ pageSize: 200 });
   const create = useCaseMutation(caseApi.create);
   const [form, setForm] = useState({
     caseType: 'complaint', category: 'other', priority: 'normal', partnerId: '', subject: '', description: '',
     contactName: '', contactPhone: '',
   });
+  const [partnerName, setPartnerName] = useState('');
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
   const submit = async () => {
@@ -115,10 +115,9 @@ function NewCaseDialog({ onClose }: { onClose: () => void }) {
         </DialogHeader>
         <div className="grid gap-3">
           <Field label={tx('Customer')}>
-            <select className={SELECT} value={form.partnerId} onChange={(e) => set('partnerId', e.target.value)}>
-              <option value="">{tx('Select…')}</option>
-              {(customers?.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            {/* Searchable, so any customer can be picked (the old list stopped at 200). */}
+            <PartnerPicker value={form.partnerId} label={partnerName} placeholder={tx('Search customers…')}
+              onPick={(id, name) => { set('partnerId', id); setPartnerName(name); }} />
           </Field>
           <Field label={tx('Subject')}>
             <Input value={form.subject} onChange={(e) => set('subject', e.target.value)} />
@@ -132,12 +131,12 @@ function NewCaseDialog({ onClose }: { onClose: () => void }) {
             </Field>
             <Field label={tx('Category')}>
               <select className={SELECT} value={form.category} onChange={(e) => set('category', e.target.value)}>
-                {['delivery', 'quality', 'billing', 'service', 'other'].map((c) => <option key={c} value={c}>{c}</option>)}
+                {['delivery', 'quality', 'billing', 'service', 'other'].map((c) => <option key={c} value={c}>{caseLabel(c)}</option>)}
               </select>
             </Field>
             <Field label={tx('Priority')}>
               <select className={SELECT} value={form.priority} onChange={(e) => set('priority', e.target.value)}>
-                {['low', 'normal', 'high', 'urgent'].map((p) => <option key={p} value={p}>{p}</option>)}
+                {['low', 'normal', 'high', 'urgent'].map((p) => <option key={p} value={p}>{caseLabel(p)}</option>)}
               </select>
             </Field>
           </div>

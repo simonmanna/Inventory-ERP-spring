@@ -150,6 +150,9 @@ public class CrmCaseService {
     @Transactional
     public Map<String, Object> fromDiscrepancy(String discrepancyId, Map<String, Object> in) {
         Map<String, Object> x = discrepancies.get(discrepancyId);
+        // Two clicks at once: the second waits here, then finds the first one's case instead of a unique violation.
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?))").param("crm_case:" + discrepancyId).query()
+                .listOfRows();
         Map<String, Object> existing = db.row("SELECT id FROM \"CrmCase\" WHERE \"organizationId\" = ? AND"
                 + " \"discrepancyId\" = ? AND status <> 'cancelled'", org(), discrepancyId);
         if (existing != null) {
@@ -182,7 +185,7 @@ public class CrmCaseService {
 
     @Transactional
     public Map<String, Object> update(String id, Map<String, Object> in) {
-        Map<String, Object> row = db.require("CrmCase", id, "Case not found");
+        Map<String, Object> row = lockCase(id);
         assertOpen(row);
         Map<String, Object> data = new LinkedHashMap<>();
         for (String f : List.of("subject", "description", "contactName", "contactPhone")) {
@@ -210,7 +213,7 @@ public class CrmCaseService {
 
     @Transactional
     public Map<String, Object> assign(String id, Map<String, Object> in) {
-        Map<String, Object> row = db.require("CrmCase", id, "Case not found");
+        Map<String, Object> row = lockCase(id);
         assertOpen(row);
         String assignee = blank(str(in.get("assigneeId"))) ? null : str(in.get("assigneeId"));
         if (assignee != null && !db.exists("User", assignee)) {
@@ -229,6 +232,16 @@ public class CrmCaseService {
         return get(id);
     }
 
+    /**
+     * The case row locked for this transaction, so an edit or assignment cannot land on a case that a concurrent
+     * status change is closing or cancelling.
+     */
+    private Map<String, Object> lockCase(String id) {
+        db.jdbc().sql("SELECT id FROM \"CrmCase\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
+                .query().listOfRows();
+        return db.require("CrmCase", id, "Case not found");
+    }
+
     @Transactional
     public Map<String, Object> addNote(String id, Map<String, Object> in) {
         db.require("CrmCase", id, "Case not found");
@@ -243,9 +256,7 @@ public class CrmCaseService {
     /** Move a case: resolving needs the resolution, cancelling a reason; a resolved case can be reopened. */
     @Transactional
     public Map<String, Object> setStatus(String id, Map<String, Object> in) {
-        db.jdbc().sql("SELECT id FROM \"CrmCase\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
-                .query().listOfRows();
-        Map<String, Object> row = db.require("CrmCase", id, "Case not found");
+        Map<String, Object> row = lockCase(id);
         String from = str(row.get("status"));
         String to = str(in.get("status"));
         if (!CrmCaseRules.STATUSES.contains(to)) {

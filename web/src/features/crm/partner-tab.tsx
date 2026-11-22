@@ -1,171 +1,101 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Handshake, Plus, Receipt, ShoppingBag, CalendarClock, AlertCircle } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { AlertCircle, ArrowRight, CalendarPlus, Handshake, KanbanSquare, Plus, Trophy } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { money, date, dateTime } from '@/lib/format';
-import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
-import {
-  useCrmDeals, useCrmActivities, useCrmPartner360, useCompleteActivity, STAGE_META, dealCurrency,
-  type ActivityType,
-} from './api';
-import { DealFormDialog } from './deal-form';
+import { date, money, relativeTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { useCustomer } from './suite-api';
+import { DealStatusPill, EmptyState, ErrorState, KpiCard, Panel, Reveal, typeLabel } from '@/pages/crm/crm-ui';
+import { OpportunityDialog, ScheduleDialog } from '@/pages/crm/crm-dialogs';
 
-const ACTIVITY_LABEL: Record<ActivityType, string> = {
-  call: tx('Call'),
-  email: tx('Email'),
-  meeting: tx('Meeting'),
-  note: tx('Note'),
-  task: tx('Task'),
-  deal_stage_change: tx('Stage change'),
-};
-
-/** CRM 360 tab shown on customer / partner detail pages: this partner's deals,
- *  activity timeline and a one-click deal creator. */
+/**
+ * CRM tab of the customer / partner page, on the sales-suite API (the legacy /crm/deals screens are gone): pipeline
+ * figures, this partner's opportunities and recent activity, with one-click New opportunity / Schedule and a link to
+ * the full Customer 360.
+ */
 export function CrmPartnerTab({ partnerId }: { partnerId: string }) {
   const navigate = useNavigate();
-  const hasWrite = useAuthStore((s) => s.hasPermission('crm:deal:write'));
-  const [formOpen, setFormOpen] = useState(false);
-  const completeActivity = useCompleteActivity();
+  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
+  const canActivity = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.activityWrite));
+  const [dialog, setDialog] = useState<'opp' | 'activity' | null>(null);
+  const { data, isLoading, isError, refetch } = useCustomer(partnerId);
 
-  const { data: deals, isLoading: dealsLoading } = useCrmDeals({ partnerId, page: 1, pageSize: 20 });
-  const { data: activities, isLoading: actsLoading } = useCrmActivities({ partnerId, page: 1, pageSize: 15 });
-  const { data: spend, isLoading: spendLoading } = useCrmPartner360(partnerId);
+  if (isLoading) return <div className="grid gap-4 sm:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}</div>;
+  if (isError || !data) return <ErrorState message={tx('Could not load the CRM data for this partner.')} onRetry={() => refetch()} />;
+
+  const opps = data.opportunities;
+  const cur = opps[0]?.currencyCode;
+  const open = opps.filter((o) => o.status === 'open');
+  const won = opps.filter((o) => o.status === 'won');
+  const sum = (rows: typeof opps) => rows.reduce((a, o) => a + Number(o.amount ?? 0), 0);
 
   return (
-    <div className="space-y-6">
-      {/* C1 — spend stats from POS documents */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="flex items-start justify-between px-5 py-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{tx('Total spent')}</p>
-              <p className="mt-1 text-xl font-bold">{spendLoading ? '…' : money(spend?.totalSpent ?? 0, 'IDR')}</p>
-            </div>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-100 text-indigo-700"><Receipt className="h-4.5 w-4.5" /></div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between px-5 py-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{tx('Orders')}</p>
-              <p className="mt-1 text-xl font-bold">{spendLoading ? '…' : String(spend?.orderCount ?? 0)}</p>
-            </div>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700"><ShoppingBag className="h-4.5 w-4.5" /></div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between px-5 py-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{tx('Last order')}</p>
-              <p className="mt-1 text-xl font-bold">{spendLoading ? '…' : (spend?.lastOrderAt ? date(spend.lastOrderAt) : '—')}</p>
-            </div>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><CalendarClock className="h-4.5 w-4.5" /></div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-start justify-between px-5 py-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{tx('Open receivable')}</p>
-              <p className={cn('mt-1 text-xl font-bold', (spend?.openReceivable ?? 0) > 0 ? 'text-amber-600' : '')}>
-                {spendLoading ? '…' : money(spend?.openReceivable ?? 0, 'IDR')}
-              </p>
-            </div>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700"><AlertCircle className="h-4.5 w-4.5" /></div>
-          </CardContent>
-        </Card>
-      </div>
-      {/* Deals */}
-      <Card>
-        <CardHeader className="pb-3 px-5 pt-4 bg-muted/30 border-b rounded-t-lg flex flex-row items-center justify-between">
-          <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Deals')}</CardTitle>
-          {hasWrite && (
-            <Button size="sm" className="h-8" onClick={() => setFormOpen(true)}>
-              <Plus className="mr-1.5 h-4 w-4" /> {tx('New Deal')}
-            </Button>
-          )}
-        </CardHeader>
-        <CardContent className="p-0">
-          {dealsLoading ? (
-            <div className="p-6"><Skeleton className="h-32 w-full" /></div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{tx('Deal')}</TableHead>
-                  <TableHead className="text-right">{tx('Amount')}</TableHead>
-                  <TableHead>{tx('Stage')}</TableHead>
-                  <TableHead>{tx('Owner')}</TableHead>
-                  <TableHead>{tx('Expected close')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(deals?.data ?? []).length === 0 ? (
-                  <TableRow><TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                    {tx('No deals for this partner yet.')}
-                  </TableCell></TableRow>
-                ) : deals?.data.map((d) => (
-                  <TableRow key={d.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/crm/deals/${d.id}`)}>
-                    <TableCell className="font-medium">{d.name}</TableCell>
-                    <TableCell className="text-right font-medium">{money(d.amount, dealCurrency(d))}</TableCell>
-                    <TableCell><Badge variant="secondary" className={`text-xs capitalize ${STAGE_META[d.stage].chip}`}>{d.stage}</Badge></TableCell>
-                    <TableCell className="text-sm">{d.owner?.name ?? '—'}</TableCell>
-                    <TableCell className="text-sm">{d.expectedClose ? date(d.expectedClose) : '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Timeline */}
-      <Card>
-        <CardHeader className="pb-3 px-5 pt-4 bg-muted/30 border-b rounded-t-lg">
-          <CardTitle className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{tx('Activity timeline')}</CardTitle>
-        </CardHeader>
-        <CardContent className="px-5 py-4">
-          {actsLoading ? (
-            <Skeleton className="h-24 w-full" />
-          ) : (activities?.data ?? []).length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">{tx('No activity logged for this partner.')}</p>
-          ) : (
-            <ul className="space-y-3">
-              {activities?.data.map((a) => (
-                <li key={a.id} className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground">{a.title}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {ACTIVITY_LABEL[a.type]} · {dateTime(a.occurredAt)}
-                      {a.dueAt ? tx(' · due {{v1}}', { v1: date(a.dueAt) }) : ''}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {a.type === 'task' && a.status !== 'done' && (
-                      <Button variant="outline" size="sm" className="h-7 px-2 text-[11px]" onClick={() => completeActivity.mutate(a.id)}>
-                        {tx('Complete')}
-                      </Button>
-                    )}
-                    {a.status === 'done' && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">{tx('Done')}</Badge>}
-                    {a.dealId && (
-                      <Button variant="ghost" size="sm" className="h-7 px-2 text-[11px]" onClick={() => navigate(`/crm/deals/${a.dealId}`)}>
-                        <Handshake className={cn('mr-1 h-3 w-3')} /> {tx('Deal')}
-                      </Button>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
-      <DealFormDialog open={formOpen} onOpenChange={setFormOpen} presetPartnerId={partnerId} onSaved={(dealId) => navigate(`/crm/deals/${dealId}`)} />
+    <div className="space-y-4">
+      <Reveal>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <Link to={`/crm/customers/${partnerId}`} className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline">
+            {tx('Open Customer 360')}<ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+          <div className="flex gap-2">
+            {canActivity && <Button size="sm" variant="outline" onClick={() => setDialog('activity')}><CalendarPlus className="mr-1.5 h-4 w-4" />{tx('Schedule')}</Button>}
+            {canWrite && <Button size="sm" onClick={() => setDialog('opp')}><Plus className="mr-1.5 h-4 w-4" />{tx('New opportunity')}</Button>}
+          </div>
+        </div>
+      </Reveal>
+      <Reveal delay={60}>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <KpiCard icon={KanbanSquare} label={tx('Open pipeline')} value={money(sum(open), cur)} sub={`${open.length} ${tx('open opportunities')}`} />
+          <KpiCard icon={Trophy} label={tx('Won')} value={money(sum(won), cur)} sub={`${won.length} ${tx('deals won')}`} tone={won.length ? 'success' : undefined} />
+          <KpiCard icon={AlertCircle} label={tx('Open receivable')} value={money(data.credit?.openReceivables ?? 0)}
+            sub={data.credit?.overdueReceivables ? `${money(data.credit.overdueReceivables)} ${tx('overdue')}` : tx('Nothing overdue')}
+            tone={data.credit?.overdueReceivables ? 'danger' : undefined} />
+        </div>
+      </Reveal>
+      <Reveal delay={120}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel title={tx('Opportunities')} icon={Handshake} href={`/crm/customers/${partnerId}`} action={tx('See all')}>
+            {opps.length === 0
+              ? <EmptyState icon={Handshake} title={tx('No opportunities for this partner yet.')} className="py-6" />
+              : (
+                <ul className="divide-y">
+                  {opps.slice(0, 8).map((o) => (
+                    <li key={o.id}>
+                      <Link to={`/crm/${o.kind === 'lead' ? 'leads' : 'opportunities'}/${o.id}`} className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-sm transition-colors hover:bg-muted/50">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{o.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">{o.stageName ?? '—'}{o.expectedClose ? ` · ${date(o.expectedClose)}` : ''}</p>
+                        </div>
+                        <DealStatusPill status={o.status} />
+                        <span className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums">{money(o.amount, o.currencyCode)}</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </Panel>
+          <Panel title={tx('Recent activity')} icon={CalendarPlus}>
+            {data.activities.length === 0
+              ? <EmptyState icon={CalendarPlus} title={tx('No activity logged for this partner.')} className="py-6" />
+              : (
+                <ol className="relative space-y-3 border-l pl-4">
+                  {data.activities.slice(0, 10).map((a) => (
+                    <li key={a.id} className="text-sm">
+                      <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full border-2 border-background bg-primary" />
+                      <p className="font-medium">{a.title}</p>
+                      <p className="text-[11px] text-muted-foreground">{typeLabel(a.type)} · {relativeTime(a.occurredAt)}{a.outcome ? ` · ${a.outcome}` : ''}</p>
+                    </li>
+                  ))}
+                </ol>
+              )}
+          </Panel>
+        </div>
+      </Reveal>
+      <OpportunityDialog open={dialog === 'opp'} onOpenChange={(v) => !v && setDialog(null)} kind="opportunity"
+        defaults={{ partnerId, partnerName: data.partner.name as string }} onSaved={(o) => navigate(`/crm/opportunities/${o.id}`)} />
+      <ScheduleDialog open={dialog === 'activity'} onOpenChange={(v) => !v && setDialog(null)} partnerId={partnerId} />
     </div>
   );
 }
