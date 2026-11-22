@@ -263,3 +263,53 @@ or error message changed; the additions below are new behaviour.
 - Authorization matrix: 119 CRM routes. The sales routes are counted in `SalesOrderIT`. Tests:
   `CrmLeadFormQuoteLinkIT`.
 - Open point (ADR-S084): without `server.forward-headers-strategy`, anonymous throttling behind nginx shares one bucket.
+
+## CRM enhancements T3b (2026-11-22, post-parity)
+
+Migration V604 adds `CrmCompetitor`, `Deal.competitorId`, `Deal.forecastCategory`, `CrmDealLine`, `CrmDealContact` and
+`CrmEmailTemplate`.
+
+- **Competitors:**
+  - Config routes: `POST /crm/config/competitors`, `PATCH|DELETE /crm/config/competitors/{id}` (`crm:configure`).
+    They also appear in `GET /crm/config/lookups` as `competitors`.
+  - `POST …/lost` accepts `competitorId`; an unknown one is 404 "Competitor not found".
+  - New report section `lostCompetitors`.
+- **Forecast categories:** `forecastCategory` on PATCH: pipeline, best_case, commit or omitted. Empty means pipeline;
+  any other value is 400.
+  - The report's `forecast` rows gain `commit` and `bestCase` amounts.
+  - New report section `forecastCategories`.
+- **Product lines:** `PUT /crm/opportunities/{id}/lines` with `{lines, updateAmount = true}` replaces all lines (at
+  most 200; `crm:deal:write`).
+  - With `updateAmount`, the expected revenue becomes the total of qty × price × (1 − disc %), rounded HALF_UP to 2
+    decimals.
+  - Opportunity detail returns `lines`, each with product name, tax and line total.
+  - A new quotation started from the opportunity pre-fills its lines from them (web).
+- **Contacts on a deal:** `POST /crm/opportunities/{id}/contacts` with `{contactId, role}` (posting again updates the
+  role) and `DELETE /crm/opportunities/{id}/contacts/{contactId}`. Opportunity detail returns `contacts`.
+- **Merge deals:** `POST /crm/opportunities/{id}/merge` and `POST /crm/leads/{id}/merge` with `{sourceId}`. The lead
+  route only merges leads.
+  - Moves activities, quotations, product lines and contacts.
+  - Fills the target's empty fields, combines tags, appends notes, logs a note and archives the source.
+  - Refused when:
+    - the source is won;
+    - the target is not open;
+    - the two records have different customers: 400 "The two records belong to different customers; merge the
+      customers first".
+- **Merge customers:** `GET /crm/customers/{id}/merge-preview?sourceId=` and `POST /crm/customers/{id}/merge`
+  (`crm:configure`).
+  - Only for a customer used in CRM alone. Its deals, activities, cases, contacts and quotations move over, child
+    companies are re-parented, and it is archived through `PartnerService.remove`.
+  - Any other reference blocks the merge with 409 "This customer also has records in X; only customers used in CRM
+    alone can be merged". That means every foreign key to `Partner`, plus partner-like text columns, plus converted
+    quotations.
+  - Cross-module note: the merge updates `Contact.partnerId` and `SalesQuotation.partnerId` / `dealId` directly, in
+    the same transaction, so a merge is all or nothing.
+- **Email templates:**
+  - `GET /crm/config/email-templates` (deal, lead or configure read) also returns `placeholders`.
+  - `POST|PATCH|DELETE /crm/config/email-templates/{id}` (`crm:configure`).
+  - Placeholders: `{{contact_name}} {{first_name}} {{company}} {{deal_name}} {{amount}} {{salesperson}} {{my_name}}
+    {{organization}}`. An unknown one is 400.
+  - `GET /crm/opportunities|leads/{id}/email?templateId=` returns `{to, subject, body}` rendered.
+  - `POST /crm/opportunities|leads/{id}/email` with `{to, subject, body}` sends plain text and logs a done email
+    activity "Email: {subject}".
+- Authorization matrix: 137 routes. Tests: `CrmDealExtrasIT`.

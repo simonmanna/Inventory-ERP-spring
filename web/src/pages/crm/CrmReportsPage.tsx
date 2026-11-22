@@ -10,7 +10,7 @@ import { ListPageHeader } from '@/components/list';
 import { localDateInput, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
-import { QUOTE_STATUS_LABEL, useCrmLookups, useCrmReport, type Breakdown, type CrmReport } from '@/features/crm/suite-api';
+import { FORECAST_LABEL, QUOTE_STATUS_LABEL, useCrmLookups, useCrmReport, type Breakdown, type CrmReport } from '@/features/crm/suite-api';
 import { ErrorState, KpiCard, Meter, colorOf, compact, typeLabel } from './crm-ui';
 import { downloadCsv } from './csv';
 
@@ -122,9 +122,18 @@ export function CrmReportsPage() {
                     <Legend />
                     <Bar dataKey="amount" name={tx('Expected')} fill="#cbd5e1" radius={[3, 3, 0, 0]} />
                     <Bar dataKey="weighted" name={tx('Weighted')} fill="#6366f1" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="bestCase" name={tx('Best case')} fill="#38bdf8" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="commit" name={tx('Commit')} fill="#10b981" radius={[3, 3, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
+              {(data.forecastCategories ?? []).length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 border-t pt-2 text-xs">
+                  {data.forecastCategories!.map((f) => (
+                    <span key={f.key}><span className="text-muted-foreground">{FORECAST_LABEL[f.key] ?? f.key}:</span> <strong className="tabular-nums">{money(f.amount, cur)}</strong> ({f.count})</span>
+                  ))}
+                </div>
+              )}
             </Card>
           </div>
 
@@ -146,6 +155,15 @@ export function CrmReportsPage() {
               ))}
               {data.lostReasons.length === 0 && <Empty />}
             </Card>
+            {(data.lostCompetitors ?? []).some((c) => c.key) && (
+              <Card title={tx('Lost to competitors')}>
+                {data.lostCompetitors!.map((l) => (
+                  <div key={String(l.key)} className="grid grid-cols-[1fr_80px_30px] items-center gap-2 py-1 text-sm">
+                    <span className="truncate">{l.label}</span><Meter value={l.count} max={Math.max(...data.lostCompetitors!.map((x) => x.count), 1)} className="bg-rose-400" /><span className="text-right tabular-nums">{l.count}</span>
+                  </div>
+                ))}
+              </Card>
+            )}
             <Card title={tx('Average time in stage')} sub={tx('Where deals wait longest')}>
               {data.timeInStage.map((t) => (
                 <div key={t.key} className="grid grid-cols-[1fr_80px_50px] items-center gap-2 py-1 text-sm">

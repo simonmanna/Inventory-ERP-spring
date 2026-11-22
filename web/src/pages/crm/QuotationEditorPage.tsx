@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { RecordChatter } from '@/features/communication/record-chatter';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -103,6 +103,14 @@ export function QuotationEditorPage() {
     if (isNew && deal?.partner) { setPartnerId(deal.partner.id); setPartnerName(deal.partner.name); }
     else if (isNew && params.get('partnerId')) { setPartnerId(params.get('partnerId')!); setPartnerName(params.get('partnerName')); }
   }, [isNew, deal, params]);
+  // A new quotation from an opportunity starts from its expected products (CRM enhancements T3b), once.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (!isNew || prefilled.current || !deal?.lines?.length) return;
+    prefilled.current = true;
+    setLines((ls) => ls.length ? ls : deal.lines!.map((l) => ({ ...blankLine(l.taxInclusive ?? undefined), productId: l.productId, variantId: l.variantId ?? null,
+      description: l.description, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId ?? null })));
+  }, [isNew, deal]);
   useEffect(() => { if (isNew && lk?.settings.defaultQuoteTerms) setTerms((t) => t || lk.settings.defaultQuoteTerms || ''); }, [isNew, lk]);
 
   const editable = isNew || (!!q && ['draft', 'rejected'].includes(q.status) && canWrite);

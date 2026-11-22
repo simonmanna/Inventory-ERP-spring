@@ -7,6 +7,9 @@ import org.springframework.http.MediaType;
 import com.inventoryerp.kernel.security.Throttle;
 import com.inventoryerp.kernel.security.Public;
 import com.inventoryerp.crm.application.CrmCalendarFeedService;
+import com.inventoryerp.crm.application.CrmCustomerMergeService;
+import com.inventoryerp.crm.application.CrmDealExtrasService;
+import com.inventoryerp.crm.application.CrmEmailService;
 import com.inventoryerp.crm.application.CrmLeadFormService;
 import com.inventoryerp.crm.application.CrmPipelineService;
 import com.inventoryerp.crm.application.CrmPlannerService;
@@ -132,21 +135,21 @@ public final class CrmSuiteController {
             return svc.deleteLookup("CrmTeam", id);
         }
 
-        @PostMapping({"/tags", "/sources", "/lost-reasons"})
+        @PostMapping({"/tags", "/sources", "/lost-reasons", "/competitors"})
         @ResponseStatus(HttpStatus.CREATED)
         @RequirePermissions(Permissions.CRM__CONFIGURE)
         public Map<String, Object> createLookup(HttpServletRequest req, @RequestBody Map<String, Object> b) {
             return svc.saveLookup(table(req), null, body(b));
         }
 
-        @PatchMapping({"/tags/{id}", "/sources/{id}", "/lost-reasons/{id}"})
+        @PatchMapping({"/tags/{id}", "/sources/{id}", "/lost-reasons/{id}", "/competitors/{id}"})
         @RequirePermissions(Permissions.CRM__CONFIGURE)
         public Map<String, Object> updateLookup(HttpServletRequest req, @PathVariable String id,
                 @RequestBody Map<String, Object> b) {
             return svc.saveLookup(table(req), id, body(b));
         }
 
-        @DeleteMapping({"/tags/{id}", "/sources/{id}", "/lost-reasons/{id}"})
+        @DeleteMapping({"/tags/{id}", "/sources/{id}", "/lost-reasons/{id}", "/competitors/{id}"})
         @RequirePermissions(Permissions.CRM__CONFIGURE)
         public Map<String, Object> deleteLookup(HttpServletRequest req, @PathVariable String id) {
             return svc.deleteLookup(table(req), id);
@@ -169,6 +172,9 @@ public final class CrmSuiteController {
             String uri = req.getRequestURI();
             if (uri.contains("/crm/config/tags")) {
                 return "CrmTag";
+            }
+            if (uri.contains("/crm/config/competitors")) {
+                return "CrmCompetitor";
             }
             return uri.contains("/crm/config/sources") ? "CrmSource" : "CrmLostReason";
         }
@@ -558,6 +564,146 @@ public final class CrmSuiteController {
             return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/calendar; charset=utf-8"))
                     .header(HttpHeaders.CACHE_CONTROL, "private, max-age=300")
                     .body(feeds.ics(token).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * CRM enhancements T3b on one record: product lines, extra contacts, merge and email ({@code /crm/opportunities/*};
+     * merge and email also under {@code /crm/leads/*} with the lead permissions).
+     */
+    @RestController
+    public static class DealExtrasController {
+
+        private final CrmDealExtrasService extras;
+        private final CrmEmailService email;
+        private final CrmPipelineService pipeline;
+
+        public DealExtrasController(CrmDealExtrasService extras, CrmEmailService email, CrmPipelineService pipeline) {
+            this.extras = extras;
+            this.email = email;
+            this.pipeline = pipeline;
+        }
+
+        @PutMapping("/crm/opportunities/{id}/lines")
+        @RequirePermissions(Permissions.CRM__DEAL_WRITE)
+        public Map<String, Object> lines(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return extras.saveLines(id, body(b));
+        }
+
+        @PostMapping("/crm/opportunities/{id}/contacts")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__DEAL_WRITE)
+        public Map<String, Object> addContact(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return extras.addContact(id, body(b));
+        }
+
+        @DeleteMapping("/crm/opportunities/{id}/contacts/{contactId}")
+        @RequirePermissions(Permissions.CRM__DEAL_WRITE)
+        public Map<String, Object> removeContact(@PathVariable String id, @PathVariable String contactId) {
+            return extras.removeContact(id, contactId);
+        }
+
+        @PostMapping("/crm/opportunities/{id}/merge")
+        @RequirePermissions(Permissions.CRM__DEAL_WRITE)
+        public Map<String, Object> merge(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return extras.merge(id, body(b));
+        }
+
+        @PostMapping("/crm/leads/{id}/merge")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> mergeLead(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            Map<String, Object> in = body(b);
+            String source = in.get("sourceId") == null ? null : in.get("sourceId").toString();
+            if (source != null && !source.equals(id)) {
+                pipeline.asLead(source, () -> true); // a lead route merges leads only
+            }
+            return pipeline.asLead(id, () -> extras.merge(id, in));
+        }
+
+        @GetMapping("/crm/opportunities/{id}/email")
+        @RequirePermissions(Permissions.CRM__DEAL_READ)
+        public Map<String, Object> compose(@PathVariable String id, @RequestParam(required = false) String templateId) {
+            return email.compose(id, templateId);
+        }
+
+        @PostMapping("/crm/opportunities/{id}/email")
+        @RequirePermissions(Permissions.CRM__DEAL_WRITE)
+        public Map<String, Object> send(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return email.send(id, body(b));
+        }
+
+        @GetMapping("/crm/leads/{id}/email")
+        @RequirePermissions(Permissions.CRM__LEAD_READ)
+        public Map<String, Object> composeLead(@PathVariable String id, @RequestParam(required = false) String templateId) {
+            return pipeline.asLead(id, () -> email.compose(id, templateId));
+        }
+
+        @PostMapping("/crm/leads/{id}/email")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> sendLead(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return pipeline.asLead(id, () -> email.send(id, body(b)));
+        }
+    }
+
+    /** {@code /crm/config/email-templates}: reusable CRM emails (CRM enhancements T3b). */
+    @RestController
+    @RequestMapping("/crm/config/email-templates")
+    public static class EmailTemplateController {
+
+        private final CrmEmailService email;
+
+        public EmailTemplateController(CrmEmailService email) {
+            this.email = email;
+        }
+
+        @GetMapping
+        @RequirePermissions(value = {Permissions.CRM__DEAL_READ, Permissions.CRM__LEAD_READ, Permissions.CRM__CONFIGURE},
+                anyOf = true)
+        public Map<String, Object> list() {
+            return email.templates();
+        }
+
+        @PostMapping
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> create(@RequestBody Map<String, Object> b) {
+            return email.saveTemplate(null, body(b));
+        }
+
+        @PatchMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return email.saveTemplate(id, body(b));
+        }
+
+        @DeleteMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> delete(@PathVariable String id) {
+            return email.deleteTemplate(id);
+        }
+    }
+
+    /** {@code /crm/customers/{id}/merge}: merge a CRM-only duplicate customer into this one (CRM enhancements T3b). */
+    @RestController
+    @RequestMapping("/crm/customers/{id}")
+    public static class CustomerMergeController {
+
+        private final CrmCustomerMergeService merges;
+
+        public CustomerMergeController(CrmCustomerMergeService merges) {
+            this.merges = merges;
+        }
+
+        @GetMapping("/merge-preview")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> preview(@PathVariable String id, @RequestParam String sourceId) {
+            return merges.preview(id, sourceId);
+        }
+
+        @PostMapping("/merge")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> merge(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return merges.merge(id, body(b));
         }
     }
 

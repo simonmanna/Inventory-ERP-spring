@@ -57,7 +57,7 @@ final class CrmDealQuery {
                 AS probability,
             d.probability AS "probabilityOverride", d.priority, d."tagIds", d."sourceId", d."lostReasonId",
             d."lostNote", d."expectedClose", d."createdAt", d."updatedAt", d."stageChangedAt", d."wonAt", d."lostAt",
-            d."convertedAt", d."sequenceInStage", d.notes,
+            d."convertedAt", d."sequenceInStage", d.notes, d."competitorId", d."forecastCategory",
             na.id AS "nextActivityId", na.title AS "nextActivityTitle", na.type::text AS "nextActivityType",
             na."dueAt" AS "nextActivityDueAt",
             (SELECT count(*) FROM "SalesQuotation" cq WHERE cq."dealId" = d.id AND cq."deletedAt" IS NULL)

@@ -135,9 +135,21 @@ public class CrmReportService {
                 + " GROUP BY 1, 2 ORDER BY 3 DESC", clp.toArray()));
         out.put("trend", trend(from, to, p));
         out.put("forecast", db.rows("SELECT to_char(d.\"expectedClose\", 'YYYY-MM') AS month, count(*) AS count,"
-                + " COALESCE(sum(d.amount), 0) AS amount, COALESCE(sum(d.amount * " + PROB + " / 100), 0) AS weighted"
+                + " COALESCE(sum(d.amount), 0) AS amount, COALESCE(sum(d.amount * " + PROB + " / 100), 0) AS weighted,"
+                + " COALESCE(sum(d.amount) FILTER (WHERE d.\"forecastCategory\" = 'commit'), 0) AS \"commit\","
+                + " COALESCE(sum(d.amount) FILTER (WHERE d.\"forecastCategory\" IN ('commit', 'best_case')), 0) AS"
+                + " \"bestCase\""
                 + CrmDealQuery.FROM + closed.where + " AND d.status = 'open' AND d.\"expectedClose\" IS NOT NULL GROUP BY"
                 + " 1 ORDER BY 1 LIMIT 12", closed.params.toArray()));
+        // T3b: the salespeople's forecast call on open deals (empty = pipeline), and who wins the deals we lose
+        out.put("forecastCategories", db.rows("SELECT COALESCE(d.\"forecastCategory\", 'pipeline') AS key, count(*) AS"
+                + " count, COALESCE(sum(d.amount), 0) AS amount" + CrmDealQuery.FROM + closed.where + " AND d.status ="
+                + " 'open' GROUP BY 1 ORDER BY array_position(ARRAY['commit', 'best_case', 'pipeline', 'omitted'],"
+                + " COALESCE(d.\"forecastCategory\", 'pipeline'))", closed.params.toArray()));
+        out.put("lostCompetitors", db.rows("SELECT d.\"competitorId\" AS key, COALESCE(cm.name, 'Not recorded') AS label,"
+                + " count(*) AS count, COALESCE(sum(d.amount), 0) AS amount" + CrmDealQuery.FROM
+                + " LEFT JOIN \"CrmCompetitor\" cm ON cm.id = d.\"competitorId\"" + closedWhere + " AND d.status = 'lost'"
+                + " GROUP BY 1, 2 ORDER BY 3 DESC", clp.toArray()));
         out.put("timeInStage", db.rows("SELECT h.\"fromStageId\" AS key, s2.name AS label, s2.sequence,"
                 + " round(avg(h.\"secondsInStage\") / 86400.0, 1) AS \"avgDays\", count(*) AS samples FROM"
                 + " \"CrmStageHistory\" h JOIN \"CrmStage\" s2 ON s2.id = h.\"fromStageId\" WHERE h.\"organizationId\" = ?"

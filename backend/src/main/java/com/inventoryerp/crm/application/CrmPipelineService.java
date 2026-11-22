@@ -74,6 +74,9 @@ public class CrmPipelineService {
     private final CrmConfigService config;
     private final AuditService audit;
     private final EventBus events;
+    /** Forecast categories of an open deal (CRM enhancements T3b); empty = pipeline. */
+    static final List<String> FORECAST = List.of("pipeline", "best_case", "commit", "omitted");
+
     private final PartnerService partners;
 
     public CrmPipelineService(CrmDb db, CrmConfigService config, AuditService audit, EventBus events,
@@ -202,6 +205,8 @@ public class CrmPipelineService {
                 + " 'note') ORDER BY a.\"dueAt\" NULLS LAST", id, org()));
         r.put("stageDurations", db.rows("SELECT \"fromStageId\" AS \"stageId\", sum(\"secondsInStage\") AS seconds FROM"
                 + " \"CrmStageHistory\" WHERE \"dealId\" = ? GROUP BY 1", id));
+        r.put("lines", dealLines(id));
+        r.put("contacts", dealContacts(id));
         return r;
     }
 
@@ -442,17 +447,22 @@ public class CrmPipelineService {
         if (!blank(reason) && !db.exists("CrmLostReason", reason)) {
             throw ApiException.notFound("Lost reason not found");
         }
+        String competitor = str(in.get("competitorId"));
+        if (!blank(competitor) && !db.exists("CrmCompetitor", competitor)) {
+            throw ApiException.notFound("Competitor not found");
+        }
         if ("won".equals(deal.get("status"))) {
             throw ApiException.badRequest("A won opportunity cannot be marked lost; reopen it first");
         }
         db.jdbc().sql("UPDATE \"Deal\" SET status = 'lost', \"lostAt\" = " + NOW + ", \"lostReasonId\" = ?,"
-                + " \"lostNote\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
-                .params(blank(reason) ? null : reason, str(in.get("lostNote")), id, org()).update();
+                + " \"lostNote\" = ?, \"competitorId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(blank(reason) ? null : reason, str(in.get("lostNote")),
+                        blank(competitor) ? null : competitor, id, org()).update();
         syncLegacyStage(id, "lost");
         history(id, str(deal.get("stageId")), str(deal.get("stageId")), str(deal.get("status")), "lost", null);
         stageActivity(deal, stageName(str(deal.get("stageId"))), "Lost");
         audit.record(AuditInput.of("Deal", id, "update", Obj.of("status", deal.get("status")), Obj.of("status", "lost",
-                "lostReasonId", reason, "lostNote", in.get("lostNote"))));
+                "lostReasonId", reason, "lostNote", in.get("lostNote"), "competitorId", competitor)));
         events.publishOnCommit(DomainEvents.CRM_DEAL_LOST, Obj.of("organizationId", org(), "dealId", id, "lostReasonId",
                 reason));
         return get(id);
@@ -689,7 +699,7 @@ public class CrmPipelineService {
         return q.decorate(r);
     }
 
-    private Map<String, Object> lock(String id) {
+    Map<String, Object> lock(String id) {
         visible(id);
         return db.row("SELECT *, stage::text AS stage FROM \"Deal\" WHERE id = ? AND \"organizationId\" = ? AND"
                 + " \"deletedAt\" IS NULL FOR UPDATE", id, org());
@@ -717,6 +727,20 @@ public class CrmPipelineService {
         if (in.containsKey("contactId")) {
             String c = str(in.get("contactId"));
             d.put("contactId", blank(c) ? null : c);
+        }
+        if (in.containsKey("competitorId")) {
+            String c = str(in.get("competitorId"));
+            if (!blank(c) && !db.exists("CrmCompetitor", c)) {
+                throw ApiException.notFound("Competitor not found");
+            }
+            d.put("competitorId", blank(c) ? null : c);
+        }
+        if (in.containsKey("forecastCategory")) {
+            String f = str(in.get("forecastCategory"));
+            if (!blank(f) && !FORECAST.contains(f)) {
+                throw ApiException.badRequest("forecastCategory must be one of: " + String.join(", ", FORECAST));
+            }
+            d.put("forecastCategory", blank(f) ? null : f);
         }
         if (in.containsKey("teamId")) {
             String t = str(in.get("teamId"));
@@ -806,6 +830,25 @@ public class CrmPipelineService {
                 + " WHERE \"organizationId\" = ? RETURNING \"roundRobinCursor\"", org());
         int n = ((Number) cur.get("roundRobinCursor")).intValue();
         return pool.get(Math.floorMod(n - 1, pool.size()));
+    }
+
+    /** Expected products of a deal (T3b), with what a quotation needs to start from them (tax, product name). */
+    List<Map<String, Object>> dealLines(String dealId) {
+        return db.rows("SELECT l.id, l.\"productId\", l.\"variantId\", l.description, l.quantity, l.\"unitPrice\","
+                + " l.\"discountPercent\", round(l.quantity * l.\"unitPrice\" * (100 - l.\"discountPercent\") / 100, 2) AS"
+                + " \"lineTotal\", p.name AS \"productName\", p.code AS \"productCode\", p.\"taxId\", p.\"taxInclusive\","
+                + " v.name AS \"variantName\" FROM \"CrmDealLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" LEFT"
+                + " JOIN \"ProductVariant\" v ON v.id = l.\"variantId\" WHERE l.\"dealId\" = ? AND l.\"organizationId\" = ?"
+                + " ORDER BY l.\"sortOrder\", l.\"createdAt\"", dealId, org());
+    }
+
+    /** The other people on a deal (T3b). */
+    List<Map<String, Object>> dealContacts(String dealId) {
+        return db.rows("SELECT dc.\"contactId\", dc.role, c.\"firstName\", c.\"lastName\", NULLIF(trim(concat_ws(' ',"
+                + " c.\"firstName\", c.\"lastName\")), '') AS name, c.email, c.phone, c.position, c.\"partnerId\","
+                + " p.name AS \"partnerName\" FROM \"CrmDealContact\" dc JOIN \"Contact\" c ON c.id = dc.\"contactId\""
+                + " LEFT JOIN \"Partner\" p ON p.id = c.\"partnerId\" WHERE dc.\"dealId\" = ? AND dc.\"organizationId\" = ?"
+                + " AND c.\"deletedAt\" IS NULL ORDER BY dc.\"createdAt\"", dealId, org());
     }
 
     private String teamOf(String userId) {

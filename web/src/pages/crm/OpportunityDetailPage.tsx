@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  ArrowRightLeft, CalendarPlus, Check, FileText, Mail, Pencil, Phone, RotateCcw, Trash2, Trophy, X,
+  ArrowRightLeft, CalendarPlus, Check, FileText, Mail, Merge, Pencil, Phone, RotateCcw, Send, Trash2, Trophy, X,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -14,12 +14,13 @@ import { date, dateTime, money, relativeTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
-  canReadQuotes, canWriteQuotes, crmApi, quoteUi, useCrmLookups, useCrmMutation, useOpportunity, useTimeline, type OpportunityDetail,
+  FORECAST_LABEL, canReadQuotes, canWriteQuotes, crmApi, quoteUi, useCrmLookups, useCrmMutation, useOpportunity, useTimeline, type OpportunityDetail,
   type TimelineItem,
 } from '@/features/crm/suite-api';
 import { ActivityBadge, Avatar, QuoteStatusPill, Stars, TYPE_ICON, TagChips, colorOf, typeLabel } from './crm-ui';
 import { ConvertDialog, DoneDialog, LostDialog, OpportunityDialog, ScheduleDialog } from './crm-dialogs';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
+import { DealContactsCard, DealLinesCard, EmailDialog, MergeDealDialog } from './deal-extras';
 
 function duration(seconds: number) {
   const d = Math.floor(seconds / 86400);
@@ -41,7 +42,7 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
   const canQuote = useAuthStore((s) => canWriteQuotes(s.hasPermission));
   const canSeeQuotes = useAuthStore((s) => canReadQuotes(s.hasPermission));
   const quotes = quoteUi();
-  const [dialog, setDialog] = useState<'edit' | 'lost' | 'schedule' | 'convert' | null>(null);
+  const [dialog, setDialog] = useState<'edit' | 'lost' | 'schedule' | 'convert' | 'merge' | 'email' | null>(null);
   const [doneId, setDoneId] = useState<string | null>(null);
   const move = useCrmMutation(crmApi.move);
   const won = useCrmMutation(crmApi.won);
@@ -97,6 +98,8 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
           )}
           {canWrite && <Button variant="outline" onClick={() => setDialog('edit')}><Pencil className="mr-1.5 h-4 w-4" />{tx('Edit')}</Button>}
           {canActivity && <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarPlus className="mr-1.5 h-4 w-4" />{tx('Activity')}</Button>}
+          {canWrite && <Button variant="outline" onClick={() => setDialog('email')}><Send className="mr-1.5 h-4 w-4" />{tx('Email')}</Button>}
+          {canWrite && o.status === 'open' && <Button variant="outline" title={tx('Merge a duplicate into this record')} onClick={() => setDialog('merge')}><Merge className="mr-1.5 h-4 w-4" />{tx('Merge')}</Button>}
           {canWrite && o.status !== 'won' && (
             <Button variant="ghost" className="text-destructive" onClick={() => {
               if (!confirm(tx('Archive this record?'))) return;
@@ -145,11 +148,13 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
             <Info label={tx('Priority')} value={<Stars value={o.priority} onChange={canWrite ? (p) => prio.mutate({ ...ref, priority: p }, { onError: err(tx('Could not save')) }) : undefined} size="md" />} />
             <Info label={tx('Phone')} value={o.phone && <a className="inline-flex items-center gap-1 text-primary hover:underline" href={`tel:${o.phone}`}><Phone className="h-3.5 w-3.5" />{o.phone}</a>} />
             <Info label={tx('Tags')} value={<TagChips ids={o.tagIds} tags={lk?.tags ?? []} max={8} />} />
+            {!isLead && o.status === 'open' && <Info label={tx('Forecast')} value={FORECAST_LABEL[o.forecastCategory ?? 'pipeline']} />}
           </div>
           <Tabs defaultValue="notes" className="mt-6">
             <TabsList>
               <TabsTrigger value="notes">{tx('Internal notes')}</TabsTrigger>
               <TabsTrigger value="extra">{tx('Extra information')}</TabsTrigger>
+              {!isLead && <TabsTrigger value="products">{tx('Products')} ({(o.lines ?? []).length})</TabsTrigger>}
               {!isLead && <TabsTrigger value="quotes">{tx('Quotations')} ({o.quotations.length})</TabsTrigger>}
             </TabsList>
             <TabsContent value="notes" className="whitespace-pre-wrap pt-3 text-sm text-muted-foreground">{o.notes || tx('No notes. Use Edit to add internal notes.')}</TabsContent>
@@ -163,8 +168,12 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
                 <Info label={tx('In stage since')} value={`${date(o.stageChangedAt)} (${o.daysInStage} ${tx('days')})`} />
                 {o.convertedAt && <Info label={tx('Converted from lead')} value={date(o.convertedAt)} />}
                 {o.wonAt && <Info label={tx('Won on')} value={date(o.wonAt)} />}
+                {o.status === 'lost' && o.competitorId && <Info label={tx('Lost to')} value={lk?.competitors?.find((c) => c.id === o.competitorId)?.name} />}
                 {o.status === 'lost' && <Info label={tx('Lost reason')} value={(lk?.lostReasons.find((r) => r.id === o.lostReasonId)?.name ?? tx('Not recorded')) + (o.lostNote ? ` — ${o.lostNote}` : '')} />}
               </div>
+            </TabsContent>
+            <TabsContent value="products" className="pt-3">
+              <DealLinesCard o={o} canWrite={canWrite && o.status === 'open'} />
             </TabsContent>
             <TabsContent value="quotes" className="pt-3">
               <QuotesTab o={o} />
@@ -202,6 +211,7 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
               })}
             </div>
           </div>
+          {!isLead && <DealContactsCard o={o} canWrite={canWrite} />}
           <AttachmentPanel resType="crm_deal" resId={o.id} writePermission={isLead ? PERMISSIONS.crm.leadWrite : PERMISSIONS.crm.dealWrite} />
           <Chatter id={o.id} kind={routeKind} />
         </div>
@@ -211,6 +221,8 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
       <LostDialog open={dialog === 'lost'} onOpenChange={(v) => !v && setDialog(null)} id={o.id} kind={o.kind} />
       <ScheduleDialog open={dialog === 'schedule'} onOpenChange={(v) => !v && setDialog(null)} dealId={o.id} />
       <ConvertDialog open={dialog === 'convert'} onOpenChange={(v) => !v && setDialog(null)} lead={o} onDone={(c) => navigate(`/crm/opportunities/${c.id}`, { replace: true })} />
+      <MergeDealDialog o={o} open={dialog === 'merge'} onOpenChange={(v) => !v && setDialog(null)} />
+      <EmailDialog o={o} open={dialog === 'email'} onOpenChange={(v) => !v && setDialog(null)} />
       <DoneDialog open={!!doneId} onOpenChange={(v) => !v && setDoneId(null)} activityId={doneId ?? ''} />
     </div>
   );

@@ -21,6 +21,7 @@ import {
 } from '@/features/crm/suite-api';
 import { Field, colorOf } from './crm-ui';
 import { LeadFormsTab } from './lead-forms';
+import { EmailTemplatesTab } from './email-templates';
 
 const onErr = (m: string) => (e: unknown) => toast.error(apiErrorMessage(e, m));
 
@@ -38,6 +39,8 @@ export function CrmSettingsPage() {
           <TabsTrigger value="tags">{tx('Tags')}</TabsTrigger>
           <TabsTrigger value="sources">{tx('Sources')}</TabsTrigger>
           <TabsTrigger value="lost">{tx('Lost reasons')}</TabsTrigger>
+          <TabsTrigger value="competitors">{tx('Competitors')}</TabsTrigger>
+          <TabsTrigger value="emails">{tx('Email templates')}</TabsTrigger>
           <TabsTrigger value="forms">{tx('Website forms')}</TabsTrigger>
           <TabsTrigger value="settings">{tx('Policies')}</TabsTrigger>
         </TabsList>
@@ -46,6 +49,8 @@ export function CrmSettingsPage() {
         <TabsContent value="tags"><LookupTab kind="tags" rows={lk.tags.map((t) => ({ ...t, isActive: true }))} withColor /></TabsContent>
         <TabsContent value="sources"><LookupTab kind="sources" rows={lk.sources} /></TabsContent>
         <TabsContent value="lost"><LookupTab kind="lost-reasons" rows={lk.lostReasons} /></TabsContent>
+        <TabsContent value="competitors"><LookupTab kind="competitors" rows={lk.competitors ?? []} /></TabsContent>
+        <TabsContent value="emails"><EmailTemplatesTab /></TabsContent>
         <TabsContent value="forms"><LeadFormsTab lk={lk} /></TabsContent>
         <TabsContent value="settings"><PolicyTab settings={lk.settings} users={lk.users} /></TabsContent>
       </Tabs>
@@ -255,7 +260,7 @@ function TeamDialog({ team, users, onClose }: { team: Partial<Team>; users: Arra
 
 // ------------------------------------------------------------------ simple lookups
 
-function LookupTab({ kind, rows, withColor }: { kind: 'tags' | 'sources' | 'lost-reasons'; rows: Array<{ id: string; name: string; isActive: boolean; color?: Color }>; withColor?: boolean }) {
+function LookupTab({ kind, rows, withColor }: { kind: 'tags' | 'sources' | 'lost-reasons' | 'competitors'; rows: Array<{ id: string; name: string; isActive: boolean; color?: Color }>; withColor?: boolean }) {
   const [name, setName] = useState('');
   const [color, setColor] = useState<Color>('sky');
   const save = useCrmMutation(crmApi.saveLookup);
