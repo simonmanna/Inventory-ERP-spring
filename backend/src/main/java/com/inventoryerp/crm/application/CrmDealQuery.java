@@ -48,7 +48,7 @@ final class CrmDealQuery {
 
     /** Card / row columns (needs {@link #FROM}). */
     static final String COLUMNS = """
-            d.id, d.kind, d.name, d."partnerId", p.name AS "partnerName", d."contactId", d."contactName",
+            d.id, d.kind, d.name, d."version", d."partnerId", p.name AS "partnerName", d."contactId", d."contactName",
             d."companyName", d.email, d.phone, d.city, d.country, d."ownerId",
             COALESCE(NULLIF(trim(concat_ws(' ', u."firstName", u."lastName")), ''), u.email) AS "ownerName",
             d."teamId", d."stageId", s.name AS "stageName", d.stage::text AS "legacyStage", d.status, d.amount,

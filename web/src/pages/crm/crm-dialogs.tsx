@@ -114,7 +114,8 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
     if (kind === 'opportunity' && f.stageId) body.stageId = f.stageId;
     if (initial) body.probability = f.probability === '' ? null : Number(f.probability);
     if (kind === 'opportunity') body.forecastCategory = f.forecastCategory || null;
-    if (initial) return crmApi.update({ id: initial.id, kind: initial.kind, ...body });
+    // version: the server refuses (409) if someone else changed the record since this dialog opened
+    if (initial) return crmApi.update({ id: initial.id, kind: initial.kind, version: initial.version, ...body });
     return kind === 'lead' ? crmApi.createLead(body) : crmApi.createOpportunity(body);
   });
 

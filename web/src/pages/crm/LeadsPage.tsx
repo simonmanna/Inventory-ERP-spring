@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, Inbox, Plus, Upload } from 'lucide-react';
 import { toast } from 'sonner';
@@ -33,6 +33,9 @@ export function LeadsPage() {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
+  // a bulk action must only touch rows the user can see: a new filter or page starts a new selection
+  const filterKey = JSON.stringify(state.filters);
+  useEffect(() => setSelected([]), [filterKey, state.page]);
   const pageIds = data?.data.map((l) => l.id) ?? [];
   const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
   const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));

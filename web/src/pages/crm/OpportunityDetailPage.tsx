@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAuthStore } from '@/stores/auth.store';
 import { apiErrorMessage } from '@/lib/api-error';
-import { date, dateTime, money, relativeTime } from '@/lib/format';
+import { date, dateTime, money, relativeTime, statusLabel } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
@@ -238,8 +238,10 @@ function Info({ label, value }: { label: string; value: ReactNode }) {
 }
 
 function QuotesTab({ o }: { o: OpportunityDetail }) {
+  const canSalesOrders = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.orderRead));
   if (o.quotations.length === 0) return <p className="text-sm text-muted-foreground">{tx('No quotations yet.')}</p>;
   return (
+    <div className="space-y-3">
     <div className="divide-y rounded-lg border">
       {o.quotations.map((q) => (
         <Link key={q.id} to={`${quoteUi()}/${q.id}`} className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-muted/40">
@@ -249,6 +251,26 @@ function QuotesTab({ o }: { o: OpportunityDetail }) {
           <span className="tabular-nums">{money(q.total, q.currencyCode)}</span>
         </Link>
       ))}
+    </div>
+    {(o.salesOrders?.length ?? 0) > 0 && (
+      <div>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Sales orders')}</p>
+        <div className="divide-y rounded-lg border">
+          {o.salesOrders!.map((so) => {
+            const cells = (<>
+              <span className="font-medium">{so.number}</span>
+              <span className="text-muted-foreground">{date(so.createdAt)}</span>
+              <span>{statusLabel(so.status)}</span>
+              <span className="tabular-nums">{money(so.total, so.currencyCode)}</span>
+            </>);
+            const cls = 'flex items-center justify-between gap-3 px-3 py-2 text-sm';
+            return canSalesOrders
+              ? <Link key={so.id} to={`/sales/orders/${so.id}`} className={cls + ' hover:bg-muted/40'}>{cells}</Link>
+              : <div key={so.id} className={cls}>{cells}</div>;
+          })}
+        </div>
+      </div>
+    )}
     </div>
   );
 }

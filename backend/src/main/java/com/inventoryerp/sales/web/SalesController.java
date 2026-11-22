@@ -142,7 +142,8 @@ public final class SalesController {
         }
 
         @PostMapping("/{id}/convert")
-        @Idempotent
+        // converting twice would create two sales documents: the Idempotency-Key is mandatory (production-readiness P1)
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__QUOTATION_CONVERT)
         public Map<String, Object> convert(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             Map<String, Object> in = body(b);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -309,6 +309,9 @@ function ListTable({ filters, page, setPage }: { filters: FilterState; page: num
   const { data, isLoading } = useOpportunities({ ...filters, page, pageSize: 50 } as Record<string, string | number>);
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
   const [selected, setSelected] = useState<string[]>([]);
+  // a bulk action must only touch rows the user can see: a new filter or page starts a new selection
+  const filterKey = JSON.stringify(filters);
+  useEffect(() => setSelected([]), [filterKey, page]);
   const pageIds = data?.data.map((o) => o.id) ?? [];
   const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
   const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));

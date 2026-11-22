@@ -707,8 +707,9 @@ public final class CrmSuiteController {
             return merges.preview(id, sourceId);
         }
 
+        /** Merging archives a core Partner, so it also needs {@code partner:delete} (production-readiness P1). */
         @PostMapping("/merge")
-        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        @RequirePermissions({Permissions.CRM__CONFIGURE, Permissions.PARTNER__DELETE})
         public Map<String, Object> merge(@PathVariable String id, @RequestBody Map<String, Object> b) {
             return merges.merge(id, body(b));
         }
@@ -945,7 +946,8 @@ public final class CrmSuiteController {
         }
 
         @PostMapping("/{id}/convert")
-        @Idempotent
+        // converting twice would create two sales documents: the Idempotency-Key is mandatory (production-readiness P1)
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.CRM__QUOTATION_CONVERT)
         public Map<String, Object> convert(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             return svc.convert(id, body(b));
