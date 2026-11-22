@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Handshake
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -204,6 +205,9 @@ internal fun allowed(permissions: Set<String>, need: Set<String>?): Boolean = wh
 
 private const val MANAGE_CATALOG = "product:update"
 
+/** Any of these opens the till's CRM screens (each tab checks its own). */
+internal val CRM_PERMISSIONS = arrayOf("crm:activity:read", "crm:lead:write", "crm:deal:read")
+
 /**
  * Ordered like a shift: sell, settle, cash up, report, then manage. Mirrors the web POS area,
  * limited to what the till has; Backup sits under Device for every manager.
@@ -246,7 +250,14 @@ private fun sidebarSections(standalone: Boolean, isRetail: Boolean): List<Sideba
             route("Suppliers", Icons.Outlined.Business, "suppliers", "supplier:read", "supplier:manage"),
         ),
     ),
-    SidebarSection("Customers", Icons.Outlined.People, listOf(route("Customers", Icons.Outlined.People, "customers", "partner:read"))),
+    SidebarSection(
+        "Customers", Icons.Outlined.People,
+        listOfNotNull(
+            route("Customers", Icons.Outlined.People, "customers", "partner:read"),
+            // CRM enhancements T3c: online-only, so not on a standalone till.
+            if (standalone) null else route("CRM", Icons.Outlined.Handshake, "crm", *CRM_PERMISSIONS),
+        ),
+    ),
     SidebarSection(
         "Setup", Icons.Outlined.Settings,
         listOfNotNull(

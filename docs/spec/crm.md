@@ -313,3 +313,35 @@ Migration V604 adds `CrmCompetitor`, `Deal.competitorId`, `Deal.forecastCategory
   - `POST /crm/opportunities|leads/{id}/email` with `{to, subject, body}` sends plain text and logs a done email
     activity "Email: {subject}".
 - Authorization matrix: 137 routes. Tests: `CrmDealExtrasIT`.
+
+## CRM enhancements T3c (2026-11-22, post-parity): CRM on the Android till
+
+These are online-only screens in the Android app. There is no server change, no sync scope and no Room table. Sidebar: **Customers → CRM**.
+- It is hidden on a standalone till.
+- It is shown to staff whose synced roles hold `crm:activity:read`, `crm:lead:write` or `crm:deal:read`.
+
+- **Sign-in:**
+  - The salesperson signs in with their own ERP account through the existing `POST /auth/login`, then `/auth/mfa-login`
+    when MFA is enrolled.
+  - The account must be the same user as the PIN signed in on the till; otherwise the app refuses it. Everything done
+    from the till is then attributed to the person holding it.
+  - The access and refresh tokens are held in memory only, never on disk. The session ends when the till locks, idles
+    out or another PIN signs in.
+  - A 401 triggers one `POST /auth/refresh` and a retry; if that fails, the sign-in form returns.
+  - Only the organization code is remembered, in the encrypted device preferences.
+  - Requests use the device's server URL and its rule that plain HTTP is allowed only on the local network. The bearer
+    token takes precedence over the device token on the server.
+- **My activities:** `GET /crm/planner?state=overdue|today|upcoming` (the caller's own, with counts) and
+  `POST /crm/planner/{id}/done` with an optional outcome.
+- **New lead:**
+  - `POST /crm/leads` with name, contact, company, phone, email and notes. The server's auto-assignment applies.
+  - Possible duplicates are shown as typed, from `GET /crm/leads/duplicates`. They are advisory and never block the
+    save.
+- **Customers:** `GET /crm/customers?q=` and Customer 360 `GET /crm/customers/{id}`, which shows:
+  - receivables, overdue amount and credit;
+  - contacts, deals, invoices and recent activity.
+- Each tab is shown only with its permission. The server enforces every route as for the web.
+- Tests (Android unit, run by the Android CI job):
+  - `CrmParsersTest`
+  - `CrmRepositoryTest` (Robolectric): same-user rule, MFA, session ends on lock, refresh once, sign-out when refresh fails, lead body
+  - `SidebarAccessTest` (CRM entry)

@@ -177,6 +177,11 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
         get() = prefs.getString("deviceToken", null)
         set(v) = prefs.edit().putString("deviceToken", v).apply()
 
+    /** CRM sign-in (T3c): the organization code last used, to pre-fill the form. Never a password or token. */
+    var crmOrganizationCode: String?
+        get() = prefs.getString("crmOrganizationCode", null)
+        set(v) = prefs.edit().putString("crmOrganizationCode", v).apply()
+
     var prefix: String
         get() = prefs.getString("prefix", "D?") ?: "D?"
         set(v) = prefs.edit().putString("prefix", v).apply()
