@@ -38,7 +38,7 @@ consumes `invoice.created`.
 
 ## Scheduled jobs
 
-—
+— (Nest had none. Spring-only jobs: `CrmReminderJob`, `CrmCaseSlaJob`, `CrmActivityDigestJob`; see the sections below.)
 
 ## Notes and pitfalls
 
@@ -155,3 +155,34 @@ Spring-native suite behaviour only; no parity route, JSON field or error message
 - **Stages:** deactivating the last active stage is refused ("The pipeline needs at least one stage"), as deleting it is.
 - **Pipeline filters:** `priorityExact` and `wonFrom` / `wonTo` so the "group by priority / won month" rows open.
 - Tests: `CrmReviewFixesIT`.
+
+## CRM enhancements T1 (2026-11-22, post-parity)
+
+Improvements beyond the NestJS reference, approved by the owner ("build all three tiers"). No parity route, JSON field
+or error message changed; the additions below are new behaviour.
+
+- **Case response-time alerts:** `CrmCaseSlaJob` runs every five minutes (ShedLock `crm-case-sla`) →
+  `CrmCaseService.sendSlaAlerts`.
+  - A live case (`open` / `in_progress`) is warned once when 75 % of its response time has passed. The in-app
+    notification (`crm.case.sla_warning`) goes to the assignee, or to the creator when the case is unassigned.
+  - It is flagged once when overdue: `crm.case.sla_breached` goes to the assignee and the creator, and an `sla` entry
+    is added to the timeline.
+  - The new columns `CrmCase.slaWarnedAt` / `slaBreachedAt` (V601) keep each alert to one. Changing `dueAt` via PATCH
+    clears both.
+- **Overdue-activity digest:** `CrmActivityDigestJob` runs daily at 07:00 in `APP_TIMEZONE` (ShedLock
+  `crm-activity-overdue-digest`). It sends one in-app notification per person with planned activities due before
+  today (`crm.activity.overdue_digest`, link `/crm/activities?state=overdue`; the Activities page opens that tab).
+- **Quotation emails on the timeline:** `POST /crm/quotations/{id}/email` (and the sales route) writes a done `email`
+  activity on the quote's opportunity and customer, through the new `QuotationOpportunityPort.quotationEmailed`
+  (a no-op without CRM).
+- **Duplicate check:** `GET /crm/leads/duplicates?email=&phone=&companyName=&excludeId=` (`crm:lead:read` or
+  `crm:deal:read`).
+  - Returns `{deals, partners}` matching on email (case-insensitive), phone (last 9 digits, at least 7) or company
+    name, each with `matchedOn`.
+  - Deals the caller may not see come back with `id` / `name` null and `visible: false`.
+  - The check is advisory: the New lead dialog and the Convert dialog warn, and a customer match can be linked in one
+    click.
+  - Authorization matrix: 105 routes.
+- **CSV export** of the Leads and Pipeline lists (current filters, all pages up to 5,000 rows; web only, using the
+  existing list routes).
+- Tests: `CrmEnhancementsIT`.

@@ -6,7 +6,7 @@ import {
   DndContext, DragOverlay, PointerSensor, closestCorners, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { ChevronDown, ChevronRight, KanbanSquare, List, Plus, Settings2, Trophy } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, KanbanSquare, List, Plus, Settings2, Trophy } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,6 +23,7 @@ import {
 import { ActivityBadge, ActivityBar, Avatar, DealStatusPill, EmptyState, ErrorState, Stars, TagChips, colorOf, compact } from './crm-ui';
 import { OpportunityDialog, ScheduleDialog } from './crm-dialogs';
 import { CrmFilterBar, useCrmFilters, type FilterState } from './filter-bar';
+import { exportDeals } from './csv';
 
 const GROUPS = ['stage', 'owner', 'team', 'source', 'tag', 'partner', 'city', 'country', 'status', 'priority', 'lostReason', 'createdMonth', 'closeMonth', 'wonMonth'];
 
@@ -33,6 +34,8 @@ export function PipelinePage() {
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
   const canConfigure = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.configure));
   const [creating, setCreating] = useState<{ stageId?: string } | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const { data: lk } = useCrmLookups();
   const navigate = useNavigate();
 
   return (
@@ -48,7 +51,11 @@ export function PipelinePage() {
         <div className="order-last flex w-full min-w-0 sm:order-none sm:w-auto sm:flex-1 sm:justify-center">
           <div className="w-full max-w-2xl"><CrmFilterBar scope="pipeline" state={state} groupByOptions={GROUPS} /></div>
         </div>
-        <div className="ml-auto flex rounded-md border bg-background p-0.5">
+        <Button variant="outline" size="sm" className="ml-auto" disabled={exporting} title={tx('Export the opportunities matching these filters')} onClick={async () => {
+          setExporting(true);
+          try { toast.success(`${await exportDeals('/crm/opportunities', filters, lk)} ${tx('opportunities exported')}`); } catch (e) { toast.error(apiErrorMessage(e, tx('Could not export'))); } finally { setExporting(false); }
+        }}><Download className="mr-1.5 h-4 w-4" />{exporting ? tx('Exporting…') : tx('Export CSV')}</Button>
+        <div className="flex rounded-md border bg-background p-0.5">
           <button title={tx('Kanban')} onClick={() => state.set({ view: 'kanban', groupBy: null })} className={cn('rounded p-1.5', view === 'kanban' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}><KanbanSquare className="h-4 w-4" /></button>
           <button title={tx('List')} onClick={() => state.set({ view: 'list' })} className={cn('rounded p-1.5', view === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted')}><List className="h-4 w-4" /></button>
         </div>

@@ -15,10 +15,12 @@ public class CrmQuotationPorts implements QuotationOpportunityPort {
 
     private final CrmDb db;
     private final CrmPipelineService pipeline;
+    private final CrmPlannerService planner;
 
-    public CrmQuotationPorts(CrmDb db, CrmPipelineService pipeline) {
+    public CrmQuotationPorts(CrmDb db, CrmPipelineService pipeline, CrmPlannerService planner) {
         this.db = db;
         this.pipeline = pipeline;
+        this.planner = planner;
     }
 
     @Override
@@ -33,5 +35,10 @@ public class CrmQuotationPorts implements QuotationOpportunityPort {
         if (deal != null && "open".equals(deal.get("status")) && "opportunity".equals(deal.get("kind"))) {
             pipeline.won(dealId);
         }
+    }
+
+    @Override
+    public void quotationEmailed(String dealId, String partnerId, String number, String sentTo, boolean delivered) {
+        planner.logQuotationEmail(dealId, partnerId, number, sentTo, delivered);
     }
 }

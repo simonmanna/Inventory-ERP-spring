@@ -387,6 +387,13 @@ public final class CrmSuiteController {
             return svc.create(in);
         }
 
+        /** Possible duplicates of a lead being entered or converted (advisory; CRM enhancements T1). */
+        @GetMapping("/duplicates")
+        @RequirePermissions(value = {Permissions.CRM__LEAD_READ, Permissions.CRM__DEAL_READ}, anyOf = true)
+        public Map<String, Object> duplicates(@RequestParam Map<String, String> q) {
+            return svc.duplicates(q);
+        }
+
         // Lead-scoped record routes: same JSON as /crm/opportunities/:id, gated by the lead permissions.
         @GetMapping("/{id}")
         @RequirePermissions(Permissions.CRM__LEAD_READ)
