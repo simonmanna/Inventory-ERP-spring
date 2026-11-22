@@ -6,6 +6,7 @@ import com.poscafe.pos.data.DeviceConfig
 import com.poscafe.pos.data.ServerUrlPolicy
 import com.poscafe.pos.data.local.PosDatabase
 import com.poscafe.pos.data.local.dao.*
+import com.poscafe.pos.data.remote.CrmApi
 import com.poscafe.pos.data.remote.SyncApi
 import dagger.Module
 import dagger.Provides
@@ -100,6 +101,25 @@ object AppModule {
             .readTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(DynamicHostInterceptor(config))
             .build()
+
+    /**
+     * CRM enhancements T3c: the online-only CRM screens. Same client (host rewrite, HTTPS rule); each call carries the
+     * salesperson's own bearer token, which the server prefers over the device token.
+     */
+    @Provides
+    @Singleton
+    fun crmApi(client: OkHttpClient, config: DeviceConfig): CrmApi {
+        val json = Json { ignoreUnknownKeys = true }
+        val base = (config.serverUrl ?: "http://localhost:8080/api/v1/").let {
+            if (it.endsWith("/")) it else "$it/"
+        }
+        return Retrofit.Builder()
+            .baseUrl(base)
+            .client(client)
+            .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+            .build()
+            .create(CrmApi::class.java)
+    }
 
     @Provides
     @Singleton

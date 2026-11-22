@@ -96,6 +96,7 @@ class MainActivity : ComponentActivity() {
                         composable("tables-manager") { com.poscafe.pos.ui.screens.manage.TablesManagerScreen(onBack = { nav.popBackStack() }) }
                         composable("registers") { com.poscafe.pos.ui.screens.manage.RegistersScreen(onBack = { nav.popBackStack() }) }
                         composable("shift-history") { com.poscafe.pos.ui.screens.manage.ShiftHistoryScreen(onBack = { nav.popBackStack() }) }
+                        composable("crm") { com.poscafe.pos.ui.screens.crm.CrmScreen(onBack = { nav.popBackStack() }) }
                         composable("customers") { com.poscafe.pos.ui.screens.manage.CustomersScreen(onBack = { nav.popBackStack() }) }
                         composable("suppliers") { com.poscafe.pos.ui.screens.manage.SuppliersScreen(onBack = { nav.popBackStack() }) }
                         composable("stock") { com.poscafe.pos.ui.screens.manage.StockScreen(onBack = { nav.popBackStack() }) }
