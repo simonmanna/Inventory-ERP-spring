@@ -130,6 +130,13 @@ location must be an active `InventoryLocation` with the profile's `branchId`.
   - cash verifier ≠ collector, and verifier ≠ confirmer;
   - confirmer ≠ approver ≠ invoicer.
   A violation returns 403.
+- **Capture guards (2026-11-22).** A payment that would take Σ payments above the sale total → 400 `Payments (x)
+  would exceed the sale total (y); the balance due is z`. A `paymentDate` after today (business time zone) → 400
+  `paymentDate must not be in the future`. A payment mode with `requiresReference` needs a reference for cash too.
+  Removing a payment writes `payment_removed` to the timeline. `GET /payment-modes` leaves out modes whose receiving
+  account cannot take a cash sale (e.g. a foreign-currency bank), instead of offering them and refusing on capture.
+  The web dialog shows the balance due, keeps what was typed when the server refuses, and a verifier can mark a
+  pending line **Not received** (`failed`); it must then be removed before confirm.
 - **Settlement.** `settlementStatus` (`unsettled` | `settled` | `remitted`) is stored now and driven by CS-5.
 - **References.** Unique (org, provider, reference) when the reference is not null.
 
@@ -375,3 +382,6 @@ and register under Cash & Banking. Tested in `CashSaleIT.branchCashSalesReports`
      `deliveryAddress` / `deliveryDate` come from it. Later delivery updates on the sale follow onto the active
      invoice. The invoice handover of a cash-sale invoice is read-only: `PATCH /sales/invoices/{id}/handover` → 400
      `The delivery of this invoice is managed on cash sale <number>`. A replacement invoice gets a fresh copy.
+     The invoice's own `deliveryAddress` / `deliveryDate` follow later changes on the sale as well (2026-11-22), so
+     the printed invoice never shows an old address. The web delivery buttons say what is missing (address, scheduled
+     date, confirm) instead of sending a save the server refuses.

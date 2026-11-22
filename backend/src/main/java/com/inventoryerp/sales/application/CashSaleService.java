@@ -658,10 +658,16 @@ public class CashSaleService {
 
     // ------------------------------------------------------------------ payments
 
-    /** Payment modes a cash sale can take: the organization's active cash, mobile-money and bank modes. */
+    /**
+     * Payment modes a cash sale can take: the organization's active cash, mobile-money and bank modes whose receiving
+     * account can hold a cash sale's money (a foreign-currency bank, say, is left out instead of being refused on
+     * capture).
+     */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> paymentModes() {
         return paymentModes.terminalPaymentMethods().stream().filter(m -> CASH_SALE_METHODS.contains(m.kind()))
+                .filter(m -> m.accountId() == null || recognition.tenderProblems(m.label(), m.kind(), m.accountId())
+                        .isEmpty())
                 .map(PosPaymentMethodService.View::toMap).toList();
     }
 
@@ -683,6 +689,7 @@ public class CashSaleService {
         String account;
         String modeId = blank(str(in.get("paymentModeId"))) ? null : str(in.get("paymentModeId"));
         String modeLabel = null;
+        boolean referenceRequired = false;
         if (modeId != null) {
             PosPaymentMethodService.View mode = paymentModes.terminalPaymentMethods().stream()
                     .filter(m -> m.id().equals(modeId)).findFirst()
@@ -692,6 +699,7 @@ public class CashSaleService {
                 throw ApiException.badRequest("Payment mode " + mode.label() + " cannot be used for cash sales");
             }
             modeLabel = mode.label();
+            referenceRequired = mode.requiresReference();
             provider = "mobile_money".equals(method)
                     ? (blank(mode.provider()) ? mode.code() : mode.provider()).trim().toLowerCase() : null;
             account = mode.accountId();
@@ -720,9 +728,23 @@ public class CashSaleService {
         if (amount.signum() <= 0) {
             throw ApiException.badRequest("amount must be greater than 0");
         }
+        // the lines are priced, so Σ payments can never pass the sale total (confirm needs them equal)
+        BigDecimal captured = dec(db.row("SELECT COALESCE(sum(amount), 0) AS paid FROM \"SalesSubmissionPayment\" WHERE"
+                + " \"submissionId\" = ?", id).get("paid"));
+        BigDecimal total = dec(s.get("grandTotal"));
+        if (captured.add(amount).compareTo(total) > 0) {
+            throw ApiException.badRequest("Payments (" + JsNumbers.js(captured.add(amount)) + ") would exceed the sale"
+                    + " total (" + JsNumbers.js(total) + "); the balance due is " + JsNumbers.js(
+                            total.subtract(captured).max(BigDecimal.ZERO)));
+        }
+        LocalDate paymentDate = SalesDb.date(str(in.get("paymentDate")));
+        if (paymentDate != null && paymentDate.isAfter(SalesQuotationService.today())) {
+            throw ApiException.badRequest("paymentDate must not be in the future");
+        }
         String reference = blank(str(in.get("reference"))) ? null : str(in.get("reference")).trim();
-        if (!"cash".equals(method) && reference == null) {
-            throw ApiException.badRequest("reference should not be empty for " + method.replace('_', ' ') + " payments");
+        if ((!"cash".equals(method) || referenceRequired) && reference == null) {
+            throw ApiException.badRequest("reference should not be empty for " + (modeLabel == null
+                    ? method.replace('_', ' ') : modeLabel) + " payments");
         }
         List<String> attachmentIds = SalesDb.strings(in.get("attachmentIds")).stream().filter(a -> !blank(a))
                 .distinct().toList();
@@ -732,7 +754,7 @@ public class CashSaleService {
         }
         Map<String, Object> row = Obj.of("submissionId", id, "method", method, "provider", provider, "amount", amount,
                 "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId", modeId,
-                "paymentModeLabel", modeLabel, "paymentDate", SalesDb.date(str(in.get("paymentDate"))), "payerName", trimmed(in.get("payerName")),
+                "paymentModeLabel", modeLabel, "paymentDate", paymentDate, "payerName", trimmed(in.get("payerName")),
                 "payerAccount", trimmed(in.get("payerAccount")), "notes", trimmed(in.get("notes")), "attachmentIds",
                 attachmentIds);
         // the collector's capture is the verification, unless the branch requires segregation of duties
@@ -757,10 +779,14 @@ public class CashSaleService {
     public Map<String, Object> removePayment(String id, String paymentId) {
         Map<String, Object> s = lock(id);
         requireDraft(s);
-        if (db.update("DELETE FROM \"SalesSubmissionPayment\" WHERE id = ? AND \"submissionId\" = ? AND \"organizationId\" = ?",
-                paymentId, id, org()) == 0) {
+        Map<String, Object> pay = db.row("SELECT method, amount, reference FROM \"SalesSubmissionPayment\" WHERE id = ? AND"
+                + " \"submissionId\" = ? AND \"organizationId\" = ?", paymentId, id, org());
+        if (pay == null) {
             throw ApiException.notFound("Payment not found");
         }
+        db.update("DELETE FROM \"SalesSubmissionPayment\" WHERE id = ?", paymentId);
+        event(id, "payment_removed", null, null, null, null, str(pay.get("method")) + " " + JsNumbers.js(dec(pay.get(
+                "amount"))) + (pay.get("reference") == null ? "" : " ref " + pay.get("reference")));
         return get(id);
     }
 
@@ -1043,12 +1069,32 @@ public class CashSaleService {
         return get(id);
     }
 
-    /** Copy the sale's delivery onto its active head-office invoice, if it has one. */
+    /**
+     * Copy the sale's delivery onto its active head-office invoice, if it has one: the invoice handover, and the
+     * invoice's own delivery address and date (printed on the invoice), so a later change on the sale reaches both.
+     */
     private void mirrorDelivery(String id) {
         Map<String, Object> s = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ? AND \"organizationId\" = ?", id, org());
         if (s != null && s.get("currentInvoiceId") != null) {
             handovers.mirrorCashSale(str(s.get("currentInvoiceId")), s);
+            db.update("UPDATE \"Document\" SET \"deliveryAddress\" = ?, \"deliveryDate\" = ?, \"updatedAt\" = " + NOW
+                    + " WHERE id = ? AND \"organizationId\" = ? AND (\"deliveryAddress\" IS DISTINCT FROM ? OR"
+                    + " \"deliveryDate\"::date IS DISTINCT FROM ?)", invoiceDeliveryAddress(s),
+                    invoiceDeliveryDate(s).atStartOfDay(), s.get("currentInvoiceId"), org(),
+                    invoiceDeliveryAddress(s), invoiceDeliveryDate(s));
         }
+    }
+
+    /** Address printed on the sale's invoice: the delivery address for a delivery, else the customer's address. */
+    private static String invoiceDeliveryAddress(Map<String, Object> s) {
+        boolean delivery = "delivery".equals(s.get("deliveryMethod")) && !blank(str(s.get("deliveryAddress")));
+        return str(s.get(delivery ? "deliveryAddress" : "customerAddress"));
+    }
+
+    /** Delivery date printed on the sale's invoice: the scheduled date, else the sale date. */
+    private static LocalDate invoiceDeliveryDate(Map<String, Object> s) {
+        Object d = s.get("deliveryScheduledDate") != null ? s.get("deliveryScheduledDate") : s.get("saleDate");
+        return d == null ? LocalDate.now() : d instanceof LocalDate ld ? ld : LocalDate.parse(d.toString().substring(0, 10));
     }
 
     /** Non-financial corrections while returned (audited one row per changed field). */
@@ -1217,12 +1263,9 @@ public class CashSaleService {
                     ProductSizingService.Sizing.stored(l), l.get("uomFactor") == null ? null : dec(l.get("uomFactor"))));
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
-        boolean delivery = "delivery".equals(s.get("deliveryMethod")) && !blank(str(s.get("deliveryAddress")));
-        String deliveryDate = s.get("deliveryScheduledDate") == null ? issue
-                : s.get("deliveryScheduledDate").toString().substring(0, 10);
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,
-                "cash", null, null, str(s.get("salespersonId")), deliveryDate,
-                str(s.get(delivery ? "deliveryAddress" : "customerAddress")), null, null, number,
+                "cash", null, null, str(s.get("salespersonId")), invoiceDeliveryDate(s).toString(),
+                invoiceDeliveryAddress(s), null, null, number,
                 null, null, number, "Cash sale " + number + (s.get("customerName") == null ? "" : " — "
                         + s.get("customerName")), lines), str(s.get("branchId")), id, number,
                 str(s.get("accrualJournalEntryId")));

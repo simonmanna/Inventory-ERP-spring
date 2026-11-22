@@ -491,7 +491,14 @@ export function CashSalePage() {
         }} />
       )}
       {s && dialog === 'amend' && <AmendDialog sale={s} onClose={() => setDialog(null)} onSubmit={(p, fiscal) => { setDialog(null); void act(fiscal ? 'fiscal/correct' : 'amend', fiscal ? tx('Fiscal correction requested') : tx('Corrected'), p); }} />}
-      {s && dialog === 'payment' && <PaymentDialog sale={s} onClose={() => setDialog(null)} onSubmit={(p) => { setDialog(null); void act('payments', tx('Payment recorded'), p); }} />}
+      {s && dialog === 'payment' && <PaymentDialog sale={s} onClose={() => setDialog(null)} onSubmit={async (p) => {
+        // the dialog stays open (with what was typed) when the server refuses the payment
+        try { await api.post(`/sales/cash-sales/${s.id}/payments`, p); } catch (e) { toast.error(apiErrorMessage(e, tx('Could not record the payment'))); return false; }
+        toast.success(tx('Payment recorded'));
+        setDialog(null);
+        await refresh();
+        return true;
+      }} />}
     </div>
   );
 }
@@ -514,14 +521,19 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
   const [preview, setPreview] = useState<{ id: string; name: string; contentType: string | null } | null>(null);
   const payments = sale.payments ?? [];
   const paid = payments.reduce((a, p) => a + Number(p.amount), 0);
-  const pending = payments.filter((p) => p.verificationStatus !== 'verified');
+  const due = Math.round((Number(sale.grandTotal) - paid) * 100) / 100;
+  const pending = payments.filter((p) => p.verificationStatus === 'pending');
+  const failed = payments.filter((p) => p.verificationStatus === 'failed');
+  const verify = (p: { id: string }, status: 'verified' | 'failed') => run(() => api.post(`/sales/cash-sales/${sale.id}/payments/${p.id}/verify`, { status }),
+    status === 'verified' ? tx('Payment verified') : tx('Payment marked as not received'));
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold">{tx('Payments')}</h3>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span>{tx('Collected')} {money(paid)} / {money(sale.grandTotal)}</span>
-          {draft && <Button data-tour="sales.cash.add-payment" size="sm" variant="outline" disabled={busy} onClick={onAdd}><Plus className="mr-1 h-4 w-4" />{tx('Add payment')}</Button>}
+          {draft && due > 0 && <span className="font-medium text-amber-700">{tx('Balance due')} {money(due)}</span>}
+          {draft && <Button data-tour="sales.cash.add-payment" size="sm" variant="outline" disabled={busy || due <= 0} title={due <= 0 ? tx('The sale is fully paid') : undefined} onClick={onAdd}><Plus className="mr-1 h-4 w-4" />{tx('Add payment')}</Button>}
         </div>
       </div>
       <table className="w-full text-sm">
@@ -556,7 +568,10 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
                   ))}
                 </td>
                 <td className="py-1.5 text-right whitespace-nowrap">
-                  {draft && p.verificationStatus !== 'verified' && canVerify && <Button size="sm" variant="outline" disabled={busy} onClick={() => run(() => api.post(`/sales/cash-sales/${sale.id}/payments/${p.id}/verify`, { status: 'verified' }), tx('Payment verified'))}>{tx('Verify')}</Button>}
+                  {draft && p.verificationStatus === 'pending' && canVerify && <>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => verify(p, 'verified')}>{tx('Verify')}</Button>
+                    <Button size="sm" variant="ghost" className="text-rose-600" disabled={busy} title={tx('The money did not arrive')} onClick={() => verify(p, 'failed')}>{tx('Not received')}</Button>
+                  </>}
                   {draft && <Button size="icon" variant="ghost" disabled={busy} onClick={() => run(() => api.delete(`/sales/cash-sales/${sale.id}/payments/${p.id}`), tx('Payment removed'))}><Trash2 className="h-4 w-4" /></Button>}
                 </td>
               </tr>
@@ -565,7 +580,10 @@ function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; o
           {payments.length === 0 && <tr><td colSpan={9} className="py-3 text-center text-muted-foreground">{tx('No payment captured yet.')}</td></tr>}
         </tbody>
       </table>
+      {draft && due < 0 && <p className="mt-2 text-xs font-medium text-rose-700">{tx('Payments are more than the sale total. Remove or correct a payment before confirming.')}</p>}
+      {draft && due > 0 && payments.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{tx('Payments must add up to the sale total before the sale can be confirmed.')}</p>}
       {pending.length > 0 && <p className="mt-2 text-xs text-muted-foreground">{tx('This branch requires segregation of duties: someone other than the collector verifies each payment before the sale is confirmed.')}</p>}
+      {draft && failed.length > 0 && <p className="mt-2 text-xs font-medium text-rose-700">{tx('A payment was marked as not received. Remove it and capture the payment again before confirming.')}</p>}
       <FilePreviewDialog documentId={preview?.id ?? null} name={preview?.name} contentType={preview?.contentType} open={!!preview} onOpenChange={(o) => !o && setPreview(null)} />
     </section>
   );
@@ -696,8 +714,9 @@ function AmendDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () 
   );
 }
 
-function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () => void; onSubmit: (p: Record<string, unknown>) => void }) {
-  const remaining = Math.max(0, Number(sale.grandTotal) - (sale.payments ?? []).reduce((a, p) => a + Number(p.amount), 0));
+function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: () => void; onSubmit: (p: Record<string, unknown>) => Promise<boolean> }) {
+  const remaining = Math.max(0, Math.round((Number(sale.grandTotal) - (sale.payments ?? []).reduce((a, p) => a + Number(p.amount), 0)) * 100) / 100);
+  const today = new Date().toLocaleDateString('en-CA');
   const modes = usePaymentModes();
   const upload = useUploadRecordAttachments();
   const canAttach = useAuthStore((st) => st.hasPermission(PERMISSIONS.dms.documentWrite) && st.hasPermission(PERMISSIONS.sales.cashSaleCreate));
@@ -705,28 +724,38 @@ function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: (
   const mode = (modes.data ?? []).find((m) => m.id === modeId) ?? modes.data?.[0];
   const [amount, setAmount] = useState<number>(remaining);
   const [reference, setReference] = useState('');
-  const [paymentDate, setPaymentDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [paymentDate, setPaymentDate] = useState(today);
   const [payerName, setPayerName] = useState(sale.customerName ?? sale.partnerName ?? '');
   const [payerAccount, setPayerAccount] = useState(sale.customerPhone ?? '');
   const [notes, setNotes] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  // files already uploaded by an earlier attempt that the server refused: reused, not uploaded twice
+  const [uploaded, setUploaded] = useState<{ files: File[]; ids: string[] }>({ files: [], ids: [] });
   const [saving, setSaving] = useState(false);
+  const tooMuch = amount > remaining;
+  const futureDate = !!paymentDate && paymentDate > today;
   const needsRef = !!mode && (mode.kind !== 'cash' || mode.requiresReference);
   const accountLabel = mode?.kind === 'bank' ? tx('Payer account no.') : mode?.kind === 'mobile_money' ? tx('Payer phone') : tx('Payer phone / account no.');
   const submit = async () => {
     if (!mode) return;
     setSaving(true);
-    try {
-      const docs = files.length ? await upload.mutateAsync({ resType: 'sales_submission', resId: sale.id, files }) : [];
-      onSubmit({
-        paymentModeId: mode.id, amount, reference: reference.trim() || undefined, paymentDate: paymentDate || undefined,
-        payerName: payerName.trim() || undefined, payerAccount: payerAccount.trim() || undefined, notes: notes.trim() || undefined,
-        attachmentIds: docs.length ? docs.map((d) => d.id) : undefined,
-      });
-    } catch (e) {
-      toast.error(apiErrorMessage(e, tx('Could not upload the file')));
-      setSaving(false);
+    let ids = files.length === 0 ? [] : uploaded.files.length === files.length && files.every((f, i) => f === uploaded.files[i]) ? uploaded.ids : null;
+    if (ids === null) {
+      try {
+        ids = (await upload.mutateAsync({ resType: 'sales_submission', resId: sale.id, files })).map((d) => d.id);
+        setUploaded({ files, ids });
+      } catch (e) {
+        toast.error(apiErrorMessage(e, tx('Could not upload the file')));
+        setSaving(false);
+        return;
+      }
     }
+    const ok = await onSubmit({
+      paymentModeId: mode.id, amount, reference: reference.trim() || undefined, paymentDate: paymentDate || undefined,
+      payerName: payerName.trim() || undefined, payerAccount: payerAccount.trim() || undefined, notes: notes.trim() || undefined,
+      attachmentIds: ids.length ? ids : undefined,
+    });
+    if (!ok) setSaving(false);
   };
   return (
     <Dialog open onOpenChange={(o) => !o && !saving && onClose()}>
@@ -739,8 +768,16 @@ function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: (
               {(modes.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.label}{m.provider && m.kind !== 'cash' && m.provider !== m.label ? ` · ${m.provider}` : ''}</option>)}
             </select>
           </Field>
-          <Field label={tx('Amount')}><Input type="number" min={0} value={amount} onChange={(e) => setAmount(Number(e.target.value))} /></Field>
-          <Field label={tx('Payment date')}><Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} /></Field>
+          <Field label={tx('Amount')}>
+            <Input type="number" min={0} max={remaining} value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
+            <p className={cn('mt-1 text-xs', tooMuch ? 'text-rose-700' : 'text-muted-foreground')}>
+              {tooMuch ? `${tx('More than the balance due')} (${money(remaining)})` : `${tx('Balance due')} ${money(remaining)}`}
+            </p>
+          </Field>
+          <Field label={tx('Payment date')}>
+            <Input type="date" max={today} value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+            {futureDate && <p className="mt-1 text-xs text-rose-700">{tx('The payment date cannot be in the future')}</p>}
+          </Field>
           <Field label={needsRef ? `${tx('Transaction reference')} *` : tx('Reference / receipt no.')}><Input value={reference} onChange={(e) => setReference(e.target.value)} /></Field>
           <Field label={tx('Payer name')}><Input value={payerName} onChange={(e) => setPayerName(e.target.value)} /></Field>
           <Field label={accountLabel}><Input value={payerAccount} onChange={(e) => setPayerAccount(e.target.value)} /></Field>
@@ -776,7 +813,7 @@ function PaymentDialog({ sale, onClose, onSubmit }: { sale: CashSale; onClose: (
         </p>
         <DialogFooter>
           <Button variant="outline" disabled={saving} onClick={onClose}>{tx('Close')}</Button>
-          <Button disabled={saving || !mode || amount <= 0 || (needsRef && !reference.trim())} onClick={() => void submit()}>{saving ? tx('Saving…') : tx('Add payment')}</Button>
+          <Button disabled={saving || !mode || amount <= 0 || tooMuch || futureDate || (needsRef && !reference.trim())} onClick={() => void submit()}>{saving ? tx('Saving…') : tx('Add payment')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

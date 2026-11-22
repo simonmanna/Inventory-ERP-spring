@@ -343,6 +343,31 @@ class CashSaleIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("Payments: never above the sale total, no future payment date, removal on the timeline")
+    void paymentCaptureGuards() {
+        String id = draft(null, 1); // 35,000 × 1.18 = 41,300
+        String path = "/sales/cash-sales/" + id + "/payments";
+        Res over = as("POST", path, Map.of("method", "cash", "amount", 50_000));
+        assertThat(over.status()).isEqualTo(400);
+        assertThat(over.body().get("message").asString())
+                .isEqualTo("Payments (50000) would exceed the sale total (41300); the balance due is 41300");
+        String first = pay(id, "cash", null, 40_000, null);
+        assertThat(as("POST", path, Map.of("method", "cash", "amount", 1_301)).body().get("message").asString())
+                .endsWith("the balance due is 1300");
+        Res future = as("POST", path, Map.of("method", "cash", "amount", 1_000, "paymentDate",
+                LocalDate.now().plusDays(3).toString()));
+        assertThat(future.status()).isEqualTo(400);
+        assertThat(future.body().get("message").asString()).isEqualTo("paymentDate must not be in the future");
+        assertThat(ok(200, "DELETE", path + "/" + first, null).get("payments").size()).isZero();
+        assertThat(as("DELETE", path + "/" + first, null).status()).isEqualTo(404);
+        pay(id, "cash", null, 41_300, null);
+        money("/sales/cash-sales/" + id + "/confirm", null, 200);
+        List<String> actions = new ArrayList<>();
+        ok(200, "GET", "/sales/cash-sales/" + id + "/timeline", null).forEach(e -> actions.add(e.get("action").asString()));
+        assertThat(actions).containsSubsequence("payment_verified", "payment_removed", "payment_verified", "confirm");
+    }
+
+    @Test
     @DisplayName("T7/T9: insufficient stock at the showroom location → 400, nothing posted; payments ≠ total → 400")
     void insufficientStockAndTotals() {
         // strict org (negative stock off) + item policy "block" → 400, nothing posted
@@ -513,6 +538,13 @@ class CashSaleIT extends ApiTestSupport {
         assertThat(edit.status()).isEqualTo(400);
         assertThat(edit.body().get("message").asString())
                 .isEqualTo("The delivery of this invoice is managed on cash sale " + number);
+        // a change on the sale reaches the invoice handover and the invoice's own delivery address and date
+        ok(200, "PATCH", "/sales/cash-sales/" + id + "/delivery", Map.of("deliveryAddress", "Plot 9, Naguru",
+                "deliveryScheduledDate", "2026-11-30"));
+        JsonNode moved = ok(200, "GET", "/invoices/" + invoiceId, null);
+        assertThat(moved.get("deliveryAddress").asString()).isEqualTo("Plot 9, Naguru");
+        assertThat(moved.get("deliveryDate").asString()).startsWith("2026-11-30");
+        assertThat(ok(200, "GET", handover, null).get("address").asString()).isEqualTo("Plot 9, Naguru");
         ok(200, "PATCH", "/sales/cash-sales/" + id + "/delivery", Map.of("deliveryStatus", "delivered",
                 "deliveryReceivedBy", "Site foreman"));
         JsonNode delivered = ok(200, "GET", handover, null);
