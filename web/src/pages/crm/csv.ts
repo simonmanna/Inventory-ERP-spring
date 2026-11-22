@@ -40,3 +40,32 @@ export async function exportDeals(path: '/crm/leads' | '/crm/opportunities', fil
   downloadCsv(`crm-${lead ? 'leads' : 'opportunities'}-${new Date().toISOString().slice(0, 10)}.csv`, [head, ...body]);
   return rows.length;
 }
+
+/** RFC 4180-style CSV parse (quotes, escaped quotes, newlines in quotes); comma or semicolon, picked from line 1. */
+export function parseCsv(text: string): string[][] {
+  const src = text.replace(/^﻿/, '');
+  const firstLine = src.split(/\r?\n/, 1)[0] ?? '';
+  const sep = (firstLine.match(/;/g)?.length ?? 0) > (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (quoted) {
+      if (c === '"' && src[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === sep) { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && src[i + 1] === '\n') i++;
+      row.push(cell); cell = '';
+      if (row.some((x) => x.trim() !== '')) rows.push(row);
+      row = [];
+    } else cell += c;
+  }
+  row.push(cell);
+  if (row.some((x) => x.trim() !== '')) rows.push(row);
+  return rows;
+}

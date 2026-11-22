@@ -24,6 +24,7 @@ import { ActivityBadge, ActivityBar, Avatar, DealStatusPill, EmptyState, ErrorSt
 import { OpportunityDialog, ScheduleDialog } from './crm-dialogs';
 import { CrmFilterBar, useCrmFilters, type FilterState } from './filter-bar';
 import { exportDeals } from './csv';
+import { BulkBar } from './bulk-bar';
 
 const GROUPS = ['stage', 'owner', 'team', 'source', 'tag', 'partner', 'city', 'country', 'status', 'priority', 'lostReason', 'createdMonth', 'closeMonth', 'wonMonth'];
 
@@ -306,24 +307,42 @@ function Header() {
 
 function ListTable({ filters, page, setPage }: { filters: FilterState; page: number; setPage: (p: number) => void }) {
   const { data, isLoading } = useOpportunities({ ...filters, page, pageSize: 50 } as Record<string, string | number>);
+  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
+  const [selected, setSelected] = useState<string[]>([]);
+  const pageIds = data?.data.map((o) => o.id) ?? [];
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const check = 'h-4 w-4 shrink-0 cursor-pointer accent-primary';
   return (
-    <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
-      <div className="min-w-[860px]">
-        <Header />
-        {isLoading && <div className="p-3"><Skeleton className="h-40 w-full" /></div>}
-        {data?.data.map((o) => <Row key={o.id} o={o} />)}
-        {data && data.data.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">{tx('No opportunities match these filters.')}</p>}
-        {data && (
-          <div className="flex items-center justify-between border-t px-3 py-2 text-sm">
-            <span className="text-muted-foreground">{data.meta.total} {tx('records')}</span>
-            <span className="font-semibold tabular-nums">{money(data.totals?.amount ?? 0)}</span>
+    <>
+      <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
+        <div className="min-w-[860px]">
+          <div className="flex items-center bg-muted/40 [&>div]:flex-1">
+            {canWrite && <input type="checkbox" aria-label={tx('Select all on this page')} className={cn(check, 'ml-3')} checked={allOnPage}
+              onChange={() => setSelected((s) => (allOnPage ? s.filter((id) => !pageIds.includes(id)) : [...new Set([...s, ...pageIds])]))} />}
+            <Header />
           </div>
+          {isLoading && <div className="p-3"><Skeleton className="h-40 w-full" /></div>}
+          {data?.data.map((o) => (
+            <div key={o.id} className={cn('flex items-center border-b [&>button]:border-b-0', selected.includes(o.id) && 'bg-primary/5')}>
+              {canWrite && <input type="checkbox" aria-label={`${tx('Select')} ${o.name}`} className={cn(check, 'ml-3')} checked={selected.includes(o.id)} onChange={() => toggle(o.id)} />}
+              <Row o={o} />
+            </div>
+          ))}
+          {data && data.data.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">{tx('No opportunities match these filters.')}</p>}
+          {data && (
+            <div className="flex items-center justify-between border-t px-3 py-2 text-sm">
+              <span className="text-muted-foreground">{data.meta.total} {tx('records')}</span>
+              <span className="font-semibold tabular-nums">{money(data.totals?.amount ?? 0)}</span>
+            </div>
+          )}
+        </div>
+        {data && data.meta.totalPages > 1 && (
+          <DataTablePagination page={data.meta.page} pageSize={data.meta.pageSize} total={data.meta.total} totalPages={data.meta.totalPages} onPageChange={setPage} />
         )}
       </div>
-      {data && data.meta.totalPages > 1 && (
-        <DataTablePagination page={data.meta.page} pageSize={data.meta.pageSize} total={data.meta.total} totalPages={data.meta.totalPages} onPageChange={setPage} />
-      )}
-    </div>
+      <BulkBar kind="opportunity" ids={selected} onClear={() => setSelected([])} />
+    </>
   );
 }
 

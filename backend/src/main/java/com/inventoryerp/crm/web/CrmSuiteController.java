@@ -2,6 +2,7 @@ package com.inventoryerp.crm.web;
 
 import com.inventoryerp.crm.application.CrmCaseService;
 import com.inventoryerp.crm.application.CrmConfigService;
+import com.inventoryerp.crm.application.CrmBulkService;
 import com.inventoryerp.crm.application.CrmPipelineService;
 import com.inventoryerp.crm.application.CrmPlannerService;
 import com.inventoryerp.crm.application.CrmPricingService;
@@ -268,9 +269,18 @@ public final class CrmSuiteController {
     public static class OpportunityController {
 
         private final CrmPipelineService svc;
+        private final CrmBulkService bulk;
 
-        public OpportunityController(CrmPipelineService svc) {
+        public OpportunityController(CrmPipelineService svc, CrmBulkService bulk) {
             this.svc = svc;
+            this.bulk = bulk;
+        }
+
+        /** Assign / move / lost / archive many opportunities; each one on its own (CRM enhancements T2a). */
+        @PostMapping("/bulk")
+        @RequirePermissions(Permissions.CRM__DEAL_WRITE)
+        public Map<String, Object> bulk(@RequestBody Map<String, Object> b) {
+            return bulk.bulk("opportunity", body(b));
         }
 
         @GetMapping
@@ -365,9 +375,25 @@ public final class CrmSuiteController {
     public static class LeadController {
 
         private final CrmPipelineService svc;
+        private final CrmBulkService bulk;
 
-        public LeadController(CrmPipelineService svc) {
+        public LeadController(CrmPipelineService svc, CrmBulkService bulk) {
             this.svc = svc;
+            this.bulk = bulk;
+        }
+
+        /** Assign / lost / archive many leads; each one on its own (CRM enhancements T2a). */
+        @PostMapping("/bulk")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> bulk(@RequestBody Map<String, Object> b) {
+            return bulk.bulk("lead", body(b));
+        }
+
+        /** CSV lead import: {@code dryRun} checks and reports duplicates, otherwise creates the valid rows. */
+        @PostMapping("/import")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> importLeads(@RequestBody Map<String, Object> b) {
+            return bulk.importLeads(body(b));
         }
 
         @GetMapping

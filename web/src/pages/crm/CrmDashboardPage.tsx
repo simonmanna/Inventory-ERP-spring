@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlarmClock, ArrowRight, CalendarCheck, FileCheck2, FileClock, Flame, Gauge, Inbox, KanbanSquare, Loader2, Sparkles, Trophy,
+  AlarmClock, ArrowRight, CalendarCheck, FileCheck2, FileClock, Flame, Gauge, Inbox, KanbanSquare, Loader2, Sparkles, Target, Trophy,
   type LucideIcon,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -140,6 +140,33 @@ export function CrmDashboardPage() {
             </div>
           </Reveal>
 
+          {(data.salesTargets?.length ?? 0) > 0 && (
+            <Reveal delay={120}>
+              <Panel title={scope === 'mine' ? tx('My targets') : tx('Salesperson targets')} icon={Target} hint={tx('Targets set in Sales, measured on invoiced sales, collections or orders.')}>
+                <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {data.salesTargets!.map((t) => {
+                    const pct = t.percent ?? 0;
+                    return (
+                      <li key={t.id} className="rounded-xl border p-3">
+                        <div className="flex items-center justify-between gap-2 text-sm">
+                          <span className="flex min-w-0 items-center gap-2"><Avatar name={t.salespersonName} /><span className="truncate font-medium">{t.salespersonName ?? '—'}</span></span>
+                          <span className={cn('font-semibold tabular-nums', pct >= 100 ? 'text-emerald-600' : pct >= 80 ? 'text-amber-600' : 'text-foreground')}>{t.percent == null ? '—' : `${t.percent}%`}</span>
+                        </div>
+                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+                          <div className={cn('h-full rounded-full', pct >= 100 ? 'bg-emerald-500' : pct >= 80 ? 'bg-amber-500' : 'bg-primary')} style={{ width: `${Math.min(100, Math.max(2, pct))}%` }} />
+                        </div>
+                        <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
+                          <span>{METRIC_LABEL[t.metric] ?? t.metric} · {tx('until')} {date(t.periodEnd)}</span>
+                          <span className="tabular-nums">{['new_customers', 'order_count'].includes(t.metric) ? `${t.actual} / ${t.target}` : `${compact(t.actual)} / ${compact(t.target)}`}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </Panel>
+            </Reveal>
+          )}
+
           <Reveal delay={160}>
             <div className="grid gap-4 lg:grid-cols-2">
               <DealList title={tx('Closing in the next 30 days')} icon={AlarmClock} rows={data.closingSoon} empty={tx('Nothing closing soon.')}
@@ -153,6 +180,11 @@ export function CrmDashboardPage() {
     </div>
   );
 }
+
+const METRIC_LABEL: Record<string, string> = {
+  revenue: tx('Revenue'), gross_profit: tx('Gross profit'), collection: tx('Collections'), new_customers: tx('New customers'),
+  order_count: tx('Orders'), order_value: tx('Order value'),
+};
 
 function HeroStat({ to, icon: Icon, label, value, sub, alert }: { to: string; icon: LucideIcon; label: string; value: string; sub?: string; alert?: boolean }) {
   return (

@@ -186,3 +186,27 @@ or error message changed; the additions below are new behaviour.
 - **CSV export** of the Leads and Pipeline lists (current filters, all pages up to 5,000 rows; web only, using the
   existing list routes).
 - Tests: `CrmEnhancementsIT`.
+
+## CRM enhancements T2a (2026-11-22, post-parity)
+
+- **Bulk actions:** `POST /crm/opportunities/bulk` (`crm:deal:write`; actions assign / move / lost / archive) and
+  `POST /crm/leads/bulk` (`crm:lead:write`; assign / lost / archive).
+  - Body: `{action, ids (≤ 200), ownerId | stageId | lostReasonId + lostNote}`.
+  - `CrmBulkService` runs each record through the normal single-record use case in its own transaction, with the same
+    visibility, rules, history, audit and events.
+  - Response: `{action, done, failed: [{id, error}]}`. On the leads route an opportunity id fails with "Lead not
+    found".
+  - Web: tick boxes on the Leads table and the Pipeline list view, plus a sticky action bar.
+- **Lead CSV import:** `POST /crm/leads/import` (`crm:lead:write`).
+  - Body: `{rows (≤ 1000), dryRun, skipDuplicates}`.
+  - Columns: name (required), companyName, contactName, email, phone, city, country, amount, expectedClose, notes,
+    source (by name), tags ("a; b"), owner (user email).
+  - Unknown sources and tags are warnings; an unknown owner, a bad amount or a bad date is a row error.
+  - Rows are checked with the T1 duplicate check, plus repeats within the file.
+  - Each created lead goes through `create` (auto-assignment when no owner).
+  - Web: the Import dialog on Leads parses the CSV (comma or semicolon) in the browser, previews it with a dry run,
+    then imports. A template download is included.
+- **Salesperson targets on the dashboard:** `GET /crm/dashboard` adds `salesTargets`. These are the sales-module
+  targets (SG-12) whose period covers today, with actual and %; in mine scope (or without view-all) only the caller's
+  own.
+- Authorization matrix: 108 routes. Tests: `CrmBulkImportIT`.
