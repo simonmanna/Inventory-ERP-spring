@@ -84,11 +84,11 @@ export function useOnline(): boolean {
 }
 
 /**
- * Screens that record work offline themselves — the POS (ADR-S083 O2) and the warehouse tablet (O4). The read-only
- * rules of O3 (write guard, disabled submits, offline banner) are for the rest of the back office.
+ * Screens that record work offline themselves — the POS (ADR-S083 O2), the warehouse tablet (O4) and field sales
+ * (O5). The read-only rules of O3 (write guard, disabled submits, offline banner) are for the rest of the back office.
  */
 export function isOfflineCapablePath(path = typeof window !== 'undefined' ? window.location.pathname : ''): boolean {
-  return path === '/pos' || path.startsWith('/pos/') || path === '/warehouse/tablet';
+  return path === '/pos' || path.startsWith('/pos/') || path === '/warehouse/tablet' || path === '/sales/field';
 }
 
 /**

@@ -77,7 +77,7 @@ public class CashSessionService {
      * to {@code SyncOpCatalog.moneyTypes()} by {@code SyncOpCatalogTest} (accounting may not depend on sync).
      */
     public static final List<String> SYNC_MONEY_OP_TYPES = List.of("cash_session.movement", "sale.checkout",
-            "tab.settle", "sale.refund", "sale.void", "expense.create");
+            "tab.settle", "sale.refund", "sale.void", "expense.create", "payment.receive");
 
     /** Manual drawer movement. */
     public record MovementInput(String counterpartAccountId, String correctionOfSessionId, String movementType,

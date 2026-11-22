@@ -69,7 +69,8 @@ public class SyncPullService {
      * {@code serials} are deltas (a snapshot sends only stock on hand; later deltas include rows that reached zero).
      */
     public static final List<String> EXTENDED_SCOPES = List.of("openPurchaseOrders", "transfers", "lots", "serials",
-            "uomConversions");
+            "uomConversions", "priceLists", "paymentTerms", "customerCredit", "openSalesOrders", "openInvoices");
+    // ADR-S083 O5: the last five are field-sales scopes (SyncSalesScopes), full sets, limited to the device's branch.
 
     /** Every scope a device may name. */
     public static boolean known(String scope) {
@@ -95,6 +96,14 @@ public class SyncPullService {
 
     private static String org() {
         return TenantContext.organizationId();
+    }
+
+    private SyncSalesScopes salesScopes;
+
+    /** ADR-S083 O5 field-sales scopes (setter injection keeps the constructor stable for existing wiring). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSalesScopes(SyncSalesScopes salesScopes) {
+        this.salesScopes = salesScopes;
     }
 
     /** ADR-S083 S7: protocol-2 pulls also ship soft-deleted rows changed since the watermark, as tombstones. */
@@ -324,6 +333,8 @@ public class SyncPullService {
             case "lots" -> lots(since);
             case "serials" -> serials(since);
             case "uomConversions" -> uomConversions();
+            case "priceLists", "paymentTerms", "customerCredit", "openSalesOrders", "openInvoices" ->
+                    salesScopes.read(scope, BRANCH.get());
             case "productVariants" -> productVariants(since);
             case "suppliers" -> changed(Partner.class, since, "\"isSupplier\" = true").stream()
                     .map(r -> pick(r, "id", "name", "phone", "notes", "updatedAt", "deletedAt")).toList();

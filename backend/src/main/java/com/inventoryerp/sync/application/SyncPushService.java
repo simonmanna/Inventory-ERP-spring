@@ -115,6 +115,14 @@ public class SyncPushService {
     private final org.springframework.transaction.support.TransactionTemplate opTx;
     private SyncLedger ledger;
 
+    private SyncSalesService salesOps;
+
+    /** ADR-S083 O5 field-sales ops (setter injection keeps the long constructor stable). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSalesOps(SyncSalesService salesOps) {
+        this.salesOps = salesOps;
+    }
+
     /** ADR-S083 C1 ledger (setter injection keeps the long constructor stable for existing wiring). */
     @org.springframework.beans.factory.annotation.Autowired
     void setLedger(SyncLedger ledger) {
@@ -992,6 +1000,9 @@ public class SyncPushService {
             case "transfer.receive" -> m.putAll(stockOps.receive(stockCtx(device, op), payload));
             case "stock.adjust" -> m.putAll(stockOps.adjust(stockCtx(device, op), payload));
             case "grn.receive" -> m.putAll(stockOps.receiveGoods(stockCtx(device, op), payload));
+            case "salesOrder.create" -> m.putAll(salesOps.order(stockCtx(device, op), payload));
+            case "quote.create" -> m.putAll(salesOps.quote(stockCtx(device, op), payload));
+            case "payment.receive" -> m.putAll(salesOps.payment(stockCtx(device, op), payload));
             case "kitchen.void" -> m.putAll(kitchenVoid(device, op, payload));
             case "expense.create" -> {
                 Map<String, Object> e = expenses.create(new ExpensesService.CreateInput(str(payload.get("title")),

@@ -78,6 +78,20 @@ public class SyncPolicyService {
         }
     }
 
+    /**
+     * ADR-S083 O5: the most one rep may have confirmed from offline orders within the offline window
+     * ({@code sync.offlineOrderCap}, base currency; 0 or unset = no cap). Beyond it an order is put on hold.
+     */
+    public BigDecimal offlineOrderCap(String organizationId) {
+        String v = setting(organizationId, "sync.offlineOrderCap");
+        try {
+            BigDecimal d = v == null || v.isBlank() ? BigDecimal.ZERO : new BigDecimal(v);
+            return d.signum() < 0 ? BigDecimal.ZERO : d;
+        } catch (NumberFormatException e) {
+            return BigDecimal.ZERO;
+        }
+    }
+
     /** What a device enforces while offline (sent on every pull). */
     public Map<String, Object> offlinePolicy(String organizationId, Integer deviceOverride) {
         Map<String, Object> p = new LinkedHashMap<>();
@@ -86,6 +100,11 @@ public class SyncPolicyService {
         p.put("pinMaxAttempts", intSetting(organizationId, "sync.pinMaxAttempts", DEFAULT_PIN_MAX_ATTEMPTS, 1, 20));
         p.put("pinLockoutMinutes", intSetting(organizationId, "sync.pinLockoutMinutes", DEFAULT_PIN_LOCKOUT_MINUTES, 1,
                 1440));
+        // ADR-S083 O5 (additive): the device warns before it records offline orders beyond the rep's cap.
+        p.put("offlineOrderCap", com.inventoryerp.pos.application.PosSql.js(offlineOrderCap(organizationId)));
+        p.put("varianceTolerance", Map.of("salesOrder", com.inventoryerp.pos.application.PosSql.js(
+                varianceTolerancePercent(organizationId, "salesOrder")), "quote", com.inventoryerp.pos.application.PosSql
+                        .js(varianceTolerancePercent(organizationId, "quote"))));
         return p;
     }
 }

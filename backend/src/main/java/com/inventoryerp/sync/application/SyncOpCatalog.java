@@ -59,6 +59,11 @@ public final class SyncOpCatalog {
         svc(m, "transfer.receive", false, "");
         svc(m, "stock.adjust", false, "");
         svc(m, "grn.receive", false, "");
+        // ADR-S083 O5: sales / payment services own their transactions (create, then confirm / submit). A later step
+        // the server refuses becomes a review item instead of failing the op.
+        svc(m, "salesOrder.create", false, "domain events via the outbox");
+        svc(m, "quote.create", false, "");
+        svc(m, "payment.receive", true, "domain events via the outbox");
         // Thin writes and services that write in auto-commit: one op transaction.
         op(m, "stock.count", false);
         op(m, "kitchen.void", false); // per-line waste commits stay REQUIRES_NEW, keyed per line (retry-safe)
