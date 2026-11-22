@@ -265,7 +265,7 @@ public class SalesPortalService {
         return quotation(id);
     }
 
-    private static Map<String, Object> strip(Map<String, Object> m, String... keys) {
+    static Map<String, Object> strip(Map<String, Object> m, String... keys) {
         Map<String, Object> out = new LinkedHashMap<>(m);
         for (String k : keys) {
             out.remove(k);

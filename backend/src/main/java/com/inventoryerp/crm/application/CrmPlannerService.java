@@ -342,6 +342,23 @@ public class CrmPlannerService {
         touchDeal(dealId);
     }
 
+    /**
+     * A done timeline entry for something the customer did online (accepted or declined a quotation link, sent the
+     * website form), assigned to {@code ownerId}. Runs without a signed-in user.
+     */
+    @Transactional
+    public void logCustomerEvent(String dealId, String partnerId, String title, String body, String ownerId) {
+        if (blank(dealId) && blank(partnerId)) {
+            return;
+        }
+        db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, body, \"dealId\", \"partnerId\","
+                + " status, completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\")"
+                + " VALUES (?, ?, 'task'::\"ActivityType\", ?, ?, ?, ?, 'done'::\"TaskStatus\", true, " + NOW + ", ?, ?, "
+                + NOW + ", " + NOW + ")", CrmDb.newId(), org(), title, body, blank(dealId) ? null : dealId,
+                blank(partnerId) ? null : partnerId, blank(ownerId) ? null : ownerId, blank(ownerId) ? null : ownerId);
+        touchDeal(dealId);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Map<String, Object> require(String id) {

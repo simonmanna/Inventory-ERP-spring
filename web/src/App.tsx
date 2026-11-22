@@ -307,6 +307,8 @@ const ProjectTagsPage = lazy(() => import('@/pages/projects/ProjectTagsPage').th
 const TaskEditPage = lazy(() => import('@/pages/tasks/TaskEditPage').then((m) => ({ default: m.TaskEditPage })));
 
 const SharePage = lazy(() => import('@/pages/public/SharePage').then((m) => ({ default: m.SharePage })));
+const PublicQuotePage = lazy(() => import('@/pages/public/PublicQuotePage').then((m) => ({ default: m.PublicQuotePage })));
+const PublicLeadFormPage = lazy(() => import('@/pages/public/PublicLeadFormPage').then((m) => ({ default: m.PublicLeadFormPage })));
 
 export function App() {
   // Remount the whole tree when the language changes so tx() re-evaluates.
@@ -322,6 +324,8 @@ export function App() {
         <Route path="/sales-portal" element={<CustomerPortalPage />} />
         {/* DMS share link (ADR-S044) — token-authorized, no staff login. */}
         <Route path="/share/:token" element={<SharePage />} />
+        <Route path="/q/:token" element={<PublicQuotePage />} />
+        <Route path="/forms/lead/:formKey" element={<PublicLeadFormPage />} />
         <Route element={<ProtectedRoute />}>
           {/* KDS — full-screen kitchen monitor, chrome-less (no sidebar/header). */}
           <Route path="/pos/kds" element={<KdsPage />} />

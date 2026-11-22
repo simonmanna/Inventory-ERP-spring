@@ -7,7 +7,8 @@ import { HeaderSelect, useHeaderOptions } from '@/pages/sales/OrderHeaderFields'
 import { defaultUnitId, unitPrice as priceForUnit, withVariantPrices } from '@/features/products/units';
 import { cachedVariantOption } from '@/features/products/variants-api';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
+import { QuoteShareDialog } from './quote-share';
+import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, Link2, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -57,6 +58,7 @@ export function QuotationEditorPage() {
   const docBase = quoteBase();
   const canEmail = useAuthStore((s) => (docBase.startsWith('/sales') ? s.hasPermission(PERMISSIONS.sales.quotationSend) : s.hasPermission(PERMISSIONS.crm.quotationWrite)));
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
   const base = useLocation().pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
   const [internalNotes, setInternalNotes] = useState('');
@@ -261,6 +263,7 @@ export function QuotationEditorPage() {
   const menu: MenuItem[] = [];
   if (q) {
     if (['approved', 'sent'].includes(status) && canEmail) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`${docBase}/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
+    if (['approved', 'sent', 'accepted', 'rejected'].includes(status) && canEmail) menu.push({ key: 'share', label: tx('Online link for the customer'), icon: <Link2 className={ico} />, onSelect: () => setShareOpen(true) });
     menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`${docBase}/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
     menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printPdf(`${docBase}/${q.id}/pdf?images=${printImages}`) });
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
@@ -456,6 +459,7 @@ export function QuotationEditorPage() {
 
       {q && <RecordChatter contextType="SalesQuotation" contextId={q.id} />}
 
+      {q && <QuoteShareDialog quotationId={q.id} status={status} open={shareOpen} onOpenChange={setShareOpen} />}
       <Dialog open={dialog === 'reject' || dialog === 'decline'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
           {dialog === 'decline' && <Field label={tx('Lost reason')}><HeaderSelect value={lostReasonId} options={(lostReasons.data ?? []).filter((r) => r.isActive)} none={tx('Choose…')} onChange={setLostReasonId} /></Field>}

@@ -41,4 +41,9 @@ public class CrmQuotationPorts implements QuotationOpportunityPort {
     public void quotationEmailed(String dealId, String partnerId, String number, String sentTo, boolean delivered) {
         planner.logQuotationEmail(dealId, partnerId, number, sentTo, delivered);
     }
+
+    @Override
+    public void quotationAnsweredOnline(String dealId, String partnerId, String title, String body, String ownerId) {
+        planner.logCustomerEvent(dealId, partnerId, title, body, ownerId);
+    }
 }

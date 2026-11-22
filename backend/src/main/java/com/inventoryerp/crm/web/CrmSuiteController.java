@@ -7,6 +7,7 @@ import org.springframework.http.MediaType;
 import com.inventoryerp.kernel.security.Throttle;
 import com.inventoryerp.kernel.security.Public;
 import com.inventoryerp.crm.application.CrmCalendarFeedService;
+import com.inventoryerp.crm.application.CrmLeadFormService;
 import com.inventoryerp.crm.application.CrmPipelineService;
 import com.inventoryerp.crm.application.CrmPlannerService;
 import com.inventoryerp.crm.application.CrmPricingService;
@@ -31,6 +32,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -556,6 +558,83 @@ public final class CrmSuiteController {
             return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/calendar; charset=utf-8"))
                     .header(HttpHeaders.CACHE_CONTROL, "private, max-age=300")
                     .body(feeds.ics(token).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    /** {@code /crm/config/lead-forms}: website lead forms (CRM enhancements T3a). */
+    @RestController
+    @RequestMapping("/crm/config/lead-forms")
+    public static class LeadFormController {
+
+        private final CrmLeadFormService forms;
+
+        public LeadFormController(CrmLeadFormService forms) {
+            this.forms = forms;
+        }
+
+        @GetMapping
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public List<Map<String, Object>> list() {
+            return forms.list();
+        }
+
+        @PostMapping
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> create(@RequestBody Map<String, Object> b) {
+            return forms.create(body(b));
+        }
+
+        @PatchMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return forms.update(id, body(b));
+        }
+
+        @PostMapping("/{id}/rotate-key")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> rotateKey(@PathVariable String id) {
+            return forms.rotateKey(id);
+        }
+
+        @DeleteMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> delete(@PathVariable String id) {
+            return forms.delete(id);
+        }
+    }
+
+    /**
+     * Public website lead form (ADR-S084): the form's public key (not a secret) identifies the organization. Rate
+     * limited per address; CORS is open for these two paths only, without credentials (SecurityConfig).
+     */
+    @RestController
+    public static class LeadFormPublicController {
+
+        private final CrmLeadFormService forms;
+
+        public LeadFormPublicController(CrmLeadFormService forms) {
+            this.forms = forms;
+        }
+
+        @Public
+        @Throttle(limit = 60, ttlMs = 60_000)
+        @GetMapping("/public/crm/forms/{key}")
+        public Map<String, Object> info(@PathVariable String key) {
+            return forms.publicInfo(key);
+        }
+
+        @Public
+        @Throttle(limit = 10, ttlMs = 60_000)
+        @PostMapping("/public/crm/forms/{key}/submit")
+        @ResponseStatus(HttpStatus.CREATED)
+        public Map<String, Object> submit(@PathVariable String key, @RequestBody(required = false) Map<String, Object> b,
+                @RequestHeader(value = HttpHeaders.ORIGIN, required = false) String origin,
+                @RequestHeader(value = HttpHeaders.HOST, required = false) String host) {
+            if (b != null && b.size() > 20) {
+                throw ApiException.badRequest("Too many fields");
+            }
+            return forms.submit(key, body(b), origin, host);
         }
     }
 

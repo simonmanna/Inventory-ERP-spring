@@ -32,6 +32,7 @@ public class SecurityConfig {
 
     private static final Pattern PRIVATE_ORIGIN = Pattern.compile(
             "^https?://(localhost|127\\.0\\.0\\.1|10\\.\\d+\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+)(:\\d+)?$");
+    private static final Pattern LEAD_FORM_PATH = Pattern.compile("^(/api/v1)?/public/crm/forms/[^/]+(/submit)?$");
 
     @Bean
     AuthenticationFilter authenticationFilter(JwtTokenService jwt, PosSessionCheck posSessionCheck, JdbcClient jdbc,
@@ -111,6 +112,13 @@ public class SecurityConfig {
         cfg.setExposedHeaders(List.of("X-Request-Id", "X-Total-Count", PosSessionCheck.POS_SESSION_HEADER,
                 "X-Snapshot-Taken-At"));
         cfg.setMaxAge(86_400L);
-        return (HttpServletRequest request) -> cfg;
+        // Website lead forms (ADR-S084) post from any customer website: any origin, no credentials, no auth headers.
+        CorsConfiguration forms = new CorsConfiguration();
+        forms.addAllowedOriginPattern("*");
+        forms.setAllowCredentials(false);
+        forms.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
+        forms.setAllowedHeaders(List.of("Content-Type"));
+        forms.setMaxAge(86_400L);
+        return (HttpServletRequest request) -> LEAD_FORM_PATH.matcher(request.getRequestURI()).matches() ? forms : cfg;
     }
 }
