@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, Inbox, Plus } from 'lucide-react';
+import { Download, Inbox, Plus, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
 import { PERMISSIONS } from '@erp/shared';
@@ -10,11 +10,14 @@ import { DataTablePagination, ListPageHeader } from '@/components/list';
 import { useAuthStore } from '@/stores/auth.store';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { cn } from '@/lib/utils';
 import { useCrmLookups, useOpportunities, type Opportunity } from '@/features/crm/suite-api';
 import { ActivityBadge, Avatar, DealStatusPill, ErrorState, Stars, TagChips } from './crm-ui';
 import { ConvertDialog, OpportunityDialog } from './crm-dialogs';
 import { CrmFilterBar, useCrmFilters } from './filter-bar';
 import { exportDeals } from './csv';
+import { BulkBar } from './bulk-bar';
+import { ImportLeadsDialog } from './import-leads';
 
 /** Lead inbox: unqualified enquiries before they enter the pipeline (ADR-S010). */
 export function LeadsPage() {
@@ -26,8 +29,13 @@ export function LeadsPage() {
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.leadWrite) && s.hasPermission(PERMISSIONS.crm.dealWrite));
   const [creating, setCreating] = useState(false);
   const [converting, setConverting] = useState<Opportunity | null>(null);
-  const [exporting, setExporting] = useState(false);
   const { data, isLoading, isError, refetch } = useOpportunities({ ...state.filters, page: state.page, pageSize: 50 } as Record<string, string | number>, '/crm/leads');
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
+  const pageIds = data?.data.map((l) => l.id) ?? [];
+  const allOnPage = pageIds.length > 0 && pageIds.every((id) => selected.includes(id));
+  const toggle = (id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
 
   return (
     <div className="space-y-4">
@@ -37,6 +45,7 @@ export function LeadsPage() {
             setExporting(true);
             try { toast.success(`${await exportDeals('/crm/leads', state.filters, lk)} ${tx('leads exported')}`); } catch (e) { toast.error(apiErrorMessage(e, tx('Could not export'))); } finally { setExporting(false); }
           }}><Download className="mr-1.5 h-4 w-4" />{exporting ? tx('Exporting…') : tx('Export CSV')}</Button>
+          {canWrite && <Button variant="outline" onClick={() => setImporting(true)}><Upload className="mr-1.5 h-4 w-4" />{tx('Import')}</Button>}
           {canWrite && <Button onClick={() => setCreating(true)}><Plus className="mr-1 h-4 w-4" />{tx('New lead')}</Button>}
         </div>} />
       <CrmFilterBar scope="leads" state={state} groupByOptions={[]} />
@@ -44,6 +53,8 @@ export function LeadsPage() {
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-muted/40 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             <tr>
+              {canWrite && <th className="w-8 pl-3"><input type="checkbox" aria-label={tx('Select all on this page')} className="h-4 w-4 cursor-pointer accent-primary" checked={allOnPage}
+                onChange={() => setSelected((s) => (allOnPage ? s.filter((id) => !pageIds.includes(id)) : [...new Set([...s, ...pageIds])]))} /></th>}
               <th className="px-3 py-2">{tx('Lead')}</th><th className="px-3 py-2">{tx('Company / contact')}</th>
               <th className="px-3 py-2">{tx('Email / phone')}</th><th className="px-3 py-2">{tx('Source')}</th>
               <th className="px-3 py-2">{tx('Salesperson')}</th><th className="px-3 py-2">{tx('Created')}</th>
@@ -51,10 +62,11 @@ export function LeadsPage() {
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
-            {isError && <tr><td colSpan={8} className="p-3"><ErrorState message={tx('Could not load the leads.')} onRetry={() => refetch()} /></td></tr>}
+            {isLoading && <tr><td colSpan={canWrite ? 9 : 8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
+            {isError && <tr><td colSpan={canWrite ? 9 : 8} className="p-3"><ErrorState message={tx('Could not load the leads.')} onRetry={() => refetch()} /></td></tr>}
             {data?.data.map((l) => (
-              <tr key={l.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/crm/leads/${l.id}`)}>
+              <tr key={l.id} className={cn('cursor-pointer border-t hover:bg-muted/30', selected.includes(l.id) && 'bg-primary/5')} onClick={() => navigate(`/crm/leads/${l.id}`)}>
+                {canWrite && <td className="pl-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`${tx('Select')} ${l.name}`} className="h-4 w-4 cursor-pointer accent-primary" checked={selected.includes(l.id)} onChange={() => toggle(l.id)} /></td>}
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2"><ActivityBadge state={l.activityState} type={l.nextActivity?.type} /><span className="font-medium">{l.name}</span></div>
                   <div className="mt-1 flex items-center gap-2"><Stars value={l.priority} /><TagChips ids={l.tagIds} tags={lk?.tags ?? []} /></div>
@@ -72,13 +84,15 @@ export function LeadsPage() {
                 </td>
               </tr>
             ))}
-            {data && data.data.length === 0 && <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">{tx('No leads match these filters.')}</td></tr>}
+            {data && data.data.length === 0 && <tr><td colSpan={canWrite ? 9 : 8} className="p-6 text-center text-muted-foreground">{tx('No leads match these filters.')}</td></tr>}
           </tbody>
         </table>
         {data && data.meta.totalPages > 1 && (
           <DataTablePagination page={data.meta.page} pageSize={data.meta.pageSize} total={data.meta.total} totalPages={data.meta.totalPages} onPageChange={state.setPage} />
         )}
       </div>
+      <BulkBar kind="lead" ids={selected} onClear={() => setSelected([])} />
+      <ImportLeadsDialog open={importing} onOpenChange={setImporting} />
       <OpportunityDialog open={creating} onOpenChange={setCreating} kind="lead" onSaved={(o) => navigate(`/crm/leads/${o.id}`)} />
       {converting && <ConvertDialog open onOpenChange={(v) => !v && setConverting(null)} lead={converting} onDone={(o) => navigate(`/crm/opportunities/${o.id}`)} />}
     </div>

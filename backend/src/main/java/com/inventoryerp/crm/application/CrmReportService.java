@@ -40,8 +40,13 @@ public class CrmReportService {
     private final CrmDb db;
     private final CrmConfigService config;
     private final CrmQuotationService quotations;
+    private final org.springframework.beans.factory.ObjectProvider<com.inventoryerp.sales.application.SalesTargetService>
+            targets;
 
-    public CrmReportService(CrmDb db, CrmConfigService config, CrmQuotationService quotations) {
+    public CrmReportService(CrmDb db, CrmConfigService config, CrmQuotationService quotations,
+            org.springframework.beans.factory.ObjectProvider<com.inventoryerp.sales.application.SalesTargetService>
+                    targets) {
+        this.targets = targets;
         this.db = db;
         this.config = config;
         this.quotations = quotations;
@@ -310,7 +315,31 @@ public class CrmReportService {
                         "progress", target.signum() == 0 ? null : JsNumbers.js(dec(month.get("wonValue")).multiply(
                                 BigDecimal.valueOf(100)).divide(target, 1, RoundingMode.HALF_UP))),
                 "activities", acts, "pendingApproval", pendingApproval, "byStage", byStage, "closingSoon", closing,
-                "rotting", rotting);
+                "rotting", rotting, "salesTargets", salespersonTargets(today, mine));
+    }
+
+    /**
+     * Salesperson targets (sales module, SG-12) whose period covers today, with actual and achievement % (CRM
+     * enhancements T2a). {@code mine} (or no view-all): only the caller's own.
+     */
+    private List<Map<String, Object>> salespersonTargets(LocalDate today, boolean mine) {
+        com.inventoryerp.sales.application.SalesTargetService svc = targets.getIfAvailable();
+        if (svc == null) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> t : svc.achievement(today, today)) {
+            if (t.get("salespersonId") == null || (mine && !String.valueOf(t.get("salespersonId")).equals(user()))) {
+                continue;
+            }
+            out.add(Obj.of("id", t.get("id"), "salespersonId", t.get("salespersonId"), "salespersonName",
+                    t.get("salespersonName"), "metric", t.get("metric"), "periodType", t.get("periodType"),
+                    "periodEnd", String.valueOf(t.get("periodEndDate")), "target", JsNumbers.js(dec(t.get("amount"))),
+                    "actual", t.get("actualAmount"), "percent", t.get("achievementPercent")));
+        }
+        out.sort(java.util.Comparator.comparing((Map<String, Object> m) -> m.get("percent") == null ? -1d
+                : ((Number) m.get("percent")).doubleValue()).reversed());
+        return out.size() > 20 ? out.subList(0, 20) : out;
     }
 
     // ------------------------------------------------------------------ customers

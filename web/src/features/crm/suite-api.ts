@@ -436,7 +436,15 @@ export function useCrmMutation<TVars, TOut = unknown>(fn: (v: TVars) => Promise<
   });
 }
 
+export interface BulkResult { action: string; done: number; failed: Array<{ id: string; error: string }> }
+export interface ImportRow { row: number; name?: string; status: 'ok' | 'duplicate' | 'error' | 'skipped' | 'created'; error?: string; warnings?: string[]; duplicates?: number; id?: string }
+export interface ImportResult { dryRun: boolean; total: number; created: number; skipped: number; errors: number; rows: ImportRow[] }
+
 export const crmApi = {
+  bulk: async ({ kind, ...body }: { kind: DealKind; ids: string[]; action: string } & Record<string, unknown>) =>
+    (await api.post<BulkResult>(`/crm/${kind === 'lead' ? 'leads' : 'opportunities'}/bulk`, body)).data,
+  importLeads: async (body: { rows: Array<Record<string, string>>; dryRun: boolean; skipDuplicates?: boolean }) =>
+    (await api.post<ImportResult>('/crm/leads/import', body)).data,
   createOpportunity: async (body: Record<string, unknown>) => (await api.post<OpportunityDetail>('/crm/opportunities', body)).data,
   createLead: async (body: Record<string, unknown>) => (await api.post<OpportunityDetail>('/crm/leads', body)).data,
   update: async ({ id, kind, ...body }: { id: string; kind?: string | null } & Record<string, unknown>) =>
@@ -604,6 +612,8 @@ export interface CrmDashboard {
   byStage: Array<{ key: string; label: string; color: Color; count: number; amount: number }>;
   closingSoon: Opportunity[];
   rotting: Opportunity[];
+  /** Salesperson targets (sales module) covering today; only the caller's own in "mine" scope. */
+  salesTargets?: Array<{ id: string; salespersonId: string; salespersonName: string | null; metric: string; periodType: string; periodEnd: string; target: number; actual: number; percent: number | null }>;
 }
 
 export function useCrmDashboard(scope: string) {
