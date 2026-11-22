@@ -74,16 +74,22 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
     picked: status === 'dispatched' || done ? Number(l.quantity) : 0, invoiced: Number(l.invoicedQty ?? 0), returned: Number(l.returnedQty ?? 0),
   })), [sale.lines, done, status]);
 
+  // what each step still needs, said on the button instead of a refused save
+  const noAddress = !collect && !f.address.trim() ? tx('Enter the delivery address first') : undefined;
+  const notConfirmed = confirmed ? undefined : tx('Confirm the sale first');
+  const scheduleBlock = noAddress ?? (!f.scheduledDate ? tx('Enter the scheduled date first') : undefined);
+  const moveBlock = notConfirmed ?? noAddress;
   const actions = editable && !done && (
     <>
-      {!collect && status !== 'scheduled' && <Button size="sm" variant="outline" disabled={busy} onClick={() => save({ deliveryStatus: 'scheduled' }, tx('Delivery scheduled'))}><CalendarClock className="mr-1 h-4 w-4" />{tx('Schedule')}</Button>}
-      {!collect && status !== 'dispatched' && <Button size="sm" variant="outline" disabled={busy || !confirmed} title={confirmed ? undefined : tx('Confirm the sale first')} onClick={() => save({ deliveryStatus: 'dispatched' }, tx('Goods dispatched'))}><Truck className="mr-1 h-4 w-4" />{tx('Mark dispatched')}</Button>}
-      <Button size="sm" disabled={busy || !confirmed} title={confirmed ? undefined : tx('Confirm the sale first')} onClick={() => save({ deliveryStatus: 'delivered' }, collect ? tx('Goods collected') : tx('Delivery completed'))}>
+      {!collect && status !== 'scheduled' && <Button size="sm" variant="outline" disabled={busy || !!scheduleBlock} title={scheduleBlock} onClick={() => save({ deliveryStatus: 'scheduled' }, tx('Delivery scheduled'))}><CalendarClock className="mr-1 h-4 w-4" />{tx('Schedule')}</Button>}
+      {!collect && status !== 'dispatched' && <Button size="sm" variant="outline" disabled={busy || !!moveBlock} title={moveBlock} onClick={() => save({ deliveryStatus: 'dispatched' }, tx('Goods dispatched'))}><Truck className="mr-1 h-4 w-4" />{tx('Mark dispatched')}</Button>}
+      <Button size="sm" disabled={busy || !!moveBlock} title={moveBlock} onClick={() => save({ deliveryStatus: 'delivered' }, collect ? tx('Goods collected') : tx('Delivery completed'))}>
         <CheckCircle2 className="mr-1 h-4 w-4" />{collect ? tx('Mark collected') : tx('Mark delivered')}
       </Button>
       {!collect && status !== 'failed' && status !== 'pending' && <Button size="sm" variant="ghost" className="text-rose-600" disabled={busy} onClick={() => save({ deliveryStatus: 'failed' }, tx('Delivery marked failed'))}><XCircle className="mr-1 h-4 w-4" />{tx('Failed')}</Button>}
     </>
   );
+  const hint = editable && !done ? (moveBlock && confirmed ? moveBlock : !collect && status !== 'scheduled' && scheduleBlock && !confirmed ? `${scheduleBlock} ${tx('to schedule the delivery.')}` : null) : null;
   const notice = closed ? tx('This sale is voided or discarded; delivery details are read-only.')
     : !confirmed ? tx('Goods are issued from stock when the sale is confirmed. You can plan the delivery now; dispatch and delivery need the sale confirmed.')
       : sale.confirmedAt ? `${tx('Issued from')} ${sale.locationName ?? tx('the stock location')} ${tx('on')} ${date(sale.confirmedAt)}.` : null;
@@ -92,7 +98,7 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
     <div data-tour="sales.cash.delivery">
     <HandoverDeliveryView form={f} onChange={setF} status={status} lines={lines} stockLocationName={sale.locationName}
       methods={CASH_SALE_METHODS} hide={CASH_SALE_HIDE} planLocked={!editable || done} receiptLocked={!editable}
-      actions={actions || undefined} notice={notice}
+      actions={actions || undefined} notice={hint ? <>{notice}{notice ? ' ' : ''}<span className="font-medium">{hint}.</span></> : notice}
       tip={tx('Stock leaves the showroom when the sale is confirmed; here you track how the goods reach the customer.')}
       completed={done ? `${collect ? tx('Collected') : tx('Delivered')} ${sale.deliveredAt ? date(sale.deliveredAt) : ''}${sale.deliveredByName ? ` · ${sale.deliveredByName}` : ''}` : undefined}
       dirty={editable && dirty} saving={busy} onSave={() => void save()} onDiscard={() => setF(base)}

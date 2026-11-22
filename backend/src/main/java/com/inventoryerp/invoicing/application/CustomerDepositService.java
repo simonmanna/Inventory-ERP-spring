@@ -370,6 +370,17 @@ public class CustomerDepositService {
     /** Apply part of a deposit to a posted invoice of the same customer (P9). */
     @Transactional
     public Map<String, Object> apply(String depositId, String documentId, BigDecimal amountIn) {
+        return apply(depositId, documentId, amountIn, null, null);
+    }
+
+    /**
+     * {@link #apply(String, String, BigDecimal)} with the application payment's reference and branch set by the caller
+     * (a branch cash sale carries its tender, reference and payer onto the invoice); null keeps the defaults
+     * ({@code Deposit <number>}, no branch).
+     */
+    @Transactional
+    public Map<String, Object> apply(String depositId, String documentId, BigDecimal amountIn, String reference,
+            String branchId) {
         Map<String, Object> d = lock(depositId);
         if (!"open".equals(d.get("status"))) {
             throw ApiException.badRequest("Deposit " + d.get("number") + " is " + d.get("status"));
@@ -421,8 +432,9 @@ public class CustomerDepositService {
         // a foreign deposit is relieved at its own rate (non-monetary, IFRIC 22); the gap to the invoice rate is
         // realised FX, computed by the payment's FX settlement exactly as for a foreign receipt
         Map<String, Object> pay = payments.createDepositApplication(new PaymentInput((String) d.get("partnerId"),
-                LocalDate.now().toString(), amount, PaymentService.DEPOSIT_METHOD, depositAccount(), "Deposit "
-                        + d.get("number"), null, List.of(new AllocationInput(documentId, null, amount)), null, false, null,
+                LocalDate.now().toString(), amount, PaymentService.DEPOSIT_METHOD, depositAccount(),
+                reference == null ? "Deposit " + d.get("number") : reference, branchId,
+                List.of(new AllocationInput(documentId, null, amount)), null, false, null,
                 null, foreign ? cur : null, foreign ? SqlRows.dec(d, "exchangeRate") : null, null, null));
         jdbc.sql("INSERT INTO \"DepositApplication\" (id, \"organizationId\", \"depositId\", \"documentId\", \"paymentId\","
                 + " amount, kind, \"createdById\") VALUES (?, ?, ?, ?, ?, ?, 'application', ?)").params(UUID.randomUUID()

@@ -27,6 +27,8 @@ export interface Handover {
   destinationLocationName?: string | null; courierName?: string | null; deadline?: string | null;
   deliveredAt: string | null; deliveredByName: string | null; saved: boolean;
   deliveryNoteNumber?: string | null; sourceNumber?: string | null; returns?: ReturnView[];
+  /** Set on a branch cash sale's invoice: its delivery mirrors the sale and is edited there. */
+  cashSaleId?: string | null; cashSaleNumber?: string | null;
   lines: Array<{
     id: string; productName: string | null; description: string; uomCode: string | null; quantity: number; issuedQty: number | null; handedOverQty: number;
     pickedQty?: number | null; invoicedQty?: number | null; returnedQty?: number | null;
@@ -89,7 +91,8 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
   const closed = h.stage === 'closed';
   const ready = h.stage === 'ready';
   const done = status === 'delivered';
-  const editable = canEdit && !closed;
+  const mirrored = !!h.cashSaleId;
+  const editable = canEdit && !closed && !mirrored;
   const busy = save.isPending;
   const collect = f.method === 'pickup';
   const base = toForm(h);
@@ -108,6 +111,7 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
     </>
   );
   const notice = closed ? `${tx('This')} ${sourceLabel} ${tx('is cancelled; delivery details are read-only.')}`
+    : mirrored ? `${tx('Copied from cash sale')} ${h.cashSaleNumber ?? ''}. ${tx('Update the delivery on the cash sale; this invoice follows it.')}`
     : !ready ? `${readyHint}. ${tx('You can plan the handover now; dispatch and delivery wait for it.')}` : null;
 
   return (

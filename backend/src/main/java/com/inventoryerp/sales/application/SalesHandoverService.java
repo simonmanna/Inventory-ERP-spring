@@ -75,8 +75,10 @@ public class SalesHandoverService {
         if (INVOICE.equals(type)) {
             Map<String, Object> d = db.row("SELECT d.id, d.status::text AS status, d.\"deliveryAddress\","
                     + " d.\"deliveryDate\", d.\"branchId\", d.\"documentNumber\" AS number, p.name AS \"partnerName\","
-                    + " p.phone AS \"partnerPhone\" FROM"
-                    + " \"Document\" d LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\" WHERE d.id = ? AND"
+                    + " p.phone AS \"partnerPhone\", c.id AS \"cashSaleId\", c.number AS \"cashSaleNumber\" FROM"
+                    + " \"Document\" d LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\" LEFT JOIN \"SalesSubmission\" c ON"
+                    + " d.\"sourceType\" = 'cash_sale' AND c.id = d.\"sourceId\" AND c.\"organizationId\" = d.\"organizationId\""
+                    + " WHERE d.id = ? AND"
                     + " d.\"organizationId\" = ?" + (lock ? " FOR UPDATE OF d" : ""), id, org());
             if (d == null) {
                 throw ApiException.notFound("Invoice not found");
@@ -189,6 +191,11 @@ public class SalesHandoverService {
             out.put("deliveryNoteNumber", noteNumber(s));
         }
         out.put("sourceNumber", s.row().get("number"));
+        if (INVOICE.equals(s.type())) {
+            // a branch cash sale's invoice mirrors the sale's delivery; it is edited on the sale
+            out.put("cashSaleId", s.row().get("cashSaleId"));
+            out.put("cashSaleNumber", s.row().get("cashSaleNumber"));
+        }
         for (Map<String, Object> ln : lines) {
             ln.remove("productId");
         }
@@ -263,6 +270,10 @@ public class SalesHandoverService {
             throw ApiException.badRequest("property " + unknown.iterator().next() + " should not exist");
         }
         Source s = source(type, id, true);
+        if (s.row().get("cashSaleId") != null) {
+            throw ApiException.badRequest("The delivery of this invoice is managed on cash sale "
+                    + s.row().get("cashSaleNumber"));
+        }
         if ("closed".equals(s.stage())) {
             throw ApiException.badRequest(SALES_ORDER.equals(type)
                     ? "Delivery cannot change on a cancelled sales order"
@@ -352,6 +363,68 @@ public class SalesHandoverService {
                     Map.of("handover", changed)));
         }
         return view(s, stored(s));
+    }
+
+    /**
+     * Copy a branch cash sale's delivery onto its head-office invoice (insert or overwrite the invoice handover). The
+     * sale already validated these values and stays the place they are edited, so they are written as they are, with
+     * the sale's own delivered-at / delivered-by. A cancelled invoice is left alone.
+     */
+    @Transactional
+    public void mirrorCashSale(String invoiceId, Map<String, Object> sale) {
+        Source s = source(INVOICE, invoiceId, true);
+        if ("closed".equals(s.stage())) {
+            return;
+        }
+        String method = Objects.requireNonNullElse(firstText(sale.get("deliveryMethod")), "pickup");
+        Map<String, Object> data = new LinkedHashMap<>();
+        for (String k : FIELDS) {
+            data.put(k, null);
+        }
+        data.put("method", method);
+        data.put("status", Objects.requireNonNullElse(firstText(sale.get("deliveryStatus")), "pending"));
+        data.put("locationId", str(sale.get("locationId")));
+        data.put("address", str(sale.get("deliveryAddress")));
+        data.put("contactName", firstText(sale.get("deliveryContactName"), sale.get("customerName"),
+                s.row().get("partnerName")));
+        data.put("contactPhone", firstText(sale.get("deliveryContactPhone"), sale.get("customerPhone"),
+                s.row().get("partnerPhone")));
+        data.put("scheduledDate", day(sale.get("deliveryScheduledDate")));
+        data.put("deadline", day(sale.get("deliveryDeadline")));
+        data.put("driver", str(sale.get("deliveryDriver")));
+        data.put("vehicle", str(sale.get("deliveryVehicle")));
+        data.put("receivedBy", str(sale.get("deliveryReceivedBy")));
+        data.put("notes", str(sale.get("deliveryNotes")));
+        data.put("landmark", str(sale.get("deliveryLandmark")));
+        data.put("loadingSite", str(sale.get("deliveryLoadingSite")));
+        data.put("deliveryScope", str(sale.get("deliveryScope")));
+        data.put("offloadingEquipment", str(sale.get("deliveryOffloadingEquipment")));
+        boolean delivered = "delivered".equals(data.get("status"));
+        data.put("deliveredAt", delivered ? sale.get("deliveredAt") : null);
+        data.put("deliveredById", delivered ? str(sale.get("deliveredById")) : null);
+        data.put("updatedById", user());
+        Map<String, Object> h = stored(s);
+        if (h == null) {
+            data.put("sourceType", INVOICE);
+            data.put("sourceId", invoiceId);
+            db.insert("SalesHandover", data);
+        } else {
+            db.patch("SalesHandover", str(h.get("id")), data, true);
+        }
+    }
+
+    /** The first non-blank value as text, or null. */
+    private static String firstText(Object... values) {
+        for (Object v : values) {
+            if (!blank(str(v))) {
+                return str(v);
+            }
+        }
+        return null;
+    }
+
+    private static LocalDate day(Object v) {
+        return v == null ? null : v instanceof LocalDate d ? d : LocalDate.parse(v.toString().substring(0, 10));
     }
 
     /** Parse the date field {@code k} of {@code next} (normalising it to {@code yyyy-MM-dd}); null when empty. */

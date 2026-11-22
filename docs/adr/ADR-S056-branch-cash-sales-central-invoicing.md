@@ -67,6 +67,9 @@ fails with 400.
   - It is authorised and limited to goods physically back on the shelf.
   - It reverses P3, returns stock at the original cost, and refunds the deposit or keeps it as a documented advance.
 - A rejected sale stays posted. It goes to an owned exception queue and is resolved by `reopen` or, later, an RMA.
+- Approve and invoice may run as one step (`approve-and-invoice`, owner request 2026-11-22) except on a branch with
+  segregation of duties. The invoice then carries the sale's payment details (P5 references, branch) and a copy of its
+  delivery, which follows later delivery updates. See spec deviation 10.
 - Invoice cancel unapplies the deposit, reverses P4 and sets the CSS back to `approved`, all in one transaction.
   - Cancelled invoices stay linked to the CSS.
   - A replacement invoice reuses the original accrual.

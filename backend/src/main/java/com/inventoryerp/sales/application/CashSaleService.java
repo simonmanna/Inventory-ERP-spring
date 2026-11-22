@@ -109,6 +109,13 @@ public class CashSaleService {
     private final ProductVariantService variants;
     private ProductSizingService sizing;
     private SalesLetterhead letterhead;
+    private SalesHandoverService handovers;
+
+    /** The head-office invoice mirrors the sale's delivery. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setHandovers(SalesHandoverService handovers) {
+        this.handovers = handovers;
+    }
 
     /** Sell by size (ADR-S066). */
     @org.springframework.beans.factory.annotation.Autowired
@@ -232,7 +239,7 @@ public class CashSaleService {
         s.put("fiscalDocuments", db.rows("SELECT id, operation, provider, \"requestRef\", status, attempts, \"lastError\","
                 + " \"externalRef\", \"fiscalNumber\", reason, \"createdAt\", \"updatedAt\" FROM \"FiscalDocument\" WHERE"
                 + " \"submissionId\" = ? ORDER BY \"createdAt\"", id));
-        s.put("actions", actions(s));
+        s.put("actions", actions(s, segregated(s)));
         return s;
     }
 
@@ -319,7 +326,7 @@ public class CashSaleService {
     }
 
     /** The transitions open to the caller now (drives the buttons of the web screens). */
-    private static List<String> actions(Map<String, Object> s) {
+    private static List<String> actions(Map<String, Object> s, boolean segregated) {
         String ex = str(s.get("executionStatus"));
         String pr = str(s.get("processingStatus"));
         List<String> out = new ArrayList<>();
@@ -347,6 +354,12 @@ public class CashSaleService {
             if (TenantContext.has(Permissions.SALES__CASH_SALE_APPROVE)) {
                 out.addAll(List.of("approve", "reject"));
             }
+        }
+        // one step: approve (starting the review when needed), invoice, apply the payments, copy the delivery
+        if (("under_review".equals(pr) || "submitted".equals(pr) && TenantContext.has(Permissions.SALES__CASH_SALE_REVIEW))
+                && TenantContext.has(Permissions.SALES__CASH_SALE_APPROVE)
+                && TenantContext.has(Permissions.SALES__CASH_SALE_INVOICE) && !segregated) {
+            out.add("approve_and_invoice");
         }
         if ("rejected".equals(pr) && TenantContext.has(Permissions.SALES__CASH_SALE_APPROVE)) {
             out.addAll(List.of("reopen", "assign"));
@@ -645,10 +658,16 @@ public class CashSaleService {
 
     // ------------------------------------------------------------------ payments
 
-    /** Payment modes a cash sale can take: the organization's active cash, mobile-money and bank modes. */
+    /**
+     * Payment modes a cash sale can take: the organization's active cash, mobile-money and bank modes whose receiving
+     * account can hold a cash sale's money (a foreign-currency bank, say, is left out instead of being refused on
+     * capture).
+     */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> paymentModes() {
         return paymentModes.terminalPaymentMethods().stream().filter(m -> CASH_SALE_METHODS.contains(m.kind()))
+                .filter(m -> m.accountId() == null || recognition.tenderProblems(m.label(), m.kind(), m.accountId())
+                        .isEmpty())
                 .map(PosPaymentMethodService.View::toMap).toList();
     }
 
@@ -670,6 +689,7 @@ public class CashSaleService {
         String account;
         String modeId = blank(str(in.get("paymentModeId"))) ? null : str(in.get("paymentModeId"));
         String modeLabel = null;
+        boolean referenceRequired = false;
         if (modeId != null) {
             PosPaymentMethodService.View mode = paymentModes.terminalPaymentMethods().stream()
                     .filter(m -> m.id().equals(modeId)).findFirst()
@@ -679,6 +699,7 @@ public class CashSaleService {
                 throw ApiException.badRequest("Payment mode " + mode.label() + " cannot be used for cash sales");
             }
             modeLabel = mode.label();
+            referenceRequired = mode.requiresReference();
             provider = "mobile_money".equals(method)
                     ? (blank(mode.provider()) ? mode.code() : mode.provider()).trim().toLowerCase() : null;
             account = mode.accountId();
@@ -707,9 +728,23 @@ public class CashSaleService {
         if (amount.signum() <= 0) {
             throw ApiException.badRequest("amount must be greater than 0");
         }
+        // the lines are priced, so Σ payments can never pass the sale total (confirm needs them equal)
+        BigDecimal captured = dec(db.row("SELECT COALESCE(sum(amount), 0) AS paid FROM \"SalesSubmissionPayment\" WHERE"
+                + " \"submissionId\" = ?", id).get("paid"));
+        BigDecimal total = dec(s.get("grandTotal"));
+        if (captured.add(amount).compareTo(total) > 0) {
+            throw ApiException.badRequest("Payments (" + JsNumbers.js(captured.add(amount)) + ") would exceed the sale"
+                    + " total (" + JsNumbers.js(total) + "); the balance due is " + JsNumbers.js(
+                            total.subtract(captured).max(BigDecimal.ZERO)));
+        }
+        LocalDate paymentDate = SalesDb.date(str(in.get("paymentDate")));
+        if (paymentDate != null && paymentDate.isAfter(SalesQuotationService.today())) {
+            throw ApiException.badRequest("paymentDate must not be in the future");
+        }
         String reference = blank(str(in.get("reference"))) ? null : str(in.get("reference")).trim();
-        if (!"cash".equals(method) && reference == null) {
-            throw ApiException.badRequest("reference should not be empty for " + method.replace('_', ' ') + " payments");
+        if ((!"cash".equals(method) || referenceRequired) && reference == null) {
+            throw ApiException.badRequest("reference should not be empty for " + (modeLabel == null
+                    ? method.replace('_', ' ') : modeLabel) + " payments");
         }
         List<String> attachmentIds = SalesDb.strings(in.get("attachmentIds")).stream().filter(a -> !blank(a))
                 .distinct().toList();
@@ -719,7 +754,7 @@ public class CashSaleService {
         }
         Map<String, Object> row = Obj.of("submissionId", id, "method", method, "provider", provider, "amount", amount,
                 "reference", reference, "accountId", account, "collectedById", user(), "paymentModeId", modeId,
-                "paymentModeLabel", modeLabel, "paymentDate", SalesDb.date(str(in.get("paymentDate"))), "payerName", trimmed(in.get("payerName")),
+                "paymentModeLabel", modeLabel, "paymentDate", paymentDate, "payerName", trimmed(in.get("payerName")),
                 "payerAccount", trimmed(in.get("payerAccount")), "notes", trimmed(in.get("notes")), "attachmentIds",
                 attachmentIds);
         // the collector's capture is the verification, unless the branch requires segregation of duties
@@ -744,10 +779,14 @@ public class CashSaleService {
     public Map<String, Object> removePayment(String id, String paymentId) {
         Map<String, Object> s = lock(id);
         requireDraft(s);
-        if (db.update("DELETE FROM \"SalesSubmissionPayment\" WHERE id = ? AND \"submissionId\" = ? AND \"organizationId\" = ?",
-                paymentId, id, org()) == 0) {
+        Map<String, Object> pay = db.row("SELECT method, amount, reference FROM \"SalesSubmissionPayment\" WHERE id = ? AND"
+                + " \"submissionId\" = ? AND \"organizationId\" = ?", paymentId, id, org());
+        if (pay == null) {
             throw ApiException.notFound("Payment not found");
         }
+        db.update("DELETE FROM \"SalesSubmissionPayment\" WHERE id = ?", paymentId);
+        event(id, "payment_removed", null, null, null, null, str(pay.get("method")) + " " + JsNumbers.js(dec(pay.get(
+                "amount"))) + (pay.get("reference") == null ? "" : " ref " + pay.get("reference")));
         return get(id);
     }
 
@@ -1026,7 +1065,36 @@ public class CashSaleService {
         }
         patch.put("version", ((Number) s.get("version")).intValue() + 1);
         db.patch("SalesSubmission", id, patch, true);
+        mirrorDelivery(id);
         return get(id);
+    }
+
+    /**
+     * Copy the sale's delivery onto its active head-office invoice, if it has one: the invoice handover, and the
+     * invoice's own delivery address and date (printed on the invoice), so a later change on the sale reaches both.
+     */
+    private void mirrorDelivery(String id) {
+        Map<String, Object> s = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ? AND \"organizationId\" = ?", id, org());
+        if (s != null && s.get("currentInvoiceId") != null) {
+            handovers.mirrorCashSale(str(s.get("currentInvoiceId")), s);
+            db.update("UPDATE \"Document\" SET \"deliveryAddress\" = ?, \"deliveryDate\" = ?, \"updatedAt\" = " + NOW
+                    + " WHERE id = ? AND \"organizationId\" = ? AND (\"deliveryAddress\" IS DISTINCT FROM ? OR"
+                    + " \"deliveryDate\"::date IS DISTINCT FROM ?)", invoiceDeliveryAddress(s),
+                    invoiceDeliveryDate(s).atStartOfDay(), s.get("currentInvoiceId"), org(),
+                    invoiceDeliveryAddress(s), invoiceDeliveryDate(s));
+        }
+    }
+
+    /** Address printed on the sale's invoice: the delivery address for a delivery, else the customer's address. */
+    private static String invoiceDeliveryAddress(Map<String, Object> s) {
+        boolean delivery = "delivery".equals(s.get("deliveryMethod")) && !blank(str(s.get("deliveryAddress")));
+        return str(s.get(delivery ? "deliveryAddress" : "customerAddress"));
+    }
+
+    /** Delivery date printed on the sale's invoice: the scheduled date, else the sale date. */
+    private static LocalDate invoiceDeliveryDate(Map<String, Object> s) {
+        Object d = s.get("deliveryScheduledDate") != null ? s.get("deliveryScheduledDate") : s.get("saleDate");
+        return d == null ? LocalDate.now() : d instanceof LocalDate ld ? ld : LocalDate.parse(d.toString().substring(0, 10));
     }
 
     /** Non-financial corrections while returned (audited one row per changed field). */
@@ -1147,6 +1215,33 @@ public class CashSaleService {
      */
     @Transactional
     public Map<String, Object> generateInvoice(String id) {
+        return invoice(id);
+    }
+
+    /**
+     * Approve and invoice in one step (owner request 2026-11-22): a submitted sale's review is started, the sale is
+     * approved, and its invoice is generated, posted and settled by the sale's payments, with the delivery copied —
+     * one transaction, so nothing is left half done. Not on a branch with segregation of duties, where the approver may
+     * not invoice.
+     */
+    @Transactional
+    public Map<String, Object> approveAndInvoice(String id) {
+        Map<String, Object> s = lock(id);
+        if (segregated(s)) {
+            throw ApiException.forbidden("Segregation of duties: on this branch the sale is approved and invoiced by"
+                    + " different users");
+        }
+        if ("submitted".equals(s.get("processingStatus"))) {
+            if (!TenantContext.has(Permissions.SALES__CASH_SALE_REVIEW)) {
+                throw ApiException.forbidden("Missing required permission(s): " + Permissions.SALES__CASH_SALE_REVIEW);
+            }
+            startReview(id);
+        }
+        approve(id);
+        return invoice(id);
+    }
+
+    private Map<String, Object> invoice(String id) {
         Map<String, Object> s = lock(id);
         requireProcessing(s, "approved");
         requireExecution(s, "confirmed");
@@ -1169,7 +1264,8 @@ public class CashSaleService {
         }
         String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,
-                "cash", null, null, str(s.get("salespersonId")), issue, str(s.get("customerAddress")), null, null, number,
+                "cash", null, null, str(s.get("salespersonId")), invoiceDeliveryDate(s).toString(),
+                invoiceDeliveryAddress(s), null, null, number,
                 null, null, number, "Cash sale " + number + (s.get("customerName") == null ? "" : " — "
                         + s.get("customerName")), lines), str(s.get("branchId")), id, number,
                 str(s.get("accrualJournalEntryId")));
@@ -1177,13 +1273,20 @@ public class CashSaleService {
         invoices.post(docId);
         BigDecimal residual = dec(db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?", docId)
                 .get("amountResidual"));
+        Map<String, Map<String, Object>> paidBy = new HashMap<>();
+        for (Map<String, Object> p : db.rows("SELECT * FROM \"SalesSubmissionPayment\" WHERE \"submissionId\" = ? AND"
+                + " \"customerDepositId\" IS NOT NULL", id)) {
+            paidBy.put(str(p.get("customerDepositId")), p);
+        }
         for (Map<String, Object> dep : deposits.cashSaleDeposits(id)) {
             BigDecimal available = dec(dep.get("available"));
             if (residual.signum() <= 0 || available.signum() <= 0 || !"open".equals(dep.get("status"))) {
                 continue;
             }
             BigDecimal amount = available.min(residual);
-            deposits.apply(str(dep.get("id")), docId, amount);
+            // the invoice payment carries the sale's tender, reference and payer, and the sale's branch
+            deposits.apply(str(dep.get("id")), docId, amount, paymentReference(number, paidBy.get(str(dep.get("id"))),
+                    str(dep.get("number"))), str(s.get("branchId")));
             residual = residual.subtract(amount);
         }
         int attempt = (int) db.count("SELECT count(*) FROM \"SalesSubmissionInvoice\" WHERE \"submissionId\" = ?",
@@ -1196,6 +1299,7 @@ public class CashSaleService {
         }
         Map<String, Object> out = processing(id, s, "generate_invoice", "invoiced", Map.of("invoicedAt", Instant.now(),
                 "invoicedById", user(), "currentInvoiceId", docId), null, DomainEvents.SALES_CASH_SALE_INVOICED);
+        mirrorDelivery(id);
         Map<String, Object> profile = profiles.get(str(s.get("profileId")));
         if ("at_invoice".equals(str(profile.get("fiscalTrigger")))) {
             fiscal.request(db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?", id), "issue", docId,
@@ -1205,6 +1309,68 @@ public class CashSaleService {
         notify(str(s.get("submittedById")), "Cash sale " + number + " invoiced", "Invoice " + doc.get("documentNumber"),
                 id);
         return out;
+    }
+
+    /**
+     * Reference of the invoice payment that applies one payment line's deposit, e.g.
+     * {@code MTN MoMo · ref 77812 · Jane Doe · CSS-MAIN-2026-00004 · DEP-2026-00011}.
+     */
+    static String paymentReference(String saleNumber, Map<String, Object> p, String depositNumber) {
+        List<String> parts = new ArrayList<>();
+        if (p != null) {
+            String label = str(p.get("paymentModeLabel"));
+            if (blank(label)) {
+                String method = str(p.get("method"));
+                String provider = str(p.get("provider"));
+                label = "mobile_money".equals(method) ? (blank(provider) ? "" : provider.toUpperCase() + " ") + "Mobile money"
+                        : "bank".equals(method) ? "Bank" : "Cash";
+            }
+            parts.add(label);
+            if (!blank(str(p.get("reference")))) {
+                parts.add("ref " + str(p.get("reference")).trim());
+            }
+            if (!blank(str(p.get("payerName")))) {
+                parts.add(str(p.get("payerName")).trim());
+            }
+        }
+        parts.add(saleNumber);
+        if (!blank(depositNumber)) {
+            parts.add(depositNumber);
+        }
+        return String.join(" · ", parts);
+    }
+
+    /**
+     * The branch cash sale behind a head-office invoice, for the invoice screen: sale header, its payment lines (tender,
+     * reference, payer, verification, receipts) and its delivery; 404 when the invoice is not a cash sale's.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> forInvoice(String invoiceId) {
+        Map<String, Object> s = db.row("SELECT s.id, s.number, s.\"branchId\", b.name AS \"branchName\", s.\"saleDate\","
+                + " s.\"customerName\", s.\"grandTotal\", s.\"paidTotal\", s.\"executionStatus\", s.\"processingStatus\","
+                + " s.\"deliveryMethod\", s.\"deliveryStatus\", s.\"currentInvoiceId\","
+                + " COALESCE(NULLIF(trim(concat_ws(' ', u.\"firstName\", u.\"lastName\")), ''), u.email) AS \"salespersonName\""
+                + " FROM \"Document\" d JOIN \"SalesSubmission\" s ON s.id = d.\"sourceId\" AND s.\"organizationId\" ="
+                + " d.\"organizationId\" LEFT JOIN \"Branch\" b ON b.id = s.\"branchId\" LEFT JOIN \"User\" u ON u.id ="
+                + " s.\"salespersonId\" WHERE d.id = ? AND d.\"organizationId\" = ? AND d.\"sourceType\" = 'cash_sale'",
+                invoiceId, org());
+        if (s == null) {
+            throw ApiException.notFound("This invoice is not from a branch cash sale");
+        }
+        s.put("payments", db.rows("SELECT y.id, y.method, y.provider, y.\"paymentModeLabel\", y.amount, y.reference,"
+                + " y.\"paymentDate\", y.\"payerName\", y.\"payerAccount\", y.notes, y.\"verificationStatus\","
+                + " y.\"verificationSource\", y.\"verifiedAt\", y.\"collectedAt\", a.code AS \"accountCode\","
+                + " a.name AS \"accountName\", dep.number AS \"depositNumber\","
+                + " COALESCE(NULLIF(trim(concat_ws(' ', c.\"firstName\", c.\"lastName\")), ''), c.email) AS \"collectedByName\","
+                + " COALESCE(NULLIF(trim(concat_ws(' ', v.\"firstName\", v.\"lastName\")), ''), v.email) AS \"verifiedByName\","
+                + " (SELECT COALESCE(json_agg(json_build_object('id', m.id, 'name', m.name, 'contentType', m.\"contentType\")"
+                + " ORDER BY m.name), '[]'::json) FROM \"DmsDocument\" m WHERE m.\"organizationId\" = y.\"organizationId\""
+                + " AND m.id = ANY(y.\"attachmentIds\")) AS attachments"
+                + " FROM \"SalesSubmissionPayment\" y LEFT JOIN \"Account\" a ON a.id = y.\"accountId\" LEFT JOIN"
+                + " \"CustomerDeposit\" dep ON dep.id = y.\"customerDepositId\" LEFT JOIN \"User\" c ON c.id ="
+                + " y.\"collectedById\" LEFT JOIN \"User\" v ON v.id = y.\"verifiedById\" WHERE y.\"submissionId\" = ?"
+                + " ORDER BY y.\"createdAt\"", s.get("id")));
+        return s;
     }
 
     /**
