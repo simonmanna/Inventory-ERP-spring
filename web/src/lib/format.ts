@@ -89,14 +89,17 @@ export function relativeTime(value?: string | Date | null): string {
   if (!value) return '-';
   const d = typeof value === 'string' ? new Date(value) : value;
   const diffMs = Date.now() - d.getTime();
-  const sec = Math.floor(diffMs / 1000);
-  if (sec < 60) return `${sec}s ago`;
+  // A future time (a due date) reads "in 3h", not "-10800s ago".
+  const future = diffMs < 0;
+  const fmt = (n: number, unit: string) => (future ? `in ${n}${unit}` : `${n}${unit} ago`);
+  const sec = Math.floor(Math.abs(diffMs) / 1000);
+  if (sec < 60) return future ? 'in <1m' : `${sec}s ago`;
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return fmt(min, 'm');
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return fmt(hr, 'h');
   const days = Math.floor(hr / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return fmt(days, 'd');
   return d.toLocaleDateString();
 }
 

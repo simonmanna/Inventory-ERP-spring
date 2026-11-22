@@ -60,7 +60,7 @@ export function CrmPartnerTab({ partnerId }: { partnerId: string }) {
             {opps.length === 0
               ? <EmptyState icon={Handshake} title={tx('No opportunities for this partner yet.')} className="py-6" />
               : (
-                <ul className="-mx-2 divide-y">
+                <ul className="divide-y">
                   {opps.slice(0, 8).map((o) => (
                     <li key={o.id}>
                       <Link to={`/crm/${o.kind === 'lead' ? 'leads' : 'opportunities'}/${o.id}`} className="flex items-center gap-3 rounded-lg px-2 py-2.5 text-sm transition-colors hover:bg-muted/50">
@@ -69,7 +69,7 @@ export function CrmPartnerTab({ partnerId }: { partnerId: string }) {
                           <p className="truncate text-xs text-muted-foreground">{o.stageName ?? '—'}{o.expectedClose ? ` · ${date(o.expectedClose)}` : ''}</p>
                         </div>
                         <DealStatusPill status={o.status} />
-                        <span className="w-28 text-right font-medium tabular-nums">{money(o.amount, o.currencyCode)}</span>
+                        <span className="shrink-0 whitespace-nowrap text-right font-medium tabular-nums">{money(o.amount, o.currencyCode)}</span>
                       </Link>
                     </li>
                   ))}

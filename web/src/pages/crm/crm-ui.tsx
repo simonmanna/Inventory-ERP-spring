@@ -152,7 +152,8 @@ export function Field({ label, children, className, hint }: { label: string; chi
 }
 
 export function typeLabel(t: string): string {
-  return ACTIVITY_TYPE_LABEL[t as PlannedType] ?? t;
+  if (t === 'deal_stage_change') return tx('Stage change');
+  return ACTIVITY_TYPE_LABEL[t as PlannedType] ?? t.replace(/_/g, ' ');
 }
 
 /** Compact amount: 12.3k / 1.2M. */

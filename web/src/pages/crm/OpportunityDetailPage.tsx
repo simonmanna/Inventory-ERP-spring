@@ -189,7 +189,7 @@ export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'op
                     <div className="min-w-0 flex-1">
                       <p className="font-medium">{a.title}</p>
                       <p className={cn('text-xs', state === 'overdue' ? 'text-rose-600' : state === 'today' ? 'text-amber-600' : 'text-muted-foreground')}>
-                        {typeLabel(a.type)} · {due ? relativeTime(a.dueAt) : tx('no due date')} · {a.assignedToName ?? ''}
+                        {typeLabel(a.type)} · {due ? relativeTime(a.dueAt) : tx('no due date')}{a.assignedToName ? ` · ${a.assignedToName}` : ''}
                       </p>
                       {a.body && <p className="mt-0.5 text-xs text-muted-foreground">{a.body}</p>}
                     </div>
