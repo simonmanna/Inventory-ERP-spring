@@ -232,3 +232,34 @@ or error message changed; the additions below are new behaviour.
   - Only the token's SHA-256 is stored (`CrmCalendarFeed`), one live link per user. A new link or turning it off
     makes the old one 404, as does an inactive user.
 - Authorization matrix: 112 routes (the public ICS route included). Tests: `CrmStageRulesCalendarIT`.
+
+## CRM enhancements T3a (2026-11-22, post-parity, ADR-S084)
+
+- **Website lead forms (V603 `CrmLeadForm`):** CRM Settings → Website forms.
+  - Each form has a name, source, team, salesperson (empty = normal auto-assignment), tags, allowed websites,
+    thank-you text and an on/off switch.
+  - Config routes: `GET|POST /crm/config/lead-forms`, `PATCH|DELETE /crm/config/lead-forms/{id}`,
+    `POST /crm/config/lead-forms/{id}/rotate-key` (`crm:configure`).
+  - Public routes: `GET /public/crm/forms/{key}` (for the hosted page) and `POST /public/crm/forms/{key}/submit`
+    (10/min per address).
+  - Submit fields: `name` (required), `email` and/or `phone`, `company`, `subject`, `message`, `pageUrl`, and the
+    honeypot `_hp`.
+  - Each submission creates a lead named "Website enquiry: {company or name}" (or the `subject`). The message and the
+    page go in `notes`. `createdById` is null.
+  - The owner gets an in-app notification (`crm.lead.web_form`).
+  - Errors: "Please enter your name", "Please enter an email address or a phone number", "Please enter a valid email
+    address", 403 "This website is not allowed to use the form", 404 "Form not found".
+  - Two ways to put it on a site: the hosted page `/forms/lead/{key}`, or an HTML snippet. CORS is open for these two
+    paths only.
+- **Online quotation link (V603 `SalesQuoteLink`, licence `customerPortal`):**
+  - Staff routes: `GET|POST|DELETE /sales/quotations/{id}/share-link`. Read needs `sales:quotation:read` or
+    `crm:quotation:read`; create and revoke need `sales:quotation:send` or `crm:quotation:write`.
+  - Only approved or sent quotations can be shared. A link is valid 60 days, and a new one replaces the old.
+  - The customer page is `/q/{token}`, backed by `GET /public/sales/quotes/{token}`, `/pdf`, `POST …/accept`
+    (`signerName` required, `note`) and `…/decline` (`reason`, `signerName`).
+  - Accept and decline use the staff accept/decline rules. A link answers once (409).
+  - The owner is notified on first view and on the answer, and the CRM timeline gets a done entry.
+  - Editor menu: "Online link for the customer".
+- Authorization matrix: 119 CRM routes. The sales routes are counted in `SalesOrderIT`. Tests:
+  `CrmLeadFormQuoteLinkIT`.
+- Open point (ADR-S084): without `server.forward-headers-strategy`, anonymous throttling behind nginx shares one bucket.

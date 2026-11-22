@@ -20,6 +20,7 @@ import {
   COLORS, crmApi, useCrmLookups, useCrmMutation, type Color, type CrmSettings, type Stage, type Team,
 } from '@/features/crm/suite-api';
 import { Field, colorOf } from './crm-ui';
+import { LeadFormsTab } from './lead-forms';
 
 const onErr = (m: string) => (e: unknown) => toast.error(apiErrorMessage(e, m));
 
@@ -37,6 +38,7 @@ export function CrmSettingsPage() {
           <TabsTrigger value="tags">{tx('Tags')}</TabsTrigger>
           <TabsTrigger value="sources">{tx('Sources')}</TabsTrigger>
           <TabsTrigger value="lost">{tx('Lost reasons')}</TabsTrigger>
+          <TabsTrigger value="forms">{tx('Website forms')}</TabsTrigger>
           <TabsTrigger value="settings">{tx('Policies')}</TabsTrigger>
         </TabsList>
         <TabsContent value="stages"><StagesTab stages={lk.stages} teams={lk.teams} /></TabsContent>
@@ -44,6 +46,7 @@ export function CrmSettingsPage() {
         <TabsContent value="tags"><LookupTab kind="tags" rows={lk.tags.map((t) => ({ ...t, isActive: true }))} withColor /></TabsContent>
         <TabsContent value="sources"><LookupTab kind="sources" rows={lk.sources} /></TabsContent>
         <TabsContent value="lost"><LookupTab kind="lost-reasons" rows={lk.lostReasons} /></TabsContent>
+        <TabsContent value="forms"><LeadFormsTab lk={lk} /></TabsContent>
         <TabsContent value="settings"><PolicyTab settings={lk.settings} users={lk.users} /></TabsContent>
       </Tabs>
     </div>

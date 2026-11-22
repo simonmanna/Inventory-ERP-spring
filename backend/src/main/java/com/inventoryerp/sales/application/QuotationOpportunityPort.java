@@ -19,4 +19,10 @@ public interface QuotationOpportunityPort {
 
     /** Record on the CRM timeline that quotation {@code number} was emailed (deal and/or customer; no-op by default). */
     default void quotationEmailed(String dealId, String partnerId, String number, String sentTo, boolean delivered) {}
+
+    /**
+     * Record on the CRM timeline that the customer answered quotation {@code number} through its online link
+     * ({@code title} / {@code body} already worded), assigned to the quote owner {@code ownerId}. No-op by default.
+     */
+    default void quotationAnsweredOnline(String dealId, String partnerId, String title, String body, String ownerId) {}
 }

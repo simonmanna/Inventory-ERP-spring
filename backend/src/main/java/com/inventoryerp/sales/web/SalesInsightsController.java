@@ -10,12 +10,15 @@ import com.inventoryerp.sales.application.SalesAdvisorService;
 import com.inventoryerp.sales.application.SalesAnalyticsService;
 import com.inventoryerp.sales.application.SalesPortalService;
 import com.inventoryerp.sales.application.SalesPresentationService;
+import com.inventoryerp.sales.application.SalesQuoteLinkService;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -224,6 +227,83 @@ public final class SalesInsightsController {
         public Map<String, Object> complain(@RequestHeader(value = TOKEN, required = false) String token,
                 @RequestBody Map<String, Object> b) {
             return portal.withToken(token, () -> portal.complain(body(b)));
+        }
+    }
+
+    /** {@code /sales/quotations/{id}/share-link}: staff share one quotation online (CRM enhancements T3a). */
+    @RestController
+    @RequestMapping("/sales/quotations/{id}/share-link")
+    @RequiresFeature(LicenseFeatures.CUSTOMER_PORTAL)
+    public static class QuoteLinks {
+
+        private final SalesQuoteLinkService links;
+
+        public QuoteLinks(SalesQuoteLinkService links) {
+            this.links = links;
+        }
+
+        @GetMapping
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_READ, Permissions.CRM__QUOTATION_READ}, anyOf = true)
+        public Map<String, Object> status(@PathVariable String id) {
+            return links.status(id);
+        }
+
+        @PostMapping
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_SEND, Permissions.CRM__QUOTATION_WRITE}, anyOf = true)
+        public Map<String, Object> create(@PathVariable String id) {
+            return links.create(id);
+        }
+
+        @DeleteMapping
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_SEND, Permissions.CRM__QUOTATION_WRITE}, anyOf = true)
+        public Map<String, Object> revoke(@PathVariable String id) {
+            return links.revoke(id);
+        }
+    }
+
+    /**
+     * {@code /public/sales/quotes/{token}}: the customer's view of one shared quotation (ADR-S084). The token is the
+     * secret; unknown, revoked or expired links answer 404. Rate limited per address.
+     */
+    @RestController
+    @RequestMapping("/public/sales/quotes/{token}")
+    @Public
+    @RequiresFeature(LicenseFeatures.CUSTOMER_PORTAL)
+    public static class PublicQuote {
+
+        private final SalesQuoteLinkService links;
+
+        public PublicQuote(SalesQuoteLinkService links) {
+            this.links = links;
+        }
+
+        @GetMapping
+        @Throttle(limit = 60, ttlMs = 60_000)
+        public ResponseEntity<Map<String, Object>> view(@PathVariable String token) {
+            return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(links.view(token));
+        }
+
+        @GetMapping("/pdf")
+        @Throttle(limit = 20, ttlMs = 60_000)
+        public ResponseEntity<byte[]> pdf(@PathVariable String token) {
+            return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"quotation.pdf\"").body(links.pdf(token));
+        }
+
+        @PostMapping("/accept")
+        @Throttle(limit = 10, ttlMs = 60_000)
+        public Map<String, Object> accept(@PathVariable String token, @RequestBody(required = false) Map<String, Object> b,
+                HttpServletRequest req) {
+            return links.accept(token, body(b), req.getRemoteAddr());
+        }
+
+        @PostMapping("/decline")
+        @Throttle(limit = 10, ttlMs = 60_000)
+        public Map<String, Object> decline(@PathVariable String token, @RequestBody(required = false) Map<String, Object> b,
+                HttpServletRequest req) {
+            return links.decline(token, body(b), req.getRemoteAddr());
         }
     }
 }
