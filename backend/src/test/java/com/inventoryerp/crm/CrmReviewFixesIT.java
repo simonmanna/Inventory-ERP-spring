@@ -275,4 +275,26 @@ class CrmReviewFixesIT extends ApiTestSupport {
 
         assertThat(call("DELETE", "/crm/leads/" + lead, null, u[1]).status()).isEqualTo(200);
     }
+
+    @Test
+    @DisplayName("the last active stage cannot be deactivated (same floor as delete)")
+    void lastActiveStageStaysActive() {
+        // otherOrg is created fresh for this class, so its default pipeline is ours to empty.
+        JsonNode stages = call("GET", "/crm/config/stages", null, otherToken).body();
+        List<String> active = new java.util.ArrayList<>();
+        stages.forEach(st -> {
+            if (st.get("isActive").asBoolean()) {
+                active.add(st.get("id").asString());
+            }
+        });
+        assertThat(active).hasSizeGreaterThan(1);
+        for (String id : active.subList(1, active.size())) {
+            assertThat(call("PATCH", "/crm/config/stages/" + id, Map.of("isActive", false), otherToken).status())
+                    .isEqualTo(200);
+        }
+        Res last = call("PATCH", "/crm/config/stages/" + active.get(0), Map.of("isActive", false), otherToken);
+        assertThat(last.status()).isEqualTo(400);
+        assertThat(last.body().get("message").asString()).isEqualTo("The pipeline needs at least one stage");
+        assertThat(call("DELETE", "/crm/config/stages/" + active.get(0), null, otherToken).status()).isEqualTo(400);
+    }
 }
