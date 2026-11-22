@@ -4,6 +4,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from '@/components/ui/dialog';
 import { tx } from '@/lib/i18n/tx';
+import { useWritesBlocked } from '@/lib/offline/reachability';
 
 interface ConfirmDialogProps {
   open: boolean;
@@ -26,6 +27,8 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   open, title, description, confirmLabel, pendingLabel, pending, destructive, onConfirm, onOpenChange,
 }: ConfirmDialogProps) {
+  // ADR-S083 O3: a confirmed action is a write; offline the back office is read-only.
+  const blocked = useWritesBlocked();
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!pending) onOpenChange(o); }}>
       <DialogContent className="w-[calc(100vw-2rem)] max-w-md">
@@ -39,7 +42,8 @@ export function ConfirmDialog({
         </DialogHeader>
         <DialogFooter className="gap-2">
           <Button variant="outline" disabled={pending} onClick={() => onOpenChange(false)}>{tx('Back')}</Button>
-          <Button variant={destructive ? 'destructive' : 'default'} disabled={pending} onClick={onConfirm}>
+          <Button variant={destructive ? 'destructive' : 'default'} disabled={pending || blocked} onClick={onConfirm}
+            title={blocked ? tx('Needs connection') : undefined}>
             {pending ? (pendingLabel ?? tx('Working…')) : confirmLabel}
           </Button>
         </DialogFooter>

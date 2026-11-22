@@ -227,6 +227,7 @@ export interface PosNavVisibility {
 export function usePosSettings() {
   return useQuery({
     queryKey: ['pos-settings'],
+    networkMode: 'always', // offlineRead serves the last good answer (ADR-S083 O2)
     queryFn: () => offlineRead('pos-settings', async () => (await api.get<{
       posMode?: string;
       sharedDrawer?: boolean;

@@ -1,9 +1,11 @@
 import axios, { AxiosError, type AxiosRequestConfig } from 'axios';
 import { useAuthStore } from '@/stores/auth.store';
 import { getPosToken, posSessionRevoked } from '@/features/pos/pos-session';
+import { toast } from 'sonner';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
 import { refusalFromResponse, useLicenseStore } from '@/features/license/license.store';
+import { installReachability, isPosPath, isReachable, markReachable, markUnreachable } from '@/lib/offline/reachability';
 
 function getApiBaseUrl(): string {
   const raw = import.meta.env.VITE_API_URL;
@@ -58,12 +60,51 @@ export function wasNotified(error: unknown): boolean {
   return !!error && typeof error === 'object' && (error as { notified?: unknown }).notified === true;
 }
 
-let lastNetworkFailureAt: number | null = null;
-export function noteServerUnreachable(): void { lastNetworkFailureAt = Date.now(); }
-export function noteServerReachable(): void { lastNetworkFailureAt = null; }
-/** True when a request failed to reach the server within the last `withinMs`. */
-export function serverUnreachable(withinMs = 15_000): boolean {
-  return lastNetworkFailureAt != null && Date.now() - lastNetworkFailureAt < withinMs;
+export function noteServerUnreachable(): void { markUnreachable(); }
+export function noteServerReachable(): void { markReachable(); }
+/**
+ * True while the server is known unreachable: from a request that got no answer until any answered request or a
+ * successful health probe (ADR-S083 O3, `lib/offline/reachability.ts`).
+ */
+export function serverUnreachable(): boolean {
+  return !isReachable();
+}
+
+installReachability(async () => {
+  try {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(`${baseURL}/health`, { signal: controller.signal, credentials: 'omit' });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
+});
+
+/* ── Offline write guard (ADR-S083 O3) ───────────────────────────────────────
+ * While the server is known unreachable, a write from the back office is refused at once with "Needs connection"
+ * instead of waiting for a timeout: the offline view is read-only. Exempt: the POS screens (their own offline
+ * handling — the replay queue and sync ops — runs only there, ADR-S083 O2) and sign-in.
+ */
+export const NEEDS_CONNECTION_MESSAGE = 'Needs connection — changes cannot be saved while the server is unreachable.';
+
+export function isNeedsConnection(e: unknown): boolean {
+  return !!e && typeof e === 'object' && (e as { needsConnection?: unknown }).needsConnection === true;
+}
+
+export function guardExempt(config: AxiosRequestConfig): boolean {
+  if ((config.url ?? '').includes('/auth/')) return true;
+  return isPosPath();
+}
+
+function needsConnectionError(config: AxiosRequestConfig): AxiosError {
+  const message = tx(NEEDS_CONNECTION_MESSAGE);
+  const data = { statusCode: 503, code: 'NEEDS_CONNECTION', message };
+  return Object.assign(new AxiosError(message, 'ERR_NEEDS_CONNECTION', config as never), {
+    needsConnection: true,
+    response: { status: 503, statusText: 'Needs connection', data, headers: {}, config },
+  });
 }
 
 api.interceptors.request.use((config) => {
@@ -85,6 +126,9 @@ api.interceptors.request.use((config) => {
   // per-attempt key. crypto.randomUUID only exists in secure contexts, so
   // fall back for LAN-over-http terminals.
   const method = (config.method || '').toLowerCase();
+  if (['post', 'put', 'patch', 'delete'].includes(method) && serverUnreachable() && !guardExempt(config)) {
+    return Promise.reject(needsConnectionError(config));
+  }
   if (['post', 'put', 'patch', 'delete'].includes(method)) {
     config.headers = config.headers ?? {};
     if (!config.headers['Idempotency-Key']) {
@@ -135,6 +179,13 @@ function noteLicenceHeaders(headers: unknown): void {
 api.interceptors.response.use(
   (r) => { noteServerReachable(); noteLicenceHeaders(r.headers); return r; },
   async (err: AxiosError) => {
+    // Refused locally by the offline write guard: the server said nothing, so it is still unreachable.
+    if (isNeedsConnection(err)) {
+      (err as AxiosError & { userMessage?: string }).userMessage = err.message;
+      toast.error(err.message, { id: 'needs-connection' }); // one toast however many writes were tried
+      (err as AxiosError & { notified?: boolean }).notified = true;
+      throw err;
+    }
     const status = err.response?.status;
     // The server answered — whatever it said, it is up.
     if (status) noteServerReachable();

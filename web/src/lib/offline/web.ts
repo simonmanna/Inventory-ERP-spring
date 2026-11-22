@@ -4,6 +4,7 @@
  * yet, so O1 changes no existing behaviour.
  */
 import { api, getApiBaseUrl } from '@/lib/api';
+import { wipeQueryCache } from '@/lib/query-client';
 import { SyncEngine } from './engine';
 import { requestPersistence } from './storage';
 import { SyncStore } from './store';
@@ -16,6 +17,10 @@ export function syncEngineFor(organizationId: string): SyncEngine {
   if (!e) {
     e = new SyncEngine({ store: SyncStore.forOrganization(organizationId), transport: new FetchTransport(getApiBaseUrl()) });
     engines.set(organizationId, e);
+    // ADR-S083 S2/S3: a revoked device keeps no cached data either.
+    e.subscribe((s) => {
+      if (s.state === 'revoked') void wipeQueryCache();
+    });
   }
   return e;
 }

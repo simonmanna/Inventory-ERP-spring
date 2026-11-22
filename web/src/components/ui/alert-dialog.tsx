@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { useWritesBlocked } from '@/lib/offline/reachability';
+import { tx } from '@/lib/i18n/tx';
 import * as AlertDialogPrimitive from '@radix-ui/react-alert-dialog';
 import { cn } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui/button';
@@ -73,9 +75,14 @@ AlertDialogDescription.displayName = AlertDialogPrimitive.Description.displayNam
 const AlertDialogAction = React.forwardRef<
   React.ElementRef<typeof AlertDialogPrimitive.Action>,
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Action>
->(({ className, ...props }, ref) => (
-  <AlertDialogPrimitive.Action ref={ref} className={cn(buttonVariants(), className)} {...props} />
-));
+>(({ className, ...props }, ref) => {
+  // ADR-S083 O3: the confirming action of an alert dialog is a write; offline the back office is read-only.
+  const blocked = useWritesBlocked();
+  return (
+    <AlertDialogPrimitive.Action ref={ref} className={cn(buttonVariants(), className)} {...props}
+      disabled={props.disabled || blocked} title={blocked ? tx('Needs connection') : props.title} />
+  );
+});
 AlertDialogAction.displayName = AlertDialogPrimitive.Action.displayName;
 
 const AlertDialogCancel = React.forwardRef<

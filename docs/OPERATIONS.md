@@ -238,3 +238,4 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 | Offline device sales missing | `/sync/dead-letters` (open items block shift close); device registry `/sync/devices` |
 | Web till must sell through an outage | Register it once while online: Settings → Offline devices → "This browser" (needs `organization:update`); it must sync once before it can work offline (ADR-S083 O2) |
 | Offline receipt shows `OFF-XXXX-000123` | Provisional number of a sale recorded offline; the POS sync badge shows the final invoice number once it posts |
+| Back office shows "Offline: data as of …" | The server is unreachable; screens show what this browser saved (per user, 24 h–7 days by kind) and writes are refused with "Needs connection". It clears by itself within ~10 s of the server answering (ADR-S083 O3) |

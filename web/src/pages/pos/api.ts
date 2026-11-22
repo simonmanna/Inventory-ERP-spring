@@ -146,6 +146,7 @@ export function useOpenSession() {
   const registerId = localStorage.getItem(`pos-register:${org}`) ?? undefined;
   return useQuery({
     queryKey: ['cash-session', 'open', org, operator, registerId],
+    networkMode: 'always', // overlays offline-opened shifts when the server is unreachable (ADR-S083 O2)
     queryFn: async () => {
       // ADR-S083 O2: a shift opened offline on this device is the open shift until the server has it.
       const local = (await offlineShifts(registerId))[0] as unknown as CashSession | undefined;
