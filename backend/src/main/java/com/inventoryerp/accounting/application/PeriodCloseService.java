@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import com.inventoryerp.kernel.crud.SqlRows;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -83,6 +84,13 @@ public class PeriodCloseService {
         return ts.toLocalDateTime().toInstant(ZoneOffset.UTC);
     }
 
+    /**
+     * ADR-S083 S4: sync op types that move stock; their open dead letters block a period close. Kept equal to
+     * {@code SyncOpCatalog.STOCK_TYPES} by {@code SyncOpCatalogTest} (accounting may not depend on sync).
+     */
+    public static final List<String> SYNC_STOCK_OP_TYPES = List.of("stock.in", "stock.out", "stock.count",
+            "kitchen.void", "transfer.dispatch", "transfer.receive", "stock.adjust", "grn.receive");
+
     /** Close the period: post the closing journal, flip status to closed. */
     @Transactional
     public Map<String, Object> close(String periodId) {
@@ -121,6 +129,22 @@ public class PeriodCloseService {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + totalPending
                     + " pending inventory mutation(s) (" + stockOuts + " stock-outs, " + waste + " waste, " + adjustments
                     + " adjustments, " + transfers + " transfers). Post or cancel them before closing.");
+        }
+        // ADR-S083 S4/S5: stock work recorded offline that the server refused outright is a dead letter until a person
+        // corrects or discards it. Until then the stock of its location is not final, so the period cannot close.
+        List<Map<String, Object>> stockDeadLetters = SqlRows.list(jdbc.sql("SELECT COALESCE(l.name, d.payload->>'locationId',"
+                        + " d.payload->>'fromLocationId', d.payload->>'warehouseId', '?') AS location, count(*) AS n"
+                        + " FROM \"SyncOpDeadLetter\" d LEFT JOIN \"InventoryLocation\" l ON l.id = COALESCE("
+                        + "d.payload->>'locationId', d.payload->>'fromLocationId', d.payload->>'warehouseId')"
+                        + " WHERE d.\"organizationId\" = ? AND d.status IN ('open', 'investigating')"
+                        + " AND d.\"opType\" = ANY(?::text[]) AND d.\"createdAt\" <= ? GROUP BY 1 ORDER BY 1")
+                .params(organizationId, SYNC_STOCK_OP_TYPES.toArray(String[]::new), period.endDate()));
+        if (!stockDeadLetters.isEmpty()) {
+            List<String> where = new ArrayList<>();
+            stockDeadLetters.forEach(r -> where.add(r.get("location") + " (" + r.get("n") + ")"));
+            throw ApiException.badRequest("Cannot close '" + period.name() + "': stock work recorded offline was refused"
+                    + " and is still open in Sync dead letters for " + String.join(", ", where)
+                    + ". Correct or discard it before closing.");
         }
         // A GL tie-out variance (daily tie-out job) is not a sale line: it shows on the close checklist as its own
         // advisory item and does not block the close.

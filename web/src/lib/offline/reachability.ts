@@ -83,9 +83,12 @@ export function useOnline(): boolean {
   return useSyncExternalStore(subscribeReachability, isReachable, () => true);
 }
 
-/** The POS screens keep working offline (ADR-S083 O2); the read-only rules are for the back office. */
-export function isPosPath(path = typeof window !== 'undefined' ? window.location.pathname : ''): boolean {
-  return path === '/pos' || path.startsWith('/pos/');
+/**
+ * Screens that record work offline themselves — the POS (ADR-S083 O2) and the warehouse tablet (O4). The read-only
+ * rules of O3 (write guard, disabled submits, offline banner) are for the rest of the back office.
+ */
+export function isOfflineCapablePath(path = typeof window !== 'undefined' ? window.location.pathname : ''): boolean {
+  return path === '/pos' || path.startsWith('/pos/') || path === '/warehouse/tablet';
 }
 
 /**
@@ -93,7 +96,7 @@ export function isPosPath(path = typeof window !== 'undefined' ? window.location
  * offline itself). Write controls (form submits, confirm actions) disable themselves on it.
  */
 export function useWritesBlocked(): boolean {
-  return !useOnline() && !isPosPath();
+  return !useOnline() && !isOfflineCapablePath();
 }
 
 /** Test hook. */

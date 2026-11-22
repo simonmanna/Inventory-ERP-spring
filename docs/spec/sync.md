@@ -132,8 +132,14 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
   `cash_session.open` mapping key; same organization and device). Index: V595. Test: `SyncCrossBatchIT`.
 - **Web POS (O2):** see ADR-S083 "O2 — Web POS on the protocol".
 - **Read-only cached web app (O3):** client only, no wire change; see ADR-S083 "O3 as built" under S3.
+- **Warehouse ops (O4):** push op types `transfer.dispatch`, `transfer.receive`, `stock.adjust`, `grn.receive`; the
+  push result gains `outcome {state, reason?}` for them. Pull scopes `openPurchaseOrders`, `transfers`, `lots`,
+  `serials`, `uomConversions` are sent only when named and are limited to the device's branch; `stockLocations` rows
+  gain `branchId`. New route `GET /sync/stock-discrepancies` (`inventory:read`). Columns `recordedOffline` /
+  `occurredAt` on `StockTransfer`, `StockAdjustment`, `GoodsReceiptNote` (V596). See ADR-S083 "O4 as built".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
-  `SyncProtocolContractIT`, `SyncOpCatalogTest`; the `SyncIT` authorization matrix now covers 15 routes.
+  `SyncProtocolContractIT`, `SyncOpCatalogTest`, `SyncInventoryIT`; the `SyncIT` authorization matrix now covers 16
+  routes.
 
 ## Notes
 

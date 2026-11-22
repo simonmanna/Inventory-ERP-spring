@@ -381,6 +381,69 @@ refunds/voids, reservations and expenses stay online-only on the web (their ops 
 - **Count conflicts:** a count against an open draft is a definitive dead letter (`COUNT_CONFLICT`, built in O0).
 - **Reports and blocks:** an inventory discrepancy report. Open stock dead letters block period close for the location.
 
+### O4 as built (branch `phase/O4-inventory-offline`)
+
+**Ops** (all `SERVICE_TRANSACTIONS`: each reuses the existing inventory/procurement service, so the ledger row rides
+on the first business commit and a later failure reports `PARTIAL_COMMIT`). Code: `sync/application/SyncStockService`.
+
+| Op | Payload | What the server does |
+|---|---|---|
+| `transfer.dispatch` | `transferId` (an existing transfer, or the `clientId` of one made offline), **or** `clientId` + `fromLocationId` + `toLocationId` + `items[{productId, variantId?, unit?, batchNumber?, quantity}]` | Creates a transit transfer if needed (`StockDocService`), approves it when the actor may (approval gate unchanged), dispatches it to the transit location, then applies any receipt waiting for it |
+| `transfer.receive` | `transferId` + `lines[{itemId, received, damaged?, short?}]` | Not yet dispatched on the server → kept as `offline_awaiting_dispatch` and applied when the dispatch arrives (in the same push, or by `SyncStockJob` every 2 min); otherwise `receiveTransfer` |
+| `stock.adjust` | `clientId`, `locationId`, `reason`, `lines[{productId, variantId?, unit?, batchNumber?, qtyChange}]` | Creates a **pending** adjustment with counted = on-hand + `qtyChange`. Approval, SoD and the approval gate stay in the back office |
+| `grn.receive` | `clientId`, `purchaseOrderId`, `warehouseId` or `locationId`, `lines[{purchaseOrderLineId, productId, variantId?, description, quantity, uomId?, batchNumber?, expiryDate?}]` | `GoodsReceiptsService.createDraft` (`receivedAt` = `occurredAt`, branch = the device's); posts it when the actor has `goods_receipt:post`, otherwise holds it |
+
+Permissions per op: `inventory:move` (dispatch, receive, adjust); `goods_receipt:create` (grn). A missing permission is
+a definitive 403 dead letter. Every document made offline is stamped `recordedOffline = true` and `occurredAt` (V596).
+
+**The push result gains an additive `outcome` member** for these ops: `{state, reason?}`, where state is
+`dispatched | received | posted | pending_approval | awaiting_dispatch | held`. The op itself is `applied`: the fact
+is kept even when its posting is held.
+
+**S4 as built — deviations to approve:**
+1. **Holds use `InventoryException`, not a new `stock_discrepancy` table.** Kinds `offline_negative_stock`,
+   `offline_held_posting` and `offline_awaiting_dispatch`. They appear in the existing Posting Monitor (resolve with
+   POS__OVERRIDE), and an open exception in a period already blocks period close.
+2. **A business refusal of a posting step (400/409/422) is a hold, not a dead letter.** The document stays, the
+   reason is recorded, and a supervisor completes or reverses it in the back office.
+3. **Transfers never take their source below zero** (existing `StockDocService` rule), whatever
+   `inventory.allowNegativeStock` says: a short dispatch is held. The allow-negative path (post + flag) applies to
+   `stock.out` and the other direct issues.
+4. **Count as-at `occurredAt`** is done by carrying later movements forward: the counted figure submitted to the
+   count = counted + Σ ledger movements after `occurredAt` at that location. The variance posted is therefore
+   counted − on-hand-when-counted.
+5. **Offline adjustments stay pending approval** (as any adjustment does online); they are not posted on sync.
+6. **Serial numbers on GRN lines** are not taken offline. A receipt of a serial-tracked item is held for the back
+   office.
+
+**Period close** (`PeriodCloseService`): an `open` / `investigating` `SyncOpDeadLetter` of a stock op type
+(`SYNC_STOCK_OP_TYPES`, kept equal to `SyncOpCatalog.STOCK_TYPES` by `SyncOpCatalogTest`) created up to period end
+blocks the close, naming the locations.
+
+**Scopes** — sent only when named in `scopes` (a default pull is unchanged), limited to the device's branch
+(locations with that `branchId` or none): `openPurchaseOrders` (approved / sent / acknowledged / partially received,
+with lines), `transfers` (transit; approved / in transit / partially received, with items), `lots` (quantity > 0),
+`serials` (`in_stock`), `uomConversions` (product units with factors). `stockLocations` gains `branchId` (additive).
+
+**Report:** `GET /sync/stock-discrepancies` (`inventory:read`; filters `branchId`, `deviceId`, `locationId`, `kind`,
+`status`; newest 500) — web page `/inventory/offline-discrepancies`.
+
+**Web — warehouse tablet** `/warehouse/tablet` (`inventory:move`; registered device required): Receive PO, Dispatch
+(an approved transfer, or scanned goods), Receive transfer (received / damaged / missing per line; warns when the
+dispatch has not synced), Adjust, Count, and the recent work on the device with its server outcome. Scanning: a
+keyboard-wedge scanner into the scan box, or the camera via `BarcodeDetector` where the browser has it. Codes resolve
+offline against serials, variant barcode/SKU, packaging barcode (counts the pack), product barcode/SKU/code, then
+lots. The tablet path is treated like the POS by the O3 write guard (`isOfflineCapablePath`). Pure logic:
+`web/src/features/warehouse/offline-stock.ts`.
+
+**Tests:** `SyncInventoryIT` (9: ad-hoc dispatch then receive by client id across batches; a receipt waiting for its
+dispatch; held when negative stock is blocked; flagged when allowed; a short transfer held even when allowed;
+pending adjustment; GRN posted with stock; count as-at; scopes only when named), `SyncOpCatalogTest` (45 types, stock
+types = period close list), `SyncIT` authorization matrix (16 routes); Vitest `features/warehouse/__tests__/offline-stock.test.ts` (6).
+
+**Not done in O4:** a browser run of the tablet on DEMO; a period-close IT for the stock dead-letter block (covered
+by the constant test only); camera scanning on Safari/Firefox (no `BarcodeDetector`, scanner input works).
+
 ## S5 — Dead-letter workflow (O0 server side; UI in O1/O2)
 
 Statuses: `open` → `investigating` → `resolved` (correction op linked) | `retried` | `discarded`. Every transition is

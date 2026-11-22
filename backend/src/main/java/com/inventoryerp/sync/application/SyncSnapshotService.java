@@ -78,7 +78,7 @@ public class SyncSnapshotService {
         Map<String, Object> pages = new LinkedHashMap<>();
         int total = 0;
         for (String scope : scopes) {
-            int rows = pull.snapshotRows(scope).size();
+            int rows = pull.snapshotRows(scope, device.branchId()).size();
             int n = Math.max(1, (rows + PAGE_SIZE - 1) / PAGE_SIZE);
             pages.put(scope, n);
             total += n;
@@ -124,7 +124,7 @@ public class SyncSnapshotService {
         String after = afterRaw == null ? "" : afterRaw;
         List<Map<String, Object>> rows = new ArrayList<>();
         boolean more = false;
-        for (Map<String, Object> r : pull.snapshotRows(scope)) {
+        for (Map<String, Object> r : pull.snapshotRows(scope, device.branchId())) {
             if (String.valueOf(r.get("id")).compareTo(after) <= 0 && !after.isEmpty()) {
                 continue;
             }

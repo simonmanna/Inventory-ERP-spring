@@ -39,7 +39,7 @@ export const RULES: readonly Rule[] = [
     // live state that must never be shown stale as current
     'cash-session', 'cash-register-drawer-balance', 'pos-holds', 'pos-split', 'pos-tab', 'pos-order', 'pos-orders',
     'pos-sale-quote', 'pos-kds', 'pos-kds-live', 'pos-kds-tickets', 'approvals', 'handover', 'posting-monitor',
-    'budget-check', 'pos-store-credit', 'pos-loyalty-balance', 'pos-credit', 'credit',
+    'budget-check', 'pos-store-credit', 'pos-loyalty-balance', 'pos-credit', 'credit', 'sync-stock-discrepancies',
     // previews and pickers (transient, query-specific)
     /-preview$/, 'search-picker', 'product-picker', 'report-filter', 'mrp-run', 'process-period',
     // files are fetched through signed URLs that expire
