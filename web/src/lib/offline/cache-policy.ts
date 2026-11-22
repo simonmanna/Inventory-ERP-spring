@@ -93,7 +93,7 @@ export const RULES: readonly Rule[] = [
     // stock
     /^inventory/, 'stock-adjustments', 'replenishment', 'mfg-availability', 'shipments', 'returns', 'return',
     // documents and work
-    'invoice', 'invoices', 'invoice-duplicate-overrides', 'credit-note', 'credit-notes', 'debit-notes', 'receipt',
+    'invoice', 'invoices', 'invoice-cash-sale', 'invoice-duplicate-overrides', 'credit-note', 'credit-notes', 'debit-notes', 'receipt',
     'receipts', 'payment', 'payments', 'payment-schedule', 'supplier-payments', 'supplier-claims', 'vendor-bills',
     'purchase-order', 'purchase-orders', 'purchase-requests', 'purchase-request-approval', 'po-changes', 'po-for-grn',
     'goods-receipt', 'goods-receipts', 'rfqs', 'sourcing', 'emergency-purchases', 'procurement-budgets', 'expense',
