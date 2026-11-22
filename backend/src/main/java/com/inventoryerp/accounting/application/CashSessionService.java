@@ -4,6 +4,7 @@ import static com.inventoryerp.accounting.application.PostingService.plain;
 
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
+import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.auth.CredentialGuard;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.common.Money;
@@ -59,7 +60,24 @@ public class CashSessionService {
     public record CloseInput(Map<String, Object> closingAccounts, Map<String, Object> uncountedAccounts,
             BigDecimal pendingSyncCount, BigDecimal closingCounted, String notes, String varianceReason,
             String varianceStatus, Boolean autoAdjustCash, String approvedById, String approverEmail, String managerPin,
-            Map<String, Object> closingDenomination, String occurredAt, String sessionId) {}
+            Map<String, Object> closingDenomination, String occurredAt, String sessionId, String syncOverrideReason) {
+        /** Without a sync dead-letter override (ADR-S083 S5). */
+        public CloseInput(Map<String, Object> closingAccounts, Map<String, Object> uncountedAccounts,
+                BigDecimal pendingSyncCount, BigDecimal closingCounted, String notes, String varianceReason,
+                String varianceStatus, Boolean autoAdjustCash, String approvedById, String approverEmail,
+                String managerPin, Map<String, Object> closingDenomination, String occurredAt, String sessionId) {
+            this(closingAccounts, uncountedAccounts, pendingSyncCount, closingCounted, notes, varianceReason,
+                    varianceStatus, autoAdjustCash, approvedById, approverEmail, managerPin, closingDenomination,
+                    occurredAt, sessionId, null);
+        }
+    }
+
+    /**
+     * ADR-S083 S5: sync op types that move money. Their unresolved dead letters block a cash-session close. Kept equal
+     * to {@code SyncOpCatalog.moneyTypes()} by {@code SyncOpCatalogTest} (accounting may not depend on sync).
+     */
+    public static final List<String> SYNC_MONEY_OP_TYPES = List.of("cash_session.movement", "sale.checkout",
+            "tab.settle", "sale.refund", "sale.void", "expense.create");
 
     /** Manual drawer movement. */
     public record MovementInput(String counterpartAccountId, String correctionOfSessionId, String movementType,
@@ -206,6 +224,48 @@ public class CashSessionService {
             m.put((String) kv[i], kv[i + 1]);
         }
         return m;
+    }
+
+    /**
+     * ADR-S083 S5 (O0 correction 3): a shift does not close while a money operation that belongs to it was rejected
+     * by sync (dead letter {@code open} or {@code investigating}, legacy and quarantined ones included). It belongs to
+     * the shift when its payload names the shift or it came from the device that opened the shift. A supervisor may
+     * override with a reason and {@code pos:override}; the override is audited with the dead letters it passed.
+     */
+    private void assertNoUnresolvedSyncMoney(Map<String, Object> s, String overrideReason, String actorId) {
+        String sessionId = (String) s.get("id");
+        Object deviceId = s.get("deviceId");
+        List<Map<String, Object>> blocking = SqlRows.list(jdbc.sql("SELECT id, \"opId\", \"opType\", \"failureCode\""
+                + " FROM \"SyncOpDeadLetter\" WHERE \"organizationId\" = ? AND status IN ('open', 'investigating') AND"
+                + " \"opType\" IN (" + String.join(", ", java.util.Collections.nCopies(SYNC_MONEY_OP_TYPES.size(), "?"))
+                + ") AND (payload->>'cashSessionId' = ? OR payload->>'sessionId' = ? OR (?::text IS NOT NULL AND"
+                + " \"deviceId\" = ?::text)) ORDER BY \"createdAt\"")
+                .params(concat(List.of(org()), SYNC_MONEY_OP_TYPES, java.util.Arrays.asList(sessionId, sessionId, deviceId,
+                        deviceId)))); // deviceId is null for a shift not opened from a device
+        if (blocking.isEmpty()) {
+            return;
+        }
+        List<Object> ids = blocking.stream().map(r -> r.get("id")).toList();
+        if (overrideReason == null || overrideReason.trim().isEmpty()) {
+            throw ApiException.withBody(HttpStatus.CONFLICT, Obj.of("code", "SYNC_DEAD_LETTERS_OPEN", "message",
+                    "This shift has " + blocking.size() + " rejected sync operation(s) involving money. Resolve them under"
+                            + " Sync dead letters, or close with a supervisor override and a reason.",
+                    "deadLetterIds", ids, "statusCode", 409, "error", "Conflict"));
+        }
+        if (!TenantContext.has(com.inventoryerp.kernel.security.Permissions.POS__OVERRIDE)) {
+            throw ApiException.forbidden("Closing over rejected sync operations needs a supervisor (pos:override)");
+        }
+        audit.recordInTx(AuditInput.of("CashSession", sessionId, "update", null, Obj.of("kind",
+                "sync_dead_letter_override", "reason", overrideReason.trim(), "approvedById", actorId,
+                "deadLetters", blocking)));
+    }
+
+    private static List<Object> concat(List<?>... parts) {
+        List<Object> out = new java.util.ArrayList<>();
+        for (List<?> p : parts) {
+            out.addAll(p);
+        }
+        return out;
     }
 
     private Map<String, Object> session(String id) {
@@ -400,12 +460,11 @@ public class CashSessionService {
             }
             boolean onBehalf = !force && !actorId.equals(found.get("userId"));
             Map<String, Object> s = lockOpenSession((String) found.get("id"));
-            long openDeadLetters = jdbc.sql("SELECT count(*) FROM \"SyncOpDeadLetter\" WHERE \"organizationId\" = ? AND status = 'open'")
-                    .param(organizationId).query(Long.class).single();
+            assertNoUnresolvedSyncMoney(s, dto.syncOverrideReason(), actorId);
+            // Pending (not yet pushed) operations are not failures: they only warn. Rejected ones block (above).
             double pending = dto.pendingSyncCount() == null ? 0 : dto.pendingSyncCount().doubleValue();
-            if (pending > 0 || openDeadLetters > 0) {
-                log.warn("Closing shift {} with {} client-reported pending sync(s) and {} open dead-letter operation(s)",
-                        s.get("id"), pending, openDeadLetters);
+            if (pending > 0) {
+                log.warn("Closing shift {} with {} client-reported pending sync(s)", s.get("id"), pending);
             }
             Closing closing = validateClosing(s, counted, dto.closingAccounts(), dto.uncountedAccounts(),
                     dto.varianceReason(), Boolean.TRUE.equals(dto.autoAdjustCash()),
