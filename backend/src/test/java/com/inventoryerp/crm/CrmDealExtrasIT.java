@@ -75,7 +75,7 @@ class CrmDealExtrasIT extends ApiTestSupport {
         List<String> keys = new ArrayList<>();
         report.get("forecastCategories").forEach(r -> keys.add(r.get("key").asString()));
         assertThat(keys).contains("commit");
-        assertThat(report.get("forecast").get(0).has("bestCase") || report.get("forecast").isEmpty()).isTrue();
+        assertThat(report.get("forecast").isEmpty() || report.get("forecast").get(0).has("bestCase")).isTrue();
         assertThat(call("GET", "/crm/config/lookups", null, otherToken).body().toString()).doesNotContain(rival);
     }
 

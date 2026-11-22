@@ -345,3 +345,13 @@ These are online-only screens in the Android app. There is no server change, no 
   - `CrmParsersTest`
   - `CrmRepositoryTest` (Robolectric): same-user rule, MFA, session ends on lock, refresh once, sign-out when refresh fails, lead body
   - `SidebarAccessTest` (CRM entry)
+
+### RLS fix for the enhancement tables (V605, 2026-11-22)
+V602–V604 created their tables with a strict RLS policy (`"organizationId" = app.org_id`). Under the
+non-owner API role used in CI and on live, that hid the rows from the public, token-authorized lookups. Those lookups
+run before the organization is known: website lead forms, customer quote links and calendar feeds, which answered 404.
+
+V605 gives those seven tables the standard V214 policy instead: with no organization set every row is visible, otherwise
+only the organization's rows. That policy now applies to both reads (`USING`) and writes (`WITH CHECK`).
+
+The CRM ITs were re-run with `DB_USER` set to a non-owner role, as CI does.
