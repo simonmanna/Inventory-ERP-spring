@@ -1,5 +1,7 @@
 import { idempotentPost } from '@/lib/idempotent-request';
 import { draftPricing } from '@/features/pos/cart-payload';
+import { offlineShifts, posEngine, routePosWrite } from '@/features/pos/pos-sync';
+import { isRecordedOffline } from '@/features/pos/pos-ops';
 import { submitCashOperation } from '@/features/pos/cash-operation';
 import { useAuthStore } from '@/stores/auth.store';
 import { usePosAuthStore } from '@/features/pos/pos-auth.store';
@@ -26,6 +28,7 @@ import { submitEntitySaleOperation, submitSaleOperation, syncSessionOperations }
  *   /pos/override/{verify,pin}   → Manager PIN flow
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { serverUnreachable } from '@/lib/api';
 import { api } from '@/lib/api';
 import { useCartStore } from '@/features/pos/cart.store';
 import type { PaginatedResult } from '@erp/shared';
@@ -97,8 +100,20 @@ export function useCustomers(q?: string) {
 export function useCreateCustomer() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { name: string; phone?: string; email?: string }) =>
-      (await api.post<Customer>('/partners', { ...body, isCustomer: true })).data,
+    mutationFn: async (body: { name: string; phone?: string; email?: string }) => {
+      const full = { ...body, isCustomer: true };
+      // ADR-S083 O2: offline on a registered device → customer.upsert op; the device-minted id is the server id too.
+      try {
+        await routePosWrite('/partners', full, undefined, false);
+      } catch (e) {
+        if (isRecordedOffline(e)) {
+          return { id: e.op.clientId, name: body.name, phone: body.phone ?? null, email: body.email ?? null,
+            isCustomer: true } as unknown as Customer;
+        }
+        throw e;
+      }
+      return (await api.post<Customer>('/partners', full)).data;
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['pos-customers'] }),
   });
 }
@@ -132,8 +147,15 @@ export function useOpenSession() {
   return useQuery({
     queryKey: ['cash-session', 'open', org, operator, registerId],
     queryFn: async () => {
-      const res = await api.get<CashSession | null>('/cash-sessions/open', { params: { registerId } });
-      return res.data ?? null;
+      // ADR-S083 O2: a shift opened offline on this device is the open shift until the server has it.
+      const local = (await offlineShifts(registerId))[0] as unknown as CashSession | undefined;
+      try {
+        const res = await api.get<CashSession | null>('/cash-sessions/open', { params: { registerId } });
+        return res.data ?? local ?? null;
+      } catch (e: any) {
+        if (!e?.response && local) return local;
+        throw e;
+      }
     },
     // Open session is stable; rely on mutation invalidation, not polling.
     // Long staleTime prevents flicker; no refetchInterval needed.
@@ -190,6 +212,9 @@ export function useCloseShift() {
       // checked against the server's books, and the queue keeps syncing
       // after the shift is sealed.
       await syncSessionOperations(body.sessionId);
+      // ADR-S083 O2: a registered device pushes its offline ops first, so the close sees them on the server.
+      const engine = await posEngine();
+      if (engine && !serverUnreachable()) await engine.sync().catch(() => undefined);
       return submitCashOperation('/cash-sessions/close', { ...body, pendingSyncCount: 0 });
     },
     onSuccess: () => {

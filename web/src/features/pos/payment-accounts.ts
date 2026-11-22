@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { offlineRead, paymentMethodsFromScopes } from './offline-reads';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
@@ -9,7 +10,7 @@ export function accountsForMethod(accounts: PaymentAccount[], method: string) {
 }
 export function usePaymentAccounts() {
   const org = useAuthStore((s) => s.organization?.id);
-  return useQuery({ queryKey: ['pos-payment-accounts', org], queryFn: async () => (await api.get<PaymentAccount[]>('/pos/payment-accounts')).data, staleTime: 60_000 });
+  return useQuery({ queryKey: ['pos-payment-accounts', org], queryFn: () => offlineRead('pos-payment-accounts', async () => (await api.get<PaymentAccount[]>('/pos/payment-accounts')).data), staleTime: 60_000 });
 }
 
 /**
@@ -40,7 +41,8 @@ export function usePosPaymentMethods() {
   const org = useAuthStore((s) => s.organization?.id);
   return useQuery({
     queryKey: ['pos-payment-methods', org],
-    queryFn: async () => (await api.get<PosPaymentMethod[]>('/pos/payment-methods')).data,
+    queryFn: () => offlineRead('pos-payment-methods', async () => (await api.get<PosPaymentMethod[]>('/pos/payment-methods')).data,
+      (e) => paymentMethodsFromScopes<PosPaymentMethod[]>(e)),
     staleTime: 60_000,
   });
 }

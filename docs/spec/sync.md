@@ -127,6 +127,10 @@ Spring-only, additive. Every Nest route and member is unchanged. Full rules are 
 - **Snapshot page bytes (O1):** `rows` is written into the page response as the exact bytes the checksum was computed
   over, so a client can verify a page against the raw body.
 - **Web client (O1):** `web/src/lib/offline/` — see ADR-S083 "O1 — Web sync engine".
+- **Cross-batch references (O2):** a client id in `cashSessionId` / `sessionId` / `invoiceId` / `reservationId`
+  resolves through the applied-op ledger when the creating op was applied in an earlier batch (its `opId`, or a
+  `cash_session.open` mapping key; same organization and device). Index: V595. Test: `SyncCrossBatchIT`.
+- **Web POS (O2):** see ADR-S083 "O2 — Web POS on the protocol".
 - Tests: `SyncLedgerIT`, `SyncO0IT`, `SyncLedgerCoverageIT`, `SyncRevocationIT`, `SyncCashCloseIT`,
   `SyncProtocolContractIT`, `SyncOpCatalogTest`; the `SyncIT` authorization matrix now covers 15 routes.
 

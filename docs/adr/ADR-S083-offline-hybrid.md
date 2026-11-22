@@ -261,6 +261,67 @@ applied-op ledger: lost response, crash mid-push, batch replay, retryable vs rej
 lock, token expiry, revocation export + wipe, unknown token, 426, offline; snapshot checksum retry, resume, 410/409
 restart, failed completion; PIN throttling, offline window, clock rollback, idle timeout; vault; store atomicity.
 
+## O2 — Web POS on the protocol
+
+Built on branch `phase/O2-web-pos-sync` (stacked on O1). Only a browser registered as a sync device (Devices page →
+"This browser") takes part; an unregistered browser keeps the pre-O2 behaviour exactly.
+
+### Routing rule (one per write)
+
+| Situation | Path |
+|---|---|
+| Server reachable | REST, unchanged (immediate receipt and numbers, Nest parity) |
+| A REST attempt got no answer | finished over REST with the same `Idempotency-Key` and body (the legacy write-ahead queue) |
+| Server known unreachable (a request failed in the last 15 s), registered device | sync op with a provisional number |
+| Online, but the body references a client id that has not synced (an offline shift) | sync op, behind the op that creates the reference |
+
+The REST queue is **narrowed, not removed**: it now holds only REST attempts whose outcome is unknown. Converting
+those into ops is unsafe — the REST idempotency hash covers method + path + raw body, the op hash covers the op
+payload, so the server could not match the two and would refuse the op as a reused id (safe, but a sale that did post
+would need a person). Each POS sync pass drains that queue first, then pushes ops, so device order holds across both.
+
+### Writes with an offline form
+
+`/pos/checkout` → `sale.checkout`; `/pos/tabs/{id}/settle` → `tab.settle`; `/cash-sessions/open|close|movement` →
+`cash_session.*`; `/pos/cash-drawer/openings` → `cash_drawer.open`; POS customer create (`/partners`) →
+`customer.upsert` (the device-minted id is the server id). Everything else needs a connection, as before (order
+settle, refunds and voids, tab saves, holds, split bills, loyalty).
+
+Refused offline with a 409-shaped message (the cart stays, nothing is "saved"):
+- a write carrying a manager approval (`overridePin`, `managerPin`, `incomingPin`, `approvalToken`, `approverEmail`) —
+  a PIN is never stored on the device;
+- the offline window lapsed, the device never synced, or its clock reads earlier than the last sync;
+- an offline sign-in that idled out.
+
+### References between offline writes
+
+The op `clientId` equals its `opId` (the cart's idempotency key for sales). Payloads are never rewritten after they
+are first queued (the hash must stay stable). The server resolves a client id within the batch as before and, new in
+O2, **across batches** through the applied-op ledger: the creating op's `opId` (unique index) or a shift-open's
+`mapping` key (partial index, V595) — same organization and device only (`SyncCrossBatchIT`). This also closes the gap
+for Android, whose retries could land in a later batch than the op they depend on.
+
+### Screens
+
+- **Sale finished offline:** the receipt shows `OFF-<device>-<seq>`; the badge next to the connection indicator lists
+  offline work with provisional → final numbers; refused work points to Sync dead letters (never retried).
+- **Reads offline:** menu and payment methods from the pulled scopes; payment accounts and POS settings from the last
+  good answer kept on the device. A refusal (any HTTP status) is never masked.
+- **Offline PIN login:** the staff list and bcrypt hashes come from the `staff` scope; throttling, idle timeout and the
+  permission snapshot are O1's. Back online, a cashier signed in offline signs in again so REST writes carry a
+  server-issued POS token.
+- **Shifts:** a shift opened offline is the open shift until the server has it. With the server unreachable the close
+  is a short form (counted cash + each tracked tender balance); expected cash, variance and every close rule are the
+  server's at sync — a close that needs a manager is refused there and goes to a supervisor. Before an online close,
+  the device pushes its offline ops. Recovery both ways (opened offline / closed online and the reverse) is covered by
+  `SyncCrossBatchIT`; rejected money ops still block the close server-side (O0 correction 3).
+
+### Not in O2
+
+The `reference/e2e` sell loop is read-only (`reference/`), so the offline leg is covered by the Vitest suites and
+`SyncCrossBatchIT` instead; a browser-driven offline shift on org DEMO is the manual check. Tab saves, order settle,
+refunds/voids, reservations and expenses stay online-only on the web (their ops exist; their screens are not wired).
+
 ## S3 — Cache policy (O3)
 
 - An explicit allowlist (`web/src/lib/offline/cache-policy.ts`). Every query-key family is classified:
