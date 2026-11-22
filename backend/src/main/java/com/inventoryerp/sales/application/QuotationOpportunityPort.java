@@ -16,4 +16,7 @@ public interface QuotationOpportunityPort {
 
     /** Mark the opportunity won when it is still an open opportunity (no-op otherwise). */
     void markWonIfOpen(String dealId);
+
+    /** Record on the CRM timeline that quotation {@code number} was emailed (deal and/or customer; no-op by default). */
+    default void quotationEmailed(String dealId, String partnerId, String number, String sentTo, boolean delivered) {}
 }

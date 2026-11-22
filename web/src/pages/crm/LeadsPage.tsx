@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Inbox, Plus } from 'lucide-react';
+import { Download, Inbox, Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,6 +14,7 @@ import { useCrmLookups, useOpportunities, type Opportunity } from '@/features/cr
 import { ActivityBadge, Avatar, DealStatusPill, ErrorState, Stars, TagChips } from './crm-ui';
 import { ConvertDialog, OpportunityDialog } from './crm-dialogs';
 import { CrmFilterBar, useCrmFilters } from './filter-bar';
+import { exportDeals } from './csv';
 
 /** Lead inbox: unqualified enquiries before they enter the pipeline (ADR-S010). */
 export function LeadsPage() {
@@ -23,12 +26,19 @@ export function LeadsPage() {
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.leadWrite) && s.hasPermission(PERMISSIONS.crm.dealWrite));
   const [creating, setCreating] = useState(false);
   const [converting, setConverting] = useState<Opportunity | null>(null);
+  const [exporting, setExporting] = useState(false);
   const { data, isLoading, isError, refetch } = useOpportunities({ ...state.filters, page: state.page, pageSize: 50 } as Record<string, string | number>, '/crm/leads');
 
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Inbox} title={tx('Leads')} description={tx('Qualify incoming enquiries, then convert the good ones into opportunities.')}
-        actions={canWrite && <Button onClick={() => setCreating(true)}><Plus className="mr-1 h-4 w-4" />{tx('New lead')}</Button>} />
+        actions={<div className="flex gap-2">
+          <Button variant="outline" disabled={exporting || !data?.meta.total} onClick={async () => {
+            setExporting(true);
+            try { toast.success(`${await exportDeals('/crm/leads', state.filters, lk)} ${tx('leads exported')}`); } catch (e) { toast.error(apiErrorMessage(e, tx('Could not export'))); } finally { setExporting(false); }
+          }}><Download className="mr-1.5 h-4 w-4" />{exporting ? tx('Exporting…') : tx('Export CSV')}</Button>
+          {canWrite && <Button onClick={() => setCreating(true)}><Plus className="mr-1 h-4 w-4" />{tx('New lead')}</Button>}
+        </div>} />
       <CrmFilterBar scope="leads" state={state} groupByOptions={[]} />
       <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
         <table className="w-full min-w-[900px] text-sm">

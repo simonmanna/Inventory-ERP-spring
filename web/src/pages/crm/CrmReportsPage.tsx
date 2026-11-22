@@ -12,6 +12,7 @@ import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { QUOTE_STATUS_LABEL, useCrmLookups, useCrmReport, type Breakdown, type CrmReport } from '@/features/crm/suite-api';
 import { ErrorState, KpiCard, Meter, colorOf, compact, typeLabel } from './crm-ui';
+import { downloadCsv } from './csv';
 
 const iso = (d: Date) => localDateInput(d);
 const PRESETS: Array<{ days: number; label: string }> = [
@@ -219,11 +220,5 @@ function exportCsv(r: CrmReport) {
   add(tx('Salesperson'), r.byOwner); add(tx('Source'), r.bySource); add(tx('Team'), r.byTeam); add(tx('Tag'), r.byTag); add(tx('Country'), r.byCountry);
   lines.push([]); lines.push([tx('KPI'), tx('Value')]);
   for (const [k, v] of Object.entries(r.kpis)) lines.push([k, String(v)]);
-  // A label typed by a user (tag, source, team) that starts with = + - @ would run as a formula in a spreadsheet.
-  const cell = (c: string) => (/^[=+\-@\t\r]/.test(c) && Number.isNaN(Number(c)) ? `'${c}` : c);
-  const csv = lines.map((l) => l.map((c) => `"${cell(String(c ?? '')).replace(/"/g, '""')}"`).join(',')).join('\n');
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  const a = document.createElement('a');
-  a.href = url; a.download = `crm-report-${r.range.from}-${r.range.to}.csv`; a.click();
-  URL.revokeObjectURL(url);
+  downloadCsv(`crm-report-${r.range.from}-${r.range.to}.csv`, lines);
 }

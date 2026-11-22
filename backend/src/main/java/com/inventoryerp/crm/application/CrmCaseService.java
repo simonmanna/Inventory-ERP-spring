@@ -204,6 +204,9 @@ public class CrmCaseService {
         }
         if (in.containsKey("dueAt")) {
             data.put("dueAt", CrmDb.instant(str(in.get("dueAt"))));
+            // A new deadline is watched again.
+            data.put("slaWarnedAt", null);
+            data.put("slaBreachedAt", null);
         }
         data.put("updatedBy", user());
         db.patch("CrmCase", id, data, true);
@@ -286,6 +289,68 @@ public class CrmCaseService {
         event(id, "status", note, from, to);
         audit.recordInTx(AuditInput.of("CrmCase", id, "update", Obj.of("status", from), Obj.of("status", to)));
         return get(id);
+    }
+
+    /**
+     * Response-time alerts of the current organization (called per organization by {@link CrmCaseSlaJob}). A live case
+     * is warned once when 75 % of its response time has passed (its assignee, or its creator when unassigned) and
+     * flagged once when it is overdue (assignee and creator, plus a timeline entry). Rows are claimed with
+     * {@code SKIP LOCKED} so a case being edited is simply picked up on the next run.
+     */
+    @Transactional
+    public int sendSlaAlerts() {
+        java.sql.Timestamp now = com.inventoryerp.kernel.crud.SqlRows.ts(Instant.now());
+        int sent = 0;
+        List<Map<String, Object>> breached = db.rows("SELECT id, code, subject, \"assigneeId\", \"createdBy\", \"dueAt\""
+                + " FROM \"CrmCase\" WHERE \"organizationId\" = ? AND status IN ('open', 'in_progress') AND"
+                + " \"dueAt\" < ? AND \"slaBreachedAt\" IS NULL ORDER BY \"dueAt\" LIMIT 200 FOR UPDATE SKIP LOCKED",
+                org(), now);
+        for (Map<String, Object> c : breached) {
+            db.update("UPDATE \"CrmCase\" SET \"slaBreachedAt\" = " + NOW + ", \"slaWarnedAt\" = COALESCE("
+                    + "\"slaWarnedAt\", " + NOW + ") WHERE id = ?", c.get("id"));
+            event(str(c.get("id")), "sla", "Response time passed (was due " + local(c.get("dueAt")) + ")", null,
+                    null);
+            java.util.LinkedHashSet<String> to = new java.util.LinkedHashSet<>();
+            for (String k : List.of("assigneeId", "createdBy")) {
+                if (!blank(str(c.get(k)))) {
+                    to.add(str(c.get(k)));
+                }
+            }
+            for (String u : to) {
+                sent += alert(u, c, "Overdue: case " + c.get("code"), "crm.case.sla_breached");
+            }
+        }
+        List<Map<String, Object>> warn = db.rows("SELECT id, code, subject, \"assigneeId\", \"createdBy\", \"dueAt\""
+                + " FROM \"CrmCase\" WHERE \"organizationId\" = ? AND status IN ('open', 'in_progress') AND"
+                + " \"dueAt\" >= ? AND \"slaWarnedAt\" IS NULL AND ? >= \"createdAt\" + (\"dueAt\" - \"createdAt\") *"
+                + " 0.75 ORDER BY \"dueAt\" LIMIT 200 FOR UPDATE SKIP LOCKED", org(), now, now);
+        for (Map<String, Object> c : warn) {
+            db.update("UPDATE \"CrmCase\" SET \"slaWarnedAt\" = " + NOW + " WHERE id = ?", c.get("id"));
+            String u = blank(str(c.get("assigneeId"))) ? str(c.get("createdBy")) : str(c.get("assigneeId"));
+            if (u != null) {
+                sent += alert(u, c, "Due soon: case " + c.get("code"), "crm.case.sla_warning");
+            }
+        }
+        return sent;
+    }
+
+    private int alert(String userId, Map<String, Object> c, String title, String kind) {
+        try {
+            notifications.send(new SendInput(org(), userId, "in_app", "crm", title, c.get("subject") + " — due "
+                    + local(c.get("dueAt")), Obj.of("kind", kind, "caseId", c.get("id"), "link", "/crm/cases/"
+                            + c.get("id"))));
+            return 1;
+        } catch (RuntimeException e) {
+            log.warn("Case alert {} not delivered: {}", c.get("id"), e.toString());
+            return 0;
+        }
+    }
+
+    /** A stored UTC timestamp as business-zone wall time, e.g. {@code 22 Nov 14:30}. */
+    static String local(Object utc) {
+        Instant at = utc instanceof Instant i ? i : CrmDb.instant(str(utc));
+        return at == null ? "" : java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm", java.util.Locale.ENGLISH)
+                .withZone(com.inventoryerp.kernel.common.BusinessZone.get()).format(at);
     }
 
     /** Timeline entry for a fleet decision on a linked discrepancy (at-least-once delivery: skips a repeat). */

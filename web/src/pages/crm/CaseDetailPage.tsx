@@ -110,7 +110,7 @@ export function CaseDetailPage() {
             {c.events?.length ? (
               <ul className="space-y-2 text-sm">
                 {c.events.map((e) => (
-                  <li key={e.id} className="border-l-2 pl-3">
+                  <li key={e.id} className={e.kind === 'sla' ? 'border-l-2 border-rose-400 pl-3 text-rose-700 dark:text-rose-300' : 'border-l-2 pl-3'}>
                     <div className="text-xs text-muted-foreground">
                       {dateTime(e.createdAt)} {e.actorName ? `· ${e.actorName}` : ''}
                     </div>

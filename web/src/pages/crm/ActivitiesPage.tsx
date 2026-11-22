@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CalendarCheck, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
@@ -24,7 +24,9 @@ const TABS = [
 
 /** "My activities": calls, meetings, emails and to-dos by due state, with reminders (ADR-S010). */
 export function ActivitiesPage() {
-  const [state, setState] = useState<string>('today');
+  const [params] = useSearchParams();
+  const initial = params.get('state');
+  const [state, setState] = useState<string>(initial && TABS.some((t) => t.key === initial) ? initial : 'today');
   const [scope, setScope] = useState('mine');
   const [assignee, setAssignee] = useState('');
   const [type, setType] = useState('');

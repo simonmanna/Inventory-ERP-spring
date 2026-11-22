@@ -6,7 +6,7 @@ import type { Paged } from '@/features/crm/suite-api';
 
 export interface CaseEvent {
   id: string;
-  kind: 'note' | 'status' | 'assignment' | 'discrepancy';
+  kind: 'note' | 'status' | 'assignment' | 'discrepancy' | 'sla';
   body: string | null;
   fromStatus: string | null;
   toStatus: string | null;

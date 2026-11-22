@@ -10,8 +10,10 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { localDateTimeInput } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import {
-  crmApi, useCrmLookups, useCrmMutation, usePartnerOptions, type DealKind, type Opportunity, type PlannedType,
+  crmApi, useCrmLookups, useCrmMutation, useDuplicates, usePartnerOptions, type DealKind, type Opportunity, type PlannedType,
 } from '@/features/crm/suite-api';
+import { Link } from 'react-router-dom';
+import { AlertTriangle } from 'lucide-react';
 import { Field, Stars, TYPE_ICON, typeLabel } from './crm-ui';
 import { cn } from '@/lib/utils';
 
@@ -144,6 +146,12 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
           <Field label={tx('Contact name')}><Input value={f.contactName ?? ''} onChange={set('contactName')} /></Field>
           <Field label={tx('Email')}><Input type="email" value={f.email ?? ''} onChange={set('email')} /></Field>
           <Field label={tx('Phone')}><Input value={f.phone ?? ''} onChange={set('phone')} /></Field>
+          {!initial && (
+            <div className="sm:col-span-2">
+              <DuplicateHint email={f.email} phone={f.phone} companyName={f.companyName} enabled={open}
+                onLinkPartner={(id, n) => { setF((s) => ({ ...s, partnerId: id })); setPartnerName(n); }} />
+            </div>
+          )}
           <Field label={tx('Expected revenue')}><Input type="number" min={0} value={f.amount ?? ''} onChange={set('amount')} /></Field>
           <Field label={tx('Expected closing')}><Input type="date" value={f.expectedClose ?? ''} onChange={set('expectedClose')} /></Field>
           {kind === 'opportunity' && !initial && (
@@ -348,6 +356,8 @@ export function ConvertDialog({ open, onOpenChange, lead, onDone }: { open: bool
           <label className="flex items-start gap-2"><input type="radio" checked={mode === 'create'} onChange={() => setMode('create')} className="mt-1" />
             <span>{tx('Create a new customer')} <strong>{name}</strong></span></label>
           <label className="flex items-start gap-2"><input type="radio" checked={mode === 'link'} onChange={() => setMode('link')} className="mt-1" />{tx('Link to an existing customer')}</label>
+          <DuplicateHint email={lead.email} phone={lead.phone} companyName={lead.companyName} excludeId={lead.id} enabled={open}
+            onLinkPartner={(id, n) => { setMode('link'); setPartnerId(id); setPartnerName(n); }} />
           {mode === 'link' && <PartnerPicker value={partnerId} label={partnerName} onPick={(id, n) => { setPartnerId(id); setPartnerName(n || null); }} />}
           <label className="flex items-start gap-2"><input type="radio" checked={mode === 'none'} onChange={() => setMode('none')} className="mt-1" />{tx('Do not link a customer yet')}</label>
           <Field label={tx('Pipeline stage')}>
@@ -365,5 +375,46 @@ export function ConvertDialog({ open, onOpenChange, lead, onDone }: { open: bool
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const MATCH_LABEL: Record<string, string> = { email: tx('same email'), phone: tx('same phone'), company: tx('same company') };
+
+/**
+ * Advisory warning while a lead is entered or converted: existing leads, opportunities and customers with the same
+ * email, phone or company. A customer match can be linked in one click instead of creating a second customer.
+ */
+export function DuplicateHint({ email, phone, companyName, excludeId, enabled = true, onLinkPartner }: {
+  email?: string | null; phone?: string | null; companyName?: string | null; excludeId?: string; enabled?: boolean;
+  onLinkPartner?: (id: string, name: string) => void;
+}) {
+  const { data } = useDuplicates({ email, phone, companyName, excludeId }, enabled);
+  if (!data || (data.deals.length === 0 && data.partners.length === 0)) return null;
+  const why = (m: string[]) => m.map((x) => MATCH_LABEL[x] ?? x).join(', ');
+  return (
+    <div role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+      <div className="mb-1.5 flex items-center gap-1.5 font-medium"><AlertTriangle className="h-4 w-4" />{tx('This may already exist')}</div>
+      <ul className="space-y-1">
+        {data.partners.map((p) => (
+          <li key={'p' + p.id} className="flex flex-wrap items-center gap-x-2">
+            <span>{p.isCustomer ? tx('Customer') : tx('Partner')} <strong>{p.name}</strong></span>
+            <span className="text-xs opacity-80">({why(p.matchedOn)})</span>
+            {onLinkPartner && <button type="button" className="text-xs font-medium underline underline-offset-2" onClick={() => onLinkPartner(p.id, p.name)}>{tx('Use this customer')}</button>}
+          </li>
+        ))}
+        {data.deals.map((d, i) => (
+          <li key={'d' + (d.id ?? i)} className="flex flex-wrap items-center gap-x-2">
+            <span>
+              {d.kind === 'lead' ? tx('Lead') : tx('Opportunity')}{' '}
+              {d.visible && d.id
+                ? <Link to={`/crm/${d.kind === 'lead' ? 'leads' : 'opportunities'}/${d.id}`} target="_blank" className="font-semibold underline underline-offset-2">{d.name}</Link>
+                : <strong>{d.companyName ?? tx('(not visible to you)')}</strong>}
+              {' · '}{d.status}{d.ownerName ? ` · ${d.ownerName}` : ''}
+            </span>
+            <span className="text-xs opacity-80">({why(d.matchedOn)})</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

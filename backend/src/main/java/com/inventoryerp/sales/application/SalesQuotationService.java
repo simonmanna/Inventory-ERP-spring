@@ -1045,6 +1045,10 @@ public class SalesQuotationService {
                 + q.get("number") + ", valid until " + q.get("validUntil") + ".", new com.inventoryerp.kernel.notifications
                         .NotificationsService.Attachment(q.get("number") + ".pdf", "application/pdf", pdf(id)));
         send(id);
+        QuotationOpportunityPort port = opportunities.getIfAvailable();
+        if (port != null) {
+            port.quotationEmailed(str(q.get("dealId")), str(q.get("partnerId")), str(q.get("number")), address, sent);
+        }
         return Obj.of("ok", true, "sentTo", address, "delivered", sent);
     }
 

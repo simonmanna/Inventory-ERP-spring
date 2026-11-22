@@ -4,6 +4,7 @@ import { PERMISSIONS } from '@erp/shared';
 import { useAuthStore } from '@/stores/auth.store';
 import type { UnitAwareProduct } from '@/features/products/units';
 import { tx } from '@/lib/i18n/tx';
+import { useDebouncedValue } from '@/lib/use-debounced-value';
 
 // ---- Types (CRM sales suite, ADR-S010) ----
 
@@ -673,5 +674,29 @@ export function useCrmUsers() {
         name: [u.firstName, u.lastName].filter(Boolean).join(' ') || String(u.email ?? ''),
       }));
     },
+  });
+}
+
+// ---------------------------------------------------------------- duplicate check (CRM enhancements T1)
+
+export interface DuplicateDeal { id: string | null; kind: DealKind; name: string | null; companyName: string | null; status: DealStatus; ownerName: string | null; visible: boolean; matchedOn: string[] }
+export interface DuplicatePartner { id: string; name: string; isCustomer: boolean; matchedOn: string[] }
+export interface Duplicates { deals: DuplicateDeal[]; partners: DuplicatePartner[] }
+
+/** Possible duplicates of a lead by email, phone or company (advisory, debounced while typing). */
+export function useDuplicates(input: { email?: string | null; phone?: string | null; companyName?: string | null; excludeId?: string }, enabled = true) {
+  // Debounce a string, not a fresh object (a new object every render would restart the timer forever).
+  const key = useDebouncedValue(JSON.stringify({
+    email: input.email?.trim() || undefined,
+    phone: (input.phone ?? '').replace(/\D/g, '').length >= 7 ? input.phone!.trim() : undefined,
+    companyName: (input.companyName ?? '').trim().length >= 3 ? input.companyName!.trim() : undefined,
+    excludeId: input.excludeId,
+  }), 400);
+  const q = JSON.parse(key) as { email?: string; phone?: string; companyName?: string; excludeId?: string };
+  return useQuery({
+    queryKey: ['crm-suite', 'duplicates', key],
+    queryFn: async () => (await api.get<Duplicates>('/crm/leads/duplicates', { params: clean(q) })).data,
+    enabled: enabled && !!(q.email || q.phone || q.companyName),
+    staleTime: 30_000,
   });
 }

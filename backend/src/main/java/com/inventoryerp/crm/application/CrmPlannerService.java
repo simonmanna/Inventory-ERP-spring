@@ -282,6 +282,54 @@ public class CrmPlannerService {
         return sent;
     }
 
+    /**
+     * One in-app digest per person with overdue planned activities (due before today, business zone) in the current
+     * organization (called per organization by {@link CrmActivityDigestJob}).
+     */
+    @Transactional
+    public int sendOverdueDigest() {
+        ZoneId zone = BusinessZone.get();
+        Instant start = LocalDate.now(zone).atStartOfDay(zone).toInstant();
+        List<Map<String, Object>> people = db.rows("SELECT COALESCE(a.\"assignedToId\", a.\"createdById\") AS"
+                + " \"userId\", count(*) AS n, min(a.\"dueAt\") AS oldest FROM \"Activity\" a WHERE a.\"organizationId\" = ?"
+                + " AND a.\"deletedAt\" IS NULL AND a.status::text IN ('todo', 'in_progress') AND a.\"dueAt\" < ? AND"
+                + " a.type::text NOT IN ('deal_stage_change', 'note') AND COALESCE(a.\"assignedToId\","
+                + " a.\"createdById\") IS NOT NULL GROUP BY 1", org(), SqlRows.ts(start));
+        int sent = 0;
+        for (Map<String, Object> r : people) {
+            long n = ((Number) r.get("n")).longValue();
+            try {
+                notifications.send(new SendInput(org(), str(r.get("userId")), "in_app", "crm", n == 1
+                        ? "1 overdue activity" : n + " overdue activities", "The oldest was due "
+                                + CrmCaseService.local(r.get("oldest")) + ".", Obj.of("kind",
+                                        "crm.activity.overdue_digest", "count", n, "link",
+                                        "/crm/activities?state=overdue")));
+                sent++;
+            } catch (RuntimeException e) {
+                log.warn("CRM overdue digest for {} not delivered: {}", r.get("userId"), e.toString());
+            }
+        }
+        return sent;
+    }
+
+    /**
+     * Timeline record of a quotation emailed to the customer: a done {@code email} activity on the opportunity and the
+     * customer, so the 360 view and the opportunity history show it.
+     */
+    @Transactional
+    public void logQuotationEmail(String dealId, String partnerId, String number, String sentTo, boolean delivered) {
+        if (blank(dealId) && blank(partnerId)) {
+            return;
+        }
+        db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, body, \"dealId\", \"partnerId\","
+                + " status, completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\")"
+                + " VALUES (?, ?, 'email'::\"ActivityType\", ?, ?, ?, ?, 'done'::\"TaskStatus\", true, " + NOW + ", ?, ?, "
+                + NOW + ", " + NOW + ")", CrmDb.newId(), org(), "Quotation " + number + " emailed", delivered
+                        ? "Sent to " + sentTo : "Queued for " + sentTo + " (mail delivery not confirmed)",
+                blank(dealId) ? null : dealId, blank(partnerId) ? null : partnerId, user(), user());
+        touchDeal(dealId);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Map<String, Object> require(String id) {

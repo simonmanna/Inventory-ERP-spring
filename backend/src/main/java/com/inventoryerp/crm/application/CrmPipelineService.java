@@ -514,6 +514,84 @@ public class CrmPipelineService {
         return get(id);
     }
 
+    // ------------------------------------------------------------------ duplicate check (CRM enhancements T1)
+
+    /**
+     * Existing leads, opportunities and partners that look like the same customer: same email, same phone (last 9
+     * digits, at least 7) or the same company name (case-insensitive). Advisory only, nothing is blocked. Deals the
+     * caller may not see are returned without their id and name, so the warning still says "Mary already has this
+     * lead" without opening it.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> duplicates(Map<String, String> p) {
+        String email = blank(p.get("email")) ? null : p.get("email").trim().toLowerCase(java.util.Locale.ROOT);
+        String digits = blank(p.get("phone")) ? "" : p.get("phone").replaceAll("\\D", "");
+        String phone = digits.length() < 7 ? null : digits.substring(Math.max(0, digits.length() - 9));
+        String company = blank(p.get("companyName")) ? null
+                : p.get("companyName").trim().toLowerCase(java.util.Locale.ROOT);
+        if (email == null && phone == null && company == null) {
+            return Obj.of("deals", List.of(), "partners", List.of());
+        }
+        String exclude = blank(p.get("excludeId")) ? "" : p.get("excludeId");
+        List<Object> params = new ArrayList<>(List.of(org(), exclude, nz(email), nz(phone), nz(phone), nz(company)));
+        List<Map<String, Object>> deals = db.rows("SELECT d.id, d.kind, d.name, d.\"companyName\", d.email, d.phone,"
+                + " d.status, d.\"ownerId\", NULLIF(trim(concat(u.\"firstName\", ' ', u.\"lastName\")), '') AS"
+                + " \"ownerName\" FROM \"Deal\" d LEFT JOIN \"User\" u ON u.id = d.\"ownerId\" WHERE d.\"organizationId\""
+                + " = ? AND d.\"deletedAt\" IS NULL AND d.id <> ? AND (lower(trim(d.email)) = NULLIF(?, '') OR (? <> '' AND"
+                + " right(regexp_replace(d.phone, '\\D', '', 'g'), 9) = ?) OR lower(trim(d.\"companyName\")) = NULLIF(?, ''))"
+                + " ORDER BY d.status = 'open' DESC, d.\"updatedAt\" DESC LIMIT 10", params);
+        List<Object> vp = new ArrayList<>(List.of(org()));
+        String vis = CrmDealQuery.visibleSql("d", vp);
+        Set<String> visibleIds = new java.util.HashSet<>();
+        if (!deals.isEmpty()) {
+            vp.addAll(deals.stream().map(d -> d.get("id")).toList());
+            db.rows("SELECT d.id FROM \"Deal\" d WHERE d.\"organizationId\" = ?" + vis + " AND d.id IN ("
+                    + CrmDb.marks(deals.size()) + ")", vp).forEach(r -> visibleIds.add(str(r.get("id"))));
+        }
+        List<Map<String, Object>> outDeals = new ArrayList<>();
+        for (Map<String, Object> d : deals) {
+            boolean visible = visibleIds.contains(str(d.get("id")));
+            outDeals.add(Obj.of("id", visible ? d.get("id") : null, "kind", d.get("kind"), "name", visible
+                    ? d.get("name") : null, "companyName", d.get("companyName"), "status", d.get("status"),
+                    "ownerName", d.get("ownerName"), "visible", visible, "matchedOn", matched(d.get("email"),
+                            d.get("phone"), d.get("companyName"), email, phone, company)));
+        }
+        List<Map<String, Object>> partners = db.rows("SELECT id, name, email, phone, \"isCustomer\" FROM \"Partner\""
+                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND (lower(trim(email)) = NULLIF(?, '') OR (? <> '' AND"
+                + " right(regexp_replace(phone, '\\D', '', 'g'), 9) = ?) OR lower(trim(name)) = NULLIF(?, '')) ORDER BY"
+                + " \"isCustomer\" DESC, name LIMIT 10", org(), nz(email), nz(phone), nz(phone), nz(company));
+        List<Map<String, Object>> outPartners = new ArrayList<>();
+        for (Map<String, Object> r : partners) {
+            outPartners.add(Obj.of("id", r.get("id"), "name", r.get("name"), "isCustomer", r.get("isCustomer"),
+                    "matchedOn", matched(r.get("email"), r.get("phone"), r.get("name"), email, phone, company)));
+        }
+        return Obj.of("deals", outDeals, "partners", outPartners);
+    }
+
+    private static String nz(String v) {
+        return v == null ? "" : v;
+    }
+
+    private static List<String> matched(Object email, Object phone, Object company, String wantEmail,
+            String wantPhone, String wantCompany) {
+        List<String> on = new ArrayList<>();
+        if (wantEmail != null && email != null && wantEmail.equals(email.toString().trim().toLowerCase(
+                java.util.Locale.ROOT))) {
+            on.add("email");
+        }
+        if (wantPhone != null && phone != null) {
+            String d = phone.toString().replaceAll("\\D", "");
+            if (d.length() >= 7 && d.substring(Math.max(0, d.length() - 9)).equals(wantPhone)) {
+                on.add("phone");
+            }
+        }
+        if (wantCompany != null && company != null && wantCompany.equals(company.toString().trim().toLowerCase(
+                java.util.Locale.ROOT))) {
+            on.add("company");
+        }
+        return on;
+    }
+
     // ------------------------------------------------------------------ lead-scoped access (crm:lead:*)
 
     /**
