@@ -210,3 +210,25 @@ or error message changed; the additions below are new behaviour.
   targets (SG-12) whose period covers today, with actual and %; in mine scope (or without view-all) only the caller's
   own.
 - Authorization matrix: 108 routes. Tests: `CrmBulkImportIT`.
+
+## CRM enhancements T2b (2026-11-22, post-parity)
+
+- **Stage rules (V602):** `CrmStage.requiredFields` (any of amount, expectedClose, partnerId, contactName, email,
+  phone) plus an optional automatic follow-up (`followUpType` call / email / meeting / task, `followUpTitle`,
+  `followUpDays` 0–365).
+  - Moving a deal into the stage (drag, PATCH `stageId`, bulk move) and the Won button check the target stage's
+    fields: 400 "Fill in Expected revenue, Expected closing before moving to Proposal". Amount must be above 0.
+  - A won caused by quotation conversion (`autoWinOnConversion`) skips the check, so a stage rule never blocks turning
+    a quote into a sales document.
+  - Entering the stage creates one planned activity for the deal owner, due in N days at 09:00 business time. It is
+    not created again while an open one with the same title exists.
+  - Empty by default; set in CRM Settings → Stages.
+- **Calendar:** `GET /crm/planner?state=range&from=YYYY-MM-DD&to=YYYY-MM-DD` (at most 62 days; done and planned, not
+  cancelled). The Activities page has a List / Calendar toggle (week and month) and `?view=calendar`.
+- **Personal ICS feed:** `GET|POST|DELETE /crm/planner/calendar-feed` (`crm:activity:read`) shows the status, creates
+  a link (shown once) and turns it off.
+  - The public route is `GET /public/crm/calendar/{token}.ics` (`@Public`, throttled 30/min).
+  - It serves the user's activities from 30 days back to 180 days ahead as RFC 5545 VEVENTs.
+  - Only the token's SHA-256 is stored (`CrmCalendarFeed`), one live link per user. A new link or turning it off
+    makes the old one 404, as does an inactive user.
+- Authorization matrix: 112 routes (the public ICS route included). Tests: `CrmStageRulesCalendarIT`.

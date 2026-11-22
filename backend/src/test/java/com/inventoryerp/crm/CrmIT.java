@@ -174,11 +174,11 @@ class CrmIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("tenant isolation and authorization matrix (21 parity + 87 sales-suite routes)")
+    @DisplayName("tenant isolation and authorization matrix (21 parity + 91 sales-suite routes)")
     void isolationAndAuthz() {
         String id = deal("Private", 10).get("id").asString();
         assertThat(call("GET", "/crm/deals/" + id, null, otherToken).status()).isEqualTo(404);
         assertThat(call("GET", "/crm/deals", null, otherToken).body().get("meta").get("total").asInt()).isZero();
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.crm")).isEqualTo(108); // CRM review: + quotation pdf/email, + 6 lead-scoped routes; T1: + lead duplicates; T2a: + 2 bulk, + lead import
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.crm")).isEqualTo(112); // CRM review: + quotation pdf/email, + 6 lead-scoped routes; T1: + lead duplicates; T2a: + 2 bulk, + lead import; T2b: + 3 calendar-feed, + public ICS
     }
 }

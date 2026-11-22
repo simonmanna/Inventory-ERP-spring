@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CalendarCheck, Check, X } from 'lucide-react';
+import { CalendarCheck, CalendarDays, Check, List, Rss, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
 import { PERMISSIONS } from '@erp/shared';
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { crmApi, useCrmLookups, useCrmMutation, usePlanner } from '@/features/crm/suite-api';
 import { ActivityBadge, ErrorState, typeLabel } from './crm-ui';
 import { DoneDialog, ScheduleDialog } from './crm-dialogs';
+import { ActivityCalendar, CalendarFeedDialog } from './activity-calendar';
 
 const TABS = [
   { key: 'overdue', label: tx('Overdue') },
@@ -24,7 +25,10 @@ const TABS = [
 
 /** "My activities": calls, meetings, emails and to-dos by due state, with reminders (ADR-S010). */
 export function ActivitiesPage() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const view = params.get('view') === 'calendar' ? 'calendar' : 'list';
+  const setView = (v: 'list' | 'calendar') => setParams((p) => { const n = new URLSearchParams(p); if (v === 'calendar') n.set('view', 'calendar'); else n.delete('view'); return n; }, { replace: true });
+  const [feed, setFeed] = useState(false);
   const initial = params.get('state');
   const [state, setState] = useState<string>(initial && TABS.some((t) => t.key === initial) ? initial : 'today');
   const [scope, setScope] = useState('mine');
@@ -42,9 +46,16 @@ export function ActivitiesPage() {
   return (
     <div className="space-y-4">
       <ListPageHeader icon={CalendarCheck} title={tx('Activities')} description={tx('Your planned calls, meetings and follow-ups.')}
-        actions={canWrite && <Button onClick={() => setScheduling(true)}>{tx('Schedule activity')}</Button>} />
+        actions={<div className="flex gap-2">
+          <Button variant="outline" onClick={() => setFeed(true)}><Rss className="mr-1.5 h-4 w-4" />{tx('Calendar link')}</Button>
+          {canWrite && <Button onClick={() => setScheduling(true)}>{tx('Schedule activity')}</Button>}
+        </div>} />
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-lg border bg-card p-0.5">
+        <div className="flex rounded-lg border bg-card p-0.5" role="group" aria-label={tx('View')}>
+          <button onClick={() => setView('list')} title={tx('List')} aria-pressed={view === 'list'} className={cn('rounded-md p-1.5', view === 'list' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}><List className="h-4 w-4" /></button>
+          <button onClick={() => setView('calendar')} title={tx('Calendar')} aria-pressed={view === 'calendar'} className={cn('rounded-md p-1.5', view === 'calendar' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}><CalendarDays className="h-4 w-4" /></button>
+        </div>
+        {view === 'list' && <div className="flex rounded-lg border bg-card p-0.5">
           {TABS.map((t) => {
             const n = t.key === 'done' ? null : counts?.[t.key as 'overdue' | 'today' | 'upcoming'];
             return (
@@ -54,7 +65,7 @@ export function ActivitiesPage() {
               </button>
             );
           })}
-        </div>
+        </div>}
         <select className="h-9 rounded-md border bg-background px-2 text-sm" value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">{tx('All types')}</option>
           {(['call', 'email', 'meeting', 'task'] as const).map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
@@ -74,7 +85,8 @@ export function ActivitiesPage() {
           </>
         )}
       </div>
-      <div className="divide-y rounded-xl border bg-card shadow-sm">
+      {view === 'calendar' && <ActivityCalendar scope={scope} assignedToId={scope === 'all' ? assignee || undefined : undefined} type={type || undefined} onDone={(id) => canWrite && setDoneId(id)} />}
+      {view === 'list' && <div className="divide-y rounded-xl border bg-card shadow-sm">
         {isLoading && <div className="p-3"><Skeleton className="h-40 w-full" /></div>}
         {isError && <div className="p-3"><ErrorState message={tx('Could not load the activities.')} onRetry={() => refetch()} /></div>}
         {data?.data.map((a) => (
@@ -101,7 +113,8 @@ export function ActivitiesPage() {
           </div>
         ))}
         {data && data.data.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">{tx('Nothing here. 🎉')}</p>}
-      </div>
+      </div>}
+      <CalendarFeedDialog open={feed} onOpenChange={setFeed} />
       <DoneDialog open={!!doneId} onOpenChange={(v) => !v && setDoneId(null)} activityId={doneId ?? ''} />
       <ScheduleDialog open={scheduling} onOpenChange={setScheduling} />
     </div>

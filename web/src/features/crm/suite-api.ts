@@ -33,6 +33,11 @@ export interface Stage {
   rottingDays: number | null;
   isActive: boolean;
   openCount?: number;
+  /** Stage rules (T2b): fields a deal needs before entering, and an optional follow-up for the owner. */
+  requiredFields?: string[];
+  followUpType?: 'call' | 'email' | 'meeting' | 'task' | null;
+  followUpTitle?: string | null;
+  followUpDays?: number | null;
 }
 
 export interface Team {
@@ -149,6 +154,7 @@ export interface PlannedActivity {
   assignedToId: string | null;
   assignedToName: string | null;
   dealName?: string | null;
+  dealKind?: DealKind | null;
   partnerName?: string | null;
   state?: 'overdue' | 'today' | 'planned' | 'done';
 }

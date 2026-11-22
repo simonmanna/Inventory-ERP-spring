@@ -3,6 +3,10 @@ package com.inventoryerp.crm.web;
 import com.inventoryerp.crm.application.CrmCaseService;
 import com.inventoryerp.crm.application.CrmConfigService;
 import com.inventoryerp.crm.application.CrmBulkService;
+import org.springframework.http.MediaType;
+import com.inventoryerp.kernel.security.Throttle;
+import com.inventoryerp.kernel.security.Public;
+import com.inventoryerp.crm.application.CrmCalendarFeedService;
 import com.inventoryerp.crm.application.CrmPipelineService;
 import com.inventoryerp.crm.application.CrmPlannerService;
 import com.inventoryerp.crm.application.CrmPricingService;
@@ -473,9 +477,31 @@ public final class CrmSuiteController {
     public static class PlannerController {
 
         private final CrmPlannerService svc;
+        private final CrmCalendarFeedService feeds;
 
-        public PlannerController(CrmPlannerService svc) {
+        public PlannerController(CrmPlannerService svc, CrmCalendarFeedService feeds) {
             this.svc = svc;
+            this.feeds = feeds;
+        }
+
+        /** The caller's personal calendar (ICS) feed: status, (re)create — the path is shown once — and revoke. */
+        @GetMapping("/calendar-feed")
+        @RequirePermissions(Permissions.CRM__ACTIVITY_READ)
+        public Map<String, Object> feed() {
+            return feeds.status();
+        }
+
+        @PostMapping("/calendar-feed")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__ACTIVITY_READ)
+        public Map<String, Object> createFeed() {
+            return feeds.create();
+        }
+
+        @DeleteMapping("/calendar-feed")
+        @RequirePermissions(Permissions.CRM__ACTIVITY_READ)
+        public Map<String, Object> revokeFeed() {
+            return feeds.revoke();
         }
 
         @GetMapping
@@ -507,6 +533,29 @@ public final class CrmSuiteController {
         @RequirePermissions(Permissions.CRM__ACTIVITY_WRITE)
         public Map<String, Object> cancel(@PathVariable String id) {
             return svc.cancel(id);
+        }
+    }
+
+    /**
+     * Public, token-authorized ICS feed of one user's CRM activities (calendar apps cannot send a bearer token). The
+     * token is the secret; unknown or revoked tokens answer 404. Rate limited.
+     */
+    @RestController
+    public static class CalendarFeedPublicController {
+
+        private final CrmCalendarFeedService feeds;
+
+        public CalendarFeedPublicController(CrmCalendarFeedService feeds) {
+            this.feeds = feeds;
+        }
+
+        @Public
+        @Throttle(limit = 30, ttlMs = 60_000)
+        @GetMapping("/public/crm/calendar/{token}.ics")
+        public ResponseEntity<byte[]> ics(@PathVariable String token) {
+            return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/calendar; charset=utf-8"))
+                    .header(HttpHeaders.CACHE_CONTROL, "private, max-age=300")
+                    .body(feeds.ics(token).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
     }
 

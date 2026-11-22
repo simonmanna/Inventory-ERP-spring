@@ -359,6 +359,7 @@ public class CrmPipelineService {
         if ("lost".equals(deal.get("status"))) {
             throw ApiException.badRequest("Restore the lost opportunity before moving it");
         }
+        requireStageFields(deal, stage);
         boolean toWon = Boolean.TRUE.equals(stage.get("isWon"));
         if (toWon) {
             return markWon(id, stageId);
@@ -370,6 +371,7 @@ public class CrmPipelineService {
         syncLegacyStage(id, str(stage.get("legacyStage")));
         history(id, str(deal.get("stageId")), stageId, fromStatus, "open", deal.get("stageChangedAt"));
         stageActivity(deal, stageName(str(deal.get("stageId"))), str(stage.get("name")));
+        stageFollowUp(deal, stage);
         events.publishOnCommit("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id, "fromStage",
                 deal.get("stage"), "toStage", stage.get("legacyStage"), "toStageId", stageId));
         return get(id);
@@ -378,11 +380,27 @@ public class CrmPipelineService {
     /** Mark won: moves to the won stage (if configured), the partner becomes a customer. */
     @Transactional
     public Map<String, Object> won(String id) {
+        return won(id, true);
+    }
+
+    /**
+     * Mark won from a converted quotation: the won stage's required fields are not checked, so a stage rule can never
+     * block turning a quote into a sales document.
+     */
+    @Transactional
+    public Map<String, Object> wonByQuotation(String id) {
+        return won(id, false);
+    }
+
+    private Map<String, Object> won(String id, boolean rules) {
         Map<String, Object> deal = lock(id);
         if ("won".equals(deal.get("status"))) {
             return get(id);
         }
         Map<String, Object> wonStage = config.wonStage();
+        if (rules && wonStage != null && !"lead".equals(deal.get("kind"))) {
+            requireStageFields(deal, wonStage);
+        }
         return markWon(id, wonStage == null ? str(deal.get("stageId")) : str(wonStage.get("id")));
     }
 
@@ -401,6 +419,13 @@ public class CrmPipelineService {
         }
         history(id, str(deal.get("stageId")), stageId, str(deal.get("status")), "won", deal.get("stageChangedAt"));
         stageActivity(deal, stageName(str(deal.get("stageId"))), "Won");
+        if (stageId != null && !stageId.equals(deal.get("stageId"))) {
+            Map<String, Object> st = db.row("SELECT * FROM \"CrmStage\" WHERE id = ? AND \"organizationId\" = ?", stageId,
+                    org());
+            if (st != null) {
+                stageFollowUp(deal, st);
+            }
+        }
         audit.record(AuditInput.of("Deal", id, "update", Obj.of("status", deal.get("status")), Obj.of("status", "won")));
         events.publishOnCommit(DomainEvents.CRM_DEAL_WON, Obj.of("organizationId", org(), "dealId", id, "amount",
                 deal.get("amount")));
@@ -821,6 +846,51 @@ public class CrmPipelineService {
         } finally {
             LEGACY_STAGE_LOG.remove();
         }
+    }
+
+    private static final Map<String, String> FIELD_LABELS = Map.of("amount", "Expected revenue", "expectedClose",
+            "Expected closing", "partnerId", "Customer", "contactName", "Contact", "email", "Email", "phone", "Phone");
+
+    /** Stage rule (T2b): the deal must have every field the target stage requires (an amount above zero). */
+    private void requireStageFields(Map<String, Object> deal, Map<String, Object> stage) {
+        List<String> missing = new ArrayList<>();
+        for (String f : strings(stage.get("requiredFields"))) {
+            Object v = deal.get(f);
+            boolean empty = "amount".equals(f) ? v == null || dec(v).signum() <= 0 : v == null || blank(str(v));
+            if (empty) {
+                missing.add(FIELD_LABELS.getOrDefault(f, f));
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw ApiException.badRequest("Fill in " + String.join(", ", missing) + " before moving to "
+                    + stage.get("name"));
+        }
+    }
+
+    /**
+     * Stage rule (T2b): a planned activity for the deal owner when the deal enters a stage with a follow-up, due
+     * {@code followUpDays} from today at 09:00 business time; skipped if the same open activity already exists.
+     */
+    private void stageFollowUp(Map<String, Object> deal, Map<String, Object> stage) {
+        String type = str(stage.get("followUpType"));
+        if (blank(type)) {
+            return;
+        }
+        String title = blank(str(stage.get("followUpTitle"))) ? "Follow up: " + stage.get("name")
+                : str(stage.get("followUpTitle"));
+        if (db.count("SELECT count(*) FROM \"Activity\" WHERE \"organizationId\" = ? AND \"dealId\" = ? AND title = ?"
+                + " AND status::text IN ('todo', 'in_progress') AND \"deletedAt\" IS NULL", List.of(org(),
+                        deal.get("id"), title)) > 0) {
+            return;
+        }
+        int days = stage.get("followUpDays") instanceof Number n ? n.intValue() : 1;
+        java.time.ZoneId zone = com.inventoryerp.kernel.common.BusinessZone.get();
+        Instant due = java.time.LocalDate.now(zone).plusDays(days).atTime(9, 0).atZone(zone).toInstant();
+        String owner = blank(str(deal.get("ownerId"))) ? user() : str(deal.get("ownerId"));
+        db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, \"dealId\", \"partnerId\", \"dueAt\","
+                + " status, completed, \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\") VALUES (?, ?,"
+                + " ?::\"ActivityType\", ?, ?, ?, ?, 'todo'::\"TaskStatus\", false, ?, ?, " + NOW + ", " + NOW + ")",
+                CrmDb.newId(), org(), type, title, deal.get("id"), deal.get("partnerId"), SqlRows.ts(due), owner, user());
     }
 
     private void stageActivity(Map<String, Object> deal, String from, String to) {
