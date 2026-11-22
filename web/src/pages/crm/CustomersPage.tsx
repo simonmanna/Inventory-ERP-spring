@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Building2, CalendarPlus, FileText, Plus, Users } from 'lucide-react';
+import { AlertTriangle, Building2, CalendarPlus, FileText, Merge, Plus, Users } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ import { canWriteQuotes, crmApi, quoteUi, useCategoryOptions, useCrmMutation, us
 import { DealStatusPill, ErrorState, KpiCard, QuoteStatusPill, typeLabel } from './crm-ui';
 import { OpportunityDialog, ScheduleDialog } from './crm-dialogs';
 import { CustomerDepositsList } from '@/pages/sales/CustomerDepositsPage';
+import { CustomerMergeDialog } from './customer-merge';
 
 /** Customer directory with pipeline, revenue and receivables per customer (ADR-S010). */
 export function CustomersPage() {
@@ -109,7 +110,8 @@ export function CustomerDetailPage() {
   const canQuote = useAuthStore((s) => canWriteQuotes(s.hasPermission));
   const canActivity = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.activityWrite));
   const canDeposits = useAuthStore((s) => s.hasPermission(PERMISSIONS.payment.read));
-  const [dialog, setDialog] = useState<'opp' | 'activity' | null>(null);
+  const canMerge = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.configure));
+  const [dialog, setDialog] = useState<'opp' | 'activity' | 'merge' | null>(null);
   if (isLoading) return <Skeleton className="h-96 w-full" />;
   if (isError) return <ErrorState message={tx('Could not load this customer.')} onRetry={() => refetch()} />;
   if (!data) return <p className="text-sm text-muted-foreground">{tx('Customer not found.')}</p>;
@@ -129,6 +131,7 @@ export function CustomerDetailPage() {
           {canQuote && <Button variant="secondary" onClick={() => navigate(`${quoteUi()}/new?partnerId=${p.id}&partnerName=${encodeURIComponent(p.name)}`)}><FileText className="mr-1 h-4 w-4" />{tx('New quotation')}</Button>}
           {canActivity && <Button variant="outline" onClick={() => setDialog('activity')}><CalendarPlus className="mr-1 h-4 w-4" />{tx('Activity')}</Button>}
           <Button variant="outline" asChild><Link to={`/customers/${p.id}`}>{tx('Edit contact')}</Link></Button>
+          {canMerge && <Button variant="outline" title={tx('Merge a duplicate customer into this one')} onClick={() => setDialog('merge')}><Merge className="mr-1 h-4 w-4" />{tx('Merge duplicate')}</Button>}
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -161,6 +164,7 @@ export function CustomerDetailPage() {
       <OpportunityDialog open={dialog === 'opp'} onOpenChange={(v) => !v && setDialog(null)} kind="opportunity" initial={null}
         onSaved={(o) => navigate(`/crm/opportunities/${o.id}`)} defaults={{ partnerId: p.id, partnerName: p.name }} />
       <ScheduleDialog open={dialog === 'activity'} onOpenChange={(v) => !v && setDialog(null)} partnerId={p.id} />
+      <CustomerMergeDialog partnerId={p.id} partnerName={p.name} open={dialog === 'merge'} onOpenChange={(v) => !v && setDialog(null)} />
     </div>
   );
 }

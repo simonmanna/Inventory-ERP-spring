@@ -10,7 +10,7 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { localDateTimeInput } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import {
-  crmApi, useCrmLookups, useCrmMutation, useDuplicates, usePartnerOptions, type DealKind, type Opportunity, type PlannedType,
+  FORECAST_LABEL, crmApi, useCrmLookups, useCrmMutation, useDuplicates, usePartnerOptions, type DealKind, type Opportunity, type PlannedType,
 } from '@/features/crm/suite-api';
 import { Link } from 'react-router-dom';
 import { AlertTriangle } from 'lucide-react';
@@ -84,6 +84,7 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
       country: initial?.country ?? '',
       notes: initial?.notes ?? '',
       probability: initial?.probabilityOverride != null ? String(initial.probabilityOverride) : '',
+      forecastCategory: initial?.forecastCategory ?? '',
     });
     setPriority(initial?.priority ?? 0);
     setTagIds(initial?.tagIds ?? []);
@@ -112,6 +113,7 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
     if (f.ownerId || initial) body.ownerId = f.ownerId || null;
     if (kind === 'opportunity' && f.stageId) body.stageId = f.stageId;
     if (initial) body.probability = f.probability === '' ? null : Number(f.probability);
+    if (kind === 'opportunity') body.forecastCategory = f.forecastCategory || null;
     if (initial) return crmApi.update({ id: initial.id, kind: initial.kind, ...body });
     return kind === 'lead' ? crmApi.createLead(body) : crmApi.createOpportunity(body);
   });
@@ -164,6 +166,12 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
               <Input type="number" min={0} max={100} value={f.probability ?? ''} onChange={set('probability')} />
             </Field>
           )}
+          {kind === 'opportunity' && (
+            <Field label={tx('Forecast')} hint={tx('Your call for the forecast report')}>
+              <OptionalSelect value={f.forecastCategory ?? ''} onChange={(v) => setF((s) => ({ ...s, forecastCategory: v }))}
+                options={(['commit', 'best_case', 'pipeline', 'omitted'] as const).map((k) => ({ value: k, label: FORECAST_LABEL[k] }))} placeholder={tx('Pipeline')} noneLabel={tx('Pipeline')} />
+            </Field>
+          )}
           <Field label={tx('Salesperson')}>
             <OptionalSelect value={f.ownerId ?? ''} onChange={(v) => setF((s) => ({ ...s, ownerId: v }))} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={initial ? tx('Unassigned') : tx('Automatic / me')} noneLabel={initial ? tx('Unassigned') : tx('Automatic / me')} />
           </Field>
@@ -206,6 +214,7 @@ export function LostDialog({ open, onOpenChange, id, kind, onDone }: { open: boo
   const { data: lk } = useCrmLookups();
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
+  const [competitor, setCompetitor] = useState('');
   const m = useCrmMutation(crmApi.lost);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -215,11 +224,16 @@ export function LostDialog({ open, onOpenChange, id, kind, onDone }: { open: boo
           <Field label={tx('Lost reason')}>
             <OptionalSelect value={reason} onChange={setReason} options={(lk?.lostReasons ?? []).filter((r) => r.isActive).map((r) => ({ value: r.id, label: r.name }))} placeholder={tx('Choose a reason')} noneLabel={tx('Not recorded')} />
           </Field>
+          {(lk?.competitors ?? []).some((c) => c.isActive) && (
+            <Field label={tx('Lost to competitor')}>
+              <OptionalSelect value={competitor} onChange={setCompetitor} options={(lk?.competitors ?? []).filter((c) => c.isActive).map((c) => ({ value: c.id, label: c.name }))} placeholder={tx('Unknown / none')} noneLabel={tx('Unknown / none')} />
+            </Field>
+          )}
           <Field label={tx('Closing note')}><Textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tx('Cancel')}</Button>
-          <Button variant="destructive" disabled={m.isPending} onClick={() => m.mutate({ id, kind, lostReasonId: reason || undefined, lostNote: note || undefined }, {
+          <Button variant="destructive" disabled={m.isPending} onClick={() => m.mutate({ id, kind, lostReasonId: reason || undefined, lostNote: note || undefined, competitorId: competitor || undefined }, {
             onSuccess: () => { toast.success(tx('Marked as lost')); onOpenChange(false); onDone?.(); },
             onError: (e) => toast.error(apiErrorMessage(e, tx('Could not mark as lost'))),
           })}>{tx('Mark lost')}</Button>

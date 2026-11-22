@@ -103,7 +103,7 @@ public class CrmConfigService {
     public Map<String, Object> lookups() {
         ensureDefaults();
         return Obj.of("stages", stages(), "teams", teams(), "tags", tags(), "sources", sources(true),
-                "lostReasons", lostReasons(true), "users", users(), "settings", settings());
+                "lostReasons", lostReasons(true), "competitors", competitors(), "users", users(), "settings", settings());
     }
 
     /** Active users of the organization (salespeople pickers). */
@@ -368,6 +368,12 @@ public class CrmConfigService {
     public List<Map<String, Object>> sources(boolean all) {
         return db.rows("SELECT * FROM \"CrmSource\" WHERE \"organizationId\" = ?" + (all ? "" : " AND \"isActive\"")
                 + " ORDER BY name", org());
+    }
+
+    /** Competitors a lost deal can be recorded against (CRM enhancements T3b). */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> competitors() {
+        return db.rows("SELECT * FROM \"CrmCompetitor\" WHERE \"organizationId\" = ? ORDER BY name", org());
     }
 
     @Transactional(readOnly = true)

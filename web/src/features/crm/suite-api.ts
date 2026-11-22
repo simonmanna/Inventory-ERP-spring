@@ -75,6 +75,7 @@ export interface CrmLookups {
   tags: Tag[];
   sources: Lookup[];
   lostReasons: Lookup[];
+  competitors?: Lookup[];
   users: CrmUserRef[];
   settings: CrmSettings;
 }
@@ -124,7 +125,32 @@ export interface Opportunity {
   rotting: boolean;
   weightedAmount: number;
   nextActivity: NextActivity | null;
+  competitorId?: string | null;
+  forecastCategory?: ForecastCategory | null;
 }
+
+/** CRM enhancements T3b. */
+export type ForecastCategory = 'pipeline' | 'best_case' | 'commit' | 'omitted';
+export const FORECAST_LABEL: Record<ForecastCategory, string> = {
+  commit: tx('Commit'), best_case: tx('Best case'), pipeline: tx('Pipeline'), omitted: tx('Omitted'),
+};
+export interface DealLine {
+  id?: string;
+  productId: string | null;
+  variantId?: string | null;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  discountPercent: number;
+  lineTotal?: number;
+  productName?: string | null;
+  productCode?: string | null;
+  variantName?: string | null;
+  taxId?: string | null;
+  taxInclusive?: boolean | null;
+}
+export interface DealContact { contactId: string; role: string | null; name: string | null; email: string | null; phone: string | null; position: string | null; partnerId: string | null; partnerName: string | null }
+export interface EmailTemplate { id: string; name: string; subject: string; body: string; isActive: boolean; updatedAt: string }
 
 export interface PartnerLite {
   id: string;
@@ -164,6 +190,8 @@ export interface OpportunityDetail extends Opportunity {
   quotations: Array<{ id: string; number: string; status: QuoteStatus; total: number; currencyCode: string; issueDate: string; validUntil: string | null }>;
   plannedActivities: PlannedActivity[];
   stageDurations: Array<{ stageId: string; seconds: number }>;
+  lines?: DealLine[];
+  contacts?: DealContact[];
 }
 
 export interface TimelineItem {
@@ -458,7 +486,7 @@ export const crmApi = {
   move: async ({ id, stageId, index }: { id: string; stageId: string; index?: number }) =>
     (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/move`, { stageId, index })).data,
   won: async (id: string) => (await api.post<OpportunityDetail>(`/crm/opportunities/${id}/won`)).data,
-  lost: async ({ id, kind, ...body }: { id: string; kind?: string | null; lostReasonId?: string; lostNote?: string }) =>
+  lost: async ({ id, kind, ...body }: { id: string; kind?: string | null; lostReasonId?: string; lostNote?: string; competitorId?: string }) =>
     (await api.post<OpportunityDetail>(`${dealBase(kind)}/${id}/lost`, body)).data,
   reopen: async (r: DealRef) => { const { id, kind } = refOf(r); return (await api.post<OpportunityDetail>(`${dealBase(kind)}/${id}/reopen`)).data; },
   convert: async ({ id, ...body }: { id: string } & Record<string, unknown>) =>
@@ -480,9 +508,9 @@ export const crmApi = {
   saveTeam: async ({ id, ...body }: Partial<Team> & { id?: string }) =>
     (id ? await api.patch<Team>(`/crm/config/teams/${id}`, body) : await api.post<Team>('/crm/config/teams', body)).data,
   deleteTeam: async (id: string) => (await api.delete(`/crm/config/teams/${id}`)).data,
-  saveLookup: async ({ kind, id, ...body }: { kind: 'tags' | 'sources' | 'lost-reasons'; id?: string; name?: string; color?: string; isActive?: boolean }) =>
+  saveLookup: async ({ kind, id, ...body }: { kind: 'tags' | 'sources' | 'lost-reasons' | 'competitors'; id?: string; name?: string; color?: string; isActive?: boolean }) =>
     (id ? await api.patch(`/crm/config/${kind}/${id}`, body) : await api.post(`/crm/config/${kind}`, body)).data,
-  deleteLookup: async ({ kind, id }: { kind: 'tags' | 'sources' | 'lost-reasons'; id: string }) => (await api.delete(`/crm/config/${kind}/${id}`)).data,
+  deleteLookup: async ({ kind, id }: { kind: 'tags' | 'sources' | 'lost-reasons' | 'competitors'; id: string }) => (await api.delete(`/crm/config/${kind}/${id}`)).data,
   updateSettings: async (body: Partial<CrmSettings>) => (await api.put<CrmSettings>('/crm/config/settings', body)).data,
 
   saveFilter: async (body: { scope: string; name: string; filters: Record<string, string>; shared?: boolean }) => (await api.post<SavedFilter>('/crm/saved-filters', body)).data,
@@ -594,7 +622,9 @@ export interface CrmReport {
   byCountry: Breakdown[];
   lostReasons: Array<{ key: string | null; label: string; count: number; amount: number }>;
   trend: Array<{ month: string; created: number; won: number; wonValue: number }>;
-  forecast: Array<{ month: string; count: number; amount: number; weighted: number }>;
+  forecast: Array<{ month: string; count: number; amount: number; weighted: number; commit?: number; bestCase?: number }>;
+  forecastCategories?: Array<{ key: ForecastCategory; count: number; amount: number }>;
+  lostCompetitors?: Array<{ key: string | null; label: string; count: number; amount: number }>;
   timeInStage: Array<{ key: string; label: string; avgDays: number; samples: number }>;
   quotations: { count: number; value: number; acceptanceRate: number; byStatus: Array<{ key: QuoteStatus; count: number; value: number }> };
   activities: { byType: Array<{ key: string; done: number }>; overdue: number };
