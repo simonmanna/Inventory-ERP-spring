@@ -7,6 +7,7 @@ import com.poscafe.pos.data.local.entity.*
 import com.poscafe.pos.data.remote.PushOp
 import com.poscafe.pos.data.remote.PushRequest
 import com.poscafe.pos.data.remote.SyncApi
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,10 +26,13 @@ import javax.inject.Singleton
  * us). Rows with deletedAt are tombstones → local delete. MenuItem arrives as
  * a full aggregate: children are wiped + re-inserted per item.
  *
- * PUSH: the op queue drains FIFO in one batch. Results:
+ * PUSH: the op queue drains in device order. Results (ADR-S083 S1, protocol 2):
  *   applied/replayed → mark pushed, store invoice mapping + final numbers
- *   failed           → mark failed locally (visible in sync screen); the
- *                      server has dead-lettered it — never re-pushed blindly.
+ *   failed, retryable → stays queued under the SAME opId, re-sent after a backoff
+ *                      (parked for a person after [MAX_AUTO_RETRIES])
+ *   failed, definitive → marked failed (the server dead-lettered it); never re-sent.
+ *                      A person discards it or resubmits a correction: a NEW op with
+ *                      a new opId and sequence and `supersedesOpId` — an opId is never re-minted.
  */
 @Singleton
 class SyncRepository @Inject constructor(
@@ -53,7 +57,19 @@ class SyncRepository @Inject constructor(
         try {
             block()
         } catch (e: HttpException) {
+            if (e.code() == 426) {
+                // ADR-S083 S8: this app's protocol is too old for the server's pull. The push before it still ran.
+                config.setSyncProblem(PROBLEM_UPGRADE)
+                throw UpgradeRequiredException()
+            }
             if (e.code() == 401 && config.isEnrolled && db.syncStateDao().get()?.lastPullAt != null) {
+                val message = runCatching { e.response()?.errorBody()?.string() }.getOrNull().orEmpty()
+                if (message.contains("expired", ignoreCase = true)) {
+                    // ADR-S083 C4: an expired token is not a revocation. Nothing is wiped; queued work still
+                    // pushes (the server holds it for a supervisor) and the till is re-enrolled to pull again.
+                    config.setSyncProblem(PROBLEM_TOKEN_EXPIRED)
+                    throw DeviceTokenExpiredException()
+                }
                 onRevoked()
                 throw DeviceRevokedException()
             }
@@ -132,20 +148,54 @@ class SyncRepository @Inject constructor(
     }
 
     /**
-     * Requeues rejected ops ([opId] null = all). The server locks an op's
-     * idempotency key after any failure, so resending with the same key only
-     * ever gets 409 "needs recovery". When the first rejection was definitive
-     * (4xx — the server says nothing was committed and a new key is safe) the
-     * op goes out under a fresh key; anything else keeps its key, as the
-     * server requires for possibly-committed work.
+     * Re-sends ops the server said may run again ([opId] null = all) under the SAME opId (ADR-S083 S1). A definitive
+     * rejection is never re-sent: see [resubmitRejected].
      */
     suspend fun retryRejected(opId: String? = null) = lock.withLock {
         val dao = db.opQueueDao()
         for (op in dao.failedNowList()) {
             if (opId != null && op.opId != opId) continue
-            if (op.rejectedStatus != null) dao.requeueWithNewKey(op.opId, UUID.randomUUID().toString())
-            else dao.retry(op.opId)
+            if (op.retryable) dao.retryRetryable(op.opId)
         }
+    }
+
+    /**
+     * A manager resubmits a definitively rejected op after fixing its cause (a permission granted, a shift opened,
+     * stock received, …). ADR-S083 S1: this is a correction — a NEW op with its own opId and the next device
+     * sequence, the same payload, and `supersedesOpId` naming the rejected one, which the server then closes as
+     * resolved. The rejected op stays here as 'superseded'. The local sale/refund/expense row keeps its id
+     * ([OpQueueEntity.rowId]), so the correction's result lands on it.
+     * @return the new op's id, or null when [opId] is not (or no longer) a definitive rejection.
+     */
+    suspend fun resubmitRejected(opId: String, approverName: String): String? = lock.withLock {
+        val dao = db.opQueueDao()
+        val op = dao.byId(opId)?.takeIf { it.status == "failed" && !it.retryable } ?: return@withLock null
+        val newId = UUID.randomUUID().toString()
+        db.withTransaction {
+            if (dao.supersede(opId, "Corrected by $approverName as $newId — ${op.lastError ?: "rejected"}") == 0) {
+                return@withTransaction
+            }
+            dao.enqueueNext { seq ->
+                OpQueueEntity(
+                    opId = newId,
+                    deviceSeq = seq,
+                    type = op.type,
+                    actorUserId = op.actorUserId,
+                    occurredAt = op.occurredAt,
+                    payloadJson = op.payloadJson,
+                    status = "queued",
+                    attempts = 0,
+                    lastError = null,
+                    supersedesOpId = op.wireOpId ?: op.opId,
+                    rowId = op.rowId ?: op.opId,
+                )
+            }
+        }
+        val rowKey = op.rowId ?: op.opId
+        db.saleDao().markSync(rowKey, "queued", null, null, null)
+        db.refundDao().markSync(rowKey, "queued", null, null)
+        db.expenseDao().markSync(rowKey, "queued", null)
+        newId
     }
 
     /**
@@ -160,13 +210,14 @@ class SyncRepository @Inject constructor(
         val op = dao.unpushed().firstOrNull { it.opId == opId && it.status == "failed" } ?: return@withLock false
         val note = "Discarded by $approverName — ${op.lastError ?: "rejected"}"
         if (dao.discard(opId, note) == 0) return@withLock false
-        db.saleDao().markSync(opId, "discarded", null, null, note)
-        db.refundDao().markSync(opId, "discarded", null, note)
-        db.messageDao().markState(opId, "failed", note)
-        db.expenseDao().markSync(opId, "discarded", note)
-        db.purchaseDao().markSync(opId, "discarded")
+        val row = op.rowId ?: opId
+        db.saleDao().markSync(row, "discarded", null, null, note)
+        db.refundDao().markSync(row, "discarded", null, note)
+        db.messageDao().markState(row, "failed", note)
+        db.expenseDao().markSync(row, "discarded", note)
+        db.purchaseDao().markSync(row, "discarded")
         // Phase I6: the device mirror of a stock op / restock / kitchen void the server never took.
-        db.inventoryDao().deleteForOp(opId)
+        db.inventoryDao().deleteForOp(row)
         true
     }
 
@@ -188,6 +239,13 @@ class SyncRepository @Inject constructor(
         val state = db.syncStateDao().get()
         val cursor = if (fullResync) null else state?.cursor
         val res = api.pull(cursor = cursor)
+        // ADR-S083 (protocol 2): the rotated token is stored before anything else, so a crash while applying rows
+        // cannot leave the device holding only the replaced token (which the server honours for 24 h).
+        res.deviceToken?.let { config.storeRotatedToken(it, res.deviceTokenExpiresAt) }
+        res.serverId?.let { config.serverId = it }
+        res.offlinePolicy?.let {
+            config.applyOfflinePolicy(it.offlineWindowHours, it.idleTimeoutMinutes, it.pinMaxAttempts, it.pinLockoutMinutes)
+        }
 
         res.data["menuCategories"]?.let { applyCategories(it) }
         res.data["taxes"]?.let { applyTaxes(it) }
@@ -223,6 +281,8 @@ class SyncRepository @Inject constructor(
             ),
         )
         if (fullResync) config.catalogUnitsVersion = CATALOG_UNITS_VERSION
+        config.setSyncProblem(null)
+        config.lastPullAt = System.currentTimeMillis()
         // The scale the server rounds tax to, so the till prices a sale to the server's total.
         res.currency?.let { config.taxScale = it.decimalPlaces ?: -1 }
         CartEngine.taxScale = config.taxScale
@@ -270,19 +330,24 @@ class SyncRepository @Inject constructor(
     private suspend fun pushLocked(): Int {
         ensureCatalogUnits()
         val deviceId = config.deviceId ?: error("Device not enrolled")
-        val ops = resolveSyncedSessions(db.opQueueDao().nextBatch())
+        renumberAfterRestore()
+        val ops = resolveSyncedSessions(dueBatch(System.currentTimeMillis()))
         if (ops.isEmpty()) return 0
+        // Recorded before sending: a batch that reaches the server but loses its answer still used these numbers.
+        config.seqHighWater = maxOf(config.seqHighWater, ops.maxOf { it.deviceSeq })
 
         val request = PushRequest(
             deviceId = deviceId,
             ops = ops.map { op ->
                 PushOp(
+                    // An op an older build re-keyed keeps the key the server knows; nothing is re-keyed any more.
                     opId = op.wireOpId ?: op.opId,
                     deviceSeq = op.deviceSeq,
                     type = op.type,
                     actorUserId = op.actorUserId,
                     occurredAt = Instant.ofEpochMilli(op.occurredAt).toString(),
                     payload = Json.parseToJsonElement(op.payloadJson),
+                    supersedesOpId = op.supersedesOpId,
                 )
             },
         )
@@ -291,30 +356,41 @@ class SyncRepository @Inject constructor(
         val response = api.push(batchId = UUID.randomUUID().toString(), body = request)
 
         // Results name ops by the key that went over the wire.
-        val localIds = ops.associate { (it.wireOpId ?: it.opId) to it.opId }
+        val byWire = ops.associateBy { it.wireOpId ?: it.opId }
+        val now = System.currentTimeMillis()
         var unresolved = 0
-        for (wireResult in response.results) {
-            val result = wireResult.copy(opId = localIds[wireResult.opId] ?: wireResult.opId)
+        for (result in response.results) {
+            val op = byWire[result.opId] ?: continue
+            val row = op.rowId ?: op.opId
             when (result.status) {
                 "applied", "replayed" -> {
-                    db.opQueueDao().mark(result.opId, "pushed", null)
-                    applyMapping(result.opId, result.mapping, result.finalNumbers)
+                    db.opQueueDao().mark(op.opId, "pushed", null)
+                    applyMapping(row, result.mapping, result.finalNumbers)
                 }
                 else -> {
                     unresolved += 1
-                    db.opQueueDao().markFailed(
-                        result.opId, result.error,
-                        result.httpStatus.takeIf { it in DEFINITIVE_REJECTIONS },
-                    )
-                    // The opId belongs to exactly one of these tables; the other
-                    // updates are harmless no-ops (WHERE id = opId matches none).
-                    db.saleDao().markSync(result.opId, "failed", null, null, result.error)
-                    db.refundDao().markSync(result.opId, "failed", null, result.error)
+                    if (isRetryable(result)) {
+                        if (op.attempts + 1 < MAX_AUTO_RETRIES) {
+                            // ADR-S083 S1: the same opId goes again after a backoff; nothing is marked failed yet.
+                            db.opQueueDao().markRetry(op.opId, result.error, result.code, now + backoffMs(op.attempts))
+                            continue
+                        }
+                        db.opQueueDao().markParked(op.opId, result.error, result.code)
+                    } else {
+                        db.opQueueDao().markFailed(
+                            op.opId, result.error,
+                            result.httpStatus.takeIf { it in DEFINITIVE_REJECTIONS }, result.code,
+                        )
+                    }
+                    // The row id belongs to exactly one of these tables; the other
+                    // updates are harmless no-ops (WHERE id = row matches none).
+                    db.saleDao().markSync(row, "failed", null, null, result.error)
+                    db.refundDao().markSync(row, "failed", null, result.error)
                     // message.send opId == the message id; flip its bubble to failed.
-                    db.messageDao().markState(result.opId, "failed", result.error)
+                    db.messageDao().markState(row, "failed", result.error)
                     // Expense / purchase ops are keyed by their row id too.
-                    db.expenseDao().markSync(result.opId, "failed", result.error)
-                    db.purchaseDao().markSync(result.opId, "failed")
+                    db.expenseDao().markSync(row, "failed", result.error)
+                    db.purchaseDao().markSync(row, "failed")
                 }
             }
         }
@@ -328,6 +404,32 @@ class SyncRepository @Inject constructor(
             ),
         )
         return unresolved
+    }
+
+    /**
+     * Queued ops in device order, up to [BATCH] — stopping at the first op still waiting out a retry backoff, so a
+     * later op never overtakes an earlier one it may depend on (the web engine's rule).
+     */
+    private suspend fun dueBatch(now: Long): List<OpQueueEntity> =
+        db.opQueueDao().queuedInOrder(BATCH).takeWhile { it.nextAttemptAt <= now }
+
+    /**
+     * A restored backup brings back an older op queue, whose next sequence numbers the server may already have seen
+     * under other opIds (it refuses those: SEQ_REUSED). Once after a restore ([DeviceConfig.renumberPending]), ops
+     * not yet answered by the server are renumbered above anything sent, in their order. Safe: a sequence is not
+     * part of an op's payload hash, and an op the server already has is matched by its opId first.
+     */
+    private suspend fun renumberAfterRestore() {
+        if (!config.renumberPending) return
+        val dao = db.opQueueDao()
+        val floor = maxOf(config.seqHighWater, dao.maxSentSeq())
+        val unsent = dao.unsentQueued()
+        if (unsent.any { it.deviceSeq <= floor }) {
+            db.withTransaction {
+                unsent.forEachIndexed { i, op -> dao.setSeq(op.opId, floor + 1 + i) }
+            }
+        }
+        config.renumberPending = false
     }
 
     /**
@@ -508,7 +610,13 @@ class SyncRepository @Inject constructor(
         for (row in rows) {
             val id = row.str("id") ?: continue
             if (id in pending) continue
-            // MenuItem "delete" is isAvailable=false — still an upsert.
+            // A soft-deleted item arrives as a tombstone on protocol 2: it and its children leave the till. (The menu
+            // manager's own "delete" is isAvailable=false — still an upsert.)
+            if (row.deleted()) {
+                dao.clearVariants(id); dao.clearItemModifierJoins(id); dao.clearItemAccompanimentJoins(id)
+                dao.deleteItem(id)
+                continue
+            }
             dao.upsertItems(
                 listOf(
                     MenuItemEntity(
@@ -618,10 +726,13 @@ class SyncRepository @Inject constructor(
         // device-local isActive/sortOrder (the server has no such columns).
         val pending = pendingIds("cashRegister.upsert", "cashRegister.delete")
         val existing = db.registerDao().all().associateBy { it.id }
+        // Protocol 2 tombstones: a deleted register leaves the till.
+        rows.filter { it.deleted() }.mapNotNull { it.str("id") }.filterNot { it in pending }
+            .forEach { db.registerDao().delete(it) }
         db.registerDao().upsertAll(
             rows.mapNotNull { row ->
                 val id = row.str("id") ?: return@mapNotNull null
-                if (id in pending) return@mapNotNull null
+                if (id in pending || row.deleted()) return@mapNotNull null
                 val local = existing[id]
                 CashRegisterEntity(
                     id = id,
@@ -1062,6 +1173,24 @@ class SyncRepository @Inject constructor(
          */
         private val DEFINITIVE_REJECTIONS = setOf(400, 403, 404, 422, 424)
 
+        /** Automatic re-sends of a retryable op before it is parked for a person (who may retry, same opId). */
+        const val MAX_AUTO_RETRIES = 8
+        private const val BATCH = 100
+
+        const val PROBLEM_TOKEN_EXPIRED = "token_expired"
+        const val PROBLEM_UPGRADE = "upgrade_required"
+
+        /** 2 s, 4 s, 8 s … capped at 5 minutes. */
+        fun backoffMs(attempts: Int): Long = minOf(300_000L, 2_000L shl attempts.coerceIn(0, 8))
+
+        /**
+         * ADR-S083 S1: the server says so (`retryable`). An older server sends no flag: 5xx, 424 (a dependency) and
+         * 409 "still being processed" are transient there too.
+         */
+        fun isRetryable(r: com.poscafe.pos.data.remote.PushOpResult): Boolean = r.retryable
+            ?: (r.httpStatus >= 500 || r.httpStatus == 424 || r.httpStatus == 429 ||
+                (r.httpStatus == 409 && r.error?.contains("being processed") == true))
+
         /** Payload keys that reference a cash session by id (see [resolveSyncedSessions]). */
         private val SESSION_REF_KEYS = setOf("cashSessionId", "sessionId")
 
@@ -1079,6 +1208,16 @@ class SyncRepository @Inject constructor(
         )
     }
 }
+
+/** ADR-S083 C4: the token expired. Nothing was wiped; the till must be re-enrolled to pull again. */
+class DeviceTokenExpiredException : IllegalStateException(
+    "This device's token expired. Queued work is still sent and held for a supervisor; re-enroll the device to sync again.",
+)
+
+/** ADR-S083 S8 (426): the server no longer serves this app's sync protocol on pull. Pushes still go through. */
+class UpgradeRequiredException : IllegalStateException(
+    "The server needs a newer version of this app to sync. Queued sales are still sent; update the app.",
+)
 
 /** The server no longer accepts this device's token; the device has been wiped back to setup. */
 class DeviceRevokedException : IllegalStateException("This device was revoked in the back office")

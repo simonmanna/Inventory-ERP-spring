@@ -20,8 +20,8 @@ import javax.inject.Singleton
  * MAX_FAILED_ATTEMPTS=10 so a stolen tablet cannot brute-force PINs through
  * the UI (the DB itself is SQLCipher-encrypted against offline extraction).
  * Failure counts live in [DeviceConfig], so force-stopping the app does not
- * reset them; from [BACKOFF_AFTER] failures each attempt waits out a doubling
- * delay. A PIN reset in the back office (a new hash on the next sync) clears it.
+ * reset them; from the org's `pinMaxAttempts` failures (ADR-S083 C4, default 5)
+ * each attempt waits out `pinLockoutMinutes`, doubling. A PIN reset in the back office (a new hash on the next sync) clears it.
  */
 @Singleton
 class AuthRepository @Inject constructor(
@@ -53,7 +53,9 @@ class AuthRepository @Inject constructor(
         if (attempts >= MAX_FAILED_ATTEMPTS) {
             return@runCatching Result.failure(IllegalStateException("Account locked after $MAX_FAILED_ATTEMPTS failed attempts — ask a manager to reset your PIN in the back office"))
         }
-        val waitMs = backoffMs(attempts) - (System.currentTimeMillis() - config.lastPinFailureAt(userId))
+        val policy = config.offlinePolicy
+        val waitMs = backoffMs(attempts, policy.pinMaxAttempts, policy.pinLockoutMinutes) -
+            (System.currentTimeMillis() - config.lastPinFailureAt(userId))
         if (waitMs > 0) {
             return@runCatching Result.failure(IllegalStateException("Too many wrong PINs — try again in ${(waitMs + 999) / 1000}s"))
         }
@@ -71,6 +73,7 @@ class AuthRepository @Inject constructor(
                 permissions = user.permissions.split(',').filter { it.isNotBlank() }.toSet(),
             )
             current = session
+            touch()
             Result.success(session)
         } else {
             config.recordPinFailure(userId)
@@ -79,6 +82,7 @@ class AuthRepository @Inject constructor(
     }.fold({ it }, { failure -> Result.failure(failure) })
 
     fun logout() {
+        lastActivityAt = 0L
         current = null
     }
 
@@ -183,13 +187,29 @@ class AuthRepository @Inject constructor(
         BCrypt.verifyer().verify(pin.toCharArray(), hash.toCharArray()).verified
     }
 
-    companion object {
-        const val MAX_FAILED_ATTEMPTS = 10
-        const val BACKOFF_AFTER = 3
-        private const val BACKOFF_BASE_MS = 15_000L
+    // ---- ADR-S083 C4: the signed-in session expires after the org's idle timeout ----
 
-        /** 0 below [BACKOFF_AFTER] failures, then 15 s, 30 s, 60 s, … */
-        fun backoffMs(failures: Int): Long =
-            if (failures < BACKOFF_AFTER) 0L else BACKOFF_BASE_MS shl (failures - BACKOFF_AFTER).coerceAtMost(6)
+    @Volatile private var lastActivityAt: Long = 0L
+
+    /** Any touch on the screen. */
+    fun touch(now: Long = System.currentTimeMillis()) { lastActivityAt = now }
+
+    /** Whether the signed-in user has been idle past `offlinePolicy.idleTimeoutMinutes` (0 or less = never). */
+    fun idleExpired(now: Long = System.currentTimeMillis()): Boolean {
+        val minutes = config.offlinePolicy.idleTimeoutMinutes
+        return current != null && minutes > 0 && lastActivityAt > 0 && now - lastActivityAt > minutes * 60_000L
+    }
+
+    companion object {
+        /** Permanent lock (server parity: MAX_FAILED_ATTEMPTS); only a PIN reset in the back office clears it. */
+        const val MAX_FAILED_ATTEMPTS = 10
+
+        /**
+         * ADR-S083 C4 PIN throttling from the org's offline policy: no wait below [maxAttempts] failures, then
+         * [lockoutMinutes], doubling with each further failure (capped at ×64). Defaults 5 failures / 5 minutes.
+         */
+        fun backoffMs(failures: Int, maxAttempts: Int = 5, lockoutMinutes: Int = 5): Long =
+            if (failures < maxAttempts.coerceAtLeast(1)) 0L
+            else (lockoutMinutes.coerceAtLeast(1) * 60_000L) shl (failures - maxAttempts.coerceAtLeast(1)).coerceAtMost(6)
     }
 }

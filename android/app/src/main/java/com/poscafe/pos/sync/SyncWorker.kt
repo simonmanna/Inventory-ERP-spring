@@ -14,6 +14,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.poscafe.pos.data.DeviceConfig
 import com.poscafe.pos.data.repo.DeviceRevokedException
+import com.poscafe.pos.data.repo.DeviceTokenExpiredException
+import com.poscafe.pos.data.repo.UpgradeRequiredException
 import com.poscafe.pos.data.repo.SyncRepository
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -43,6 +45,13 @@ class SyncWorker @AssistedInject constructor(
             sync.pushAll()
             sync.pull()
             status.lastError.value = null
+            Result.success()
+        } catch (e: DeviceTokenExpiredException) {
+            // ADR-S083 C4: the push before the pull still ran; nothing to gain by retrying until re-enrolment.
+            status.lastError.value = e.message
+            Result.success()
+        } catch (e: UpgradeRequiredException) {
+            status.lastError.value = e.message
             Result.success()
         } catch (e: DeviceRevokedException) {
             // Already wiped back to setup; nothing left to retry.

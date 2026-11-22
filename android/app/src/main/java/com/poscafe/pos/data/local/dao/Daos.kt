@@ -509,22 +509,53 @@ interface OpQueueDao {
     @Query("UPDATE op_queue SET status = :status, attempts = attempts + 1, lastError = :error WHERE opId = :opId")
     suspend fun mark(opId: String, status: String, error: String?)
 
-    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE opId = :opId")
+    /** Requeue an op under the SAME opId (a person resends their own message). */
+    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL, nextAttemptAt = 0 WHERE opId = :opId")
     suspend fun retry(opId: String)
 
-    /** Rejected ops keep the first definitive status; later 409 "needs recovery" answers don't erase it. */
-    @Query("UPDATE op_queue SET status = 'failed', attempts = attempts + 1, lastError = :error, rejectedStatus = COALESCE(rejectedStatus, :definitiveStatus) WHERE opId = :opId")
-    suspend fun markFailed(opId: String, error: String?, definitiveStatus: Int?)
+    /**
+     * A definitive rejection (ADR-S083 S1): the server dead-lettered it and the same opId will never succeed. Kept
+     * as 'failed' until a person discards it or resubmits a correction. Keeps the first definitive status.
+     */
+    @Query("UPDATE op_queue SET status = 'failed', attempts = attempts + 1, lastError = :error, failureCode = :code, retryable = 0, rejectedStatus = COALESCE(rejectedStatus, :definitiveStatus) WHERE opId = :opId")
+    suspend fun markFailed(opId: String, error: String?, definitiveStatus: Int?, code: String? = null)
 
-    /** Requeue under a fresh idempotency key; the old key stays locked on the server. */
-    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL, wireOpId = :wireOpId, rejectedStatus = NULL WHERE opId = :opId AND status = 'failed'")
-    suspend fun requeueWithNewKey(opId: String, wireOpId: String)
+    /** A retryable answer: stays queued under the same opId and goes again after [nextAttemptAt]. */
+    @Query("UPDATE op_queue SET status = 'queued', attempts = attempts + 1, lastError = :error, failureCode = :code, retryable = 1, nextAttemptAt = :nextAttemptAt WHERE opId = :opId")
+    suspend fun markRetry(opId: String, error: String?, code: String?, nextAttemptAt: Long)
+
+    /** Retryable but past its automatic attempts: parked as failed; a person may retry it (same opId). */
+    @Query("UPDATE op_queue SET status = 'failed', attempts = attempts + 1, lastError = :error, failureCode = :code, retryable = 1 WHERE opId = :opId")
+    suspend fun markParked(opId: String, error: String?, code: String?)
+
+    /** Manual retry of a retryable op, under the same opId (never a new key). */
+    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL, nextAttemptAt = 0 WHERE opId = :opId AND status = 'failed' AND retryable = 1")
+    suspend fun retryRetryable(opId: String): Int
+
+    /** The rejected op a person corrected: it stays as the audit trail, linked from the new op. */
+    @Query("UPDATE op_queue SET status = 'superseded', lastError = :note WHERE opId = :opId AND status = 'failed'")
+    suspend fun supersede(opId: String, note: String): Int
+
+    /** Queued ops in device order (backoff is applied by the caller, which keeps that order). */
+    @Query("SELECT * FROM op_queue WHERE status = 'queued' ORDER BY deviceSeq LIMIT :limit")
+    suspend fun queuedInOrder(limit: Int = 500): List<OpQueueEntity>
+
+    /** Highest sequence of an op that may have reached the server. */
+    @Query("SELECT COALESCE(MAX(deviceSeq), 0) FROM op_queue WHERE attempts > 0 OR status <> 'queued'")
+    suspend fun maxSentSeq(): Long
+
+    @Query("SELECT * FROM op_queue WHERE status = 'queued' AND attempts = 0 ORDER BY deviceSeq")
+    suspend fun unsentQueued(): List<OpQueueEntity>
+
+    @Query("UPDATE op_queue SET deviceSeq = :seq WHERE opId = :opId")
+    suspend fun setSeq(opId: String, seq: Long)
+
+    @Query("SELECT * FROM op_queue WHERE opId = :opId")
+    suspend fun byId(opId: String): OpQueueEntity?
 
     @Query("SELECT * FROM op_queue WHERE status = 'failed'")
     suspend fun failedNowList(): List<OpQueueEntity>
 
-    @Query("UPDATE op_queue SET status = 'queued', lastError = NULL WHERE status = 'failed'")
-    suspend fun retryAllFailed()
 
     @Query("SELECT * FROM op_queue WHERE type = :type AND status IN ('queued', 'failed') AND occurredAt < :before")
     suspend fun unpushedOfTypeBefore(type: String, before: Long): List<OpQueueEntity>

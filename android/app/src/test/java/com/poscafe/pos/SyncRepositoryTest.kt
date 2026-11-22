@@ -16,6 +16,9 @@ import com.poscafe.pos.data.remote.PushRequest
 import com.poscafe.pos.data.remote.PushResponse
 import com.poscafe.pos.data.remote.SyncApi
 import com.poscafe.pos.data.repo.DeviceRevokedException
+import com.poscafe.pos.data.repo.DeviceTokenExpiredException
+import com.poscafe.pos.data.repo.UpgradeRequiredException
+import com.poscafe.pos.data.remote.OfflinePolicyView
 import com.poscafe.pos.data.repo.SyncRepository
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -29,6 +32,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -266,30 +270,186 @@ class SyncRepositoryTest {
         assertFalse("second discard is a no-op", repo().discardRejected("sale-x", "Admin User"))
     }
 
-    @Test
-    fun `a definitive rejection is resent under a new key, a pending one keeps its key`() = runBlocking {
-        queueOp("bad-input", 1)
-        queueOp("maybe-committed", 2)
-        api.reject["bad-input"] = 400 to "A session is already open on register MAIN-REG"
-        api.reject["maybe-committed"] = 500 to "boom"
-        repo().pushAll()
-        assertEquals(2, db.opQueueDao().failedNow())
+    // ---------------- ADR-S083 O6: protocol 2 ----------------
 
-        // From now on the server answers both old keys with 409 "needs recovery".
-        api.reject["bad-input"] = 409 to "This operation needs recovery"
-        api.reject["maybe-committed"] = 409 to "This operation needs recovery"
+    private suspend fun failedSale(id: String) = db.saleDao().insert(
+        LocalSaleEntity(
+            id = id, occurredAt = 0L, actorUserId = "u1", cashSessionLocalId = "shift", tableId = null,
+            orderType = "takeaway", provisionalNumber = "D2-000009", subtotal = 10.0, taxAmount = 0.0,
+            total = 10.0, tendersJson = "[]", linesJson = "[]", syncStatus = "queued",
+            serverInvoiceId = null, finalInvoiceNumber = null, lastError = null,
+        ),
+    )
+
+    @Test
+    fun `a definitive rejection is never re-sent or re-keyed - a correction is a new op that supersedes it`() = runBlocking {
+        failedSale("sale-1")
+        db.opQueueDao().enqueue(OpQueueEntity("sale-1", 1, "sale.checkout", "u1", 0L, "{\"a\":1}", "queued", 0, null))
+        api.reject["sale-1"] = Rejection(422, "No open shift", "BUSINESS_RULE", false)
+        repo().pushAll()
+        val failed = db.opQueueDao().byId("sale-1")!!
+        assertEquals("failed", failed.status)
+        assertEquals("BUSINESS_RULE", failed.failureCode)
+        assertFalse(failed.retryable)
+
         repo().retryRejected()
         repo().pushAll()
+        assertEquals("a definitive rejection is not retried", 1, api.pushed.size)
 
-        val keys = api.pushed.last().ops.map { it.opId }
-        assertTrue("400 goes out under a new key: $keys", keys.none { it == "bad-input" } && keys.size == 2)
-        assertTrue("500 keeps its key", "maybe-committed" in keys)
-        assertEquals(listOf("maybe-committed"), db.opQueueDao().unpushed().map { it.opId })
+        val newId = repo().resubmitRejected("sale-1", "Admin User")!!
+        assertEquals("superseded", db.opQueueDao().byId("sale-1")!!.status)
+        val correction = db.opQueueDao().byId(newId)!!
+        assertEquals("sale-1", correction.supersedesOpId)
+        assertEquals("sale-1", correction.rowId)
+        assertEquals(2L, correction.deviceSeq)
+        assertEquals("{\"a\":1}", correction.payloadJson)
+        assertNull("only once", repo().resubmitRejected("sale-1", "Admin User"))
 
-        // The 409 did not turn the 500 into a definitive rejection: it keeps its key again.
-        repo().retryRejected("maybe-committed")
+        api.reject.clear()
+        api.finalNumber = "INV-0042"
         repo().pushAll()
-        assertEquals("maybe-committed", api.pushed.last().ops.single().opId)
+        val wire = api.pushed.last().ops.single()
+        assertEquals(newId, wire.opId)
+        assertEquals("sale-1", wire.supersedesOpId)
+        assertEquals(2L, wire.deviceSeq)
+        val sale = db.saleDao().byId("sale-1")!!
+        assertEquals("the correction's result lands on the original sale", "pushed", sale.syncStatus)
+        assertEquals("INV-0042", sale.finalInvoiceNumber)
+    }
+
+    @Test
+    fun `a retryable failure stays queued under the same opId, waits out a backoff and holds later ops back`() = runBlocking {
+        queueOp("flaky", 1)
+        queueOp("after", 2)
+        api.reject["flaky"] = Rejection(500, "boom", "SERVER_ERROR", true)
+        repo().pushAll()
+        val op = db.opQueueDao().byId("flaky")!!
+        assertEquals("queued", op.status)
+        assertTrue(op.retryable)
+        assertTrue(op.nextAttemptAt > System.currentTimeMillis())
+        // "after" was in the same batch and applied; a new op queued now must wait behind "flaky".
+        queueOp("later", 3)
+        repo().pushAll()
+        assertEquals("nothing is sent while the earliest op backs off", 1, api.pushed.size)
+
+        db.openHelper.writableDatabase.execSQL("UPDATE op_queue SET nextAttemptAt = 0")
+        api.reject.clear()
+        repo().pushAll()
+        assertEquals(listOf("flaky", "later"), api.pushed.last().ops.map { it.opId })
+        assertTrue(db.opQueueDao().unpushed().isEmpty())
+    }
+
+    @Test
+    fun `a retryable failure is parked after the automatic attempts and a person retries it with the same opId`() = runBlocking {
+        queueOp("dep", 1)
+        api.reject["dep"] = Rejection(424, "Depends on failed op", "DEPENDENCY_FAILED", true)
+        var rounds = 0
+        while (db.opQueueDao().byId("dep")!!.status == "queued" && rounds < 20) {
+            db.openHelper.writableDatabase.execSQL("UPDATE op_queue SET nextAttemptAt = 0")
+            repo().pushAll()
+            rounds++
+        }
+        assertEquals(SyncRepository.MAX_AUTO_RETRIES, api.pushed.size)
+        val parked = db.opQueueDao().byId("dep")!!
+        assertEquals("failed", parked.status)
+        assertTrue(parked.retryable)
+
+        api.reject.clear()
+        repo().retryRejected("dep")
+        repo().pushAll()
+        assertEquals("dep", api.pushed.last().ops.single().opId)
+        assertTrue(db.opQueueDao().unpushed().isEmpty())
+    }
+
+    @Test
+    fun `an op re-keyed by an older build keeps going out under the key the server knows`() = runBlocking {
+        db.opQueueDao().enqueue(
+            OpQueueEntity("local", 1, "sale.checkout", "u1", 0L, "{}", "queued", 1, null, wireOpId = "wire-2"),
+        )
+        repo().pushAll()
+        assertEquals("wire-2", api.pushed.last().ops.single().opId)
+        assertEquals("pushed", db.opQueueDao().byId("local")!!.status)
+    }
+
+    @Test
+    fun `after a backup restore unsent ops are renumbered above every sequence the server saw`() = runBlocking {
+        config.seqHighWater = 40
+        db.opQueueDao().enqueue(OpQueueEntity("old-sent", 7, "sale.checkout", "u1", 0L, "{}", "pushed", 1, null))
+        queueOp("a", 8)
+        queueOp("b", 9)
+        config.renumberPending = true
+        repo().pushAll()
+        assertEquals(listOf(41L, 42L), api.pushed.last().ops.map { it.deviceSeq })
+        assertEquals(listOf("a", "b"), api.pushed.last().ops.map { it.opId })
+        assertFalse(config.renumberPending)
+        assertEquals(42L, config.seqHighWater)
+    }
+
+    @Test
+    fun `an expired token stops the pull without wiping anything, and the push before it still runs`() = runBlocking {
+        seedStaff()
+        markSyncedBefore()
+        queueOp("sale", 1)
+        repo().pushAll()
+        api.pullStatus = 401
+        api.errorBody = "{\"message\":\"This device's token expired — register the device again\"}"
+        try {
+            repo().pull()
+            fail("expected DeviceTokenExpiredException")
+        } catch (_: DeviceTokenExpiredException) {
+        }
+        assertEquals(SyncRepository.PROBLEM_TOKEN_EXPIRED, config.syncProblem.value)
+        assertTrue("enrollment kept", config.isEnrolled)
+        assertFalse(config.revoked.value)
+        assertEquals("staff kept", 1, db.staffDao().all().size)
+        assertEquals(1, api.pushed.size)
+    }
+
+    @Test
+    fun `426 on pull asks for an upgrade and wipes nothing`() = runBlocking {
+        seedStaff()
+        markSyncedBefore()
+        api.pullStatus = 426
+        try {
+            repo().pull()
+            fail("expected UpgradeRequiredException")
+        } catch (_: UpgradeRequiredException) {
+        }
+        assertEquals(SyncRepository.PROBLEM_UPGRADE, config.syncProblem.value)
+        assertTrue(config.isEnrolled)
+        api.pullStatus = 200
+        repo().pull()
+        assertNull("a good pull clears it", config.syncProblem.value)
+    }
+
+    @Test
+    fun `a protocol-2 pull rotates the token first and applies the offline policy`() = runBlocking {
+        api.pullExtra = { it.copy(deviceToken = "rotated", deviceTokenExpiresAt = "2026-12-21T00:00:00.000Z",
+            serverId = "hq", offlinePolicy = OfflinePolicyView(24, 10, 3, 2)) }
+        repo().pull()
+        assertEquals("rotated", config.deviceToken)
+        assertEquals("2026-12-21T00:00:00.000Z", config.deviceTokenExpiresAt)
+        assertEquals("hq", config.serverId)
+        assertEquals(DeviceConfig.OfflinePolicy(24, 10, 3, 2), config.offlinePolicy)
+        assertNotNull(config.lastPullAt)
+    }
+
+    @Test
+    fun `protocol-2 tombstones remove menu items and registers`() = runBlocking {
+        api.pullData = mapOf(
+            "menuItems" to listOf(buildJsonObject { put("id", "m1"); put("name", "Tea"); put("basePrice", 2) }),
+            "cashRegisters" to listOf(buildJsonObject { put("id", "r1"); put("code", "MAIN") }),
+        )
+        repo().pull()
+        assertNotNull(db.menuDao().itemById("m1"))
+        assertEquals(1, db.registerDao().all().size)
+        api.pullData = mapOf(
+            "menuItems" to listOf(buildJsonObject { put("id", "m1"); put("deletedAt", "2026-11-21T00:00:00Z") }),
+            "cashRegisters" to listOf(buildJsonObject { put("id", "r1"); put("deletedAt", "2026-11-21T00:00:00Z") }),
+        )
+        repo().pull()
+        assertNull(db.menuDao().itemById("m1"))
+        assertEquals(0, db.registerDao().all().size)
     }
 
     @Test
@@ -311,21 +471,26 @@ class SyncRepositoryTest {
         var status = 200
         var pushDelayMs = 0L
         var pullData: Map<String, List<JsonObject>> = emptyMap()
-        /** Wire op id -> (httpStatus, error) to reject instead of applying. */
-        val reject = mutableMapOf<String, Pair<Int, String>>()
+        /** Wire op id -> rejection to answer instead of applying. */
+        val reject = mutableMapOf<String, Rejection>()
+        var pullStatus = 200
+        var errorBody = "{}"
+        var finalNumber: String? = null
+        var pullExtra: (PullResponse) -> PullResponse = { it }
         var lastPullCursor: String? = "unset"
         val pushed = mutableListOf<PushRequest>()
         private val active = AtomicInteger()
         val maxConcurrent = AtomicInteger()
 
-        private fun failIfNeeded() {
-            if (status != 200) throw HttpException(Response.error<Any>(status, "{}".toResponseBody()))
+        private fun failIfNeeded(code: Int = status) {
+            if (code != 200) throw HttpException(Response.error<Any>(code, errorBody.toResponseBody()))
         }
 
         override suspend fun pull(cursor: String?, scopes: String?): PullResponse {
             failIfNeeded()
+            failIfNeeded(pullStatus)
             lastPullCursor = cursor
-            return PullResponse(data = pullData, cursor = "c2", serverTime = "2026-10-25T00:00:00Z")
+            return pullExtra(PullResponse(data = pullData, cursor = "c2", serverTime = "2026-10-25T00:00:00Z"))
         }
 
         override suspend fun push(batchId: String, body: PushRequest): PushResponse {
@@ -339,8 +504,8 @@ class SyncRepositoryTest {
             }
             return PushResponse(
                 results = body.ops.map { op ->
-                    reject[op.opId]?.let { (status, error) -> PushOpResult(op.opId, "failed", status, error) }
-                        ?: PushOpResult(op.opId, "applied", 201)
+                    reject[op.opId]?.let { r -> PushOpResult(op.opId, "failed", r.status, r.error, code = r.code, retryable = r.retryable) }
+                        ?: PushOpResult(op.opId, "applied", 201, finalNumbers = finalNumber?.let { mapOf("invoiceNumber" to it) })
                 },
                 lastPushSeq = body.ops.maxOf { it.deviceSeq },
                 serverTime = "2026-10-25T00:00:00Z",
@@ -348,3 +513,5 @@ class SyncRepositoryTest {
         }
     }
 }
+
+data class Rejection(val status: Int, val error: String, val code: String? = null, val retryable: Boolean? = null)

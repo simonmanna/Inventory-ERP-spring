@@ -68,7 +68,9 @@ class MessagingRepository @Inject constructor(
     suspend fun retry(messageId: String, actorUserId: String) {
         val m = messages.byId(messageId) ?: return
         messages.markState(messageId, "sending", null)
-        enqueueSend(messageId, m.conversationId, m.body, actorUserId, m.occurredAt)
+        // ADR-S083 S1: the op keeps its id and sequence; a second row with the same opId would not even insert.
+        if (opQueue.byId(messageId) != null) opQueue.retry(messageId)
+        else enqueueSend(messageId, m.conversationId, m.body, actorUserId, m.occurredAt)
     }
 
     suspend fun markRead(conversationId: String, userId: String, lastMessageId: String?) {

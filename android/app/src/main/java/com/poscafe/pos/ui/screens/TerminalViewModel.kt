@@ -116,6 +116,13 @@ class TerminalViewModel @Inject constructor(
     cashRefs: com.poscafe.pos.data.local.dao.CashInventoryDao,
 ) : ViewModel() {
 
+    /** ADR-S083 C4: why new sales are refused right now (offline window lapsed, clock wound back), else null. */
+    private val offlineBlock: String?
+        get() = if (!config.isEnrolled) null
+        else com.poscafe.pos.data.OfflineWindow.block(
+            config.lastPullAt, config.offlinePolicy.offlineWindowHours, System.currentTimeMillis(),
+        )
+
     /** The org's configured payment tiles (same as the web terminal); empty until synced. */
     val paymentMethods: StateFlow<List<com.poscafe.pos.data.local.entity.PaymentMethodEntity>> =
         cashRefs.paymentMethodsFlow().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -705,6 +712,9 @@ class TerminalViewModel @Inject constructor(
                 ?: "This system is read-only: the licence has expired. Ask the manager."
             return
         }
+        // ADR-S083 C4: past the offline window (or with the clock wound back) the till stops new sales until it
+        // syncs; the queue still pushes. Read synchronously from the last pull time the sync status keeps.
+        offlineBlock?.let { error = it; return }
         val billLines = cart.filter { it.lineId in lineIds }
         if (billLines.isEmpty()) return
         val table = if (isRetailMode.value) null else selectedTable.value

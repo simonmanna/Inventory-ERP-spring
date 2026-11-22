@@ -133,6 +133,24 @@ class SyncViewModel @Inject constructor(
             discardBusy = false
         }
     }
+
+    /**
+     * ADR-S083 S1: manager-approved correction of a definitive rejection, after its cause was fixed — a new op that
+     * supersedes the rejected one (never the same op under a new key). [onDone] runs only on success.
+     */
+    fun resubmit(opId: String, pin: String, onDone: () -> Unit) = viewModelScope.launch {
+        discardBusy = true; discardError = null
+        try {
+            val mgr = auth.verifyPinFor(pin, DISCARD_PERMISSION).getOrNull()
+            when {
+                mgr == null -> discardError = "Manager PIN with $DISCARD_PERMISSION required"
+                sync.resubmitRejected(opId, mgr.displayName) == null -> discardError = "This op is no longer rejected"
+                else -> { onDone(); SyncWorker.syncNow(context) }
+            }
+        } finally {
+            discardBusy = false
+        }
+    }
 }
 
 @Composable
@@ -141,6 +159,7 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
     val s by vm.snapshot.collectAsStateWithLifecycle()
     val failed by vm.failed.collectAsStateWithLifecycle()
     var discarding by remember { mutableStateOf<OpQueueEntity?>(null) }
+    var resubmitting by remember { mutableStateOf<OpQueueEntity?>(null) }
     discarding?.let { op ->
         DiscardDialog(
             op = op,
@@ -148,6 +167,16 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
             error = vm.discardError,
             onConfirm = { pin -> vm.discard(op.opId, pin) { discarding = null } },
             onDismiss = { discarding = null; vm.clearDiscardError() },
+        )
+    }
+    resubmitting?.let { op ->
+        DiscardDialog(
+            op = op,
+            busy = vm.discardBusy,
+            error = vm.discardError,
+            onConfirm = { pin -> vm.resubmit(op.opId, pin) { resubmitting = null } },
+            onDismiss = { resubmitting = null; vm.clearDiscardError() },
+            resubmit = true,
         )
     }
 
@@ -222,7 +251,7 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f),
                 )
-                if (failed.size > 1) {
+                if (failed.count { it.retryable } > 1) {
                     TextButton(onClick = { vm.retryAll() }) { Text("Retry all") }
                 }
             }
@@ -251,8 +280,17 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            failureHint(op)?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(onClick = { vm.retry(op.opId) }) { Text("Retry") }
+                                // ADR-S083 S1: only a retryable failure goes again under the same opId; a definitive
+                                // one is corrected by a new op (held ops wait for a supervisor in the back office).
+                                if (op.retryable) {
+                                    TextButton(onClick = { vm.retry(op.opId) }) { Text("Retry") }
+                                } else if (op.failureCode !in HELD_CODES) {
+                                    TextButton(onClick = { resubmitting = op }) { Text("Resubmit…") }
+                                }
                                 TextButton(onClick = { discarding = op }) {
                                     Text("Discard…", color = MaterialTheme.colorScheme.error)
                                 }
@@ -270,6 +308,17 @@ fun SyncScreen(onBack: () -> Unit, vm: SyncViewModel = hiltViewModel()) {
  * dead-letter copy; the till stops resending it. A sale must be re-rung if
  * the money was taken.
  */
+/** Codes whose ops a supervisor recovers in the back office (Sync dead letters), never the till. */
+private val HELD_CODES = setOf("DEVICE_REVOKED", "DEVICE_TOKEN_EXPIRED", "OPERATION_INCOMPLETE", "PARTIAL_COMMIT")
+
+private fun failureHint(op: OpQueueEntity): String? = when (op.failureCode) {
+    "DEVICE_REVOKED", "DEVICE_TOKEN_EXPIRED" -> "Held for a supervisor: recover it in the back office (Sync dead letters)."
+    "OPERATION_INCOMPLETE", "PARTIAL_COMMIT" -> "Partly recorded on the server: the back office reconciles it. Do not re-ring."
+    "SEQ_REUSED", "OP_ID_REUSED" -> "Duplicate of another op on this till. Discard it unless the back office says otherwise."
+    null -> null
+    else -> if (op.retryable) "Temporary problem (${op.failureCode}): retry when it is fixed." else null
+}
+
 @Composable
 private fun DiscardDialog(
     op: OpQueueEntity,
@@ -277,16 +326,22 @@ private fun DiscardDialog(
     error: String?,
     onConfirm: (pin: String) -> Unit,
     onDismiss: () -> Unit,
+    resubmit: Boolean = false,
 ) {
     var pin by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
-        title = { Text("Discard ${op.type}?") },
+        title = { Text(if (resubmit) "Resubmit ${op.type}?" else "Discard ${op.type}?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "The server rejected this and will not accept it again. Discarding stops the till " +
-                        "resending it and removes it from shift totals. Re-ring a sale if the money was taken.",
+                    if (resubmit) {
+                        "Fix the cause first (permission, open shift, stock, …). The till sends this again as a new " +
+                            "correction linked to the rejected one; the server checks every rule again."
+                    } else {
+                        "The server rejected this and will not accept it again. Discarding stops the till " +
+                            "resending it and removes it from shift totals. Re-ring a sale if the money was taken."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedTextField(
@@ -304,7 +359,7 @@ private fun DiscardDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(pin) }, enabled = !busy && pin.length >= 4) {
-                Text("Discard", color = MaterialTheme.colorScheme.error)
+                if (resubmit) Text("Resubmit") else Text("Discard", color = MaterialTheme.colorScheme.error)
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") } },

@@ -9,6 +9,10 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Query
 
+/** ADR-S083 S8: the protocol this app speaks; sent on every request. */
+const val SYNC_PROTOCOL_HEADER = "X-Sync-Protocol"
+const val SYNC_PROTOCOL = "2.0"
+
 /**
  * The device side of the P1 sync protocol (Spring `com.inventoryerp.sync`, `SyncController`).
  * Transport auth = X-Device-Token (added by an OkHttp interceptor).
@@ -45,6 +49,23 @@ data class PullResponse(
     val license: LicenseView? = null,
     /** Phase I6: organisation currency; its decimal places are the server's tax rounding scale. */
     val currency: CurrencyView? = null,
+    // ADR-S083 (protocol 2, O6). All optional: an older server sends none of them.
+    val protocolVersion: String? = null,
+    val serverId: String? = null,
+    /** The rotated device token (protocol 2). Stored before the rows are applied; the old one stays valid 24 h. */
+    val deviceToken: String? = null,
+    val deviceTokenExpiresAt: String? = null,
+    val deviceBranchId: String? = null,
+    val offlinePolicy: OfflinePolicyView? = null,
+)
+
+/** ADR-S083 C4: the user offline-session rules the device enforces (org setting, a device policy may only lower it). */
+@Serializable
+data class OfflinePolicyView(
+    val offlineWindowHours: Int? = null,
+    val idleTimeoutMinutes: Int? = null,
+    val pinMaxAttempts: Int? = null,
+    val pinLockoutMinutes: Int? = null,
 )
 
 @Serializable
@@ -79,6 +100,8 @@ data class PushOp(
     val actorUserId: String,
     val occurredAt: String,
     val payload: JsonElement,
+    /** ADR-S083 S1: a person's correction of a rejected op names it; omitted otherwise. */
+    val supersedesOpId: String? = null,
 )
 
 @Serializable
@@ -95,6 +118,9 @@ data class PushOpResult(
     val error: String? = null,
     val mapping: Map<String, String>? = null,
     val finalNumbers: Map<String, String>? = null,
+    /** ADR-S083 S1 failure code (BUSINESS_RULE, SERVER_ERROR, DEVICE_REVOKED, …) and whether the same opId may retry. */
+    val code: String? = null,
+    val retryable: Boolean? = null,
 )
 
 @Serializable

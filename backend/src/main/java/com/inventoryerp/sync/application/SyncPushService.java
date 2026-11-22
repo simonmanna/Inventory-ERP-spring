@@ -85,9 +85,18 @@ public class SyncPushService {
     }
 
     /** The authenticated device ({@code RequestDevice}). */
-    public record Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode) {
+    /**
+     * The pushing device. {@code strictSeq} (protocol 2+, ADR-S083 O6): the client never re-keys an op, so a device
+     * sequence number already used by another opId of this device is refused ({@code SEQ_REUSED}).
+     */
+    public record Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode,
+            boolean strictSeq) {
         public Device(String id, String organizationId, String branchId) {
-            this(id, organizationId, branchId, null, null);
+            this(id, organizationId, branchId, null, null, false);
+        }
+
+        public Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode) {
+            this(id, organizationId, branchId, cutoff, cutoffCode, false);
         }
     }
 
@@ -351,6 +360,17 @@ public class SyncPushService {
             afterApplied(device, op); // a dead letter left by a crash after commit is closed by the replay
             return success(op, true, entry.httpStatus() == null ? 201 : entry.httpStatus(), body);
         }
+        // ADR-S083 O6: a protocol-2 client mints one opId per deviceSeq and never re-keys a rejected op (a correction
+        // is a new op with a new sequence and supersedesOpId). The same sequence under another opId is a re-keyed or
+        // duplicated op: refused, never applied. Protocol-1 clients (older Android builds) still re-key, so not them.
+        if (device.strictSeq() && device.id() != null && seqUsedByAnotherOp(device, op)) {
+            String why = "Device sequence " + op.deviceSeq() + " was already used by another operation of this device;"
+                    + " a rejected operation is corrected with a new operation (supersedesOpId), never re-sent under a"
+                    + " new id";
+            deadLetter(device, op, why, 409, "SEQ_REUSED", false);
+            markFailed.run();
+            return failed(op, 409, why, "SEQ_REUSED", false);
+        }
         // No ledger row: nothing committed. A key an earlier attempt left pending is released once it is stale, so
         // the same opId runs again (never a new key); a fresh one is an attempt still in flight.
         Map<String, Object> pre = TenantContext.run(store, () -> {
@@ -455,6 +475,16 @@ public class SyncPushService {
     }
 
     /** Server-maintained sequence state: the highest deviceSeq applied for this device. */
+    /** Whether another opId of this device already reached the server (applied or dead-lettered) with this sequence. */
+    private boolean seqUsedByAnotherOp(Device device, Op op) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM \"SyncAppliedOp\" WHERE \"organizationId\" = ? AND \"deviceId\" = ?"
+                + " AND \"deviceSeq\" = ? AND \"opId\" <> ?) OR EXISTS (SELECT 1 FROM \"SyncOpDeadLetter\" WHERE"
+                + " \"organizationId\" = ? AND \"deviceId\" = ? AND \"deviceSeq\" = ? AND \"opId\" <> ?)")
+                .params(device.organizationId(), device.id(), op.deviceSeq(), op.opId(), device.organizationId(),
+                        device.id(), op.deviceSeq(), op.opId())
+                .query(Boolean.class).single();
+    }
+
     private void acceptSeq(Device device, Op op) {
         if (device.id() == null) {
             return;

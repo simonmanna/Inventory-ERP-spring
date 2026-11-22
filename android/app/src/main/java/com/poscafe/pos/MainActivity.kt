@@ -49,6 +49,16 @@ class MainActivity : ComponentActivity() {
                     // Revoked mid-shift (detected by a sync run) or re-enroll chosen: sign out and go to setup.
                     val revoked by config.revoked.collectAsState()
                     val setupRequested by config.setupRequested.collectAsState()
+                    // ADR-S083 C4: a signed-in cashier idle past the org's timeout signs in with their PIN again.
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            kotlinx.coroutines.delay(30_000)
+                            if (auth.idleExpired() && nav.currentDestination?.route !in setOf("pin", "setup")) {
+                                auth.logout()
+                                nav.navigate("pin") { popUpTo(0) { inclusive = true } }
+                            }
+                        }
+                    }
                     LaunchedEffect(revoked, setupRequested) {
                         if ((revoked || setupRequested) && nav.currentDestination?.route != "setup") {
                             auth.logout()
@@ -101,6 +111,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
+        auth.touch()
+        return super.dispatchTouchEvent(ev)
     }
 
     /** App foreground: push whatever was sold while backgrounded (no-op standalone). */

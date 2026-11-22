@@ -21,6 +21,8 @@ import retrofit2.Retrofit
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import com.poscafe.pos.data.remote.SYNC_PROTOCOL
+import com.poscafe.pos.data.remote.SYNC_PROTOCOL_HEADER
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -84,6 +86,8 @@ object AppModule {
 
             val builder = request.newBuilder().url(rebuilt)
             config.deviceToken?.let { builder.header("X-Device-Token", it) }
+            // ADR-S083 S8: protocol 2 — token rotation and tombstones on pull, strict device sequences on push.
+            builder.header(SYNC_PROTOCOL_HEADER, SYNC_PROTOCOL)
             return chain.proceed(builder.build())
         }
     }

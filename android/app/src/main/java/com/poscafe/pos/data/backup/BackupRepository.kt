@@ -224,6 +224,8 @@ class BackupRepository @Inject constructor(
             listOf("", "-wal", "-shm", "-journal").forEach { File(dbFile.path + it).delete() }
             check(fresh.renameTo(dbFile)) { "Could not replace the database." }
             file.delete()
+            // ADR-S083 O6: the restored op queue may hand out sequence numbers the server already saw.
+            config.renumberPending = true
             applyProfile(meta)
         }
     }
