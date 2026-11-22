@@ -59,6 +59,34 @@ class RateLimitInterceptorTest {
         assertThat(anon.getHeader("X-RateLimit-Limit")).isEqualTo("100");
     }
 
+    /** A public route keyed per form (CRM production-readiness P0-5). */
+    static class PublicForm {
+        @Throttle(limit = 2, ttlMs = 60_000, perPathVariable = "key")
+        public void submit() {}
+    }
+
+    @Test
+    @DisplayName("perPathVariable: an anonymous counter is per client address AND per form key")
+    void perPathVariable() throws Exception {
+        var limiter = new RateLimitInterceptor(true, 5);
+        HandlerMethod submit = new HandlerMethod(new PublicForm(), PublicForm.class.getMethod("submit"));
+        for (int i = 0; i < 2; i++) {
+            assertThat(limiter.preHandle(form("10.0.0.9", "lf_a"), new MockHttpServletResponse(), submit)).isTrue();
+        }
+        assertThatThrownBy(() -> limiter.preHandle(form("10.0.0.9", "lf_a"), new MockHttpServletResponse(), submit))
+                .isInstanceOf(ApiException.class);
+        // the same visitor on another form, and another visitor on the same form, still have their own budget
+        assertThat(limiter.preHandle(form("10.0.0.9", "lf_b"), new MockHttpServletResponse(), submit)).isTrue();
+        assertThat(limiter.preHandle(form("10.0.0.10", "lf_a"), new MockHttpServletResponse(), submit)).isTrue();
+    }
+
+    private static MockHttpServletRequest form(String ip, String key) {
+        var r = req(ip, null);
+        r.setAttribute(org.springframework.web.servlet.HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE,
+                java.util.Map.of("key", key));
+        return r;
+    }
+
     private static MockHttpServletRequest req(String ip, AuthUser user) {
         var r = new MockHttpServletRequest("POST", "/api/v1/auth/login");
         r.setRemoteAddr(ip);

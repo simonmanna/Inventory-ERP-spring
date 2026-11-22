@@ -180,11 +180,59 @@ public class CrmDb {
 
     // ------------------------------------------------------------------ value helpers
 
+    /**
+     * Decimal of a request or row value; blank = 0. A value that is not a number is a 400, never a 500
+     * (production-readiness fix P0-3).
+     */
     static BigDecimal dec(Object v) {
+        return dec(v, null);
+    }
+
+    /** {@link #dec(Object)} naming {@code field} in the 400 message. */
+    static BigDecimal dec(Object v, String field) {
         if (v == null || v.toString().isBlank()) {
             return BigDecimal.ZERO;
         }
-        return v instanceof BigDecimal b ? b : new BigDecimal(v.toString());
+        if (v instanceof BigDecimal b) {
+            return b;
+        }
+        if (v instanceof Boolean || v instanceof Map<?, ?> || v instanceof Collection<?>) {
+            throw notANumber(field, v);
+        }
+        try {
+            return new BigDecimal(v.toString().trim());
+        } catch (NumberFormatException e) {
+            throw notANumber(field, v);
+        }
+    }
+
+    /**
+     * Whole number of a request value (JSON number or numeric string); null stays null. Not a whole number = 400
+     * {@code "<field> must be an integer number"} (class-validator's {@code @IsInt} message).
+     */
+    static Integer intOf(Object v, String field) {
+        if (v == null || (v instanceof String s && s.isBlank())) {
+            return null;
+        }
+        BigDecimal d = v instanceof Number n && !(v instanceof BigDecimal) ? new BigDecimal(n.toString())
+                : v instanceof Boolean || v instanceof Map<?, ?> || v instanceof Collection<?> ? null : tryDec(v);
+        if (d == null || d.stripTrailingZeros().scale() > 0 || d.abs().compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0) {
+            throw ApiException.badRequest(field + " must be an integer number");
+        }
+        return d.intValueExact();
+    }
+
+    private static BigDecimal tryDec(Object v) {
+        try {
+            return new BigDecimal(v.toString().trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static ApiException notANumber(String field, Object v) {
+        return ApiException.badRequest(field == null ? "Invalid number: " + v
+                : field + " must be a number conforming to the specified constraints");
     }
 
     static BigDecimal decOrNull(Object v) {

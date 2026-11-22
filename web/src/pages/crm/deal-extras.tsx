@@ -181,7 +181,7 @@ export function EmailDialog({ o, open, onOpenChange }: { o: OpportunityDetail; o
       .catch(err(tx('Could not load the template')));
   }, [open, templateId, path, o.id]);
   useEffect(() => { if (!open) { setTemplateId(''); setTo(''); setSubject(''); setBody(''); } }, [open]);
-  const send = useCrmMutation(() => api.post<{ sentTo: string; delivered: boolean }>(`${path}/${o.id}/email`, { to, subject, body }));
+  const send = useCrmMutation(() => api.post<{ sentTo: string; delivered: boolean; status: 'sent' | 'retrying' | 'failed' | 'not_configured' | 'queued' }>(`${path}/${o.id}/email`, { to, subject, body }));
   const active = (templates.data ?? []).filter((t) => t.isActive);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -200,7 +200,14 @@ export function EmailDialog({ o, open, onOpenChange }: { o: OpportunityDetail; o
           {active.length === 0 && <Button variant="ghost" onClick={() => navigate('/crm/settings')}>{tx('Templates')}</Button>}
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tx('Cancel')}</Button>
           <Button disabled={!to || !subject.trim() || !body.trim() || send.isPending} onClick={() => send.mutate(undefined, {
-            onSuccess: (r) => { toast.success(r.data.delivered ? `${tx('Sent to')} ${r.data.sentTo}` : `${tx('Queued for')} ${r.data.sentTo}`); onOpenChange(false); },
+            onSuccess: (r) => {
+              const st = r.data.status;
+              if (st === 'sent') toast.success(`${tx('Sent to')} ${r.data.sentTo}`);
+              else if (st === 'not_configured') toast.error(tx('Not sent: outgoing email is not set up on this server. Ask your administrator to configure SMTP.'));
+              else if (st === 'failed') toast.error(`${tx('Not sent to')} ${r.data.sentTo}`);
+              else toast.warning(`${tx('Not sent yet; it will be retried automatically')}: ${r.data.sentTo}`);
+              onOpenChange(false);
+            },
             onError: err(tx('Could not send')),
           })}><Send className="mr-1.5 h-4 w-4" />{tx('Send')}</Button>
         </DialogFooter>

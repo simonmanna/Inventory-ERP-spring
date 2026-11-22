@@ -77,6 +77,23 @@ consumes `invoice.created`.
   - The web client no longer calls the legacy routes (old `features/crm/api.ts` and `deal-form.tsx` removed; the
     partner page's CRM tab uses `/crm/customers/:id`). Android has no CRM screens.
 
+- **CRM production-readiness fixes (2026-11-22, owner approved "P0 + P1"; see the section of that name)** — all on
+  Spring-native suite routes except where noted:
+  - Converting a quotation marks its open opportunity won even when the converter cannot see the deal (system side
+    effect). Before, the conversion rolled back with 404 "Opportunity not found".
+  - A non-numeric number in a CRM suite body or filter is a 400 naming the field, not a 500.
+  - A public quotation link is revoked by a revision or cancellation of the quotation. A repeated identical answer is
+    a 200 replay (a different answer is still 409).
+  - Website forms need the signed submit token `_t` from `GET /public/crm/forms/{key}`. Without it the answer is 400
+    "This form has expired; reload the page and try again". A token sent back within 2 s is dropped like the
+    honeypot. A rolling 24-hour cap per form and per organization answers 429.
+  - `POST /crm/{opportunities|leads}/{id}/email` returns `status` (`sent`, `retrying`, `failed`, `not_configured`)
+    and `activityId` next to `sentTo` and `delivered`. It never logs "Queued for" an email that was dropped.
+  - The quotation-email timeline entry says "Not sent to … (SMTP)" instead of "Queued for … (mail delivery not
+    confirmed)" when no SMTP is set up.
+  - Error bodies keep the Nest contract `{statusCode, message, error}` (docs/CONTRACT.md). A `code`/`details`
+    envelope, as the external review suggested, would change every client's error handling, so it was not added.
+
 Same as Nest, kept on purpose:
 
 - `PATCH /crm/deals/:id/stage` takes an untyped body (no DTO validation) — but see the deviation above: an unknown
@@ -263,6 +280,7 @@ or error message changed; the additions below are new behaviour.
 - Authorization matrix: 119 CRM routes. The sales routes are counted in `SalesOrderIT`. Tests:
   `CrmLeadFormQuoteLinkIT`.
 - Open point (ADR-S084): without `server.forward-headers-strategy`, anonymous throttling behind nginx shares one bucket.
+  Closed by the production-readiness fixes (P0-5): `native` is the default and public counters are per form / token.
 
 ## CRM enhancements T3b (2026-11-22, post-parity)
 
@@ -398,3 +416,54 @@ WHERE m.uid IS NOT NULL
   AND (e.id IS NULL OR NOT e."isActive" OR e."employmentStatus"::text NOT IN ('ACTIVE', 'PROBATION', 'ON_LEAVE'))
 ORDER BY t.name, u.email;
 ```
+
+## CRM production-readiness fixes (2026-11-22)
+
+An independent audit found the CRM was not production-ready. The owner approved fixing P0 + P1 before more features,
+and an external review added safeguards. This section covers PR A (P0, branch `fix/crm-prod-readiness`, V622; first numbered V606, renumbered when rebased after V621).
+Tests: `CrmProdReadinessIT`, plus the cases added to `CrmLeadFormQuoteLinkIT`, `CrmDealExtrasIT` and
+`RateLimitInterceptorTest`.
+
+- **P0-1, no organization-wide lock on reads.** `CrmConfigService.ensureDefaults` used to take
+  `SELECT … FOR UPDATE` on the org's single `CrmSettings` row on every list, kanban, report, dashboard and lookup.
+  - Now an unlocked `EXISTS` check returns at once for a seeded organization.
+  - Only first use seeds, under the lock with `ON CONFLICT DO NOTHING`. It runs inline in a write transaction, or
+    in its own transaction for read-only callers.
+  - `list`, `kanban`, `grouped`, `report` and `dashboard` are `readOnly`.
+  - Test: the routes answer while another transaction holds the row lock.
+- **P0-2, quote → order never rolls back on CRM visibility.** `QuotationOpportunityPort.markWonIfOpen(dealId,
+  number)` calls `CrmPipelineService.wonByQuotation`, which locks the deal inside the organization without the
+  salesperson visibility rule.
+  - It only marks an open opportunity won and returns nothing.
+  - The audit entry names the converter and the quotation (`via: quotation_conversion`).
+  - The convert route keeps its own permission, quotation visibility, row lock and idempotency.
+- **P0-3, bad numbers are 400.** `CrmDb.dec(v, field)` and `CrmDb.intOf(v, field)` turn non-numbers into 400
+  "<field> must be a number conforming to the specified constraints" / "<field> must be an integer number". They
+  are used for the filters `priority`/`priorityExact`, deal `amount`/`probability`/`priority`, stage `sequence`,
+  settings integers, targets and price rules. Legacy `/crm/deals` DTOs are typed, so Jackson already answered 400.
+- **P0-4, the quotation link is a commercial and legal boundary.**
+  - `SalesQuoteLink.revision` is set when the link is issued.
+  - `revise()` and `cancel()` revoke live links (audited).
+  - View, PDF and answer refuse a link whose revision is no longer current: 404 "This quotation is being updated;
+    ask us for a new link".
+  - Accept and decline lock the quotation, then the link (same order as revise), and store `decidedRevision`, an
+    immutable `decisionSnapshot` (header + lines as answered), `signerIp` (proxy-resolved) and `signerUserAgent`.
+  - A repeated identical answer is an idempotent 200. A different answer is 409.
+- **P0-5, public endpoint abuse.**
+  - `server.forward-headers-strategy=native` by default: only trusted proxies' `X-Forwarded-For` counts.
+  - `@Throttle(perPathVariable)` keys anonymous counters per client address and form key or token. This applies
+    to the lead form, quote link and ICS feed.
+  - Lead forms add a signed submit token: HMAC-SHA256 with a key derived from the server secret, bound to the
+    form, valid 24 h, minimum 2 s fill time.
+  - Lead forms have a rolling 24-hour cap per form (`CrmLeadForm.dailyLimit`, default 200, editable) and per
+    organization (`APP_CRM_WEB_LEAD_ORG_DAILY_LIMIT`, default 1000). Over the cap the answer is 429 and nothing is
+    stored.
+  - The honeypot and the origin allow-list are unchanged.
+- **P0-6, email outbox.** `CrmEmailService.send` writes the email activity (outcome `Sending`) and a
+  `CrmEmailOutbox` row in the request transaction.
+  - After commit `CrmEmailOutbox.deliver` makes one immediate attempt, and the answer reports the real status.
+  - The job `crm-email-outbox` (30 s, ShedLock) retries transport errors at 1 min, 5 min, 30 min and 2 h. After the
+    fifth failure the row is `failed`, the activity outcome becomes "Not sent: …" and the sender gets an in-app
+    notification (`crm.email.failed`).
+  - Without SMTP the row fails at once with "Outgoing email is not set up on this server (SMTP)".
+  - Rows survive restarts. Delivery is at-least-once.

@@ -129,7 +129,7 @@ public class CrmPricingService {
             d.put("kind", kind);
         }
         if (id == null || in.containsKey("value")) {
-            BigDecimal v = dec(in.get("value"));
+            BigDecimal v = dec(in.get("value"), "value");
             if (v.signum() < 0) {
                 throw ApiException.badRequest("value must not be less than 0");
             }
@@ -141,7 +141,7 @@ public class CrmPricingService {
             throw ApiException.badRequest("A discount cannot exceed 100%");
         }
         if (in.containsKey("minQuantity")) {
-            BigDecimal q = dec(in.get("minQuantity"));
+            BigDecimal q = dec(in.get("minQuantity"), "minQuantity");
             if (q.signum() < 0) {
                 throw ApiException.badRequest("minQuantity must not be less than 0");
             }

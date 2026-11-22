@@ -8,11 +8,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.HandlerMapping;
 
 /**
  * Port of Nest's {@code ThrottlerModule} ({@code default}: 100 / 60 s, {@code burst}: 600 / 10 min) with
@@ -20,7 +22,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
  * are multiplied by {@code THROTTLE_STAFF_MULTIPLIER} (5); anonymous traffic is tracked per IP. Counters
  * are per route, hits expire individually after the TTL (sliding window, like the Nest in-memory
  * storage), and an exceeded limit blocks the tracker for one TTL. Route overrides ({@link Throttle})
- * replace only {@code default} and are never multiplied.
+ * replace only {@code default} and are never multiplied; {@link Throttle#perPathVariable()} additionally scopes an
+ * anonymous counter to one public form key or link token. The client address is the proxy-resolved one
+ * ({@code server.forward-headers-strategy}).
  */
 @Component
 public class RateLimitInterceptor implements HandlerInterceptor {
@@ -61,6 +65,12 @@ public class RateLimitInterceptor implements HandlerInterceptor {
                 : request.getRemoteAddr();
         Throttle override = AccessGuardInterceptor.find(method, Throttle.class);
         String route = method.getBeanType().getName() + "-" + method.getMethod().getName();
+        if (auth == null && override != null && !override.perPathVariable().isEmpty()
+                && request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE) instanceof Map<?, ?> vars
+                && vars.get(override.perPathVariable()) instanceof String scope) {
+            // a public key / token: hash-free but bounded, the counter key never grows with the input
+            route = route + "-" + (scope.length() > 100 ? scope.substring(0, 100) : scope);
+        }
         for (Throttler t : new Throttler[] {DEFAULT, BURST}) {
             int limit = t == DEFAULT && override != null ? override.limit() : t.limit();
             long ttl = t == DEFAULT && override != null ? override.ttlMs() : t.ttlMs();

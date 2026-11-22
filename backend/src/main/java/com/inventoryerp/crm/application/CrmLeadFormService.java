@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,8 +33,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Website lead forms (CRM enhancements T3a, ADR-S084). A form has a public key that sits in the website's HTML (it is
  * not a secret) and turns each submission into a lead with the form's source, team, tags and owner (or the normal
- * auto-assignment). Abuse controls: per-address rate limit on the route, a honeypot field, an optional origin
- * allow-list, field length limits, and switching the form off or rotating its key.
+ * auto-assignment). Abuse controls: a per-address and per-form rate limit on the route (client address resolved
+ * behind the trusted proxy), a signed submit token from the form page (submissions without one are refused; one sent
+ * back faster than a person can type is dropped like a bot), a honeypot field, a rolling 24-hour cap per form
+ * ({@code dailyLimit}) and per organization ({@code app.crm.web-lead-org-daily-limit}), an optional origin allow-list,
+ * field length limits, and switching the form off or rotating its key (production-readiness fix P0-5).
  */
 @Service
 public class CrmLeadFormService {
@@ -56,15 +61,27 @@ public class CrmLeadFormService {
     private final NotificationsService notifications;
     private final AuditService audit;
     private final TransactionTemplate tx;
+    private final byte[] tokenKey;
+    private final int orgDailyLimit;
+
+    /** Submit token field and its rules: a person needs a few seconds to fill the form; a page is good for a day. */
+    public static final String TOKEN = "_t";
+    static final long MIN_FILL_MS = 2_000;
+    static final long TOKEN_TTL_MS = 24 * 3_600_000L;
 
     public CrmLeadFormService(CrmDb db, CrmConfigService config, CrmPipelineService pipeline,
-            NotificationsService notifications, AuditService audit, PlatformTransactionManager transactions) {
+            NotificationsService notifications, AuditService audit, PlatformTransactionManager transactions,
+            @Value("${app.jwt.access-secret}") String secret,
+            @Value("${app.crm.web-lead-org-daily-limit:1000}") int orgDailyLimit) {
         this.db = db;
         this.config = config;
         this.pipeline = pipeline;
         this.notifications = notifications;
         this.audit = audit;
         this.tx = new TransactionTemplate(transactions);
+        // a key of its own, derived from the server secret: a form token is never valid as anything else
+        this.tokenKey = sha256Bytes("crm-lead-form-token:" + secret);
+        this.orgDailyLimit = orgDailyLimit;
     }
 
     // ------------------------------------------------------------------ settings
@@ -166,6 +183,13 @@ public class CrmLeadFormService {
         if (in.containsKey("isActive")) {
             d.put("isActive", Boolean.TRUE.equals(in.get("isActive")));
         }
+        if (in.containsKey("dailyLimit")) {
+            Integer limit = CrmDb.intOf(in.get("dailyLimit"), "dailyLimit");
+            if (limit == null || limit < 1 || limit > 100_000) {
+                throw ApiException.badRequest("dailyLimit must be between 1 and 100000");
+            }
+            d.put("dailyLimit", limit);
+        }
         return d;
     }
 
@@ -190,7 +214,8 @@ public class CrmLeadFormService {
     /** What the hosted form page shows: the form and company name and the thank-you text. */
     public Map<String, Object> publicInfo(String key) {
         Map<String, Object> f = resolve(key);
-        return Obj.of("name", f.get("name"), "company", f.get("company"), "thankYouMessage", thanks(f));
+        return Obj.of("name", f.get("name"), "company", f.get("company"), "thankYouMessage", thanks(f), "submitToken",
+                issueToken(str(f.get("id")), System.currentTimeMillis()));
     }
 
     /**
@@ -208,6 +233,13 @@ public class CrmLeadFormService {
         Map<String, Object> ok = Obj.of("ok", true, "message", thanks(f));
         if (!blank(str(in.get(HONEYPOT)))) {
             return ok;
+        }
+        long age = tokenAge(str(f.get("id")), in.get(TOKEN), System.currentTimeMillis());
+        if (age < 0 || age > TOKEN_TTL_MS) {
+            throw ApiException.badRequest("This form has expired; reload the page and try again");
+        }
+        if (age < MIN_FILL_MS) {
+            return ok; // filled faster than a person can: answered like the honeypot, nothing is stored
         }
         String name = text(in, "name", 120);
         String email = text(in, "email", 254);
@@ -233,6 +265,7 @@ public class CrmLeadFormService {
         // no signed-in user: the lead is created by the form; view_all lets the create read back what it wrote
         store.setPermissions(List.of(Permissions.CRM__DEAL_VIEW_ALL));
         TenantContext.run(store, () -> tx.execute(s -> {
+            withinDailyLimits(formId);
             Map<String, Object> lead = new LinkedHashMap<>();
             lead.put("kind", "lead");
             String title = subject != null ? subject : "Website enquiry: " + (company != null ? company : name);
@@ -268,6 +301,76 @@ public class CrmLeadFormService {
             return made;
         }));
         return ok;
+    }
+
+    /**
+     * Count this submission in the form's rolling 24-hour window and refuse it (429) past the form's
+     * {@code dailyLimit} or the organization-wide cap. Runs in the submission's transaction, so a refused or failed
+     * submission is not counted.
+     */
+    private void withinDailyLimits(String formId) {
+        Map<String, Object> w = db.row("UPDATE \"CrmLeadForm\" SET \"windowCount\" = CASE WHEN \"windowStart\" IS NULL OR"
+                + " \"windowStart\" < " + CrmDb.NOW + " - interval '1 day' THEN 1 ELSE \"windowCount\" + 1 END,"
+                + " \"windowStart\" = CASE WHEN \"windowStart\" IS NULL OR \"windowStart\" < " + CrmDb.NOW
+                + " - interval '1 day' THEN " + CrmDb.NOW + " ELSE \"windowStart\" END WHERE id = ? AND"
+                + " \"organizationId\" = ? RETURNING \"windowCount\", \"dailyLimit\"", formId, org());
+        if (w == null) {
+            throw ApiException.notFound(NOT_FOUND);
+        }
+        long orgCount = db.count("SELECT COALESCE(sum(\"windowCount\"), 0) FROM \"CrmLeadForm\" WHERE"
+                + " \"organizationId\" = ? AND \"windowStart\" >= " + CrmDb.NOW + " - interval '1 day'", List.of(org()));
+        if (((Number) w.get("windowCount")).intValue() > ((Number) w.get("dailyLimit")).intValue()
+                || orgCount > orgDailyLimit) {
+            throw new ApiException(HttpStatus.TOO_MANY_REQUESTS,
+                    "We have received a lot of enquiries today; please try again tomorrow or contact us directly");
+        }
+    }
+
+    /** {@code <issuedAtMillis>.<HMAC-SHA256(formId.issuedAt)>}, base64url (public for the integration tests). */
+    public String issueToken(String formId, long issuedAt) {
+        return issuedAt + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(mac(formId + "." + issuedAt));
+    }
+
+    /** Milliseconds since the token was issued for this form, or -1 when it is missing, malformed or forged. */
+    long tokenAge(String formId, Object raw, long now) {
+        if (!(raw instanceof String t) || t.length() > 100) {
+            return -1;
+        }
+        int dot = t.indexOf('.');
+        if (dot <= 0) {
+            return -1;
+        }
+        long issuedAt;
+        byte[] sig;
+        try {
+            issuedAt = Long.parseLong(t.substring(0, dot));
+            sig = Base64.getUrlDecoder().decode(t.substring(dot + 1));
+        } catch (IllegalArgumentException e) {
+            return -1;
+        }
+        if (!java.security.MessageDigest.isEqual(sig, mac(formId + "." + issuedAt)) || issuedAt > now + 60_000) {
+            return -1;
+        }
+        return Math.max(0, now - issuedAt);
+    }
+
+    private byte[] mac(String data) {
+        try {
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            mac.init(new javax.crypto.spec.SecretKeySpec(tokenKey, "HmacSHA256"));
+            return mac.doFinal(data.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.security.GeneralSecurityException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static byte[] sha256Bytes(String s) {
+        try {
+            return java.security.MessageDigest.getInstance("SHA-256").digest(s.getBytes(
+                    java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String thanks(Map<String, Object> f) {

@@ -55,7 +55,7 @@ public class CrmReportService {
     // ------------------------------------------------------------------ management report
 
     /** Report over deals created in {@code [from, to]} (default: last 90 days) plus wins closed in that window. */
-    @Transactional
+    @Transactional(readOnly = true)
     public Map<String, Object> report(Map<String, String> params) {
         config.ensureDefaults();
         ZoneId zone = BusinessZone.get();
@@ -268,7 +268,7 @@ public class CrmReportService {
     // ------------------------------------------------------------------ dashboard
 
     /** Personal sales dashboard ({@code scope = mine | all}). */
-    @Transactional
+    @Transactional(readOnly = true)
     public Map<String, Object> dashboard(String scope) {
         config.ensureDefaults();
         boolean mine = !"all".equals(scope) || !TenantContext.has(Permissions.CRM__DEAL_VIEW_ALL);

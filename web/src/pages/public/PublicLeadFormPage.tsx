@@ -11,7 +11,7 @@ import { tx } from '@/lib/i18n/tx';
 export function PublicLeadFormPage() {
   const { formKey = '' } = useParams();
   const base = `${getApiBaseUrl()}/public/crm/forms/${encodeURIComponent(formKey)}`;
-  const [info, setInfo] = useState<{ name: string; company: string; thankYouMessage: string } | null>(null);
+  const [info, setInfo] = useState<{ name: string; company: string; thankYouMessage: string; submitToken?: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [values, setValues] = useState({ name: '', email: '', phone: '', company: '', message: '', _hp: '' });
   const [busy, setBusy] = useState(false);
@@ -31,9 +31,9 @@ export function PublicLeadFormPage() {
     setError(null);
     try {
       const body = Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim() !== ''));
-      const r = await fetch(`${base}/submit`, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pageUrl: window.location.href }) });
+      const r = await fetch(`${base}/submit`, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, _t: info?.submitToken, pageUrl: window.location.href }) });
       const out = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(r.status === 429 ? tx('Too many attempts. Please wait a minute and try again.') : out.message || tx('Something went wrong. Please try again.'));
+      if (!r.ok) throw new Error(out.message || (r.status === 429 ? tx('Too many attempts. Please wait a minute and try again.') : tx('Something went wrong. Please try again.')));
       setDone(out.message);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

@@ -15,4 +15,11 @@ public @interface Throttle {
     int limit();
 
     long ttlMs();
+
+    /**
+     * For anonymous traffic, also key the counter on this path variable (a public form key or link token), so one
+     * visitor hammering one form or link never uses up the budget of another form or another tenant. Empty = per
+     * client address and route only (the Nest behaviour).
+     */
+    String perPathVariable() default "";
 }

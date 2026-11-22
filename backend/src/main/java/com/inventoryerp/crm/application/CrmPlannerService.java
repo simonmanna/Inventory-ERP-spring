@@ -337,7 +337,7 @@ public class CrmPlannerService {
                 + " status, completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\")"
                 + " VALUES (?, ?, 'email'::\"ActivityType\", ?, ?, ?, ?, 'done'::\"TaskStatus\", true, " + NOW + ", ?, ?, "
                 + NOW + ", " + NOW + ")", CrmDb.newId(), org(), "Quotation " + number + " emailed", delivered
-                        ? "Sent to " + sentTo : "Queued for " + sentTo + " (mail delivery not confirmed)",
+                        ? "Sent to " + sentTo : "Not sent to " + sentTo + ": outgoing email is not set up on this server (SMTP)",
                 blank(dealId) ? null : dealId, blank(partnerId) ? null : partnerId, user(), user());
         touchDeal(dealId);
     }

@@ -32,10 +32,10 @@ final class CrmDealQuery {
         static Filter of(Map<String, String> p) {
             return new Filter(p.get("kind"), p.get("status"), p.get("stageId"), p.get("ownerId"), p.get("teamId"),
                     p.get("sourceId"), p.get("tagId"), p.get("partnerId"), p.get("lostReasonId"), p.get("q"),
-                    blank(p.get("priority")) ? null : Integer.valueOf(p.get("priority")), p.get("createdFrom"),
+                    CrmDb.intOf(p.get("priority"), "priority"), p.get("createdFrom"),
                     p.get("createdTo"), p.get("closeFrom"), p.get("closeTo"), "true".equals(p.get("mine")),
                     "true".equals(p.get("unassigned")), p.get("activityState"), p.get("city"), p.get("country"),
-                    blank(p.get("priorityExact")) ? null : Integer.valueOf(p.get("priorityExact")), p.get("wonFrom"),
+                    CrmDb.intOf(p.get("priorityExact"), "priorityExact"), p.get("wonFrom"),
                     p.get("wonTo"));
         }
 

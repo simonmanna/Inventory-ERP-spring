@@ -23,7 +23,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * CRM configuration (ADR-S010): the admin-configurable pipeline stages, sales teams, tags, lead sources, lost
@@ -42,11 +46,16 @@ public class CrmConfigService {
     private final CrmDb db;
     private final AuditService audit;
     private final SalesSettingsService sales;
+    /** Seeding in its own transaction, for callers in a read-only (or no) transaction. */
+    private final TransactionTemplate seedTx;
 
-    public CrmConfigService(CrmDb db, AuditService audit, SalesSettingsService sales) {
+    public CrmConfigService(CrmDb db, AuditService audit, SalesSettingsService sales,
+            PlatformTransactionManager transactions) {
         this.db = db;
         this.audit = audit;
         this.sales = sales;
+        this.seedTx = new TransactionTemplate(transactions);
+        this.seedTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** Quotation policy keys owned by the sales settings since ADR-S011 (shown and edited here unchanged). */
@@ -55,9 +64,41 @@ public class CrmConfigService {
 
     // ------------------------------------------------------------------ defaults
 
-    /** Seed the default pipeline, sources, lost reasons and settings row once per organization (idempotent). */
-    @Transactional
+    /**
+     * Seed the default pipeline, sources, lost reasons and settings row once per organization (idempotent).
+     *
+     * <p>Production-readiness fix P0-1 (2026-11-22): every CRM list, kanban, report and dashboard call runs this. It
+     * used to take {@code SELECT … FOR UPDATE} on the organization's one {@code CrmSettings} row each time, so every
+     * CRM read in an organization queued behind that lock. Now an unlocked existence check returns at once when the
+     * organization is seeded (every call after the first). Only an unseeded organization takes the lock: inline when
+     * the caller is in a read-write transaction (as before), else in a new transaction, so read-only callers stay
+     * read-only. Concurrent first calls are still serialized by the lock plus {@code ON CONFLICT DO NOTHING} on the
+     * unique {@code organizationId}.
+     */
     public void ensureDefaults() {
+        if (seeded()) {
+            return;
+        }
+        boolean inWriteTx = TransactionSynchronizationManager.isActualTransactionActive()
+                && !TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+        if (inWriteTx) {
+            seedDefaults();
+        } else {
+            seedTx.executeWithoutResult(s -> seedDefaults());
+        }
+    }
+
+    /** True when the seeding below has nothing left to do (same conditions, no lock). */
+    private boolean seeded() {
+        String org = org();
+        Map<String, Object> r = db.row("SELECT EXISTS (SELECT 1 FROM \"CrmSettings\" WHERE \"organizationId\" = ?)"
+                + " AND EXISTS (SELECT 1 FROM \"CrmStage\" WHERE \"organizationId\" = ?)"
+                + " AND EXISTS (SELECT 1 FROM \"CrmSource\" WHERE \"organizationId\" = ?)"
+                + " AND EXISTS (SELECT 1 FROM \"CrmLostReason\" WHERE \"organizationId\" = ?) AS ok", org, org, org, org);
+        return r != null && Boolean.TRUE.equals(r.get("ok"));
+    }
+
+    private void seedDefaults() {
         String org = org();
         db.update("INSERT INTO \"CrmSettings\" (\"organizationId\") VALUES (?) ON CONFLICT DO NOTHING", org);
         // Serialize the one-time seeding per organization.
@@ -132,7 +173,7 @@ public class CrmConfigService {
     public Map<String, Object> createStage(Map<String, Object> in) {
         ensureDefaults();
         String name = requireName(in);
-        Integer seq = in.get("sequence") == null ? null : ((Number) in.get("sequence")).intValue();
+        Integer seq = CrmDb.intOf(in.get("sequence"), "sequence");
         if (seq == null) {
             seq = (int) db.count("SELECT COALESCE(max(sequence), 0) + 10 FROM \"CrmStage\" WHERE \"organizationId\""
                     + " = ?", List.of(org()));
@@ -155,7 +196,7 @@ public class CrmConfigService {
             data.put("name", requireName(in));
         }
         if (in.containsKey("sequence") && in.get("sequence") != null) {
-            data.put("sequence", ((Number) in.get("sequence")).intValue());
+            data.put("sequence", CrmDb.intOf(in.get("sequence"), "sequence"));
         }
         data.remove("legacyStage");
         if (Boolean.FALSE.equals(in.get("isActive")) && Boolean.TRUE.equals(before.get("isActive"))) {
@@ -242,7 +283,7 @@ public class CrmConfigService {
     private Map<String, Object> stageData(Map<String, Object> in) {
         Map<String, Object> d = new LinkedHashMap<>();
         if (in.containsKey("probability")) {
-            BigDecimal p = dec(in.get("probability"));
+            BigDecimal p = dec(in.get("probability"), "probability");
             if (p.signum() < 0 || p.compareTo(BigDecimal.valueOf(100)) > 0) {
                 throw ApiException.badRequest("probability must be between 0 and 100");
             }
@@ -294,7 +335,8 @@ public class CrmConfigService {
         }
         if (in.containsKey("rottingDays")) {
             Object r = in.get("rottingDays");
-            int days = r == null ? 0 : ((Number) r).intValue();
+            Integer rd = CrmDb.intOf(r, "rottingDays");
+            int days = rd == null ? 0 : rd;
             if (r != null && days <= 0) {
                 throw ApiException.badRequest("rottingDays must be positive");
             }
@@ -443,7 +485,7 @@ public class CrmConfigService {
             d.put("branchId", requireActive("Branch", in.get("branchId"), "Branch not found"));
         }
         if (in.containsKey("monthlyTarget")) {
-            BigDecimal t = dec(in.get("monthlyTarget"));
+            BigDecimal t = dec(in.get("monthlyTarget"), "monthlyTarget");
             if (t.signum() < 0) {
                 throw ApiException.badRequest("monthlyTarget must not be negative");
             }
@@ -552,7 +594,7 @@ public class CrmConfigService {
         List<Object> params = new ArrayList<>();
         for (String k : List.of("quoteMaxDiscountPercent", "quoteApprovalAmount")) {
             if (in.containsKey(k)) {
-                BigDecimal v = dec(in.get(k));
+                BigDecimal v = dec(in.get(k), k);
                 if (v.signum() < 0 || ("quoteMaxDiscountPercent".equals(k) && v.compareTo(BigDecimal.valueOf(100)) > 0)) {
                     throw ApiException.badRequest(k + " is out of range");
                 }
@@ -562,7 +604,8 @@ public class CrmConfigService {
         }
         for (String k : List.of("quoteValidityDays", "rottingDays")) {
             if (in.containsKey(k)) {
-                int v = in.get(k) == null ? 0 : ((Number) in.get(k)).intValue();
+                Integer iv = CrmDb.intOf(in.get(k), k);
+                int v = iv == null ? 0 : iv;
                 if (v <= 0) {
                     throw ApiException.badRequest(k + " must be positive");
                 }

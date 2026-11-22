@@ -565,7 +565,7 @@ public final class CrmSuiteController {
         }
 
         @Public
-        @Throttle(limit = 30, ttlMs = 60_000)
+        @Throttle(limit = 30, ttlMs = 60_000, perPathVariable = "token")
         @GetMapping("/public/crm/calendar/{token}.ics")
         public ResponseEntity<byte[]> ics(@PathVariable String token) {
             return ResponseEntity.ok().contentType(MediaType.parseMediaType("text/calendar; charset=utf-8"))
@@ -771,14 +771,14 @@ public final class CrmSuiteController {
         }
 
         @Public
-        @Throttle(limit = 60, ttlMs = 60_000)
+        @Throttle(limit = 60, ttlMs = 60_000, perPathVariable = "key")
         @GetMapping("/public/crm/forms/{key}")
         public Map<String, Object> info(@PathVariable String key) {
             return forms.publicInfo(key);
         }
 
         @Public
-        @Throttle(limit = 10, ttlMs = 60_000)
+        @Throttle(limit = 10, ttlMs = 60_000, perPathVariable = "key")
         @PostMapping("/public/crm/forms/{key}/submit")
         @ResponseStatus(HttpStatus.CREATED)
         public Map<String, Object> submit(@PathVariable String key, @RequestBody(required = false) Map<String, Object> b,
