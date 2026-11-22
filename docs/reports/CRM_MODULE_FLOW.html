@@ -1,0 +1,433 @@
+<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CRM Module Flow</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (max 1040px) with a compact contents strip; diagrams and tables scroll inside their own boxes. */
+:root {
+  --bg: #f5f7fa; --surface: #ffffff; --fg: #142235; --muted: #5a6b80; --line: #dde3ec;
+  --navy: #0f2b4c; --accent: #0b7fc7; --accent-soft: #e3f1fb;
+  --ok: #138a52; --ok-soft: #e2f5ea; --warn: #b26a00; --warn-soft: #fdf1dc; --bad: #c0362c; --bad-soft: #fbe6e4;
+  --f-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1520; --surface: #142030; --fg: #e4ebf3; --muted: #93a4b8; --line: #263548;
+  --navy: #0a1a2c; --accent: #4fb3f0; --accent-soft: #15324a;
+  --ok: #4cc98a; --ok-soft: #12321f; --warn: #f0b04f; --warn-soft: #3a2a10; --bad: #f07a6f; --bad-soft: #3d1a17;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0d1520; --surface: #142030; --fg: #e4ebf3; --muted: #93a4b8; --line: #263548;
+  --navy: #0a1a2c; --accent: #4fb3f0; --accent-soft: #15324a;
+  --ok: #4cc98a; --ok-soft: #12321f; --warn: #f0b04f; --warn-soft: #3a2a10; --bad: #f07a6f; --bad-soft: #3d1a17;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.6 var(--f-body); }
+.wrap { max-width: 1040px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 64px; }
+
+.hero { background: var(--navy); color: #eef4fb; margin-top: calc(-1 * env(safe-area-inset-top, 0px)); padding-top: calc(env(safe-area-inset-top, 0px) + 40px); padding-bottom: 36px; }
+.hero .wrap { padding-block: 0; }
+.eyebrow { font: 600 12px/1 var(--f-body); letter-spacing: .12em; text-transform: uppercase; color: #8fc9ef; }
+h1 { font: 700 clamp(28px, 5vw, 42px)/1.1 var(--f-display); margin: 10px 0 12px; text-wrap: balance; }
+.hero p { max-width: 68ch; color: #c8d6e6; margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.chip { font: 500 12px/1 var(--f-mono); padding: 7px 10px; border-radius: 6px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14); color: #dce8f5; }
+
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; padding-block: 18px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+nav.toc a { color: var(--muted); text-decoration: none; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+section { padding-top: 44px; }
+h2 { font: 600 24px/1.2 var(--f-display); margin: 0 0 6px; text-wrap: balance; }
+h2 .n { color: var(--accent); margin-right: 8px; }
+h3 { font: 600 17px/1.3 var(--f-display); margin: 28px 0 8px; }
+.lede { color: var(--muted); max-width: 70ch; margin: 0 0 18px; }
+p { max-width: 72ch; }
+code, .mono { font-family: var(--f-mono); font-size: .86em; }
+code { background: var(--accent-soft); color: var(--fg); padding: 1px 5px; border-radius: 4px; }
+
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+.card h4 { font: 600 15px/1.3 var(--f-display); margin: 0 0 6px; }
+.card p { margin: 0; color: var(--muted); font-size: 14px; }
+.card .who { font: 500 11px/1 var(--f-body); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; overflow-x: auto; margin: 12px 0 6px; }
+.diagram pre.mermaid { margin: 0; background: transparent; text-align: center; min-width: 560px; }
+.caption { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
+
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; margin: 12px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 11.5px/1.2 var(--f-body); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+
+.steps { list-style: none; counter-reset: s; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.steps li::before { content: counter(s); font: 600 14px/34px var(--f-display); text-align: center; width: 34px; height: 34px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+.steps b { font-weight: 600; }
+.steps span { color: var(--muted); font-size: 14px; display: block; }
+
+.pill { display: inline-block; font: 600 11px/1 var(--f-body); padding: 4px 8px; border-radius: 999px; white-space: nowrap; }
+.p-ok { background: var(--ok-soft); color: var(--ok); }
+.p-warn { background: var(--warn-soft); color: var(--warn); }
+.p-bad { background: var(--bad-soft); color: var(--bad); }
+.p-info { background: var(--accent-soft); color: var(--accent); }
+
+.note { border-left: 3px solid var(--accent); background: var(--surface); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 14px 0; font-size: 14px; color: var(--muted); max-width: none; }
+.note strong { color: var(--fg); }
+footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+@media (max-width: 520px) { th, td { padding: 8px 10px; } .steps li { grid-template-columns: 28px 1fr; } .steps li::before { width: 28px; height: 28px; line-height: 28px; } }
+
+@page { size: A4; margin: 12mm 10mm; }
+@media print {
+  .keep { break-inside: avoid; page-break-inside: avoid; }
+  body { font-size: 12.5px; }
+  section { padding-top: 22px; }
+  .diagram, .tbl, .card, .steps li { break-inside: avoid; }
+  h2, h3 { break-after: avoid; }
+  .diagram pre.mermaid { min-width: 0; }
+  .diagram svg { max-width: 100% !important; height: auto; }
+  nav.toc a { color: var(--accent); }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style></head><body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Inventory-ERP · Sales · CRM</div>
+    <h1>How the CRM module works</h1>
+    <p>Data model, business process, data flow between modules, and screen-to-screen UI flow of the CRM as it runs on <span class="mono">main 5e6fce34</span> (after the 2026-11-22 review fixes). Written from the Spring backend, the React web client and the database schema.</p>
+    <div class="chips">
+      <span class="chip">104 CRM routes</span>
+      <span class="chip">13 CRM tables + sales quotations</span>
+      <span class="chip">9 domain events</span>
+      <span class="chip">18 permissions</span>
+      <span class="chip">web only (no Android CRM)</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Contents">
+    <a href="#overview">1 Overview</a><a href="#model">2 Data model</a><a href="#process">3 Process &amp; workflow</a>
+    <a href="#dataflow">4 Data flow</a><a href="#ui">5 UI flow</a><a href="#access">6 Access rules</a><a href="#notes">7 Observations</a>
+  </nav>
+
+  <section id="overview">
+    <h2><span class="n">1</span>Overview</h2>
+    <p class="lede">The CRM turns an enquiry into revenue: capture a lead, qualify it into an opportunity, move it through configurable pipeline stages with planned activities, quote it, get the quote approved, and convert it into a sales document. After the sale, complaints and service requests are handled as cases.</p>
+    <div class="grid">
+      <div class="card"><div class="who">Salesperson</div><h4>Works own pipeline</h4><p>Creates leads, schedules calls and meetings, moves cards on the kanban, writes quotations.</p></div>
+      <div class="card"><div class="who">Sales manager / team lead</div><h4>Sees the team</h4><p>With <code>crm:deal:view_all</code> (or as team leader) sees everyone's deals, targets, reports and forecasts.</p></div>
+      <div class="card"><div class="who">Approver</div><h4>Releases quotes</h4><p>Approves quotes that break the discount cap, the amount threshold or the credit check, manually or via an approval workflow.</p></div>
+      <div class="card"><div class="who">Customer service</div><h4>Handles cases</h4><p>Owns complaints and service requests with a due time set by priority; cases can come from delivery discrepancies.</p></div>
+    </div>
+  </section>
+
+  <section id="model">
+    <h2><span class="n">2</span>Data model</h2>
+    <p class="lede">One <code>Deal</code> table holds both leads and opportunities, told apart by <code>kind</code>. Its <code>status</code> (open, won, lost) is separate from its pipeline position (<code>stageId</code>). Quotations belong to the sales module and point back at the deal.</p>
+    <div class="diagram"><pre class="mermaid">
+erDiagram
+  Partner ||--o{ Deal : "customer of"
+  User ||--o{ Deal : "owns"
+  CrmTeam ||--o{ Deal : "team"
+  CrmStage ||--o{ Deal : "current stage"
+  CrmSource ||--o{ Deal : "source"
+  CrmLostReason ||--o{ Deal : "lost because"
+  Deal ||--o{ CrmStageHistory : "every move"
+  Deal ||--o{ Activity : "calls, meetings, notes"
+  Deal ||--o{ SalesQuotation : "quoted by"
+  SalesQuotation ||--|{ SalesQuotationLine : "lines"
+  SalesQuotation ||--o| ApprovalRequest : "pending approval"
+  Partner ||--o{ CrmCase : "raises"
+  CrmCase ||--o{ CrmCaseEvent : "timeline"
+  Partner ||--o{ CrmPriceRule : "special prices"
+  Deal {
+    string kind "lead | opportunity"
+    string status "open | won | lost"
+    string stage "legacy enum, kept in sync"
+    decimal amount
+    int probability "override; else stage default"
+    int priority "0-3 stars"
+    string[] tagIds
+    date expectedClose
+  }
+    </pre></div>
+    <p class="caption">Also: <code>CrmTag</code>, <code>CrmSettings</code> (quote rules), <code>CrmSavedFilter</code> (saved segments), plus shared <code>AuditLog</code> and attachments on <code>crm_deal</code>.</p>
+
+    <div class="tbl"><table>
+      <thead><tr><th>Table</th><th>What it stores</th><th>Written by</th></tr></thead>
+      <tbody>
+        <tr><td><code>Deal</code></td><td>Leads and opportunities: customer or company/contact, owner, team, stage, status, amount, probability, priority, tags, dates (created, stage changed, won, lost, converted).</td><td>Pipeline service; legacy <code>/crm/deals</code> routes</td></tr>
+        <tr><td><code>CrmStage</code></td><td>Configurable pipeline columns with default probability, colour, won flag and the legacy stage they map to.</td><td>CRM settings</td></tr>
+        <tr><td><code>CrmStageHistory</code></td><td>One row per move: from/to stage and status, seconds spent in the previous stage. Feeds history, funnel and sales-cycle reports.</td><td>Every create, move, won, lost, reopen</td></tr>
+        <tr><td><code>Activity</code></td><td>Planned and done calls, emails, meetings, tasks and notes, linked to a deal and/or partner, with due time, assignee and outcome. Also stage-change entries.</td><td>Planner; pipeline</td></tr>
+        <tr><td><code>CrmTeam</code></td><td>Sales teams: leader, members, monthly target (drives the dashboard target ring).</td><td>CRM settings</td></tr>
+        <tr><td><code>CrmSource</code> · <code>CrmTag</code> · <code>CrmLostReason</code></td><td>Lookup lists used on deals and in report breakdowns.</td><td>CRM settings</td></tr>
+        <tr><td><code>SalesQuotation</code> + lines</td><td>Quotes with revision number, validity, approval reasons, conversion target and id.</td><td>Sales quotation service (shared by CRM and Sales screens)</td></tr>
+        <tr><td><code>CrmPriceRule</code></td><td>Fixed price or % discount per customer or customer category, product or product category, quantity break and date window.</td><td>Price rules screen</td></tr>
+        <tr><td><code>CrmCase</code> + <code>CrmCaseEvent</code></td><td>Complaints and service requests: type, category, priority, assignee, due time, status, linked delivery/discrepancy; timeline of notes and status changes.</td><td>Cases; delivery discrepancy screen</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="process">
+    <h2><span class="n">3</span>Process &amp; workflow</h2>
+    <p class="lede">Four connected lifecycles: the deal, the quotation, the activity and the case.</p>
+
+    <div class="keep"><h3>3.1 Lead to won deal</h3>
+    <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  [*] --> Lead : New lead
+  Lead --> Lead : edit, schedule activity
+  Lead --> LeadLost : Mark lost (reason)
+  LeadLost --> Lead : Reopen
+  Lead --> Opportunity : Convert (create customer / link / none)
+  [*] --> Opportunity : New opportunity (customer required)
+  state Opportunity {
+    direction LR
+    New --> Qualified
+    Qualified --> Proposition
+    Proposition --> Negotiation
+    Negotiation --> Qualified : drag back
+  }
+  Opportunity --> Won : Mark won / quote converted (auto-win)
+  Opportunity --> Lost : Mark lost (reason + note)
+  Lost --> Opportunity : Reopen
+  Won --> Opportunity : Reopen
+    </pre></div></div>
+    <ol class="steps">
+      <li><div><b>Capture.</b><span>A lead needs only a name; company, contact, phone and expected amount are optional. The owner defaults to the creator and must be a user of the organisation.</span></div></li>
+      <li><div><b>Qualify and convert.</b><span>Convert creates a new customer from the lead's company, links an existing customer, or links none. The record becomes an opportunity in the chosen stage and <code>crm.lead.converted</code> is published. A lead cannot be moved on the pipeline or marked won before conversion.</span></div></li>
+      <li><div><b>Work the pipeline.</b><span>Dragging a card (or the stage bar on the detail page) moves it; each move writes a history row and a stage-change activity, and publishes <code>crm.deal.stage_changed</code>. Probability comes from the stage unless overridden, so weighted value = amount × probability.</span></div></li>
+      <li><div><b>Close.</b><span>Won stamps <code>wonAt</code>, makes the partner a customer, publishes <code>crm.deal.won</code>. Lost records a reason and note. A won deal must be reopened before it can be marked lost.</span></div></li>
+    </ol>
+
+    <div class="keep"><h3>3.2 Quotation lifecycle</h3>
+    <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction TB
+  [*] --> draft : New quotation (from deal or customer)
+  draft --> approved : Submit, no approval reasons
+  draft --> pending_approval : Submit, rules triggered
+  pending_approval --> approved : Approve (manual or workflow)
+  pending_approval --> rejected : Reject
+  rejected --> draft : Revise (rev + 1)
+  approved --> sent : Send / email PDF
+  approved --> accepted : Customer accepts
+  sent --> accepted : Customer accepts
+  sent --> rejected : Customer declines (lost reason)
+  accepted --> converted : Convert to proforma / sales order
+  approved --> converted : Convert
+  sent --> converted : Convert
+  approved --> draft : Revise (withdraws approval)
+  sent --> draft : Revise
+  draft --> cancelled : Cancel
+  approved --> cancelled : Cancel
+  converted --> [*]
+    </pre></div></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Rule</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td>Discount above <code>quoteMaxDiscountPercent</code></td><td><span class="pill p-warn">needs approval</span> reason "Discount … exceeds …"</td></tr>
+        <tr><td>Total above <code>quoteApprovalAmount</code></td><td><span class="pill p-warn">needs approval</span> reason "Total exceeds the approval amount of …"</td></tr>
+        <tr><td><code>creditCheck</code> on and customer over limit / on hold</td><td><span class="pill p-warn">needs approval</span></td></tr>
+        <tr><td>Approval workflow exists for <code>crm_quotation</code></td><td>Request goes to the approvals engine; its decision comes back on <code>approval.decided</code>. A late decision for a superseded request is ignored.</td></tr>
+        <tr><td>Past <code>validUntil</code> (business time zone)</td><td><span class="pill p-bad">blocked</span> accept and convert refuse: "Quotation has expired; revise it first"</td></tr>
+        <tr><td><code>autoWinOnConversion</code> on</td><td>Converting the quote marks its open deal won.</td></tr>
+        <tr><td>Price rules</td><td>Applied when lines are priced (quotes, sales orders, cash sales): most specific customer/product rule wins by priority.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="keep"><h3>3.3 Activities</h3>
+    <p>Scheduled from a deal, a customer, the kanban card badge or the Activities page. Each has a type (call, email, meeting, task, note), due time, optional reminder and assignee. The planner groups them as <span class="pill p-bad">overdue</span> <span class="pill p-warn">today</span> <span class="pill p-info">upcoming</span> <span class="pill p-ok">done</span>. Marking done records an outcome and can schedule a follow-up in the same step; a note is done the moment it is logged. The kanban card shows the next activity's state, so a deal "going cold" is visible without opening it.</p>
+
+    <h3>3.4 Complaints &amp; service requests</h3>
+    <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  [*] --> open : New case / from delivery discrepancy
+  open --> in_progress : Start
+  open --> resolved : Resolve (note required)
+  in_progress --> resolved : Resolve (note required)
+  resolved --> closed : Close
+  resolved --> in_progress : Reopen
+  open --> cancelled : Cancel (note required)
+  in_progress --> cancelled : Cancel (note required)
+    </pre></div></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Priority</th><th>Due after creation</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill p-bad">urgent</span></td><td>4 hours</td></tr>
+        <tr><td><span class="pill p-warn">high</span></td><td>24 hours</td></tr>
+        <tr><td><span class="pill p-info">normal</span></td><td>72 hours</td></tr>
+        <tr><td><span class="pill p-ok">low</span></td><td>7 days</td></tr>
+      </tbody>
+    </table></div>
+    <p>Updates, assignment and status changes lock the case row, and a delivery discrepancy can open at most one case (advisory lock), so double clicks and parallel edits cannot fork a case.</p>
+  </section>
+
+  <section id="dataflow">
+    <h2><span class="n">4</span>Data flow</h2>
+    <p class="lede">Every screen talks REST to <code>/api/v1</code>. Controllers check permissions, services run one transaction per action, and events leave through the transactional outbox only after commit.</p>
+
+    <div class="keep"><h3>4.1 One request, end to end (moving a card to "Won")</h3>
+    <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant UI as Pipeline (React)
+  participant API as CrmSuiteController
+  participant G as Access guard
+  participant S as CrmPipelineService
+  participant DB as PostgreSQL
+  participant O as Event outbox
+  UI->>UI: optimistic move (card jumps now)
+  UI->>API: POST /crm/opportunities/{id}/won
+  API->>G: crm:deal:write + visibility (own / unassigned / team led / view_all)
+  G-->>API: allowed
+  API->>S: won(id)
+  S->>DB: lock Deal row, set status=won, wonAt, Won stage
+  S->>DB: Partner.isCustomer = true
+  S->>DB: insert CrmStageHistory + stage-change Activity
+  S->>O: crm.deal.won, crm.deal.stage_changed (publishOnCommit)
+  DB-->>S: commit
+  O-->>O: delivered after commit (notifications, other modules)
+  API-->>UI: updated card JSON
+  UI->>UI: refetch crm-suite queries (dashboard, lists, 360)
+  Note over UI: on error the card moves back and a toast explains why
+    </pre></div></div>
+
+    <div class="keep"><h3>4.2 How CRM connects to the rest of the ERP</h3>
+    <div class="diagram"><pre class="mermaid">
+flowchart LR
+  CRM(("CRM<br>leads · deals · quotes<br>activities · cases"))
+  P[("Partners / customers")]
+  AP["Approvals engine"]
+  SO["Sales: proforma,<br>sales orders"]
+  INV["Invoices, payments,<br>receivables"]
+  FL["Fleet: delivery<br>discrepancies"]
+  N["Notifications"]
+  AU[("Audit log")]
+  CRM -- "convert lead / win deal:<br>create or mark customer" --> P
+  CRM -- "quote needs approval" --> AP
+  AP -- "approval.decided" --> CRM
+  CRM -- "convert quote" --> SO
+  SO -- "invoice" --> INV
+  INV -- "receivables, credit check" --> CRM
+  FL -- "open a case" --> CRM
+  CRM -. "events after commit" .-> N
+  CRM -. "every change" .-> AU
+    </pre></div></div>
+
+    <div class="keep"><h3>4.3 Events published</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Event</th><th>When</th></tr></thead>
+      <tbody>
+        <tr><td><code>crm.deal.created</code></td><td>Lead or opportunity created</td></tr>
+        <tr><td><code>crm.deal.assigned</code></td><td>Owner changed</td></tr>
+        <tr><td><code>crm.deal.stage_changed</code></td><td>Any move, won, lost, reopen (also from the legacy route)</td></tr>
+        <tr><td><code>crm.deal.won</code> · <code>crm.deal.lost</code></td><td>Deal closed</td></tr>
+        <tr><td><code>crm.deal.deleted</code></td><td>Deal archived</td></tr>
+        <tr><td><code>crm.lead.converted</code></td><td>Lead became an opportunity</td></tr>
+        <tr><td><code>crm.quotation.approved</code></td><td>Quote approved (manual or by the engine); routed to notifications</td></tr>
+        <tr><td><code>crm.quotation.converted</code></td><td>Quote turned into a proforma or sales order; routed to notifications</td></tr>
+      </tbody>
+    </table></div></div>
+    <div class="note"><strong>After-commit only.</strong> All CRM and quotation events use <code>publishOnCommit</code>, so a request that fails and rolls back never announces a change that did not happen.</div>
+
+    <div class="keep"><h3>4.4 Where the dashboard and report numbers come from</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>Figure</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>Won this month, target ring</td><td>Sum of <code>Deal.amount</code> with <code>status = won</code> and <code>wonAt</code> in the month, against the team's <code>monthlyTarget</code></td></tr>
+        <tr><td>Open pipeline, weighted pipeline</td><td>Open opportunities: Σ amount and Σ amount × probability / 100 (BigDecimal, 2 dp)</td></tr>
+        <tr><td>Pipeline by stage, kanban column totals</td><td>Open opportunities grouped by <code>stageId</code></td></tr>
+        <tr><td>Overdue / due today</td><td>Planned <code>Activity</code> rows by due time in the business time zone</td></tr>
+        <tr><td>Funnel, sales cycle, win rate</td><td><code>CrmStageHistory</code> and <code>Deal</code> created / won / lost dates in the chosen range</td></tr>
+        <tr><td>Quote acceptance</td><td><code>SalesQuotation</code> statuses in the range</td></tr>
+        <tr><td>Customer 360 receivables</td><td>Open and overdue invoices (<code>amountResidual</code>) and the credit limit</td></tr>
+      </tbody>
+    </table></div></div>
+    <p>Every figure respects visibility: a rep without <code>view_all</code> sees totals of their own, unassigned and led-team deals only.</p>
+  </section>
+
+  <section id="ui">
+    <h2><span class="n">5</span>UI flow</h2>
+    <p class="lede">The CRM menu sits under Sales in the sidebar. Every screen links into the record detail pages, and the detail pages link back out to quotes, customers and activities.</p>
+    <div class="diagram"><pre class="mermaid">
+flowchart TB
+  D[CRM Dashboard<br>/crm] --> PL[Pipeline kanban / list<br>/crm/pipeline]
+  D --> AC[Activities planner<br>/crm/activities]
+  D --> QL[Quotations<br>/crm/quotations]
+  D --> RP[CRM Reports<br>/crm/reports]
+  LD[Leads<br>/crm/leads] --> LDD[Lead detail<br>/crm/leads/:id]
+  LDD -- Convert --> OD
+  PL --> OD[Opportunity detail<br>/crm/opportunities/:id]
+  OD -- New quotation --> QE[Quotation editor<br>/crm/quotations/:id]
+  QL --> QE
+  QE -- Convert --> SD[Proforma / Sales order]
+  CU[Customers<br>/crm/customers] --> C360[Customer 360<br>/crm/customers/:id]
+  C360 --> OD
+  C360 --> QE
+  PD[Partner page CRM tab<br>/customers/:id] --> C360
+  PD --> OD
+  CS[Complaints &amp; Requests<br>/crm/cases] --> CD[Case detail<br>/crm/cases/:id]
+  DISC[Delivery discrepancies] -- Open case --> CD
+  ST[CRM Settings<br>stages, teams, tags, sources, lost reasons, quote policies]
+  PRR[Price Rules<br>/crm/pricing]
+  OLD[Old links /crm/deals/:id] -. redirect .-> OD
+    </pre></div>
+
+    <div class="tbl"><table>
+      <thead><tr><th>Screen</th><th>What you do there</th><th>Needs</th></tr></thead>
+      <tbody>
+        <tr><td>CRM Dashboard</td><td>Won this month vs target, open leads / opportunities, weighted pipeline, overdue activities, pipeline by stage, closing in 30 days, going cold, quotes to approve. Mine / Team toggle.</td><td><code>crm:dashboard:read</code></td></tr>
+        <tr><td>Leads</td><td>Filterable list; New lead; open a lead.</td><td><code>crm:lead:read</code></td></tr>
+        <tr><td>Lead detail</td><td>Edit, schedule, mark lost, convert to opportunity, attachments, history.</td><td><code>crm:lead:*</code> (convert also needs <code>crm:deal:write</code>)</td></tr>
+        <tr><td>Pipeline</td><td>Kanban with drag-and-drop between stages, quick-create per column, activity badges, filters and saved segments, list view with group-by (stage, owner, team, source, tag, priority, months).</td><td><code>crm:deal:read</code> / <code>write</code></td></tr>
+        <tr><td>Opportunity detail</td><td>Stage bar, Won / Lost / Reopen, edit, priority stars, planned activities, quotations tab, attachments, history (stages, activities, audited edits).</td><td><code>crm:deal:*</code></td></tr>
+        <tr><td>Activities</td><td>Overdue / Today / Upcoming / Done tabs, mine or everyone, mark done with outcome and follow-up, cancel.</td><td><code>crm:activity:read</code> / <code>write</code></td></tr>
+        <tr><td>Quotations · editor</td><td>Lines with price-rule pricing, submit for approval, approve / reject, PDF, email, send, accept / decline, revise, convert.</td><td><code>crm:quotation:*</code> or <code>sales:quotation:*</code></td></tr>
+        <tr><td>Customers · Customer 360</td><td>Customer list with deal totals; 360 view of opportunities, quotations, orders, invoices, deposits, contacts, prices, activity, credit.</td><td><code>crm:deal:read</code></td></tr>
+        <tr><td>Partner page, CRM tab</td><td>Open pipeline, won, open receivable; opportunities and recent activity; New opportunity and Schedule.</td><td><code>crm:deal:read</code></td></tr>
+        <tr><td>Complaints &amp; Requests</td><td>List with status / type / priority / overdue filters, searchable customer picker for new cases, detail with notes and status buttons.</td><td><code>crm:case:read</code> / <code>write</code></td></tr>
+        <tr><td>CRM Reports</td><td>KPIs, conversion funnel, monthly trend, open pipeline by stage, forecast, breakdowns by salesperson, source, team, tag, country; CSV export.</td><td><code>crm:report:read</code></td></tr>
+        <tr><td>Price Rules · CRM Settings</td><td>Special prices; stages (drag to reorder), teams and targets, tags, sources, lost reasons, quote policies.</td><td><code>crm:pricing:*</code> · <code>crm:configure</code></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="access">
+    <h2><span class="n">6</span>Access rules</h2>
+    <div class="grid">
+      <div class="card"><h4>Permissions</h4><p><code>crm:lead:read|write</code>, <code>crm:deal:read|write|view_all</code>, <code>crm:activity:read|write</code>, <code>crm:quotation:read|write|approve|convert</code>, <code>crm:case:read|write</code>, <code>crm:pricing:read|manage</code>, <code>crm:report:read</code>, <code>crm:dashboard:read</code>, <code>crm:configure</code>.</p></div>
+      <div class="card"><h4>Record visibility</h4><p>Without <code>crm:deal:view_all</code> a user sees deals they own, unassigned deals, and deals of teams they lead. Hidden records answer 404, on the new routes and on the legacy <code>/crm/deals</code> routes alike.</p></div>
+      <div class="card"><h4>Shared lookups</h4><p>Stages, teams, tags and sources load for anyone holding any CRM read permission, so a case-desk or lead-only user still gets working dropdowns.</p></div>
+      <div class="card"><h4>Tenancy &amp; audit</h4><p>Every query is filtered by organisation. Creates, edits, archives and restores are written to the audit log and shown in each record's history.</p></div>
+    </div>
+  </section>
+
+  <section id="notes">
+    <h2><span class="n">7</span>Observations</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Topic</th><th>State</th></tr></thead>
+      <tbody>
+        <tr><td>Legacy <code>/crm/deals</code>, <code>/crm/activities</code>, <code>/crm/analytics</code></td><td><span class="pill p-info">kept</span> Same paths and JSON as the original NestJS API, but stage changes now go through the pipeline rules (owner-approved deviation). The web client no longer uses them.</td></tr>
+        <tr><td>Mobile</td><td><span class="pill p-warn">gap</span> The Android POS app has no CRM screens; CRM is web-only.</td></tr>
+        <tr><td>Closed dates</td><td><span class="pill p-info">by design</span> <code>wonAt</code> / <code>lostAt</code> are set by the server at close time; deals can't be back-dated, so imported history lands in the import month.</td></tr>
+        <tr><td>Live DEMO data</td><td><span class="pill p-warn">pending</span> DEMO has no CRM records until <code>tools/demo-data/crm/seed.py</code> runs with the admin password.</td></tr>
+        <tr><td>Tests</td><td><span class="pill p-ok">covered</span> CrmIT (authorization matrix, 104 routes), CrmSuiteIT, CrmEditsIT, CrmCaseIT, CrmCustomerDataIT, CrmReviewFixesIT, plus sales quotation suites.</td></tr>
+      </tbody>
+    </table></div>
+    <footer>Sources: <span class="mono">backend/…/crm</span> (CrmPipelineService, CrmService, CrmPlannerService, CrmCaseService, CrmConfigService, CrmPricingService, CrmReportService), <span class="mono">sales/application/SalesQuotationService</span>, <span class="mono">web/src/pages/crm</span>, <span class="mono">docs/spec/crm.md</span>. Prepared 2026-11-22.</footer>
+  </section>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:false, theme:"neutral", securityLevel:"loose", themeVariables:{fontSize:"15px"}, flowchart:{htmlLabels:true}, sequence:{actorMargin:16, width:118, boxMargin:6, messageMargin:28, messageFontSize:15, actorFontSize:15, noteFontSize:14, mirrorActors:false}});mermaid.run({querySelector:"pre.mermaid"}).then(()=>{document.body.dataset.ready="1"}).catch(e=>{document.body.dataset.ready="err:"+(e.message||e)});</script></body></html>
