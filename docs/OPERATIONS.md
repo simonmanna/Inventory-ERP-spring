@@ -6,9 +6,46 @@
 |---|---|
 | Single café (LAN server / mini-PC) | `docker compose up -d --build` → Postgres 16 + API + nginx web on :8080; terminals use the server's LAN IP (`CORS_ALLOW_LAN=true`) |
 | Hosted (VPS) | same images behind Caddy (TLS, zstd/gzip) — see `docs/legacy/DEPLOYMENT.md` and `deployment/demo` in the legacy repo |
+| Branch relay node (ADR-S083 O7) | same image on a branch mini-PC with its own Postgres, `ERP_SYNC_MODE=branch` (see §1a); the branch's tills sync to it over the LAN; HQ stays the system of record |
 | Cloud read replica | logical replication of the LAN DB + API with `READ_ONLY_MODE=true` (`docs/legacy/architecture`) |
 
 Minimum server: 2 vCPU, 4 GB RAM, SSD. Recommended: 4 vCPU, 8 GB. JVM heap = 75 % of container RAM.
+
+## 1a. Branch relay node (ADR-S083 O7)
+
+1. At HQ, register the branch server as a device: Settings → Devices, or `POST /sync/devices/register` with
+   `{"name": "...", "platform": "branch", "branchId": "<branch>"}`. Keep the returned token. Register the branch's tills
+   at HQ too, bound to the same branch.
+2. On the branch machine run the API with its own database and:
+   `ERP_SYNC_MODE=branch`, `ERP_SYNC_SERVER_ID=<unique, e.g. branch-arusha>`, `ERP_SYNC_BRANCH_HQ_URL=https://<hq>/api/v1`,
+   `ERP_SYNC_BRANCH_TOKEN=<token>`, `ERP_SYNC_BRANCH_ORGANIZATION_ID=<org id>`, `APP_JOBS_ENABLED=false`
+   (Spring relaxed binding of `erp.sync.*`). Optional: `ERP_SYNC_BRANCH_INTERVAL` (PT10S), `ERP_SYNC_BRANCH_PULL_INTERVAL`
+   (PT30S), `ERP_SYNC_BRANCH_TIMEOUT` (PT10S).
+3. Point the tills at the branch server's LAN address. Within a minute the branch has HQ's master data and the tills.
+4. Watch `GET /sync/branch/status` (any till token): `pendingHqPosting` should drain whenever the WAN is up;
+   `lastError` says why it does not. Rejections appear at HQ under Sync dead letters (device = the branch server).
+5. Back up the branch database nightly with WAL (§7c). After a restore just start it: it reads HQ's feed first.
+
+### Compose: HQ and a branch on one machine (demo, drill) or a branch machine
+
+```bash
+# .env: BRANCH_HQ_ADMIN_EMAIL, BRANCH_HQ_ADMIN_PASSWORD, BRANCH_CODE (an HQ branch code), optional BRANCH_HQ_ORG (DEMO),
+#       BRANCH_SERVER_ID (branch-1), BRANCH_PORT (3003; Grafana uses 3002), BRANCH_HQ_URL (default: this file's api service)
+docker compose --profile branch up -d --build          # HQ + branch; Android tills use http://<host>:3003,
+                                                        # browser tills open http://<host>:8081 (BRANCH_WEB_PORT)
+infra/docker/branch/drill.sh                            # cut the link, restore the branch, compare HQ (needs curl, jq)
+# On a branch machine with a remote HQ:
+BRANCH_HQ_URL=https://hq.example.com/api/v1 BRANCH_HQ_ORIGIN=https://hq.example.com \
+  docker compose --profile branch up -d branch-db branch-enroll branch-api branch-web
+```
+
+Browser tills at the branch: open the branch web app (:8081) while HQ is reachable, sign in (sign-in goes to HQ), then
+Settings → Offline Devices → This browser, choose the branch, register. With HQ down the app shows its offline banner
+and the POS keeps selling through the branch server.
+
+`branch-enroll` registers the branch once and keeps its token in the `branchenroll` volume. To re-enrol (token
+revoked at HQ): `docker compose --profile branch run --rm --entrypoint rm branch-enroll /enroll/branch.env`, then start
+the profile again.
 
 ## 2. Configuration
 
@@ -149,13 +186,15 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "Invoice_org_open_idx" ON "Invoice" ("or
   "Inventory ERP — API" (`docker compose -f docker-compose.yml -f infra/monitoring/docker-compose.monitoring.yml up -d`,
   Grafana on :3002).
 - Metrics: Micrometer HTTP (`http_server_requests_seconds{uri,status}`), JVM, GC, Hikari, process CPU, plus
-  `erp_stock_posting_jobs_pending`, `erp_sync_dead_letters_open`, `erp_event_publications_incomplete`,
+  `erp_stock_posting_jobs_pending`, `erp_sync_dead_letters_open`, `erp_sync_push_ops_total{status}`,
+  `erp_sync_lag_seconds_max` (devices active in the last 7 days), `erp_sync_devices_stale` (not heard from for 24 h),
+  `erp_event_publications_incomplete`,
   `erp_backup_health` (0/1/2), `erp_backup_last_full_age_seconds`, `erp_job_failures_total{task}` (a scheduled job failed
   for one organization: replenishment scan, contract expiry, mobile money poll, alert scans, telematics sync) and
   `erp_provider_failures_total{provider}` (mobile money). These jobs carry on with the next organization, so their
   errors never reach the HTTP metrics.
 - Alerts (`alerts.yml`): API down, 5xx > 2 %, checkout p95 > 1.5 s, Hikari pending, heap > 90 %, GC > 10 %,
-  stock-posting backlog, open sync dead letters, stuck outbox, failing scheduled job, failing external provider, backup
+  stock-posting backlog, open sync dead letters, stale or lagging sync devices, stuck outbox, failing scheduled job, failing external provider, backup
   critical / older than 36 h.
 - `/api/v1/health/ready`: `critical.database` (503 when down) and `advisory.backup` (`degraded`, never 503).
 - Logs: JSON to stdout under `prod`; ship with Loki/Promtail or the Docker logging driver. Search by `requestId`.
@@ -184,13 +223,16 @@ Rules:
    not seen acknowledged. Normal dedup decides apply or replay:
    - an op whose ledger row was lost with the restore is applied again, because its business rows were lost too
    - an op whose ledger row survived is replayed
-3. **Run the post-restore reconciliation.** The automated job is deferred (tracked in ADR-S083 "Deferred work"); until
-   it exists, run these by hand:
-   - ledger rows still `state = 'committed'`: `SELECT * FROM "SyncAppliedOp" WHERE state = 'committed'`
-   - devices whose `PosDevice.lastPushSeq` is ahead of their highest ledger `deviceSeq`
-   - open dead letters by `failureCode`
-   - the trial balance (balanced journals; subledger vs control accounts)
-   - `StockItem` quantities vs the sum of stock movements
+3. **Run the post-restore reconciliation.** It runs by itself a few minutes after the API starts and nightly; to run it
+   now: `POST /sync/reconciliation/run` (needs `organization:update`), then read `GET /sync/reconciliation/runs/{id}`.
+   Administrators get an in-app alert when its findings change. Its checks: device and branch watermarks ahead of the
+   ledger, stale `committed` ledger rows, unbalanced posted journals, AR/AP subledger vs control accounts, `StockItem`
+   vs stock movements, open dead letters. What to do with each finding:
+   - `watermarks`: the device acknowledged ops the restore lost; make sure it is online and syncing (it re-pushes them),
+     then run again
+   - `committedOps`: verify the business rows of each op; it is also an `OPERATION_INCOMPLETE` dead letter
+   - `unbalancedJournals`, `receivables`, `payables`: hand to accounting before the period is closed
+   - `stock`: rebuild or count the listed cells (Inventory → reconciliation)
 
    Record what you found in the incident note.
 4. **Revoke and re-register a device whose token was in a lost backup window**, if it can no longer pull. Ops it
@@ -248,3 +290,6 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 | An Android till says "has not synced for more than N hours" and refuses sales | The offline window (`sync.offlineWindowHours`, default 72, or the device policy) has lapsed since its last pull, or its clock reads earlier than the last sync. Connect it and sync (More → Sync); fix the date and time if it was wound back. Queued sales are still pushed (ADR-S083 O6) |
 | An Android till says "This device's token expired" | The token passed `sync.deviceTokenTtlDays` without a pull. Nothing on the till was deleted; its queued work is pushed and held as `DEVICE_TOKEN_EXPIRED` dead letters. Re-enroll the device, then recover the held ops under Sync dead letters |
 | A dead letter with code `SEQ_REUSED` | A protocol-2 client sent a device sequence it had already used for another op (an old copy of its data, or a bug). Nothing was applied. Check the device's other op with that sequence; discard the duplicate unless it is a genuine, different sale — then re-enter it as a new sale |
+| A branch server's `pendingHqPosting` keeps growing | HQ unreachable or refusing the branch token: `GET /sync/branch/status` → `lastError`. Fix the WAN / URL; a 401 means the branch device was revoked at HQ — register a new branch device and update `ERP_SYNC_BRANCH_TOKEN`. Tills keep selling meanwhile; nothing is lost |
+| A dead letter with code `ORIGIN_NOT_ALLOWED` | A branch server relayed an op that names no till of its own branch (a till moved to another branch, or a misconfigured branch). Nothing was applied; move the till back or re-enter the sale at the right branch |
+| A branch till cannot close its shift: "rejected sync operation(s) involving money" | A money op of that shift was rejected at HQ. Resolve or discard its dead letter at HQ; the branch learns it within one relay cycle and the close goes through. At HQ, any open money rejection from that branch blocks closing that branch's shifts (ADR-S083 O7 deviation 5) |

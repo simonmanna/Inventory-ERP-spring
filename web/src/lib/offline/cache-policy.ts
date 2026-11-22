@@ -35,7 +35,7 @@ export const RULES: readonly Rule[] = [
     'license', 'api-clients', 'webhooks', 'webhooks-deliveries', 'settings-developer', 'pos-devices', 'user-data-scope',
     'hr-access', 'hr-workforce-access', 'sod-rules', 'audit-logs', 'config-changes', 'organization-users',
     'hr-linkable-users', 'crm-users', 'staff',
-    /^backup-/, /^sync-dead-letter/, /^auth/, /token/, /password/, /secret/,
+    /^backup-/, /^sync-dead-letter/, 'sync-status', 'sync-reconciliation', /^auth/, /token/, /password/, /secret/,
     // live state that must never be shown stale as current
     'cash-session', 'cash-register-drawer-balance', 'pos-holds', 'pos-split', 'pos-tab', 'pos-order', 'pos-orders',
     'pos-sale-quote', 'pos-kds', 'pos-kds-live', 'pos-kds-tickets', 'approvals', 'handover', 'posting-monitor',

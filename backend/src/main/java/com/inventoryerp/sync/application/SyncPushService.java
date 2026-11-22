@@ -84,21 +84,30 @@ public class SyncPushService {
         }
     }
 
-    /** The authenticated device ({@code RequestDevice}). */
     /**
-     * The pushing device. {@code strictSeq} (protocol 2+, ADR-S083 O6): the client never re-keys an op, so a device
-     * sequence number already used by another opId of this device is refused ({@code SEQ_REUSED}).
+     * The pushing device ({@code RequestDevice}). {@code strictSeq} (protocol 2+, ADR-S083 O6): the client never
+     * re-keys an op, so a device sequence number already used by another opId of this device is refused
+     * ({@code SEQ_REUSED}). {@code relay} (ADR-S083 O7): a branch node relaying its tills' ops — each op must name a till
+     * of the same branch in {@code originChain}, and a {@code hold:<code>} hop the branch added is dead-lettered here.
      */
     public record Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode,
-            boolean strictSeq) {
+            boolean strictSeq, boolean relay) {
         public Device(String id, String organizationId, String branchId) {
-            this(id, organizationId, branchId, null, null, false);
+            this(id, organizationId, branchId, null, null, false, false);
         }
 
         public Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode) {
-            this(id, organizationId, branchId, cutoff, cutoffCode, false);
+            this(id, organizationId, branchId, cutoff, cutoffCode, false, false);
+        }
+
+        public Device(String id, String organizationId, String branchId, Instant cutoff, String cutoffCode,
+                boolean strictSeq) {
+            this(id, organizationId, branchId, cutoff, cutoffCode, strictSeq, false);
         }
     }
+
+    /** Codes a branch node may ask HQ to hold an op under ({@code hold:<code>} in originChain). */
+    static final Set<String> BRANCH_HOLDS = Set.of("DEVICE_REVOKED", "DEVICE_TOKEN_EXPIRED", "SEQ_REUSED");
 
     private final PosDb db;
     private final JdbcClient jdbc;
@@ -183,6 +192,14 @@ public class SyncPushService {
         return new ApiException(HttpStatus.valueOf(status), message);
     }
 
+    private SyncMetrics metrics;
+
+    /** ADR-S083 S9: push counters (optional, so unit tests can build the service without a registry). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMetrics(SyncMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     public Map<String, Object> push(Device device, List<Op> opsIn) {
         List<Op> ops = new ArrayList<>(opsIn);
         ops.sort(Comparator.comparingInt(Op::deviceSeq));
@@ -194,6 +211,9 @@ public class SyncPushService {
         for (Op op : ops) {
             Map<String, Object> result = applyOp(device, op, clientIdMap, failedClientIds, actorOk);
             results.add(result);
+            if (metrics != null) {
+                metrics.pushed(result.get("status"));
+            }
             if (!"failed".equals(result.get("status"))) {
                 lastAppliedSeq = op.deviceSeq();
             }
@@ -301,19 +321,44 @@ public class SyncPushService {
         // device makes arrives after its cut-off (receivedAt > revokedAt), so nothing new is applied, whatever
         // occurredAt the device claims. An op the server already applied replays its stored result (no new effect);
         // anything else is quarantined for supervisor recovery (SyncDeadLetterService#recover).
+        String holdCode = null;
+        String holdWhy = null;
+        int holdStatus = 403;
         if (device.cutoff() != null) {
+            holdCode = device.cutoffCode();
+            holdWhy = ("DEVICE_REVOKED".equals(device.cutoffCode()) ? "This device was revoked at "
+                    : "This device's token expired at ") + JsonConfig.toJsIso(device.cutoff())
+                    + "; operations received after that are held for supervisor review";
+        } else if (device.relay()) {
+            // ADR-S083 O7: a branch relays only its own tills' ops, and holds what it already knows HQ must not apply.
+            String origin = originDevice(op);
+            String marker = holdMarker(op);
+            if (origin == null || !originOfBranch(device, origin)) {
+                holdCode = "ORIGIN_NOT_ALLOWED";
+                holdWhy = "A relayed operation must name a till of the relaying branch in originChain (device:<id>)";
+            } else if (marker != null) {
+                holdCode = marker;
+                holdStatus = "SEQ_REUSED".equals(marker) ? 409 : 403;
+                holdWhy = switch (marker) {
+                    case "DEVICE_REVOKED" -> "Till " + origin + " was revoked before the branch received this"
+                            + " operation; it is held for supervisor review";
+                    case "DEVICE_TOKEN_EXPIRED" -> "Till " + origin + "'s token had expired when the branch received"
+                            + " this operation; it is held for supervisor review";
+                    default -> "Till " + origin + " reused a device sequence for another operation (detected at the"
+                            + " branch); a rejected operation is corrected with a new operation (supersedesOpId)";
+                };
+            }
+        }
+        if (holdCode != null) {
             SyncLedger.Entry seen = ledger.find(device.organizationId(), op.opId());
             if (seen != null && seen.applied() && seen.payloadHash().equals(payloadHash)) {
                 Map<String, Object> body = asMap(seen.result());
                 remember(clientId, body, clientIdMap);
                 return success(op, true, seen.httpStatus() == null ? 201 : seen.httpStatus(), body);
             }
-            String why = ("DEVICE_REVOKED".equals(device.cutoffCode()) ? "This device was revoked at "
-                    : "This device's token expired at ") + JsonConfig.toJsIso(device.cutoff())
-                    + "; operations received after that are held for supervisor review";
-            deadLetter(device, op, why, 403, device.cutoffCode(), false);
+            deadLetter(device, op, holdWhy, holdStatus, holdCode, false);
             markFailed.run();
-            return failed(op, 403, why, device.cutoffCode(), false);
+            return failed(op, holdStatus, holdWhy, holdCode, false);
         }
         List<String> permissions = actorMayAct(device, op.actorUserId(), actorOk);
         if (permissions == null) {
@@ -621,6 +666,32 @@ public class SyncPushService {
             return n.isObject() ? mapper.convertValue(n, Map.class) : null;
         }
         return mapper.convertValue(body, Map.class);
+    }
+
+    /** The till a branch-relayed op came from: the first {@code device:<id>} hop of its originChain. */
+    static String originDevice(Op op) {
+        for (String hop : op.originChain() == null ? List.<String>of() : op.originChain()) {
+            if (hop != null && hop.startsWith("device:") && hop.length() > 7) {
+                return hop.substring(7);
+            }
+        }
+        return null;
+    }
+
+    /** A {@code hold:<code>} hop a branch added for a code HQ knows ({@link #BRANCH_HOLDS}), else null. */
+    static String holdMarker(Op op) {
+        for (String hop : op.originChain() == null ? List.<String>of() : op.originChain()) {
+            if (hop != null && hop.startsWith("hold:") && BRANCH_HOLDS.contains(hop.substring(5))) {
+                return hop.substring(5);
+            }
+        }
+        return null;
+    }
+
+    private boolean originOfBranch(Device relay, String origin) {
+        return !origin.equals(relay.id()) && jdbc.sql("SELECT count(*) FROM \"PosDevice\" WHERE id = ? AND"
+                + " \"organizationId\" = ? AND \"branchId\" IS NOT DISTINCT FROM ? AND platform <> 'branch'")
+                .params(origin, relay.organizationId(), relay.branchId()).query(Long.class).single() > 0;
     }
 
     /** Client ids this op depends on (references created by earlier ops). */

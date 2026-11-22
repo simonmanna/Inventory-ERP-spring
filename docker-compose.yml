@@ -5,6 +5,10 @@
 # The licence authority is a separate product, not part of a customer's stack: it is in the
 # `license` profile so it never starts by accident on a shop's machine.
 #   docker compose --profile license up -d --build   # authority on http://localhost:3100
+#
+# A branch relay node (ADR-S083 O7) is in the `branch` profile: its own Postgres and an API in erp.sync.mode=branch
+# that relays its tills to HQ (by default the `api` service of this file; set BRANCH_HQ_URL for a remote HQ).
+#   docker compose --profile branch up -d --build    # HQ + branch; branch API :3003, branch web app :8081
 services:
   db:
     image: postgres:16-alpine
@@ -243,9 +247,108 @@ services:
     ports:
       - "127.0.0.1:3100:3100"
 
+  # ---- branch relay node (ADR-S083 O7, docs/OPERATIONS.md §1a) ----
+  #
+  # branch-enroll registers the branch at HQ once (BRANCH_HQ_ADMIN_EMAIL / _PASSWORD, BRANCH_CODE = an HQ branch
+  # code) and keeps the branch token in the branchenroll volume; branch-api starts with it. Tills of that branch point
+  # at http://<this machine>:3003. On a branch machine with a remote HQ start only the branch services:
+  #   BRANCH_HQ_URL=https://hq.example.com/api/v1 BRANCH_HQ_ORIGIN=https://hq.example.com docker compose --profile branch up -d branch-db branch-enroll branch-api branch-web
+  # Drill (cut the link, restore the branch, compare HQ): infra/docker/branch/drill.sh
+  branch-db:
+    image: postgres:16-alpine
+    container_name: ierp-branch-db
+    profiles: ["branch"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${BRANCH_DB_USER:-erp}
+      POSTGRES_PASSWORD: ${BRANCH_DB_PASSWORD:-erp}
+      POSTGRES_DB: ${BRANCH_DB_NAME:-erp_branch}
+    command: ["postgres", "-c", "max_locks_per_transaction=1024"]
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - branchdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BRANCH_DB_USER:-erp} -d ${BRANCH_DB_NAME:-erp_branch}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  branch-enroll:
+    image: alpine:3.20
+    profiles: ["branch"]
+    environment:
+      HQ_URL: ${BRANCH_HQ_URL:-http://api:3000/api/v1}
+      HQ_ORG_CODE: ${BRANCH_HQ_ORG:-DEMO}
+      HQ_ADMIN_EMAIL: ${BRANCH_HQ_ADMIN_EMAIL:-}
+      HQ_ADMIN_PASSWORD: ${BRANCH_HQ_ADMIN_PASSWORD:-}
+      BRANCH_CODE: ${BRANCH_CODE:-}
+      BRANCH_NAME: ${BRANCH_NAME:-}
+    volumes:
+      - branchenroll:/enroll
+      - ./infra/docker/branch/enroll.sh:/enroll.sh:ro
+    entrypoint: ["sh", "/enroll.sh"]
+    restart: "no"
+
+  branch-api:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: ierp-branch-api
+    profiles: ["branch"]
+    restart: unless-stopped
+    depends_on:
+      branch-db:
+        condition: service_healthy
+      branch-enroll:
+        condition: service_completed_successfully
+    environment:
+      PORT: 3000
+      JDBC_DATABASE_URL: jdbc:postgresql://branch-db:5432/${BRANCH_DB_NAME:-erp_branch}?stringtype=unspecified
+      FLYWAY_USER: ${BRANCH_DB_USER:-erp}
+      FLYWAY_PASSWORD: ${BRANCH_DB_PASSWORD:-erp}
+      DB_USER: ${BRANCH_DB_APP_USER:-erp_app}
+      DB_PASSWORD: ${BRANCH_DB_APP_PASSWORD:-erp_app}
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      ERP_SYNC_MODE: branch
+      ERP_SYNC_SERVER_ID: ${BRANCH_SERVER_ID:-branch-1}
+      ERP_SYNC_BRANCH_HQ_URL: ${BRANCH_HQ_URL:-http://api:3000/api/v1}
+      # A branch node runs no business jobs: HQ is the system of record. Its relay loop runs regardless.
+      APP_JOBS_ENABLED: "false"
+      SUPERSET_URL: ""
+      STORAGE_LOCAL_DIR: /app/var/uploads
+    volumes:
+      - branchenroll:/enroll:ro
+    # The token and organisation id come from the enrolment, not from .env.
+    entrypoint: ["/bin/sh", "-c", ". /enroll/branch.env && exec /sbin/tini -- java org.springframework.boot.loader.launch.JarLauncher"]
+    ports:
+      - "${BRANCH_PORT:-3003}:3000"
+
+  # Browser tills at the branch: the web app served locally; sync goes to branch-api, sign-in and back office to HQ.
+  # A browser registered at HQ for this branch (Settings → Offline Devices → This browser, with the branch chosen)
+  # keeps selling through the branch while HQ is down. BRANCH_HQ_ORIGIN = HQ's origin without /api/v1.
+  branch-web:
+    build:
+      context: .
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: ierp-branch-web
+    profiles: ["branch"]
+    restart: unless-stopped
+    depends_on:
+      - branch-api
+    environment:
+      BRANCH_API_ORIGIN: http://branch-api:3000
+      BRANCH_HQ_ORIGIN: ${BRANCH_HQ_ORIGIN:-http://api:3000}
+    volumes:
+      - ./infra/docker/branch/nginx.branch.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "${BRANCH_WEB_PORT:-8081}:80"
+
 volumes:
   pgdata:
   bi:
   uploads:
   backups:
   licensedata:
+  branchdata:
+  branchenroll:

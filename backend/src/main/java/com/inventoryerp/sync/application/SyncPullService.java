@@ -106,6 +106,18 @@ public class SyncPullService {
         this.salesScopes = salesScopes;
     }
 
+    private SyncBranchMirror mirror;
+
+    /** ADR-S083 O7: on a branch node, scopes are read from HQ's mirror instead of the local (empty) tables. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setMirror(SyncBranchMirror mirror) {
+        this.mirror = mirror;
+    }
+
+    private boolean branchNode() {
+        return mirror != null && mirror.active();
+    }
+
     /** ADR-S083 S7: protocol-2 pulls also ship soft-deleted rows changed since the watermark, as tombstones. */
     private static final ThreadLocal<Boolean> TOMBSTONES = new ThreadLocal<>();
 
@@ -179,6 +191,10 @@ public class SyncPullService {
         Map<String, Object> data = new LinkedHashMap<>();
         Map<String, Object> nextCursor = new LinkedHashMap<>(cursor);
         for (String scope : scopes) {
+            if ("messages".equals(scope) && branchNode()) {
+                data.put("messages", List.of()); // O7: messages are not relayed through a branch node
+                continue;
+            }
             if ("messages".equals(scope)) {
                 Object[] page = readMessagesPaged(cursor.get("messagesSeq"));
                 data.put("messages", page[0]);
@@ -211,6 +227,11 @@ public class SyncPullService {
      * so an offline device prices a sale to the same total ({@code expectedTotal}).
      */
     private Map<String, Object> currency() {
+        if (branchNode()) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> hq = mirror.meta("currency") instanceof Map<?, ?> m ? (Map<String, Object>) m : null;
+            return hq;
+        }
         Map<String, Object> row = SqlRows.one(jdbc.sql("SELECT o.\"currencyCode\" AS code, c.\"decimalPlaces\" AS"
                 + " \"decimalPlaces\" FROM \"Organization\" o LEFT JOIN \"Currency\" c ON c.code = o.\"currencyCode\""
                 + " WHERE o.id = ?").param(org()));
@@ -285,6 +306,9 @@ public class SyncPullService {
     }
 
     private Object readScope(String scope, Instant since) {
+        if (branchNode()) {
+            return mirror.read(scope, since, Boolean.TRUE.equals(TOMBSTONES.get()));
+        }
         return switch (scope) {
             case "menuItems" -> menuItems(since);
             case "menuCategories" -> changed(MenuCategory.class, since, null);

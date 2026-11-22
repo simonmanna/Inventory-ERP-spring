@@ -398,9 +398,9 @@ class SyncIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("authorization matrix: 19 routes (incl. O4 stock-discrepancies, O5 sales reviews + payment reconciliation; pull, push and the 3 snapshot routes are public, device-authenticated)")
+    @DisplayName("authorization matrix: 26 routes (incl. O4 stock-discrepancies, O5 sales reviews + payment reconciliation, C2 reconciliation, S9 status; pull, push, the 3 snapshot routes and the O7 relay feed + 2 branch routes are public, device-authenticated)")
     void authorization() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.sync")).isEqualTo(19);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.sync")).isEqualTo(26);
     }
 
     @Test

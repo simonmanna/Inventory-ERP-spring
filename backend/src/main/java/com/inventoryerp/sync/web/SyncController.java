@@ -55,7 +55,7 @@ public class SyncController {
 
     /** {@code RegisterDeviceDto}. */
     public record RegisterDeviceRequest(@NotNull(message = STR) String name,
-            @OneOf({"android", "web"}) String platform, String branchId) {}
+            @OneOf({"android", "web", "branch"}) String platform, String branchId) {}
 
     /** {@code ResolveDeadLetterDto}. */
     public record ResolveDeadLetterRequest(
@@ -144,6 +144,20 @@ public class SyncController {
 
     /** {@code POST /sync/sales-reviews/{id}/resolve}. */
     public record ResolveReviewRequest(@NotNull(message = "should not be empty") String note) {}
+
+    private com.inventoryerp.sync.application.SyncBranch branch;
+    private com.inventoryerp.sync.application.SyncBranchRelay relay;
+    private com.inventoryerp.sync.application.SyncRelayFeedService relayFeed;
+
+    /** ADR-S083 O7 branch relay collaborators (setter injection keeps the constructor stable). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setO7Collaborators(com.inventoryerp.sync.application.SyncBranch branch,
+            com.inventoryerp.sync.application.SyncBranchRelay relay,
+            com.inventoryerp.sync.application.SyncRelayFeedService relayFeed) {
+        this.branch = branch;
+        this.relay = relay;
+        this.relayFeed = relayFeed;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void setO0Collaborators(SyncSnapshotService snapshots, IdempotencyService idempotency) {
@@ -294,6 +308,14 @@ public class SyncController {
         boolean v2 = SyncProtocol.atLeast2(version);
         Map<String, Object> body = new java.util.LinkedHashMap<>(pullSvc.pull(cursor, scopes, v2,
                 attached.get("branchId") instanceof String b ? b : null));
+        if (branch.enabled()) {
+            // ADR-S083 O7: a branch node answers from HQ's mirror, with HQ's licence view; tokens are not rotated here.
+            Object hqLicense = relayLicense();
+            body.put("license", hqLicense != null ? hqLicense : LicenseSyncView.of(licenses.current()));
+            body.put("protocolVersion", SyncProtocol.CURRENT);
+            body.putAll(relay.afterPull(attached));
+            return body;
+        }
         body.put("license", LicenseSyncView.of(licenses.current()));
         // ADR-S083 (additive): protocol, identity, offline policy, token lifecycle (rotation on protocol 2).
         body.put("protocolVersion", SyncProtocol.CURRENT);
@@ -343,6 +365,9 @@ public class SyncController {
             ops.add(new Op(o.opId(), o.deviceSeq(), o.type(), o.actorUserId(), o.occurredAt(), o.payload(),
                     o.originChain(), o.supersedesOpId()));
         }
+        if (branch.enabled()) {
+            return relay.accept(device, ops); // ADR-S083 O7: outbox first, then HQ (the outbox dedups by opId)
+        }
         String key = IdempotencyService.readKey(request.getHeader("Idempotency-Key"));
         if (key == null) {
             return pushSvc.push(device, ops);
@@ -354,6 +379,103 @@ public class SyncController {
         return idempotency.executeWithKey("sync-batch:" + device.id() + ":" + key, idempotency.hashPayload(hashed),
                 "SYNC_BATCH", "/sync/push", null, () -> new IdempotencyService.Result(false, 201, pushSvc.push(device, ops)))
                 .body();
+    }
+
+    /**
+     * ADR-S083 O7 (Extension, HQ): what a branch node needs back — outcomes of the ops it relayed, its relay watermark,
+     * its tills (token hashes, expiry, revocation). {@code seen}: tills that used the branch since the last call.
+     */
+    @GetMapping("/relay/feed")
+    @Public
+    public Map<String, Object> relayFeed(HttpServletRequest request, @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) String seen) {
+        Device device = requireDevice(request);
+        List<String> ids = new ArrayList<>();
+        if (seen != null) {
+            for (String s : seen.split(",")) {
+                if (!s.isBlank() && ids.size() < 500) {
+                    ids.add(s.trim());
+                }
+            }
+        }
+        return relayFeed.feed(device, cursor, ids);
+    }
+
+    /** ADR-S083 O7 (Extension, branch node): relay health and outbox counts, for any till of the branch. */
+    @GetMapping("/branch/status")
+    @Public
+    public Map<String, Object> branchStatus(HttpServletRequest request) {
+        branch.requireEnabled();
+        requireDevice(request);
+        return relay.status();
+    }
+
+    /** ADR-S083 O7 (Extension, branch node): a shift's cash from the branch's own records (C3), by its client id. */
+    @GetMapping("/branch/shift-report")
+    @Public
+    public Map<String, Object> branchShiftReport(HttpServletRequest request,
+            @RequestParam(required = false) String cashSessionId) {
+        branch.requireEnabled();
+        requireDevice(request);
+        if (cashSessionId == null || cashSessionId.isBlank()) {
+            throw ApiException.badRequest("cashSessionId is required");
+        }
+        return relay.shiftReport(cashSessionId);
+    }
+
+    private com.inventoryerp.sync.application.SyncReconciliationService reconciliation;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReconciliation(com.inventoryerp.sync.application.SyncReconciliationService reconciliation) {
+        this.reconciliation = reconciliation;
+    }
+
+    /** ADR-S083 C2 (Extension): run the post-restore reconciliation now for the caller's organisation. */
+    @PostMapping("/reconciliation/run")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.ORGANIZATION__UPDATE)
+    public Map<String, Object> runReconciliation() {
+        return reconciliation.runForCurrent();
+    }
+
+    /** ADR-S083 C2 (Extension): recent reconciliation runs (no reports). */
+    @GetMapping("/reconciliation/runs")
+    @RequirePermissions(Permissions.ORGANIZATION__READ)
+    public List<Map<String, Object>> reconciliationRuns() {
+        return reconciliation.runs();
+    }
+
+    /** ADR-S083 C2 (Extension): one reconciliation run's report. */
+    @GetMapping("/reconciliation/runs/{id}")
+    @RequirePermissions(Permissions.ORGANIZATION__READ)
+    public Map<String, Object> reconciliationRun(@PathVariable String id) {
+        return reconciliation.report(id);
+    }
+
+    private com.inventoryerp.sync.application.SyncStatusService statusService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStatusService(com.inventoryerp.sync.application.SyncStatusService statusService) {
+        this.statusService = statusService;
+    }
+
+    /** ADR-S083 S9 (Extension): the sync status dashboard. */
+    @GetMapping("/status")
+    @RequirePermissions(Permissions.ORGANIZATION__READ)
+    public Map<String, Object> status() {
+        return statusService.status();
+    }
+
+    /** HQ's licence view as the branch last pulled it. */
+    private Object relayLicense() {
+        return mirrorLicense == null ? null : mirrorLicense.get();
+    }
+
+    private java.util.function.Supplier<Object> mirrorLicense;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setMirror(com.inventoryerp.sync.application.SyncBranchMirror mirror) {
+        this.mirrorLicense = () -> mirror.meta("license");
     }
 
     private void validate(SyncPushRequest dto) {
@@ -403,8 +525,10 @@ public class SyncController {
         }
         String version = SyncProtocol.of(request.getHeader(SyncProtocol.HEADER));
         devices.touch((String) d.get("id"), version);
+        // ADR-S083 O7: at HQ, a branch node pushes its tills' ops (relay); a branch node itself has no relays below it.
+        boolean relaying = !branch.enabled() && relayFeed.isBranch((String) d.get("id"));
         return new Device((String) d.get("id"), (String) d.get("organizationId"), (String) d.get("branchId"), cutoff,
-                code, SyncProtocol.atLeast2(version));
+                code, SyncProtocol.atLeast2(version), relaying);
     }
 
     private static Map<?, ?> attached(HttpServletRequest request) {
