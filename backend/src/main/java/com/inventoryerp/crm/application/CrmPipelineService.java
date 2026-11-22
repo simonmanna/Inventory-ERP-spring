@@ -269,6 +269,9 @@ public class CrmPipelineService {
             }
         }
         String owner = in.containsKey("ownerId") ? str(in.get("ownerId")) : null;
+        if (!blank(owner)) {
+            config.requireUser(owner); // same check as update / assign / convert: a user of this organization
+        }
         if (!in.containsKey("ownerId")) {
             owner = autoAssign();
             if (owner == null) {
@@ -299,7 +302,7 @@ public class CrmPipelineService {
         history(id, null, str(stage.get("id")), null, "open", null);
         audit.record(AuditInput.of("Deal", id, "create", null, Obj.of("kind", kind, "name", name, "stageId",
                 stage.get("id"), "amount", d.get("amount"))));
-        events.publish("crm.deal.created", Obj.of("organizationId", org(), "dealId", id, "name", name, "stage",
+        events.publishOnCommit("crm.deal.created", Obj.of("organizationId", org(), "dealId", id, "name", name, "stage",
                 "lead".equals(kind) ? "lead" : stage.get("legacyStage")));
         return get(id);
     }
@@ -367,7 +370,7 @@ public class CrmPipelineService {
         syncLegacyStage(id, str(stage.get("legacyStage")));
         history(id, str(deal.get("stageId")), stageId, fromStatus, "open", deal.get("stageChangedAt"));
         stageActivity(deal, stageName(str(deal.get("stageId"))), str(stage.get("name")));
-        events.publish("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id, "fromStage",
+        events.publishOnCommit("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id, "fromStage",
                 deal.get("stage"), "toStage", stage.get("legacyStage"), "toStageId", stageId));
         return get(id);
     }
@@ -399,9 +402,9 @@ public class CrmPipelineService {
         history(id, str(deal.get("stageId")), stageId, str(deal.get("status")), "won", deal.get("stageChangedAt"));
         stageActivity(deal, stageName(str(deal.get("stageId"))), "Won");
         audit.record(AuditInput.of("Deal", id, "update", Obj.of("status", deal.get("status")), Obj.of("status", "won")));
-        events.publish(DomainEvents.CRM_DEAL_WON, Obj.of("organizationId", org(), "dealId", id, "amount",
+        events.publishOnCommit(DomainEvents.CRM_DEAL_WON, Obj.of("organizationId", org(), "dealId", id, "amount",
                 deal.get("amount")));
-        events.publish("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id, "fromStage",
+        events.publishOnCommit("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id, "fromStage",
                 deal.get("stage"), "toStage", "won", "toStageId", stageId));
         return get(id);
     }
@@ -425,7 +428,7 @@ public class CrmPipelineService {
         stageActivity(deal, stageName(str(deal.get("stageId"))), "Lost");
         audit.record(AuditInput.of("Deal", id, "update", Obj.of("status", deal.get("status")), Obj.of("status", "lost",
                 "lostReasonId", reason, "lostNote", in.get("lostNote"))));
-        events.publish(DomainEvents.CRM_DEAL_LOST, Obj.of("organizationId", org(), "dealId", id, "lostReasonId",
+        events.publishOnCommit(DomainEvents.CRM_DEAL_LOST, Obj.of("organizationId", org(), "dealId", id, "lostReasonId",
                 reason));
         return get(id);
     }
@@ -506,9 +509,29 @@ public class CrmPipelineService {
         history(id, str(deal.get("stageId")), str(stage.get("id")), "open", "open", deal.get("stageChangedAt"));
         audit.record(AuditInput.of("Deal", id, "update", Obj.of("kind", "lead"), Obj.of("kind", "opportunity",
                 "partnerId", partnerId)));
-        events.publish(DomainEvents.CRM_LEAD_CONVERTED, Obj.of("organizationId", org(), "dealId", id, "partnerId",
+        events.publishOnCommit(DomainEvents.CRM_LEAD_CONVERTED, Obj.of("organizationId", org(), "dealId", id, "partnerId",
                 partnerId));
         return get(id);
+    }
+
+    // ------------------------------------------------------------------ lead-scoped access (crm:lead:*)
+
+    /**
+     * Run {@code action} only when {@code id} is a lead the caller may see: the {@code /crm/leads/:id} routes let a
+     * user with lead permissions (and no deal permissions) work their inbox without reaching opportunities.
+     */
+    public <T> T asLead(String id, java.util.function.Supplier<T> action) {
+        Map<String, Object> deal = db.row("SELECT kind FROM \"Deal\" d WHERE d.id = ? AND d.\"organizationId\" = ?"
+                + " AND d.\"deletedAt\" IS NULL", id, org());
+        if (deal == null || !"lead".equals(String.valueOf(deal.get("kind")))) {
+            throw ApiException.notFound("Lead not found");
+        }
+        try {
+            visible(id); // the usual visibility rule, as on /crm/opportunities/:id
+        } catch (ApiException hidden) {
+            throw ApiException.notFound("Lead not found");
+        }
+        return action.get();
     }
 
     /** Partner record created on conversion (fields of {@code Partner}). */
@@ -530,7 +553,7 @@ public class CrmPipelineService {
         db.patch("Deal", id, Obj.of("ownerId", owner, "teamId", teamOf(owner)), true);
         audit.record(AuditInput.of("Deal", id, "update", null, Obj.of("ownerId", owner)));
         // Notification routing (ADR-S065): the new owner learns about it.
-        events.publish("crm.deal.assigned", Obj.of("organizationId", org(), "dealId", id, "ownerId", owner));
+        events.publishOnCommit("crm.deal.assigned", Obj.of("organizationId", org(), "dealId", id, "ownerId", owner));
         return get(id);
     }
 
@@ -544,7 +567,7 @@ public class CrmPipelineService {
         db.update("UPDATE \"Deal\" SET \"deletedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND"
                 + " \"organizationId\" = ?", id, org());
         audit.record(AuditInput.of("Deal", id, "delete"));
-        events.publish("crm.deal.deleted", Obj.of("organizationId", org(), "dealId", id));
+        events.publishOnCommit("crm.deal.deleted", Obj.of("organizationId", org(), "dealId", id));
         return Obj.of("ok", true);
     }
 
@@ -709,7 +732,23 @@ public class CrmPipelineService {
         return s == null ? "—" : str(s.get("name"));
     }
 
+    /** Set while the legacy {@code /crm/deals} stage route drives the pipeline; it logs its own activity. */
+    private static final ThreadLocal<Boolean> LEGACY_STAGE_LOG = new ThreadLocal<>();
+
+    /** Runs {@code action} without the pipeline's stage-change activity (the caller writes its own). */
+    <T> T withoutStageActivity(java.util.function.Supplier<T> action) {
+        LEGACY_STAGE_LOG.set(Boolean.TRUE);
+        try {
+            return action.get();
+        } finally {
+            LEGACY_STAGE_LOG.remove();
+        }
+    }
+
     private void stageActivity(Map<String, Object> deal, String from, String to) {
+        if (Boolean.TRUE.equals(LEGACY_STAGE_LOG.get())) {
+            return;
+        }
         db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, \"dealId\", \"partnerId\","
                 + " \"occurredAt\", status, completed, \"createdById\", \"updatedAt\") VALUES (?, ?, 'deal_stage_change',"
                 + " ?, ?, ?, " + NOW + ", 'done', true, ?, " + NOW + ")", CrmDb.newId(), org(), "Stage: " + from + " → "

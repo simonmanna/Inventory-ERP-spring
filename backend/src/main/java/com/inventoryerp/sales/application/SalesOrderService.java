@@ -841,12 +841,19 @@ public class SalesOrderService {
         return get(id);
     }
 
-    /** Apply a kernel approval-engine decision (idempotent: ignored unless still pending). */
+    /**
+     * Apply a kernel approval-engine decision (idempotent: ignored unless still pending, and ignored when it answers a
+     * request that is no longer the order's current one).
+     */
     @Transactional
-    public void applyDecision(String id, boolean approved, String comment) {
-        Map<String, Object> o = db.row("SELECT status FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", id,
-                org());
+    public void applyDecision(String id, String requestId, boolean approved, String comment) {
+        Map<String, Object> o = db.row("SELECT status, \"approvalRequestId\" FROM \"SalesOrder\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE", id, org());
         if (o == null || !"pending_approval".equals(o.get("status"))) {
+            return;
+        }
+        // A decision on a superseded request (the order was rejected and resubmitted since) must not decide the new one.
+        if (!blank(requestId) && !requestId.equals(String.valueOf(o.get("approvalRequestId")))) {
             return;
         }
         if (approved) {

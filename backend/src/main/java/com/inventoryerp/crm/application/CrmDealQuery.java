@@ -27,20 +27,22 @@ final class CrmDealQuery {
     record Filter(String kind, String status, String stageId, String ownerId, String teamId, String sourceId,
             String tagId, String partnerId, String lostReasonId, String q, Integer priority, String createdFrom,
             String createdTo, String closeFrom, String closeTo, Boolean mine, Boolean unassigned, String activityState,
-            String city, String country) {
+            String city, String country, Integer priorityExact, String wonFrom, String wonTo) {
 
         static Filter of(Map<String, String> p) {
             return new Filter(p.get("kind"), p.get("status"), p.get("stageId"), p.get("ownerId"), p.get("teamId"),
                     p.get("sourceId"), p.get("tagId"), p.get("partnerId"), p.get("lostReasonId"), p.get("q"),
                     blank(p.get("priority")) ? null : Integer.valueOf(p.get("priority")), p.get("createdFrom"),
                     p.get("createdTo"), p.get("closeFrom"), p.get("closeTo"), "true".equals(p.get("mine")),
-                    "true".equals(p.get("unassigned")), p.get("activityState"), p.get("city"), p.get("country"));
+                    "true".equals(p.get("unassigned")), p.get("activityState"), p.get("city"), p.get("country"),
+                    blank(p.get("priorityExact")) ? null : Integer.valueOf(p.get("priorityExact")), p.get("wonFrom"),
+                    p.get("wonTo"));
         }
 
         Filter withKind(String k) {
             return new Filter(k, status, stageId, ownerId, teamId, sourceId, tagId, partnerId, lostReasonId, q,
                     priority, createdFrom, createdTo, closeFrom, closeTo, mine, unassigned, activityState, city,
-                    country);
+                    country, priorityExact, wonFrom, wonTo);
         }
     }
 
@@ -123,6 +125,11 @@ final class CrmDealQuery {
             where.append(" AND d.priority >= ?");
             params.add(f.priority());
         }
+        // Exact priority: opens one row of the "group by priority" table (priority above is "at least").
+        if (f.priorityExact() != null) {
+            where.append(" AND d.priority = ?");
+            params.add(f.priorityExact());
+        }
         if (!blank(f.city())) {
             where.append(" AND d.city ILIKE ?");
             params.add(f.city());
@@ -141,6 +148,7 @@ final class CrmDealQuery {
         }
         range("d.\"createdAt\"", f.createdFrom(), f.createdTo());
         range("d.\"expectedClose\"", f.closeFrom(), f.closeTo());
+        range("d.\"wonAt\"", f.wonFrom(), f.wonTo());
         if (!blank(f.activityState())) {
             switch (f.activityState()) {
                 case "overdue" -> {
@@ -163,14 +171,24 @@ final class CrmDealQuery {
     }
 
     private void visibility() {
+        where.append(visibleSql("d", params));
+    }
+
+    /**
+     * The deal visibility rule (ADR-S010 §7) as an {@code AND (...)} fragment on the deal alias {@code a}, its
+     * parameters appended to {@code params}; empty for callers holding {@code crm:deal:view_all}. Without it a user
+     * sees own, unassigned and led-team records. Shared by the suite, the legacy {@code /crm/deals} routes, the legacy
+     * analytics and the customer directory so every screen counts the same deals.
+     */
+    static String visibleSql(String a, List<Object> params) {
         if (TenantContext.has(Permissions.CRM__DEAL_VIEW_ALL)) {
-            return;
+            return "";
         }
         String me = TenantContext.userId();
-        where.append(" AND (d.\"ownerId\" = ? OR d.\"ownerId\" IS NULL OR d.\"teamId\" IN (SELECT t.id FROM"
-                + " \"CrmTeam\" t WHERE t.\"leaderId\" = ?))");
         params.add(me);
         params.add(me);
+        return " AND (" + a + ".\"ownerId\" = ? OR " + a + ".\"ownerId\" IS NULL OR " + a + ".\"teamId\" IN (SELECT"
+                + " t.id FROM \"CrmTeam\" t WHERE t.\"leaderId\" = ?))";
     }
 
     private void eq(String col, String v) {
@@ -212,9 +230,11 @@ final class CrmDealQuery {
         r.put("daysInStage", days);
         int rot = r.get("rottingDays") instanceof Number n ? n.intValue() : 14;
         r.put("rotting", "open".equals(r.get("status")) && "opportunity".equals(r.get("kind")) && days >= rot);
-        double amount = r.get("amount") instanceof Number n ? n.doubleValue() : 0;
-        double prob = r.get("probability") instanceof Number n ? n.doubleValue() : 0;
-        r.put("weightedAmount", com.inventoryerp.kernel.common.JsNumbers.js(Math.round(amount * prob) / 100.0));
+        java.math.BigDecimal amount = r.get("amount") == null ? java.math.BigDecimal.ZERO : CrmDb.dec(r.get("amount"));
+        java.math.BigDecimal prob = r.get("probability") == null ? java.math.BigDecimal.ZERO : CrmDb.dec(r.get("probability"));
+        // amount × probability / 100, to the cent (HALF_UP), as the list totals do in SQL.
+        r.put("weightedAmount", com.inventoryerp.kernel.common.JsNumbers.js(amount.multiply(prob)
+                .divide(java.math.BigDecimal.valueOf(100), 2, java.math.RoundingMode.HALF_UP)));
         if (r.get("nextActivityId") != null) {
             r.put("nextActivity", com.inventoryerp.kernel.common.Obj.of("id", r.get("nextActivityId"), "title",
                     r.get("nextActivityTitle"), "type", r.get("nextActivityType"), "dueAt", r.get("nextActivityDueAt")));

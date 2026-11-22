@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CalendarCheck, Check, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,7 +12,7 @@ import { dateTime, relativeTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { crmApi, useCrmLookups, useCrmMutation, usePlanner } from '@/features/crm/suite-api';
-import { ActivityBadge, typeLabel } from './crm-ui';
+import { ActivityBadge, ErrorState, typeLabel } from './crm-ui';
 import { DoneDialog, ScheduleDialog } from './crm-dialogs';
 
 const TABS = [
@@ -29,15 +31,16 @@ export function ActivitiesPage() {
   const [doneId, setDoneId] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState(false);
   const viewAll = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealViewAll));
+  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.activityWrite));
   const { data: lk } = useCrmLookups();
-  const { data, isLoading } = usePlanner({ state, scope, assignedToId: scope === 'all' ? assignee || undefined : undefined, type: type || undefined });
+  const { data, isLoading, isError, refetch } = usePlanner({ state, scope, assignedToId: scope === 'all' ? assignee || undefined : undefined, type: type || undefined });
   const cancel = useCrmMutation(crmApi.cancelActivity);
   const counts = data?.counts;
 
   return (
     <div className="space-y-4">
       <ListPageHeader icon={CalendarCheck} title={tx('Activities')} description={tx('Your planned calls, meetings and follow-ups.')}
-        actions={<Button onClick={() => setScheduling(true)}>{tx('Schedule activity')}</Button>} />
+        actions={canWrite && <Button onClick={() => setScheduling(true)}>{tx('Schedule activity')}</Button>} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex rounded-lg border bg-card p-0.5">
           {TABS.map((t) => {
@@ -71,6 +74,7 @@ export function ActivitiesPage() {
       </div>
       <div className="divide-y rounded-xl border bg-card shadow-sm">
         {isLoading && <div className="p-3"><Skeleton className="h-40 w-full" /></div>}
+        {isError && <div className="p-3"><ErrorState message={tx('Could not load the activities.')} onRetry={() => refetch()} /></div>}
         {data?.data.map((a) => (
           <div key={a.id} className="flex flex-wrap items-start gap-3 p-3 text-sm">
             <ActivityBadge state={a.state === 'done' ? 'none' : (a.state ?? 'planned')} type={a.type} />
@@ -86,10 +90,10 @@ export function ActivitiesPage() {
             <div className={cn('text-right text-xs', a.state === 'overdue' ? 'text-rose-600' : a.state === 'today' ? 'text-amber-600' : 'text-muted-foreground')}>
               {a.state === 'done' ? dateTime(a.completedAt) : a.dueAt ? <>{relativeTime(a.dueAt)}<br />{dateTime(a.dueAt)}</> : tx('No due date')}
             </div>
-            {a.state !== 'done' && (
+            {canWrite && a.state !== 'done' && (
               <div className="flex gap-1">
                 <Button size="sm" variant="outline" onClick={() => setDoneId(a.id)}><Check className="mr-1 h-3.5 w-3.5" />{tx('Done')}</Button>
-                <Button size="sm" variant="ghost" title={tx('Cancel')} onClick={() => cancel.mutate(a.id)}><X className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" title={tx('Cancel')} onClick={() => cancel.mutate(a.id, { onError: (e) => toast.error(apiErrorMessage(e, tx('Could not cancel'))) })}><X className="h-4 w-4" /></Button>
               </div>
             )}
           </div>

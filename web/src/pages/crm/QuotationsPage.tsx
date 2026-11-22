@@ -9,7 +9,7 @@ import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { QUOTE_STATUS_LABEL, useCrmLookups, useQuotations, type QuoteStatus } from '@/features/crm/suite-api';
-import { QuoteStatusPill } from './crm-ui';
+import { ErrorState, QuoteStatusPill } from './crm-ui';
 
 const TABS: Array<{ key: string; label: string }> = [
   { key: '', label: tx('All') },
@@ -30,7 +30,7 @@ export function QuotationsPage() {
   const base = window.location.pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
   const status = params.get('status') ?? '';
   const set = (k: string, v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); if (k !== 'page') n.delete('page'); return n; }, { replace: true });
-  const { data, isLoading } = useQuotations({
+  const { data, isLoading, isError, refetch } = useQuotations({
     status: status || undefined, q: params.get('q') || undefined, dealId: params.get('dealId') || undefined,
     ownerId: params.get('ownerId') || undefined, from: params.get('from') || undefined, to: params.get('to') || undefined,
     page: Number(params.get('page') ?? 1), pageSize: 50,
@@ -64,6 +64,7 @@ export function QuotationsPage() {
           </thead>
           <tbody>
             {isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
+            {isError && <tr><td colSpan={8} className="p-3"><ErrorState message={tx('Could not load the quotations.')} onRetry={() => refetch()} /></td></tr>}
             {data?.data.map((q) => (
               <tr key={q.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`${base}/${q.id}`)}>
                 <td className="px-3 py-2 font-medium">{q.number}{q.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{q.revision}</span>}</td>

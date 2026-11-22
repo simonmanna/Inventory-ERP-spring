@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { apiErrorMessage } from '@/lib/api-error';
+import { localDateTimeInput } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import {
   crmApi, useCrmLookups, useCrmMutation, usePartnerOptions, type DealKind, type Opportunity, type PlannedType,
@@ -109,7 +110,7 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
     if (f.ownerId || initial) body.ownerId = f.ownerId || null;
     if (kind === 'opportunity' && f.stageId) body.stageId = f.stageId;
     if (initial) body.probability = f.probability === '' ? null : Number(f.probability);
-    if (initial) return crmApi.update({ id: initial.id, ...body });
+    if (initial) return crmApi.update({ id: initial.id, kind: initial.kind, ...body });
     return kind === 'lead' ? crmApi.createLead(body) : crmApi.createOpportunity(body);
   });
 
@@ -193,7 +194,7 @@ export function OpportunityDialog({ open, onOpenChange, kind, initial, defaults,
 }
 
 /** Mark lost with a reason. */
-export function LostDialog({ open, onOpenChange, id, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; id: string; onDone?: () => void }) {
+export function LostDialog({ open, onOpenChange, id, kind, onDone }: { open: boolean; onOpenChange: (o: boolean) => void; id: string; kind?: string; onDone?: () => void }) {
   const { data: lk } = useCrmLookups();
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
@@ -210,7 +211,7 @@ export function LostDialog({ open, onOpenChange, id, onDone }: { open: boolean; 
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{tx('Cancel')}</Button>
-          <Button variant="destructive" disabled={m.isPending} onClick={() => m.mutate({ id, lostReasonId: reason || undefined, lostNote: note || undefined }, {
+          <Button variant="destructive" disabled={m.isPending} onClick={() => m.mutate({ id, kind, lostReasonId: reason || undefined, lostNote: note || undefined }, {
             onSuccess: () => { toast.success(tx('Marked as lost')); onOpenChange(false); onDone?.(); },
             onError: (e) => toast.error(apiErrorMessage(e, tx('Could not mark as lost'))),
           })}>{tx('Mark lost')}</Button>
@@ -234,7 +235,7 @@ export function ScheduleDialog({ open, onOpenChange, dealId, partnerId, onDone }
   const [assignee, setAssignee] = useState('');
   const [body, setBody] = useState('');
   useEffect(() => {
-    if (open) { setType('call'); setTitle(''); setDue(new Date(Date.now() + 86_400_000).toISOString().slice(0, 16)); setRemind(''); setAssignee(''); setBody(''); }
+    if (open) { setType('call'); setTitle(''); setDue(localDateTimeInput(new Date(Date.now() + 86_400_000))); setRemind(''); setAssignee(''); setBody(''); }
   }, [open]);
   const m = useCrmMutation(crmApi.schedule);
   const submit = () => {
@@ -293,7 +294,7 @@ export function DoneDialog({ open, onOpenChange, activityId, onDone }: { open: b
   const [ftype, setFtype] = useState<PlannedType>('call');
   const [ftitle, setFtitle] = useState('');
   const [fdue, setFdue] = useState('');
-  useEffect(() => { if (open) { setOutcome(''); setFollow(false); setFtitle(''); setFdue(new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 16)); } }, [open]);
+  useEffect(() => { if (open) { setOutcome(''); setFollow(false); setFtitle(''); setFdue(localDateTimeInput(new Date(Date.now() + 3 * 86_400_000))); } }, [open]);
   const m = useCrmMutation(crmApi.doneActivity);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

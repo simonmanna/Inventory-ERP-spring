@@ -119,3 +119,15 @@ export function formatBytes(n: number | null | undefined): string {
   if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** `YYYY-MM-DD` in the browser's local time (an `<input type="date">` value; `toISOString` would give the UTC day). */
+export function localDateInput(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** `YYYY-MM-DDTHH:mm` in local time, for `<input type="datetime-local">` defaults. */
+export function localDateTimeInput(d: Date = new Date()): string {
+  return `${localDateInput(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}

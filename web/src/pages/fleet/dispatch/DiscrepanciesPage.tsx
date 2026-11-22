@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Scale } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { DataTable, type Column } from '@/components/data-table';
@@ -55,9 +56,11 @@ export function DiscrepanciesPage() {
     }
   };
 
+  const qc = useQueryClient();
   const openCase = async (discrepancyId: string) => {
     try {
       const created = await caseApi.fromDiscrepancy(discrepancyId);
+      qc.invalidateQueries({ queryKey: ['crm-cases'] });
       navigate(`/crm/cases/${created.id}`);
     } catch (err) {
       notify.error(apiMessage(err, tx('Could not open the case')));

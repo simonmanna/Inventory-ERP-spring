@@ -528,6 +528,12 @@ html.theme-anim *::after {
     transition-timing-function: var(--ease-out);
   }
   .press:active { transform: scale(0.97); }
+  /* Bars that grow in from the left on first paint (CRM meters, funnel). */
+  .grow-x {
+    transform-origin: left center;
+    animation: grow-x 700ms var(--ease-out) both;
+  }
+  @keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -59,9 +59,9 @@ public class SalesQuotationApprovalSubscriber {
                 + " \"decidedAt\" DESC LIMIT 1").param(requestId).query(String.class).optional().orElse(null);
         TenantContext.run(TenantStore.user(orgId, decider), () -> {
             if (order) {
-                orders.applyDecision(quotationId, approved, comment);
+                orders.applyDecision(quotationId, requestId, approved, comment);
             } else {
-                quotations.applyDecision(quotationId, approved, comment);
+                quotations.applyDecision(quotationId, requestId, approved, comment);
             }
             log.info("Quotation {} {} by approval request {}", quotationId, approved ? "approved" : "rejected",
                     requestId);

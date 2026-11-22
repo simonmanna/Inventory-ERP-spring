@@ -1,3 +1,4 @@
+import { tx } from '@/lib/i18n/tx';
 /** Customer complaints and service requests (CRM-1). */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -38,6 +39,17 @@ export interface CrmCase {
   createdAt: string;
   events?: CaseEvent[];
 }
+
+/** Translated labels for the case enums (shown instead of the raw API values). */
+export const caseLabel = (v: string | null | undefined): string => {
+  const L: Record<string, string> = {
+    open: tx('Open'), in_progress: tx('In progress'), resolved: tx('Resolved'), closed: tx('Closed'), cancelled: tx('Cancelled'),
+    complaint: tx('Complaint'), service_request: tx('Service request'),
+    delivery: tx('Delivery'), quality: tx('Quality'), billing: tx('Billing'), service: tx('Service'), other: tx('Other'),
+    low: tx('Low'), normal: tx('Normal'), high: tx('High'), urgent: tx('Urgent'),
+  };
+  return v ? L[v] ?? v.replace(/_/g, ' ') : '';
+};
 
 export const CASE_STATUS_TONE: Record<string, string> = {
   open: 'bg-sky-100 text-sky-800',

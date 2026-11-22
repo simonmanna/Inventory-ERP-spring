@@ -14,7 +14,8 @@ import { date, dateTime, money, relativeTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
-  crmApi, useCrmLookups, useCrmMutation, useOpportunity, useTimeline, type OpportunityDetail, type TimelineItem,
+  canReadQuotes, canWriteQuotes, crmApi, quoteUi, useCrmLookups, useCrmMutation, useOpportunity, useTimeline, type OpportunityDetail,
+  type TimelineItem,
 } from '@/features/crm/suite-api';
 import { ActivityBadge, Avatar, QuoteStatusPill, Stars, TYPE_ICON, TagChips, colorOf, typeLabel } from './crm-ui';
 import { ConvertDialog, DoneDialog, LostDialog, OpportunityDialog, ScheduleDialog } from './crm-dialogs';
@@ -28,13 +29,18 @@ function duration(seconds: number) {
 }
 
 /** Lead / opportunity form: stage bar, won / lost, quotations, planned activities and the history chatter. */
-export function OpportunityDetailPage() {
+export function OpportunityDetailPage({ kind: routeKind }: { kind?: 'lead' | 'opportunity' } = {}) {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data: o, isLoading, isError } = useOpportunity(id);
+  const { data: o, isLoading, isError } = useOpportunity(id, routeKind);
   const { data: lk } = useCrmLookups();
-  const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
-  const canQuote = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite));
+  const dealWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite));
+  const leadWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.leadWrite));
+  const canActivity = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.activityWrite));
+  const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.dealWrite) && s.hasPermission(PERMISSIONS.crm.leadWrite));
+  const canQuote = useAuthStore((s) => canWriteQuotes(s.hasPermission));
+  const canSeeQuotes = useAuthStore((s) => canReadQuotes(s.hasPermission));
+  const quotes = quoteUi();
   const [dialog, setDialog] = useState<'edit' | 'lost' | 'schedule' | 'convert' | null>(null);
   const [doneId, setDoneId] = useState<string | null>(null);
   const move = useCrmMutation(crmApi.move);
@@ -46,8 +52,11 @@ export function OpportunityDetailPage() {
   const err = (m: string) => (e: unknown) => toast.error(apiErrorMessage(e, m));
 
   if (isLoading) return <Skeleton className="h-96 w-full" />;
-  if (isError || !o) return <p className="text-sm text-muted-foreground">{tx('Opportunity not found.')}</p>;
+  if (isError || !o) return <p className="text-sm text-muted-foreground">{routeKind === 'lead' ? tx('Lead not found.') : tx('Opportunity not found.')}</p>;
   const isLead = o.kind === 'lead';
+  // A lead is worked with the lead permissions through /crm/leads/:id; an opportunity with the deal permissions.
+  const canWrite = isLead ? leadWrite : dealWrite;
+  const ref = { id: o.id, kind: o.kind };
   const stages = (lk?.stages ?? []).filter((s) => s.isActive && (!s.teamId || s.teamId === o.teamId));
   const durations = new Map(o.stageDurations.map((d) => [d.stageId, Number(d.seconds)]));
 
@@ -60,9 +69,11 @@ export function OpportunityDetailPage() {
           <span className="font-semibold">{o.name}</span>
         </div>
         <div className="flex gap-2">
-          <Link to={`/crm/quotations?dealId=${o.id}`} className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm shadow-sm hover:bg-muted">
+          {canSeeQuotes && (
+          <Link to={`${quotes}?dealId=${o.id}`} className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm shadow-sm hover:bg-muted">
             <FileText className="h-4 w-4 text-primary" /><span><span className="block text-xs text-muted-foreground">{tx('Quotations')}</span><strong>{o.quotationCount}</strong></span>
           </Link>
+          )}
           {o.partner && (
             <Link to={`/crm/customers/${o.partner.id}`} className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm shadow-sm hover:bg-muted">
               <Avatar name={o.partner.name} /><span><span className="block text-xs text-muted-foreground">{tx('Customer')}</span><strong className="line-clamp-1 max-w-[140px]">{o.partner.name}</strong></span>
@@ -73,23 +84,23 @@ export function OpportunityDetailPage() {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-2">
-          {isLead && canWrite && <Button onClick={() => setDialog('convert')}><ArrowRightLeft className="mr-1.5 h-4 w-4" />{tx('Convert to opportunity')}</Button>}
+          {isLead && canConvert && <Button onClick={() => setDialog('convert')}><ArrowRightLeft className="mr-1.5 h-4 w-4" />{tx('Convert to opportunity')}</Button>}
           {!isLead && canQuote && o.status !== 'lost' && (
-            <Button onClick={() => navigate(`/crm/quotations/new?dealId=${o.id}`)} disabled={!o.partnerId} title={!o.partnerId ? tx('Set a customer first') : undefined}>{tx('New quotation')}</Button>
+            <Button onClick={() => navigate(`${quotes}/new?dealId=${o.id}`)} disabled={!o.partnerId} title={!o.partnerId ? tx('Set a customer first') : undefined}>{tx('New quotation')}</Button>
           )}
           {!isLead && canWrite && o.status === 'open' && (
             <Button variant="secondary" disabled={won.isPending} onClick={() => won.mutate(o.id, { onSuccess: () => toast.success(tx('Won! 🎉')), onError: err(tx('Could not mark won')) })}><Trophy className="mr-1.5 h-4 w-4" />{tx('Won')}</Button>
           )}
           {canWrite && o.status === 'open' && <Button variant="secondary" onClick={() => setDialog('lost')}><X className="mr-1.5 h-4 w-4" />{tx('Lost')}</Button>}
           {canWrite && o.status !== 'open' && (
-            <Button variant="secondary" onClick={() => reopen.mutate(o.id, { onError: err(tx('Could not restore')) })}><RotateCcw className="mr-1.5 h-4 w-4" />{tx('Restore')}</Button>
+            <Button variant="secondary" onClick={() => reopen.mutate(ref, { onError: err(tx('Could not restore')) })}><RotateCcw className="mr-1.5 h-4 w-4" />{tx('Restore')}</Button>
           )}
           {canWrite && <Button variant="outline" onClick={() => setDialog('edit')}><Pencil className="mr-1.5 h-4 w-4" />{tx('Edit')}</Button>}
-          <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarPlus className="mr-1.5 h-4 w-4" />{tx('Activity')}</Button>
+          {canActivity && <Button variant="outline" onClick={() => setDialog('schedule')}><CalendarPlus className="mr-1.5 h-4 w-4" />{tx('Activity')}</Button>}
           {canWrite && o.status !== 'won' && (
             <Button variant="ghost" className="text-destructive" onClick={() => {
               if (!confirm(tx('Archive this record?'))) return;
-              archive.mutate(o.id, { onSuccess: () => navigate(isLead ? '/crm/leads' : '/crm/pipeline'), onError: err(tx('Could not archive')) });
+              archive.mutate(ref, { onSuccess: () => navigate(isLead ? '/crm/leads' : '/crm/pipeline'), onError: err(tx('Could not archive')) });
             }}><Trash2 className="h-4 w-4" /></Button>
           )}
         </div>
@@ -131,7 +142,7 @@ export function OpportunityDetailPage() {
             <Info label={tx('Contact')} value={o.contactName} />
             <Info label={tx('Expected closing')} value={o.expectedClose ? date(o.expectedClose) : null} />
             <Info label={tx('Email')} value={o.email && <a className="inline-flex items-center gap-1 text-primary hover:underline" href={`mailto:${o.email}`}><Mail className="h-3.5 w-3.5" />{o.email}</a>} />
-            <Info label={tx('Priority')} value={<Stars value={o.priority} onChange={canWrite ? (p) => prio.mutate({ id: o.id, priority: p }) : undefined} size="md" />} />
+            <Info label={tx('Priority')} value={<Stars value={o.priority} onChange={canWrite ? (p) => prio.mutate({ ...ref, priority: p }, { onError: err(tx('Could not save')) }) : undefined} size="md" />} />
             <Info label={tx('Phone')} value={o.phone && <a className="inline-flex items-center gap-1 text-primary hover:underline" href={`tel:${o.phone}`}><Phone className="h-3.5 w-3.5" />{o.phone}</a>} />
             <Info label={tx('Tags')} value={<TagChips ids={o.tagIds} tags={lk?.tags ?? []} max={8} />} />
           </div>
@@ -165,7 +176,7 @@ export function OpportunityDetailPage() {
           <div className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-sm font-semibold">{tx('Planned activities')}</h2>
-              <Button size="sm" variant="ghost" onClick={() => setDialog('schedule')}><CalendarPlus className="mr-1 h-4 w-4" />{tx('Schedule')}</Button>
+              {canActivity && <Button size="sm" variant="ghost" onClick={() => setDialog('schedule')}><CalendarPlus className="mr-1 h-4 w-4" />{tx('Schedule')}</Button>}
             </div>
             {o.plannedActivities.length === 0 && <p className="text-xs text-muted-foreground">{tx('Nothing planned. Schedule the next step so the deal does not go cold.')}</p>}
             <div className="space-y-2">
@@ -182,24 +193,24 @@ export function OpportunityDetailPage() {
                       </p>
                       {a.body && <p className="mt-0.5 text-xs text-muted-foreground">{a.body}</p>}
                     </div>
-                    <div className="flex gap-1">
+                    {canActivity && <div className="flex gap-1">
                       <button title={tx('Mark done')} className="rounded p-1 text-emerald-600 hover:bg-emerald-50" onClick={() => setDoneId(a.id)}><Check className="h-4 w-4" /></button>
-                      <button title={tx('Cancel')} className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => cancelAct.mutate(a.id)}><X className="h-4 w-4" /></button>
-                    </div>
+                      <button title={tx('Cancel')} className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => cancelAct.mutate(a.id, { onError: err(tx('Could not cancel')) })}><X className="h-4 w-4" /></button>
+                    </div>}
                   </div>
                 );
               })}
             </div>
           </div>
-          <AttachmentPanel resType="crm_deal" resId={o.id} writePermission={PERMISSIONS.crm.dealWrite} />
-          <Chatter id={o.id} />
+          <AttachmentPanel resType="crm_deal" resId={o.id} writePermission={isLead ? PERMISSIONS.crm.leadWrite : PERMISSIONS.crm.dealWrite} />
+          <Chatter id={o.id} kind={routeKind} />
         </div>
       </div>
 
       <OpportunityDialog open={dialog === 'edit'} onOpenChange={(v) => !v && setDialog(null)} kind={o.kind} initial={o} />
-      <LostDialog open={dialog === 'lost'} onOpenChange={(v) => !v && setDialog(null)} id={o.id} />
+      <LostDialog open={dialog === 'lost'} onOpenChange={(v) => !v && setDialog(null)} id={o.id} kind={o.kind} />
       <ScheduleDialog open={dialog === 'schedule'} onOpenChange={(v) => !v && setDialog(null)} dealId={o.id} />
-      <ConvertDialog open={dialog === 'convert'} onOpenChange={(v) => !v && setDialog(null)} lead={o} />
+      <ConvertDialog open={dialog === 'convert'} onOpenChange={(v) => !v && setDialog(null)} lead={o} onDone={(c) => navigate(`/crm/opportunities/${c.id}`, { replace: true })} />
       <DoneDialog open={!!doneId} onOpenChange={(v) => !v && setDoneId(null)} activityId={doneId ?? ''} />
     </div>
   );
@@ -219,7 +230,7 @@ function QuotesTab({ o }: { o: OpportunityDetail }) {
   return (
     <div className="divide-y rounded-lg border">
       {o.quotations.map((q) => (
-        <Link key={q.id} to={`/crm/quotations/${q.id}`} className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-muted/40">
+        <Link key={q.id} to={`${quoteUi()}/${q.id}`} className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-muted/40">
           <span className="font-medium">{q.number}</span>
           <span className="text-muted-foreground">{date(q.issueDate)}</span>
           <QuoteStatusPill status={q.status} />
@@ -246,8 +257,8 @@ function describe(t: TimelineItem): { title: string; body?: string | null } {
 }
 
 /** History chatter: logged activities, stage moves and audited changes. */
-function Chatter({ id }: { id: string }) {
-  const { data } = useTimeline(id);
+function Chatter({ id, kind }: { id: string; kind?: 'lead' | 'opportunity' }) {
+  const { data } = useTimeline(id, kind);
   return (
     <div className="rounded-xl border bg-card p-4 shadow-sm">
       <h2 className="mb-3 text-sm font-semibold">{tx('History')}</h2>

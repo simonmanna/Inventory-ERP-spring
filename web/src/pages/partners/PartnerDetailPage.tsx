@@ -829,7 +829,7 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
   const { partnerId } = useParams<{ partnerId: string }>();
   const navigate = useNavigate();
   const hasPermission = useAuthStore((s) => s.hasPermission);
-  const canCrm = hasPermission('crm:deal:read');
+  const canCrm = hasPermission(PERMISSIONS.crm.dealRead);
   const canEdit = hasPermission(PERMISSIONS.partners.edit);
   const canFollowup = hasPermission('sales:collections:read');
   const canManageFollowup = hasPermission('sales:collections:manage');
@@ -904,7 +904,7 @@ function PartnerDetailPage({ partnerType }: { partnerType: 'customer' | 'supplie
   tabs.push({ value: isCustomer ? 'invoices' : 'expenses-purchases', label: isCustomer ? tx('Invoices') : tx('Expenses/Purchases'), icon: isCustomer ? DollarSign : Receipt });
   tabs.push({ value: 'payments', label: isCustomer ? tx('Payments and Follow-ups') : tx('Payments'), icon: Activity });
   if (canCrm) {
-    tabs.push({ value: 'crm', label: 'CRM', icon: Handshake });
+    tabs.push({ value: 'crm', label: tx('CRM'), icon: Handshake });
   }
   if (isCustomer) {
     tabs.push({ value: 'statement', label: tx('Statement'), icon: BookOpen });

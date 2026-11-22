@@ -57,8 +57,18 @@ public class CrmQuotationService {
         return sales.reject(id, reason);
     }
 
-    public void applyDecision(String id, boolean approved, String comment) {
-        sales.applyDecision(id, approved, comment);
+    public void applyDecision(String id, String requestId, boolean approved, String comment) {
+        sales.applyDecision(id, requestId, approved, comment);
+    }
+
+    /** Quotation PDF (same document as {@code /sales/quotations/:id/pdf}). */
+    public byte[] pdf(String id, Boolean withImages) {
+        return sales.pdf(id, withImages);
+    }
+
+    /** Email the quotation PDF to {@code to} (or the customer's address). */
+    public Map<String, Object> email(String id, String to) {
+        return sales.email(id, to);
     }
 
     public Map<String, Object> send(String id) {

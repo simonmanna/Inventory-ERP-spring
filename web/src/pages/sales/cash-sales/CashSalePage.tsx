@@ -31,7 +31,7 @@ import { UnitSelect } from '@/components/unit-select';
 import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components/line-columns';
 import { defaultUnitId, unitPrice as priceForUnit } from '@/features/products/units';
 import { pricingApi } from '@/features/sales/api';
-import { useCrmUsers } from '@/features/crm/api';
+import { useCrmUsers } from '@/features/crm/suite-api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';

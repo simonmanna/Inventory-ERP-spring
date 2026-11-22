@@ -9,7 +9,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useCrmLookups, useOpportunities, type Opportunity } from '@/features/crm/suite-api';
-import { ActivityBadge, Avatar, DealStatusPill, Stars, TagChips } from './crm-ui';
+import { ActivityBadge, Avatar, DealStatusPill, ErrorState, Stars, TagChips } from './crm-ui';
 import { ConvertDialog, OpportunityDialog } from './crm-dialogs';
 import { CrmFilterBar, useCrmFilters } from './filter-bar';
 
@@ -19,9 +19,11 @@ export function LeadsPage() {
   const navigate = useNavigate();
   const { data: lk } = useCrmLookups();
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.leadWrite));
+  // POST /crm/leads/:id/convert requires both lead:write and deal:write.
+  const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.leadWrite) && s.hasPermission(PERMISSIONS.crm.dealWrite));
   const [creating, setCreating] = useState(false);
   const [converting, setConverting] = useState<Opportunity | null>(null);
-  const { data, isLoading } = useOpportunities({ ...state.filters, page: state.page, pageSize: 50 } as Record<string, string | number>, '/crm/leads');
+  const { data, isLoading, isError, refetch } = useOpportunities({ ...state.filters, page: state.page, pageSize: 50 } as Record<string, string | number>, '/crm/leads');
 
   return (
     <div className="space-y-4">
@@ -40,8 +42,9 @@ export function LeadsPage() {
           </thead>
           <tbody>
             {isLoading && <tr><td colSpan={8} className="p-3"><Skeleton className="h-32 w-full" /></td></tr>}
+            {isError && <tr><td colSpan={8} className="p-3"><ErrorState message={tx('Could not load the leads.')} onRetry={() => refetch()} /></td></tr>}
             {data?.data.map((l) => (
-              <tr key={l.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/crm/opportunities/${l.id}`)}>
+              <tr key={l.id} className="cursor-pointer border-t hover:bg-muted/30" onClick={() => navigate(`/crm/leads/${l.id}`)}>
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2"><ActivityBadge state={l.activityState} type={l.nextActivity?.type} /><span className="font-medium">{l.name}</span></div>
                   <div className="mt-1 flex items-center gap-2"><Stars value={l.priority} /><TagChips ids={l.tagIds} tags={lk?.tags ?? []} /></div>
@@ -53,7 +56,7 @@ export function LeadsPage() {
                 <td className="px-3 py-2 text-muted-foreground">{date(l.createdAt)}</td>
                 <td className="px-3 py-2"><DealStatusPill status={l.status} /></td>
                 <td className="px-3 py-2 text-right">
-                  {canWrite && l.status === 'open' && (
+                  {canConvert && l.status === 'open' && (
                     <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setConverting(l); }}>{tx('Convert')}</Button>
                   )}
                 </td>
@@ -66,7 +69,7 @@ export function LeadsPage() {
           <DataTablePagination page={data.meta.page} pageSize={data.meta.pageSize} total={data.meta.total} totalPages={data.meta.totalPages} onPageChange={state.setPage} />
         )}
       </div>
-      <OpportunityDialog open={creating} onOpenChange={setCreating} kind="lead" onSaved={(o) => navigate(`/crm/opportunities/${o.id}`)} />
+      <OpportunityDialog open={creating} onOpenChange={setCreating} kind="lead" onSaved={(o) => navigate(`/crm/leads/${o.id}`)} />
       {converting && <ConvertDialog open onOpenChange={(v) => !v && setConverting(null)} lead={converting} onDone={(o) => navigate(`/crm/opportunities/${o.id}`)} />}
     </div>
   );

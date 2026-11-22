@@ -16,7 +16,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -61,8 +63,13 @@ public final class CrmSuiteController {
             this.svc = svc;
         }
 
+        // Stages, owners, tags and policy defaults feed every CRM screen (leads, activities, quotations — also the
+        // /sales quotation editor —, cases, reports, settings), so any of their read permissions may load them.
         @GetMapping("/lookups")
-        @RequirePermissions(Permissions.CRM__DEAL_READ)
+        @RequirePermissions(value = {Permissions.CRM__DEAL_READ, Permissions.CRM__LEAD_READ,
+            Permissions.CRM__ACTIVITY_READ, Permissions.CRM__QUOTATION_READ, Permissions.SALES__QUOTATION_READ,
+            Permissions.CRM__CASE_READ, Permissions.CRM__REPORT_READ, Permissions.CRM__PRICING_READ,
+            Permissions.CRM__CONFIGURE, Permissions.CRM__DASHBOARD_READ}, anyOf = true)
         public Map<String, Object> lookups() {
             return svc.lookups();
         }
@@ -380,6 +387,45 @@ public final class CrmSuiteController {
             return svc.create(in);
         }
 
+        // Lead-scoped record routes: same JSON as /crm/opportunities/:id, gated by the lead permissions.
+        @GetMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__LEAD_READ)
+        public Map<String, Object> get(@PathVariable String id) {
+            return svc.asLead(id, () -> svc.get(id));
+        }
+
+        @GetMapping("/{id}/timeline")
+        @RequirePermissions(Permissions.CRM__LEAD_READ)
+        public List<Map<String, Object>> timeline(@PathVariable String id) {
+            return svc.asLead(id, () -> svc.timeline(id));
+        }
+
+        @PatchMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            Map<String, Object> in = body(b);
+            in.remove("stageId"); // a lead moves on the pipeline only after conversion
+            return svc.asLead(id, () -> svc.update(id, in));
+        }
+
+        @PostMapping("/{id}/lost")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> lost(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.asLead(id, () -> svc.lost(id, body(b)));
+        }
+
+        @PostMapping("/{id}/reopen")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> reopen(@PathVariable String id) {
+            return svc.asLead(id, () -> svc.reopen(id));
+        }
+
+        @DeleteMapping("/{id}")
+        @RequirePermissions(Permissions.CRM__LEAD_WRITE)
+        public Map<String, Object> archive(@PathVariable String id) {
+            return svc.asLead(id, () -> svc.archive(id));
+        }
+
         @PostMapping("/{id}/convert")
         @RequirePermissions({Permissions.CRM__LEAD_WRITE, Permissions.CRM__DEAL_WRITE})
         public Map<String, Object> convert(@PathVariable String id,
@@ -535,6 +581,22 @@ public final class CrmSuiteController {
         public Map<String, Object> reject(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             Object r = body(b).get("reason");
             return svc.reject(id, r == null ? null : r.toString());
+        }
+
+        // PDF / email under /crm too, so a CRM-only user can print and send the quote they work on.
+        @GetMapping("/{id}/pdf")
+        @RequirePermissions(Permissions.CRM__QUOTATION_READ)
+        public ResponseEntity<byte[]> pdf(@PathVariable String id, @RequestParam(required = false) Boolean images) {
+            return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"quotation-" + id + ".pdf\"")
+                    .body(svc.pdf(id, images));
+        }
+
+        @PostMapping("/{id}/email")
+        @RequirePermissions(Permissions.CRM__QUOTATION_WRITE)
+        public Map<String, Object> email(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            Object to = body(b).get("to");
+            return svc.email(id, to == null ? null : to.toString());
         }
 
         @PostMapping("/{id}/send")

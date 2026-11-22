@@ -37,6 +37,11 @@ import tools.jackson.databind.JsonNode;
  * Deals pipeline + activity timeline (port of {@code crm.service.ts}). Deals and activities are soft-deleted; a won
  * deal converts its partner into a customer and cannot be deleted; every stage change logs a
  * {@code deal_stage_change} activity; {@code invoice.created} links the invoice to the partner's open deal.
+ *
+ * <p>CRM review (2026-11-22, owner-approved deviation): the legacy routes see the same deals as the pipeline (the
+ * {@code crm:deal:view_all} visibility rule), and a legacy stage change runs through {@link CrmPipelineService} —
+ * row lock, stage history, {@code crm.deal.won / lost} events and the same guards (a lead must be converted before
+ * it is won; a won deal must be reopened before it is lost). The legacy JSON of every route is unchanged.
  */
 @Service
 public class CrmService {
@@ -66,11 +71,13 @@ public class CrmService {
     private final JdbcClient jdbc;
     private final EventBus events;
     private final AuditService audit;
+    private final CrmPipelineService pipeline;
 
-    public CrmService(JdbcClient jdbc, EventBus events, AuditService audit) {
+    public CrmService(JdbcClient jdbc, EventBus events, AuditService audit, CrmPipelineService pipeline) {
         this.jdbc = jdbc;
         this.events = events;
         this.audit = audit;
+        this.pipeline = pipeline;
     }
 
     private static String org() {
@@ -130,7 +137,7 @@ public class CrmService {
     private void publish(String event, Map<String, Object> payload) {
         Map<String, Object> p = new HashMap<>(payload);
         p.put("organizationId", org());
-        events.publish(event, p);
+        events.publishOnCommit(event, p);
     }
 
     // ------------------------------------------------------------------ deals
@@ -142,6 +149,9 @@ public class CrmService {
                 .params(org(), input.partnerId()).query().listOfRows().size() > 0;
         if (!partner) {
             throw ApiException.notFound("Partner not found");
+        }
+        if (input.ownerId() != null) {
+            requireUser(input.ownerId());
         }
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Deal\" (id, \"organizationId\", name, \"partnerId\", \"ownerId\", stage, amount,"
@@ -156,6 +166,10 @@ public class CrmService {
                         input.notes())
                 .update();
         syncSuiteStage(id, input.stage() != null ? input.stage() : "lead");
+        // Same opening history row as a pipeline create, so funnel / time-in-stage reports count legacy deals too.
+        jdbc.sql("INSERT INTO \"CrmStageHistory\" (id, \"organizationId\", \"dealId\", \"toStageId\", \"toStatus\","
+                + " \"changedById\") SELECT ?, ?, id, \"stageId\", status, ? FROM \"Deal\" WHERE id = ?")
+                .params(UUID.randomUUID().toString(), org(), userId(), id).update();
         Map<String, Object> deal = dealRow(id);
         audit.record(AuditInput.of("Deal", id, "create", null, Obj.of("name", deal.get("name"), "stage", deal.get("stage"),
                 "amount", JsNumbers.js(new BigDecimal(deal.get("amount").toString())))));
@@ -167,15 +181,18 @@ public class CrmService {
     @Transactional
     public Map<String, Object> updateDeal(String id, Map<String, Object> input) {
         requireDeal(id);
+        if (input.get("ownerId") != null) {
+            requireUser(input.get("ownerId").toString());
+        }
         List<String> sets = new ArrayList<>();
         List<Object> params = new ArrayList<>();
-        for (String f : List.of("name", "stage", "amount", "expectedClose", "notes", "ownerId")) {
+        // A stage in the body is applied last, through changeStage (history, events, guards).
+        for (String f : List.of("name", "amount", "expectedClose", "notes", "ownerId")) {
             if (!input.containsKey(f)) {
                 continue;
             }
             Object v = input.get(f);
             switch (f) {
-                case "stage" -> sets.add("stage = ?::\"DealStage\"");
                 case "expectedClose" -> {
                     sets.add("\"expectedClose\" = ?");
                     v = v == null || v.toString().isEmpty() ? null : SqlRows.ts(EntityPatch.toInstant(v.toString()));
@@ -192,36 +209,68 @@ public class CrmService {
         params.addAll(List.of(id, org()));
         jdbc.sql("UPDATE \"Deal\" SET " + String.join(", ", sets) + " WHERE id = ? AND \"organizationId\" = ? AND"
                 + " \"deletedAt\" IS NULL").params(params).update();
-        if (input.containsKey("stage") && input.get("stage") != null) {
-            syncSuiteStage(id, input.get("stage").toString());
-        }
         audit.record(AuditInput.of("Deal", id, "update", null, input));
+        if (input.containsKey("stage") && input.get("stage") != null) {
+            changeStage(id, input.get("stage").toString());
+        }
         return dealRow(id);
     }
 
-    /** Move a deal to another stage; won converts the partner into a customer. */
+    /**
+     * Move a deal to another legacy stage; won converts the partner into a customer. Runs through the pipeline: won /
+     * lost become the outcome, any other stage moves to the first active configured stage mapped to it (reopening a
+     * won / lost deal first). Without such a stage only the legacy column changes, as before.
+     */
+    private static final java.util.Set<String> LEGACY_STAGES =
+            java.util.Set.of("lead", "qualified", "proposal", "negotiation", "won", "lost");
+
     @Transactional
     public Map<String, Object> changeStage(String id, String stage) {
         Map<String, Object> deal = requireDeal(id);
         if (String.valueOf(deal.get("stage")).equals(stage)) {
             return deal;
         }
-        jdbc.sql("UPDATE \"Deal\" SET stage = ?::\"DealStage\", \"updatedAt\" = " + NOW + " WHERE id = ? AND"
-                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(stage, id, org()).update();
-        syncSuiteStage(id, stage);
-        Map<String, Object> updated = dealRow(id);
-        if ("won".equals(stage)) {
-            jdbc.sql("UPDATE \"Partner\" SET \"isCustomer\" = true, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
-                    + " \"organizationId\" = ? AND \"isCustomer\" = false").params(deal.get("partnerId"), org()).update();
+        // Nest has no DTO here; a missing / unknown stage used to fail the enum cast with a 500.
+        if (stage == null || !LEGACY_STAGES.contains(stage)) {
+            throw ApiException.badRequest(
+                    "stage must be one of the following values: lead, qualified, proposal, negotiation, won, lost");
         }
+        // The pipeline applies the rules; this route keeps its own "Stage: <legacy> → <legacy>" activity (Nest parity).
+        pipeline.withoutStageActivity(() -> applyLegacyStage(id, deal, stage));
         jdbc.sql("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, \"dealId\", \"partnerId\", \"occurredAt\","
                         + " \"createdById\", \"updatedAt\") VALUES (?, ?, 'deal_stage_change', ?, ?, ?, " + NOW + ", ?, " + NOW
                         + ")")
                 .params(UUID.randomUUID().toString(), org(), "Stage: " + deal.get("stage") + " → " + stage, id,
                         deal.get("partnerId"), userId())
                 .update();
-        publish("crm.deal.stage_changed", Obj.of("dealId", id, "fromStage", deal.get("stage"), "toStage", stage));
-        return updated;
+        return dealRow(id);
+    }
+
+    private Object applyLegacyStage(String id, Map<String, Object> deal, String stage) {
+        switch (stage) {
+            case "won" -> pipeline.won(id);
+            case "lost" -> pipeline.lost(id, Map.of());
+            default -> {
+                String target = jdbc.sql("SELECT id FROM \"CrmStage\" WHERE \"organizationId\" = ? AND \"isActive\" AND"
+                        + " \"legacyStage\"::text = ? ORDER BY sequence LIMIT 1").params(org(), stage).query(String.class)
+                        .optional().orElse(null);
+                if (!"open".equals(String.valueOf(deal.get("status")))) {
+                    pipeline.reopen(id);
+                }
+                if (target != null) {
+                    pipeline.move(id, Map.of("stageId", target));
+                }
+                // The exact legacy stage asked for (several legacy stages may share a configured one).
+                jdbc.sql("UPDATE \"Deal\" SET stage = ?::\"DealStage\", \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                        + " \"organizationId\" = ?").params(stage, id, org()).update();
+                if (target == null) {
+                    // No configured stage maps to it: pipeline.move did not run, so announce the legacy change here.
+                    events.publishOnCommit("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id,
+                            "fromStage", deal.get("stage"), "toStage", stage));
+                }
+            }
+        }
+        return null;
     }
 
     /** Paginated deal list {@code {data, meta}}. */
@@ -245,6 +294,7 @@ public class CrmService {
             where.append(" AND name ILIKE ?");
             params.add("%" + com.inventoryerp.kernel.crud.BaseCrudService.escapeLike(q.q()) + "%");
         }
+        where.append(CrmDealQuery.visibleSql("\"Deal\"", params));
         int page = Math.max(1, q.page() == null ? 1 : q.page());
         int pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, q.pageSize() == null ? DEFAULT_PAGE_SIZE : q.pageSize()));
         List<Map<String, Object>> items = SqlRows.list(Deal.class, jdbc.sql("SELECT * FROM \"Deal\" WHERE" + where
@@ -260,11 +310,7 @@ public class CrmService {
     /** Deal with partner (+ contacts), last 50 activities and owner. */
     @Transactional(readOnly = true)
     public Map<String, Object> findDeal(String id) {
-        Map<String, Object> deal = SqlRows.one(Deal.class, jdbc.sql("SELECT * FROM \"Deal\" WHERE id = ? AND"
-                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, org()));
-        if (deal == null) {
-            throw ApiException.notFound("Deal not found");
-        }
+        Map<String, Object> deal = requireDeal(id);
         Map<String, Object> partner = SqlRows.one(Partner.class, jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?")
                 .param(deal.get("partnerId")));
         if (partner != null) {
@@ -296,8 +342,10 @@ public class CrmService {
     /** Restore an archived deal. */
     @Transactional
     public Map<String, Object> restoreDeal(String id) {
+        List<Object> rp = new ArrayList<>(List.of(id, org()));
+        String vis = CrmDealQuery.visibleSql("\"Deal\"", rp);
         int n = jdbc.sql("UPDATE \"Deal\" SET \"deletedAt\" = NULL, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
-                + " \"organizationId\" = ? AND \"deletedAt\" IS NOT NULL").params(id, org()).update();
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NOT NULL" + vis).params(rp).update();
         if (n == 0) {
             throw ApiException.notFound("Archived deal not found");
         }
@@ -309,9 +357,11 @@ public class CrmService {
     /** Archived deals, most recently deleted first (max 200). */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listDeletedDeals() {
+        List<Object> dp = new ArrayList<>(List.of(org()));
+        String vis = CrmDealQuery.visibleSql("\"Deal\"", dp);
         List<Map<String, Object>> items = SqlRows.list(Deal.class, jdbc.sql("SELECT * FROM \"Deal\" WHERE"
-                + " \"organizationId\" = ? AND \"deletedAt\" IS NOT NULL ORDER BY \"deletedAt\" DESC LIMIT 200")
-                .param(org()));
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NOT NULL" + vis + " ORDER BY \"deletedAt\" DESC LIMIT 200")
+                .params(dp));
         items.forEach(this::withPartnerSummary);
         items.forEach(CrmService::numericAmount);
         return attachUsers(items);
@@ -471,13 +521,23 @@ public class CrmService {
                 + " WHERE id = ? AND \"organizationId\" = ?").params(stage, stage, stage, stage, id, org()).update();
     }
 
+    /** A live deal the caller may see (visibility rule), or 404. */
     private Map<String, Object> requireDeal(String id) {
+        List<Object> p = new ArrayList<>(List.of(id, org()));
+        String vis = CrmDealQuery.visibleSql("\"Deal\"", p);
         Map<String, Object> deal = SqlRows.one(Deal.class, jdbc.sql("SELECT * FROM \"Deal\" WHERE id = ? AND"
-                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL").params(id, org()));
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL" + vis).params(p));
         if (deal == null) {
             throw ApiException.notFound("Deal not found");
         }
         return deal;
+    }
+
+    private void requireUser(String userId) {
+        if (jdbc.sql("SELECT 1 FROM \"User\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
+                .params(userId, org()).query().listOfRows().isEmpty()) {
+            throw ApiException.notFound("User not found");
+        }
     }
 
     private void requireActivity(String id) {

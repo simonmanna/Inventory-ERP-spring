@@ -20,11 +20,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { useAuthStore } from '@/stores/auth.store';
 import { apiErrorMessage } from '@/lib/api-error';
-import { date, money } from '@/lib/format';
+import { date, localDateInput, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
-  crmApi, useCrmLookups, useCrmMutation, useOpportunity, useProductOptions, useQuotation, useTaxOptions,
+  crmApi, quoteBase, useCrmLookups, useCrmMutation, useOpportunity, useProductOptions, useQuotation, useTaxOptions,
   type Quotation,
 } from '@/features/crm/suite-api';
 import { Field, QuoteStatusPill } from './crm-ui';
@@ -53,6 +53,9 @@ export function QuotationEditorPage() {
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert) || s.hasPermission(PERMISSIONS.sales.quotationConvert));
   const canPrice = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.pricingRead));
   const canCreateCustomer = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
+  // PDF / print / email follow the same API family as the rest of the editor (quoteBase): /sales or /crm.
+  const docBase = quoteBase();
+  const canEmail = useAuthStore((s) => (docBase.startsWith('/sales') ? s.hasPermission(PERMISSIONS.sales.quotationSend) : s.hasPermission(PERMISSIONS.crm.quotationWrite)));
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
   const base = useLocation().pathname.startsWith('/sales') ? '/sales/quotations' : '/crm/quotations';
@@ -67,7 +70,7 @@ export function QuotationEditorPage() {
 
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
-  const [issueDate, setIssueDate] = useState(new Date().toISOString().slice(0, 10));
+  const [issueDate, setIssueDate] = useState(localDateInput());
   const [validUntil, setValidUntil] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [notes, setNotes] = useState('');
@@ -257,9 +260,9 @@ export function QuotationEditorPage() {
   type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
   const menu: MenuItem[] = [];
   if (q) {
-    if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`/sales/quotations/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
-    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`/sales/quotations/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
-    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printPdf(`/sales/quotations/${q.id}/pdf?images=${printImages}`) });
+    if (['approved', 'sent'].includes(status) && canEmail) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`${docBase}/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
+    menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`${docBase}/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
+    menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printPdf(`${docBase}/${q.id}/pdf?images=${printImages}`) });
     if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
     if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
     if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
