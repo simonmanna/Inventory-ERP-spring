@@ -73,6 +73,8 @@ export interface HrEmployee {
   department?: HrDepartment | null;
   position?: HrPosition | null;
   supervisor?: HrEmployeeSummary | null;
+  /** CRM sales teams the employee's user leads or belongs to (configured in CRM settings). */
+  salesTeams?: Array<{ id: string; name: string; color: string; isActive: boolean; monthlyTarget: number; role: 'leader' | 'member'; departmentName: string | null; branchName: string | null }>;
   leaveBalances?: HrLeaveBalance[];
   loans?: HrEmployeeLoan[];
   salaryAdvances?: HrSalaryAdvance[];

@@ -18,6 +18,7 @@ class CrmEditsIT extends ApiTestSupport {
     String sfx;
     String customer;
     String adminId;
+    String repId;
 
     @BeforeAll
     void fixtures() {
@@ -25,6 +26,11 @@ class CrmEditsIT extends ApiTestSupport {
         customer = ok(201, "POST", "/partners", Map.of("code", "CRE-" + sfx, "name", "Edit customer " + sfx,
                 "isCustomer", true)).get("id").asString();
         adminId = jdbc.sql("SELECT id FROM \"User\" WHERE email = 'admin@demo.test'").query(String.class).single();
+        // Team members must be HR employees with a login (deviation "Sales teams ↔ HR").
+        repId = createUser(demoOrg, "crm-rep-" + sfx + "@demo.test", "Rep@123456", null);
+        String emp = ok(201, "POST", "/hr/employees", Map.of("firstName", "Crm", "lastName", "Rep " + sfx)).get("id")
+                .asString();
+        ok(201, "POST", "/hr/employees/" + emp + "/link-user", Map.of("userId", repId));
     }
 
     /** CRM actions answer 200 or 201 (Nest has no {@code @HttpCode} on some of them). */
@@ -45,7 +51,7 @@ class CrmEditsIT extends ApiTestSupport {
         ok(200, "DELETE", "/crm/config/stages/" + stage, null);
 
         String team = ok(201, "POST", "/crm/config/teams", Map.of("name", "North " + sfx, "monthlyTarget", 1000,
-                "leaderId", adminId, "memberIds", List.of(adminId))).get("id").asString();
+                "leaderId", repId, "memberIds", List.of(repId))).get("id").asString();
         JsonNode t = ok(200, "PATCH", "/crm/config/teams/" + team, Map.of("name", "North-East " + sfx,
                 "monthlyTarget", 2500));
         assertThat(t.get("name").asString()).isEqualTo("North-East " + sfx);

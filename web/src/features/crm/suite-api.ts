@@ -40,6 +40,29 @@ export interface Stage {
   followUpDays?: number | null;
 }
 
+/** An HR employee who may sit on a sales team (active, with a login). */
+export interface TeamEmployee {
+  employeeId: string;
+  userId: string;
+  employeeCode: string;
+  name: string;
+  employmentStatus: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  positionName: string | null;
+  branchId: string | null;
+  branchName: string | null;
+  eligible: boolean;
+}
+
+/** A team leader / member with the HR employee behind the login (null for a user who is not an employee). */
+export interface TeamMember {
+  userId: string;
+  name: string;
+  employee: TeamEmployee | null;
+  eligible: boolean;
+}
+
 export interface Team {
   id: string;
   name: string;
@@ -48,6 +71,19 @@ export interface Team {
   monthlyTarget: number;
   color: Color;
   isActive: boolean;
+  departmentId?: string | null;
+  branchId?: string | null;
+  departmentName?: string | null;
+  branchName?: string | null;
+  members?: TeamMember[];
+  leader?: TeamMember | null;
+  notEligibleCount?: number;
+}
+
+export interface TeamCandidates {
+  employees: TeamEmployee[];
+  departments: Array<{ id: string; code: string; name: string }>;
+  branches: Array<{ id: string; code: string; name: string }>;
 }
 
 export interface Tag { id: string; name: string; color: Color }
@@ -410,6 +446,15 @@ export function useCrmLookups() {
     queryKey: ['crm-suite', 'lookups'],
     queryFn: async () => (await api.get<CrmLookups>('/crm/config/lookups')).data,
     staleTime: 60_000,
+  });
+}
+
+/** HR employees, departments and branches for the sales team editor (crm:configure). */
+export function useTeamCandidates(enabled = true) {
+  return useQuery({
+    queryKey: ['crm-suite', 'team-candidates'],
+    queryFn: async () => (await api.get<TeamCandidates>('/crm/config/team-candidates')).data,
+    enabled,
   });
 }
 

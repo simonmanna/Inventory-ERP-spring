@@ -320,9 +320,100 @@ public class CrmConfigService {
 
     // ------------------------------------------------------------------ teams
 
+    /** Employment statuses that may join a sales team (deviation "Sales teams ↔ HR"). */
+    static final String ELIGIBLE_STATUSES = "('ACTIVE', 'PROBATION', 'ON_LEAVE')";
+
+    /** HR employee columns a team member is shown with (alias {@code e}, joins {@code d}, {@code p}, {@code b}). */
+    private static final String EMPLOYEE_SQL = "SELECT e.id AS \"employeeId\", e.\"userId\", e.\"employeeCode\","
+            + " trim(e.\"firstName\" || ' ' || coalesce(e.\"lastName\", '')) AS name,"
+            + " e.\"employmentStatus\"::text AS \"employmentStatus\", e.\"departmentId\", d.name AS \"departmentName\","
+            + " p.name AS \"positionName\", e.\"branchId\", b.name AS \"branchName\","
+            + " (e.\"isActive\" AND e.\"employmentStatus\"::text IN " + ELIGIBLE_STATUSES + ") AS eligible"
+            + " FROM \"HrEmployee\" e LEFT JOIN \"HrDepartment\" d ON d.id = e.\"departmentId\""
+            + " LEFT JOIN \"HrPosition\" p ON p.id = e.\"positionId\" LEFT JOIN \"Branch\" b ON b.id = e.\"branchId\""
+            + " WHERE e.\"organizationId\" = ? AND e.\"deletedAt\" IS NULL AND e.\"userId\" IS NOT NULL";
+
+    /**
+     * Sales teams with their HR picture: department / branch names, and per leader and member the linked HR employee
+     * ({@code employee} is null for a user with no employee record; {@code eligible} false when the employee is
+     * terminated, resigned, suspended or inactive). Such members were admitted before the HR link and are kept.
+     */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> teams() {
-        return db.rows("SELECT * FROM \"CrmTeam\" WHERE \"organizationId\" = ? ORDER BY name", org());
+        List<Map<String, Object>> teams = db.rows("SELECT t.*, d.name AS \"departmentName\", b.name AS \"branchName\""
+                + " FROM \"CrmTeam\" t LEFT JOIN \"HrDepartment\" d ON d.id = t.\"departmentId\""
+                + " LEFT JOIN \"Branch\" b ON b.id = t.\"branchId\" WHERE t.\"organizationId\" = ? ORDER BY t.name", org());
+        if (teams.isEmpty()) {
+            return teams;
+        }
+        Map<String, Map<String, Object>> byUser = new LinkedHashMap<>();
+        for (Map<String, Object> e : db.rows(EMPLOYEE_SQL + " ORDER BY e.\"employmentStatus\" = 'TERMINATED'", org())) {
+            byUser.putIfAbsent(str(e.get("userId")), e);
+        }
+        Map<String, String> userNames = new LinkedHashMap<>();
+        users().forEach(u -> userNames.put(str(u.get("id")), str(u.get("name"))));
+        for (Map<String, Object> t : teams) {
+            List<Map<String, Object>> members = new ArrayList<>();
+            int notEligible = 0;
+            for (String uid : strings(t.get("memberIds"))) {
+                Map<String, Object> m = member(uid, byUser, userNames);
+                notEligible += Boolean.TRUE.equals(m.get("eligible")) ? 0 : 1;
+                members.add(m);
+            }
+            String leader = str(t.get("leaderId"));
+            Map<String, Object> lm = blank(leader) ? null : member(leader, byUser, userNames);
+            if (lm != null && !Boolean.TRUE.equals(lm.get("eligible"))) {
+                notEligible++;
+            }
+            t.put("members", members);
+            t.put("leader", lm);
+            t.put("notEligibleCount", notEligible);
+        }
+        return teams;
+    }
+
+    private static Map<String, Object> member(String userId, Map<String, Map<String, Object>> byUser,
+            Map<String, String> userNames) {
+        Map<String, Object> e = byUser.get(userId);
+        return Obj.of("userId", userId, "name", e != null ? e.get("name") : userNames.getOrDefault(userId, userId),
+                "employee", e, "eligible", e != null && Boolean.TRUE.equals(e.get("eligible")));
+    }
+
+    /**
+     * Who may be put on a sales team: active HR employees (active, probation or on leave) with a login, plus the
+     * departments and branches a team can be filed under.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> teamCandidates() {
+        return Obj.of("employees", db.rows(EMPLOYEE_SQL + " AND e.\"isActive\" AND e.\"employmentStatus\"::text IN "
+                        + ELIGIBLE_STATUSES + " ORDER BY name, e.\"employeeCode\"", org()),
+                "departments", db.rows("SELECT id, code, name FROM \"HrDepartment\" WHERE \"organizationId\" = ? AND"
+                        + " \"deletedAt\" IS NULL AND \"isActive\" ORDER BY name", org()),
+                "branches", db.rows("SELECT id, code, name FROM \"Branch\" WHERE \"organizationId\" = ? AND"
+                        + " \"deletedAt\" IS NULL AND \"isActive\" ORDER BY name", org()));
+    }
+
+    /** A user newly put on a team must be an active HR employee of the organization. */
+    private String requireTeamEmployee(String userId) {
+        requireUser(userId);
+        if (db.count("SELECT count(*) FROM \"HrEmployee\" e WHERE e.\"organizationId\" = ? AND e.\"userId\" = ? AND"
+                + " e.\"deletedAt\" IS NULL AND e.\"isActive\" AND e.\"employmentStatus\"::text IN " + ELIGIBLE_STATUSES,
+                List.of(org(), userId)) == 0) {
+            throw ApiException.badRequest("Sales team members must be active HR employees linked to a user account");
+        }
+        return userId;
+    }
+
+    private String requireActive(String table, Object id, String message) {
+        String v = str(id);
+        if (blank(v)) {
+            return null;
+        }
+        if (db.count("SELECT count(*) FROM \"" + table + "\" WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"deletedAt\" IS NULL", List.of(v, org())) == 0) {
+            throw ApiException.notFound(message);
+        }
+        return v;
     }
 
     @Transactional
@@ -331,13 +422,25 @@ public class CrmConfigService {
         if (id == null || in.containsKey("name")) {
             d.put("name", requireName(in));
         }
+        // Members and leader must be active HR employees. Only users newly put on the team are checked, so people
+        // admitted before the HR link stay until someone removes them (they are flagged in the team view).
+        Map<String, Object> current = id == null ? Map.of() : db.require("CrmTeam", id, "Not found");
         if (in.containsKey("leaderId")) {
-            d.put("leaderId", blank(str(in.get("leaderId"))) ? null : requireUser(str(in.get("leaderId"))));
+            String leader = str(in.get("leaderId"));
+            d.put("leaderId", blank(leader) ? null
+                    : leader.equals(str(current.get("leaderId"))) ? leader : requireTeamEmployee(leader));
         }
         if (in.containsKey("memberIds")) {
-            List<String> members = strings(in.get("memberIds"));
-            members.forEach(this::requireUser);
+            List<String> before = strings(current.get("memberIds"));
+            List<String> members = strings(in.get("memberIds")).stream().distinct().toList();
+            members.stream().filter(m -> !before.contains(m)).forEach(this::requireTeamEmployee);
             d.put("memberIds", members);
+        }
+        if (in.containsKey("departmentId")) {
+            d.put("departmentId", requireActive("HrDepartment", in.get("departmentId"), "Department not found"));
+        }
+        if (in.containsKey("branchId")) {
+            d.put("branchId", requireActive("Branch", in.get("branchId"), "Branch not found"));
         }
         if (in.containsKey("monthlyTarget")) {
             BigDecimal t = dec(in.get("monthlyTarget"));

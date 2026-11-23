@@ -257,7 +257,30 @@ public class HrOrgService {
         List<Map<String, Object>> assignments = hr.many(HrShiftAssignment.class, "employeeId", id, null, null);
         hr.oneAll(assignments, "shift", HrShift.class, "shiftId");
         row.put("shiftAssignments", assignments);
+        row.put("salesTeams", salesTeams(row.get("userId")));
         return redactEmployee(row, canSeeCompensation());
+    }
+
+    /**
+     * The CRM sales teams the employee's user leads or belongs to (deviation "Sales teams ↔ HR", docs/spec/crm.md).
+     * Read straight from {@code "CrmTeam"}; teams are configured in CRM settings.
+     */
+    List<Map<String, Object>> salesTeams(Object userId) {
+        if (userId == null) {
+            return List.of();
+        }
+        return hr.jdbc().sql("SELECT t.id, t.name, t.color, t.\"isActive\", t.\"monthlyTarget\","
+                + " CASE WHEN t.\"leaderId\" = :u THEN 'leader' ELSE 'member' END AS role,"
+                + " d.name AS \"departmentName\", b.name AS \"branchName\""
+                + " FROM \"CrmTeam\" t LEFT JOIN \"HrDepartment\" d ON d.id = t.\"departmentId\""
+                + " LEFT JOIN \"Branch\" b ON b.id = t.\"branchId\""
+                + " WHERE t.\"organizationId\" = :o AND (t.\"leaderId\" = :u OR :u = ANY(t.\"memberIds\"))"
+                + " ORDER BY t.name").param("u", userId.toString()).param("o", org()).query().listOfRows()
+                .stream().map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>(r);
+                    m.put("monthlyTarget", PosSql.js(r.get("monthlyTarget")));
+                    return m;
+                }).toList();
     }
 
     private static void assertEnums(Map<String, Object> dto) {
