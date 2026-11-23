@@ -40,6 +40,9 @@ import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.RamenDining
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.TrendingUp
+import androidx.activity.compose.BackHandler
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -61,6 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -73,7 +77,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.poscafe.pos.ui.components.SyncBanner
 import kotlinx.coroutines.launch
 
-internal enum class HomeTab(
+enum class HomeTab(
     val label: String,
     val icon: ImageVector,
     val selectedIcon: ImageVector,
@@ -90,8 +94,13 @@ internal enum class HomeTab(
  * ([HomeSidebar]) for everything else.
  */
 @Composable
-fun HomeScreen(onOpenSync: () -> Unit, onLock: () -> Unit, onNavigate: (String) -> Unit) {
-    var tab by rememberSaveable { mutableStateOf(HomeTab.Sell) }
+fun HomeScreen(
+    onOpenSync: () -> Unit,
+    onLock: () -> Unit,
+    onNavigate: (String) -> Unit,
+    initialTab: HomeTab = HomeTab.Sell,
+) {
+    var tab by rememberSaveable { mutableStateOf(initialTab) }
     val terminalVm: TerminalViewModel = hiltViewModel()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -106,9 +115,30 @@ fun HomeScreen(onOpenSync: () -> Unit, onLock: () -> Unit, onNavigate: (String) 
     }
 
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
+    // Leaving the till for the dashboard drops the cart (and locks it): ask first when a sale is in progress.
+    var confirmLeave by remember { mutableStateOf(false) }
+    val leaveTill: () -> Unit = { if (terminalVm.cart.isEmpty()) onNavigate(APPS_ROUTE) else confirmLeave = true }
     val navigateFromDrawer: (String) -> Unit = { route ->
         scope.launch { drawerState.close() }
-        onNavigate(route)
+        if (route == APPS_ROUTE) leaveTill() else onNavigate(route)
+    }
+    // Back: another tab returns to Sell first; from Sell it leaves for the dashboard (inner handlers, like the cafe's
+    // "back to the floor", are composed later and win while they are enabled).
+    BackHandler {
+        if (tab != HomeTab.Sell) tab = HomeTab.Sell else leaveTill()
+    }
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Leave the till?") },
+            text = { Text("The sale in progress will be cleared, and the next person needs their PIN to open the till.") },
+            confirmButton = {
+                TextButton(onClick = { confirmLeave = false; onNavigate(APPS_ROUTE) }) {
+                    Text("Leave", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Stay") } },
+        )
     }
 
     ModalNavigationDrawer(

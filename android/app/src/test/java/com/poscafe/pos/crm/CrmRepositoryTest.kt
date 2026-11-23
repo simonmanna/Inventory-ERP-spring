@@ -11,6 +11,9 @@ import com.poscafe.pos.data.crm.CrmRepository
 import com.poscafe.pos.data.crm.LeadDraft
 import com.poscafe.pos.data.local.PosDatabase
 import com.poscafe.pos.data.local.entity.StaffEntity
+import com.poscafe.pos.data.account.AccountRepository
+import com.poscafe.pos.data.account.SignInStep
+import com.poscafe.pos.data.remote.AccountApi
 import com.poscafe.pos.data.remote.CrmApi
 import com.poscafe.pos.data.repo.AuthRepository
 import kotlinx.coroutines.runBlocking
@@ -43,6 +46,7 @@ class CrmRepositoryTest {
     private lateinit var auth: AuthRepository
     private lateinit var api: FakeApi
     private lateinit var repo: CrmRepository
+    private lateinit var account: AccountRepository
 
     private fun json(s: String): JsonObject = Json.parseToJsonElement(s).jsonObject
 
@@ -53,7 +57,7 @@ class CrmRepositoryTest {
         HttpException(Response.error<Any>(code, body.toResponseBody("application/json".toMediaType())))
 
     /** Answers like the server: a token is valid until [expired] says otherwise. */
-    private inner class FakeApi : CrmApi {
+    private inner class FakeApi : CrmApi, AccountApi {
         var loginAs = "u1"
         var expired = mutableSetOf<String>()
         var refreshFails = false
@@ -64,6 +68,8 @@ class CrmRepositoryTest {
             if ((body["password"] as JsonPrimitive).content == "mfa") json("""{"mfaToken":"m1","requiresMfa":true}""") else tokens(loginAs, "a1")
 
         override suspend fun mfaLogin(body: JsonObject) = tokens(loginAs, "a1")
+
+        override suspend fun registerDevice(auth: String, body: JsonObject): JsonObject = json("{}")
 
         override suspend fun refresh(body: JsonObject): JsonObject {
             if (refreshFails) throw http(401)
@@ -100,7 +106,9 @@ class CrmRepositoryTest {
         val config = DeviceConfig(context, context.getSharedPreferences("crm-test", Context.MODE_PRIVATE))
         auth = AuthRepository(db.staffDao(), db.opQueueDao(), config)
         api = FakeApi()
-        repo = CrmRepository(api, auth, config)
+        config.accountJson = null
+        account = AccountRepository(api, auth, db.staffDao(), config)
+        repo = CrmRepository(api, auth, config, account)
         assertTrue(auth.loginWithPin("u1", "1234").isSuccess)
     }
 
@@ -167,5 +175,23 @@ class CrmRepositoryTest {
         assertEquals(setOf("name", "phone"), api.lastLead!!.keys)
         assertEquals("Partner not found", repo.customer("x").exceptionOrNull()?.message)
         assertEquals("Give the lead a name.", repo.createLead(LeadDraft(name = " ")).exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun `the app's account session is borrowed when it is the same person`() = runBlocking {
+        // Ann opened the app with her account and unlocked the till with her PIN: CRM needs no second sign-in.
+        val a = (account.authenticate("DEMO", "ann@x", "pw") as SignInStep.Tokens).account
+        account.accept(a)
+        val s = repo.current()
+        assertNotNull(s)
+        assertTrue(s!!.viaAccount)
+        api.expired += "a1"
+        assertTrue(repo.planner("today").isSuccess)
+        assertEquals(listOf("Bearer a1", "Bearer a2"), api.seenAuth)
+        assertEquals("the account owns the rotated token", "a2", account.account.value?.accessToken)
+
+        // Another cashier on the till: the account is not theirs to use.
+        account.signOut()
+        assertNull(repo.current())
     }
 }

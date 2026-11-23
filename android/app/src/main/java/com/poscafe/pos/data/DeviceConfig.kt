@@ -182,6 +182,27 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
         get() = prefs.getString("crmOrganizationCode", null)
         set(v) = prefs.edit().putString("crmOrganizationCode", v).apply()
 
+    /**
+     * The signed-in ERP account (mobile app shell), as JSON written by `AccountRepository`: who it is, the
+     * permissions the server reported and the bearer/refresh tokens. Kept in these encrypted prefs so the app stays
+     * signed in across restarts (owner decision 2026-11-23) until Sign out, a failed refresh or a revoked device.
+     */
+    var accountJson: String?
+        get() = prefs.getString("account", null)
+        set(v) {
+            prefs.edit().apply { if (v == null) remove("account") else putString("account", v) }.commit()
+        }
+
+    /** Email last used to sign in (pre-fills the form after a sign-out). Not a secret. */
+    var lastAccountEmail: String?
+        get() = prefs.getString("lastAccountEmail", null)
+        set(v) = prefs.edit().putString("lastAccountEmail", v).apply()
+
+    /** The organization this device was enrolled into by an account sign-in; null for manual enrolment. */
+    var enrolledOrganizationId: String?
+        get() = prefs.getString("enrolledOrganizationId", null)
+        set(v) = prefs.edit().putString("enrolledOrganizationId", v).apply()
+
     var prefix: String
         get() = prefs.getString("prefix", "D?") ?: "D?"
         set(v) = prefs.edit().putString("prefix", v).apply()
@@ -384,7 +405,7 @@ class DeviceConfig internal constructor(private val context: Context, testPrefs:
 
     fun clearEnrollment() {
         prefs.edit().remove("deviceId").remove("deviceToken").remove("prefix").remove("deviceTokenExpiresAt")
-            .remove("syncProblem").commit()
+            .remove("syncProblem").remove("account").remove("enrolledOrganizationId").commit()
         _syncProblem.value = null
     }
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -50,7 +51,20 @@ class PinLoginViewModel @Inject constructor(
     var pin by mutableStateOf("")
     var error by mutableStateOf<String?>(null); private set
 
-    init { viewModelScope.launch { staff = auth.staffList() } }
+    /** The person who opened the app: the POS gate puts their card first and selects it. */
+    val appUserId: String? = auth.appUser?.userId
+
+    /** The app user has no PIN on this till (e.g. an admin account): say how to get one instead of a missing card. */
+    var appUserHasNoPin by mutableStateOf(false); private set
+
+    init {
+        viewModelScope.launch {
+            val all = auth.staffList()
+            staff = all.sortedByDescending { it.id == appUserId }
+            appUserHasNoPin = appUserId != null && all.none { it.id == appUserId }
+            if (selected == null) selected = all.firstOrNull { it.id == appUserId }
+        }
+    }
 
     fun submit(onLoggedIn: () -> Unit) {
         val user = selected ?: return
@@ -71,8 +85,20 @@ class PinLoginViewModel @Inject constructor(
     }
 }
 
+/**
+ * Pick a name, punch the PIN. Used as the POS gate (every cashier unlocks the till with their PIN) and, offline, as
+ * the way into the app. [onBack] shows a back arrow (POS gate → dashboard); [header] replaces the business-name line.
+ */
 @Composable
-fun PinLoginScreen(onLoggedIn: () -> Unit, vm: PinLoginViewModel = hiltViewModel()) {
+fun PinLoginScreen(
+    onLoggedIn: () -> Unit,
+    vm: PinLoginViewModel = hiltViewModel(),
+    title: String = "Who's on the till?",
+    subtitle: String = "Tap your name, then enter your PIN.",
+    onBack: (() -> Unit)? = null,
+    showBusinessName: Boolean = true,
+) {
+    onBack?.let { androidx.activity.compose.BackHandler(onBack = it) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 720.dp
         if (wide) {
@@ -80,7 +106,7 @@ fun PinLoginScreen(onLoggedIn: () -> Unit, vm: PinLoginViewModel = hiltViewModel
                 Modifier.fillMaxSize().padding(32.dp),
                 horizontalArrangement = Arrangement.spacedBy(32.dp),
             ) {
-                StaffPicker(vm, Modifier.weight(1f))
+                StaffPicker(vm, title, subtitle, onBack, showBusinessName, Modifier.weight(1f))
                 PinPad(vm, onLoggedIn, Modifier.width(300.dp).align(Alignment.CenterVertically))
             }
         } else {
@@ -88,7 +114,7 @@ fun PinLoginScreen(onLoggedIn: () -> Unit, vm: PinLoginViewModel = hiltViewModel
                 Modifier.fillMaxSize().padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                StaffPicker(vm, Modifier.weight(1f).fillMaxWidth())
+                StaffPicker(vm, title, subtitle, onBack, showBusinessName, Modifier.weight(1f).fillMaxWidth())
                 Spacer(Modifier.height(16.dp))
                 PinPad(vm, onLoggedIn, Modifier.widthIn(max = 320.dp))
             }
@@ -97,21 +123,49 @@ fun PinLoginScreen(onLoggedIn: () -> Unit, vm: PinLoginViewModel = hiltViewModel
 }
 
 @Composable
-private fun StaffPicker(vm: PinLoginViewModel, modifier: Modifier = Modifier) {
+private fun StaffPicker(
+    vm: PinLoginViewModel,
+    title: String,
+    subtitle: String,
+    onBack: (() -> Unit)?,
+    showBusinessName: Boolean,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier) {
-        Text(
-            vm.businessName.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text("Who's on the till?", style = MaterialTheme.typography.headlineMedium)
+        if (onBack != null) {
+            androidx.compose.material3.TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 0.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Apps")
+            }
+        }
+        if (showBusinessName) {
+            Text(
+                vm.businessName.uppercase(),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(6.dp))
+        }
+        Text(title, style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(4.dp))
+        if (vm.appUserHasNoPin) {
+            Spacer(Modifier.height(8.dp))
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.medium) {
+                Text(
+                    "Your account has no PIN on this till yet. A manager can set one in Staff & PINs (or on the web), " +
+                        "then it arrives with the next sync.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
         Text(
-            "Tap your name, then enter your PIN.",
+            subtitle,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

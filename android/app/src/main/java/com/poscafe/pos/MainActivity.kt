@@ -19,9 +19,18 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.account.AccountRepository
 import com.poscafe.pos.data.repo.AuthRepository
 import com.poscafe.pos.sync.SyncWorker
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import com.poscafe.pos.ui.screens.APPS_ROUTE
+import com.poscafe.pos.ui.screens.AppTarget
+import com.poscafe.pos.ui.screens.BarcodeAppScreen
+import com.poscafe.pos.ui.screens.DashboardScreen
 import com.poscafe.pos.ui.screens.HomeScreen
+import com.poscafe.pos.ui.screens.HomeTab
+import com.poscafe.pos.ui.screens.LoginScreen
 import com.poscafe.pos.ui.screens.PinLoginScreen
 import com.poscafe.pos.ui.screens.SetupScreen
 import com.poscafe.pos.ui.screens.SyncScreen
@@ -34,10 +43,23 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var config: DeviceConfig
     @Inject lateinit var auth: AuthRepository
+    @Inject lateinit var account: AccountRepository
 
+    /**
+     * Mobile app shell (2026-11-23):
+     *   setup → login (account; PIN when offline or standalone) → dashboard (app grid)
+     *   dashboard → pos-pin/{tab} (every cashier unlocks the till with a PIN) → home/{tab} (the POS)
+     * The account stays signed in across restarts until Sign out; the till locks on Lock, on idle and whenever the
+     * dashboard is shown.
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val start = when {
+            !config.isReady -> "setup"
+            account.restore() -> "dashboard"
+            else -> "login"
+        }
         setContent {
             PosTheme {
                 Surface(
@@ -45,24 +67,30 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                 ) {
                     val nav = rememberNavController()
-                    val start = if (config.isReady) "pin" else "setup"
                     // Revoked mid-shift (detected by a sync run) or re-enroll chosen: sign out and go to setup.
                     val revoked by config.revoked.collectAsState()
                     val setupRequested by config.setupRequested.collectAsState()
-                    // ADR-S083 C4: a signed-in cashier idle past the org's timeout signs in with their PIN again.
+                    // ADR-S083 C4: a cashier idle past the org's timeout locks the till; the next one signs in with a PIN.
                     LaunchedEffect(Unit) {
                         while (true) {
                             kotlinx.coroutines.delay(30_000)
-                            if (auth.idleExpired() && nav.currentDestination?.route !in setOf("pin", "setup")) {
-                                auth.logout()
-                                nav.navigate("pin") { popUpTo(0) { inclusive = true } }
+                            if (auth.idleExpired()) {
+                                auth.lockPos()
+                                nav.navigate("pos-pin/${HomeTab.Sell.name}") { popUpTo(DASHBOARD) }
                             }
                         }
                     }
                     LaunchedEffect(revoked, setupRequested) {
                         if ((revoked || setupRequested) && nav.currentDestination?.route != "setup") {
-                            auth.logout()
+                            account.signOut()
                             nav.navigate("setup") { popUpTo(0) { inclusive = true } }
+                        }
+                    }
+                    val toDashboard: () -> Unit = { nav.navigate(DASHBOARD) { popUpTo(0) { inclusive = true } } }
+                    // Stayed signed in: once online, check the account still stands (deactivated → back to sign-in).
+                    LaunchedEffect(Unit) {
+                        if (start == DASHBOARD && !account.revalidate()) {
+                            nav.navigate("login") { popUpTo(0) { inclusive = true } }
                         }
                     }
                     NavHost(
@@ -74,18 +102,60 @@ class MainActivity : ComponentActivity() {
                         popExitTransition = { fadeOut(tween(180)) },
                     ) {
                         composable("setup") {
-                            SetupScreen(onDone = { nav.navigate("pin") { popUpTo("setup") { inclusive = true } } })
+                            SetupScreen(onDone = { signedIn ->
+                                if (signedIn) toDashboard() else nav.navigate("login") { popUpTo(0) { inclusive = true } }
+                            })
                         }
-                        composable("pin") {
-                            PinLoginScreen(onLoggedIn = { nav.navigate("home") { popUpTo("pin") { inclusive = true } } })
-                        }
-                        composable("home") {
-                            HomeScreen(
+                        composable("login") { LoginScreen(onSignedIn = toDashboard) }
+                        composable(DASHBOARD) {
+                            // Outside the till: whoever unlocked it is signed out of it (the POS always asks for a PIN).
+                            LaunchedEffect(Unit) { auth.lockPos() }
+                            DashboardScreen(
+                                onOpenApp = { target ->
+                                    when (target) {
+                                        is AppTarget.Pos -> nav.navigate("pos-pin/${target.tab.name}")
+                                        is AppTarget.Route -> nav.navigate(target.route)
+                                    }
+                                },
                                 onOpenSync = { nav.navigate("sync") },
-                                onLock = { nav.navigate("pin") { popUpTo("home") { inclusive = true } } },
-                                onNavigate = { route -> nav.navigate(route) },
+                                onSignedOut = { nav.navigate("login") { popUpTo(0) { inclusive = true } } },
                             )
                         }
+                        composable(
+                            "pos-pin/{tab}",
+                            arguments = listOf(navArgument("tab") { type = NavType.StringType }),
+                        ) { entry ->
+                            val tab = entry.arguments?.getString("tab") ?: HomeTab.Sell.name
+                            PinLoginScreen(
+                                onLoggedIn = { nav.navigate("home/$tab") { popUpTo("pos-pin/{tab}") { inclusive = true } } },
+                                title = "Point of Sale",
+                                subtitle = "Enter your PIN to open the till.",
+                                onBack = { if (!nav.popBackStack(DASHBOARD, false)) toDashboard() },
+                            )
+                        }
+                        composable(
+                            "home/{tab}",
+                            arguments = listOf(navArgument("tab") { type = NavType.StringType }),
+                        ) { entry ->
+                            val tab = entry.arguments?.getString("tab")
+                                ?.let { name -> HomeTab.entries.firstOrNull { it.name == name } } ?: HomeTab.Sell
+                            HomeScreen(
+                                initialTab = tab,
+                                onOpenSync = { nav.navigate("sync") },
+                                onLock = {
+                                    auth.lockPos()
+                                    nav.navigate("pos-pin/${HomeTab.Sell.name}") { popUpTo(DASHBOARD) }
+                                },
+                                onNavigate = { route ->
+                                    if (route == APPS_ROUTE) {
+                                        if (!nav.popBackStack(DASHBOARD, false)) toDashboard()
+                                    } else {
+                                        nav.navigate(route)
+                                    }
+                                },
+                            )
+                        }
+                        composable("barcode") { BarcodeAppScreen(onBack = { nav.popBackStack() }) }
                         composable("sync") { SyncScreen(onBack = { nav.popBackStack() }) }
                         composable("messaging") { com.poscafe.pos.ui.screens.messaging.MessagingScreen(onBack = { nav.popBackStack() }) }
                         composable("menu-manager") { com.poscafe.pos.ui.screens.manage.MenuManagerScreen(onBack = { nav.popBackStack() }) }
@@ -112,6 +182,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private companion object {
+        const val DASHBOARD = "dashboard"
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {

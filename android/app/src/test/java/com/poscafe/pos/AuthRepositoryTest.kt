@@ -105,4 +105,23 @@ class AuthRepositoryTest {
         config.applyOfflinePolicy(null, 0, null, null)
         assertFalse("0 disables it", auth.idleExpired(now + 999 * 60_000L))
     }
+
+    @Test
+    fun `locking the till keeps the app user signed in`() = runBlocking {
+        val (auth, _) = freshProcess()
+        auth.signInApp(AuthRepository.LoggedIn("boss", "Boss", setOf("organization:update")))
+        assertEquals("boss", auth.current?.userId)
+        assertFalse("the dashboard is not a till session", auth.idleExpired(System.currentTimeMillis() + 999 * 60_000L))
+
+        assertTrue(auth.loginWithPin("u1", "1234").isSuccess)
+        assertTrue(auth.posUnlocked)
+        assertEquals("the cashier acts while the till is open", "u1", auth.current?.userId)
+
+        auth.lockPos()
+        assertFalse(auth.posUnlocked)
+        assertEquals("boss", auth.current?.userId)
+
+        auth.logout()
+        assertEquals(null, auth.current)
+    }
 }

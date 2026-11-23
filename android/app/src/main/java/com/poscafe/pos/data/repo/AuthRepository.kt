@@ -31,9 +31,35 @@ class AuthRepository @Inject constructor(
 ) {
     data class LoggedIn(val userId: String, val displayName: String, val permissions: Set<String>)
 
+    /**
+     * Mobile app shell: two people can be signed in. [appUser] opened the app (ERP account sign-in, or a PIN when
+     * offline) and owns the dashboard; [cashier] unlocked the POS terminal with a PIN (owner decision 2026-11-23:
+     * the POS always asks for one). Everything that acts — sales, stock, expenses — uses [current]: the cashier while
+     * the POS is unlocked, else the app user.
+     */
     @Volatile
-    var current: LoggedIn? = null
+    var appUser: LoggedIn? = null
         private set
+
+    @Volatile
+    var cashier: LoggedIn? = null
+        private set
+
+    val current: LoggedIn? get() = cashier ?: appUser
+
+    /** Whether a cashier has unlocked the POS with their PIN. */
+    val posUnlocked: Boolean get() = cashier != null
+
+    /** The app is opened by [user] (account sign-in, or an offline PIN sign-in). */
+    fun signInApp(user: LoggedIn) {
+        appUser = user
+        touch()
+    }
+
+    /** Leave or lock the POS: the next cashier signs in with their PIN; the app user stays signed in. */
+    fun lockPos() {
+        cashier = null
+    }
 
     suspend fun staffList(): List<StaffEntity> = staffDao.all().filter { it.isActive && it.pinHash != null }
 
@@ -72,7 +98,7 @@ class AuthRepository @Inject constructor(
                 displayName = listOfNotNull(user.firstName, user.lastName).joinToString(" "),
                 permissions = user.permissions.split(',').filter { it.isNotBlank() }.toSet(),
             )
-            current = session
+            cashier = session
             touch()
             Result.success(session)
         } else {
@@ -81,9 +107,11 @@ class AuthRepository @Inject constructor(
         }
     }.fold({ it }, { failure -> Result.failure(failure) })
 
+    /** Everyone out: device revoked, re-enrolment, or Sign out. */
     fun logout() {
         lastActivityAt = 0L
-        current = null
+        cashier = null
+        appUser = null
     }
 
     /**
@@ -194,10 +222,13 @@ class AuthRepository @Inject constructor(
     /** Any touch on the screen. */
     fun touch(now: Long = System.currentTimeMillis()) { lastActivityAt = now }
 
-    /** Whether the signed-in user has been idle past `offlinePolicy.idleTimeoutMinutes` (0 or less = never). */
+    /**
+     * Whether the POS cashier has been idle past `offlinePolicy.idleTimeoutMinutes` (0 or less = never). The idle
+     * timeout locks the till; the app user stays signed in (the app keeps its session until Sign out).
+     */
     fun idleExpired(now: Long = System.currentTimeMillis()): Boolean {
         val minutes = config.offlinePolicy.idleTimeoutMinutes
-        return current != null && minutes > 0 && lastActivityAt > 0 && now - lastActivityAt > minutes * 60_000L
+        return cashier != null && minutes > 0 && lastActivityAt > 0 && now - lastActivityAt > minutes * 60_000L
     }
 
     companion object {

@@ -195,6 +195,13 @@ interface SaleDao {
     @Query("SELECT * FROM local_sales WHERE occurredAt >= :since ORDER BY occurredAt DESC")
     suspend fun since(since: Long): List<LocalSaleEntity>
 
+    /** Dashboard: takings rung up on this device since [since] (discarded sales excluded). */
+    @Query("SELECT COALESCE(SUM(total), 0) FROM local_sales WHERE occurredAt >= :since AND syncStatus != 'discarded'")
+    fun totalSinceFlow(since: Long): Flow<Double>
+
+    @Query("SELECT COUNT(*) FROM local_sales WHERE occurredAt >= :since AND syncStatus != 'discarded'")
+    fun countSinceFlow(since: Long): Flow<Int>
+
     /** Report window [from, until): every sale, discarded ones included (the report drops them). */
     @Query("SELECT * FROM local_sales WHERE occurredAt >= :from AND occurredAt < :until ORDER BY occurredAt DESC")
     suspend fun between(from: Long, until: Long): List<LocalSaleEntity>
@@ -377,6 +384,10 @@ interface ProductDao {
 
     @Query("SELECT * FROM products WHERE id = :id")
     suspend fun byId(id: String): ProductEntity?
+
+    /** Any product (active or not) already carrying this barcode or SKU — a new product must not reuse it. */
+    @Query("SELECT * FROM products WHERE barcode = :code OR sku = :code LIMIT 1")
+    suspend fun anyByCode(code: String): ProductEntity?
 
     @Query("SELECT * FROM products WHERE isActive = 1 AND (name LIKE '%' || :query || '%' OR sku LIKE '%' || :query || '%' OR barcode LIKE '%' || :query || '%') ORDER BY name")
     fun search(query: String): Flow<List<ProductEntity>>

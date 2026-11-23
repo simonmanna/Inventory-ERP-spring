@@ -1,5 +1,8 @@
 package com.poscafe.pos.ui.screens.manage
 
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -80,7 +83,8 @@ class ProductsViewModel @Inject constructor(
                     uomName = existing?.uomName,
                     taxId = tax?.id,
                     taxRate = tax?.rate ?: 0.0,
-                    taxInclusive = existing?.taxInclusive ?: false,
+                    // As the pull does: inclusivity follows the chosen tax row.
+                    taxInclusive = tax?.isInclusive ?: false,
                     isActive = active,
                     isService = existing?.isService ?: false,
                     updatedAt = System.currentTimeMillis(),
@@ -234,6 +238,14 @@ private fun ProductEditorDialog(
     var categoryId by remember { mutableStateOf(existing?.categoryId) }
     var taxId by remember { mutableStateOf(existing?.taxId) }
     var active by remember { mutableStateOf(existing?.isActive ?: true) }
+    var scanning by remember { mutableStateOf(false) }
+    if (scanning) {
+        com.poscafe.pos.ui.screens.BarcodeScannerDialog(
+            onDismiss = { scanning = false },
+            onBarcodeDetected = { barcode = it },
+            title = "Scan the product's barcode",
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -248,7 +260,15 @@ private fun ProductEditorDialog(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = sku, onValueChange = { sku = it }, label = { Text("SKU") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f))
-                    OutlinedTextField(value = barcode, onValueChange = { barcode = it }, label = { Text("Barcode") }, singleLine = true, shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f))
+                    OutlinedTextField(
+                        value = barcode, onValueChange = { barcode = it }, label = { Text("Barcode") }, singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { scanning = true }) {
+                                Icon(Icons.Outlined.QrCodeScanner, "Scan barcode")
+                            }
+                        },
+                        shape = MaterialTheme.shapes.medium, modifier = Modifier.weight(1f),
+                    )
                 }
                 if (categories.isNotEmpty()) {
                     Text("Category", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
