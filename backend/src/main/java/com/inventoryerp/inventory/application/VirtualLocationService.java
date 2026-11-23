@@ -30,7 +30,14 @@ public class VirtualLocationService {
 
     /** Id of the live location {@code code} of the current organization, created as a virtual location if absent. */
     public String ensure(String code, String name) {
-        String org = TenantContext.organizationId();
+        return ensure(TenantContext.organizationId(), code, name);
+    }
+
+    /**
+     * {@link #ensure(String, String)} for an explicit organization (rental bootstraps its role locations per org). The
+     * one way other modules create system locations, so none of them writes {@code InventoryLocation} itself (R2).
+     */
+    public String ensure(String org, String code, String name) {
         String existing = find(org, code);
         if (existing != null) {
             return existing;

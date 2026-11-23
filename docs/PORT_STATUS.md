@@ -2001,6 +2001,12 @@ against a live Superset.
 
 Not verified yet: the dashboards rendered in a browser through the ERP web app.
 
+## Inventory hardening R2 — branch security and master data (owner-approved 2026-11-23, gate G3)
+
+- [x] R2 branch scope on reversals, transfer source/destination actions, reservations and replenishment transfer
+  sources; location delete/deactivate/retype/branch-move guards; transit location protected; system locations via
+  `VirtualLocationService` ([spec deviations 31–32](spec/inventory.md#deviations)) — `InventoryBranchScopeIT`
+
 ## Guide: in-app guided tours (ADR-S079, extension: no Nest counterpart)
 
 [Spec](spec/guide.md). 3 routes: `GuideController` (`GET /guide/progress`, `PUT|DELETE /guide/progress/{tourKey}`).

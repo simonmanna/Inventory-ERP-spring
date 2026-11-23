@@ -308,6 +308,37 @@ Approved by the owner 2026-11-23 (inventory hardening R3, financial integrity, r
   1396, NRV allowance 1397) and their value-only components stay with the organisation-level tie-out, and so does a
   branch split (revaluations and landed cost post per product, not per location). Test `StandardCostingIntegrityIT`.
 
+Owner-approved hardening 2026-11-23, batch R2 of the inventory hardening plan (branch security and master data,
+gate G3). The Spring app is independent of Nest since 2026-11-18, so these are hardening rules, not parity gaps:
+
+31. **Branch scope on stock actions.** A user with a data scope (BR-1) is checked on the side of the document the
+    action belongs to. A refusal is 403 `This location is outside your data access`.
+    - Reversals (`POST /inventory/{stock-outs|waste|adjustments|transfers}/:id/reverse`): the document's location, for a
+      transfer its source. The check runs inside the reversing transaction after the header row lock. Engine reversals
+      other modules run (`reverseLedgerSource` from procurement, fleet, quarry, manufacturing) are not user-scoped.
+    - Transfers: approve, dispatch, recall and cancel need the source; receive needs the destination; reads and create
+      stay reachable from either end. Dispatch, receive, recall and cancel check after the header lock; approve checks
+      before its approval gate (which runs in its own transaction) and the status claim serialises it. Offline
+      `transfer.dispatch` / `transfer.receive` inherit the same rules (a 403 is not a business refusal: the op is
+      dead-lettered for a supervisor, not held).
+    - Reservations (`/inventory/reservations`): reserve needs the location in scope and 404s `Product not found` /
+      `Location not found`; release, consume, the source list and the overview touch or show only the caller's
+      locations, and an overview `locationId` outside them is 403. `GET /inventory/reservations` without both
+      `sourceType` and `sourceId` is paged (`page`, `pageSize`, at most 200 rows). The engine methods sales, POS and
+      manufacturing call are unchanged (no user scope).
+    - Replenishment: a transfer rule's `sourceLocationId` must be in scope when it is set or changed; a kept source is
+      not re-checked, so a branch user can still edit the levels of a rule an unrestricted user set up.
+32. **Location guards.** `DELETE /inventory/locations/:id`, `isActive: false`, a `type` change or a `branchId` change
+    is refused (400 `Location <code> cannot be deleted|deactivated|retyped|moved to another branch while it still has
+    <what> (<n>); move or close them first`) while the location has non-zero stock, stock in warehouse bins, open
+    transfers (draft, pending, approved, in transit, partially received; from, to or through it), draft counts, active
+    reservations, or active replenishment / reorder rules (as location or transfer source). The system transit
+    location is never deleted, deactivated or retyped (400 `The transit location is system-managed; it cannot be
+    deleted|retyped|deactivated`); no user can type a location `transit` (unchanged DTO rule). Manufacturing's QC
+    quarantine and rental's role locations are created through `VirtualLocationService.ensure` instead of direct
+    inserts. Tests: `InventoryBranchScopeIT`; `WarehouseReplenishmentGapsIT.scanSurvivesABrokenRule` now soft-deletes
+    the source in SQL to simulate legacy data.
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation
