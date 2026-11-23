@@ -89,6 +89,17 @@ public class StockReservationService {
     }
 
     /**
+     * {@link #reserve} for a caller that keeps a reservation failure soft (production confirm) and runs it under a
+     * savepoint in its own transaction rather than in a new one: the reservation takes the quant's advisory lock, which
+     * the caller's transaction may already hold, so a separate transaction would wait for it forever. A failure does
+     * not mark the caller's transaction rollback-only.
+     */
+    @Transactional(noRollbackFor = RuntimeException.class)
+    public Map<String, Object> reserveSoft(Reserve dto) {
+        return reserve(dto);
+    }
+
+    /**
      * Hardening R5b (P2-1): lock one stock cell in the engine's order (costing locks, quant advisory lock, then the
      * {@code StockItem} row) for a caller that measures free stock before it reserves (sales ATP). Locks last until the
      * caller's transaction ends.

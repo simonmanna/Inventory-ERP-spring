@@ -26,6 +26,7 @@ import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.Savepoints;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
@@ -356,12 +357,16 @@ public class ProductionService {
             try {
                 // Review M-3: reservations count base units (the stock they hold back); the material line is in its
                 // BOM unit.
-                // The conversion runs in the reservation's own transaction: a failure stays soft.
+                // The conversion runs in its own transaction: a failure stays soft.
                 String productId = str(m, "productId");
-                newTx.executeWithoutResult(s -> reservations.reserve(new Reserve(productId,
-                        str(m, "variantId"), str(order, "locationId"), uom.toBase(dec(m, "qtyPlanned"),
-                                str(m, "uomId"), productId, productUnit(productId), true), SOURCE, id,
-                        str(order, "orderCode"))));
+                BigDecimal base = newTx.execute(s -> uom.toBase(dec(m, "qtyPlanned"), str(m, "uomId"), productId,
+                        productUnit(productId), true));
+                // The reservation itself joins this transaction under a savepoint: it takes the quant's advisory lock
+                // (hardening R5b), which this transaction may already hold from a stock move earlier in it (the demo
+                // seeds confirm orders after receiving their materials); a separate transaction would wait for it
+                // forever. reserveSoft does not mark this transaction rollback-only, so a failure stays soft.
+                Savepoints.run(db.jdbc(), () -> reservations.reserveSoft(new Reserve(productId, str(m, "variantId"),
+                        str(order, "locationId"), base, SOURCE, id, str(order, "orderCode"))));
             } catch (RuntimeException e) {
                 log.warn("reserve failed for {} / {}: {}", order.get("orderCode"), m.get("productId"), e.getMessage());
             }
