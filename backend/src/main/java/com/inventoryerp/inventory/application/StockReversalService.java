@@ -49,15 +49,17 @@ public class StockReversalService {
     private final StockService stock;
     private final StockPostingService stockPosting;
     private final StockDocService docs;
+    private final LocationScope scope;
 
     public StockReversalService(JdbcClient jdbc, AuditService audit, PostingService posting, StockService stock,
-            StockPostingService stockPosting, StockDocService docs) {
+            StockPostingService stockPosting, StockDocService docs, LocationScope scope) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.posting = posting;
         this.stock = stock;
         this.stockPosting = stockPosting;
         this.docs = docs;
+        this.scope = scope;
     }
 
     private static String org() {
@@ -75,17 +77,23 @@ public class StockReversalService {
         };
     }
 
-    /** Reverse a completed stock document. */
+    /**
+     * Reverse a completed stock document (the user route). The header is row-locked first and the caller's branch
+     * scope is checked on it inside the moving transaction (R2): the document's location, for a transfer its source.
+     */
     @Transactional
     public Map<String, Object> reverseDocument(String kind, String id, String reason) {
         if (reason == null || reason.trim().isEmpty()) {
             throw ApiException.badRequest("A reason is required to reverse a posted document");
         }
         Spec spec = spec(kind);
+        jdbc.sql("SELECT id FROM \"" + spec.table() + "\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(id, org()).query().listOfRows();
         Map<String, Object> doc = header(spec, id);
         if (doc == null) {
             throw ApiException.notFound(spec.label() + " not found");
         }
+        scope.assertAllowed(str(doc, "StockTransfer".equals(spec.table()) ? "fromLocId" : "locationId"));
         String code = str(doc, spec.codeField());
         if (doc.get("reversedAt") != null || "reversed".equals(str(doc, "status"))) {
             throw ApiException.conflict(spec.label() + " " + code + " is already reversed");

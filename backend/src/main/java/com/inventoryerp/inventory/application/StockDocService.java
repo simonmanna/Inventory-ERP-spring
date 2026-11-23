@@ -812,14 +812,18 @@ public class StockDocService {
         return withItems(transfer(id));
     }
 
-    /** Approve a transfer: immediate posts it; transit only authorises dispatch. */
+    /**
+     * Approve a transfer: immediate posts it; transit only authorises dispatch. The source location must be in the
+     * caller's scope (R2: source-side action). The header is not row-locked here because the approval gate runs in its
+     * own transaction; the status claim below serialises concurrent approvals and a transfer's locations never change.
+     */
     @Transactional
     public Map<String, Object> approveTransfer(String id) {
         Map<String, Object> doc = transfer(id);
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
+        scope.assertAllowed(str(doc, "fromLocId"));
         List<Map<String, Object>> items = items("StockTransferItem", StockTransferItem.class, "transferId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         BigDecimal magnitude = BigDecimal.ZERO;
@@ -907,15 +911,24 @@ public class StockDocService {
                 .param(org()).query(String.class).optional().orElse(null);
     }
 
-    /** Row-lock the transfer header and return it with fresh items; must be a transit transfer. */
-    private Map<String, Object> lockTransfer(String id) {
+    /**
+     * Row-lock the transfer header and check the caller's scope on the side the action belongs to (R2): the source for
+     * approve, dispatch, recall and cancel; the destination for a receipt. Reads stay reachable from either end.
+     */
+    private Map<String, Object> lockedTransfer(String id, boolean sourceSide) {
         jdbc.sql("SELECT id FROM \"StockTransfer\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(id, org()).query().listOfRows();
         Map<String, Object> doc = transfer(id);
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
+        scope.assertAllowed(str(doc, sourceSide ? "fromLocId" : "toLocId"));
+        return doc;
+    }
+
+    /** {@link #lockedTransfer} with fresh items; must be a transit transfer. */
+    private Map<String, Object> lockTransfer(String id, boolean sourceSide) {
+        Map<String, Object> doc = lockedTransfer(id, sourceSide);
         if (!"transit".equals(str(doc, "mode"))) {
             throw ApiException.badRequest(doc.get("transferCode")
                     + " is an immediate transfer; it has no dispatch or receipt stages");
@@ -933,7 +946,7 @@ public class StockDocService {
     public Map<String, Object> dispatchTransfer(String id) {
         String transit = ensureTransitLocation();
         return tx.execute(s -> {
-            Map<String, Object> doc = lockTransfer(id);
+            Map<String, Object> doc = lockTransfer(id, true);
             if (!"approved".equals(str(doc, "status")) || doc.get("dispatchedAt") != null) {
                 throw ApiException.badRequest("Only an approved, undispatched transfer can be dispatched ("
                         + doc.get("transferCode") + " is " + doc.get("status") + ")");
@@ -963,7 +976,7 @@ public class StockDocService {
     /** Record one destination receipt splitting outstanding transit qty into received / damaged / short. */
     @Transactional
     public Map<String, Object> receiveTransfer(String id, List<ReceiveLine> lines, String notes) {
-        Map<String, Object> doc = lockTransfer(id);
+        Map<String, Object> doc = lockTransfer(id, false);
         String status = str(doc, "status");
         String code = str(doc, "transferCode");
         if (!"in_transit".equals(status) && !"partially_received".equals(status)) {
@@ -1070,7 +1083,7 @@ public class StockDocService {
         if (reason == null || reason.trim().isEmpty()) {
             throw ApiException.badRequest("A reason is required to recall a transfer");
         }
-        Map<String, Object> doc = lockTransfer(id);
+        Map<String, Object> doc = lockTransfer(id, true);
         String status = str(doc, "status");
         String code = str(doc, "transferCode");
         if (!"in_transit".equals(status) && !"partially_received".equals(status)) {
@@ -1114,10 +1127,10 @@ public class StockDocService {
         return done;
     }
 
-    /** Cancel a transfer that has not moved any stock yet. */
+    /** Cancel a transfer that has not moved any stock yet; the source location must be in the caller's scope. */
     @Transactional
     public Map<String, Object> cancelTransfer(String id) {
-        Map<String, Object> doc = getTransfer(id);
+        Map<String, Object> doc = lockedTransfer(id, true);
         int upd = jdbc.sql("UPDATE \"StockTransfer\" SET status = 'cancelled', \"updatedBy\" = ?, \"updatedAt\" = " + NOW
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"postedAt\" IS NULL AND \"dispatchedAt\" IS NULL"
                         + " AND status IN ('draft', 'pending', 'approved')")

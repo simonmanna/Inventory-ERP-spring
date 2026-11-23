@@ -1,7 +1,6 @@
 package com.inventoryerp.rental.application;
 
-import com.inventoryerp.inventory.domain.InventoryLocation;
-import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.inventory.application.VirtualLocationService;
 import com.inventoryerp.pos.application.PosDb;
 import com.inventoryerp.rental.domain.RentalLocationConfig;
 import java.util.LinkedHashMap;
@@ -32,21 +31,19 @@ public class RentalLocationConfigService {
             new Boot("damaged", "RENT-DAMAGED", "Rental Damaged"));
 
     private final PosDb db;
+    private final VirtualLocationService locations;
 
-    public RentalLocationConfigService(PosDb db) {
+    public RentalLocationConfigService(PosDb db, VirtualLocationService locations) {
         this.db = db;
+        this.locations = locations;
     }
 
     /** Ensure the five locations + config rows exist for an org. Idempotent. */
     @Transactional
     public void ensureForOrg(String orgId) {
         for (Boot row : BOOTSTRAP) {
-            // findUnique on (organizationId, code) is soft-delete filtered by the tenancy extension.
-            Map<String, Object> existing = db.first(InventoryLocation.class,
-                    "\"organizationId\" = ? AND code = ? AND \"deletedAt\" IS NULL", orgId, row.code());
-            String locationId = existing != null ? (String) existing.get("id")
-                    : (String) db.insert(InventoryLocation.class, Obj.of("organizationId", orgId, "code", row.code(),
-                            "name", row.name(), "type", "virtual", "isActive", true)).get("id");
+            // Found by (organizationId, code) among live locations, or created through the inventory API (R2).
+            String locationId = locations.ensure(orgId, row.code(), row.name());
             db.jdbc().sql("""
                             INSERT INTO "RentalLocationConfig" (id, "organizationId", role, "locationId", "createdAt",
                               "updatedAt")

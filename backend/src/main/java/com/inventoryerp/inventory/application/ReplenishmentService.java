@@ -311,6 +311,11 @@ public class ReplenishmentService {
             throw ApiException.badRequest("The source location must differ from the rule's location");
         }
         assertExists("InventoryLocation", source, "Source location not found");
+        // R2: the caller must be allowed to move stock out of a source they name (a kept source is not re-checked, so
+        // a branch user can still edit the levels of a rule an unrestricted user set up).
+        if (row == null || !source.equals(row.get("sourceLocationId"))) {
+            scope.assertAllowed(source);
+        }
         return new Route(route, source);
     }
 

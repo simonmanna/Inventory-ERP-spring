@@ -15,7 +15,7 @@ import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockReservationService;
 import com.inventoryerp.inventory.application.StockReservationService.Reserve;
 import com.inventoryerp.inventory.application.StockService;
-import com.inventoryerp.inventory.domain.InventoryLocation;
+import com.inventoryerp.inventory.application.VirtualLocationService;
 import com.inventoryerp.inventory.domain.StockItem;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.approvals.ControlledActionService;
@@ -104,6 +104,14 @@ public class ProductionService {
     private final ProductVariantService variants;
 
     private com.inventoryerp.kernel.settings.SettingResolverService settings;
+
+    private VirtualLocationService virtualLocations;
+
+    /** Setter-injected like {@link #setSettings}: system locations are created through the inventory API (R2). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setVirtualLocations(VirtualLocationService virtualLocations) {
+        this.virtualLocations = virtualLocations;
+    }
 
     /** Optional (setter) so the many existing constructions stay as they are. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -1099,18 +1107,12 @@ public class ProductionService {
         return resolveQuarantineLocation();
     }
 
-    /** The virtual QC quarantine location, auto-created (and committed) once per org. */
+    /**
+     * The virtual QC quarantine location, auto-created (and committed in its own transaction) once per org through the
+     * inventory API — the same location quality lots use.
+     */
     private String resolveQuarantineLocation() {
-        return newTx.execute(s -> {
-            String existing = db.jdbc().sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ?"
-                            + " AND \"deletedAt\" IS NULL AND code = 'QC-QUARANTINE' LIMIT 1")
-                    .param(MfgDb.org()).query(String.class).optional().orElse(null);
-            if (existing != null) {
-                return existing;
-            }
-            return str(db.insert(InventoryLocation.class, Obj.of("code", "QC-QUARANTINE", "name", "QC Quarantine",
-                    "type", "virtual", "isActive", true, "createdBy", TenantContext.userId())), "id");
-        });
+        return virtualLocations.ensure(VirtualLocationService.QC_QUARANTINE, "QC Quarantine");
     }
 
     /** 404 {@code Location not found} unless the location is live in this organization. */

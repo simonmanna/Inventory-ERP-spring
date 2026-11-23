@@ -50,7 +50,7 @@ public class StockReservationController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> reserve(@Valid @RequestBody ReserveRequest dto) {
-        return reservations.reserve(new StockReservationService.Reserve(dto.productId(), dto.variantId(),
+        return reservations.reserveForUser(new StockReservationService.Reserve(dto.productId(), dto.variantId(),
                 dto.locationId(), dto.quantity(), dto.sourceType(), dto.sourceId(), dto.reason()));
     }
 
@@ -58,14 +58,14 @@ public class StockReservationController {
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> release(@Valid @RequestBody ReleaseRequest dto) {
-        return reservations.release(dto.sourceType(), dto.sourceId());
+        return reservations.releaseForUser(dto.sourceType(), dto.sourceId());
     }
 
     @PostMapping("/consume")
     @ResponseStatus(HttpStatus.CREATED)
     @RequirePermissions(Permissions.INVENTORY__MOVE)
     public Map<String, Object> consume(@Valid @RequestBody ReleaseRequest dto) {
-        return reservations.consume(dto.sourceType(), dto.sourceId());
+        return reservations.consumeForUser(dto.sourceType(), dto.sourceId());
     }
 
     @GetMapping("/atp")
@@ -82,10 +82,12 @@ public class StockReservationController {
         return reservations.overview(query);
     }
 
+    /** A source's reservations; without both {@code sourceType} and {@code sourceId} it is paged (200 at most). */
     @GetMapping
     @RequirePermissions(Permissions.INVENTORY__READ)
     public List<Map<String, Object>> list(@RequestParam(required = false) String sourceType,
-            @RequestParam(required = false) String sourceId) {
-        return reservations.listForSource(sourceType, sourceId);
+            @RequestParam(required = false) String sourceId, @RequestParam(required = false) String page,
+            @RequestParam(required = false) String pageSize) {
+        return reservations.listForUser(sourceType, sourceId, page, pageSize);
     }
 }
