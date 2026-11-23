@@ -140,6 +140,7 @@ public class StockReversalService {
             throw ApiException.badRequest("Only posted " + spec.label().toLowerCase() + "s can be reversed (this one is "
                     + doc.get("status") + "); cancel it instead");
         }
+        assertNoLivePickOrder(kind, id, code, spec.label());
         int claim = jdbc.sql("UPDATE \"" + spec.table() + "\" SET status = 'reversed', \"reversedAt\" = " + NOW
                         + ", \"reversedById\" = ?, \"reversalReason\" = ?, \"updatedAt\" = " + NOW
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"reversedAt\" IS NULL AND status = 'completed'")
@@ -160,6 +161,30 @@ public class StockReversalService {
         audit.recordInTx(AuditInput.of(spec.entity(), id, "update", null,
                 Obj.of("status", "reversed", "reversalReason", reason.trim(), "code", code)));
         return docs.withItems(header(spec, id));
+    }
+
+    /**
+     * R4: a stock-out or transfer that a pick order not yet shipped or cancelled is sourced to stays as posted: its
+     * goods are still being picked against that issue, and reversing it underneath would leave the pick order shipping
+     * goods the ledger has taken back.
+     */
+    private void assertNoLivePickOrder(String kind, String id, String code, String label) {
+        String sourceType = switch (kind) {
+            case "stock_out" -> "stock_out";
+            case "stock_transfer" -> "transfer";
+            default -> null;
+        };
+        if (sourceType == null) {
+            return;
+        }
+        List<String> live = jdbc.sql("SELECT code FROM \"WarehousePickOrder\" WHERE \"organizationId\" = ?"
+                        + " AND \"sourceType\" = ? AND (\"sourceId\" = ? OR \"sourceRef\" = ?) AND status IN "
+                        + WarehouseStore.OPEN + " ORDER BY code")
+                .params(org(), sourceType, id, code).query(String.class).list();
+        if (!live.isEmpty()) {
+            throw ApiException.badRequest(label + " " + code + " has open pick order(s) " + String.join(", ", live)
+                    + "; ship or cancel them before reversing it");
+        }
     }
 
     private Map<String, Object> header(Spec spec, String id) {
@@ -463,6 +488,35 @@ public class StockReversalService {
             out.add(new ReturnedRow(res.ledgerCode(), str(r, "id"), str(r, "productId"), str(r, "variantId"), location,
                     batchNumber, serial, qty, dec(r, "unitCost"), dec(r, "unitCost").multiply(qty)));
         }
+        return out;
+    }
+
+    /** What a source can still return of one product and variant, in base units ({@link #returnableByProduct}). */
+    public record Returnable(String productId, String variantId, BigDecimal quantity) {}
+
+    /**
+     * R4: per product and variant, what is still returnable from the issue rows of {@code src} (issued, net of earlier
+     * returns as {@link #returnFromSource} counts them), in base units; products with nothing left are omitted.
+     */
+    @Transactional
+    public List<Returnable> returnableByProduct(IssueSource src) {
+        String org = org();
+        List<Map<String, Object>> rows = issueRows(org, src);
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        Map<String, BigDecimal> remaining = returnable(org, rows);
+        Map<List<String>, BigDecimal> byProduct = new LinkedHashMap<>();
+        for (Map<String, Object> r : rows) {
+            byProduct.merge(java.util.Arrays.asList(str(r, "productId"), str(r, "variantId")), remaining.get(str(r, "id")),
+                    BigDecimal::add);
+        }
+        List<Returnable> out = new ArrayList<>();
+        byProduct.forEach((k, q) -> {
+            if (q.signum() > 0) {
+                out.add(new Returnable(k.get(0), k.get(1), q));
+            }
+        });
         return out;
     }
 

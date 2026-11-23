@@ -213,20 +213,25 @@ public class WarehouseStore {
     /**
      * Ledger references (referenceType, referenceId) under which each source document of a {@code docs(st, ref, sid)}
      * CTE issues its stock, then {@code issued(st, ref, pid, vk, qty)}: the quantity the document has taken out of
-     * stock at {@code :loc}, net of what its cancellations and trip returns put back. A sales order issues through its
+     * stock at {@code :loc}, net of what its cancellations, trip returns and reversals put back — R4: the document's
+     * own reversal rows ({@code stock_out_reversal}, {@code stock_transfer_reversal}) and any return naming one of its
+     * issue rows ({@code reversesLedgerId}: credit notes, sales returns), net of what cancelled such returns took back
+     * again. A sales order issues through its
      * invoices or through the trips of its delivery orders; a delivery order through its trips (or its goods invoice);
      * a stock-out and a transfer through their own postings. Parameters: {@code :org}, {@code :loc}.
      */
     private static final String DOC_ISSUES = """
             refs AS (
-              SELECT d.st, d.ref, 'stock_out'::text AS rt, x."outCode" AS rid
+              SELECT d.st, d.ref, r.rt, x."outCode" AS rid
                 FROM docs d JOIN "StockOut" x ON x."organizationId" = :org AND (x.id = d.sid OR x."outCode" = d.ref)
+               CROSS JOIN (VALUES ('stock_out'), ('stock_out_reversal')) r(rt)
                WHERE d.st = 'stock_out'
               UNION ALL
               SELECT d.st, d.ref, r.rt, x."transferCode"
                 FROM docs d JOIN "StockTransfer" x ON x."organizationId" = :org
                  AND (x.id = d.sid OR x."transferCode" = d.ref)
-               CROSS JOIN (VALUES ('stock_transfer'), ('stock_transfer_dispatch'), ('stock_transfer_recall')) r(rt)
+               CROSS JOIN (VALUES ('stock_transfer'), ('stock_transfer_dispatch'), ('stock_transfer_recall'),
+                 ('stock_transfer_reversal')) r(rt)
                WHERE d.st = 'transfer'
               UNION ALL
               SELECT d.st, d.ref, r.rt, fl.id
@@ -255,11 +260,30 @@ public class WarehouseStore {
                CROSS JOIN (VALUES ('sales_invoice'), ('sales_invoice_cancel')) r(rt)
                WHERE d.st = 'sales_order'
             ),
-            issued AS (
-              SELECT r.st, r.ref, g."productId" AS pid, COALESCE(g."variantId", '') AS vk, -SUM(g."quantityChange") AS qty
+            ref_rows AS (
+              SELECT r.st, r.ref, g.id, g."productId", g."variantId", g."quantityChange"
                 FROM (SELECT DISTINCT st, ref, rt, rid FROM refs) r
                 JOIN "InventoryLedger" g ON g."organizationId" = :org AND g."referenceType" = r.rt
                  AND g."referenceId" = r.rid AND g."locationId" = :loc
+            ),
+            returned AS (
+              SELECT rr.st, rr.ref, x.id, x."productId", x."variantId", x."quantityChange"
+                FROM ref_rows rr
+                JOIN "InventoryLedger" x ON x."organizationId" = :org AND x."reversesLedgerId" = rr.id
+                 AND x."locationId" = :loc
+               WHERE rr."quantityChange" < 0
+                 AND NOT EXISTS (SELECT 1 FROM ref_rows o WHERE o.st = rr.st AND o.ref = rr.ref AND o.id = x.id)
+            ),
+            issued AS (
+              SELECT t.st, t.ref, t."productId" AS pid, COALESCE(t."variantId", '') AS vk, -SUM(t."quantityChange") AS qty
+                FROM (SELECT st, ref, "productId", "variantId", "quantityChange" FROM ref_rows
+                      UNION ALL
+                      SELECT st, ref, "productId", "variantId", "quantityChange" FROM returned
+                      UNION ALL
+                      SELECT rt.st, rt.ref, y."productId", y."variantId", y."quantityChange"
+                        FROM returned rt
+                        JOIN "InventoryLedger" y ON y."organizationId" = :org AND y."reversesLedgerId" = rt.id
+                         AND y."locationId" = :loc) t
                GROUP BY 1, 2, 3, 4
             )""";
 

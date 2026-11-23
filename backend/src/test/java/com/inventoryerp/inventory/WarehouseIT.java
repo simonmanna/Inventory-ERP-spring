@@ -538,6 +538,50 @@ class WarehouseIT extends ApiTestSupport {
         assertThat(onHand(bolts, loc)).isEqualByComparingTo("3");
     }
 
+    Res reverseStockOut(String id) {
+        return call("POST", "/inventory/stock-outs/" + id + "/reverse", Map.of("reason", "Posted by mistake"),
+                Map.of("Authorization", "Bearer " + adminToken, "Idempotency-Key", UUID.randomUUID().toString()));
+    }
+
+    @Test
+    @DisplayName("R4: a stock-out with a live pick order cannot be reversed; a reversed one no longer covers a pick")
+    void pickOrderAndDocumentReversal() {
+        String loc = location();
+        String b1 = bin(loc, "R1", null, Map.of("pickSequence", 1));
+        String nuts = product("Nuts");
+        stockIn(nuts, loc, 10);
+        putaway(loc, nuts, 10, b1);
+        JsonNode doc = stockOutDoc(nuts, loc, 2);
+        String docId = doc.get("id").asString();
+        String outCode = doc.get("outCode").asString();
+        ok(200, "POST", "/inventory/stock-outs/" + docId + "/approve", null);
+        assertThat(onHand(nuts, loc)).isEqualByComparingTo("8");
+        JsonNode live = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2, "sourceType",
+                "stock_out", "sourceRef", outCode, "lines", List.of(Map.of("productId", nuts, "quantity", 2))));
+
+        Res refused = reverseStockOut(docId);
+        assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).isEqualTo("Stock-out " + outCode + " has open pick order(s) "
+                + live.get("code").asString() + "; ship or cancel them before reversing it");
+        assertThat(onHand(nuts, loc)).isEqualByComparingTo("8");
+
+        ok(200, "POST", "/warehouse/pick-orders/" + live.get("id").asString() + "/cancel", Map.of());
+        Res reversed = reverseStockOut(docId);
+        assertThat(reversed.status()).as(reversed.raw().body()).isEqualTo(200);
+        assertThat(onHand(nuts, loc)).isEqualByComparingTo("10");
+
+        // the reversal nets the document's issue: a pick sourced to it now has nothing to ship against
+        JsonNode late = ok(201, "POST", "/warehouse/pick-orders", Map.of("locationId", loc, "steps", 2, "sourceType",
+                "stock_out", "sourceRef", outCode, "lines", List.of(Map.of("productId", nuts, "quantity", 2))));
+        completeAll(ok(200, "POST", "/warehouse/pick-orders/" + late.get("id").asString() + "/release", null)
+                .get("tasks"));
+        Res ship = call("POST", "/warehouse/pick-orders/" + late.get("id").asString() + "/ship", Map.of(), adminToken);
+        assertThat(ship.status()).as(ship.raw().body()).isEqualTo(400);
+        assertThat(ship.body().get("message").asString()).startsWith("Post stock-out " + outCode + " before shipping");
+        assertThat(onHand(nuts, loc)).isEqualByComparingTo("10");
+        ok(200, "POST", "/warehouse/pick-orders/" + late.get("id").asString() + "/cancel", Map.of("returnBinId", b1));
+    }
+
     @Test
     @DisplayName("bin drift: release is capped by the ledger, reconcile trims the bins, adjust stays within on-hand")
     void binDriftAdjustReconcile() {

@@ -263,6 +263,19 @@ Approved by the owner 2026-11-23 (inventory hardening R1, corruption blockers, r
 - **A credit note refuses to restock without an issue to return against** (see invoicing.md).
 - **Offline refund / void drains or holds; offline receipt applies exactly once** (see sync.md).
 
+Approved by the owner 2026-11-23 (inventory hardening R4, workflow integrity, release gate G1):
+
+- **Pick orders net the reversal of their source document.** `WarehouseStore.DOC_ISSUES` (what a sourced pick order's
+  document has taken out at the location) now also counts the document's own reversal rows (`stock_out_reversal`,
+  `stock_transfer_reversal`) and every return that names one of its issue rows (`reversesLedgerId`: credit notes, sales
+  returns), net of the rows that in turn took such a return back (a cancelled credit note). A pick order sourced to a
+  reversed stock-out therefore has nothing to ship against (`Post stock-out … before shipping …`).
+- **A stock-out or transfer with a live pick order cannot be reversed.** `reverseDocument` refuses with 400
+  `<Stock-out|Transfer> <code> has open pick order(s) <codes>; ship or cancel them before reversing it` while a pick
+  order sourced to it is draft / released / picking / picked / packed. Test `WarehouseIT.pickOrderAndDocumentReversal`.
+- **Order-timed POS stock follows the order** (cancel, void, reopen) and **POS jobs are one per sale** — see pos.md.
+  `StockReversalService.returnableByProduct` (new, read) gives what a source can still return per product.
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation
