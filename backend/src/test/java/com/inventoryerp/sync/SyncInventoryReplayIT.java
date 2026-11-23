@@ -222,4 +222,37 @@ class SyncInventoryReplayIT extends ApiTestSupport {
         assertThat(onHand()).isEqualByComparingTo("45");
         assertTieOut();
     }
+
+    @Test
+    @Order(6)
+    @DisplayName("6. R1: a sale and its void in one push — the void drains the sale's stock posting and restocks once,"
+            + " never dead-lettered; a re-push replays without a second restock")
+    void saleAndVoidInOnePush() {
+        drain();
+        BigDecimal before = onHand();
+        long returns = ledger("return_in");
+        String session = jdbc.sql("SELECT id FROM \"CashSession\" WHERE \"cashRegisterId\" = ? AND status::text = 'open'")
+                .param(registerId).query(String.class).single();
+        String sale = "sale-" + UUID.randomUUID();
+        List<Map<String, Object>> ops = List.of(
+                op(7, "sale.checkout", Map.of("clientId", sale, "cashSessionId", session, "lines", List.of(Map.of(
+                        "productId", water, "description", "Water", "quantity", 3, "unitPrice", 100)), "tenders",
+                        List.of(Map.of("method", "cash", "amount", 300)))),
+                op(8, "sale.void", Map.of("invoiceId", sale, "reason", "rung up on the wrong table", "overrideById",
+                        adminId, "overridePin", managerPin, "cashSessionId", session, "stockDisposition", "restock")));
+        JsonNode res = push(ops);
+        assertThat(res.get("results").get(0).get("status").asString()).as(res.toString()).isEqualTo("applied");
+        assertThat(res.get("results").get(1).get("status").asString()).as(res.toString()).isEqualTo("applied");
+        assertThat(onHand()).as("issued by the drain, then restocked").isEqualByComparingTo(before);
+        assertThat(ledger("return_in")).isEqualTo(returns + 1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"SyncOpDeadLetter\" WHERE \"deviceId\" = ? AND \"opId\" = ?")
+                .params(deviceId, ops.get(1).get("opId")).query(Long.class).single()).isZero();
+
+        JsonNode again = push(ops);
+        again.get("results").forEach(r -> assertThat(r.get("status").asString()).isEqualTo("replayed"));
+        drain();
+        assertThat(ledger("return_in")).as("no second restock").isEqualTo(returns + 1);
+        assertThat(onHand()).isEqualByComparingTo(before);
+        assertTieOut();
+    }
 }

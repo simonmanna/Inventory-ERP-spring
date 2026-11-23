@@ -1064,6 +1064,45 @@ public class PosInvoiceService {
     /** Refund / void a settled invoice (full or per line); GL reversal, payout over original tenders, disposition. */
     public Map<String, Object> refund(String invoiceId, String reason, String overrideById, String overridePin,
             String stockDisposition, String cashSessionId, List<Map<String, Object>> linesIn) {
+        if (!List.of("restock", "waste", "no_return").contains(stockDisposition == null ? "" : stockDisposition)) {
+            if (reason == null || reason.trim().isEmpty()) {
+                throw ApiException.badRequest("A refund reason is required");
+            }
+            if (overrideById == null || overrideById.isEmpty()) {
+                throw ApiException.badRequest("Manager approval is required for a refund");
+            }
+            overrides.verifyOperationApproval(overrideById, overridePin, "manual_refund");
+            throw ApiException.badRequest("Choose the returned goods disposition");
+        }
+        return refundAs(invoiceId, reason, overrideById, overridePin, stockDisposition, cashSessionId, linesIn);
+    }
+
+    /**
+     * R1 (P1-3): an offline refund / void whose sale's stock posting is still not done after a drain. The refund
+     * (money, GL, refunded quantities) applies with {@code stockDisposition = hold}: nothing is restocked here, and the
+     * sync layer raises an {@code offline_held_posting} exception so a supervisor restocks the goods once the sale's
+     * issue is resolved. Never reachable from the online route.
+     */
+    public Map<String, Object> refundWithHeldStock(String invoiceId, String reason, String overrideById,
+            String overridePin, String cashSessionId, List<Map<String, Object>> linesIn) {
+        return refundAs(invoiceId, reason, overrideById, overridePin, "hold", cashSessionId, linesIn);
+    }
+
+    /**
+     * R1 (P1-3): the stock-posting jobs of a sale that are not done — the invoice's, and (T-1) its order's not yet
+     * carrying the invoice.
+     */
+    public List<String> pendingStockPostingJobs(String invoiceId) {
+        String orgId = org();
+        return jdbc.sql("SELECT j.id FROM \"StockPostingJob\" j WHERE j.\"organizationId\" = ?"
+                        + " AND j.status::text <> 'done' AND (j.\"invoiceId\" = ? OR (j.\"invoiceId\" IS NULL"
+                        + " AND j.\"orderId\" = (SELECT i.\"orderId\" FROM \"Invoice\" i WHERE i.id = ?"
+                        + " AND i.\"organizationId\" = ?))) ORDER BY j.\"createdAt\", j.id")
+                .params(orgId, invoiceId, invoiceId, orgId).query(String.class).list();
+    }
+
+    private Map<String, Object> refundAs(String invoiceId, String reason, String overrideById, String overridePin,
+            String stockDisposition, String cashSessionId, List<Map<String, Object>> linesIn) {
         if (reason == null || reason.trim().isEmpty()) {
             throw ApiException.badRequest("A refund reason is required");
         }
@@ -1071,9 +1110,6 @@ public class PosInvoiceService {
             throw ApiException.badRequest("Manager approval is required for a refund");
         }
         overrides.verifyOperationApproval(overrideById, overridePin, "manual_refund");
-        if (!List.of("restock", "waste", "no_return").contains(stockDisposition == null ? "" : stockDisposition)) {
-            throw ApiException.badRequest("Choose the returned goods disposition");
-        }
         String orgId = org();
         return tx.execute(st -> {
             if (cashSessionId != null) {

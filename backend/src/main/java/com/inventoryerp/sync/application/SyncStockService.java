@@ -7,6 +7,7 @@ import com.inventoryerp.inventory.application.StockDocService.ReceiveLine;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.idempotency.IdempotencyService;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.pos.application.PosDb;
@@ -65,6 +66,12 @@ public class SyncStockService {
     private final StockDocService docs;
     private final GoodsReceiptsService grns;
     private final TransactionTemplate tx;
+    private IdempotencyService idempotency;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setIdempotency(IdempotencyService idempotency) {
+        this.idempotency = idempotency;
+    }
 
     public SyncStockService(PosDb db, StockDocService docs, GoodsReceiptsService grns,
             PlatformTransactionManager txm) {
@@ -197,31 +204,90 @@ public class SyncStockService {
     /**
      * Apply the receipts waiting on {@code transferId} once it is in transit. Each runs as the person who recorded
      * it; a refusal turns it into a held posting.
+     *
+     * <p>R1 (P1-13, owner-approved 2026-11-23): exactly once, crash-safe. Per waiting row, ONE transaction claims the
+     * row ({@code FOR UPDATE SKIP LOCKED}, still {@code open}), receives under the idempotency key
+     * {@code offline-receipt:<exceptionId>} and marks the row resolved — all commit together, so a crash rolls back
+     * the claim, the receipt and the resolve at once (no "applying" state is ever stored), and a concurrent runner
+     * (the sync job and a dispatch sync) skips a row another one holds. A refusal rolls the transaction back and a new
+     * transaction marks the row held with the reason.
      */
     public int applyAwaiting(String transferId) {
         Map<String, Object> t = transfer(transferId);
         if (t == null || !RECEIVABLE.contains(str(t.get("status")))) {
             return 0;
         }
+        String org = org();
         int applied = 0;
         for (Map<String, Object> row : SqlRows.list(jdbc.sql("SELECT id, payload FROM \"InventoryException\" WHERE"
                 + " \"organizationId\" = ? AND kind = ? AND status = 'open' AND payload->>'transferId' = ?"
-                + " ORDER BY \"createdAt\" ASC").params(org(), AWAITING, transferId))) {
+                + " ORDER BY \"createdAt\" ASC").params(org, AWAITING, transferId))) {
+            String exceptionId = String.valueOf(row.get("id"));
             Map<String, Object> ctx = json(row.get("payload"));
             Map<String, Object> receipt = PosSql.map(ctx.get("receipt"));
             String actor = str(ctx.get("actorUserId"));
             try {
-                TenantContext.run(TenantContext.TenantStore.user(org(), actor),
-                        () -> docs.receiveTransfer(transferId, receiveLines(receipt), str(receipt.get("notes"))));
-                resolve(String.valueOf(row.get("id")), "Applied when the dispatch synced");
-                applied++;
+                Boolean done = TenantContext.run(TenantContext.TenantStore.user(org, actor),
+                        () -> tx.execute(st -> applyOne(org, transferId, exceptionId, receipt)));
+                if (Boolean.TRUE.equals(done)) {
+                    applied++;
+                }
             } catch (ApiException e) {
-                jdbc.sql("UPDATE \"InventoryException\" SET kind = ?, reason = ? WHERE id = ?")
-                        .params(HELD, "Receipt refused after the dispatch synced: " + e.getMessage(), row.get("id"))
-                        .update();
+                tx.executeWithoutResult(st -> jdbc.sql("UPDATE \"InventoryException\" SET kind = ?, reason = ?"
+                                + " WHERE id = ? AND \"organizationId\" = ? AND status = 'open' AND kind = ?")
+                        .params(HELD, "Receipt refused after the dispatch synced: " + e.getMessage(), exceptionId, org,
+                                AWAITING)
+                        .update());
             }
         }
         return applied;
+    }
+
+    /** Test hook (R1): runs after a waiting receipt is posted, before its row is resolved (crash simulation). */
+    static volatile Runnable afterReceiptHook;
+
+    /** One waiting receipt in the caller's transaction; false when another runner holds or already applied it. */
+    private boolean applyOne(String org, String transferId, String exceptionId, Map<String, Object> receipt) {
+        List<String> claimed = jdbc.sql("SELECT id FROM \"InventoryException\" WHERE id = ?"
+                + " AND \"organizationId\" = ? AND kind = ? AND status = 'open' FOR UPDATE SKIP LOCKED")
+                .params(exceptionId, org, AWAITING)
+                .query(String.class).list();
+        if (claimed.isEmpty()) {
+            return false;
+        }
+        String key = "offline-receipt:" + exceptionId;
+        idempotency.executeWithKey(key, idempotency.hashPayload(Map.of("exceptionId", exceptionId)), "SYNC",
+                "offline-receipt", null, () -> {
+                    docs.receiveTransfer(transferId, receiveLines(receipt), str(receipt.get("notes")));
+                    return new IdempotencyService.Result(false, 200, Map.of("exceptionId", exceptionId));
+                });
+        Runnable hook = afterReceiptHook;
+        if (hook != null) {
+            hook.run();
+        }
+        resolve(exceptionId, "Applied when the dispatch synced");
+        return true;
+    }
+
+    /**
+     * R1 (P1-3): an offline refund / void applied while its sale's stock posting could not complete — the refund
+     * stands with {@code stockDisposition = hold} and its goods wait here ({@code offline_held_posting}) for a
+     * supervisor to restock them once the sale's issue is resolved. Its own transaction (it must survive the op).
+     */
+    public String holdRefundRestock(OpContext c, String invoiceId, String refundId, List<Map<String, Object>> lines) {
+        Map<String, Object> inv = SqlRows.one(jdbc.sql("SELECT \"invoiceNumber\" FROM \"Invoice\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(invoiceId, org()));
+        String number = inv == null ? invoiceId : str(inv.get("invoiceNumber"));
+        String reason = "The sale's stock posting is not done, so the returned goods were not restocked";
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("invoiceId", invoiceId);
+        extra.put("refundId", refundId);
+        extra.put("lines", lines);
+        extra.put("stockDisposition", "hold");
+        String id = exception(HELD, null, null, null, "Refund of " + number + " held: restock after the sale's stock"
+                + " posting is resolved", reason, context(c, "pos_refund", refundId, number, extra));
+        log.info("offline refund {} of {} held: {}", refundId, number, reason);
+        return id;
     }
 
     // ---------------------------------------------------------------------------------------------------- stock.adjust
@@ -461,7 +527,7 @@ public class SyncStockService {
 
     private void resolve(String id, String note) {
         jdbc.sql("UPDATE \"InventoryException\" SET status = 'resolved', \"resolvedAt\" = CURRENT_TIMESTAMP,"
-                + " \"resolutionNote\" = ? WHERE id = ?").params(note, id).update();
+                + " \"resolutionNote\" = ? WHERE id = ? AND \"organizationId\" = ?").params(note, id, org()).update();
     }
 
     private void stamp(String table, String id, OpContext c) {

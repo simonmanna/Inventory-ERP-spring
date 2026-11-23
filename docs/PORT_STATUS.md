@@ -2021,3 +2021,7 @@ Not verified yet: the tours driven by hand in a browser.
   (`integrity_*` exceptions; value kinds hold the period close), read-only data checks
   `docs/audits/2026-11-22-inventory-data-checks.sql` — `InventoryIntegrityIT`, `PeriodCloseChecklistIT`;
   [review](audits/2026-11-22-inventory-review.md)
+
+## Inventory hardening R1 (corruption blockers, gate G1; owner-approved 2026-11-23)
+
+- [x] Returns restore lot / expiry / serial / location / cost via `returnFromSource`; `InventoryLedger.reversesLedgerId` (V611); rental fee lines never move stock; credit note refuses without issue rows; offline refund drains or holds; offline receipt exactly once (`InventoryReturnsIdentityIT`, `SyncInventoryRecoveryIT`)

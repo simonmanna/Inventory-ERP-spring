@@ -81,6 +81,19 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   submitting commit together; a refused count (e.g. "Choose a variant for …") leaves no draft count open. Test
   `SyncIT.stockCountPerVariant`.
 
+- **Offline refund / void of a sale whose stock posting is pending (R1, P1-3, owner-approved 2026-11-23).** A restocking
+  `sale.refund` / `sale.void` first processes the sale's not-done stock-posting jobs (its invoice's and its order's)
+  through the claimed `processStockPostingJob` (outside the op's ledger anchor, like the shift-close drain). If one is
+  still not done, the refund applies with `stockDisposition = hold` (no restock) and an `offline_held_posting`
+  exception records the refund and lines for a supervisor; it is no longer dead-lettered with 400 `Resolve pending
+  stock posting before restocking this return`. Exactly once: the opId (SyncLedger + IdempotencyService), the invoice
+  lock and refunded quantities in `refund`. Test `SyncInventoryReplayIT.saleAndVoidInOnePush`.
+- **Offline transfer receipt applies exactly once, crash-safe (R1, P1-13, owner-approved 2026-11-23).** Each waiting
+  `offline_awaiting_dispatch` receipt is applied in ONE transaction: claim the row (`FOR UPDATE SKIP LOCKED`,
+  `status = 'open'`), receive under the idempotency key `offline-receipt:<exceptionId>`, mark it resolved. A crash rolls
+  all three back (no "applying" state is stored); a concurrent applier (sync job / dispatch sync) skips the row; a
+  refusal rolls back and a new transaction marks the row held with the reason. Tests `SyncInventoryRecoveryIT`.
+
 ## Extensions (ADR-S083 O0, owner-approved 2026-11-20)
 
 Spring-only, additive. Every Nest route and member is unchanged. Full rules are in

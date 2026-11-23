@@ -864,11 +864,25 @@ public class SyncPushService {
                         lines.add(lineByNumber(String.valueOf(payload.get("invoiceId")), PosSql.map(o)));
                     }
                 }
-                Map<String, Object> res = billing.refund(String.valueOf(payload.get("invoiceId")), reason,
-                        str(payload.get("overrideById")), str(payload.get("overridePin")),
-                        offlineStockDisposition(payload.get("stockDisposition")), str(payload.get("cashSessionId")), lines);
-                Object invId = res != null && res.get("invoiceId") != null ? res.get("invoiceId")
-                        : String.valueOf(payload.get("invoiceId"));
+                String invoiceId = String.valueOf(payload.get("invoiceId"));
+                String disposition = offlineStockDisposition(payload.get("stockDisposition"));
+                boolean holdStock = false;
+                if ("restock".equals(disposition)) {
+                    // R1 (P1-3): the sale may have synced in this same push with its stock still queued; post it first
+                    // (claimed, per-job/per-line keyed work: safe to repeat, so it never anchors the ledger row). A
+                    // posting that still cannot complete holds the restock instead of dead-lettering the refund.
+                    holdStock = ledger.outside(() -> drainSaleStockPostings(invoiceId));
+                }
+                Map<String, Object> res = holdStock
+                        ? billing.refundWithHeldStock(invoiceId, reason, str(payload.get("overrideById")),
+                                str(payload.get("overridePin")), str(payload.get("cashSessionId")), lines)
+                        : billing.refund(invoiceId, reason, str(payload.get("overrideById")),
+                                str(payload.get("overridePin")), disposition, str(payload.get("cashSessionId")), lines);
+                if (holdStock) {
+                    stockOps.holdRefundRestock(stockCtx(device, op), invoiceId, res == null ? null
+                            : (String) res.get("refundId"), lines);
+                }
+                Object invId = res != null && res.get("invoiceId") != null ? res.get("invoiceId") : invoiceId;
                 m.put("id", invId);
                 m.put("mapping", mapOf("invoiceId", invId));
             }
@@ -1576,6 +1590,21 @@ public class SyncPushService {
                 log.warn("stock posting {} before close failed: {}", job, e.toString());
             }
         }
+    }
+
+    /**
+     * R1 (P1-3): process the not-yet-done stock-posting jobs of one sale (its invoice's and its order's) before a
+     * restocking refund. Returns true when one is still not done afterwards (failed, held or claimed elsewhere).
+     */
+    private boolean drainSaleStockPostings(String invoiceId) {
+        for (String job : billing.pendingStockPostingJobs(invoiceId)) {
+            try {
+                billing.processStockPostingJob(job);
+            } catch (RuntimeException e) {
+                log.warn("stock posting {} before refund failed: {}", job, e.toString());
+            }
+        }
+        return !billing.pendingStockPostingJobs(invoiceId).isEmpty();
     }
 
     /** Which device captured the sale + the number it printed offline (metadata; never fails the sale). */
