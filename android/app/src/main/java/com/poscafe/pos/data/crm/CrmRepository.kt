@@ -1,6 +1,8 @@
 package com.poscafe.pos.data.crm
 
 import com.poscafe.pos.data.DeviceConfig
+import com.poscafe.pos.data.account.AccountException
+import com.poscafe.pos.data.account.AccountRepository
 import com.poscafe.pos.data.remote.CrmApi
 import com.poscafe.pos.data.repo.AuthRepository
 import kotlinx.coroutines.CancellationException
@@ -43,6 +45,7 @@ class CrmRepository @Inject constructor(
     private val api: CrmApi,
     private val auth: AuthRepository,
     private val config: DeviceConfig,
+    private val account: AccountRepository,
 ) {
     data class Session(
         val posUserId: String,
@@ -51,6 +54,8 @@ class CrmRepository @Inject constructor(
         val permissions: Set<String>,
         val accessToken: String,
         val refreshToken: String,
+        /** Borrowed from the app's account sign-in (mobile app shell): no second sign-in, tokens owned there. */
+        val viaAccount: Boolean = false,
     )
 
     private val _session = MutableStateFlow<Session?>(null)
@@ -59,8 +64,14 @@ class CrmRepository @Inject constructor(
 
     /** The CRM session, only while the same person is still signed in on the till. */
     fun current(): Session? {
+        val tillUser = auth.current?.userId
+        account.sessionFor(tillUser)?.let { a ->
+            val borrowed = Session(tillUser!!, a.userId, a.displayName, a.permissions.toSet(), a.accessToken, a.refreshToken, viaAccount = true)
+            if (_session.value != borrowed) _session.value = borrowed
+            return borrowed
+        }
         val s = _session.value ?: return null
-        if (auth.current?.userId != s.posUserId) {
+        if (s.viaAccount || tillUser != s.posUserId) {
             _session.value = null
             return null
         }
@@ -176,6 +187,14 @@ class CrmRepository @Inject constructor(
     /** Runs [block] with the bearer header; on a 401 refreshes the access token once and tries again. */
     private suspend fun authed(block: suspend (String) -> JsonObject): JsonObject {
         val s = current() ?: throw CrmException("Sign in to CRM first.", signedOut = true)
+        if (s.viaAccount) {
+            return try {
+                account.authed(block)
+            } catch (e: AccountException) {
+                if (e.signedOut) _session.value = null
+                throw CrmException(e.message ?: "Sign in again.", e.signedOut)
+            }
+        }
         return try {
             block("Bearer ${s.accessToken}")
         } catch (e: HttpException) {

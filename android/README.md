@@ -15,6 +15,44 @@ Protocol: [`docs/legacy/sync-protocol.md`](../docs/legacy/sync-protocol.md) ·
 contract: [`docs/CONTRACT.md`](../docs/CONTRACT.md) §10.
 Setup on a real phone: [`docs/legacy/lan-deployment.md`](../docs/legacy/lan-deployment.md).
 
+## App shell: sign-in, dashboard, POS (2026-11-23)
+
+The app opens like a normal phone app, not straight into the till:
+
+```
+setup ──► login ──► dashboard (app grid) ──► Point of Sale: PIN ──► POS terminal
+          │                     └──────────► Products, Inventory, CRM, Barcode, … (as the signed-in person)
+          └─ no connection / standalone: staff PIN instead
+```
+
+- **Sign in** with the ERP account, as on the web: organization code, email, password, then the authenticator
+  code when MFA is on (`POST /auth/login`, `/auth/mfa-login`). The session stays signed in across restarts until
+  **Sign out** (tokens in the encrypted device prefs). At start-up, if the phone is online, one refresh checks that the
+  account still stands; a refused refresh signs out. Offline the app keeps working with the saved session.
+- **Offline / standalone**: the login screen offers *Use PIN instead*; the PIN user opens the dashboard.
+- **Company guard**: on an enrolled device only accounts of the device's company are accepted (the organization it
+  was enrolled into, else the synced staff list).
+- **POS always asks for a PIN**: opening Point of Sale, Tables or Orders shows the PIN pad (the signed-in person is
+  pre-selected). Leaving the till for the dashboard, **Lock**, or the org's idle timeout locks it again. The idle timeout
+  locks the till only; the app session stays (owner decision: stay signed in).
+- **Set up by signing in**: a fresh phone asks for the server URL and an administrator's account
+  (`organization:update`); the app registers itself (`POST /sync/devices/register`), pulls, and opens signed in.
+  *Device code* (manual id + token) and *Standalone* remain under "Other ways to set up".
+- **CRM** reuses the account session when the same person is signed in (no second sign-in); the account owns the
+  tokens so a rotated refresh token is never held twice.
+
+### Barcode scanning and quick add
+
+- Camera scanner: viewfinder, torch, beep + haptic, *Continuous* mode (stays open, same code ignored for 1.5 s,
+  shows "Added …" / "No product for …"), and *Type code* for damaged labels.
+- A code resolves offline as product barcode/SKU → variant barcode/SKU → multipack barcode (`BarcodeLookup`).
+- An unknown code at the till offers **Add product** with the barcode pre-filled. The **New item** chip in the POS
+  header opens the same quick-add form (needs `product:create` or `product:update`): retail creates a product
+  (`product.upsert`), a cafe till a menu item (`menuItem.upsert`); both are local-first, sell at once offline and
+  reach the server ahead of the sale that uses them. A barcode/SKU another product already carries is refused.
+- The **Barcode** app looks up price, category and on-hand for any scanned code and can create a missing product.
+- The Products editor has a scan button on its barcode field.
+
 ## Sync protocol 2 (ADR-S083 O6)
 
 The app sends `X-Sync-Protocol: 2.0`. A rejected op is never re-sent under a new key: a retryable failure goes again

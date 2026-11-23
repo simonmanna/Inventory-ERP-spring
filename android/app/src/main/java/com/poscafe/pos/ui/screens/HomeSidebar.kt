@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.Business
 import androidx.compose.material.icons.outlined.Calculate
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Forum
@@ -205,6 +206,9 @@ internal fun allowed(permissions: Set<String>, need: Set<String>?): Boolean = wh
 
 private const val MANAGE_CATALOG = "product:update"
 
+/** The sidebar's "All apps" target: the host pops back to the dashboard instead of pushing a screen. */
+internal const val APPS_ROUTE = "apps"
+
 /** Any of these opens the till's CRM screens (each tab checks its own). */
 internal val CRM_PERMISSIONS = arrayOf("crm:activity:read", "crm:lead:write", "crm:deal:read")
 
@@ -213,6 +217,8 @@ internal val CRM_PERMISSIONS = arrayOf("crm:activity:read", "crm:lead:write", "c
  * limited to what the till has; Backup sits under Device for every manager.
  */
 private fun sidebarSections(standalone: Boolean, isRetail: Boolean): List<SidebarSection> = listOfNotNull(
+    // Mobile app shell: back to the app grid (the till locks; the next cashier unlocks it with a PIN).
+    SidebarSection(null, Icons.Outlined.Apps, listOf(route("All apps", Icons.Outlined.Apps, APPS_ROUTE))),
     SidebarSection(null, Icons.Outlined.Dashboard, listOf(route("Dashboard", Icons.Outlined.Dashboard, "reports", "pos:reports"))),
     SidebarSection(
         "Sell", Icons.Outlined.LocalCafe,

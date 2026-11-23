@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.HourglassBottom
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.QrCodeScanner
+import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.RestaurantMenu
 import androidx.compose.material.icons.outlined.Smartphone
@@ -155,6 +156,7 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
                 onSearchQueryChanged = vm::onSearchQueryChanged,
                 onSearch = vm::searchProducts,
                 onScanBarcode = { showBarcodeScanner = true },
+                onQuickAdd = if (vm.canQuickAdd) ({ vm.openQuickAdd() }) else null,
             )
             if (needsTable) {
                 // Cafe/restaurant: dine-in starts at the floor. No menu, no cart
@@ -330,10 +332,58 @@ fun TerminalScreen(vm: TerminalViewModel, onMenu: (() -> Unit)? = null) {
         )
     }
 
+    // A miss (offer quick add) or a product with variants (pick one) needs the screen: close the camera.
+    LaunchedEffect(vm.scanMiss, vm.variantPick) {
+        if (vm.scanMiss != null || vm.variantPick != null) showBarcodeScanner = false
+    }
     if (showBarcodeScanner) {
         BarcodeScannerDialog(
             onDismiss = { showBarcodeScanner = false },
-            onBarcodeDetected = { barcode -> vm.searchProducts(barcode) },
+            onBarcodeDetected = vm::onScanned,
+            feedback = vm.scanFeedback,
+            allowContinuous = true,
+            title = "Scan to sell",
+        )
+    }
+
+    vm.scanMiss?.let { code ->
+        AlertDialog(
+            onDismissRequest = vm::dismissScanMiss,
+            shape = MaterialTheme.shapes.extraLarge,
+            icon = { Icon(Icons.Outlined.QrCodeScanner, null) },
+            title = { Text("No product found") },
+            text = {
+                Text(
+                    if (vm.canQuickAdd) "Nothing on this till carries the barcode $code. Add it as a new product?"
+                    else "Nothing on this till carries the barcode $code. Ask a manager to add it, or sync the catalog.",
+                )
+            },
+            confirmButton = {
+                if (vm.canQuickAdd) Button(onClick = { vm.openQuickAdd(code) }) { Text("Add product") }
+                else TextButton(onClick = vm::dismissScanMiss) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.dismissScanMiss(); showBarcodeScanner = true }) { Text("Scan again") }
+            },
+        )
+    }
+
+    vm.quickAdd?.let { req ->
+        val retail = isRetail
+        QuickAddItemDialog(
+            forMenu = !retail,
+            initialBarcode = req.barcode,
+            categories = if (retail) productCategories.map { PickOption(it.id, it.name) } else categories.map { PickOption(it.id, it.name) },
+            taxes = vm.taxes.collectAsStateWithLifecycle().value.map {
+                PickOption(it.id, "${it.name} (${if (it.rate % 1.0 == 0.0) it.rate.toInt() else it.rate}%)")
+            },
+            initialCategoryId = if (retail) selectedProdCat else selectedCat,
+            error = vm.quickAddError,
+            busy = vm.quickAddBusy,
+            // A cafe order with no table yet has nowhere to put the line.
+            showAddToCart = retail || !needsTable,
+            onSave = vm::saveQuickAdd,
+            onDismiss = vm::dismissQuickAdd,
         )
     }
 
@@ -382,6 +432,8 @@ internal fun TerminalHeader(
     onSearchQueryChanged: (String) -> Unit = {},
     onSearch: (String) -> Unit = {},
     onScanBarcode: () -> Unit = {},
+    /** Quick add (shown when the cashier may create catalog items). */
+    onQuickAdd: (() -> Unit)? = null,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(
@@ -439,6 +491,15 @@ internal fun TerminalHeader(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                onQuickAdd?.let {
+                    HeaderChip(
+                        icon = Icons.Outlined.AddCircleOutline,
+                        label = null,
+                        fallback = "New item",
+                        active = false,
+                        onClick = it,
+                    )
+                }
                 HeaderChip(
                     icon = Icons.Outlined.Person,
                     label = customer?.name,

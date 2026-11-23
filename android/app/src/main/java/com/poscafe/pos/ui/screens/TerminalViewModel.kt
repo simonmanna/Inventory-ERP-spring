@@ -112,6 +112,9 @@ class TerminalViewModel @Inject constructor(
     private val tabRepo: TabRepository,
     private val sessions: CashSessionRepository,
     private val printer: ReceiptPrinter,
+    private val barcodes: BarcodeLookup,
+    private val productRepo: ProductRepository,
+    private val catalogRepo: CatalogRepository,
     val config: DeviceConfig,
     cashRefs: com.poscafe.pos.data.local.dao.CashInventoryDao,
 ) : ViewModel() {
@@ -546,33 +549,121 @@ class TerminalViewModel @Inject constructor(
         }
     }
 
+    /** Typed search (keyboard or a USB/Bluetooth wedge scanner): an exact code goes on the cart, else the list filters. */
     fun searchProducts(query: String) {
-        viewModelScope.launch {
-            // A single-unit barcode/sku wins first; otherwise try a multipack
-            // barcode (scan the case → add `quantity` base units).
-            val product = productDao.byCode(query)
-            if (product != null) {
-                onProductTap(product)
+        viewModelScope.launch { applyCode(query, fromCamera = false) }
+    }
+
+    // ---- Camera scanning + quick add (mobile app shell) ----
+
+    /** Result of the last camera scan, shown in the scanner while it stays open (continuous mode). */
+    var scanFeedback by mutableStateOf<ScanFeedback?>(null); private set
+
+    /** A scanned code nothing on this device carries: offer to create it. */
+    var scanMiss by mutableStateOf<String?>(null); private set
+
+    fun dismissScanMiss() { scanMiss = null }
+
+    fun onScanned(code: String) {
+        viewModelScope.launch { applyCode(code, fromCamera = true) }
+    }
+
+    /**
+     * Resolve [raw] with [BarcodeLookup] (product → variant → multipack) and put it on the cart. A product with
+     * variants opens the variant picker. A camera miss is remembered as [scanMiss] so the screen can offer quick add.
+     */
+    private suspend fun applyCode(raw: String, fromCamera: Boolean) {
+        when (val m = barcodes.find(raw)) {
+            is ScanMatch.Product -> {
+                onProductTap(m.product)
+                scanFeedback = ScanFeedback(if (m.product.hasVariants) "Pick a variant of ${m.product.name}" else "Added ${m.product.name}", ok = true)
                 productSearchQuery.value = ""
-                return@launch
             }
-            // A variant's own barcode / SKU puts exactly that variant on the cart.
-            val variant = productVariantDao.byCode(query.trim())
-            if (variant != null) {
-                val base = productDao.byId(variant.productId)
-                if (base != null) {
-                    addProduct(base, variant)
-                    productSearchQuery.value = ""
-                    return@launch
-                }
+            is ScanMatch.Variant -> {
+                addProduct(m.product, m.variant)
+                scanFeedback = ScanFeedback("Added ${m.product.name} · ${m.variant.name}", ok = true)
+                productSearchQuery.value = ""
             }
-            val pack = productPackagingDao.byBarcode(query.trim())
-            if (pack != null) {
-                val base = productDao.byId(pack.productId)
-                if (base != null) {
-                    addProductPack(base, pack.quantity, pack.name)
-                    productSearchQuery.value = ""
+            is ScanMatch.Pack -> {
+                addProductPack(m.product, m.pack.quantity, m.pack.name)
+                scanFeedback = ScanFeedback("Added ${m.product.name} · ${m.pack.name}", ok = true)
+                productSearchQuery.value = ""
+            }
+            is ScanMatch.NotFound -> if (fromCamera && m.code.isNotEmpty()) {
+                scanFeedback = ScanFeedback("No product for ${m.code}", ok = false)
+                scanMiss = m.code
+            }
+        }
+    }
+
+    /** May the signed-in cashier create catalog items from the till (same rights as the Products / Menu screens)? */
+    val canQuickAdd: Boolean
+        get() = allowed(auth.current?.permissions.orEmpty(), setOf("product:create", "product:update"))
+
+    val taxes: StateFlow<List<TaxEntity>> =
+        menuDao.taxes().map { list -> list.filter { it.isActive } }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Open quick-add form; [barcode] pre-filled when it came from a scan miss. */
+    data class QuickAdd(val barcode: String?)
+
+    var quickAdd by mutableStateOf<QuickAdd?>(null); private set
+    var quickAddError by mutableStateOf<String?>(null); private set
+    var quickAddBusy by mutableStateOf(false); private set
+
+    fun openQuickAdd(barcode: String? = null) {
+        scanMiss = null
+        quickAddError = null
+        quickAdd = QuickAdd(barcode)
+    }
+
+    fun dismissQuickAdd() {
+        if (!quickAddBusy) quickAdd = null
+    }
+
+    /**
+     * Save what was typed: retail → a product (`product.upsert`), cafe → a menu item (`menuItem.upsert`). Both are
+     * local-first, so the new item sells at once, offline, and reaches the server ahead of the sale that uses it.
+     */
+    fun saveQuickAdd(d: QuickAddDraft) {
+        if (quickAddBusy) return
+        viewModelScope.launch {
+            quickAddBusy = true
+            quickAddError = null
+            try {
+                if (!canQuickAdd) throw IllegalStateException("You do not have permission to add products")
+                if (isRetailMode.value) {
+                    val product = productRepo.createProduct(
+                        name = d.name,
+                        salesPrice = d.price,
+                        costPrice = d.cost ?: 0.0,
+                        sku = d.sku,
+                        barcode = d.barcode,
+                        category = productCategories.value.find { it.id == d.categoryId },
+                        tax = taxes.value.find { it.id == d.taxId },
+                    )
+                    if (d.addToCart) addProduct(product, null)
+                } else {
+                    require(d.name.isNotBlank()) { "Give the item a name" }
+                    val item = MenuItemEntity(
+                        id = UUID.randomUUID().toString(),
+                        code = null,
+                        name = d.name.trim(),
+                        description = null,
+                        categoryId = d.categoryId,
+                        basePriceMajor = d.price,
+                        taxId = d.taxId,
+                        image = null,
+                        isAvailable = true,
+                        displayOrder = (items.value.maxOfOrNull { it.displayOrder } ?: 0) + 1,
+                    )
+                    catalogRepo.saveMenuItem(item, emptyList(), emptyList(), emptyList(), d.cost, null)
+                    if (d.addToCart && !needsTable.value) addSimple(item, taxOf(item))
                 }
+                quickAdd = null
+            } catch (e: Exception) {
+                quickAddError = e.message ?: "Could not save"
+            } finally {
+                quickAddBusy = false
             }
         }
     }

@@ -27,6 +27,10 @@ import androidx.lifecycle.viewModelScope
 import at.favre.lib.crypto.bcrypt.BCrypt
 import com.poscafe.pos.data.DeviceConfig
 import com.poscafe.pos.data.ServerUrlPolicy
+import com.poscafe.pos.data.account.Account
+import com.poscafe.pos.data.account.AccountException
+import com.poscafe.pos.data.account.AccountRepository
+import com.poscafe.pos.data.account.SignInStep
 import com.poscafe.pos.data.local.dao.RegisterDao
 import com.poscafe.pos.data.local.dao.StaffDao
 import com.poscafe.pos.data.local.entity.CashRegisterEntity
@@ -44,11 +48,13 @@ import java.util.UUID
 import javax.inject.Inject
 
 /**
- * First-run setup. Two paths:
+ * First-run setup. Three paths:
+ *  - ACCOUNT (default, mobile app shell 2026-11-23): an administrator signs in with their ERP account and the phone
+ *    registers itself (`POST /sync/devices/register`, `organization:update`); the first pull seeds the catalog and
+ *    the admin lands on the dashboard, signed in.
+ *  - SERVER: classic enrollment with a device id + token copied from the back office.
  *  - STANDALONE: the tablet IS the whole POS. A local admin + register are
  *    created on the spot; no server, no internet, ever.
- *  - SERVER: classic enrollment against the Spring Boot backend (token shown once
- *    in the back office); first pull seeds the catalog.
  */
 @HiltViewModel
 class SetupViewModel @Inject constructor(
@@ -56,9 +62,91 @@ class SetupViewModel @Inject constructor(
     private val sync: SyncRepository,
     private val staffDao: StaffDao,
     private val registerDao: RegisterDao,
+    private val account: AccountRepository,
 ) : ViewModel() {
     var busy by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
+
+    val accountForm = AccountFormState(account.lastOrganizationCode.orEmpty(), account.lastEmail.orEmpty())
+
+    /** Step 1 of enrol-by-sign-in: server address + the admin's account. */
+    fun enrollWithAccount(serverUrl: String, onDone: () -> Unit) = launchBusy {
+        val url = serverUrl.trim().removeSuffix("/") + "/"
+        ServerUrlPolicy.problem(url)?.let { throw IllegalArgumentException(it) }
+        config.serverUrl = url
+        when (val step = account.authenticate(accountForm.organizationCode, accountForm.email, accountForm.password)) {
+            is SignInStep.NeedsMfa -> accountForm.mfa = step
+            is SignInStep.Tokens -> finishEnrollment(step.account, onDone)
+        }
+    }
+
+    /** Step 1b: the admin's authenticator code. */
+    fun verifyMfa(onDone: () -> Unit) = launchBusy {
+        val step = accountForm.mfa ?: return@launchBusy
+        finishEnrollment(account.verifyMfa(step, accountForm.mfaCode), onDone)
+    }
+
+    fun cancelMfa() {
+        accountForm.mfa = null
+        accountForm.mfaCode = ""
+        error = null
+    }
+
+    /** Register this phone as the admin, pull, then open the app as them. */
+    private suspend fun finishEnrollment(a: Account, onDone: () -> Unit) {
+        val device = try {
+            account.registerDevice(a, deviceName())
+        } catch (e: AccountException) {
+            if (e.status == 403) {
+                throw AccountException(
+                    "Only an administrator (organization:update) can set up a new device. Ask one to sign in on this " +
+                        "phone once — after that everyone signs in with their own account.",
+                )
+            }
+            throw e
+        }
+        config.deviceId = device.id
+        config.deviceToken = device.token
+        config.prefix = device.prefix
+        config.enrolledOrganizationId = a.organizationId
+        try {
+            sync.resetForEnrollment()
+            sync.pull() // validates the new token + seeds the catalog
+        } catch (e: Exception) {
+            config.clearEnrollment()
+            throw IllegalStateException(
+                "The device was registered but the first sync failed: ${e.message ?: e.javaClass.simpleName}. " +
+                    "Revoke \"${deviceName()}\" in Settings → Offline devices and try again.",
+            )
+        }
+        config.markRevoked(false)
+        config.acknowledgeKeystoreReset()
+        account.accept(a)
+        accountForm.password = ""
+        accountForm.mfaCode = ""
+        onDone()
+    }
+
+    private fun deviceName(): String {
+        val model = listOfNotNull(android.os.Build.MANUFACTURER?.replaceFirstChar { it.uppercase() }, android.os.Build.MODEL)
+            .distinct().joinToString(" ").ifBlank { "Phone" }
+        return "Android · $model"
+    }
+
+    private fun launchBusy(block: suspend () -> Unit) {
+        if (busy) return
+        viewModelScope.launch {
+            busy = true
+            error = null
+            try {
+                block()
+            } catch (e: Exception) {
+                error = e.message ?: "Setup failed"
+            } finally {
+                busy = false
+            }
+        }
+    }
 
     fun enroll(serverUrl: String, deviceId: String, token: String, prefix: String, onDone: () -> Unit) {
         viewModelScope.launch {
@@ -125,9 +213,10 @@ class SetupViewModel @Inject constructor(
 }
 
 @Composable
-fun SetupScreen(onDone: () -> Unit, vm: SetupViewModel = hiltViewModel()) {
+fun SetupScreen(onDone: (signedIn: Boolean) -> Unit, vm: SetupViewModel = hiltViewModel()) {
     val context = LocalContext.current
-    var mode by remember { mutableStateOf("standalone") }
+    // Signing in is the normal way to set up a phone now; the other two stay one tap away.
+    var mode by remember { mutableStateOf("account") }
 
     Box(
         Modifier
@@ -151,10 +240,11 @@ fun SetupScreen(onDone: () -> Unit, vm: SetupViewModel = hiltViewModel()) {
                 )
             }
             Spacer(Modifier.height(16.dp))
-            Text("Set up this terminal", style = MaterialTheme.typography.headlineMedium)
+            Text("Set up this device", style = MaterialTheme.typography.headlineMedium)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Run fully offline on this device, or connect to your POS server.",
+                if (mode == "account") "Sign in with an administrator account to connect this phone to your company."
+                else "Run fully offline on this device, or connect to your POS server.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -180,20 +270,38 @@ fun SetupScreen(onDone: () -> Unit, vm: SetupViewModel = hiltViewModel()) {
                 }
             }
             Spacer(Modifier.height(20.dp))
+            if (mode == "account") {
+                AccountSetupForm(vm) {
+                    SyncWorker.schedule(context)
+                    onDone(true)
+                }
+                Spacer(Modifier.height(20.dp))
+                Text("Other ways to set up", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (mode != "account") {
+                    ModeCard(
+                        "Sign in", "Admin account\nsets it up.",
+                        Icons.Outlined.Storefront, false, Modifier.weight(1f),
+                    ) { mode = "account" }
+                }
+                ModeCard(
+                    "Device code", "ID + token from\nthe back office.",
+                    Icons.Outlined.CloudSync, mode == "server", Modifier.weight(1f),
+                ) { mode = "server" }
                 ModeCard(
                     "Standalone", "Works 100% offline.\nNo server needed.",
                     Icons.Outlined.WifiOff, mode == "standalone", Modifier.weight(1f),
                 ) { mode = "standalone" }
-                ModeCard(
-                    "Connect to server", "Sync menu & sales\nwith the back office.",
-                    Icons.Outlined.CloudSync, mode == "server", Modifier.weight(1f),
-                ) { mode = "server" }
             }
             Spacer(Modifier.height(16.dp))
-            if (mode == "standalone") StandaloneForm(vm, onDone) else ServerForm(vm) {
-                SyncWorker.schedule(context)
-                onDone()
+            when (mode) {
+                "standalone" -> StandaloneForm(vm) { onDone(false) }
+                "server" -> ServerForm(vm) {
+                    SyncWorker.schedule(context)
+                    onDone(false)
+                }
             }
         }
     }
@@ -273,6 +381,35 @@ private fun StandaloneForm(vm: SetupViewModel, onDone: () -> Unit) {
                 "You can add menu items, staff, customers and stock from the side menu after setup. Cloud sync can be enabled later by re-installing in server mode.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccountSetupForm(vm: SetupViewModel, onEnrolled: () -> Unit) {
+    var serverUrl by remember {
+        mutableStateOf(vm.config.serverUrl?.removeSuffix("/") ?: "http://192.168.1.10:8080/api/v1")
+    }
+    PosCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (vm.accountForm.mfa == null) {
+                OutlinedTextField(
+                    value = serverUrl, onValueChange = { serverUrl = it.trim() },
+                    label = { Text("Server URL") }, singleLine = true,
+                    supportingText = { Text("Your ERP address, ending in /api/v1") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    shape = MaterialTheme.shapes.medium, modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            AccountFields(
+                form = vm.accountForm,
+                busy = vm.busy,
+                error = vm.error,
+                submitLabel = "Sign in & set up",
+                onSubmit = { vm.enrollWithAccount(serverUrl, onEnrolled) },
+                onVerifyMfa = { vm.verifyMfa(onEnrolled) },
+                onCancelMfa = vm::cancelMfa,
             )
         }
     }

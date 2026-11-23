@@ -260,6 +260,10 @@ class PosDeviceE2ETest {
 
     // ---------------------------------------------------------------- helpers
 
+    /**
+     * App shell (2026-11-23): sign in with the PIN on the login screen (→ dashboard), then open Point of Sale, whose
+     * gate asks for the PIN again. From an unlocked till, Lock leads straight to that gate.
+     */
     private fun signIn(name: String, pin: String) {
         atPinScreen()
         log("at PIN screen")
@@ -267,18 +271,38 @@ class PosDeviceE2ETest {
         log("picked $name")
         enterPin(pin)
         log("PIN entered")
+        if (device.wait(Until.hasObject(By.text(DASHBOARD_TILE)), 5_000) && !device.hasObject(By.text("More"))) {
+            tap(DASHBOARD_TILE)
+            waitText(POS_GATE)
+            tapName(name)
+            enterPin(pin)
+            log("POS unlocked")
+        }
         // Home shell: the bottom bar is always there.
         waitText("More")
     }
 
-    /** Start every flow from the PIN screen: lock the terminal if someone is still signed in. */
+    /** A PIN pad: the till's gate, or the login screen's offline sign-in — whichever the app is nearest to. */
     private fun atPinScreen() {
-        val pinScreen = By.text("Who's on the till?")
         device.wait(Until.hasObject(By.pkg(app.packageName)), TIMEOUT)
-        if (device.wait(Until.hasObject(pinScreen), 4_000)) return
-        tap("More")
-        scrollTo("Lock terminal").click()
-        if (!device.wait(Until.hasObject(pinScreen), TIMEOUT)) fail("could not lock the terminal")
+        if (device.wait(Until.hasObject(By.text("More")), 3_000)) {
+            tap("More")
+            scrollTo("Lock terminal").click()
+            if (!device.wait(Until.hasObject(By.text(POS_GATE)), TIMEOUT)) fail("could not lock the terminal")
+            return
+        }
+        if (device.hasObject(By.text(POS_GATE)) || device.hasObject(By.text(LOGIN_PIN))) return
+        if (device.wait(Until.hasObject(By.text("Use PIN instead")), 4_000)) {
+            tap("Use PIN instead")
+            waitText(LOGIN_PIN)
+            return
+        }
+        if (device.hasObject(By.text(DASHBOARD_TILE))) {
+            tap(DASHBOARD_TILE)
+            waitText(POS_GATE)
+            return
+        }
+        fail("no PIN screen")
     }
 
     private fun enterPin(pin: String) {
@@ -299,7 +323,7 @@ class PosDeviceE2ETest {
     }
 
     private fun enroll() {
-        tap("Connect to server")
+        scrollTo("Device code").click()
         val f = fields()
         f[0].text = arg("serverUrl")
         f[1].text = arg("deviceId")
@@ -312,7 +336,7 @@ class PosDeviceE2ETest {
         fields().last().text = arg("prefix")
         // No Back to hide the keyboard: with none showing it would leave the app.
         scrollTo("Enroll & first sync").click()
-        waitText("Who's on the till?", 120_000)
+        waitText("Use PIN instead", 120_000)
         log("enrolled and first sync done")
     }
 
@@ -395,6 +419,9 @@ class PosDeviceE2ETest {
     }
 
     private companion object {
+        const val POS_GATE = "Enter your PIN to open the till."
+        const val LOGIN_PIN = "Sign in with your PIN"
+        const val DASHBOARD_TILE = "Point of Sale"
         const val TAG = "PosE2E"
         const val TIMEOUT = 15_000L
         const val FLOOR_HINT = "Pick a table to start the order"

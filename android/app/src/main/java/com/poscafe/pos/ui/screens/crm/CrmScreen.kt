@@ -61,7 +61,8 @@ fun CrmScreen(onBack: () -> Unit, vm: CrmViewModel = hiltViewModel()) {
                         FilterChip(selected = vm.tab == t, onClick = { vm.openTab(t) }, label = { Text(t.label) })
                     }
                     Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = vm::signOut) { Text("Sign out of CRM") }
+                    // Borrowed from the app's account sign-in: signing out happens on the dashboard.
+                    if (session?.viaAccount != true) TextButton(onClick = vm::signOut) { Text("Sign out of CRM") }
                 }
             }
             if (vm.busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
