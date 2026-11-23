@@ -2021,3 +2021,9 @@ Not verified yet: the tours driven by hand in a browser.
   (`integrity_*` exceptions; value kinds hold the period close), read-only data checks
   `docs/audits/2026-11-22-inventory-data-checks.sql` — `InventoryIntegrityIT`, `PeriodCloseChecklistIT`;
   [review](audits/2026-11-22-inventory-review.md)
+- [x] R5a operational hardening (owner-approved deviations 31–41 + negative-stock policy in
+  [inventory](spec/inventory.md#deviations), repair deviation 6, V615): report day bounds, batched includes,
+  tolerance 400, stock-health age, past closing value from the ledger, cost fields behind `inventory_valuation:read`,
+  request limits, bounded document lists, keys on approve / dispatch / ship, warehouse move holds / disabled-settings
+  finishing / reconcile stale moves / read-only ABC, repair part variant + engine cost + `POST /repair/parts/:id/return`
+  — `InventoryReportsHardeningIT`, `WarehouseHardeningIT`, `NegativeStockPolicyIT`, `RepairIT`
