@@ -116,6 +116,13 @@ public final class CrmSuiteController {
             return svc.deleteStage(id);
         }
 
+        /** Active HR employees with a login, HR departments and branches for the team editor. */
+        @GetMapping("/team-candidates")
+        @RequirePermissions(Permissions.CRM__CONFIGURE)
+        public Map<String, Object> teamCandidates() {
+            return svc.teamCandidates();
+        }
+
         @PostMapping("/teams")
         @ResponseStatus(HttpStatus.CREATED)
         @RequirePermissions(Permissions.CRM__CONFIGURE)

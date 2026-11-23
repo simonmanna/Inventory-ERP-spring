@@ -355,3 +355,46 @@ V605 gives those seven tables the standard V214 policy instead: with no organiza
 only the organization's rows. That policy now applies to both reads (`USING`) and writes (`WITH CHECK`).
 
 The CRM ITs were re-run with `DB_USER` set to a non-owner role, as CI does.
+
+## Sales teams ↔ HR (2026-11-23, post-parity, owner request)
+The owner asked for sales teams to be configured in CRM and linked to HR. Owner decision: team leaders and members
+must be HR employees with a login.
+
+- **Schema (V620):** `CrmTeam.departmentId` (FK `HrDepartment`) and `CrmTeam.branchId` (FK `Branch`). Both are
+  optional and are set to null when the department or branch is deleted. Members and the leader stay user ids in
+  `leaderId` / `memberIds`, so every existing reader keeps working: auto-assign `teamOf`, leader visibility, team
+  reports, team-leader notifications.
+- **Rule:** `POST/PATCH /crm/config/teams` admits a user as leader or member only if they have an `HrEmployee` row in
+  the organization that is not deleted, has `isActive`, and is ACTIVE, PROBATION or ON_LEAVE. Otherwise the request
+  gets 400 `Sales team members must be active HR employees linked to a user account`. Only newly added users are
+  checked. Someone who was on the team before this change (or who left HR since) stays until removed. Once removed,
+  they cannot be added back.
+- **Unknown department or branch:** 404 `Department not found` / `Branch not found`. An empty string clears the field.
+- **Reads:**
+  - The teams in `GET /crm/config/lookups` gain `departmentName`, `branchName`, `leader` and `members`. `leader` and
+    each entry of `members` carry `{userId, name, employee, eligible}`. They also gain `notEligibleCount`.
+  - New route `GET /crm/config/team-candidates` (`crm:configure`) returns `{employees, departments, branches}` for the
+    editor.
+  - `GET /hr/employees/{id}` gains `salesTeams` (`role` is leader or member).
+- **Web:**
+  - CRM → Settings → Sales teams picks people from HR employees and can filter them by the team's department. It flags
+    members who are not active employees.
+  - The HR employee profile (Employment tab) shows a "Sales teams" card.
+- **Not changed:** the auto-assign pool stays organization-wide. Team targets and commission rules still have no UI.
+  `SalesQuotation.teamId` and `Partner.salesTeamId` still have no writer. These are possible follow-ups.
+- **Tests:** CrmTeamsHrIT (candidates, rules, legacy members, employee profile, 403). CrmEditsIT now uses an employee.
+  The CRM authorization matrix goes from 137 to 138 routes.
+- **Existing data:** run the read-only check below before deploying. It lists team members who are not active
+  employees. Nothing is changed automatically.
+
+```sql
+SELECT t.name AS team, u.email, CASE WHEN t."leaderId" = u.id THEN 'leader' ELSE 'member' END AS role,
+       e."employeeCode", e."employmentStatus"
+FROM "CrmTeam" t
+CROSS JOIN LATERAL unnest(array_append(t."memberIds", t."leaderId")) AS m(uid)
+JOIN "User" u ON u.id = m.uid
+LEFT JOIN "HrEmployee" e ON e."organizationId" = t."organizationId" AND e."userId" = u.id AND e."deletedAt" IS NULL
+WHERE m.uid IS NOT NULL
+  AND (e.id IS NULL OR NOT e."isActive" OR e."employmentStatus"::text NOT IN ('ACTIVE', 'PROBATION', 'ON_LEAVE'))
+ORDER BY t.name, u.email;
+```
