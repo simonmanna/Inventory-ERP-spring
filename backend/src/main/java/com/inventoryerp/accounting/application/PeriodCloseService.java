@@ -147,15 +147,30 @@ public class PeriodCloseService {
                     + ". Correct or discard it before closing.");
         }
         // A GL tie-out variance (daily tie-out job) is not a sale line: it shows on the close checklist as its own
-        // advisory item and does not block the close.
+        // advisory item and does not block the close. Inventory integrity findings (R0) are not sale lines either:
+        // the value ones are checked below, the quantity ones never hold the close.
         long openExceptions = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
-                        + " AND status::text = 'open' AND kind IS DISTINCT FROM ? AND \"createdAt\" >= ?"
+                        + " AND status::text = 'open' AND kind IS DISTINCT FROM ?"
+                        + " AND NOT starts_with(COALESCE(kind, ''), ?) AND \"createdAt\" >= ?"
                         + " AND \"createdAt\" <= ?",
-                organizationId, InventoryTieOutMonitor.KIND, period.startDate(), period.endDate());
+                organizationId, InventoryTieOutMonitor.KIND, InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX,
+                period.startDate(), period.endDate());
         if (openExceptions > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + openExceptions
                     + " open inventory exception(s) in this period — sale lines whose stock/COGS was not posted."
                     + " Resolve them in the Posting Monitor before closing.");
+        }
+
+        // Hardening R0: an open integrity finding on stock value (valuation vs stock ledger, valuation vs GL) raised
+        // since the period started means the period's stock value is not final, so the period cannot close.
+        long valueFindings = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
+                        + " AND status::text = 'open' AND kind = ANY(?::text[]) AND \"createdAt\" >= ?",
+                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new),
+                period.startDate());
+        if (valueFindings > 0) {
+            throw ApiException.badRequest("Cannot close '" + period.name() + "': " + valueFindings
+                    + " open inventory integrity finding(s) on stock value (valuation vs stock ledger or GL)."
+                    + " Investigate and resolve them in the Posting Monitor before closing.");
         }
 
         Map<String, BigDecimal[]> grouped = new LinkedHashMap<>();

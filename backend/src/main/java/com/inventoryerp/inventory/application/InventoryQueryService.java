@@ -685,6 +685,36 @@ public class InventoryQueryService {
     private static final int RECON_ROWS = 5000;
 
     /**
+     * The cell comparison shared by the stock reconciliation report and the integrity checks (R0): a {@code WITH}
+     * clause ending in CTE {@code c} with one row per (product, variant, location) cell found in {@code StockItem}, the
+     * stock ledger or the lots: {@code pid, vk, lid, quant, cached} (Σ StockItem.quantity), {@code ledger} (Σ
+     * quantityChange), {@code batches} (Σ lot quantity), {@code code, name, lots} (batch-tracked) and {@code lname}.
+     * Binds {@code :org}, and {@code :loc} when {@code byLocation}.
+     */
+    static String reconciliationCells(boolean byLocation) {
+        String loc = byLocation ? " AND \"locationId\" = :loc" : "";
+        return "WITH si AS (SELECT \"productId\" AS pid, \"variantKey\" AS vk, \"locationId\" AS lid,"
+                + " SUM(quantity) AS cached FROM \"StockItem\" WHERE \"organizationId\" = :org" + loc
+                + " GROUP BY 1, 2, 3),"
+                + " lg AS (SELECT \"productId\" AS pid, COALESCE(\"variantId\", '') AS vk, \"locationId\" AS lid,"
+                + " SUM(\"quantityChange\") AS ledger FROM \"InventoryLedger\" WHERE \"organizationId\" = :org" + loc
+                + " GROUP BY 1, 2, 3),"
+                + " bt AS (SELECT \"productId\" AS pid, COALESCE(\"variantId\", '') AS vk, \"locationId\" AS lid,"
+                + " SUM(quantity) AS batches FROM \"InventoryBatch\" WHERE \"organizationId\" = :org" + loc
+                + " GROUP BY 1, 2, 3),"
+                + " k AS (SELECT pid, vk, lid FROM si UNION SELECT pid, vk, lid FROM lg UNION SELECT pid, vk, lid FROM bt),"
+                + " c AS (SELECT k.pid, k.vk, k.lid, si.pid IS NOT NULL AS quant, COALESCE(si.cached, 0) AS cached,"
+                + " COALESCE(lg.ledger, 0) AS ledger, COALESCE(bt.batches, 0) AS batches, p.code, p.name,"
+                + " COALESCE(p.\"batchTracking\", false) AS lots, l.name AS lname FROM k"
+                + " LEFT JOIN si ON si.pid = k.pid AND si.vk = k.vk AND si.lid = k.lid"
+                + " LEFT JOIN lg ON lg.pid = k.pid AND lg.vk = k.vk AND lg.lid = k.lid"
+                + " LEFT JOIN bt ON bt.pid = k.pid AND bt.vk = k.vk AND bt.lid = k.lid"
+                + " LEFT JOIN \"Product\" p ON p.id = k.pid AND p.\"organizationId\" = :org"
+                + " AND (si.pid IS NOT NULL OR p.\"deletedAt\" IS NULL)"
+                + " LEFT JOIN \"InventoryLocation\" l ON l.id = k.lid)";
+    }
+
+    /**
      * h-01 F10: the cells are compared in the database and only the cells shown come back (drifted ones, or every cell
      * with {@code includeMatched}), at most {@value #RECON_ROWS}. A lot-tracked quant below zero has no lots to match,
      * so its lots are compared with zero rather than with the negative quantity (negative stock has its own report).
@@ -692,25 +722,7 @@ public class InventoryQueryService {
     private Map<String, Object> stockReconciliation(String locationId, Double toleranceIn, boolean includeMatched) {
         BigDecimal tolerance = new BigDecimal(JsNumbers.toJsString(toleranceIn != null ? toleranceIn : 0.000001));
         String loc = notBlank(locationId) ? " AND \"locationId\" = :loc" : "";
-        var spec = jdbc.sql("WITH si AS (SELECT \"productId\" AS pid, \"variantKey\" AS vk, \"locationId\" AS lid,"
-                        + " SUM(quantity) AS cached FROM \"StockItem\" WHERE \"organizationId\" = :org" + loc
-                        + " GROUP BY 1, 2, 3),"
-                        + " lg AS (SELECT \"productId\" AS pid, COALESCE(\"variantId\", '') AS vk, \"locationId\" AS lid,"
-                        + " SUM(\"quantityChange\") AS ledger FROM \"InventoryLedger\" WHERE \"organizationId\" = :org" + loc
-                        + " GROUP BY 1, 2, 3),"
-                        + " bt AS (SELECT \"productId\" AS pid, COALESCE(\"variantId\", '') AS vk, \"locationId\" AS lid,"
-                        + " SUM(quantity) AS batches FROM \"InventoryBatch\" WHERE \"organizationId\" = :org" + loc
-                        + " GROUP BY 1, 2, 3),"
-                        + " k AS (SELECT pid, vk, lid FROM si UNION SELECT pid, vk, lid FROM lg UNION SELECT pid, vk, lid FROM bt),"
-                        + " c AS (SELECT k.pid, k.vk, k.lid, si.pid IS NOT NULL AS quant, COALESCE(si.cached, 0) AS cached,"
-                        + " COALESCE(lg.ledger, 0) AS ledger, COALESCE(bt.batches, 0) AS batches, p.code, p.name,"
-                        + " COALESCE(p.\"batchTracking\", false) AS lots, l.name AS lname FROM k"
-                        + " LEFT JOIN si ON si.pid = k.pid AND si.vk = k.vk AND si.lid = k.lid"
-                        + " LEFT JOIN lg ON lg.pid = k.pid AND lg.vk = k.vk AND lg.lid = k.lid"
-                        + " LEFT JOIN bt ON bt.pid = k.pid AND bt.vk = k.vk AND bt.lid = k.lid"
-                        + " LEFT JOIN \"Product\" p ON p.id = k.pid AND p.\"organizationId\" = :org"
-                        + " AND (si.pid IS NOT NULL OR p.\"deletedAt\" IS NULL)"
-                        + " LEFT JOIN \"InventoryLocation\" l ON l.id = k.lid),"
+        var spec = jdbc.sql(reconciliationCells(!loc.isEmpty()) + ","
                         + " e AS (SELECT c.*, abs(c.cached - c.ledger) > :tol"
                         + " OR (c.lots AND abs(GREATEST(c.cached, 0) - c.batches) > :tol) AS drifted FROM c)"
                         // The first cell always comes back, so the counts arrive even when nothing drifted.

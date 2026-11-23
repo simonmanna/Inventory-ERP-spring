@@ -8,6 +8,8 @@ import static com.inventoryerp.inventory.web.InventoryDtos.WASTE_CATEGORIES;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.inventoryerp.inventory.application.DirectStockService;
+import com.inventoryerp.inventory.application.InventoryIntegrityService;
+import com.inventoryerp.inventory.application.InventoryIntegrityService.IntegrityReport;
 import com.inventoryerp.inventory.application.InventoryQueryService;
 import com.inventoryerp.inventory.application.InventoryRegisterService;
 import com.inventoryerp.inventory.application.InventoryReportsService;
@@ -200,10 +202,11 @@ public class InventoryController {
     private final LedgerDetailService ledgerDetail;
     private final InventoryReportsService reports;
     private final InventoryRegisterService registers;
+    private final InventoryIntegrityService integrity;
 
     public InventoryController(LocationService locations, StockDocService stockDocs, StockReversalService reversals,
             InventoryQueryService queries, DirectStockService directStock, LedgerDetailService ledgerDetail,
-            InventoryReportsService reports, InventoryRegisterService registers) {
+            InventoryReportsService reports, InventoryRegisterService registers, InventoryIntegrityService integrity) {
         this.locations = locations;
         this.stockDocs = stockDocs;
         this.reversals = reversals;
@@ -212,6 +215,7 @@ public class InventoryController {
         this.ledgerDetail = ledgerDetail;
         this.reports = reports;
         this.registers = registers;
+        this.integrity = integrity;
     }
 
     // ---- Locations
@@ -377,6 +381,16 @@ public class InventoryController {
         String tol = query.get("tolerance");
         return queries.getStockReconciliation(query.get("locationId"), tol != null ? JsNumbers.number(tol) : null,
                 "true".equals(query.get("includeMatched")));
+    }
+
+    /**
+     * Hardening R0: the inventory integrity checks (ledger vs quant, lots, serials, serial state, valuation vs stock
+     * ledger, valuation vs GL, transit, reservations, offline queue). Read-only; at most 5,000 rows per check.
+     */
+    @GetMapping("/reports/integrity")
+    @RequirePermissions(Permissions.INVENTORY_VALUATION__READ)
+    public IntegrityReport integrity(@RequestParam(required = false) String locationId) {
+        return integrity.report(locationId);
     }
 
     @GetMapping("/reports/stock-health")

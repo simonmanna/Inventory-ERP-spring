@@ -7,6 +7,7 @@ import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.EntityJson;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -27,6 +28,20 @@ public class InventoryTieOutMonitor {
 
     /** {@code InventoryException.kind} of a tie-out variance. */
     public static final String KIND = "gl_tieout_variance";
+
+    /**
+     * Prefix of the {@code InventoryException.kind} raised by the inventory integrity monitor (hardening R0,
+     * {@code integrity_<check>}). Declared here because accounting (period close) reads them and inventory depends on
+     * accounting, not the other way round.
+     */
+    public static final String INTEGRITY_KIND_PREFIX = "integrity_";
+
+    /**
+     * Integrity kinds on stock value: while one is open (raised since the period started) the period cannot close.
+     * The quantity integrity kinds are findings for the Posting Monitor and never hold a close.
+     */
+    public static final List<String> INTEGRITY_VALUE_KINDS = List.of(INTEGRITY_KIND_PREFIX + "valuation_vs_subledger",
+            INTEGRITY_KIND_PREFIX + "valuation_vs_gl");
 
     private static final Logger log = LoggerFactory.getLogger(InventoryTieOutMonitor.class);
 

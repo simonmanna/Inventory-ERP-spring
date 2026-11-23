@@ -2014,3 +2014,10 @@ Migration V580. Web: Learn button in the header, overlay in `AppShell`. Tests: `
 - [ ] G4 AI chat behind `AssistantResolver` (own ADR)
 
 Not verified yet: the tours driven by hand in a browser.
+
+## Inventory hardening R0 (2026-11-22 review, Spring-only)
+
+- [x] R0 `GET /api/v1/inventory/reports/integrity` (`inventory_valuation:read`), daily `InventoryIntegrityMonitor`
+  (`integrity_*` exceptions; value kinds hold the period close), read-only data checks
+  `docs/audits/2026-11-22-inventory-data-checks.sql` — `InventoryIntegrityIT`, `PeriodCloseChecklistIT`;
+  [review](audits/2026-11-22-inventory-review.md)

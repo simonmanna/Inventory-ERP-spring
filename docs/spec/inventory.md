@@ -42,7 +42,8 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Scheduled jobs
 
-— (POS stock posting drain lives in pos).
+- `InventoryIntegrityJob` (daily 03:10 UTC, ShedLock `inventory-integrity-check`, off with `app.jobs.enabled=false`):
+  see "Integrity checks (R0)". The POS stock posting drain lives in pos.
 
 ## Notes and pitfalls
 
@@ -335,3 +336,35 @@ buy / manufacture lines go out on `inventory.replenishment.requested` tagged wit
 and manufacturing each take their own). Alerts carry `route`, `documentType`, `documentId`, `documentNumber`. Incoming
 supply adds `TransferIncomingSupply` (inventory) and `ProductionIncomingSupply` (manufacturing). Details:
 `docs/adr/ADR-S027-replenishment-mrp-completion.md`.
+
+## Integrity checks (R0)
+
+Hardening batch R0 ([review](../audits/2026-11-22-inventory-review.md)). Spring-only, read-only.
+
+`GET /inventory/reports/integrity?locationId=` (`inventory_valuation:read`). The location goes through the user's data
+scope like `/reports/reconciliation`. Response: `{checkedAt, locationId, ok, rowLimit: 5000, checks: [{key, ok,
+skipped, invariant, tolerance, failures, truncated, rows, note}]}`. `failures` counts every breaking row; at most 5,000
+rows per check come back. Decimals in rows are exact decimal strings.
+
+| key | invariant | tolerance |
+|---|---|---|
+| `ledger_vs_quant` | Σ ledger `quantityChange` = `StockItem.quantity` per (product, variant, location) | 0.000001 |
+| `quant_vs_lots` | lot-tracked: max(0, qty) = Σ `InventoryBatch.quantity` | 0.000001 |
+| `quant_vs_serials` | in-stock serials ≤ max(0, qty); = qty where `inventory.serialPolicy` is `required` | exact |
+| `serial_state` | issued serial: latest movement an outflow; in-stock serial: latest movement an inflow | exact |
+| `valuation_vs_subledger` | per product: current valuation by costing method = Σ signed ledger `totalValue` | 0.01 per product |
+| `valuation_vs_gl` | the GL tie-out (organisation level; skipped under a location filter) | `inventory.glTieOut.tolerance` |
+| `transit` | per open transit transfer and product: dispatched − received − damaged − short − recalled = ledger balance at the transit location; Σ open per product = transit-location quantity (organisation level) | 0.000001 |
+| `reservations` | none negative; reserved ≤ on-hand + incoming per cell; none on a missing / closed / cancelled `invoice`, `sales_order_line`, `production_order` or `processing_job_input` | exact |
+| `offline_queue` | no open `offline_awaiting_dispatch` older than 24 h on an `in_transit` / `partially_received` transfer | — |
+
+The quantity checks share the reconciliation CTE (`InventoryQueryService.reconciliationCells`); the value checks call
+`accounting.InventoryValuationService` (`currentValueByQuant`, `glTieOut`).
+
+`InventoryIntegrityMonitor` (run daily by `InventoryIntegrityJob`, every organisation holding stock): one open
+`InventoryException` of kind `integrity_<key>` per failing check (payload: check, invariant, tolerance, failures, first
+20 rows, product ids), one in-app alert per run that raised something, never a duplicate while one of the kind is open,
+never a correction. `integrity_valuation_vs_gl` is not raised while `inventory.glTieOut.enabled` is off. The value kinds
+(`integrity_valuation_vs_subledger`, `integrity_valuation_vs_gl`) hold the period close and are the blocking checklist
+item `inventory_integrity_value`; the quantity kinds never hold a close. Test: `InventoryIntegrityIT`,
+`PeriodCloseChecklistIT`.
