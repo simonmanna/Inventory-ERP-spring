@@ -2025,3 +2025,7 @@ Not verified yet: the tours driven by hand in a browser.
 ## Inventory hardening R1 (corruption blockers, gate G1; owner-approved 2026-11-23)
 
 - [x] Returns restore lot / expiry / serial / location / cost via `returnFromSource`; `InventoryLedger.reversesLedgerId` (V611); rental fee lines never move stock; credit note refuses without issue rows; offline refund drains or holds; offline receipt exactly once (`InventoryReturnsIdentityIT`, `SyncInventoryRecoveryIT`)
+
+## Inventory hardening R4 (workflow integrity, gate G1; owner-approved 2026-11-23)
+
+- [x] Order-level timings deprecated (stored values keep working, with a warning); one POS job per sale (`sale:<orderId>`); order cancel abandons / waits / returns at original cost and lot; voided fired line issued once; pick orders net source reversals and block reversing a live source (`OrderCancelStockIT`, `WarehouseIT.pickOrderAndDocumentReversal`, `SyncInventoryReplayIT` 7)

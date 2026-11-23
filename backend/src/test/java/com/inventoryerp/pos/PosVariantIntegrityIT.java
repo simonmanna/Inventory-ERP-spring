@@ -47,6 +47,9 @@ class PosVariantIntegrityIT extends ApiTestSupport {
     @Autowired
     PosStockPostingService postings;
 
+    @Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService resolver;
+
     String sfx;
     String adminId;
     String warehouseId;
@@ -460,7 +463,11 @@ class PosVariantIntegrityIT extends ApiTestSupport {
     @Test
     @DisplayName("T-1: an order posted before it is invoiced references the order; the invoice links it and refunds restock")
     void orderPostedBeforeItsInvoice() {
-        ok(200, "PUT", "/settings/inventory.stockPostingTiming", Map.of("value", "at_fulfillment_complete"));
+        // R4: at_fulfillment_complete can no longer be selected; an organisation configured before keeps it.
+        ok(200, "PUT", "/settings/inventory.stockPostingTiming", Map.of("value", "at_payment"));
+        jdbc.sql("UPDATE \"Setting\" SET value = '\"at_fulfillment_complete\"'::jsonb WHERE \"organizationId\" = ? AND"
+                + " key = 'inventory.stockPostingTiming' AND \"scopeType\" = 'organization'").param(demoOrg).update();
+        resolver.invalidate(demoOrg);
         try {
             orderPostedBeforeItsInvoiceAtFulfilment();
         } finally {

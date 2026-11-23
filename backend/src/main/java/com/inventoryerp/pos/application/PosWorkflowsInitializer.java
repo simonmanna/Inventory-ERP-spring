@@ -4,6 +4,7 @@ import com.inventoryerp.kernel.workflow.FulfillmentRegistry;
 import com.inventoryerp.kernel.workflow.MilestoneRegistry;
 import com.inventoryerp.kernel.workflow.WorkflowDefinition;
 import com.inventoryerp.kernel.workflow.WorkflowDefinition.Guard;
+import com.inventoryerp.kernel.workflow.WorkflowDefinition.SideEffect;
 import com.inventoryerp.kernel.workflow.WorkflowDefinition.Transition;
 import com.inventoryerp.kernel.workflow.WorkflowRegistry;
 import com.inventoryerp.shared.events.DomainEvents;
@@ -11,6 +12,7 @@ import jakarta.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -31,13 +33,15 @@ public class PosWorkflowsInitializer {
     private final MilestoneRegistry milestones;
     private final FulfillmentRegistry fulfillment;
     private final JdbcClient jdbc;
+    private final ObjectProvider<OrderStockReversalService> orderStock;
 
     public PosWorkflowsInitializer(WorkflowRegistry workflows, MilestoneRegistry milestones,
-            FulfillmentRegistry fulfillment, JdbcClient jdbc) {
+            FulfillmentRegistry fulfillment, JdbcClient jdbc, ObjectProvider<OrderStockReversalService> orderStock) {
         this.workflows = workflows;
         this.milestones = milestones;
         this.fulfillment = fulfillment;
         this.jdbc = jdbc;
+        this.orderStock = orderStock;
     }
 
     private static List<Transition> withLegacyFromStates(List<Transition> transitions) {
@@ -55,9 +59,16 @@ public class PosWorkflowsInitializer {
         return new Transition(from, to, action, permission, guard, null, event);
     }
 
+    private static Transition cancel(String from, Guard guard, SideEffect sideEffect) {
+        return new Transition(from, "cancelled", "cancel", "pos:checkout", guard, sideEffect, DomainEvents.ORDER_CANCELLED);
+    }
+
     @PostConstruct
     void register() {
         Guard notBilled = ctx -> ctx.entity() == null || ctx.entity().get("invoiceId") == null;
+        // R4: a cancel (every path: POS, back office, sync) abandons the order's stock jobs and returns what it issued.
+        // A split / merge (supersede) does not: its goods are still sold through the orders that took its lines.
+        SideEffect returnStock = ctx -> orderStock.getObject().onOrderCancelled(ctx.entityId());
         workflows.register(new WorkflowDefinition("order", "draft", withLegacyFromStates(List.of(
                 t("draft", "confirmed", "confirm", "pos:checkout", null, DomainEvents.ORDER_CONFIRMED),
                 t("confirmed", "in_progress", "start_fulfillment", "pos:checkout", null,
@@ -67,12 +78,13 @@ public class PosWorkflowsInitializer {
                 t("completed", "closed", "close", null, null, DomainEvents.ORDER_CLOSED),
                 t("confirmed", "closed", "close", null, null, DomainEvents.ORDER_CLOSED),
                 t("in_progress", "closed", "close", null, null, DomainEvents.ORDER_CLOSED),
-                t("draft", "cancelled", "cancel", "pos:checkout", notBilled, DomainEvents.ORDER_CANCELLED),
-                t("confirmed", "cancelled", "cancel", "pos:checkout", notBilled, DomainEvents.ORDER_CANCELLED),
-                t("in_progress", "cancelled", "cancel", "pos:checkout", notBilled, DomainEvents.ORDER_CANCELLED),
+                cancel("draft", notBilled, returnStock),
+                cancel("confirmed", notBilled, returnStock),
+                cancel("in_progress", notBilled, returnStock),
                 t("confirmed", "cancelled", "supersede", null, notBilled, DomainEvents.ORDER_SUPERSEDED),
                 t("in_progress", "cancelled", "supersede", null, notBilled, DomainEvents.ORDER_SUPERSEDED),
-                t("cancelled", "confirmed", "reopen", "pos:override", notBilled, DomainEvents.ORDER_REOPENED)))));
+                new Transition("cancelled", "confirmed", "reopen", "pos:override", notBilled,
+                        ctx -> orderStock.getObject().onOrderReopened(ctx.entityId()), DomainEvents.ORDER_REOPENED)))));
 
         java.util.function.Predicate<JsonNode> isKitchen = p -> p != null && "kitchen".equals(
                 p.get("strategy") == null ? null : p.get("strategy").asString());

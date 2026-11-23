@@ -83,6 +83,44 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Deviations
 
+Approved by the owner 2026-11-23 (inventory hardening R4, workflow integrity, release gate G1;
+[review](../audits/2026-11-22-inventory-review.md) P1-11, P1-12):
+
+- **`at_confirmation` and `at_fulfillment_complete` are deprecated.** `PUT /settings/inventory.stockPostingTiming` with
+  either value → 400 `Setting 'inventory.stockPostingTiming' value '<v>' can no longer be selected: …` (the same
+  registry mechanism as `at_fulfillment_start`, but a stored value still reads as itself: `SettingRegistry.coerceStored`).
+  `GET /settings/effective` adds a `warning` field to the row when the effective value is deprecated. Data check (h2)
+  lists the organisations still on one. Known limits that stay with these timings: a line added after the order's job
+  posted, or a quantity raised on a posted line, is not issued; a merged / split order keeps its original issue (the
+  orders that take its lines issue nothing for them).
+- **One stock-posting job per sale.** Key `sale:<orderId>` (`sale:<invoiceId>` without an order) whatever the trigger.
+  Before inserting, a job of the same sale in any status and keyed either way (also the old `<trigger>:<invoice|order>`
+  keys, which are not migrated and keep running) prevents a second one; when the invoice arrives it is attached to the
+  order's job instead. A timing change between the order and its bill can no longer issue twice.
+- **Order cancel** (every path — `POST /pos/orders/:id/cancel`, `/orders/:id/cancel`, sync — through a side effect of the
+  `order.cancel` workflow transition, in the cancel transaction, lock order order → job → stock):
+
+  | state at cancel | behaviour |
+  |---|---|
+  | job pending | abandoned (`status = abandoned`, `lastError` `Order cancelled; nothing was issued`); no stock moves |
+  | job processing | the cancel waits for the job row lock (`FOR UPDATE`), then applies the rule for what is posted; a runner still holding the old claim posts no further line (`postOnce` requires `processing`) and cannot complete the job |
+  | posted | every issue row of the order (`pos_order` / `menu_recipe` under the order id, `pos_invoice_combo` / `pos_invoice_extra` under its line ids) comes back via `StockReversalService.returnFromSource` at its original cost, lot and serial, `reversal_in` rows under `pos_order_cancel` naming the row (`reversesLedgerId`), GL Dr stock / Cr COGS at that cost; the job is abandoned with the count |
+  | partially fulfilled | only the lines the job issued come back; the failed lines never issue and their open exceptions are discarded |
+  | partially returned | issued − already returned (the `reversesLedgerId` netting of `returnFromSource`) |
+
+  The job worker re-checks under the job lock: a job whose order is cancelled (not superseded) is abandoned, never
+  posted. Reopen revives the jobs a cancel abandoned (pending, from the start). A split / merge (`supersede`) does not
+  reverse: its goods are still sold through the orders that took its lines.
+- **Kitchen-voided line: issued once.** Voiding a line the order's job already issued returns the voided share of what
+  the line still has issued (`pos_order_void`, original cost / lot / serial, needs the new `sourceLineId` = order line
+  on POS issue rows, written from R4 on); the fired part then goes to kitchen waste as before. Net: a fired, voided unit
+  is issued once (as waste), an unfired one is returned. A job running while a line is voided re-reads the line under
+  the job lock and issues its current quantity (none when voided). Lines issued before R4 carry no `sourceLineId` and
+  are not returned by a void (the order cancel still returns them).
+- POS Z / GL reconciliation nets `pos_order_cancel` / `pos_order_void` returns like refund restocks.
+- Tests: `OrderCancelStockIT` (one per row above, job key, deprecated timings), `SyncInventoryReplayIT` 7 (held
+  refund), `KernelUnitTest.settingRegistry`.
+
 Approved by the owner 2026-11-17 (accounting and costing review,
 [audit](../audits/2026-11-17-accounting-costing-review.md)):
 

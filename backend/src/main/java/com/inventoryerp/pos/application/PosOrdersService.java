@@ -75,6 +75,7 @@ public class PosOrdersService {
     private final PricingPolicy pricing;
     private final OrderMutationPolicy mutationPolicy;
     private final KitchenWaste kitchenWaste;
+    private final OrderStockReversalService orderStock;
     private final TransactionTemplate tx;
     private final Map<String, String> actorNameCache = new ConcurrentHashMap<>();
 
@@ -82,7 +83,8 @@ public class PosOrdersService {
             DocumentBuilderService builder, PosVariantService variants, PosAccompanimentService accompaniments,
             PosModifiersService modifiers, PosKdsService kds, PosOverridesService overrides, PosReceiptsService receipts,
             WorkflowService workflows, MilestoneService milestones, PricingPolicy pricing,
-            OrderMutationPolicy mutationPolicy, KitchenWaste kitchenWaste, PlatformTransactionManager txm) {
+            OrderMutationPolicy mutationPolicy, KitchenWaste kitchenWaste, OrderStockReversalService orderStock,
+            PlatformTransactionManager txm) {
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -100,6 +102,7 @@ public class PosOrdersService {
         this.pricing = pricing;
         this.mutationPolicy = mutationPolicy;
         this.kitchenWaste = kitchenWaste;
+        this.orderStock = orderStock;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -536,6 +539,9 @@ public class PosOrdersService {
                         "voidedBy", user(), "voidApprovedBy", overrideById), "id = ?", row.get("id"));
             }
             recomputeOrderTotals(orderId, Map.of());
+            // R4: a line the order's job already issued gets the voided share back (original cost, lot, serial); the
+            // fired part then goes to kitchen waste once, below.
+            orderStock.onItemVoided(orderId, (String) row.get("id"), PosSql.decOf(asked), PosSql.decOf(current));
             TableStatus.recompute(jdbc, orgId, (String) order.get("tableId"));
             audit.recordInTx(AuditInput.of("OrderItem", (String) row.get("id"), "cancel", null, Obj.of("kind", "item_void",
                     "orderId", orderId, "orderNumber", order.get("orderNumber"), "description", row.get("description"),

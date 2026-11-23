@@ -86,10 +86,12 @@ public class PosGlReconciliationService {
                 + " coalesce(sum(coalesce((it->>'taxAmount')::numeric, 0)), 0) AS tax FROM \"PosRefund\" r,"
                 + " jsonb_array_elements(CASE WHEN jsonb_typeof(r.items) = 'array' THEN r.items ELSE '[]'::jsonb END) it"
                 + " WHERE r.\"organizationId\" = ? AND r.\"createdAt\" >= ? AND r.\"createdAt\" <= ?").params(org, f, t));
-        // Refund restocks reverse COGS at the issue cost; the stock side must net them.
+        // Refund restocks reverse COGS at the issue cost; the stock side must net them. R4: so do an order cancel's and
+        // a line void's returns of stock the order had issued before it was billed.
         BigDecimal stockReturns = jdbc.sql("SELECT coalesce(sum(\"totalValue\"), 0) FROM \"InventoryLedger\""
-                + " WHERE \"organizationId\" = ? AND \"createdAt\" >= ? AND \"createdAt\" <= ? AND \"referenceType\" = 'pos_refund'"
-                + " AND \"quantityChange\" > 0").params(org, f, t).query(BigDecimal.class).single();
+                + " WHERE \"organizationId\" = ? AND \"createdAt\" >= ? AND \"createdAt\" <= ? AND \"referenceType\" IN"
+                + " ('pos_refund', 'pos_order_cancel', 'pos_order_void') AND \"quantityChange\" > 0").params(org, f, t)
+                .query(BigDecimal.class).single();
         // Output-VAT accounts are the ones a Tax row posts to.
         Set<String> taxAccountIds = jdbc.sql("SELECT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ? AND \"accountId\" IS NOT NULL")
                 .param(org).query(String.class).list().stream().collect(Collectors.toSet());

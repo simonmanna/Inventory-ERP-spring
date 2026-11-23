@@ -151,7 +151,7 @@ public class SettingResolverService {
 
     private static Object safeCoerce(Definition def, Object raw) {
         try {
-            return SettingRegistry.coerce(def, raw);
+            return SettingRegistry.coerceStored(def, raw);
         } catch (IllegalArgumentException e) {
             return def.defaultValue();
         }

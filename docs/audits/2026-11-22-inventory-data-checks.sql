@@ -250,24 +250,62 @@ SELECT l."organizationId", l."ledgerCode", l.type::text AS type, l."referenceTyp
  ORDER BY l."organizationId", l."createdAt";
 
 -- ---------------------------------------------------------------------------------------------------------------
--- (h) P1 Cancelled orders whose pos_order stock issue was never reversed.
--- A row = a POS order in status cancelled with stock issued against it before invoicing (referenceType pos_order,
--- the at_confirmation / at_fulfillment timings) whose issue rows are not netted back by reversal rows
--- (pos_order_reversal). The goods are counted as sold although the order was cancelled.
+-- (h) P1 Cancelled orders whose order-timed stock issue was never reversed (R4 extends this block).
+-- A row = a POS order in status cancelled (not superseded by a split or merge, whose goods were sold through the
+-- orders that took its lines) with stock issued against it before invoicing — the at_confirmation /
+-- at_fulfillment_complete timings: pos_order and menu_recipe rows under the order id, pos_invoice_combo /
+-- pos_invoice_extra rows under its line ids — that is not netted back by later returns (pos_order_reversal,
+-- and since R4 pos_order_cancel / pos_order_void). The goods are counted as sold although the order was cancelled.
 -- Remedy (manual): check whether the goods were consumed (kitchen waste) or are back on the shelf; for goods back on
--- the shelf, reverse the order's pos_order rows at their original cost and lots (R4 adds this as the cancel
--- behaviour; for history use an owner-approved reversal per order), for consumed goods record waste instead.
-SELECT o."organizationId", o.id AS "orderId", o."orderNumber", o."cancelledAt",
-       sum(l."quantityChange") FILTER (WHERE l."referenceType" = 'pos_order') AS "issuedQty",
-       COALESCE(sum(l."quantityChange") FILTER (WHERE l."referenceType" = 'pos_order_reversal'), 0) AS "reversedQty",
-       sum(l."totalValue") FILTER (WHERE l."referenceType" = 'pos_order') AS "issuedValue",
-       count(DISTINCT l."productId") AS products
-  FROM "Order" o
-  JOIN "InventoryLedger" l ON l."organizationId" = o."organizationId" AND l."referenceId" = o.id
-       AND l."referenceType" IN ('pos_order', 'pos_order_reversal')
- WHERE o.status::text = 'cancelled'
- GROUP BY o."organizationId", o.id, o."orderNumber", o."cancelledAt"
-HAVING sum(l."quantityChange") < -0.000001
- ORDER BY o."organizationId", o."cancelledAt";
+-- the shelf, reverse the order's rows at their original cost and lots (R4 does this on every cancel from now on; for
+-- history use an owner-approved reversal per order), for consumed goods record waste instead.
+WITH rows AS (
+  SELECT o."organizationId", o.id AS "orderId", o."orderNumber", o."cancelledAt", l."referenceType",
+         l."productId", l."quantityChange", l."totalValue"
+    FROM "Order" o
+    JOIN "InventoryLedger" l ON l."organizationId" = o."organizationId"
+         AND ((l."referenceType" IN ('pos_order', 'menu_recipe', 'pos_order_reversal', 'pos_order_cancel')
+               AND l."referenceId" = o.id)
+           OR (l."referenceType" IN ('pos_invoice_combo', 'pos_invoice_extra')
+               AND split_part(l."referenceId", ':', 1) IN (SELECT i.id FROM "OrderItem" i WHERE i."orderId" = o.id))
+           OR (l."referenceType" = 'pos_order_void'
+               AND l."referenceId" IN (SELECT i.id FROM "OrderItem" i WHERE i."orderId" = o.id)))
+   WHERE o.status::text = 'cancelled' AND o."invoiceId" IS NULL
+     AND COALESCE(o."cancelReason", '') NOT LIKE 'Merged into %' AND COALESCE(o."cancelReason", '') NOT LIKE 'Split into %'
+)
+SELECT "organizationId", "orderId", "orderNumber", "cancelledAt",
+       sum("quantityChange") FILTER (WHERE "quantityChange" < 0) AS "issuedQty",
+       COALESCE(sum("quantityChange") FILTER (WHERE "quantityChange" > 0), 0) AS "returnedQty",
+       sum("totalValue") FILTER (WHERE "quantityChange" < 0) AS "issuedValue",
+       count(DISTINCT "productId") AS products
+  FROM rows
+ GROUP BY "organizationId", "orderId", "orderNumber", "cancelledAt"
+HAVING sum("quantityChange") < -0.000001
+ ORDER BY "organizationId", "cancelledAt";
+
+-- (h2) R4 Organisations still on a deprecated order-level stock deduction timing.
+-- A row = a stored inventory.stockPostingTiming of at_confirmation or at_fulfillment_complete (organisation level; the
+-- setting does not cascade). Since R4 these values can no longer be selected; a stored one keeps working and the
+-- settings screen shows a warning. Remedy: agree with the site to switch to at_invoice (or at_payment) at a quiet
+-- moment (no open orders posted before billing), through PUT /settings/inventory.stockPostingTiming.
+SELECT s."organizationId", org.code AS "organizationCode", s."scopeType", s."scopeId", s.value #>> '{}' AS timing,
+       s."updatedAt"
+  FROM "Setting" s
+  LEFT JOIN "Organization" org ON org.id = s."organizationId"
+ WHERE s.key = 'inventory.stockPostingTiming'
+   AND s.value #>> '{}' IN ('at_confirmation', 'at_fulfillment_complete')
+ ORDER BY s."organizationId";
+
+-- (h3) R4 Stock-posting jobs of cancelled orders that are not finished.
+-- A row = a job still pending / processing / failed for an order cancelled without a bill (not superseded). Since R4
+-- a cancel abandons these and the worker abandons any it finds; rows here predate R4. Remedy: none needed for a
+-- pending job (the worker abandons it on its next run); check (h) for what it already issued.
+SELECT j."organizationId", j.id AS "jobId", j.status, j."postingTrigger", j."idempotencyKey", o."orderNumber",
+       o."cancelledAt", cardinality(j."postedLineKeys") AS "postedLines"
+  FROM "StockPostingJob" j
+  JOIN "Order" o ON o.id = j."orderId" AND o."organizationId" = j."organizationId"
+ WHERE o.status::text = 'cancelled' AND o."invoiceId" IS NULL AND j.status NOT IN ('done', 'abandoned')
+   AND COALESCE(o."cancelReason", '') NOT LIKE 'Merged into %' AND COALESCE(o."cancelReason", '') NOT LIKE 'Split into %'
+ ORDER BY j."organizationId", j."createdAt";
 
 ROLLBACK;
