@@ -36,6 +36,16 @@ public final class SalesInsightsController {
 
     private SalesInsightsController() {}
 
+    /**
+     * Who answered a customer link. {@code getRemoteAddr()} is the real client address: behind the reverse proxy,
+     * Tomcat's RemoteIpValve ({@code server.forward-headers-strategy=native}) takes it from X-Forwarded-For only when
+     * the connection comes from a trusted proxy ({@code server.tomcat.remoteip.internal-proxies}), so it is not
+     * spoofable by the client.
+     */
+    private static SalesQuoteLinkService.Client client(HttpServletRequest req) {
+        return new SalesQuoteLinkService.Client(req.getRemoteAddr(), req.getHeader("User-Agent"));
+    }
+
     private static Map<String, Object> body(Map<String, Object> b) {
         return b == null ? new HashMap<>() : b;
     }
@@ -279,13 +289,13 @@ public final class SalesInsightsController {
         }
 
         @GetMapping
-        @Throttle(limit = 60, ttlMs = 60_000)
+        @Throttle(limit = 60, ttlMs = 60_000, perPathVariable = "token")
         public ResponseEntity<Map<String, Object>> view(@PathVariable String token) {
             return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(links.view(token));
         }
 
         @GetMapping("/pdf")
-        @Throttle(limit = 20, ttlMs = 60_000)
+        @Throttle(limit = 20, ttlMs = 60_000, perPathVariable = "token")
         public ResponseEntity<byte[]> pdf(@PathVariable String token) {
             return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
                     .header(HttpHeaders.CACHE_CONTROL, "no-store")
@@ -293,17 +303,17 @@ public final class SalesInsightsController {
         }
 
         @PostMapping("/accept")
-        @Throttle(limit = 10, ttlMs = 60_000)
+        @Throttle(limit = 10, ttlMs = 60_000, perPathVariable = "token")
         public Map<String, Object> accept(@PathVariable String token, @RequestBody(required = false) Map<String, Object> b,
                 HttpServletRequest req) {
-            return links.accept(token, body(b), req.getRemoteAddr());
+            return links.accept(token, body(b), client(req));
         }
 
         @PostMapping("/decline")
-        @Throttle(limit = 10, ttlMs = 60_000)
+        @Throttle(limit = 10, ttlMs = 60_000, perPathVariable = "token")
         public Map<String, Object> decline(@PathVariable String token, @RequestBody(required = false) Map<String, Object> b,
                 HttpServletRequest req) {
-            return links.decline(token, body(b), req.getRemoteAddr());
+            return links.decline(token, body(b), client(req));
         }
     }
 }

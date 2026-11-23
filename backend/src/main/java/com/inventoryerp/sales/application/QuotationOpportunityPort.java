@@ -14,8 +14,12 @@ public interface QuotationOpportunityPort {
      */
     Map<String, Object> visibleOpportunity(String dealId);
 
-    /** Mark the opportunity won when it is still an open opportunity (no-op otherwise). */
-    void markWonIfOpen(String dealId);
+    /**
+     * Mark the opportunity won when it is still an open opportunity (no-op otherwise). A system side effect of a
+     * conversion the caller was already authorized for: it must not apply the salesperson visibility rule, so it can
+     * never roll back the sales document (production-readiness fix P0-2).
+     */
+    void markWonIfOpen(String dealId, String quotationNumber);
 
     /** Record on the CRM timeline that quotation {@code number} was emailed (deal and/or customer; no-op by default). */
     default void quotationEmailed(String dealId, String partnerId, String number, String sentTo, boolean delivered) {}

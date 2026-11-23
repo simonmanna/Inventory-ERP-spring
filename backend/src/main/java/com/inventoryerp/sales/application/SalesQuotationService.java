@@ -767,6 +767,7 @@ public class SalesQuotationService {
         }
         db.patch("SalesQuotation", id, Obj.of("status", "cancelled"), true);
         withdrawApproval(q, "Quotation cancelled");
+        revokeShareLinks(id, "cancelled");
         audit.record(AuditInput.of("SalesQuotation", id, "cancel"));
         return get(id);
     }
@@ -780,6 +781,7 @@ public class SalesQuotationService {
         }
         snapshot(q, "revise");
         withdrawApproval(q, "Quotation revised");
+        revokeShareLinks(id, "revised");
         Map<String, Object> s = config.settings();
         db.patch("SalesQuotation", id, Obj.of("status", "draft", "revision", ((Number) q.get("revision")).intValue() + 1,
                 "approvalReasons", List.of(), "approvalRequestId", null, "approvedById", null, "approvedAt", null,
@@ -787,6 +789,19 @@ public class SalesQuotationService {
                         ((Number) s.get("quoteValidityDays")).longValue())), true);
         audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("revision", "new")));
         return get(id);
+    }
+
+    /**
+     * Production-readiness fix P0-4: a customer link was issued for one revision's terms, so a new revision (or a
+     * cancellation) stops it; the customer needs a new link for the new terms. Answered links stay as the record.
+     */
+    private void revokeShareLinks(String id, String why) {
+        int n = db.update("UPDATE \"SalesQuoteLink\" SET \"revokedAt\" = " + NOW + " WHERE \"quotationId\" = ? AND"
+                + " \"organizationId\" = ? AND \"revokedAt\" IS NULL", id, org());
+        if (n > 0) {
+            audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("shareLink", "revoked", "reason",
+                    why)));
+        }
     }
 
     /** Past {@code validUntil} on the business calendar (the quote is valid through that day). */
@@ -902,7 +917,7 @@ public class SalesQuotationService {
         if (!blank(dealId) && Boolean.TRUE.equals(config.settings().get("autoWinOnConversion"))) {
             QuotationOpportunityPort port = opportunities.getIfAvailable();
             if (port != null) {
-                port.markWonIfOpen(dealId);
+                port.markWonIfOpen(dealId, str(q.get("number")));
             }
         }
         Map<String, Object> out = get(id);

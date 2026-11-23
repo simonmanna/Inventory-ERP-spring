@@ -228,11 +228,23 @@ class CrmDealExtrasIT extends ApiTestSupport {
         JsonNode sent = ok(200, "POST", "/crm/opportunities/" + deal + "/email", Map.of("to", draft.get("to")
                 .asString(), "subject", draft.get("subject").asString(), "body", draft.get("body").asString()));
         assertThat(sent.get("sentTo").asString()).isEqualTo(draft.get("to").asString());
-        Map<String, Object> a = jdbc.sql("SELECT type::text AS type, status::text AS status, body FROM \"Activity\" WHERE"
-                + " \"dealId\" = ? AND title = ?").params(deal, "Email: About Mail deal " + sfx).query().singleRow();
+        // production-readiness P0-6: no SMTP in the tests, so the answer and the activity say so; nothing claims "sent"
+        assertThat(sent.get("status").asString()).isEqualTo("not_configured");
+        assertThat(sent.get("delivered").asBoolean()).isFalse();
+        Map<String, Object> a = jdbc.sql("SELECT id, type::text AS type, status::text AS status, body, outcome FROM"
+                + " \"Activity\" WHERE \"dealId\" = ? AND title = ?").params(deal, "Email: About Mail deal " + sfx)
+                .query().singleRow();
         assertThat(a.get("type")).isEqualTo("email");
         assertThat(a.get("status")).isEqualTo("done");
         assertThat((String) a.get("body")).contains("Dear Grace,");
+        assertThat((String) a.get("outcome")).startsWith("Not sent: Outgoing email is not set up");
+        Map<String, Object> box = jdbc.sql("SELECT status, attempts, \"lastError\" FROM \"CrmEmailOutbox\" WHERE"
+                + " \"activityId\" = ?").param(a.get("id")).query().singleRow();
+        assertThat(box.get("status")).isEqualTo("failed");
+        assertThat(box.get("attempts")).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"Notification\" WHERE payload->>'kind' = 'crm.email.failed' AND"
+                + " title = ?").param("Email not sent: About Mail deal " + sfx).query(Long.class).single())
+                .as("the sender hears about it").isEqualTo(1);
         assertThat(call("GET", "/crm/leads/" + deal + "/email", null, adminToken).status()).as("not a lead")
                 .isEqualTo(404);
         ok(200, "DELETE", "/crm/config/email-templates/" + t, null);

@@ -44,12 +44,21 @@ public class SalesQuoteLinkService {
 
     static final int DAYS = 60;
     static final String NOT_FOUND = "Quotation link not found";
+    static final String SUPERSEDED = "This quotation is being updated; ask us for a new link";
     /** States a customer may see (never a draft or one waiting for approval). */
     private static final Set<String> SHOWN = Set.of("approved", "sent", "accepted", "rejected", "expired", "converted");
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /** The link a token resolved to. */
-    private record Link(String id, String organizationId, String quotationId) {}
+    private record Link(String id, String organizationId, String quotationId, int revision) {}
+
+    /** Who answered: the client address (behind the trusted proxy) and user agent, kept with the decision. */
+    public record Client(String ip, String userAgent) {
+
+        public Client {
+            userAgent = userAgent == null ? null : userAgent.length() > 500 ? userAgent.substring(0, 500) : userAgent;
+        }
+    }
 
     private final SalesDb db;
     private final SalesQuotationService quotations;
@@ -76,7 +85,8 @@ public class SalesQuoteLinkService {
     public Map<String, Object> status(String quotationId) {
         quotations.get(quotationId);
         Map<String, Object> r = db.row("SELECT \"createdAt\", \"expiresAt\", \"firstViewedAt\", \"lastViewedAt\","
-                + " \"viewCount\", decision, \"decidedAt\", \"signerName\", \"signerNote\" FROM \"SalesQuoteLink\" WHERE"
+                + " \"viewCount\", decision, \"decidedAt\", \"signerName\", \"signerNote\", revision, \"decidedRevision\""
+                + " FROM \"SalesQuoteLink\" WHERE"
                 + " \"quotationId\" = ? AND \"organizationId\" = ? AND \"revokedAt\" IS NULL", quotationId, org());
         if (r == null) {
             return Obj.of("active", false);
@@ -98,11 +108,12 @@ public class SalesQuoteLinkService {
         String token = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
         Instant expires = Instant.now().plus(DAYS, ChronoUnit.DAYS);
         String id = SalesDb.newId();
+        int revision = ((Number) q.get("revision")).intValue();
         db.update("INSERT INTO \"SalesQuoteLink\" (id, \"organizationId\", \"quotationId\", \"tokenHash\", \"expiresAt\","
-                + " \"createdById\") VALUES (?, ?, ?, ?, ?, ?)", id, org(), quotationId, sha256(token),
-                java.sql.Timestamp.from(expires), user());
+                + " \"createdById\", revision) VALUES (?, ?, ?, ?, ?, ?, ?)", id, org(), quotationId, sha256(token),
+                java.sql.Timestamp.from(expires), user(), revision);
         audit.record(AuditInput.of("SalesQuotation", quotationId, "update", null, Obj.of("shareLink", "created",
-                "expiresAt", expires)));
+                "expiresAt", expires, "revision", revision)));
         return Obj.of("active", true, "path", "/q/" + token, "expiresAt", expires);
     }
 
@@ -147,7 +158,7 @@ public class SalesQuoteLinkService {
     }
 
     /** Customer acceptance: {@code signerName} (required) and an optional {@code note}. */
-    public Map<String, Object> accept(String token, Map<String, Object> in, String ip) {
+    public Map<String, Object> accept(String token, Map<String, Object> in, Client client) {
         String signer = str(in.get("signerName"));
         if (blank(signer) || signer.trim().length() < 2 || signer.trim().length() > 120) {
             throw ApiException.badRequest("Type your full name to accept");
@@ -155,14 +166,18 @@ public class SalesQuoteLinkService {
         String note = note(in.get("note"));
         return withLink(token, l -> {
             shown(l);
-            undecided(l);
+            // lock order quotation → link, as in revise() (which revokes the link under the quotation lock)
+            Map<String, Object> terms = currentTerms(l);
+            if (alreadyDecided(l, "accepted")) {
+                return publicView(l);
+            }
             quotations.accept(l.quotationId());
-            return decided(l, "accepted", signer.trim(), note, ip);
+            return decided(l, "accepted", signer.trim(), note, client, terms);
         });
     }
 
     /** Customer decline with an optional {@code reason} and {@code signerName}. */
-    public Map<String, Object> decline(String token, Map<String, Object> in, String ip) {
+    public Map<String, Object> decline(String token, Map<String, Object> in, Client client) {
         String signer = str(in.get("signerName"));
         if (!blank(signer) && signer.trim().length() > 120) {
             throw ApiException.badRequest("signerName must be at most 120 characters");
@@ -170,9 +185,13 @@ public class SalesQuoteLinkService {
         String reason = note(in.get("reason"));
         return withLink(token, l -> {
             shown(l);
-            undecided(l);
+            // lock order quotation → link, as in revise() (which revokes the link under the quotation lock)
+            Map<String, Object> terms = currentTerms(l);
+            if (alreadyDecided(l, "declined")) {
+                return publicView(l);
+            }
             quotations.decline(l.quotationId(), blank(reason) ? null : reason);
-            return decided(l, "declined", blank(signer) ? null : signer.trim(), reason, ip);
+            return decided(l, "declined", blank(signer) ? null : signer.trim(), reason, client, terms);
         });
     }
 
@@ -184,18 +203,47 @@ public class SalesQuoteLinkService {
         return blank(s) ? null : s.trim();
     }
 
-    private void undecided(Link l) {
+    /**
+     * Lock the link row and check it may still be answered (production-readiness fix P0-4). The same answer again is
+     * an idempotent replay ({@code true}: nothing changes, the caller returns the current view); a different answer
+     * after one was recorded is a 409. A link issued for an earlier revision never answers the current one.
+     */
+    private boolean alreadyDecided(Link l, String decision) {
         Map<String, Object> r = db.row("SELECT decision FROM \"SalesQuoteLink\" WHERE id = ? FOR UPDATE", l.id());
         if (r.get("decision") != null) {
+            if (decision.equals(r.get("decision"))) {
+                return true;
+            }
             throw ApiException.conflict("This quotation has already been answered");
         }
+        return false;
     }
 
-    private Map<String, Object> decided(Link l, String decision, String signer, String note, String ip) {
+    /**
+     * The exact commercial terms on the table, read under the quotation's row lock: header + lines of the revision
+     * the link was issued for, or a 404 when the quotation has moved on to another revision since.
+     */
+    private Map<String, Object> currentTerms(Link l) {
+        Map<String, Object> q = db.row("SELECT * FROM \"SalesQuotation\" WHERE id = ? AND \"deletedAt\" IS NULL FOR"
+                + " UPDATE", l.quotationId());
+        if (q == null || ((Number) q.get("revision")).intValue() != l.revision()) {
+            throw ApiException.notFound(SUPERSEDED);
+        }
+        Map<String, Object> header = SalesDb.json(q);
+        header.put("lines", db.rows("SELECT * FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? ORDER BY"
+                + " \"sortOrder\"", l.quotationId()));
+        return header;
+    }
+
+    private Map<String, Object> decided(Link l, String decision, String signer, String note, Client client,
+            Map<String, Object> terms) {
         db.update("UPDATE \"SalesQuoteLink\" SET decision = ?, \"decidedAt\" = " + NOW + ", \"signerName\" = ?,"
-                + " \"signerNote\" = ?, \"signerIp\" = ? WHERE id = ?", decision, signer, note, ip, l.id());
+                + " \"signerNote\" = ?, \"signerIp\" = ?, \"signerUserAgent\" = ?, \"decidedRevision\" = ?,"
+                + " \"decisionSnapshot\" = ?::jsonb WHERE id = ?", decision, signer, note, client.ip(), client.userAgent(),
+                l.revision(), SalesDb.toJson(terms), l.id());
         audit.record(AuditInput.of("SalesQuotation", l.quotationId(), "update", null, Obj.of("via", "quote_link",
-                "decision", decision, "signerName", signer)));
+                "decision", decision, "signerName", signer, "revision", l.revision(), "total", terms.get("total"),
+                "signerIp", client.ip())));
         Map<String, Object> out = publicView(l);
         String who = signer == null ? str(out.get("partnerName")) : signer;
         String title = "Quotation " + out.get("number") + " " + decision + " online by " + who;
@@ -226,10 +274,10 @@ public class SalesQuoteLinkService {
     }
 
     private void shown(Link l) {
-        Map<String, Object> q = db.row("SELECT status FROM \"SalesQuotation\" WHERE id = ? AND \"deletedAt\" IS NULL",
-                l.quotationId());
-        if (q == null || !SHOWN.contains(str(q.get("status")))) {
-            throw ApiException.notFound("This quotation is being updated; ask us for a new link");
+        Map<String, Object> q = db.row("SELECT status, revision FROM \"SalesQuotation\" WHERE id = ? AND \"deletedAt\""
+                + " IS NULL", l.quotationId());
+        if (q == null || !SHOWN.contains(str(q.get("status"))) || ((Number) q.get("revision")).intValue() != l.revision()) {
+            throw ApiException.notFound(SUPERSEDED);
         }
     }
 
@@ -260,12 +308,13 @@ public class SalesQuoteLinkService {
             throw ApiException.notFound(NOT_FOUND);
         }
         Map<String, Object> r = TenantContext.unscoped(() -> db.jdbc().sql("SELECT id, \"organizationId\","
-                + " \"quotationId\" FROM \"SalesQuoteLink\" WHERE \"tokenHash\" = ? AND \"revokedAt\" IS NULL AND"
+                + " \"quotationId\", revision FROM \"SalesQuoteLink\" WHERE \"tokenHash\" = ? AND \"revokedAt\" IS NULL AND"
                 + " \"expiresAt\" > now()").param(sha256(token)).query().listOfRows().stream().findFirst().orElse(null));
         if (r == null) {
             throw ApiException.notFound(NOT_FOUND);
         }
-        Link l = new Link(str(r.get("id")), str(r.get("organizationId")), str(r.get("quotationId")));
+        Link l = new Link(str(r.get("id")), str(r.get("organizationId")), str(r.get("quotationId")),
+                ((Number) r.get("revision")).intValue());
         TenantContext.TenantStore store = TenantContext.TenantStore.organization(l.organizationId());
         // reads the one quotation whoever owns it or whichever branch it is in; nothing else is reachable
         store.setPermissions(List.of(Permissions.SALES__ORDER_READ_ALL, Permissions.SALES__BRANCH_OVERRIDE,

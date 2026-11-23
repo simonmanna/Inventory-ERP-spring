@@ -90,6 +90,15 @@ Automatic exchange rates (FX-8, ADR-S082) are **off by default**; no outbound ca
 A rate already on file for the day and type (for example entered by hand) is never replaced. A company policy
 that requires approved rates of that type leaves fetched rates `pending` until a second person approves them.
 
+Reverse proxy and CRM public routes (CRM production-readiness, 2026-11-22):
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SERVER_FORWARD_HEADERS_STRATEGY` | `native` | The client address and scheme come from `X-Forwarded-*` only when the connection is from a trusted proxy (Tomcat RemoteIpValve). Rate limits, the audit trail and customer quote acceptance use that address. `none` turns it off. |
+| `SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES` | Tomcat default (loopback + private ranges) | Regex of the proxies trusted for `X-Forwarded-For`. Set it when nginx is on a public address. A direct client can never spoof its address. |
+| `APP_CRM_WEB_LEAD_ORG_DAILY_LIMIT` | `1000` | Website lead-form submissions per organization per rolling 24 h (each form also has its own `dailyLimit`, default 200). Over it the form answers 429. |
+| `APP_CRM_EMAIL_OUTBOX_DELAY_MS` | `30000` | How often the CRM e-mail outbox sends due rows (ShedLock `crm-email-outbox`). Without `SMTP_HOST` a CRM e-mail is recorded as "Not sent: outgoing email is not set up" and the sender is notified; nothing is reported as sent. |
+
 Grant `beverage:approve` only to supervisors: they approve flagged counts and unweighed exceptions and cannot
 approve a count they started.
 

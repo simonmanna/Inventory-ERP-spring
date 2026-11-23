@@ -1,7 +1,5 @@
 package com.inventoryerp.crm.application;
 
-import static com.inventoryerp.crm.application.CrmDb.org;
-
 import com.inventoryerp.sales.application.QuotationOpportunityPort;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -13,12 +11,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class CrmQuotationPorts implements QuotationOpportunityPort {
 
-    private final CrmDb db;
     private final CrmPipelineService pipeline;
     private final CrmPlannerService planner;
 
-    public CrmQuotationPorts(CrmDb db, CrmPipelineService pipeline, CrmPlannerService planner) {
-        this.db = db;
+    public CrmQuotationPorts(CrmPipelineService pipeline, CrmPlannerService planner) {
         this.pipeline = pipeline;
         this.planner = planner;
     }
@@ -29,12 +25,8 @@ public class CrmQuotationPorts implements QuotationOpportunityPort {
     }
 
     @Override
-    public void markWonIfOpen(String dealId) {
-        Map<String, Object> deal = db.row("SELECT status, kind FROM \"Deal\" WHERE id = ? AND \"organizationId\" = ?"
-                + " AND \"deletedAt\" IS NULL", dealId, org());
-        if (deal != null && "open".equals(deal.get("status")) && "opportunity".equals(deal.get("kind"))) {
-            pipeline.wonByQuotation(dealId);
-        }
+    public void markWonIfOpen(String dealId, String quotationNumber) {
+        pipeline.wonByQuotation(dealId, quotationNumber);
     }
 
     @Override

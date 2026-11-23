@@ -29,6 +29,7 @@ export interface LeadForm {
   allowedOrigins: string[];
   thankYouMessage: string | null;
   isActive: boolean;
+  dailyLimit: number;
   submissions: number;
   lastSubmittedAt: string | null;
 }
@@ -39,7 +40,8 @@ const hostedUrl = (key: string) => `${window.location.origin}/forms/lead/${key}`
 
 /** Copy-paste HTML for a customer website: a plain form posting JSON to the public endpoint. */
 function embedSnippet(f: LeadForm) {
-  const url = `${apiBase()}/public/crm/forms/${f.publicKey}/submit`;
+  const formUrl = `${apiBase()}/public/crm/forms/${f.publicKey}`;
+  const url = `${formUrl}/submit`;
   return `<form id="erp-lead-form">
   <input name="name" placeholder="Your name" required>
   <input name="email" type="email" placeholder="Email">
@@ -51,9 +53,12 @@ function embedSnippet(f: LeadForm) {
   <p id="erp-lead-form-result" role="status"></p>
 </form>
 <script>
+var erpLeadToken = null;
+fetch('${formUrl}').then(function (r) { return r.json(); }).then(function (b) { erpLeadToken = b.submitToken; });
 document.getElementById('erp-lead-form').addEventListener('submit', async function (e) {
   e.preventDefault();
   var data = Object.fromEntries(new FormData(this));
+  data._t = erpLeadToken;
   data.pageUrl = location.href;
   var r = await fetch('${url}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   var body = await r.json().catch(function () { return {}; });
@@ -142,7 +147,7 @@ function LeadFormDialog({ form, lk, onClose }: { form: Partial<LeadForm>; lk: Cr
   const save = useCrmMutation(async () => {
     const body = {
       name: f.name, sourceId: f.sourceId || null, teamId: f.teamId || null, ownerId: f.ownerId || null, tagIds: f.tagIds ?? [],
-      allowedOrigins: origins.split(/[\n,]/).map((s) => s.trim()).filter(Boolean), thankYouMessage: f.thankYouMessage || null, isActive: f.isActive ?? true,
+      allowedOrigins: origins.split(/[\n,]/).map((s) => s.trim()).filter(Boolean), thankYouMessage: f.thankYouMessage || null, isActive: f.isActive ?? true, dailyLimit: f.dailyLimit ?? 200,
     };
     return f.id ? api.patch(`/crm/config/lead-forms/${f.id}`, body) : api.post('/crm/config/lead-forms', body);
   });
@@ -176,6 +181,7 @@ function LeadFormDialog({ form, lk, onClose }: { form: Partial<LeadForm>; lk: Cr
             <Textarea rows={2} value={origins} onChange={(e) => setOrigins(e.target.value)} />
           </Field>
           <Field label={tx('Thank-you message')} className="sm:col-span-2"><Input value={f.thankYouMessage ?? ''} placeholder={tx('Thank you, we will be in touch soon.')} onChange={(e) => set({ thankYouMessage: e.target.value })} /></Field>
+          <Field label={tx('Enquiries per day (limit)')}><Input type="number" min={1} max={100000} value={f.dailyLimit ?? 200} onChange={(e) => set({ dailyLimit: Number(e.target.value) })} /></Field>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.isActive ?? true} onChange={(e) => set({ isActive: e.target.checked })} />{tx('Accepting enquiries')}</label>
         </div>
         <DialogFooter>

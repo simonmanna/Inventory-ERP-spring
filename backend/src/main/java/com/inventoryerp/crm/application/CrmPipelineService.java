@@ -91,7 +91,7 @@ public class CrmPipelineService {
     // ------------------------------------------------------------------ queries
 
     /** Paginated list {@code {data, meta, totals}}. */
-    @Transactional
+    @Transactional(readOnly = true)
     public Map<String, Object> list(Map<String, String> params) {
         config.ensureDefaults();
         CrmDealQuery q = new CrmDealQuery(Filter.of(params));
@@ -113,7 +113,7 @@ public class CrmPipelineService {
     }
 
     /** Kanban: one column per active stage with count, totals, activity-state bar and the first cards. */
-    @Transactional
+    @Transactional(readOnly = true)
     public Map<String, Object> kanban(Map<String, String> params) {
         config.ensureDefaults();
         Map<String, String> p = new HashMap<>(params);
@@ -167,7 +167,7 @@ public class CrmPipelineService {
     }
 
     /** Grouped table (Odoo "group by"): {@code [{key, label, count, amount, weighted}]}. */
-    @Transactional
+    @Transactional(readOnly = true)
     public List<Map<String, Object>> grouped(String groupBy, Map<String, String> params) {
         config.ensureDefaults();
         String[] g = GROUPS.get(groupBy == null ? "stage" : groupBy);
@@ -392,9 +392,23 @@ public class CrmPipelineService {
      * Mark won from a converted quotation: the won stage's required fields are not checked, so a stage rule can never
      * block turning a quote into a sales document.
      */
+    /**
+     * Production-readiness fix P0-2 (2026-11-22): the system side effect of converting a quotation. The caller already
+     * passed the quotation's own permission and visibility checks ({@code crm:quotation:convert} or
+     * {@code sales:quotation:convert} plus the quotation access rules), so the deal is locked within the organization
+     * <em>without</em> the salesperson visibility rule. Otherwise a converter who may not see the deal (no
+     * {@code crm:deal:view_all}, not the owner) got "Opportunity not found" and the whole sales order rolled back. It
+     * is not a general bypass: it only marks an open opportunity won, it stays inside {@code org()}, it returns
+     * nothing about the deal, and the audit entry names the initiating user and the quotation.
+     */
     @Transactional
-    public Map<String, Object> wonByQuotation(String id) {
-        return won(id, false);
+    public void wonByQuotation(String id, String quotationNumber) {
+        Map<String, Object> deal = systemLock(id);
+        if (deal == null || !"open".equals(deal.get("status")) || !"opportunity".equals(deal.get("kind"))) {
+            return;
+        }
+        Map<String, Object> wonStage = config.wonStage();
+        markWon(deal, wonStage == null ? str(deal.get("stageId")) : str(wonStage.get("id")), quotationNumber);
     }
 
     private Map<String, Object> won(String id, boolean rules) {
@@ -410,7 +424,12 @@ public class CrmPipelineService {
     }
 
     private Map<String, Object> markWon(String id, String stageId) {
-        Map<String, Object> deal = lock(id);
+        markWon(lock(id), stageId, null);
+        return get(id);
+    }
+
+    private void markWon(Map<String, Object> deal, String stageId, String viaQuotation) {
+        String id = str(deal.get("id"));
         if ("lead".equals(deal.get("kind"))) {
             throw ApiException.badRequest("Convert the lead to an opportunity before marking it won");
         }
@@ -431,12 +450,13 @@ public class CrmPipelineService {
                 stageFollowUp(deal, st);
             }
         }
-        audit.record(AuditInput.of("Deal", id, "update", Obj.of("status", deal.get("status")), Obj.of("status", "won")));
+        Map<String, Object> after = viaQuotation == null ? Obj.of("status", "won") : Obj.of("status", "won",
+                "via", "quotation_conversion", "quotation", viaQuotation);
+        audit.record(AuditInput.of("Deal", id, "update", Obj.of("status", deal.get("status")), after));
         events.publishOnCommit(DomainEvents.CRM_DEAL_WON, Obj.of("organizationId", org(), "dealId", id, "amount",
                 deal.get("amount")));
         events.publishOnCommit("crm.deal.stage_changed", Obj.of("organizationId", org(), "dealId", id, "fromStage",
                 deal.get("stage"), "toStage", "won", "toStageId", stageId));
-        return get(id);
     }
 
     /** Mark lost with an optional reason and note. */
@@ -701,6 +721,11 @@ public class CrmPipelineService {
 
     Map<String, Object> lock(String id) {
         visible(id);
+        return systemLock(id);
+    }
+
+    /** The deal row locked for update within the organization, without the salesperson visibility rule; or null. */
+    private Map<String, Object> systemLock(String id) {
         return db.row("SELECT *, stage::text AS stage FROM \"Deal\" WHERE id = ? AND \"organizationId\" = ? AND"
                 + " \"deletedAt\" IS NULL FOR UPDATE", id, org());
     }
@@ -770,7 +795,7 @@ public class CrmPipelineService {
             d.put("tagIds", tags);
         }
         if (in.containsKey("amount")) {
-            BigDecimal a = dec(in.get("amount"));
+            BigDecimal a = dec(in.get("amount"), "amount");
             if (a.signum() < 0) {
                 throw ApiException.badRequest("amount must not be less than 0");
             }
@@ -781,14 +806,15 @@ public class CrmPipelineService {
         }
         if (in.containsKey("probability")) {
             Object p = in.get("probability");
-            BigDecimal v = p == null ? null : dec(p);
+            BigDecimal v = p == null ? null : dec(p, "probability");
             if (v != null && (v.signum() < 0 || v.compareTo(BigDecimal.valueOf(100)) > 0)) {
                 throw ApiException.badRequest("probability must be between 0 and 100");
             }
             d.put("probability", v);
         }
         if (in.containsKey("priority")) {
-            int pr = in.get("priority") == null ? 0 : ((Number) in.get("priority")).intValue();
+            Integer prio = CrmDb.intOf(in.get("priority"), "priority");
+            int pr = prio == null ? 0 : prio;
             if (pr < 0 || pr > 3) {
                 throw ApiException.badRequest("priority must be between 0 and 3");
             }

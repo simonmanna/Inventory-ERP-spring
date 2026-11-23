@@ -9,7 +9,6 @@ import static com.inventoryerp.crm.application.CrmDb.user;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
-import com.inventoryerp.kernel.notifications.NotificationsService;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.text.DecimalFormat;
@@ -20,11 +19,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * CRM email templates and sending an email from a lead or opportunity (CRM enhancements T3b). Templates use
  * {@code {{placeholders}}} ({@link #PLACEHOLDERS}); the rendered text is shown to the salesperson, who may edit it
- * before it is sent. A sent email is logged as a done email activity on the record.
+ * before it is sent. Each email is logged as a done email activity on the record whose outcome says whether it was
+ * really sent ({@link CrmEmailOutbox}).
  */
 @Service
 public class CrmEmailService {
@@ -37,15 +39,14 @@ public class CrmEmailService {
 
     private final CrmDb db;
     private final CrmPipelineService pipeline;
-    private final NotificationsService notifications;
     private final AuditService audit;
+    private final CrmEmailOutbox outbox;
 
-    public CrmEmailService(CrmDb db, CrmPipelineService pipeline, NotificationsService notifications,
-            AuditService audit) {
+    public CrmEmailService(CrmDb db, CrmPipelineService pipeline, AuditService audit, CrmEmailOutbox outbox) {
         this.db = db;
         this.pipeline = pipeline;
-        this.notifications = notifications;
         this.audit = audit;
+        this.outbox = outbox;
     }
 
     // ------------------------------------------------------------------ templates
@@ -136,7 +137,15 @@ public class CrmEmailService {
         return Obj.of("to", deal.get("email"), "subject", subject, "body", body);
     }
 
-    /** Send {@code subject}/{@code body} to {@code to} and log it on the record (placeholders still in it are filled). */
+    /**
+     * Send {@code subject}/{@code body} to {@code to} and log it on the record (placeholders still in it are filled).
+     *
+     * <p>Production-readiness fix P0-6: the request writes the email activity and a {@link CrmEmailOutbox} row in one
+     * transaction and nothing else. After the commit the outbox sends it once straight away and the answer reports what
+     * really happened: {@code status} {@code sent}, {@code retrying} (a transport error; the outbox retries with
+     * backoff), {@code failed} or {@code not_configured} (no outgoing mail on the server), with {@code delivered}
+     * true only for {@code sent}. The activity's outcome follows the same states. A rolled-back request sends nothing.
+     */
     @Transactional
     public Map<String, Object> send(String dealId, Map<String, Object> in) {
         Map<String, Object> deal = pipeline.visible(dealId);
@@ -150,14 +159,37 @@ public class CrmEmailService {
         Map<String, String> values = values(deal);
         String subject = render(str(d.get("subject")), values);
         String body = render(str(d.get("body")), values);
-        boolean delivered = notifications.sendExternalEmail(to.trim(), subject, body, null);
-        db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, body, \"dealId\", \"partnerId\", status,"
-                + " completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\") VALUES (?, ?,"
-                + " 'email'::\"ActivityType\", ?, ?, ?, ?, 'done'::\"TaskStatus\", true, " + NOW + ", ?, ?, " + NOW + ", "
-                + NOW + ")", CrmDb.newId(), org(), "Email: " + subject, (delivered ? "Sent to " : "Queued for ") + to.trim()
-                        + "\n\n" + body, dealId, deal.get("partnerId"), user(), user());
+        String activityId = CrmDb.newId();
+        db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, body, outcome, \"dealId\", \"partnerId\","
+                + " status, completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\")"
+                + " VALUES (?, ?, 'email'::\"ActivityType\", ?, ?, 'Sending', ?, ?, 'done'::\"TaskStatus\", true, " + NOW
+                + ", ?, ?, " + NOW + ", " + NOW + ")", activityId, org(), "Email: " + subject, "To " + to.trim() + "\n\n"
+                        + body, dealId, deal.get("partnerId"), user(), user());
+        String outboxId = CrmDb.newId();
+        db.update("INSERT INTO \"CrmEmailOutbox\" (id, \"organizationId\", \"activityId\", \"dealId\", \"toAddress\","
+                + " subject, body, \"createdById\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)", outboxId, org(), activityId, dealId,
+                to.trim(), subject, body, user());
         db.update("UPDATE \"Deal\" SET \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", dealId, org());
-        return Obj.of("sentTo", to.trim(), "delivered", delivered);
+        audit.record(AuditInput.of("Activity", activityId, "create", null, Obj.of("type", "email", "dealId", dealId,
+                "to", to.trim())));
+        Map<String, Object> out = new LinkedHashMap<>(Obj.of("sentTo", to.trim(), "delivered", false, "status",
+                "queued", "activityId", activityId));
+        // After the commit (still before this call returns): one immediate attempt, reported in the answer.
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                CrmEmailOutbox.Result r = outbox.deliver(outboxId);
+                out.put("status", switch (r) {
+                    case SENT -> "sent";
+                    case RETRY -> "retrying";
+                    case NOT_CONFIGURED -> "not_configured";
+                    case FAILED -> "failed";
+                    case SKIPPED -> "queued";
+                });
+                out.put("delivered", r == CrmEmailOutbox.Result.SENT);
+            }
+        });
+        return out;
     }
 
     private Map<String, String> values(Map<String, Object> deal) {

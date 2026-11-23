@@ -6,6 +6,11 @@ server:
   compression:
     enabled: true
   shutdown: graceful
+  # Behind the reverse proxy (nginx): the client address and scheme come from X-Forwarded-* only when the connection
+  # comes from a trusted proxy (Tomcat RemoteIpValve; trusted = loopback and private ranges by default, override with
+  # SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES). A direct client cannot spoof it. Rate limits, the audit trail and customer
+  # quote acceptance use this address (CRM production-readiness fix P0-5).
+  forward-headers-strategy: ${SERVER_FORWARD_HEADERS_STRATEGY:native}
   tomcat:
     max-swallow-size: 2MB
 
