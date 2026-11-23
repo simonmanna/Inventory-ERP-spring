@@ -24,7 +24,7 @@ batch order from the plan's batch sections; map them back to the review text bef
 | P1-1 | Returns and reversals (cash-sale void, invoice cancel, credit-note restock, sales return, production `returnMaterials`, debit-note reversal) rebuild lot, expiry and serial identity from the product's current config: new auto-numbered lots, serials left `issued` | R1 | fixed (R1) | `InventoryReturnsIdentityIT`, `CashSaleIT` |
 | P1-2 | Credit note on a cash-sale or fleet invoice finds no issue rows and falls back to a default location and today's cost | R1 | fixed (R1) | `InventoryReturnsIdentityIT` |
 | P1-3 | Offline refund / void runs before the invoice's pending stock jobs are drained | R1 | fixed (R1) | `SyncInventoryRecoveryIT` |
-| P1-4 | Stock reversal does not re-check the user's branch scope inside the moving transaction | R2 | open | — |
+| P1-4 | Stock reversal does not re-check the user's branch scope inside the moving transaction | R2 | fixed (R2) | `InventoryBranchScopeIT` |
 | P1-5 | Transfer approve / dispatch / recall / cancel / receive do not re-check source or destination scope after the transfer lock | R2 | fixed (R2) | `InventoryBranchScopeIT` |
 | P1-6 | Reservations: reserve, release, consume, list and overview not scope-checked or filtered; list unbounded | R2 | fixed (R2) | `InventoryBranchScopeIT` |
 | P1-7 | Locations can be removed, deactivated, retyped or moved to another branch while they hold stock or live documents; manufacturing and rental insert locations directly | R2 | fixed (R2) | `InventoryBranchScopeIT` |
