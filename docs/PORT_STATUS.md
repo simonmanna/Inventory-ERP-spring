@@ -2032,6 +2032,14 @@ Not verified yet: the tours driven by hand in a browser.
 
 - [x] Returns restore lot / expiry / serial / location / cost via `returnFromSource`; `InventoryLedger.reversesLedgerId` (V611); rental fee lines never move stock; credit note refuses without issue rows; offline refund drains or holds; offline receipt exactly once (`InventoryReturnsIdentityIT`, `SyncInventoryRecoveryIT`)
 
+## Inventory hardening R5b (engine hardening, gates G3 / G4; owner-approved 2026-11-23)
+
+- [x] Engine lock order (count submit, reservations, landed cost, reversals), approval gates before locks, transfer and
+  production reversals pin their own lots / serials, count lots by id, serial insert race → 400, serial / STANDARD
+  transfer values, AVCO residue sweep at zero, rental variant + serial, ledger detail audit fields, cost fields behind
+  `inventory_valuation:read` ([spec deviations 44–53](spec/inventory.md#deviations), recovery runbook
+  [OPERATIONS 8a](OPERATIONS.md)) — `InventoryEngineHardeningIT`; no migration
+
 ## Inventory hardening R3 (financial integrity, gate G2; owner-approved 2026-11-23)
 
 - [x] STANDARD without a standard receives at `costPrice` with PPV; STANDARD returns at the standard with PPV (COGS at original cost); serial + STANDARD refused; product key on stock journal lines and the `valuation_vs_gl_by_product` integrity check from the V613 cutover (`StandardCostingIntegrityIT`, `InventoryIntegrityIT`); supplier claims, debit notes, lineage-exception voucher releases and branch transfers stamp their stock lines too

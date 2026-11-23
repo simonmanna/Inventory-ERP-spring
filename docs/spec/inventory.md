@@ -392,6 +392,54 @@ Approved by the owner — hardening R5a, 2026-11-23 ([review](../audits/2026-11-
     (a central store feeding branches classifies by its own issues). `createWave` locks its orders in id order.
 43. **Index (V615)** `StockTransferItem(organizationId, productId)` for the incoming-transfer supply of replenishment.
 
+Approved by the owner — owner-approved hardening R5b 2026-11-23 ([review](../audits/2026-11-22-inventory-review.md),
+P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same gaps. Test:
+`InventoryEngineHardeningIT`.
+
+44. **Engine lock order everywhere.** Every path that locks quants takes the costing locks first (organisation key
+    shared, product key shared, products sorted), then the per-quant advisory locks, then the `StockItem` rows, cells
+    sorted by (product, variant, location): count submit (`StockService.lockQuants`), landed-cost and lineage layer
+    writers (`LayerCostWriter.lockQuants`, `LineageFollower.raiseAverage`, `CostingLocks.shareProduct`), transfer and
+    transit reversals (`StockService.lockCells` over the received cells, the losses and the source; the transit
+    reversal used to lock the destination before the losses). Reservations (`StockReservationService.reserve` /
+    `lockCell`, `SalesAtpService`) take the quant's advisory lock before its row; multi-line reservations (sales
+    orders, POS invoices, processing-job inputs) run in that sorted order.
+45. **Approval gates before locks.** Count submit measures the variance without locks, runs the approval gate (its
+    own transaction), then locks and measures again. When the locked variance differs and the gate could judge it
+    differently (it grew past an approval granted for less, or a workflow would now apply), the submit is refused with
+    409 `Stock moved while the count was being submitted; submit it again.`; otherwise the locked variance posts.
+    Adjustment, stock-out, waste and transfer approvals, revaluation, lineage write-off and warehouse manual ship
+    already gate before any quant lock (they hold only their own document row while the gate runs); kept as is.
+46. **Reversals and production bring back their own lots and serials.** A transfer reversal issues, at the
+    destination, the lots and serials the transfer delivered there (recorded in `StockTransferLayer` from R5b on for
+    immediate and transit receipts; transfers received before R5b fall back to oldest-first). A production reversal
+    issues the produced lot (the `production_output` ledger lots, else the lots with the produced batch numbers). Both
+    prefer these lots and fall back to the normal order for any remainder (`StockMove.prefer`).
+47. **Count lot lines post by lot id.** A count line of one lot adjusts that lot row (loss and gain), even when two lots
+    share a batch number; the "no lot" line of a lot-tracked product keeps the engine's normal order.
+48. **Serial receipt race.** A new serial is inserted with `ON CONFLICT DO NOTHING`; when another receipt won, the
+    receipt is refused with 400 `Serial <number> is already in stock at <location>` (or `Serial number(s) already exist
+    for this product: <number> (<status>)` when it is not in stock) instead of a 500. Returns and reinstated serials
+    keep their update path.
+49. **Transfer values.** A serial transfer is valued at the moved serials' own costs (plus the average for any
+    unserialised part), not at the source average. A STANDARD quant's average is the governing standard on receipt
+    (PPV takes the difference) and a transfer of a non-lot STANDARD product moves at that standard.
+50. **AVCO residue at zero.** When a non-lot, non-serial AVCO quant reaches zero through an issue, a non-layer
+    adjustment or a transfer, a rounding residue of the quant's ledger value below 1.00 is cleared in the same
+    transaction: a value-only `cost_adjustment` row (quantity 0, notes `AVCO rounding residue at zero stock (…)`) and
+    its journal (Dr COGS / Cr stock or the reverse, cost-correction posting key, not mirrored by reversals). Only when
+    the move posts GL; a residue of 1.00 or more is left for the integrity report.
+51. **Rental units move their variant and serial.** Rental checkout, return, swap and cleaning transfers carry the
+    rental unit's `variantId` and prefer its `inventorySerialId`.
+52. **Ledger detail audit trail (additive JSON).** `GET /inventory/ledger/:id` entries and lines add `reverses`
+    (`{id, ledgerCode}` of the row named by `reversesLedgerId`, else `null`), `performedByName`, `responsibleByName`,
+    `approvedByName` and `recordedOffline` (from the source transfer, adjustment or goods receipt; `false` otherwise).
+53. **More cost fields need `inventory_valuation:read`.** Without it `GET /inventory/ledger` and `/inventory/ledger/:id`
+    answer `unitCost` / `totalValue` (and the detail's `totals.totalValue`) as `null`;
+    `GET /inventory/reports/item-movements` answers `valueIn`, `valueOut`, `valueAdjusted`, `avgCost`, `closingValue`
+    and the same totals as `null`; `GET /inventory/reports/movements` answers `netValue` and `byType.*.value` as
+    `null`. Quantities stay. The movement report, ledger and movement-detail screens show a dash.
+
 ### Negative stock policy (as built; R5a evidence for gate G3)
 
 - `inventory.allowNegativeStock` (`SettingRegistry`) defaults to **on**: every issue may take a quant below zero

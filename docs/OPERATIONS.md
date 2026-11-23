@@ -294,3 +294,44 @@ WAL archiving and PITR are infrastructure tasks for the hosting environment. The
 | A branch server's `pendingHqPosting` keeps growing | HQ unreachable or refusing the branch token: `GET /sync/branch/status` → `lastError`. Fix the WAN / URL; a 401 means the branch device was revoked at HQ — register a new branch device and update `ERP_SYNC_BRANCH_TOKEN`. Tills keep selling meanwhile; nothing is lost |
 | A dead letter with code `ORIGIN_NOT_ALLOWED` | A branch server relayed an op that names no till of its own branch (a till moved to another branch, or a misconfigured branch). Nothing was applied; move the till back or re-enter the sale at the right branch |
 | A branch till cannot close its shift: "rejected sync operation(s) involving money" | A money op of that shift was rejected at HQ. Resolve or discard its dead letter at HQ; the branch learns it within one relay cycle and the close goes through. At HQ, any open money rejection from that branch blocks closing that branch's shifts (ADR-S083 O7 deviation 5) |
+
+### 8a. Inventory recovery runbook (hardening R5b, gate G4)
+
+Nothing below corrects data by itself. Every fix goes through a document (reversal, adjustment, count, transfer) or
+an owner-approved repair plan.
+
+**Read the integrity report first.** `GET /api/v1/inventory/reports/integrity` (`inventory_valuation:read`;
+`?locationId=` narrows the per-location checks) answers `{checkedAt, locationId, ok, rowLimit, checks[]}`. Each check
+has `key`, `ok`, `skipped` (a check that cannot run, e.g. the GL tie-out while `inventory.glTieOut.enabled` is off),
+the failure count and up to `rowLimit` (5,000) failing rows. Checks:
+
+| key | Fails when | Usual cause, first step |
+|---|---|---|
+| `ledger_vs_quant` | Σ ledger quantity ≠ `StockItem.quantity` per cell | a write outside the engine; compare the cell's ledger with its quant, find the first divergent row |
+| `quant_vs_lots` | Σ open lots ≠ quant of a lot-tracked cell | lot written outside the engine or a legacy import; count the cell per lot |
+| `quant_vs_serials` / `serial_state` | in-stock serials exceed the quantity, or a serial's status / location disagrees with its last movement | reconcile with a per-serial count; never edit `InventorySerial` by hand |
+| `valuation_vs_subledger` | Σ signed ledger value ≠ quantity × average per product (0.01 tolerance) | an AVCO residue of 1.00 or more, or a value written outside the engine; find the product's value-only rows |
+| `valuation_vs_gl`, `valuation_vs_gl_by_product` | stock control accounts ≠ stock value (per product from the V613 cutover) | a manual journal on a stock account, or a posting that failed; read the account's journals for the period |
+| `transit` | open transfer quantities ≠ the transit location | a transfer received or recalled outside the engine; open the transfers listed |
+| `reservations` | reservations exceed on-hand + incoming (`over_reserved`) or point at a closed source | release or consume the stale reservation on the reservation screen |
+| `offline_queue` | offline stock work waiting too long or held | see the offline section below |
+
+The daily monitor (03:10 UTC, `InventoryIntegrityJob`) raises one Posting Monitor exception `integrity_<key>` per
+failing check with the count and first rows. Only `integrity_valuation_vs_subledger` and `integrity_valuation_vs_gl`
+hold the period close. Resolve the exception after the fix; the next run raises it again if the check still fails.
+
+**Held postings (`offline_held_posting`).** A transfer dispatch, adjustment or receipt recorded on a device that the
+server kept but could not post (for example not enough stock at the source, or the user may not post it). Inventory →
+Offline stock discrepancies (`GET /sync/stock-discrepancies?kind=offline_held_posting`) lists them. Complete or reverse
+the document in the back office, then resolve the exception in the Posting Monitor
+(`POST /pos/posting-monitor/exceptions/{id}/resolve`). The ledger detail shows such movements with
+`recordedOffline: true`.
+
+**Other `offline_*` exceptions.** `offline_negative_stock`: an offline issue took a quant below zero (allowed by the
+policy); count or receive the item, then resolve. `offline_awaiting_dispatch`: a receipt synced before its dispatch;
+`SyncStockJob` applies it within about two minutes of the dispatch arriving, so act only if it stays open (find the
+sending device and sync it). `offline_cap`: an offline sales order over the cap; release or cancel it in Sales.
+
+**Data checks for history.** `docs/audits/2026-11-22-inventory-data-checks.sql` holds read-only queries that look for
+damage written before the hardening (see the comment above each query). They contain no `UPDATE` / `DELETE`, but running them on a live database still needs the owner's approval
+each time (load, and the results are business data). Any repair they suggest needs its own owner-approved plan.
