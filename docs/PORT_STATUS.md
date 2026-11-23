@@ -2048,3 +2048,7 @@ Not verified yet: the tours driven by hand in a browser.
   request limits, bounded document lists, keys on approve / dispatch / ship, warehouse move holds / disabled-settings
   finishing / reconcile stale moves / read-only ABC, repair part variant + engine cost + `POST /repair/parts/:id/return`
   — `InventoryReportsHardeningIT`, `WarehouseHardeningIT`, `NegativeStockPolicyIT`, `RepairIT`
+
+## Inventory hardening R4 (workflow integrity, gate G1; owner-approved 2026-11-23)
+
+- [x] Order-level timings deprecated (stored values keep working, with a warning); one POS job per sale (`sale:<orderId>`); order cancel abandons / waits / returns at original cost and lot; voided fired line issued once; pick orders net source reversals and block reversing a live source (`OrderCancelStockIT`, `WarehouseIT.pickOrderAndDocumentReversal`, `SyncInventoryReplayIT` 7)

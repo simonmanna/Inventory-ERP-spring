@@ -19,10 +19,14 @@ public final class SettingRegistry {
     private static final List<String> ALL_LEVELS = List.of("organization", "warehouse", "category", "product");
     private static final List<String> ORG_ONLY = List.of("organization");
 
-    /** One registered setting. */
+    /**
+     * One registered setting. {@code unavailableEnumValues}: values that can neither be set nor read (a stored one
+     * reads as the default). {@code deprecatedEnumValues} (hardening R4): values that can no longer be set, but a value
+     * already stored keeps working; the reason is the warning shown with the effective setting.
+     */
     public record Definition(String key, String group, String type, String label, String description, Object defaultValue,
             List<String> enumValues, Map<String, String> unavailableEnumValues, boolean cascades, List<String> scopeLevels,
-            boolean deprecated) {}
+            boolean deprecated, Map<String, String> deprecatedEnumValues) {}
 
     private static final Map<String, Definition> DEFINITIONS = new LinkedHashMap<>();
 
@@ -31,12 +35,12 @@ public final class SettingRegistry {
     private static void def(String key, String group, String type, String label, String description, Object dflt,
             List<String> enumValues, boolean cascades, List<String> levels) {
         DEFINITIONS.put(key, new Definition(key, group, type, label, description, dflt, enumValues, Map.of(), cascades,
-                levels, false));
+                levels, false, Map.of()));
     }
 
     private static void deprecated(String key, String label, String description) {
         DEFINITIONS.put(key, new Definition(key, "accounting", "string", label, description, "", null, Map.of(), false,
-                ORG_ONLY, true));
+                ORG_ONLY, true, Map.of()));
     }
 
     static {
@@ -139,14 +143,24 @@ public final class SettingRegistry {
         def("inventory.reservationMode", "inventory", "enum", "Stock Reservation",
                 "Reserve stock (available-to-promise) when a sales order or invoice is raised. Released on cancel/void.",
                 "none", List.of("none", "order", "invoice"), false, ORG_ONLY);
+        // Hardening R4 (owner-approved 2026-11-23): the order-level timings issue stock before the sale is billed, and
+        // an order can still change or be cancelled after that. They can no longer be chosen; organizations already on
+        // one keep it (an order cancel returns what it issued, a voided line is not issued twice) and see the warning.
+        String orderTimed = "deprecated: stock deducted before the bill is final drifts when the order changes"
+                + " (lines added after the deduction are not deducted; merged or split orders keep the original"
+                + " deduction). Cancels and voids are reversed. Switch to at invoice or at payment.";
         DEFINITIONS.put("inventory.stockPostingTiming", new Definition("inventory.stockPostingTiming", "inventory", "enum",
                 "Stock Deduction Timing",
-                "When stock is deducted for a sale: at invoice (default), when fulfillment completes (e.g. all kitchen tickets served / goods dispatched), at payment, or manually. \"At fulfillment start\" is not yet available.",
+                "When stock is deducted for a sale: at invoice (default), at payment, or manually. \"At confirmation\""
+                        + " and \"at fulfillment complete\" are deprecated (organizations already using them keep"
+                        + " working, with a warning); \"at fulfillment start\" is not available.",
                 "at_invoice",
                 List.of("at_confirmation", "at_fulfillment_start", "at_fulfillment_complete", "at_invoice", "at_payment", "manual"),
                 Map.of("at_fulfillment_start",
                         "deducting at fulfillment start has no reversal path for an order cancelled before it is invoiced; enable once cancel-before-invoice stock reversal exists"),
-                false, ORG_ONLY, false));
+                false, ORG_ONLY, false,
+                Map.of("at_confirmation", "At confirmation is " + orderTimed,
+                        "at_fulfillment_complete", "At fulfillment complete is " + orderTimed)));
         def("inventory.batchAutoNumber", "inventory", "bool", "Auto-generate Batch Numbers",
                 "When a batch-tracked receipt omits a batch number, generate one from the format below.",
                 false, null, false, ORG_ONLY);
@@ -261,6 +275,23 @@ public final class SettingRegistry {
 
     /** Validate + normalise a raw value; throws {@link IllegalArgumentException} with the Nest message. */
     public static Object coerce(Definition def, Object raw) {
+        return coerce(def, raw, false);
+    }
+
+    /**
+     * Read a stored value: as {@link #coerce(Definition, Object)}, except that a deprecated enum value already stored
+     * keeps its meaning (hardening R4).
+     */
+    public static Object coerceStored(Definition def, Object raw) {
+        return coerce(def, raw, true);
+    }
+
+    /** The deprecation warning of an effective value, or null. */
+    public static String deprecationWarning(Definition def, Object value) {
+        return value instanceof String s ? def.deprecatedEnumValues().get(s) : null;
+    }
+
+    private static Object coerce(Definition def, Object raw, boolean stored) {
         switch (def.type()) {
             case "bool" -> {
                 if (raw instanceof Boolean b) {
@@ -291,6 +322,11 @@ public final class SettingRegistry {
                 if (unavailable != null) {
                     throw new IllegalArgumentException("Setting '" + def.key() + "' value '" + s
                             + "' is not available yet: " + unavailable);
+                }
+                String deprecatedValue = def.deprecatedEnumValues().get(s);
+                if (deprecatedValue != null && !stored) {
+                    throw new IllegalArgumentException("Setting '" + def.key() + "' value '" + s
+                            + "' can no longer be selected: " + deprecatedValue);
                 }
                 return s;
             }

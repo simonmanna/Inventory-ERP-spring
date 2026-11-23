@@ -111,6 +111,16 @@ class KernelUnitTest {
         var timing = SettingRegistry.get("inventory.stockPostingTiming");
         assertThatThrownBy(() -> SettingRegistry.coerce(timing, "at_fulfillment_start"))
                 .hasMessageStartingWith("Setting 'inventory.stockPostingTiming' value 'at_fulfillment_start' is not available yet:");
+        // R4: the order-level timings can no longer be set, but a stored one still reads as itself, with a warning.
+        assertThatThrownBy(() -> SettingRegistry.coerce(timing, "at_confirmation"))
+                .hasMessageStartingWith("Setting 'inventory.stockPostingTiming' value 'at_confirmation' can no longer be"
+                        + " selected:");
+        assertThat(SettingRegistry.coerceStored(timing, "at_fulfillment_complete")).isEqualTo("at_fulfillment_complete");
+        assertThat(SettingRegistry.deprecationWarning(timing, "at_confirmation")).startsWith("At confirmation is deprecated");
+        assertThat(SettingRegistry.deprecationWarning(timing, "at_invoice")).isNull();
+        assertThatThrownBy(() -> SettingRegistry.coerceStored(timing, "at_fulfillment_start"))
+                .hasMessageStartingWith("Setting 'inventory.stockPostingTiming' value 'at_fulfillment_start' is not"
+                        + " available yet:");
         assertThat(SettingRegistry.coerce(SettingRegistry.get("inventory.allowNegativeStock"), "false")).isEqualTo(false);
         assertThat(SettingRegistry.coerce(SettingRegistry.get("accounting.fiscalYearStartMonth"), "4")).isEqualTo(4L);
         assertThatThrownBy(() -> SettingRegistry.assertScopeAllowed(SettingRegistry.get("inventory.reservationMode"), "product"))

@@ -25,14 +25,15 @@ batch order from the plan's batch sections; map them back to the review text bef
 | P1-2 | Credit note on a cash-sale or fleet invoice finds no issue rows and falls back to a default location and today's cost | R1 | fixed (R1) | `InventoryReturnsIdentityIT` |
 | P1-3 | Offline refund / void runs before the invoice's pending stock jobs are drained | R1 | fixed (R1) | `SyncInventoryRecoveryIT` |
 | P1-4 | Stock reversal does not re-check the user's branch scope inside the moving transaction | R2 | open | — |
-| P1-5 | Transfer approve / dispatch / recall / cancel / receive do not re-check source or destination scope after the transfer lock | R2 | fixed on fix/inventory-r2 (separate branch) | see that branch |
-| P1-6 | Reservations: reserve, release, consume, list and overview not scope-checked or filtered; list unbounded | R2 | fixed on fix/inventory-r2 (separate branch) | see that branch |
-| P1-7 | Locations can be removed, deactivated, retyped or moved to another branch while they hold stock or live documents; manufacturing and rental insert locations directly | R2 | fixed on fix/inventory-r2 (separate branch) | see that branch |
+| P1-5 | Transfer approve / dispatch / recall / cancel / receive do not re-check source or destination scope after the transfer lock | R2 | fixed (R2) | `InventoryBranchScopeIT` |
+| P1-6 | Reservations: reserve, release, consume, list and overview not scope-checked or filtered; list unbounded | R2 | fixed (R2) | `InventoryBranchScopeIT` |
+| P1-7 | Locations can be removed, deactivated, retyped or moved to another branch while they hold stock or live documents; manufacturing and rental insert locations directly | R2 | fixed (R2) | `InventoryBranchScopeIT` |
 | P1-8 | STANDARD receipt with no active standard enters at actual cost without PPV | R3 | fixed (R3) | `StandardCostingIntegrityIT` |
 | P1-9 | STANDARD returns not received at the standard; serial-tracked products accepted as STANDARD | R3 | fixed (R3) | `StandardCostingIntegrityIT` |
 | P1-10 | Stock journals carry no product dimension: no product-level GL reconciliation | R3 | fixed (R3; per-product GL from the V613 cutover) | `StandardCostingIntegrityIT`, `InventoryIntegrityIT` |
-| P1-11 | Order-level stock timings (`at_confirmation`, `at_fulfillment_complete`) can double-post when the timing changes | R4 | open | — |
-| P1-12 | Order cancel does not reverse a posted `pos_order` issue (or partial / returned states) | R4 | open | — |
+| P1-11 | Order-level stock timings (`at_confirmation`, `at_fulfillment_complete`) can double-post when the timing changes | R4 | fixed (timings deprecated, one job per sale `sale:<orderId>`, old keys honoured) | `OrderCancelStockIT.oneJobPerSale`, `.orderTimingsDeprecated`, `KernelUnitTest` |
+| P1-12 | Order cancel does not reverse a posted `pos_order` issue (or partial / returned states) | R4 | fixed (cancel table in pos.md; voided fired line issued once) | `OrderCancelStockIT` (pending, processing, posted, partially posted, partially returned, kitchen void, reopen, worker) |
+| R4-a | Pick orders ignore reversals / returns of their source document; a document with a live pick order can be reversed | R4 | fixed | `WarehouseIT.pickOrderAndDocumentReversal` |
 | P1-13 | Offline transfer receipt waiting for its dispatch is not crash-safe and can be applied twice | R1 | fixed (R1) | `SyncInventoryRecoveryIT` |
 | P2-1 | Lock order: count submit, reservations per-quant lock, `createWave` id order, approval gates before locks | R5 | partly fixed (R5a: `createWave` locks in id order; count submit / reservation lock order and approval gates stay with the rest of R5) | code review (lock order; no IT) |
 | P2-2 | Transfer reversals do not pin ledger lots; count lines by lot number; serial insert without conflict check; production reversal does not issue the produced lot | R5 | open | — |
