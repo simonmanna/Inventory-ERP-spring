@@ -296,7 +296,8 @@ public class CrmPlannerService {
 
     /**
      * One in-app digest per person with overdue planned activities (due before today, business zone) in the current
-     * organization (called per organization by {@link CrmActivityDigestJob}).
+     * organization (called per organization by {@link CrmActivityDigestJob}). At most one per person per business day
+     * ({@code CrmDigestLog}, written in the same transaction as the notification).
      */
     @Transactional
     public int sendOverdueDigest() {
@@ -308,8 +309,14 @@ public class CrmPlannerService {
                 + " a.type::text NOT IN ('deal_stage_change', 'note') AND COALESCE(a.\"assignedToId\","
                 + " a.\"createdById\") IS NOT NULL GROUP BY 1", org(), SqlRows.ts(start));
         int sent = 0;
+        LocalDate today = LocalDate.now(zone);
         for (Map<String, Object> r : people) {
             long n = ((Number) r.get("n")).longValue();
+            // production-readiness P1: one digest per person per business day, whatever reruns or a second node do
+            if (db.update("INSERT INTO \"CrmDigestLog\" (\"organizationId\", \"userId\", day) VALUES (?, ?, ?) ON CONFLICT"
+                    + " DO NOTHING", org(), str(r.get("userId")), today) == 0) {
+                continue;
+            }
             try {
                 notifications.send(new SendInput(org(), str(r.get("userId")), "in_app", "crm", n == 1
                         ? "1 overdue activity" : n + " overdue activities", "The oldest was due "

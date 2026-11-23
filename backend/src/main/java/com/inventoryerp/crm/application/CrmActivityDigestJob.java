@@ -29,7 +29,7 @@ public class CrmActivityDigestJob {
     }
 
     @Scheduled(cron = "0 0 7 * * *", zone = "${app.timezone:UTC}")
-    @SchedulerLock(name = "crm-activity-overdue-digest", lockAtMostFor = "PT30M")
+    @SchedulerLock(name = "crm-activity-overdue-digest", lockAtMostFor = "PT30M", lockAtLeastFor = "PT5M")
     public void daily() {
         List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"Activity\" WHERE \"dueAt\" < now() AT"
                 + " TIME ZONE 'UTC' AND status::text IN ('todo', 'in_progress') AND \"deletedAt\" IS NULL")

@@ -112,6 +112,8 @@ class CrmEnhancementsIT extends ApiTestSupport {
         String twoDaysAgo = Instant.now().minus(2, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS).toString();
         ok(201, "POST", "/crm/activities", Map.of("type", "call", "title", "Chase deposit " + sfx, "dueAt",
                 twoDaysAgo));
+        // the digest goes out once per person per day (CrmDigestLog); forget today's so this test can rerun
+        jdbc.sql("DELETE FROM \"CrmDigestLog\" WHERE \"userId\" = ?").param(adminId).update();
         long before = jdbc.sql("SELECT count(*) FROM \"Notification\" WHERE \"userId\" = ? AND payload->>'kind' ="
                 + " 'crm.activity.overdue_digest'").param(adminId).query(Long.class).single();
         int sent = TenantContext.run(TenantContext.TenantStore.organization(demoOrg), planner::sendOverdueDigest);

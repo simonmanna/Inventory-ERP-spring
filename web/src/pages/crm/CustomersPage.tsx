@@ -84,7 +84,7 @@ export function CustomersPage() {
                 <td className="px-3 py-2 text-right tabular-nums">{c.openOpportunities}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{money(c.openValue)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{money(c.wonValue)}</td>
-                <td className={cn('px-3 py-2 text-right tabular-nums', Number(c.overdueReceivables) > 0 && 'text-rose-600')}>{money(c.openReceivables)}</td>
+                <td className={cn('px-3 py-2 text-right tabular-nums', Number(c.overdueReceivables) > 0 && 'text-rose-600')}>{c.openReceivables == null ? '—' : money(c.openReceivables)}</td>
                 <td className="px-3 py-2">{c.creditHold ? <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-700"><AlertTriangle className="h-3.5 w-3.5" />{tx('Hold')}</span>
                   : Number(c.creditLimit) > 0 ? <span className="text-xs text-muted-foreground">{money(c.creditLimit)}</span> : '—'}</td>
                 <td className="px-3 py-2 text-muted-foreground">{c.lastActivityAt ? relativeTime(c.lastActivityAt) : '—'}</td>
@@ -110,7 +110,9 @@ export function CustomerDetailPage() {
   const canQuote = useAuthStore((s) => canWriteQuotes(s.hasPermission));
   const canActivity = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.activityWrite));
   const canDeposits = useAuthStore((s) => s.hasPermission(PERMISSIONS.payment.read));
-  const canMerge = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.configure));
+  // merging archives the duplicate Partner: CRM configure + partner delete (server enforces both)
+  const canMerge = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.configure) && s.hasPermission(PERMISSIONS.partner.delete));
+  const canSalesOrders = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.orderRead));
   const [dialog, setDialog] = useState<'opp' | 'activity' | 'merge' | null>(null);
   if (isLoading) return <Skeleton className="h-96 w-full" />;
   if (isError) return <ErrorState message={tx('Could not load this customer.')} onRetry={() => refetch()} />;
@@ -137,16 +139,17 @@ export function CustomerDetailPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <KpiCard label={tx('Open opportunities')} value={open.length} sub={money(open.reduce((a, o) => a + Number(o.amount), 0))} />
         <KpiCard label={tx('Won revenue')} value={money(wonValue)} tone="success" />
-        <KpiCard label={tx('Open receivables')} value={money(data.credit?.openReceivables ?? 0)} sub={Number(data.credit?.overdueReceivables ?? 0) > 0 ? `${money(data.credit?.overdueReceivables ?? 0)} ${tx('overdue')}` : undefined} tone={Number(data.credit?.overdueReceivables ?? 0) > 0 ? 'danger' : undefined} />
-        <KpiCard label={tx('Credit limit')} value={Number(data.credit?.creditLimit ?? 0) > 0 ? money(data.credit?.creditLimit ?? 0) : tx('None')} sub={data.credit?.creditHold ? tx('On credit hold') : data.credit?.headroom != null ? `${money(data.credit.headroom)} ${tx('headroom')}` : undefined} tone={data.credit?.creditHold ? 'danger' : undefined} />
+        {!data.financeHidden && <KpiCard label={tx('Open receivables')} value={money(data.credit?.openReceivables ?? 0)} sub={Number(data.credit?.overdueReceivables ?? 0) > 0 ? `${money(data.credit?.overdueReceivables ?? 0)} ${tx('overdue')}` : undefined} tone={Number(data.credit?.overdueReceivables ?? 0) > 0 ? 'danger' : undefined} />}
+        {!data.financeHidden && <KpiCard label={tx('Credit limit')} value={Number(data.credit?.creditLimit ?? 0) > 0 ? money(data.credit?.creditLimit ?? 0) : tx('None')} sub={data.credit?.creditHold ? tx('On credit hold') : data.credit?.headroom != null ? `${money(data.credit.headroom)} ${tx('headroom')}` : undefined} tone={data.credit?.creditHold ? 'danger' : undefined} />}
         <KpiCard label={tx('Special prices')} value={data.priceRules.length} sub={tx('active price rules')} />
       </div>
       <Tabs defaultValue="opps">
         <TabsList className="flex-wrap">
           <TabsTrigger value="opps">{tx('Opportunities')} ({data.opportunities.length})</TabsTrigger>
           <TabsTrigger value="quotes">{tx('Quotations')} ({data.quotations.length})</TabsTrigger>
+          {(data.salesOrders?.length ?? 0) > 0 && <TabsTrigger value="salesOrders">{tx('Sales orders')} ({data.salesOrders.length})</TabsTrigger>}
           <TabsTrigger value="orders">{tx('Orders')} ({data.orders.length})</TabsTrigger>
-          <TabsTrigger value="invoices">{tx('Invoices')} ({data.invoices.length})</TabsTrigger>
+          {!data.financeHidden && <TabsTrigger value="invoices">{tx('Invoices')} ({data.invoices.length})</TabsTrigger>}
           {canDeposits && <TabsTrigger value="deposits">{tx('Deposits')}</TabsTrigger>}
           <TabsTrigger value="contacts">{tx('Contacts')} ({p.contacts.length})</TabsTrigger>
           <TabsTrigger value="prices">{tx('Prices')}</TabsTrigger>
@@ -155,6 +158,7 @@ export function CustomerDetailPage() {
         <TabsContent value="opps"><SimpleTable rows={data.opportunities.map((o) => ({ key: o.id, link: `/crm/opportunities/${o.id}`, cells: [o.name, o.stageName ?? '', <DealStatusPill key="s" status={o.status} />, o.ownerName ?? '', money(o.amount, o.currencyCode)] }))} /></TabsContent>
         <TabsContent value="quotes"><SimpleTable rows={data.quotations.map((q) => ({ key: q.id, link: `${quoteUi()}/${q.id}`, cells: [q.number, date(q.issueDate), <QuoteStatusPill key="s" status={q.status} />, q.dealName ?? '', money(q.total, q.currencyCode)] }))} /></TabsContent>
         <TabsContent value="orders"><SimpleTable rows={data.orders.map((o) => ({ key: o.id, link: `/orders/${o.id}`, cells: [o.orderNumber, date(o.createdAt), statusLabel(o.status), o.invoiceId ? tx('Invoiced') : '', money(o.total)] }))} /></TabsContent>
+        <TabsContent value="salesOrders"><SimpleTable rows={(data.salesOrders ?? []).map((o) => ({ key: o.id, link: canSalesOrders ? `/sales/orders/${o.id}` : undefined, cells: [o.number, date(o.createdAt), statusLabel(o.status), statusLabel(o.invoiceStatus), money(o.total, o.currencyCode)] }))} /></TabsContent>
         <TabsContent value="invoices"><SimpleTable rows={data.invoices.map((d) => ({ key: d.id, link: `/invoices/${d.id}`, cells: [d.documentNumber, date(d.issueDate), statusLabel(d.documentType), statusLabel(d.paymentStatus), money(d.amountResidual) + ' / ' + money(d.totalAmount)] }))} /></TabsContent>
         {canDeposits && <TabsContent value="deposits"><CustomerDepositsList partnerId={p.id} partnerName={p.name} /></TabsContent>}
         <TabsContent value="contacts"><SimpleTable rows={p.contacts.map((c) => ({ key: c.id, cells: [[c.firstName, c.lastName].filter(Boolean).join(' ') + (c.isPrimary ? ' ★' : ''), c.position ?? '', c.email ?? '', c.phone ?? '', ''] }))} /></TabsContent>

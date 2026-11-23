@@ -179,6 +179,12 @@ public class CrmAnalyticsService {
                 + " \"partnerId\" = ? AND status = 'posted' AND \"paymentStatus\"::text IN ('not_paid', 'partial')")
                 .params(org(), partnerId).query().listOfRows().getFirst().get("total");
         Object last = completed.get("last");
+        if (!CrmReportService.canSeeFinance()) {
+            // owner decision 2026-11-22: spend and receivables need invoice:read; same keys, no figures
+            return Obj.of("totalSpent", null, "orderCount", ((Number) completed.get("n")).longValue(), "lastOrderAt",
+                    last == null ? null : ((Timestamp) last).toLocalDateTime().toInstant(ZoneOffset.UTC),
+                    "openReceivable", null);
+        }
         return Obj.of("totalSpent", JsNumbers.js(num(completed.get("total"))), "orderCount",
                 ((Number) completed.get("n")).longValue(), "lastOrderAt", last == null ? null
                         : ((Timestamp) last).toLocalDateTime().toInstant(ZoneOffset.UTC),

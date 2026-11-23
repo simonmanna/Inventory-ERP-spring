@@ -380,7 +380,7 @@ public class CrmReportService {
         String sort = switch (blank(p.get("sort")) ? "name" : p.get("sort")) {
             case "openValue" -> "\"openValue\" DESC";
             case "wonValue" -> "\"wonValue\" DESC";
-            case "receivable" -> "\"openReceivables\" DESC";
+            case "receivable" -> canSeeFinance() ? "\"openReceivables\" DESC" : "pa.name";
             case "lastActivity" -> "\"lastActivityAt\" DESC NULLS LAST";
             default -> "pa.name";
         };
@@ -406,6 +406,12 @@ public class CrmReportService {
                 + " \"deletedAt\" IS NULL) la ON true" + where + " ORDER BY " + sort + " OFFSET " + (long) (page - 1)
                 * pageSize + " LIMIT " + pageSize, rowParams);
         long total = db.count("SELECT count(*) FROM \"Partner\" pa" + where, params);
+        if (!canSeeFinance()) {
+            rows.forEach(r -> {
+                r.put("openReceivables", null);
+                r.put("overdueReceivables", null);
+            });
+        }
         return Obj.of("data", rows, "meta", Obj.of("page", page, "pageSize", pageSize, "total", total, "totalPages",
                 Math.max(1, (long) Math.ceil((double) total / pageSize))));
     }
@@ -429,15 +435,23 @@ public class CrmReportService {
                 + " a.\"dueAt\", a.\"occurredAt\", a.\"dealId\", a.outcome FROM \"Activity\" a WHERE a.\"partnerId\" = ?"
                 + " AND a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL ORDER BY a.\"occurredAt\" DESC LIMIT 30",
                 partnerId, org()));
-        out.put("invoices", db.rows("SELECT id, \"documentNumber\", \"documentType\"::text AS \"documentType\","
-                + " status::text AS status, \"issueDate\", \"dueDate\", \"totalAmount\", \"amountResidual\","
+        // Production-readiness P1 (owner decision 2026-11-22): invoices, receivables and credit need invoice:read on top
+        // of the CRM permission; without it the keys stay (empty / null) and financeHidden says why.
+        boolean finance = canSeeFinance();
+        out.put("financeHidden", !finance);
+        out.put("invoices", !finance ? List.of() : db.rows("SELECT id, \"documentNumber\", \"documentType\"::text AS"
+                + " \"documentType\", status::text AS status, \"issueDate\", \"dueDate\", \"totalAmount\", \"amountResidual\","
                 + " \"paymentStatus\"::text AS \"paymentStatus\" FROM \"Document\" WHERE \"organizationId\" = ? AND"
                 + " \"partnerId\" = ? AND \"documentType\"::text IN ('sales_invoice', 'proforma_invoice', 'credit_note')"
                 + " ORDER BY \"issueDate\" DESC LIMIT 20", org(), partnerId));
+        // B2B sales orders (production-readiness P1: the 360 showed counter orders only)
+        out.put("salesOrders", db.rows("SELECT id, number, status, \"deliveryStatus\", \"invoiceStatus\", total,"
+                + " \"currencyCode\", \"quotationId\", \"dealId\", \"createdAt\" FROM \"SalesOrder\" WHERE \"organizationId\" = ?"
+                + " AND \"partnerId\" = ? AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" DESC LIMIT 20", org(), partnerId));
         out.put("orders", db.rows("SELECT id, \"orderNumber\", status::text AS status, \"totalAmount\" AS total, \"createdAt\", \"invoiceId\""
                 + " FROM \"Order\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? ORDER BY \"createdAt\" DESC LIMIT"
                 + " 20", org(), partnerId));
-        out.put("credit", quotations.credit(partnerId, BigDecimal.ZERO));
+        out.put("credit", finance ? quotations.credit(partnerId, BigDecimal.ZERO) : null);
         out.put("priceRules", db.rows("SELECT r.*, pr.name AS \"productName\" FROM \"CrmPriceRule\" r LEFT JOIN"
                 + " \"Product\" pr ON pr.id = r.\"productId\" WHERE r.\"organizationId\" = ? AND r.\"isActive\" AND"
                 + " (r.\"partnerId\" = ? OR r.\"partnerCategoryId\" = ?) ORDER BY r.priority DESC", org(), partnerId,
@@ -446,6 +460,11 @@ public class CrmReportService {
     }
 
     // ------------------------------------------------------------------ helpers
+
+    /** Invoices, receivables and credit on CRM customer screens need {@code invoice:read} (owner decision). */
+    static boolean canSeeFinance() {
+        return com.inventoryerp.kernel.tenancy.TenantContext.has(com.inventoryerp.kernel.security.Permissions.INVOICE__READ);
+    }
 
     private String orgCurrency() {
         Map<String, Object> o = db.row("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?", org());

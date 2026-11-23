@@ -243,6 +243,13 @@ export function QuotationEditorPage() {
   });
   const action = useCrmMutation(crmApi.quoteAction);
   const convert = useCrmMutation(crmApi.convertQuote);
+  // one Idempotency-Key per quotation + choice: a retry after a lost answer replays the first conversion
+  const convertKeys = useRef(new Map<string, string>());
+  const convertKey = (target: string, backorder: boolean) => {
+    const k = `${q?.id}:${target}:${backorder}`;
+    if (!convertKeys.current.has(k)) convertKeys.current.set(k, crypto.randomUUID());
+    return convertKeys.current.get(k)!;
+  };
   const del = useCrmMutation(crmApi.deleteQuote);
 
   const doSave = (then?: (saved: Quotation) => void) => {
@@ -500,7 +507,7 @@ export function QuotationEditorPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>{tx('Cancel')}</Button>
-            <Button data-tour="sales.quote.convert-confirm" disabled={convert.isPending} onClick={() => convert.mutate({ id: q!.id, target, allowBackorder: backorder }, {
+            <Button data-tour="sales.quote.convert-confirm" disabled={convert.isPending} onClick={() => convert.mutate({ id: q!.id, target, allowBackorder: backorder, idempotencyKey: convertKey(target, backorder) }, {
               onSuccess: (r) => { toast.success(tx('Created') + ' ' + r.converted.number); setDialog(null); },
               onError: (e) => {
                 const data = (e as { response?: { status?: number; data?: { shortages?: string[] } } }).response;

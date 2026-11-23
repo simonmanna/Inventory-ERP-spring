@@ -93,6 +93,18 @@ consumes `invoice.created`.
     confirmed)" when no SMTP is set up.
   - Error bodies keep the Nest contract `{statusCode, message, error}` (docs/CONTRACT.md). A `code`/`details`
     envelope, as the external review suggested, would change every client's error handling, so it was not added.
+  - PR B (P1):
+    - Lead and opportunity rows carry `version`. A suite `PATCH`/`assign` that sends a stale `version` is 409 "This
+      record was changed by someone else; reload it and try again". Without `version` it saves as before.
+    - `POST /crm/customers/{id}/merge` also needs `partner:delete`. Rejected, expired and cancelled quotations stay
+      with the archived customer, and the preview reports them as `closedQuotationsKept`.
+    - Customer 360 (`/crm/customers/{id}`), the customers list and `GET /crm/analytics/partner/{id}` hide invoices,
+      receivables, credit and spend without `invoice:read` (owner decision): same keys, `[]`/`null`, plus
+      `financeHidden` on the 360. This applies to the legacy analytics route too.
+    - `POST /sales/quotations/{id}/convert` and `/crm/quotations/{id}/convert` require an `Idempotency-Key`
+      (400 without one).
+    - A lost lead cannot be converted (400 "Restore the lost lead before converting it"), nor converted into an
+      inactive or won stage (400 "Convert to an active, open stage; mark it won afterwards").
 
 Same as Nest, kept on purpose:
 
@@ -467,3 +479,44 @@ Tests: `CrmProdReadinessIT`, plus the cases added to `CrmLeadFormQuoteLinkIT`, `
     notification (`crm.email.failed`).
   - Without SMTP the row fails at once with "Outgoing email is not set up on this server (SMTP)".
   - Rows survive restarts. Delivery is at-least-once.
+
+### PR B: P1 (branch `fix/crm-p1`, V623; first numbered V607)
+
+Tests: `CrmP1IT`. `CrmEnhancementsIT.overdueDigest` clears its own digest marker so it can rerun.
+
+- **Optimistic concurrency.**
+  - The V623 trigger `Deal_bump_version` raises `Deal.version` on every real change of the row, whoever writes it
+    (suite, legacy `/crm/deals`, merges, jobs).
+  - Card re-ordering (`sequenceInStage`) and a bare `updatedAt` touch are ignored, so logging an activity never
+    makes an open edit dialog stale.
+  - `update` and `assign` lock the row and compare `version`. The web edit dialog sends it; one-click star ratings
+    don't.
+- **Deal merge leaves nothing behind.** `SalesOrder`, `Project` and `CrmEmailOutbox` rows follow the kept deal, next
+  to activities, quotations, lines and contacts. Stage history stays with the archived source, which describes its own
+  journey. Legacy `CrmQuotation` rows are write-blocked since V24 and stay on the archived, still readable, source.
+- **Customer merge.**
+  - Only open quotations move: draft, pending approval, approved, sent, accepted.
+  - The route needs `crm:configure` and `partner:delete`. The web hides the button without both.
+- **Overdue digest once per day.** `CrmDigestLog (organizationId, userId, day)` is inserted `ON CONFLICT DO NOTHING`
+  in the same transaction as the notification, with the business-zone day. The ShedLock lock adds
+  `lockAtLeastFor = PT5M`, so node clock skew cannot run it twice.
+- **Sales orders in CRM.** Customer 360 lists B2B `salesOrders`, next to counter `orders`. The opportunity page lists
+  the sales orders that came out of the deal, and its quotations carry `convertedType/Id/Number`.
+- **Finance gating.** Owner decision: see the deviation above. The web hides the receivables and credit tiles and the
+  invoices tab, and shows "—" for receivables in the list.
+- **Bulk selection.** The pipeline list and the leads list clear the selection when filters or page change, so a bulk
+  action only touches rows on screen.
+- **Quote expiry on the business date.** `expireOverdue`/`expireAndNotify` compare `validUntil` with the business
+  date (`today()`), not the database's UTC `CURRENT_DATE`.
+- **Idempotent conversion.** The key is required on both convert routes. The web keeps one key per quotation and
+  choice, so a retry after a lost response replays the first conversion instead of failing on "already converted".
+- **Pipeline guards.**
+  - A lost lead cannot be converted. The conversion stage must be active and not won.
+  - Dragging a won deal onto an open stage is a reopen: it is audited (`via: move`) and publishes
+    `crm.deal.reopened`, like `POST …/reopen`, which now publishes the event too.
+- **Indexes.** `SalesQuoteLink (organizationId, quotationId)`, `CrmDealLine (organizationId)`,
+  `CrmDealLine (productId)`, `CrmDealContact (organizationId)`, `CrmDealContact (contactId)`, `Deal (competitorId)`,
+  and `CrmLeadForm (sourceId)` / `(teamId)`.
+  - `CrmLeadForm.ownerId` gets a foreign key to `User`, `NOT VALID`: existing rows are not re-checked.
+- **Not changed (P2, needs owner approval):** legacy `/crm/activities` PATCH/DELETE keep the Nest rule (no
+  own-activities check).

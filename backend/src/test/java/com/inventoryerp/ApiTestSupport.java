@@ -149,13 +149,13 @@ public abstract class ApiTestSupport {
 
     /**
      * Routes that refuse a request without an {@code Idempotency-Key} (inventory direct stock, count submit, transit
-     * receive; since R5a transfer approve / dispatch, adjustment and waste approve, warehouse ship). Test calls get a fresh key automatically unless they pass one, or pass {@link #NO_IDEMPOTENCY_KEY} to
-     * send none.
+     * receive; since R5a transfer approve / dispatch, adjustment and waste approve, warehouse ship; quotation convert).
+     * Test calls get a fresh key automatically unless they pass one, or pass {@link #NO_IDEMPOTENCY_KEY} to send none.
      */
     private static final java.util.regex.Pattern KEY_REQUIRED = java.util.regex.Pattern.compile(
             "^/(inventory/(direct-stock/(in|out)|counts/[^/]+/submit|transfers/[^/]+/(receive|approve|dispatch)"
                     + "|(waste|adjustments)/[^/]+/approve)|warehouse/pick-orders/[^/]+/ship"
-                    + "|procurement/goods-receipts/adhoc)(\\?.*)?$");
+                    + "|procurement/goods-receipts/adhoc|(sales|crm)/quotations/[^/]+/convert)(\\?.*)?$");
 
     /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
     protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";

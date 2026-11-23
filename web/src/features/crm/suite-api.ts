@@ -122,6 +122,8 @@ export interface Opportunity {
   id: string;
   kind: DealKind;
   name: string;
+  /** Goes up on every change; sent back on edit so a stale save is refused (409). */
+  version?: number;
   partnerId: string | null;
   partnerName: string | null;
   contactId: string | null;
@@ -223,7 +225,9 @@ export interface PlannedActivity {
 
 export interface OpportunityDetail extends Opportunity {
   partner: PartnerLite | null;
-  quotations: Array<{ id: string; number: string; status: QuoteStatus; total: number; currencyCode: string; issueDate: string; validUntil: string | null }>;
+  quotations: Array<{ id: string; number: string; status: QuoteStatus; total: number; currencyCode: string; issueDate: string; validUntil: string | null; convertedType?: string | null; convertedId?: string | null; convertedNumber?: string | null }>;
+  /** Sales orders that came out of this opportunity. */
+  salesOrders?: SalesOrderLite[];
   plannedActivities: PlannedActivity[];
   stageDurations: Array<{ stageId: string; seconds: number }>;
   lines?: DealLine[];
@@ -571,9 +575,10 @@ export const crmApi = {
   updateQuote: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<Quotation>(`${quoteBase()}/${id}`, body)).data,
   quoteAction: async ({ id, action, body }: { id: string; action: 'submit' | 'approve' | 'reject' | 'send' | 'accept' | 'decline' | 'cancel' | 'revise'; body?: Record<string, unknown> }) =>
     (await api.post<Quotation>(`${quoteBase()}/${id}/${action}`, body ?? {})).data,
-  convertQuote: async ({ id, target, allowBackorder }: { id: string; target: 'sales_order' | 'order' | 'proforma'; allowBackorder?: boolean }) =>
+  /** `idempotencyKey`: keep the same one when retrying the same conversion, so a lost answer is replayed, not redone. */
+  convertQuote: async ({ id, target, allowBackorder, idempotencyKey }: { id: string; target: 'sales_order' | 'order' | 'proforma'; allowBackorder?: boolean; idempotencyKey?: string }) =>
     (await api.post<Quotation & { converted: { type: string; id: string; number: string } }>(`${quoteBase()}/${id}/convert`, { target, allowBackorder },
-      { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data,
+      { headers: { 'Idempotency-Key': idempotencyKey ?? crypto.randomUUID() } })).data,
   deleteQuote: async (id: string) => (await api.delete(`${quoteBase()}/${id}`)).data,
 };
 
@@ -618,7 +623,8 @@ export function useQuotation(id: string | undefined) {
 export interface CustomerRow {
   id: string; code: string; name: string; email: string | null; phone: string | null; isCompany: boolean; isCustomer: boolean;
   creditLimit: number; creditHold: boolean; categoryName: string | null; openOpportunities: number; openValue: number;
-  wonValue: number; won: number; openReceivables: number; overdueReceivables: number; lastActivityAt: string | null;
+  /** Null without invoice:read. */
+  wonValue: number; won: number; openReceivables: number | null; overdueReceivables: number | null; lastActivityAt: string | null;
 }
 
 export function useCustomers(params: Record<string, string | number | undefined>) {
@@ -629,6 +635,11 @@ export function useCustomers(params: Record<string, string | number | undefined>
   });
 }
 
+export interface SalesOrderLite {
+  id: string; number: string; status: string; deliveryStatus: string; invoiceStatus: string; total: number;
+  currencyCode: string; quotationId: string | null; createdAt: string;
+}
+
 export interface Customer360 {
   partner: PartnerLite & Record<string, unknown>;
   opportunities: Opportunity[];
@@ -636,7 +647,11 @@ export interface Customer360 {
   activities: Array<{ id: string; type: string; title: string; status: string; dueAt: string | null; occurredAt: string; dealId: string | null; outcome: string | null }>;
   invoices: Array<{ id: string; documentNumber: string; documentType: string; status: string; issueDate: string; dueDate: string | null; totalAmount: number; amountResidual: number; paymentStatus: string }>;
   orders: Array<{ id: string; orderNumber: string; status: string; total: number; createdAt: string; invoiceId: string | null }>;
+  /** B2B sales orders (quotation conversions and direct sales orders). */
+  salesOrders: SalesOrderLite[];
+  /** Null without invoice:read (owner decision 2026-11-22), like `invoices` (then empty). */
   credit: CreditInfo | null;
+  financeHidden?: boolean;
   priceRules: PriceRule[];
 }
 

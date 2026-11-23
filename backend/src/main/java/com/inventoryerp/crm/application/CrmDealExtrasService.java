@@ -212,6 +212,16 @@ public class CrmDealExtrasService {
                 + " \"organizationId\" = ?", targetId, sourceId, org()));
         moved.put("quotations", db.update("UPDATE \"SalesQuotation\" SET \"dealId\" = ? WHERE \"dealId\" = ? AND"
                 + " \"organizationId\" = ?", targetId, sourceId, org()));
+        // Production-readiness P1: every other record that points at the deal follows it, so nothing is left linked
+        // to the archived source (sales orders, projects, queued CRM emails). The source's own stage history stays with
+        // it: it describes that record's journey, and the target keeps its own. Legacy CrmQuotation rows are frozen
+        // since V24 (a trigger refuses writes) and stay on the archived, still readable source.
+        moved.put("salesOrders", db.update("UPDATE \"SalesOrder\" SET \"dealId\" = ? WHERE \"dealId\" = ? AND"
+                + " \"organizationId\" = ?", targetId, sourceId, org()));
+        moved.put("projects", db.update("UPDATE \"Project\" SET \"dealId\" = ? WHERE \"dealId\" = ? AND"
+                + " \"organizationId\" = ?", targetId, sourceId, org()));
+        db.update("UPDATE \"CrmEmailOutbox\" SET \"dealId\" = ? WHERE \"dealId\" = ? AND \"organizationId\" = ?",
+                targetId, sourceId, org());
         Number maxOrder = (Number) db.row("SELECT COALESCE(max(\"sortOrder\"), 0) AS m FROM \"CrmDealLine\" WHERE"
                 + " \"dealId\" = ?", targetId).get("m");
         moved.put("lines", db.update("UPDATE \"CrmDealLine\" SET \"dealId\" = ?, \"sortOrder\" = \"sortOrder\" + ? WHERE"
@@ -252,7 +262,8 @@ public class CrmDealExtrasService {
                 + " completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\") VALUES (?, ?,"
                 + " 'note'::\"ActivityType\", ?, ?, ?, ?, 'done'::\"TaskStatus\", true, " + NOW + ", ?, ?, " + NOW + ", "
                 + NOW + ")", CrmDb.newId(), org(), "Merged \"" + source.get("name") + "\" into this record",
-                moved.get("activities") + " activities, " + moved.get("quotations") + " quotations and "
+                moved.get("activities") + " activities, " + moved.get("quotations") + " quotations, "
+                        + moved.get("salesOrders") + " sales orders, " + moved.get("projects") + " projects and "
                         + moved.get("lines") + " product lines moved.", targetId,
                 patch.containsKey("partnerId") ? patch.get("partnerId") : target.get("partnerId"), user(), user());
         db.update("UPDATE \"Deal\" SET \"deletedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + ", \"lostNote\" ="

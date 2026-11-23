@@ -195,9 +195,13 @@ public class CrmPipelineService {
                     + " \"isPrimary\" DESC, \"firstName\"", partner.get("id")));
         }
         r.put("partner", partner);
-        r.put("quotations", db.rows("SELECT id, number, status, total, \"currencyCode\", \"issueDate\", \"validUntil\""
-                + " FROM \"SalesQuotation\" WHERE \"dealId\" = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL"
-                + " ORDER BY \"createdAt\" DESC", id, org()));
+        r.put("quotations", db.rows("SELECT id, number, status, total, \"currencyCode\", \"issueDate\", \"validUntil\","
+                + " \"convertedType\", \"convertedId\", \"convertedNumber\" FROM \"SalesQuotation\" WHERE \"dealId\" = ? AND"
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" DESC", id, org()));
+        // the sales orders that came out of this deal (production-readiness P1: the deal page showed none)
+        r.put("salesOrders", db.rows("SELECT id, number, status, \"deliveryStatus\", \"invoiceStatus\", total,"
+                + " \"currencyCode\", \"quotationId\", \"createdAt\" FROM \"SalesOrder\" WHERE \"dealId\" = ? AND"
+                + " \"organizationId\" = ? AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" DESC", id, org()));
         r.put("plannedActivities", db.rows("SELECT a.*, COALESCE(NULLIF(trim(concat_ws(' ', u.\"firstName\","
                 + " u.\"lastName\")), ''), u.email) AS \"assignedToName\" FROM \"Activity\" a LEFT JOIN \"User\" u ON"
                 + " u.id = a.\"assignedToId\" WHERE a.\"dealId\" = ? AND a.\"organizationId\" = ? AND a.\"deletedAt\" IS"
@@ -316,6 +320,7 @@ public class CrmPipelineService {
     @Transactional
     public Map<String, Object> update(String id, Map<String, Object> in) {
         Map<String, Object> before = visible(id);
+        expectVersion(lock(id), in);
         Map<String, Object> d = fields(in);
         if (in.containsKey("name")) {
             if (blank(str(in.get("name")))) {
@@ -370,6 +375,13 @@ public class CrmPipelineService {
             return markWon(id, stageId);
         }
         String fromStatus = str(deal.get("status"));
+        if ("won".equals(fromStatus)) {
+            // dragging a won card back onto an open stage reopens it: recorded and announced like reopen()
+            audit.record(AuditInput.of("Deal", id, "restore", Obj.of("status", "won"), Obj.of("status", "open",
+                    "stageId", stageId, "via", "move")));
+            events.publishOnCommit("crm.deal.reopened", Obj.of("organizationId", org(), "dealId", id, "fromStatus",
+                    "won"));
+        }
         db.jdbc().sql("UPDATE \"Deal\" SET \"stageId\" = ?, status = 'open', \"wonAt\" = NULL, probability = NULL,"
                 + " \"stageChangedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" ="
                 + " ?").params(stageId, id, org()).update();
@@ -510,6 +522,8 @@ public class CrmPipelineService {
         history(id, stageId, str(stage.get("id")), str(deal.get("status")), "open", null);
         audit.record(AuditInput.of("Deal", id, "restore", Obj.of("status", deal.get("status")), Obj.of("status",
                 "open")));
+        events.publishOnCommit("crm.deal.reopened", Obj.of("organizationId", org(), "dealId", id, "fromStatus",
+                deal.get("status")));
         return get(id);
     }
 
@@ -519,6 +533,9 @@ public class CrmPipelineService {
         Map<String, Object> deal = lock(id);
         if (!"lead".equals(deal.get("kind"))) {
             throw ApiException.badRequest("Only leads can be converted");
+        }
+        if ("lost".equals(deal.get("status"))) {
+            throw ApiException.badRequest("Restore the lost lead before converting it");
         }
         String partnerId = str(in.get("partnerId"));
         if (blank(partnerId)) {
@@ -548,7 +565,10 @@ public class CrmPipelineService {
         }
         Map<String, Object> stage = !blank(str(in.get("stageId"))) ? db.require("CrmStage", str(in.get("stageId")),
                 "Stage not found") : config.stage(str(deal.get("stageId")));
-        if (stage == null) {
+        if (stage == null || !Boolean.TRUE.equals(stage.get("isActive")) || Boolean.TRUE.equals(stage.get("isWon"))) {
+            if (!blank(str(in.get("stageId")))) {
+                throw ApiException.badRequest("Convert to an active, open stage; mark it won afterwards");
+            }
             stage = config.firstStage(str(deal.get("teamId")));
         }
         String owner = in.containsKey("ownerId") ? str(in.get("ownerId")) : str(deal.get("ownerId"));
@@ -673,7 +693,7 @@ public class CrmPipelineService {
     /** Re-assign; {@code ownerId} null = automatic assignment by the configured rule. */
     @Transactional
     public Map<String, Object> assign(String id, Map<String, Object> in) {
-        visible(id);
+        expectVersion(lock(id), in);
         String owner = str(in.get("ownerId"));
         if (blank(owner)) {
             owner = autoAssign();
@@ -722,6 +742,21 @@ public class CrmPipelineService {
     Map<String, Object> lock(String id) {
         visible(id);
         return systemLock(id);
+    }
+
+    /**
+     * Optimistic concurrency (production-readiness P1): when the request carries the {@code version} it was edited
+     * from, it must still be the row's version (read under the row lock), else 409 and nothing is overwritten. The
+     * database bumps {@code version} on every real change of the row (V607 trigger).
+     */
+    private static void expectVersion(Map<String, Object> locked, Map<String, Object> in) {
+        if (!in.containsKey("version") || in.get("version") == null) {
+            return;
+        }
+        Integer expected = CrmDb.intOf(in.get("version"), "version");
+        if (locked == null || expected == null || ((Number) locked.get("version")).intValue() != expected) {
+            throw ApiException.conflict("This record was changed by someone else; reload it and try again");
+        }
     }
 
     /** The deal row locked for update within the organization, without the salesperson visibility rule; or null. */

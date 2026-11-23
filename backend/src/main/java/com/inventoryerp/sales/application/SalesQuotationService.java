@@ -953,8 +953,9 @@ public class SalesQuotationService {
     @Transactional
     public int expireAndNotify() {
         List<Map<String, Object>> expired = db.rows("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW
-                + " WHERE \"organizationId\" = ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < CURRENT_DATE"
-                + " AND \"deletedAt\" IS NULL RETURNING id, number, \"ownerId\", \"createdById\"", org());
+                + " WHERE \"organizationId\" = ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < ?"
+                + " AND \"deletedAt\" IS NULL RETURNING id, number, \"ownerId\", \"createdById\"", org(),
+                java.sql.Date.valueOf(today()));
         for (Map<String, Object> e : expired) {
             alerts.send(str(e.get("ownerId") != null ? e.get("ownerId") : e.get("createdById")), "sales_quotation_expired",
                     "Quotation " + e.get("number") + " has expired", "Revise it to send it again.", Obj.of("entityType",
@@ -1067,10 +1068,15 @@ public class SalesQuotationService {
         return Obj.of("ok", true, "sentTo", address, "delivered", sent);
     }
 
+    /**
+     * Expire quotes past {@code validUntil} on the business calendar (production-readiness P1: it compared with the
+     * database's UTC {@code CURRENT_DATE}, so between midnight local and midnight UTC it disagreed with
+     * {@link #expired}). Only touches rows when there is something to expire.
+     */
     void expireOverdue() {
         db.update("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW + " WHERE \"organizationId\" ="
-                + " ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < CURRENT_DATE AND \"deletedAt\" IS"
-                + " NULL", org());
+                + " ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < ? AND \"deletedAt\" IS NULL", org(),
+                java.sql.Date.valueOf(today()));
     }
 
     private void visibility(StringBuilder where, List<Object> params) {

@@ -20,7 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Merge a duplicate customer into another (CRM enhancements T3b). Only a customer that lives in CRM alone can be merged
- * away: its deals, activities, cases, contacts and open quotations move to the kept customer, and it is archived. A
+ * away: its deals, activities, cases, contacts and open quotations (draft, pending approval, approved, sent, accepted)
+ * move to the kept customer, and it is archived. Rejected, expired and cancelled quotations stay with the archived
+ * customer as its history (production-readiness P1: they were moved too, rewriting who was quoted what). A
  * customer with orders, invoices, payments, stock or any other record is refused, because those carry ledger history
  * that must not change hands silently.
  */
@@ -71,7 +73,8 @@ public class CrmCustomerMergeService {
         }
         for (Map.Entry<String, String> e : MOVABLE.entrySet()) {
             moved.put(e.getKey(), db.update("UPDATE \"" + e.getKey() + "\" SET \"" + e.getValue() + "\" = ? WHERE \""
-                    + e.getValue() + "\" = ? AND \"organizationId\" = ?", targetId, sourceId, org()));
+                    + e.getValue() + "\" = ? AND \"organizationId\" = ?" + onlyOpen(e.getKey()), targetId, sourceId,
+                    org()));
         }
         moved.put("childCompanies", db.update("UPDATE \"Partner\" SET \"parentId\" = ? WHERE \"parentId\" = ? AND"
                 + " \"organizationId\" = ?", targetId, sourceId, org()));
@@ -103,9 +106,18 @@ public class CrmCustomerMergeService {
         Map<String, Object> out = new LinkedHashMap<>();
         for (Map.Entry<String, String> e : MOVABLE.entrySet()) {
             out.put(e.getKey(), db.count("SELECT count(*) FROM \"" + e.getKey() + "\" WHERE \"" + e.getValue() + "\" = ?"
-                    + " AND \"organizationId\" = ?", List.of(sourceId, org())));
+                    + " AND \"organizationId\" = ?" + onlyOpen(e.getKey()), List.of(sourceId, org())));
         }
+        out.put("closedQuotationsKept", db.count("SELECT count(*) FROM \"SalesQuotation\" WHERE \"partnerId\" = ? AND"
+                + " \"organizationId\" = ? AND status::text NOT IN " + OPEN_QUOTES, List.of(sourceId, org())));
         return out;
+    }
+
+    /** Quotation states that still belong to the live relationship and move with a merge. */
+    private static final String OPEN_QUOTES = "('draft', 'pending_approval', 'approved', 'sent', 'accepted')";
+
+    private static String onlyOpen(String table) {
+        return "SalesQuotation".equals(table) ? " AND status::text IN " + OPEN_QUOTES : "";
     }
 
     /**
