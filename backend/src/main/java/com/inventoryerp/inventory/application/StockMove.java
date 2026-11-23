@@ -91,6 +91,16 @@ public final class StockMove {
     /** Phase I2 (audit R-1): the document line that caused the move, recorded on its ledger rows. */
     public String sourceLineId;
     /**
+     * R1 (2026-11-23, V611): the original ledger row this move returns or reverses, recorded on its ledger rows as
+     * {@code reversesLedgerId}. A receipt naming one may bring back a serial unit that is currently issued.
+     */
+    public String reversesLedgerId;
+    /**
+     * R1: receive only — the {@code InventoryBatch} the returned units left from. When it is a lot of this very quant
+     * the units go back into it (no new lot); otherwise a new lot is opened from {@link #batchNumber} as usual.
+     */
+    String returnBatchId;
+    /**
      * Phase I2 (audit R-1): the document unit and factor of a move its caller already converted to base units (a
      * customer return), so the ledger still records the unit it came back in. Internal to {@code StockService}.
      */
@@ -160,6 +170,12 @@ public final class StockMove {
 
     public StockMove reference(String v) {
         this.reference = v;
+        return this;
+    }
+
+    /** The original ledger row this move returns or reverses (R1, V611). */
+    public StockMove reverses(String ledgerId) {
+        this.reversesLedgerId = ledgerId;
         return this;
     }
 

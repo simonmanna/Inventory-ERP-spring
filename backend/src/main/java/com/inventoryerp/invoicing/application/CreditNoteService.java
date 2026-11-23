@@ -8,6 +8,7 @@ import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.documents.domain.Document;
 import com.inventoryerp.inventory.application.PosStockLocation;
 import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Grouped;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.HeaderInput;
@@ -221,19 +222,36 @@ public class CreditNoteService {
     }
 
     /**
-     * Phase I2 (audit U-6, M-2): where and at what base-unit cost the credited invoice issued this product / variant —
-     * the location that issued most of it and the average cost of the issue — or null when the invoice issued no stock
-     * (goods delivered by Fleet, or a service).
+     * R1 (P1-2, owner-approved 2026-11-23): where the credited invoice's goods left stock. An invoice that issued its
+     * own stock → its {@code sales_invoice} rows; an invoice whose stock a cash sale issued ({@code stockIssuedBy},
+     * source {@code cash_sale}) → that sale's {@code cash_sale} rows; an invoice delivered by Fleet → the
+     * {@code fleet_trip} rows of the loads of the delivery orders that carried its goods (from the invoice, its sales
+     * order, or allocated to it). Null when the credit note credits no invoice.
      */
-    private Map<String, Object> invoiceIssue(String invoiceId, String productId, String variantId) {
+    private StockReversalService.IssueSource invoiceIssueSource(String invoiceId) {
         if (invoiceId == null) {
             return null;
         }
-        return SqlRows.one(jdbc.sql("SELECT \"locationId\", SUM(-\"quantityChange\" * \"unitCost\") / NULLIF(SUM("
-                + "-\"quantityChange\"), 0) AS \"unitCost\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
-                + " \"referenceType\" = 'sales_invoice' AND \"referenceId\" = ? AND \"productId\" = ? AND \"variantId\" IS"
-                + " NOT DISTINCT FROM ? AND \"quantityChange\" < 0 GROUP BY \"locationId\" ORDER BY SUM(-\"quantityChange\")"
-                + " DESC LIMIT 1").params(org(), invoiceId, productId, variantId));
+        Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT \"sourceType\", \"sourceId\", data->>'stockIssuedBy' AS"
+                + " \"stockIssuedBy\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(invoiceId, org()));
+        if (doc == null) {
+            return null;
+        }
+        if (doc.get("stockIssuedBy") == null) {
+            return StockReversalService.IssueSource.of("sales_invoice", invoiceId);
+        }
+        if ("cash_sale".equals(doc.get("sourceType")) && doc.get("sourceId") != null) {
+            return StockReversalService.IssueSource.of("cash_sale", (String) doc.get("sourceId"));
+        }
+        String salesOrder = "sales_order".equals(doc.get("sourceType")) ? (String) doc.get("sourceId") : null;
+        List<String> loads = jdbc.sql("SELECT DISTINCT l.id FROM \"FleetLoad\" l JOIN \"FleetDeliveryOrder\" o ON"
+                + " o.id = l.\"deliveryOrderId\" WHERE l.\"organizationId\" = ? AND o.\"organizationId\" = ? AND"
+                + " ((o.\"sourceType\" = 'invoice' AND o.\"sourceId\" = ?) OR o.\"goodsInvoiceId\" = ?"
+                + " OR (o.\"sourceType\" = 'sales_order' AND o.\"sourceId\" = ?) OR o.id IN (SELECT \"deliveryOrderId\""
+                + " FROM \"FleetDeliveryInvoiceLine\" WHERE \"documentId\" = ? AND \"organizationId\" = ?))")
+                .params(org(), org(), invoiceId, invoiceId, salesOrder, invoiceId, org()).query(String.class).list();
+        return StockReversalService.IssueSource.of("fleet_trip", loads);
     }
 
     /**
@@ -533,7 +551,9 @@ public class CreditNoteService {
         if ("restock".equals(disposition)) {
             // Deliberate deviation from Nest (SG-0): a failed restock now fails the whole post, so the books never credit
             // goods that did not come back. Goods that are not coming back are posted with disposition scrap.
-            String warehouse = posLocation.resolve(org(), null);
+            // R1 (P1-2): the goods come back against the credited invoice's own issue (lot, serial, location, cost);
+            // with no issue to return against the restock is refused instead of guessing a location and a cost.
+            StockReversalService.IssueSource source = invoiceIssueSource(reversed);
             for (Map<String, Object> ln : lines) {
                 String productId = (String) ln.get("productId");
                 BigDecimal qty = Money.dec(ln.get("quantity"));
@@ -547,20 +567,19 @@ public class CreditNoteService {
                         && ("stockable".equals(product.get("t")) || "consumable".equals(product.get("t")))) {
                     String variantId = ln.get("variantId") != null ? (String) ln.get("variantId")
                             : invoiceVariant(reversed, productId);
-                    // U-6 / M-2: goods the invoice issued come back where they left, at the cost they left at.
-                    Map<String, Object> issued = invoiceIssue(reversed, productId, variantId);
-                    String location = issued != null ? (String) issued.get("locationId") : warehouse;
+                    // U-6 / M-2 / R1: goods the invoice issued come back where they left, on the lot and serial they
+                    // left on, at the cost they left at.
                     try {
-                        if (location == null) {
-                            throw ApiException.badRequest("no stock location is configured");
+                        if (source == null) {
+                            throw ApiException.badRequest("the credit note credits no invoice whose stock issue it can"
+                                    + " return against");
                         }
-                        stock.receiveReturn(StockMove.of(productId, location, qty)
-                                .variant(variantId).uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
-                                        : Money.dec(ln.get("uomFactor")))
-                                .unitCost(issued == null || issued.get("unitCost") == null ? null
-                                        : Money.dec(issued.get("unitCost")))
-                                .reference((String) cn.get("documentNumber")).source("credit_note", id).sourceLine((String) ln.get("id"))
-                                .date(issueDate));
+                        stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(source,
+                                List.of(new StockReversalService.ReturnLine(productId, variantId, qty,
+                                        (String) ln.get("uomId"), ln.get("uomFactor") == null ? null
+                                                : Money.dec(ln.get("uomFactor")), null, null, (String) ln.get("id"))),
+                                "credit_note", id, (String) cn.get("documentNumber"), null, issueDate, null, true,
+                                null));
                     } catch (ApiException e) {
                         throw ApiException.badRequest("Cannot restock " + product.get("name") + ": " + e.getMessage()
                                 + ". Post with disposition scrap if the goods are not coming back.");
@@ -580,6 +599,14 @@ public class CreditNoteService {
     }
 
     // ------------------------------------------------------------------ reversal
+
+    private StockReversalService stockReturns;
+
+    /** R1: restocks are posted against the credited invoice's original issue. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
+    }
 
     private com.inventoryerp.accounting.application.DocumentReversalService reversals;
 
@@ -738,20 +765,37 @@ public class CreditNoteService {
         if (done > 0) {
             return;
         }
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
-                + " SUM(\"quantityChange\") AS qty FROM \"InventoryLedger\" WHERE \"referenceType\" = 'credit_note' AND"
-                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" > 0 GROUP BY \"productId\","
-                + " \"variantId\", \"locationId\" ORDER BY \"productId\", \"variantId\" NULLS FIRST, \"locationId\"")
+        // R1: each restock row goes back out from the lot / serial it restored, at the cost it came back at (the
+        // carried cost of an unlotted AVCO quant), naming the row it reverses so the invoice's issue is returnable
+        // again.
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.id, l.\"productId\", l.\"variantId\","
+                + " l.\"locationId\", l.\"batchId\", l.\"serialId\", l.\"unitCost\", l.\"quantityChange\" AS qty,"
+                + " b.\"batchNumber\", s.\"serialNumber\" FROM \"InventoryLedger\" l LEFT JOIN \"InventoryBatch\" b ON"
+                + " b.id = l.\"batchId\" LEFT JOIN \"InventorySerial\" s ON s.id = l.\"serialId\""
+                + " WHERE l.\"referenceType\" ="
+                + " 'credit_note' AND l.\"referenceId\" = ? AND l.\"organizationId\" = ? AND l.\"quantityChange\" > 0"
+                + " ORDER BY l.\"productId\", l.\"variantId\" NULLS FIRST, l.\"locationId\", l.\"createdAt\", l.id")
                 .params(id, org()))) {
             BigDecimal qty = Money.dec(r.get("qty"));
             if (qty.signum() <= 0) {
                 continue;
             }
             try {
-                stock.issue(StockMove.of((String) r.get("productId"), (String) r.get("locationId"), qty)
+                StockMove m = StockMove.of((String) r.get("productId"), (String) r.get("locationId"), qty)
                         .variant((String) r.get("variantId")).requireAvailable(true)
                         .source("credit_note_cancel", id).reference(number).date(posting.reversalDate(issueDate))
-                        .notes("Restocked goods taken back on reversal of credit note " + number));
+                        .notes("Restocked goods taken back on reversal of credit note " + number)
+                        .reverses((String) r.get("id"))
+                        .pin(r.get("batchId") == null ? null : List.of((String) r.get("batchId")),
+                                r.get("serialId") == null ? null : List.of((String) r.get("serialId")),
+                                Money.dec(r.get("unitCost")));
+                if (r.get("batchNumber") != null) {
+                    m.batch((String) r.get("batchNumber")).strategy("MANUAL");
+                }
+                if (r.get("serialNumber") != null) {
+                    m.serials(List.of((String) r.get("serialNumber")));
+                }
+                stock.issue(m);
             } catch (ApiException e) {
                 String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(r.get("productId"))
                         .query(String.class).optional().orElse(String.valueOf(r.get("productId")));

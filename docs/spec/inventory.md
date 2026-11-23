@@ -240,6 +240,29 @@ Approved by the owner — accounting and costing review 2026-11-17
     value and unit cost). Messages: `productId should not be empty`, `limit must not be less than 1`, `limit must be
     an integer number`, 404 `Product not found` / `Location not found`. Test: `CostExplanationIT`.
 
+Approved by the owner 2026-11-23 (inventory hardening R1, corruption blockers, release gate G1):
+
+- **Returns restore the original identity and cost.** `StockReversalService.returnFromSource` returns goods against
+  their original outflow rows: each unit comes back with the lot (into the very `InventoryBatch` row when it returns to
+  the location it left, never a new lot), expiry, serial, location and unit cost of the row it left on. The new ledger
+  row names that row in `InventoryLedger.reversesLedgerId` (V611, FK + index); `reverseLedgerSource` sets it too. The
+  quantity is allocated across the rows in their original order, net of what earlier returns brought back (net of
+  their own reversals); more is refused with 400 `Cannot return more than was issued`, a source without issue rows
+  with 400 `No stock issue was found to return against`. Callers: cash-sale void, invoice cancel, credit-note restock,
+  sales return (into the chosen receiving location: same lot number / expiry / serial / cost), production
+  cancel / reversal (`returnMaterials`, GL still the line's WIP clearance), debit-note reversal. `receiveReturn`
+  forwards `batchNumber` / `expiry` / `serials` it is given. Rows written before V611 carry no link, so returns made
+  before this change are not netted (the callers' own guards still apply). POS refunds are unchanged (they already
+  restock at the issue location and cost and refuse tracked items). Tests `InventoryReturnsIdentityIT`,
+  `CashSaleIT.voidLinksTheIssueRows`.
+- **Credit-note reversal takes back what the note restocked**, row by row: the same lot / serial, at the cost it came
+  back at (the carried cost of an unlotted AVCO quant), naming the restock row, so the invoice's issue becomes
+  returnable again.
+- **Fee lines never move stock.** A POS bill line with `rentalFeeType` set is skipped by the stock issue, the
+  reservation, the variant check and the ATP check, whatever product it names (see rental.md).
+- **A credit note refuses to restock without an issue to return against** (see invoicing.md).
+- **Offline refund / void drains or holds; offline receipt applies exactly once** (see sync.md).
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation

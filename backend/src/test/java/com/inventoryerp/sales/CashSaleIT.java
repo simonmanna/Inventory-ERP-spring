@@ -696,6 +696,48 @@ class CashSaleIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("R1 P1-2: a credit note on a cash-sale invoice restocks against the cash sale's issue (location, cost)")
+    void creditNoteOnCashSaleInvoiceRestocksAtTheSaleIssue() {
+        String c = partner("CN cash " + sfx);
+        String id = approved(c, 3);
+        String invoiceId = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200).get("currentInvoiceId")
+                .asString();
+        Map<String, Object> issue = jdbc.sql("SELECT id, \"locationId\", \"unitCost\" FROM \"InventoryLedger\" WHERE"
+                + " \"organizationId\" = ? AND \"referenceType\" = 'cash_sale' AND \"referenceId\" = ? AND"
+                + " \"quantityChange\" < 0").params(demoOrg, id).query().singleRow();
+        BigDecimal before = onHand(goods, location);
+        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", c, "issueDate", LocalDate.now().toString(),
+                "reversedDocumentId", invoiceId, "lines", List.of(Map.of("productId", goods, "quantity", 2,
+                        "unitPrice", 35_000, "taxId", vat)))).get("id").asString();
+        Res posted = as("POST", "/credit-notes/" + cn + "/post", null);
+        assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
+        Map<String, Object> back = jdbc.sql("SELECT \"locationId\", \"unitCost\", \"reversesLedgerId\","
+                + " \"quantityChange\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\" ="
+                + " 'credit_note' AND \"referenceId\" = ?").params(demoOrg, cn).query().singleRow();
+        assertThat(back.get("locationId")).as("back at the cash sale's floor").isEqualTo(location);
+        assertThat((BigDecimal) back.get("unitCost")).isEqualByComparingTo((BigDecimal) issue.get("unitCost"));
+        assertThat(back.get("reversesLedgerId")).isEqualTo(issue.get("id"));
+        assertThat((BigDecimal) back.get("quantityChange")).isEqualByComparingTo("2");
+        assertThat(onHand(goods, location)).isEqualByComparingTo(before.add(BigDecimal.TWO));
+        ledger.trialBalanceZero();
+    }
+
+    @Test
+    @DisplayName("R1 P1-1: a cash-sale void names the issue rows it brings back")
+    void voidLinksTheIssueRows() {
+        String id = confirmedCashSale(partner("Void link " + sfx), 2);
+        money("/sales/cash-sales/" + id + "/void", Map.of("reason", "Keyed twice", "goodsReturned", true), 200);
+        List<Map<String, Object>> rows = jdbc.sql("SELECT r.\"locationId\", r.\"unitCost\", i.\"unitCost\" AS"
+                + " \"issueCost\", i.\"locationId\" AS \"issueLocation\" FROM \"InventoryLedger\" r JOIN \"InventoryLedger\" i"
+                + " ON i.id = r.\"reversesLedgerId\" WHERE r.\"organizationId\" = ? AND r.\"referenceType\" ="
+                + " 'cash_sale_void' AND r.\"referenceId\" = ?").params(demoOrg, id).query().listOfRows();
+        assertThat(rows).hasSize(1);
+        assertThat(rows.getFirst().get("locationId")).isEqualTo(rows.getFirst().get("issueLocation"));
+        assertThat((BigDecimal) rows.getFirst().get("unitCost"))
+                .isEqualByComparingTo((BigDecimal) rows.getFirst().get("issueCost"));
+    }
+
+    @Test
     @DisplayName("T22/T23: a cash-sale deposit settles only its own invoice; no refund / void via /customer-deposits")
     void depositIsolation() {
         String id = confirmedCashSale(null, 1);

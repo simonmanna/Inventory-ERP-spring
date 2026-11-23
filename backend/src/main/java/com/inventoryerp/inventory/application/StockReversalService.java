@@ -43,6 +43,52 @@ public class StockReversalService {
     public record LedgerSource(String referenceType, String referenceId, String reversalSourceType,
             String reversalSourceId, List<String> journalSourceTypes, String notes, String legacyNotesPrefix) {}
 
+    /**
+     * The original issue of a return (R1): ledger rows of {@code referenceType} under any of {@code referenceIds}, or
+     * the rows of the given {@code ledgerCodes}. Only outflow rows ({@code quantityChange < 0}) are returned against.
+     */
+    public record IssueSource(String referenceType, List<String> referenceIds, List<String> ledgerCodes) {
+
+        public static IssueSource of(String referenceType, String referenceId) {
+            return new IssueSource(referenceType, List.of(referenceId), null);
+        }
+
+        public static IssueSource of(String referenceType, List<String> referenceIds) {
+            return new IssueSource(referenceType, List.copyOf(referenceIds), null);
+        }
+
+        public static IssueSource ledgerCodes(List<String> codes) {
+            return new IssueSource(null, null, List.copyOf(codes));
+        }
+    }
+
+    /**
+     * One returned line: {@code quantity} of (product, variant) in {@code uomId} (snapshot {@code uomFactor} first;
+     * base unit when both null), optionally only from the original rows of {@code issueLineId} (their
+     * {@code sourceLineId}) and from the named {@code serialNumbers}; {@code sourceLineId} is recorded on the new rows.
+     */
+    public record ReturnLine(String productId, String variantId, BigDecimal quantity, String uomId,
+            BigDecimal uomFactor, String issueLineId, List<String> serialNumbers, String sourceLineId) {
+
+        public static ReturnLine of(String productId, String variantId, BigDecimal baseQuantity) {
+            return new ReturnLine(productId, variantId, baseQuantity, null, null, null, null, null);
+        }
+    }
+
+    /**
+     * Parameters of {@link #returnFromSource}. {@code lines} null returns everything still returnable from the source.
+     * {@code locationId} null returns each unit to the location it left from. {@code postRestockGl} posts the
+     * restock (Dr Stock Valuation / Cr COGS at the original cost, as {@link StockService#receiveReturn}); false
+     * leaves the GL to the caller. {@code moveType} null = {@code return_in}.
+     */
+    public record ReturnFromSource(IssueSource source, List<ReturnLine> lines, String sourceType, String sourceId,
+            String reference, String notes, Instant date, String locationId, boolean postRestockGl, String moveType) {}
+
+    /** One movement {@link #returnFromSource} posted, and the original row it brought back. */
+    public record ReturnedRow(String ledgerCode, String reversesLedgerId, String productId, String variantId,
+            String locationId, String batchNumber, String serialNumber, BigDecimal quantity, BigDecimal unitCost,
+            BigDecimal totalValue) {}
+
     private final JdbcClient jdbc;
     private final AuditService audit;
     private final PostingService posting;
@@ -262,7 +308,7 @@ public class StockReversalService {
                 StockMove m = StockMove.of(str(r, "productId"), str(r, "locationId"), qty).variant(str(r, "variantId"))
                         .source(p.reversalSourceType(), p.reversalSourceId()).notes(p.notes())
                         .people(str(r, "responsibleById"), user).serials(serials).unitCost(dec(r, "unitCost"))
-                        .moveType("reversal_in")
+                        .moveType("reversal_in").reverses(str(r, "id"))
                         .batch(batchTracking ? (batchNumber != null ? batchNumber : "REV-" + p.reversalSourceId()) : null)
                         .expiry(batchTracking && r.get("_expiryDate") != null
                                 ? JsonConfig.toJsIso((Instant) r.get("_expiryDate")) : null);
@@ -272,7 +318,8 @@ public class StockReversalService {
                 StockMove m = StockMove.of(str(r, "productId"), str(r, "locationId"), qty).variant(str(r, "variantId"))
                         .source(p.reversalSourceType(), p.reversalSourceId()).notes(p.notes())
                         .people(str(r, "responsibleById"), user).serials(serials).batch(batchNumber)
-                        .moveType("reversal_out").strategy(batchNumber != null ? "MANUAL" : null).skipGl();
+                        .moveType("reversal_out").strategy(batchNumber != null ? "MANUAL" : null).skipGl()
+                        .reverses(str(r, "id"));
                 Issued res = stock.issue(m);
                 moved.merge(str(r, "productId"), res.totalValue(), BigDecimal::add);
             }
@@ -306,6 +353,175 @@ public class StockReversalService {
             }
         }
         return Obj.of("rows", rows.size(), "journals", journals.size());
+    }
+
+    /**
+     * R1 (owner-approved hardening, 2026-11-23): return goods against their original issue. The original outflow rows
+     * of {@code p.source()} are the authority: each returned unit comes back with the lot (into the very lot row when
+     * it returns to the location it left — never a new lot), expiry, serial, location and unit cost of the row it left
+     * on, and the new row names that row ({@code reversesLedgerId}). The requested quantity is allocated across the
+     * rows in their original order, net of what earlier returns already brought back; asking for more is refused
+     * ({@code 400 "Cannot return more than was issued"}), as is a source without issue rows. The original rows are
+     * locked first, so two returns of the same issue cannot both take the same units. Runs in the caller's
+     * transaction; moves are posted in the engine's lock order.
+     */
+    @Transactional
+    public List<ReturnedRow> returnFromSource(ReturnFromSource p) {
+        String org = org();
+        List<Map<String, Object>> rows = issueRows(org, p.source());
+        if (rows.isEmpty()) {
+            throw ApiException.badRequest("No stock issue was found to return against");
+        }
+        jdbc.sql("SELECT id FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND id = ANY(?::text[]) ORDER BY id"
+                        + " FOR UPDATE")
+                .params(org, rows.stream().map(r -> str(r, "id")).toArray(String[]::new)).query().listOfRows();
+        Map<String, BigDecimal> remaining = returnable(org, rows);
+        List<Object[]> allocations = new ArrayList<>(); // {row, base quantity, trace unit, trace factor, line}
+        if (p.lines() == null) {
+            for (Map<String, Object> r : rows) {
+                BigDecimal left = remaining.get(str(r, "id"));
+                if (left.signum() > 0) {
+                    allocations.add(new Object[] {r, left, null, null, null});
+                }
+            }
+        } else {
+            for (ReturnLine line : p.lines()) {
+                if (line.quantity() == null || line.quantity().signum() <= 0) {
+                    continue;
+                }
+                BigDecimal need = stock.returnBaseQuantity(line.productId(), line.quantity(), line.uomId(),
+                        line.uomFactor());
+                BigDecimal factor = line.uomId() == null && line.uomFactor() == null ? null
+                        : line.uomFactor() != null ? line.uomFactor()
+                                : need.divide(line.quantity(), 10, java.math.RoundingMode.HALF_UP);
+                List<Map<String, Object>> candidates = rows.stream()
+                        .filter(r -> line.productId().equals(str(r, "productId"))
+                                && java.util.Objects.equals(line.variantId(), str(r, "variantId"))
+                                && (line.issueLineId() == null || line.issueLineId().equals(str(r, "sourceLineId"))))
+                        .toList();
+                for (String serial : line.serialNumbers() == null ? List.<String>of() : line.serialNumbers()) {
+                    Map<String, Object> hit = candidates.stream().filter(r -> serial.equals(str(r, "_serialNumber"))
+                            && remaining.get(str(r, "id")).signum() > 0).findFirst().orElse(null);
+                    if (hit == null) {
+                        throw ApiException.badRequest("Serial number " + serial
+                                + " was not issued by this document or is already returned");
+                    }
+                    BigDecimal take = Money.min(need, remaining.get(str(hit, "id")));
+                    remaining.merge(str(hit, "id"), take.negate(), BigDecimal::add);
+                    need = need.subtract(take);
+                    allocations.add(new Object[] {hit, take, line.uomId(), factor, line});
+                }
+                for (Map<String, Object> r : candidates) {
+                    if (need.signum() <= 0) {
+                        break;
+                    }
+                    BigDecimal left = remaining.get(str(r, "id"));
+                    if (left.signum() <= 0) {
+                        continue;
+                    }
+                    BigDecimal take = Money.min(need, left);
+                    remaining.merge(str(r, "id"), take.negate(), BigDecimal::add);
+                    need = need.subtract(take);
+                    allocations.add(new Object[] {r, take, line.uomId(), factor, line});
+                }
+                if (need.signum() > 0) {
+                    throw ApiException.badRequest("Cannot return more than was issued");
+                }
+            }
+        }
+        // Receipts in the engine's lock order (product, variant, destination location; then the original order).
+        List<Object[]> ordered = new ArrayList<>(allocations);
+        ordered.sort(java.util.Comparator.comparing((Object[] a) -> str(row(a), "productId"))
+                .thenComparing(a -> row(a).get("variantId") == null ? "" : str(row(a), "variantId"))
+                .thenComparing(a -> p.locationId() != null ? p.locationId() : str(row(a), "locationId")));
+        List<ReturnedRow> out = new ArrayList<>();
+        for (Object[] a : ordered) {
+            Map<String, Object> r = row(a);
+            BigDecimal qty = (BigDecimal) a[1];
+            ReturnLine line = (ReturnLine) a[4];
+            String location = p.locationId() != null ? p.locationId() : str(r, "locationId");
+            boolean batchTracking = Boolean.TRUE.equals(r.get("_batchTracking"));
+            String batchNumber = batchTracking ? (r.get("_batchNumber") != null ? str(r, "_batchNumber")
+                    : "RET-" + (p.sourceId() != null ? p.sourceId() : str(r, "ledgerCode"))) : null;
+            String serial = str(r, "_serialNumber");
+            StockMove m = StockMove.of(str(r, "productId"), location, qty).variant(str(r, "variantId"))
+                    .unitCost(dec(r, "unitCost")).source(p.sourceType(), p.sourceId()).reference(p.reference())
+                    .notes(p.notes()).date(p.date()).reverses(str(r, "id"))
+                    .sourceLine(line == null ? null : line.sourceLineId()).batch(batchNumber)
+                    .expiry(batchTracking && r.get("_expiryDate") != null
+                            ? JsonConfig.toJsIso((Instant) r.get("_expiryDate")) : null)
+                    .serials(serial != null ? List.of(serial) : null);
+            m.moveType = p.moveType() != null ? p.moveType() : "return_in";
+            if (batchTracking && r.get("batchId") != null && location.equals(str(r, "locationId"))) {
+                m.returnBatchId = str(r, "batchId");
+            }
+            if (a[3] != null) {
+                m.traceUomId = (String) a[2];
+                m.traceFactor = (BigDecimal) a[3];
+            }
+            Received res = p.postRestockGl() ? stock.receiveReturn(m) : stock.receive(m);
+            out.add(new ReturnedRow(res.ledgerCode(), str(r, "id"), str(r, "productId"), str(r, "variantId"), location,
+                    batchNumber, serial, qty, dec(r, "unitCost"), dec(r, "unitCost").multiply(qty)));
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> row(Object[] allocation) {
+        return (Map<String, Object>) allocation[0];
+    }
+
+    /** The outflow rows of a return source with their lot, expiry and serial, in original order. */
+    private List<Map<String, Object>> issueRows(String org, IssueSource src) {
+        List<Object> params = new ArrayList<>(List.of(org));
+        String where;
+        if (src.ledgerCodes() != null) {
+            if (src.ledgerCodes().isEmpty()) {
+                return List.of();
+            }
+            where = "l.\"ledgerCode\" = ANY(?::text[])";
+            params.add(src.ledgerCodes().toArray(String[]::new));
+        } else {
+            if (src.referenceIds() == null || src.referenceIds().isEmpty()) {
+                return List.of();
+            }
+            where = "l.\"referenceType\" = ? AND l.\"referenceId\" = ANY(?::text[])";
+            params.add(src.referenceType());
+            params.add(src.referenceIds().toArray(String[]::new));
+        }
+        return SqlRows.list(jdbc.sql("SELECT l.*, b.\"batchNumber\" AS \"_batchNumber\", b.\"expiryDate\" AS"
+                        + " \"_expiryDate\", s.\"serialNumber\" AS \"_serialNumber\", p.\"batchTracking\" AS"
+                        + " \"_batchTracking\" FROM \"InventoryLedger\" l"
+                        + " LEFT JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\""
+                        + " LEFT JOIN \"InventorySerial\" s ON s.id = l.\"serialId\""
+                        + " JOIN \"Product\" p ON p.id = l.\"productId\""
+                        + " WHERE l.\"organizationId\" = ? AND " + where + " AND l.\"quantityChange\" < 0"
+                        + " ORDER BY l.\"createdAt\" ASC, l.id ASC")
+                .params(params));
+    }
+
+    /**
+     * Per original row, what is still returnable: its quantity minus what rows naming it brought back, net of the rows
+     * that in turn reversed those (a cancelled credit note gives its units back to the issue).
+     */
+    private Map<String, BigDecimal> returnable(String org, List<Map<String, Object>> rows) {
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        rows.forEach(r -> out.put(str(r, "id"), dec(r, "quantityChange").abs()));
+        String[] ids = out.keySet().toArray(String[]::new);
+        jdbc.sql("SELECT r.\"reversesLedgerId\" AS id, SUM(r.\"quantityChange\" - COALESCE(u.q, 0)) AS returned"
+                        + " FROM \"InventoryLedger\" r LEFT JOIN (SELECT x.\"reversesLedgerId\" AS rid,"
+                        + " SUM(-x.\"quantityChange\") AS q FROM \"InventoryLedger\" x WHERE x.\"organizationId\" = ?"
+                        + " AND x.\"quantityChange\" < 0 AND x.\"reversesLedgerId\" IN"
+                        + " (SELECT y.id FROM \"InventoryLedger\" y"
+                        + " WHERE y.\"organizationId\" = ? AND y.\"reversesLedgerId\" = ANY(?::text[])) GROUP BY 1) u"
+                        + " ON u.rid = r.id WHERE r.\"organizationId\" = ? AND r.\"reversesLedgerId\" = ANY(?::text[])"
+                        + " AND r.\"quantityChange\" > 0 GROUP BY 1")
+                .params(org, org, ids, org, ids)
+                .query((rs, n) -> out.merge(rs.getString("id"), rs.getBigDecimal("returned").negate(),
+                        BigDecimal::add))
+                .list();
+        out.replaceAll((k, v) -> v.max(BigDecimal.ZERO));
+        return out;
     }
 
     /**

@@ -172,17 +172,18 @@ public class StockService {
         assertStockPeriodOpen(date);
         holdCostingShared(TenantContext.organizationId(), dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
-        BigDecimal baseQty = product != null && dto.uomFactor != null
-                ? uomConversion.applyFactor(dto.quantity, dto.uomFactor, str(product, "uomId"), true)
-                : dto.uomId != null && product != null && product.get("uomId") != null
-                && !dto.uomId.equals(product.get("uomId"))
-                ? uomConversion.toBase(dto.quantity, dto.uomId, dto.productId, str(product, "uomId"), true)
-                : dto.quantity;
+        BigDecimal baseQty = returnBase(product, dto.productId, dto.quantity, dto.uomId, dto.uomFactor);
         BigDecimal unitCost = dto.unitCost != null ? dto.unitCost
                 : resolveCurrentCost(dto.productId, dto.variantId, dto.locationId);
+        // R1 (2026-11-23): a return keeps the identity its caller names — lot, expiry, serials, the original lot row
+        // and the movement it brings back.
         StockMove m = StockMove.of(dto.productId, dto.locationId, baseQty).variant(dto.variantId).unitCost(unitCost)
-                .reference(dto.reference).source(dto.sourceType, dto.sourceId).notes(dto.notes).moveType("return_in")
-                .serials(dto.serialNumbers).sourceLine(dto.sourceLineId);
+                .reference(dto.reference).source(dto.sourceType, dto.sourceId).notes(dto.notes)
+                .moveType(dto.moveType != null ? dto.moveType : "return_in").serials(dto.serialNumbers)
+                .sourceLine(dto.sourceLineId).batch(dto.batchNumber).expiry(dto.expiryDate)
+                .reverses(dto.reversesLedgerId);
+        m.mfgDate = dto.mfgDate;
+        m.returnBatchId = dto.returnBatchId;
         Trace t = trace(dto, product, baseQty, dto.quantity); // R-1: the unit it came back in
         m.traceUomId = t.docUomId();
         m.traceFactor = t.factor();
@@ -195,6 +196,21 @@ public class StockService {
                     "Return restock · " + JsNumbers.dec(dto.quantity));
         }
         return res;
+    }
+
+    /** Base units of a returned {@code quantity} in {@code uomId} (snapshot {@code uomFactor} first). */
+    BigDecimal returnBaseQuantity(String productId, BigDecimal quantity, String uomId, BigDecimal uomFactor) {
+        return returnBase(lookups.product(productId), productId, quantity, uomId, uomFactor);
+    }
+
+    private BigDecimal returnBase(Map<String, Object> product, String productId, BigDecimal quantity, String uomId,
+            BigDecimal uomFactor) {
+        return product != null && uomFactor != null
+                ? uomConversion.applyFactor(quantity, uomFactor, str(product, "uomId"), true)
+                : uomId != null && product != null && product.get("uomId") != null
+                        && !uomId.equals(product.get("uomId"))
+                        ? uomConversion.toBase(quantity, uomId, productId, str(product, "uomId"), true)
+                        : quantity;
     }
 
     /** Location running average when positive, else the last positive receipt cost, else the (variant's) cost. */
@@ -244,14 +260,20 @@ public class StockService {
         product = withVariantCost(product, dto.variantId);
         boolean batchTracking = bool(product, "batchTracking");
         String productName = str(product, "name");
-        if (batchTracking && dto.batchNumber == null
+        // R1: a return into the lot it left from (same quant) restores that lot; its number and expiry stand. The lot
+        // row is only read here; it is updated after the quant lock below (engine lock order).
+        Map<String, Object> returnLot = batchTracking && dto.returnBatchId != null ? SqlRows.one(jdbc.sql("SELECT id,"
+                        + " \"batchNumber\" FROM \"InventoryBatch\" WHERE id = ? AND \"organizationId\" = ? AND"
+                        + " \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?")
+                .params(dto.returnBatchId, org, dto.productId, dto.variantId, dto.locationId)) : null;
+        if (returnLot == null && batchTracking && dto.batchNumber == null
                 && !settings.resolveBool("inventory.batchAutoNumber", SettingContext.EMPTY)) {
             throw ApiException.badRequest("Batch number is required for batch-tracked products");
         }
         if (dto.expiryDate != null && !batchTracking) {
             throw ApiException.badRequest("Expiry date is only valid for batch-tracked products");
         }
-        if (bool(product, "expiryTracking") && dto.expiryDate == null) {
+        if (returnLot == null && bool(product, "expiryTracking") && dto.expiryDate == null) {
             throw ApiException.badRequest("Expiry date is required for expiry-tracked products");
         }
         String costing = str(product, "costingMethod");
@@ -312,7 +334,13 @@ public class StockService {
         Map<String, Object> stockItem = addToQuant(quant.id(), qty, newAverage);
 
         String batchId = null;
-        if (batchTracking) {
+        if (returnLot != null) {
+            batchId = str(returnLot, "id");
+            BigDecimal lotQty = qty.subtract(netted);
+            jdbc.sql("UPDATE \"InventoryBatch\" SET quantity = quantity + ?, \"isActive\" = (quantity + ? > 0),"
+                            + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                    .params(lotQty, lotQty, batchId, org).update();
+        } else if (batchTracking) {
             String batchNumber = dto.batchNumber != null ? dto.batchNumber : generateBatchNumber();
             batchId = UUID.randomUUID().toString();
             BigDecimal lotQty = qty.subtract(netted);
@@ -334,7 +362,8 @@ public class StockService {
                             + " \"InventorySerial\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                             + " AND \"serialNumber\" = ANY(?::text[]) FOR UPDATE")
                     .params(org, dto.productId, serials.toArray(String[]::new)).query().listOfRows();
-            boolean isReturn = "return_in".equals(dto.moveType) || "reversal_in".equals(dto.moveType);
+            boolean isReturn = "return_in".equals(dto.moveType) || "reversal_in".equals(dto.moveType)
+                    || dto.reversesLedgerId != null;
             List<String> conflicts = new ArrayList<>();
             for (Map<String, Object> row : found) {
                 if (!isReturn || !"issued".equals(row.get("status"))) {
@@ -366,7 +395,13 @@ public class StockService {
         }
 
         BigDecimal currentQty = dec(stockItem, "quantity");
-        insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, batchId, null,
+        // R1: a return of one named serial records that unit on its row (as an issue row does).
+        String serialId = dto.reversesLedgerId != null && serials.size() == 1 && bool(product, "serialTracking")
+                ? jdbc.sql("SELECT id FROM \"InventorySerial\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
+                        + " \"serialNumber\" = ?").params(org, dto.productId, serials.getFirst()).query(String.class)
+                        .optional().orElse(null)
+                : null;
+        insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, batchId, serialId,
                 dto.moveType != null ? dto.moveType : "receipt", currentQty.subtract(qty), qty, currentQty, unitCost,
                 cost.totalValue(),
                 glCtx != null && glCtx.sourceType() != null ? glCtx.sourceType() : dto.sourceType,
@@ -1510,19 +1545,20 @@ public class StockService {
                         + " \"locationId\", \"batchId\", \"serialId\", type, \"qtyBefore\", \"quantityChange\","
                         + " \"balanceAfter\", \"unitCost\", \"totalValue\", \"referenceType\", \"referenceId\", notes,"
                         + " \"performedBy\", \"responsibleById\", \"approvedById\", \"docUomId\", \"uomFactor\","
-                        + " \"docQuantity\", \"sourceLineId\", \"createdAt\") VALUES (?, ?, ?, ?, ?,"
-                        + " ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + NOW + ")")
+                        + " \"docQuantity\", \"sourceLineId\", \"reversesLedgerId\", \"createdAt\") VALUES (?, ?, ?, ?,"
+                        + " ?, ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        + NOW + ")")
                 .params(id, org, ledgerCode, productId, variantId, locationId, batchId,
                         serialId, type, qtyBefore, change, after, unitCost, totalValue, referenceType, referenceId,
                         notes, TenantContext.userId(), responsibleById, approvedById,
                         trace == null ? null : trace.docUomId(), factor, docQty,
-                        trace == null ? null : trace.sourceLineId())
+                        trace == null ? null : trace.sourceLineId(), trace == null ? null : trace.reversesLedgerId())
                 .update();
         return id;
     }
 
     /** Phase I2 (audit R-1): the document unit, factor and line a ledger row records. */
-    private record Trace(String docUomId, BigDecimal factor, String sourceLineId) {}
+    private record Trace(String docUomId, BigDecimal factor, String sourceLineId, String reversesLedgerId) {}
 
     /**
      * The trace of a move of {@code docQty} document units that became {@code baseQty} stock units: the caller's unit
@@ -1530,16 +1566,16 @@ public class StockService {
      */
     private static Trace trace(StockMove dto, Map<String, Object> product, BigDecimal baseQty, BigDecimal docQty) {
         if (dto.traceFactor != null) {
-            return new Trace(dto.traceUomId, dto.traceFactor, dto.sourceLineId);
+            return new Trace(dto.traceUomId, dto.traceFactor, dto.sourceLineId, dto.reversesLedgerId);
         }
         String base = product == null ? null : str(product, "uomId");
         if ((dto.uomId == null || dto.uomId.equals(base)) && dto.uomFactor == null) {
-            return new Trace(base, BigDecimal.ONE, dto.sourceLineId);
+            return new Trace(base, BigDecimal.ONE, dto.sourceLineId, dto.reversesLedgerId);
         }
         BigDecimal factor = dto.uomFactor != null ? dto.uomFactor
                 : baseQty != null && docQty != null && docQty.signum() != 0
                         ? baseQty.abs().divide(docQty.abs(), 10, RoundingMode.HALF_UP) : null;
-        return new Trace(dto.uomId != null ? dto.uomId : base, factor, dto.sourceLineId);
+        return new Trace(dto.uomId != null ? dto.uomId : base, factor, dto.sourceLineId, dto.reversesLedgerId);
     }
 
     private static String joinNotes(String... parts) {

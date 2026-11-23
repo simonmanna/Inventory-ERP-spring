@@ -13,6 +13,7 @@ import com.inventoryerp.inventory.application.StockMove.Received;
 import com.inventoryerp.inventory.application.StandardCostService;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockReservationService;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockReservationService.Reserve;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.inventory.domain.InventoryLocation;
@@ -999,12 +1000,28 @@ public class ProductionService {
             }
             BigDecimal unitCost = base.signum() > 0 && line.get("totalCost") != null
                     ? Money.div(dec(line, "totalCost"), base) : dec(line, "unitCost");
-            stock.receive(StockMove.of(str(line, "productId"), str(order, "locationId"), base)
-                    .variant(str(line, "variantId")).unitCost(unitCost).moveType("receipt")
-                    .source(sourceType, code));
+            if (ledgerQty(str(line, "ledgerCode"), false) != null) {
+                // R1: back onto the lot, expiry, serial, location and cost the consume move took them from (what is
+                // still not returned); the WIP clearance below stays the line's consumed cost.
+                stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(
+                        StockReversalService.IssueSource.ledgerCodes(List.of(str(line, "ledgerCode"))), null,
+                        sourceType, code, null, null, date, null, false, "receipt"));
+            } else {
+                stock.receive(StockMove.of(str(line, "productId"), str(order, "locationId"), base)
+                        .variant(str(line, "variantId")).unitCost(unitCost).moveType("receipt")
+                        .source(sourceType, code));
+            }
             stockPosting.postProductionOutput(str(line, "productId"), dec(line, "totalCost"), date, sourceType, code,
                     description);
         }
+    }
+
+    private StockReversalService stockReturns;
+
+    /** R1: consumed materials are returned against their consume move. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
     }
 
     /**

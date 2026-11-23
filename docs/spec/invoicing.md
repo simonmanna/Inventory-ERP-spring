@@ -114,6 +114,15 @@ SG-0 stabilization (2026-11-06), pending owner approval:
   and write routes still only accept `sales_invoice`.
 - **Credit note currency.** A credit note against an invoice takes that invoice's currency and rate unless it names one.
 
+- **Credit-note restock against the invoice's own issue (R1, P1-2, owner-approved 2026-11-23).** The restock returns the
+  goods against the credited invoice's issue rows — its `sales_invoice` rows; a cash-sale invoice
+  (`stockIssuedBy`, source `cash_sale`) → the cash sale's `cash_sale` rows; a Fleet-delivered invoice → the
+  `fleet_trip` rows of the loads of the delivery orders that carried its goods — with their lot, serial, location and
+  cost (`StockReversalService.returnFromSource`). With no issue to return against (no credited invoice, or none of its
+  goods issued) the post is refused (`Cannot restock <name>: … Post with disposition scrap if the goods are not coming
+  back.`) instead of restocking at the POS location at today's cost. Fleet trip returns (`fleet_trip_return`) are not yet linked to the trip rows, so they are
+  not netted. Tests `InventoryReturnsIdentityIT`, `CashSaleIT.creditNoteOnCashSaleInvoiceRestocksAtTheSaleIssue`.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
