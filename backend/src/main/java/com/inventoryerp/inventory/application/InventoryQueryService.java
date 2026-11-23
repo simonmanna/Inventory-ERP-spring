@@ -481,6 +481,10 @@ public class InventoryQueryService {
         long total = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE" + where).params(params)
                 .query(Long.class).single();
         includeLedger(rows);
+        if (!InventoryReportsService.seesCost()) {
+            // Hardening R5b: unit cost and value need inventory_valuation:read (null otherwise; the screen shows a dash).
+            rows.forEach(r -> InventoryReportsService.hideCost(r, "unitCost", "totalValue"));
+        }
         return PageResult.of(rows, page, size, total);
     }
 
@@ -648,9 +652,27 @@ public class InventoryQueryService {
         return out;
     }
 
-    /** Ledger grouped by product and move type over a window. */
+    /**
+     * Ledger grouped by product and move type over a window. Hardening R5b: the values ({@code byType.*.value},
+     * {@code netValue}) need {@code inventory_valuation:read} (null otherwise).
+     */
     public List<Map<String, Object>> getMovementSummary(String start, String end, String locationId) {
-        return movementSummary(start, end, scope.resolve(locationId));
+        List<Map<String, Object>> out = movementSummary(start, end, scope.resolve(locationId));
+        if (!InventoryReportsService.seesCost()) {
+            for (Map<String, Object> row : out) {
+                InventoryReportsService.hideCost(row, "netValue");
+                if (row.get("byType") instanceof Map<?, ?> byType) {
+                    byType.values().forEach(v -> {
+                        if (v instanceof Map<?, ?> m) {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> cell = (Map<String, Object>) m;
+                            InventoryReportsService.hideCost(cell, "value");
+                        }
+                    });
+                }
+            }
+        }
+        return out;
     }
 
     private List<Map<String, Object>> movementSummary(String start, String end, String locationId) {

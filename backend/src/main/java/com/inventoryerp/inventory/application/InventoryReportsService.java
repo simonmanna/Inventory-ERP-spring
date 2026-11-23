@@ -441,8 +441,22 @@ public class InventoryReportsService {
                 js(t[4], 6), "valueIn", js(t[5], 2), "valueOut", js(t[6], 2), "valueAdjusted", js(totalAdjusted, 2),
                 "closingValue",
                 js(t[7], 2), "movements", movements, "driftItems", drift);
+        if (!seesCost()) {
+            // Hardening R5b (P2-4 remainder): values and unit costs need inventory_valuation:read, as on the valuation.
+            rows.forEach(row -> hideCost(row, "valueIn", "valueOut", "valueAdjusted", "avgCost", "closingValue"));
+            hideCost(totals, "valueIn", "valueOut", "valueAdjusted", "closingValue");
+        }
         return Obj.of("data", rows, "totals", totals, "meta", Obj.of("start", r.start() != null ? localIso(r.start()) : null,
                 "end", r.end() != null ? localIso(r.end()) : null, "total", rows.size()));
+    }
+
+    /** Null the given cost / value fields of a row (hardening R5a / R5b: callers without the valuation permission). */
+    static void hideCost(Map<String, Object> row, String... keys) {
+        for (String k : keys) {
+            if (row.containsKey(k)) {
+                row.put(k, null);
+            }
+        }
     }
 
     private static final class Agg {
