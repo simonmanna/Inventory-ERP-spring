@@ -393,6 +393,17 @@ public class ApprovalsService {
     }
 
     /**
+     * Read-only: whether {@link #requestApproval} would open a request for this snapshot now (a workflow and at least
+     * one applicable step). Writes nothing, so it may run while the caller holds row or advisory locks.
+     */
+    @Transactional(readOnly = true)
+    public boolean wouldRequireApproval(String entityType, Map<String, Object> snapshot) {
+        Scope scope = new Scope(snapshot, TenantContext.userId());
+        Workflow wf = resolveWorkflow(entityType, scope);
+        return wf != null && !applicableSteps(wf, scope).isEmpty();
+    }
+
+    /**
      * {@code {needsApproval: true, requestId}} when a pending request exists or was created,
      * {@code {needsApproval: false}} when already approved, {@code null} when no workflow applies.
      */

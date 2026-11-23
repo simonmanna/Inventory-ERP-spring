@@ -101,8 +101,9 @@ public class RentalSwapService {
 
         // Audit S-6: the line's quantity goes back, as it goes out below (Nest returned 1 whatever the quantity).
         double lineQty = RentalRows.num(line.get("quantity"));
-        posting.returnTransfer(agreementId, productId, lineQty == 0 || Double.isNaN(lineQty) ? 1 : lineQty, "returned");
-        posting.checkoutTransfer(agreementId, productId, line.get("quantity"));
+        posting.returnTransfer(agreementId, productId, lineQty == 0 || Double.isNaN(lineQty) ? 1 : lineQty, "returned",
+                fromUnitId);
+        posting.checkoutTransfer(agreementId, productId, line.get("quantity"), toUnitId);
 
         Map<String, Object> booking = db.first(RentalBooking.class, "\"organizationId\" = ? AND \"sourceType\" ="
                 + " 'agreement' AND \"sourceId\" = ? AND \"productId\" = ? AND status IN ('confirmed', 'active')",

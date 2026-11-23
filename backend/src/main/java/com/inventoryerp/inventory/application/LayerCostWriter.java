@@ -35,7 +35,10 @@ public class LayerCostWriter {
 
     /**
      * Take the engine's advisory lock of each quant (transaction-scoped), in the engine's lock order (product,
-     * variant, location), so this cannot deadlock against a multi-line stock document.
+     * variant, location), so this cannot deadlock against a multi-line stock document. Hardening R5b (P2-3): first the
+     * costing locks of each product, shared and sorted ({@link CostingLocks#shareProduct}), as a stock move takes them:
+     * a landed cost then runs wholly before or after a cost policy / standard cost activation, which re-costs the same
+     * lots and averages under the exclusive side.
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void lockQuants(Collection<Quant> quants) {
@@ -45,6 +48,7 @@ public class LayerCostWriter {
                         .thenComparing(q -> Objects.toString(q.variantId(), ""))
                         .thenComparing(Quant::locationId))
                 .toList();
+        sorted.stream().map(Quant::productId).distinct().forEach(p -> CostingLocks.shareProduct(jdbc, org, p));
         for (Quant q : sorted) {
             jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)")
                     .param(StockService.quantLockKey(org, q.productId(), Objects.toString(q.variantId(), ""),

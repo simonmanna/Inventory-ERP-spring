@@ -240,17 +240,78 @@ public class StockReversalService {
         if (rows.isEmpty()) {
             throw ApiException.badRequest("Transfer " + code + " has no posted movements to reverse");
         }
-        sum(rows, false).forEach((c, qty) -> stock.transfer(StockMove.transfer(c.productId(), c.locationId(),
+        Map<Cell, BigDecimal> cells = sum(rows, false);
+        lockReversalCells(cells.keySet(), List.of(), str(doc, "fromLocId"));
+        Map<Cell, List<List<String>>> arrived = arrivedLayers(str(doc, "id"));
+        cells.forEach((c, qty) -> stock.transfer(preferArrived(StockMove.transfer(c.productId(), c.locationId(),
                         str(doc, "fromLocId"), qty).variant(c.variantId()).source("stock_transfer_reversal", code)
-                .notes(notes).people(null, TenantContext.userId())));
+                .notes(notes).people(null, TenantContext.userId()), arrived, c)));
+    }
+
+    /**
+     * Hardening R5b (P2-1): every quant a transfer reversal will move — the received cells, the transit cells of the
+     * written-off units and the source cells they all go back to — locked up front in the engine's order, so the
+     * moves below never take a lock below one they hold (the loss pass used to restart from the first product).
+     */
+    private void lockReversalCells(java.util.Collection<Cell> received, List<Map<String, Object>> losses,
+            String fromLocId) {
+        List<StockService.Cell> all = new ArrayList<>();
+        received.forEach(c -> {
+            all.add(new StockService.Cell(c.productId(), c.variantId(), c.locationId()));
+            all.add(new StockService.Cell(c.productId(), c.variantId(), fromLocId));
+        });
+        losses.forEach(r -> {
+            all.add(new StockService.Cell(str(r, "productId"), str(r, "variantId"), str(r, "locationId")));
+            all.add(new StockService.Cell(str(r, "productId"), str(r, "variantId"), fromLocId));
+        });
+        stock.lockCells(all);
+    }
+
+    /**
+     * Hardening R5b (P2-2): the lots a transfer created at a destination and the serial units it moved, per received
+     * cell ({@code [lot ids, serial ids]}), from the transfer's own layers (recorded since R5b; empty for an older
+     * transfer, which keeps the oldest-first behaviour). A lot is listed under the cell it was created in.
+     */
+    private Map<Cell, List<List<String>>> arrivedLayers(String transferId) {
+        Map<Cell, List<List<String>>> out = new java.util.HashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT l.\"batchId\", l.\"serialId\", i.\"productId\","
+                        + " i.\"variantId\", b.\"locationId\" AS \"lotLocationId\" FROM \"StockTransferLayer\" l"
+                        + " JOIN \"StockTransferItem\" i ON i.id = l.\"transferItemId\""
+                        + " LEFT JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" AND b.\"organizationId\" = l.\"organizationId\""
+                        + " WHERE l.\"organizationId\" = ? AND l.\"transferId\" = ? ORDER BY l.\"createdAt\"")
+                .params(org(), transferId))) {
+            if (r.get("batchId") != null && r.get("lotLocationId") != null) {
+                out.computeIfAbsent(new Cell(str(r, "productId"), str(r, "variantId"), str(r, "lotLocationId")),
+                        k -> List.of(new ArrayList<>(), new ArrayList<>())).get(0).add(str(r, "batchId"));
+            } else if (r.get("serialId") != null) {
+                // A serial unit keeps its id wherever it moves: listed for the product, matched at any location.
+                out.computeIfAbsent(new Cell(str(r, "productId"), str(r, "variantId"), null),
+                        k -> List.of(new ArrayList<>(), new ArrayList<>())).get(1).add(str(r, "serialId"));
+            }
+        }
+        return out;
+    }
+
+    /** Prefer the transfer's own lots at the cell and its serial units (then any other, oldest first). */
+    private static StockMove preferArrived(StockMove move, Map<Cell, List<List<String>>> arrived, Cell c) {
+        List<List<String>> lots = arrived.get(c);
+        List<List<String>> serials = arrived.get(new Cell(c.productId(), c.variantId(), null));
+        if (lots == null && serials == null) {
+            return move;
+        }
+        return move.prefer(lots == null ? null : lots.get(0), serials == null ? null : serials.get(1));
     }
 
     private void reverseTransitTransfer(Map<String, Object> doc, String code, String notes) {
         List<Map<String, Object>> received = ledgerRows("stock_transfer_receipt", code, "transfer_in");
-        sum(received, true).forEach((c, qty) -> stock.transfer(StockMove.transfer(c.productId(), c.locationId(),
-                        str(doc, "fromLocId"), qty).variant(c.variantId()).source("stock_transfer_reversal", code)
-                .notes(notes).people(null, TenantContext.userId())));
         List<Map<String, Object>> losses = ledgerRows("stock_transfer_loss", code, null);
+        Map<Cell, BigDecimal> receivedCells = sum(received, true);
+        lockReversalCells(receivedCells.keySet(), losses, str(doc, "fromLocId"));
+        Map<Cell, List<List<String>>> arrived = arrivedLayers(str(doc, "id"));
+        receivedCells.forEach((c, qty) -> stock.transfer(preferArrived(StockMove.transfer(c.productId(),
+                        c.locationId(), str(doc, "fromLocId"), qty).variant(c.variantId())
+                .source("stock_transfer_reversal", code).notes(notes).people(null, TenantContext.userId()),
+                arrived, c)));
         if (!losses.isEmpty()) {
             reverseLedgerSource(new LedgerSource("stock_transfer_loss", code, "stock_transfer_reversal", code,
                     List.of("stock_transfer_loss"), notes, null));

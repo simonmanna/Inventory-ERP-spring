@@ -859,14 +859,19 @@ public class ProductionService {
         // 1) Finished goods out, value back into WIP (Dr WIP / Cr Stock Valuation).
         // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
         // gets the output's value back, the difference is a stock adjustment gain / loss.
+        // Hardening R5b (P2-2): the produced lot goes back first (then other lots, FEFO, for any part of it that left).
         BigDecimal fgIssued = stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, fgBase)
-                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)).totalValue();
+                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)
+                .prefer(producedLots(code, str(order, "outputProductId"), str(order, "outputVariantId"), fgLocationId),
+                        null)).totalValue();
         stockPosting.postProductionReversal(str(order, "outputProductId"), fgIssued, fgValue, date,
                 "production_reversal", code, "Production reversal · " + code);
         // 1b) By-products out, their value back into WIP (Dr WIP / Cr Stock Valuation).
         for (Map<String, Object> bp : byproducts) {
             BigDecimal bpIssued = stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
-                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)).totalValue();
+                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)
+                    .prefer(producedLots(code, str(bp, "productId"), str(bp, "variantId"), fgLocationId), null))
+                    .totalValue();
             BigDecimal bpValue = bp.get("totalCost") == null ? BigDecimal.ZERO : dec(bp, "totalCost");
             stockPosting.postProductionReversal(str(bp, "productId"), bpIssued, bpValue, date, "production_reversal",
                     code, "Production reversal (by-product) · " + code);
@@ -905,6 +910,31 @@ public class ProductionService {
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "cancel", null, Obj.of("orderCode", code, "reversed",
                 JsNumbers.dec(fgValue))));
         return updated;
+    }
+
+    /**
+     * Hardening R5b (P2-2): the lots this order's output receipts created for a product, as they stand at
+     * {@code locationId}: the receipt's own lot when it is still there, else (a QC-held order whose output moved to
+     * quarantine) the lots there with the produced batch numbers. Empty for products without lots (the output receipt
+     * names no serial units, so none are pinned).
+     */
+    private List<String> producedLots(String orderCode, String productId, String variantId, String locationId) {
+        List<Map<String, Object>> produced = db.jdbc().sql("SELECT b.id, b.\"locationId\", b.\"batchNumber\" FROM"
+                        + " \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ?"
+                        + " AND l.\"referenceType\" = ? AND l.\"referenceId\" = ? AND l.type = 'production_output'"
+                        + " AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ? ORDER BY l.\"createdAt\"")
+                .params(MfgDb.org(), SOURCE, orderCode, productId, variantId).query().listOfRows();
+        List<String> here = produced.stream().filter(b -> locationId.equals(b.get("locationId")))
+                .map(b -> (String) b.get("id")).toList();
+        if (!here.isEmpty() || produced.isEmpty()) {
+            return here;
+        }
+        return db.jdbc().sql("SELECT id FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
+                        + " \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND \"batchNumber\" = ANY(?::text[])"
+                        + " AND quantity > 0")
+                .params(MfgDb.org(), productId, variantId, locationId,
+                        produced.stream().map(b -> (String) b.get("batchNumber")).distinct().toArray(String[]::new))
+                .query(String.class).list();
     }
 
     // ================================================================== menu item, list, get

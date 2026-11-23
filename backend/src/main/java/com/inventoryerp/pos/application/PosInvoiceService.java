@@ -1575,7 +1575,9 @@ public class PosInvoiceService {
                 }
             }
         }
-        for (Map.Entry<List<String>, BigDecimal> e : byCell.entrySet()) {
+        // Hardening R5b (P2-1): cells in the engine's lock order (product, variant).
+        for (Map.Entry<List<String>, BigDecimal> e : com.inventoryerp.inventory.application.StockMove.inLockOrder(
+                List.copyOf(byCell.entrySet()), c -> c.getKey().get(0), c -> c.getKey().get(1))) {
             reservations.reserve(new StockReservationService.Reserve(e.getKey().get(0), e.getKey().get(1), warehouse,
                     e.getValue(), "invoice", (String) invoice.get("id"), "POS bill " + invoice.get("invoiceNumber")));
         }

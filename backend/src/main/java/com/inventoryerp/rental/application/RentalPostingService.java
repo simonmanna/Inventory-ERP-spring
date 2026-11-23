@@ -50,6 +50,15 @@ public class RentalPostingService {
     /** Checkout transfer for one agreement line: RENT-STOCK → RENT-OUT. */
     @Transactional
     public void checkoutTransfer(String agreementId, String productId, Object lineQuantity) {
+        checkoutTransfer(agreementId, productId, lineQuantity, null);
+    }
+
+    /**
+     * Checkout transfer for one agreement line: RENT-STOCK → RENT-OUT. Hardening R5b (P2-7): with the line's rental
+     * unit, the transfer moves the unit's variant and its serial (when it has one).
+     */
+    @Transactional
+    public void checkoutTransfer(String agreementId, String productId, Object lineQuantity, String unitId) {
         String orgId = RentalRows.org();
         String stockLoc = locations.resolve(orgId, "stock");
         String outLoc = locations.resolve(orgId, "out");
@@ -58,36 +67,63 @@ public class RentalPostingService {
         if (quantity <= 0) {
             throw ApiException.badRequest("Line quantity must be positive");
         }
-        move(productId, stockLoc, outLoc, quantity, "rental_checkout", agreementId, "Rental checkout " + agreementId);
+        move(productId, unitId, stockLoc, outLoc, quantity, "rental_checkout", agreementId,
+                "Rental checkout " + agreementId);
     }
 
     /** Return transfer: RENT-OUT → destination by disposition (damaged / repair / otherwise cleaning). */
     @Transactional
     public void returnTransfer(String agreementId, String productId, double quantity, String disposition) {
+        returnTransfer(agreementId, productId, quantity, disposition, null);
+    }
+
+    /** {@link #returnTransfer(String, String, double, String)} moving the rental unit's variant and serial (R5b). */
+    @Transactional
+    public void returnTransfer(String agreementId, String productId, double quantity, String disposition,
+            String unitId) {
         String orgId = RentalRows.org();
         String outLoc = locations.resolve(orgId, "out");
         String role = "damaged".equals(disposition) ? "damaged" : "repair".equals(disposition) ? "repair" : "cleaning";
         String dest = locations.resolve(orgId, role);
-        move(productId, outLoc, dest, quantity, "rental_return", agreementId,
+        move(productId, unitId, outLoc, dest, quantity, "rental_return", agreementId,
                 "Rental return (" + disposition + ") " + agreementId);
     }
 
     /** Cleaning complete: RENT-CLEAN → RENT-STOCK (inspection passed). */
     @Transactional
     public void cleaningCompleteTransfer(String agreementId, String productId, double quantity) {
+        cleaningCompleteTransfer(agreementId, productId, quantity, null);
+    }
+
+    /** {@link #cleaningCompleteTransfer(String, String, double)} moving the rental unit's variant and serial (R5b). */
+    @Transactional
+    public void cleaningCompleteTransfer(String agreementId, String productId, double quantity, String unitId) {
         String orgId = RentalRows.org();
         String stockLoc = locations.resolve(orgId, "stock");
         String cleanLoc = locations.resolve(orgId, "cleaning");
-        move(productId, cleanLoc, stockLoc, quantity, "rental_inspect", agreementId,
+        move(productId, unitId, cleanLoc, stockLoc, quantity, "rental_inspect", agreementId,
                 "Rental inspection passed " + agreementId);
     }
 
-    private void move(String productId, String from, String to, double quantity, String sourceType, String sourceId,
-            String notes) {
+    /**
+     * Hardening R5b (P2-7): a line's rental unit moves its own stock — the unit's variant (the quant it sits in) and
+     * its serial unit first (the engine moves other units only for what the serial does not cover). Without a unit
+     * the transfer moves the product's units as before.
+     */
+    private void move(String productId, String unitId, String from, String to, double quantity, String sourceType,
+            String sourceId, String notes) {
         StockMove m = StockMove.transfer(productId, from, to, RentalRows.dec(quantity));
         m.sourceType = sourceType;
         m.sourceId = sourceId;
         m.notes = notes;
+        Map<String, Object> unit = unitId == null ? null : db.first(com.inventoryerp.rental.domain.RentalUnit.class,
+                "id = ? AND \"organizationId\" = ? AND \"productId\" = ?", unitId, RentalRows.org(), productId);
+        if (unit != null) {
+            m.variantId = (String) unit.get("variantId");
+            if (unit.get("inventorySerialId") != null) {
+                m.prefer(null, List.of((String) unit.get("inventorySerialId")));
+            }
+        }
         stock.transfer(m);
     }
 

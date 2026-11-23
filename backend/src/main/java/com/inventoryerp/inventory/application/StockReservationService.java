@@ -60,11 +60,17 @@ public class StockReservationService {
         return settings.resolveString("inventory.reservationMode", SettingContext.EMPTY);
     }
 
-    /** Reserve (idempotent per source line) under the StockItem row lock. */
+    /**
+     * Reserve (idempotent per source line) under the quant lock: the engine's lock order (costing locks, the quant's
+     * advisory lock, then the {@code StockItem} row; hardening R5b), so a reservation never holds the row while a stock
+     * move holding the advisory lock waits for it. A caller reserving several lines feeds them in lock order
+     * ({@link StockMove#inLockOrder}).
+     */
     @Transactional
     public Map<String, Object> reserve(Reserve dto) {
         String org = TenantContext.organizationId();
         String variantKey = dto.variantId() == null ? "" : dto.variantId();
+        StockService.lockCellAdvisory(jdbc, org, dto.productId(), dto.variantId(), dto.locationId());
         jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
                         + " AND \"locationId\" = ? FOR UPDATE")
                 .params(org, dto.productId(), variantKey, dto.locationId()).query().listOfRows();
@@ -80,6 +86,20 @@ public class StockReservationService {
                 .params(UUID.randomUUID().toString(), org, dto.productId(), dto.variantId(), variantKey,
                         dto.locationId(), dto.quantity(), dto.sourceType(), dto.sourceId(), dto.reason(),
                         TenantContext.userId()));
+    }
+
+    /**
+     * Hardening R5b (P2-1): lock one stock cell in the engine's order (costing locks, quant advisory lock, then the
+     * {@code StockItem} row) for a caller that measures free stock before it reserves (sales ATP). Locks last until the
+     * caller's transaction ends.
+     */
+    @Transactional
+    public void lockCell(String productId, String variantId, String locationId) {
+        String org = TenantContext.organizationId();
+        StockService.lockCellAdvisory(jdbc, org, productId, variantId, locationId);
+        jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                        + " AND \"locationId\" = ? FOR UPDATE")
+                .params(org, productId, variantId == null ? "" : variantId, locationId).query().listOfRows();
     }
 
     /**

@@ -357,7 +357,10 @@ public class StockService {
         BigDecimal correction = serialAvg != null ? serialAvg.correction()
                 : batchTracking ? netted.multiply(unitCost.subtract(shortfallCost(quant, product)))
                 : cost.costCorrection();
-        BigDecimal newAverage = serialAvg != null ? serialAvg.average() : cost.newRunningAverage();
+        // Hardening R5b (P2-3): a STANDARD quant carries its governing standard as its average (it stayed 0 when the
+        // receipt created it, so transfers out of it carried no value).
+        BigDecimal newAverage = serialAvg != null ? serialAvg.average()
+                : standardUnit != null ? standardUnit : cost.newRunningAverage();
 
         Map<String, Object> stockItem = addToQuant(quant.id(), qty, newAverage);
 
@@ -404,7 +407,15 @@ public class StockService {
                                 + String.join(", ", conflicts)
                         : "Serial number(s) already exist for this product: " + String.join(", ", conflicts));
             }
+            Set<String> reinstated = new HashSet<>();
+            found.forEach(row -> reinstated.add((String) row.get("serialNumber")));
             for (String serial : serials) {
+                if (!reinstated.contains(serial)) {
+                    // Hardening R5b (P2-2): a new serial number is inserted only if no concurrent receipt created it
+                    // meanwhile (it would otherwise be moved here silently by the upsert below).
+                    insertNewSerial(org, dto.productId, variantId, dto.locationId, serial, batchId, unitCost, receiptRef);
+                    continue;
+                }
                 jdbc.sql("INSERT INTO \"InventorySerial\" (id, \"organizationId\", \"productId\", \"variantId\","
                                 + " \"locationId\", \"serialNumber\", \"batchId\", \"unitCost\", status, \"receiptRef\","
                                 + " \"receivedAt\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
@@ -478,6 +489,35 @@ public class StockService {
                 ? actualUnitCost.multiply(qty).setScale(6, java.math.RoundingMode.HALF_UP) : cost.totalValue();
         return new Received(ledgerCode, dto.quantity, unitCost, cost.totalValue(),
                 newAverage != null ? newAverage : dec(stockItem, "runningAverageCost"), actualValue);
+    }
+
+    /**
+     * Hardening R5b (P2-2): insert a serial unit that did not exist when the receipt read its serials. When a concurrent
+     * receipt committed the same number in between, the insert does nothing and the receipt is refused (400) instead of
+     * moving that unit to this location.
+     */
+    private void insertNewSerial(String org, String productId, String variantId, String locationId, String serial,
+            String batchId, BigDecimal unitCost, String receiptRef) {
+        int inserted = jdbc.sql("INSERT INTO \"InventorySerial\" (id, \"organizationId\", \"productId\", \"variantId\","
+                        + " \"locationId\", \"serialNumber\", \"batchId\", \"unitCost\", status, \"receiptRef\","
+                        + " \"receivedAt\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'in_stock', ?, "
+                        + NOW + ", " + NOW + ", " + NOW + ") ON CONFLICT (\"organizationId\", \"productId\","
+                        + " \"serialNumber\") DO NOTHING")
+                .params(UUID.randomUUID().toString(), org, productId, variantId, locationId, serial, batchId, unitCost,
+                        receiptRef)
+                .update();
+        if (inserted == 1) {
+            return;
+        }
+        Map<String, Object> existing = SqlRows.one(jdbc.sql("SELECT s.status::text AS status, l.name AS location FROM"
+                        + " \"InventorySerial\" s LEFT JOIN \"InventoryLocation\" l ON l.id = s.\"locationId\" WHERE"
+                        + " s.\"organizationId\" = ? AND s.\"productId\" = ? AND s.\"serialNumber\" = ?")
+                .params(org, productId, serial));
+        if (existing != null && "in_stock".equals(existing.get("status"))) {
+            throw ApiException.badRequest("Serial " + serial + " is already in stock at " + existing.get("location"));
+        }
+        throw ApiException.badRequest("Serial number(s) already exist for this product: " + serial + " ("
+                + (existing == null ? "unknown" : existing.get("status")) + ")");
     }
 
     /** New average (null = unchanged) and negative-stock correction of a serial-tracked receipt. */
@@ -672,6 +712,7 @@ public class StockService {
         String ledgerCode = seq.next("stock_move", "STK/", 6);
         BigDecimal totalValue = Money.ZERO;
         BigDecimal unitCost;
+        BigDecimal residueAt = null;
         boolean carriedCost = !serialTracking && !usesLayers && dto.carriedUnitCost != null
                 && "AVCO".equals(str(product, "costingMethod"));
         IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId,
@@ -707,8 +748,7 @@ public class StockService {
                 serialRows = SqlRows.list(jdbc.sql("SELECT id, \"unitCost\", \"batchId\", \"serialNumber\" FROM"
                                 + " \"InventorySerial\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                                 + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND status = 'in_stock'"
-                                + (dto.pinnedSerialIds != null ? " AND id = ANY(?::text[])" : "")
-                                + " ORDER BY \"receivedAt\" ASC LIMIT ?")
+                                + serialPinSql(dto) + " \"receivedAt\" ASC LIMIT ?")
                         .params(sp));
             }
             String issueRef = (dto.sourceType != null ? dto.sourceType : "issue") + ":"
@@ -819,6 +859,7 @@ public class StockService {
             if (carriedCost) {
                 reAverage(stockItemId, before, dec(stockItem, "runningAverageCost"), totalValue, after);
             }
+            residueAt = after;
         }
 
         if (totalValue.signum() > 0 && !dto.skipGlPosting) {
@@ -828,6 +869,11 @@ public class StockService {
                     "Stock issue · " + productName + " · " + JsNumbers.dec(dto.quantity),
                     INV_MOVE_TYPES.getOrDefault(moveType, "STOCK_OUT"),
                     usesLayers || serialTracking || carriedCost ? totalValue : null));
+        }
+        if (residueAt != null && !dto.skipGlPosting) {
+            sweepAvcoResidue(org, product, dto.productId, variantId, dto.locationId, residueAt,
+                    dto.sourceType != null ? dto.sourceType : "stock_issue",
+                    dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode, date);
         }
 
         Map<String, Object> payload = new HashMap<>();
@@ -1004,6 +1050,8 @@ public class StockService {
                         : trace(dto, product, counted, dto.countedQuantity));
         stockPosting.postAdjustment(dto.productId, delta, unitCost, Instant.now(), sourceType, sourceId,
                 "Stock adjustment · " + str(product, "name"), dto.openingBalance);
+        sweepAvcoResidue(org, product, dto.productId, variantId, dto.locationId, counted, sourceType, sourceId,
+                ledgerCode, Instant.now());
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -1030,6 +1078,10 @@ public class StockService {
                     .source(sourceType, dto.sourceId).notes(dto.notes).serials(dto.serialNumbers).batch(dto.batchNumber)
                     .people(dto.responsibleById, dto.approvedById).moveType("adjustment_out")
                     .strategy(dto.batchNumber != null ? "MANUAL" : null).skipGl();
+            if (dto.lotId != null) {
+                // Hardening R5b (P2-2): the counted lot itself goes first (a same-number lot never absorbs it).
+                m.prefer(List.of(dto.lotId), null);
+            }
             Issued res = issue(m);
             ledgerCode = res.ledgerCode();
             totalValue = res.totalValue();
@@ -1039,7 +1091,11 @@ public class StockService {
             if (bool(product, "batchTracking")) {
                 String lotSql = "SELECT * FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                         + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?";
-                if (dto.batchNumber != null) {
+                if (dto.lotId != null) {
+                    lot = SqlRows.one(jdbc.sql(lotSql + " AND id = ?")
+                            .params(org, dto.productId, dto.variantId, dto.locationId, dto.lotId));
+                }
+                if (lot == null && dto.batchNumber != null) {
                     lot = SqlRows.one(jdbc.sql(lotSql + " AND \"batchNumber\" = ? ORDER BY \"receivedAt\" DESC LIMIT 1")
                             .params(org, dto.productId, dto.variantId, dto.locationId, dto.batchNumber));
                 }
@@ -1068,6 +1124,10 @@ public class StockService {
                             : lot != null ? str(lot, "batchNumber")
                             : "ADJ-" + LocalDate.now(ZoneOffset.UTC).toString().replace("-", "")) : null)
                     .expiry(batchTracking ? expiry : null);
+            if (dto.lotId != null && lot != null && dto.lotId.equals(str(lot, "id"))) {
+                // Hardening R5b (P2-2): the gain goes back into the counted lot row.
+                m.returnBatchId = dto.lotId;
+            }
             Received res = receiveCore(m, null);
             ledgerCode = res.ledgerCode();
             totalValue = res.totalValue();
@@ -1144,8 +1204,14 @@ public class StockService {
         boolean batchTracking = bool(product, "batchTracking");
         boolean carried = dto.carriedUnitCost != null && "AVCO".equals(costing) && !batchTracking;
         BigDecimal sourceAvg = from.average();
-        BigDecimal carriedAvg = carried ? Money.max(dto.carriedUnitCost, Money.ZERO) : sourceAvg;
+        // Hardening R5b (P2-3): a STANDARD product moves at its governing standard (its quants could carry 0).
+        StandardCostService std = "STANDARD".equals(costing) ? standards.getIfAvailable() : null;
+        BigDecimal standardUnit = std == null ? null : std.governingStandard(dto.productId).orElse(null);
+        BigDecimal carriedAvg = carried ? Money.max(dto.carriedUnitCost, Money.ZERO)
+                : standardUnit != null && !batchTracking ? standardUnit : sourceAvg;
         BigDecimal carriedValue = carriedAvg.multiply(qty);
+        // The value the source quant's average loses (re-derived below for a carried move): units at its average.
+        BigDecimal averageValue = carriedValue;
         BigDecimal toBefore = to.quantity();
         // Destination lots that went short: arriving units cover that shortfall first (open lots = max(0, on-hand)).
         BigDecimal toNet = batchTracking && toBefore.signum() < 0 ? Money.min(qty, toBefore.negate()) : Money.ZERO;
@@ -1215,10 +1281,6 @@ public class StockService {
                 layerCorrection = layerCorrection.add(netHere.multiply(carriedAvg.subtract(toShortCost)));
             }
         }
-        BigDecimal carriedUnit = Money.div(carriedValue, qty);
-        Resolution destCost = costResolver.resolveReceiptCost(
-                new ProductCost(costing, (BigDecimal) product.get("costPrice")),
-                to.created() ? null : new Quant(toBefore, to.average()), qty, carriedUnit);
         List<Map<String, Object>> moving = List.of();
         if (serialTracking) {
             List<Object> sp = new ArrayList<>(List.of(org, dto.productId));
@@ -1228,23 +1290,36 @@ public class StockService {
                 sp.add(dto.pinnedSerialIds.toArray(String[]::new));
             }
             sp.add(qty.intValueExact());
-            moving = SqlRows.list(jdbc.sql("SELECT id, \"batchId\" FROM \"InventorySerial\""
+            moving = SqlRows.list(jdbc.sql("SELECT id, \"batchId\", \"unitCost\" FROM \"InventorySerial\""
                             + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
                             + " AND \"locationId\" = ? AND status = 'in_stock'"
-                            + (dto.pinnedSerialIds != null ? " AND id = ANY(?::text[])" : "")
-                            + " ORDER BY \"receivedAt\" ASC LIMIT ?")
+                            + serialPinSql(dto) + " \"receivedAt\" ASC LIMIT ?")
                     .params(sp));
+            // Hardening R5b (P2-3): serial units move at their own cost (what the valuation carries them at); units
+            // without a serial at the source's average (the cost price while it has none), as an issue values them.
+            BigDecimal unserialisedUnit = carried ? carriedAvg
+                    : sourceAvg.signum() > 0 ? sourceAvg : dec(product, "costPrice");
+            BigDecimal value = unserialisedUnit.multiply(qty.subtract(BigDecimal.valueOf(moving.size())));
+            for (Map<String, Object> s : moving) {
+                value = value.add(s.get("unitCost") != null ? (BigDecimal) s.get("unitCost") : unserialisedUnit);
+            }
+            carriedValue = value;
         }
+        BigDecimal carriedUnit = Money.div(carriedValue, qty);
+        Resolution destCost = costResolver.resolveReceiptCost(
+                new ProductCost(costing, (BigDecimal) product.get("costPrice")),
+                to.created() ? null : new Quant(toBefore, to.average()), qty, carriedUnit);
         // Gaps h-00 F1: units arriving without a serial blend into the destination's average of such units at the
         // cost they leave the source at (its average, the cost price while it has none), as on a receipt.
-        BigDecimal toAverage = destCost.newRunningAverage() != null ? destCost.newRunningAverage()
+        BigDecimal toAverage = standardUnit != null ? standardUnit
+                : destCost.newRunningAverage() != null ? destCost.newRunningAverage()
                 : to.created() ? carriedUnit : null;
         SerialAverage serialAvg = serialTracking ? serialAverage(org, dto.productId, variantId, dto.toLocationId, to,
                 product, qty.subtract(BigDecimal.valueOf(moving.size())),
                 carried ? carriedAvg : sourceAvg.signum() > 0 ? sourceAvg : dec(product, "costPrice"), toAverage) : null;
         Map<String, Object> toItem = addToQuant(to.id(), qty, serialAvg != null ? serialAvg.average() : toAverage);
         if (carried) {
-            reAverage(from.id(), fromBefore, sourceAvg, carriedValue, newFromQty);
+            reAverage(from.id(), fromBefore, sourceAvg, serialTracking ? averageValue : carriedValue, newFromQty);
         }
 
         if (serialTracking) {
@@ -1284,7 +1359,8 @@ public class StockService {
                     jdbc.sql("UPDATE \"InventorySerial\" SET \"locationId\" = ?, \"batchId\" = COALESCE(?, \"batchId\"),"
                                     + " \"updatedAt\" = " + NOW + " WHERE id = ?")
                             .params(dto.toLocationId, newBatch, s.get("id")).update();
-                    layers.add(new StockMove.MovedLayer(null, (String) s.get("id"), BigDecimal.ONE, null));
+                    layers.add(new StockMove.MovedLayer(null, (String) s.get("id"), BigDecimal.ONE,
+                            (BigDecimal) s.get("unitCost")));
                 }
             }
         }
@@ -1310,6 +1386,11 @@ public class StockService {
                         : batchTracking ? layerCorrection
                         : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
                 dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode);
+        if (!dto.skipGlPosting) {
+            sweepAvcoResidue(org, product, dto.productId, variantId, dto.fromLocationId, newFromQty,
+                    dto.sourceType != null ? dto.sourceType : "stock_transfer",
+                    dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode, Instant.now());
+        }
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -1384,6 +1465,11 @@ public class StockService {
     @Transactional
     public void lockQuants(String locationId, List<? extends Map<String, Object>> lines) {
         String org = TenantContext.organizationId();
+        // Hardening R5b (P2-1): the costing locks of every product first (sorted), as each move takes them before its
+        // quant lock; otherwise a standard activation (costing key, then quants) and this (quants, then each move's
+        // costing key) could deadlock.
+        new java.util.TreeSet<>(lines.stream().map(l -> str(l, "productId")).filter(java.util.Objects::nonNull)
+                .toList()).forEach(productId -> holdCostingShared(org, productId));
         Set<String> seen = new HashSet<>();
         for (Map<String, Object> l : StockMove.inLockOrder(new ArrayList<Map<String, Object>>(lines))) {
             String variantKey = l.get("variantId") == null ? "" : str(l, "variantId");
@@ -1391,6 +1477,39 @@ public class StockService {
                 lockQuantForAvco(org, str(l, "productId"), variantKey, locationId);
             }
         }
+    }
+
+    /** One quant a caller pre-locks with {@link #lockCells}. */
+    public record Cell(String productId, String variantId, String locationId) {}
+
+    /**
+     * Hardening R5b (P2-1): take, before a multi-move operation, every lock its moves will take — the costing locks of
+     * each product (sorted), then each quant's advisory lock in the engine order (product, variant, location) — so the
+     * moves that follow (which re-take them) never acquire a lock out of order, whatever order they run in. Creates no
+     * quant; the locks last until the caller's transaction ends.
+     */
+    @Transactional
+    public void lockCells(java.util.Collection<Cell> cells) {
+        String org = TenantContext.organizationId();
+        new java.util.TreeSet<>(cells.stream().map(Cell::productId).toList())
+                .forEach(productId -> holdCostingShared(org, productId));
+        cells.stream().distinct().sorted(java.util.Comparator.comparing(Cell::productId)
+                        .thenComparing(c -> c.variantId() == null ? "" : c.variantId())
+                        .thenComparing(Cell::locationId))
+                .forEach(c -> lockQuantForAvco(org, c.productId(), c.variantId() == null ? "" : c.variantId(),
+                        c.locationId()));
+    }
+
+    /**
+     * Hardening R5b: the costing locks (shared) and the advisory lock of one quant, in the engine order — for a writer
+     * outside the engine that then locks the quant's {@code StockItem} row (stock reservations).
+     */
+    static void lockCellAdvisory(JdbcClient jdbc, String org, String productId, String variantId, String locationId) {
+        jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint),"
+                        + " pg_advisory_xact_lock_shared(hashtext(?)::bigint)")
+                .params(costingLockKey(org, null), costingLockKey(org, productId)).query().listOfRows();
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)")
+                .param(quantLockKey(org, productId, variantId == null ? "" : variantId, locationId)).query().listOfRows();
     }
 
     /** Costing-change lock key (readiness gaps h-02 F2): the organisation's ({@code productId} null) or a product's. */
@@ -1537,21 +1656,75 @@ public class StockService {
         params.add(variantId);
         params.add(locationId);
         String pin = "";
-        if (dto.pinnedBatchIds != null) {
+        if (dto.pinnedBatchIds != null && !dto.pinFallback) {
             pin = " AND id = ANY(?::text[])";
             params.add(dto.pinnedBatchIds.toArray(String[]::new));
         }
         if (extraParam != null) {
             params.add(extraParam);
         }
+        String ordered = order;
+        if (dto.pinnedBatchIds != null && dto.pinFallback && order.startsWith(" ORDER BY ")) {
+            // Hardening R5b: preferred lots first, then the others in the usual order.
+            ordered = " ORDER BY (id = ANY(?::text[])) DESC, " + order.substring(" ORDER BY ".length());
+            params.add(dto.pinnedBatchIds.toArray(String[]::new));
+        }
         return jdbc.sql(select + " FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
                 + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND quantity > 0"
-                + " AND \"isActive\" = true" + pin + extra + order).params(params);
+                + " AND \"isActive\" = true" + pin + extra + ordered).params(params);
     }
 
     private JdbcClient.StatementSpec lots(String org, StockMove dto, String variantId, String select, String extra,
             String order, Object extraParam) {
         return lots(org, dto, variantId, dto.locationId, select, extra, order, extraParam);
+    }
+
+    /**
+     * The serial-unit restriction / order of a move that names no serial numbers, ending in {@code ORDER BY} plus a
+     * trailing comma when needed, to be followed by the base order: pinned units only ({@code id = ANY(?)}), pinned
+     * units first ({@link StockMove#pinFallback}), or any unit. The pinned id array is bound in either case.
+     */
+    private static String serialPinSql(StockMove dto) {
+        if (dto.pinnedSerialIds == null) {
+            return " ORDER BY";
+        }
+        return dto.pinFallback ? " ORDER BY (id = ANY(?::text[])) DESC," : " AND id = ANY(?::text[]) ORDER BY";
+    }
+
+    /** Below this absolute value a zero quant's leftover ledger value is AVCO rounding and is swept (R5b). */
+    static final BigDecimal RESIDUE_SWEEP_LIMIT = BigDecimal.ONE;
+
+    /**
+     * Hardening R5b (P2-3): an AVCO quant (no lots, no serials) that a move just took to exactly zero carries no value,
+     * but its ledger can keep a residue: the average is stored at 6 decimals and every issue posts average × quantity.
+     * A residue below {@link #RESIDUE_SWEEP_LIMIT} is swept in the move's transaction — a value-only
+     * {@code cost_adjustment} ledger row for the quant and the matching journal (Dr cost of sales / Cr stock for a
+     * positive residue, the reverse for a negative one, posting rule {@code COGS_CORRECTION}, keyed like a negative-stock
+     * cost correction so a reversal of the move does not mirror it). A larger difference is not rounding: it is left for
+     * the integrity check ({@code valuation_vs_subledger}). Value-adjunct rows ({@code valuationComponent}) are not part
+     * of the residue.
+     */
+    private void sweepAvcoResidue(String org, Map<String, Object> product, String productId, String variantId,
+            String locationId, BigDecimal after, String sourceType, String sourceId, String ledgerCode, Instant date) {
+        if (after == null || after.signum() != 0 || product == null || !"AVCO".equals(str(product, "costingMethod"))
+                || bool(product, "batchTracking") || bool(product, "serialTracking")) {
+            return;
+        }
+        BigDecimal residue = jdbc.sql("SELECT COALESCE(SUM(CASE WHEN \"quantityChange\" >= 0 THEN"
+                        + " COALESCE(\"totalValue\", 0) ELSE -COALESCE(\"totalValue\", 0) END), 0) FROM \"InventoryLedger\""
+                        + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND \"locationId\" = ? AND \"valuationComponent\" IS NULL")
+                .params(org, productId, variantId, locationId).query(BigDecimal.class).single()
+                .setScale(6, RoundingMode.HALF_UP);
+        if (residue.signum() == 0 || residue.abs().compareTo(RESIDUE_SWEEP_LIMIT) >= 0) {
+            return;
+        }
+        String code = seq.next("stock_move", "STK/", 6);
+        insertLedger(org, code, productId, variantId, locationId, null, null, "cost_adjustment", Money.ZERO, Money.ZERO,
+                Money.ZERO, Money.ZERO, residue.negate(), sourceType, sourceId,
+                "AVCO rounding residue at zero stock (" + ledgerCode + ")", null, null, null);
+        stockPosting.postNegativeStockCostCorrection(productId, residue, date, sourceType, sourceId,
+                "AVCO rounding residue · " + str(product, "name"), COST_CORRECTION_KEY + org + ":residue:" + code);
     }
 
     /** Atomic decrement; returns the new quantity. */

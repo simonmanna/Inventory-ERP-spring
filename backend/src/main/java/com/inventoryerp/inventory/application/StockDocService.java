@@ -686,9 +686,19 @@ public class StockDocService {
      * One count variance to post: the change to apply ({@code delta}, against the on-hand read under the quant lock),
      * the lot it belongs to (by number; null = the quant without a named lot) and the serial units that went missing
      * (loss) or were found (gain). {@code qtySystem} / {@code qtyActual} are what the adjustment document shows.
+     * Hardening R5b (P2-2): {@code lotId} is the exact lot ({@code InventoryBatch.id}) the count line counted, when
+     * known: the variance is issued from / received into that lot, never another lot with the same number. A line
+     * without a lot (the quant's units outside any named lot) has neither: a loss is issued from the quant's lots in
+     * FEFO order and a gain goes into its newest lot, as before.
      */
     public record CountVariance(String productId, String variantId, String unit, String batchNumber,
-            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {}
+            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId) {
+
+        public CountVariance(String productId, String variantId, String unit, String batchNumber,
+                BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {
+            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, null);
+        }
+    }
 
     /**
      * Post a count's variances as one completed stock adjustment ({@code cycle_count}) inside the caller's
@@ -744,6 +754,7 @@ public class StockDocService {
                     .people(responsibleById, user);
             m.deltaQuantity = l.delta();
             m.openingBalance = opening;
+            m.lotId = l.lotId();
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
@@ -858,7 +869,7 @@ public class StockDocService {
                             dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                     .source("stock_transfer", str(doc, "transferCode")).notes(str(doc, "notes"))
                     .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
-            stock.transfer(m);
+            recordArrivedLayers(id, str(item, "id"), stock.transfer(m), true);
             jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyTransferred\" = ? WHERE id = ?")
                     .params(dec(item, "qtyRequested"), item.get("id")).update();
         }
@@ -1035,9 +1046,10 @@ public class StockDocService {
                 if (notes != null && !notes.isEmpty()) {
                     n.add(notes);
                 }
-                stock.transfer(pinTransit(StockMove.transfer(str(item, "productId"), transitLocId, str(doc, "toLocId"),
-                                received).variant(str(item, "variantId")).source("stock_transfer_receipt", code)
-                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id")));
+                recordArrivedLayers(id, str(item, "id"), stock.transfer(pinTransit(StockMove.transfer(
+                        str(item, "productId"), transitLocId, str(doc, "toLocId"), received)
+                        .variant(str(item, "variantId")).source("stock_transfer_receipt", code)
+                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id"))), false);
             }
             if (damaged.signum() > 0) {
                 stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, damaged)
@@ -1154,6 +1166,23 @@ public class StockDocService {
         for (StockMove.MovedLayer layer : moved.layers()) {
             jdbc.sql(sql).params(UUID.randomUUID().toString(), org(), transferId, itemId, layer.batchId(),
                     layer.serialId(), layer.quantity(), layer.unitCost()).update();
+        }
+    }
+
+    /**
+     * Hardening R5b (P2-2): remember the lots a transfer line created at its destination (and, for an immediate
+     * transfer, the serial units it moved; a transit line's serials are its dispatch layers already), so a reversal
+     * moves back exactly these units. Only identified layers are recorded — never a row without lot and serial, which
+     * {@link #pinTransit} reads as the dispatch cost — and lots at the destination never match a move out of transit.
+     */
+    private void recordArrivedLayers(String transferId, String itemId, StockMove.Transferred moved, boolean serials) {
+        String sql = "INSERT INTO \"StockTransferLayer\" (id, \"organizationId\", \"transferId\", \"transferItemId\","
+                + " \"batchId\", \"serialId\", quantity, \"unitCost\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        for (StockMove.MovedLayer layer : moved.layers()) {
+            if (layer.batchId() != null || (serials && layer.serialId() != null)) {
+                jdbc.sql(sql).params(UUID.randomUUID().toString(), org(), transferId, itemId, layer.batchId(),
+                        layer.serialId(), layer.quantity(), layer.unitCost()).update();
+            }
         }
     }
 

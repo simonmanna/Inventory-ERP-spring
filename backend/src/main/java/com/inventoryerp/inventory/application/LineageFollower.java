@@ -400,9 +400,13 @@ public class LineageFollower {
         return id;
     }
 
-    /** AVCO quant: same advisory lock as the stock engine, then raise the running average by {@code amount}. */
+    /**
+     * AVCO quant: the costing locks shared (hardening R5b; re-entrant when the caller holds them) and the same advisory
+     * lock as the stock engine, then raise the running average by {@code amount}.
+     */
     public void raiseAverage(String productId, String variantId, String locationId, BigDecimal amount) {
         String variantKey = variantId == null ? "" : variantId;
+        CostingLocks.shareProduct(jdbc, org(), productId);
         jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("avco:" + org() + ":" + productId + ":"
                 + variantKey + ":" + locationId).query().listOfRows();
         Map<String, Object> item = SqlRows.one(jdbc.sql("SELECT id, quantity, \"runningAverageCost\" FROM"

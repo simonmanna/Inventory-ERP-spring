@@ -298,7 +298,8 @@ public class RentalAgreementService {
         List<Map<String, Object>> lines = db.list(RentalAgreementLine.class, "\"agreementId\" = ? AND"
                 + " \"organizationId\" = ?", id, orgId);
         for (Map<String, Object> line : lines) {
-            posting.checkoutTransfer(id, (String) line.get("productId"), line.get("quantity"));
+            posting.checkoutTransfer(id, (String) line.get("productId"), line.get("quantity"),
+                    (String) line.get("unitId"));
         }
         // FX-5: the deposit's kind (refundable security deposit unless stated as prepaid rent)
         deposit.createForAgreement(id, partnerId, dto.get("depositKind") == null ? null

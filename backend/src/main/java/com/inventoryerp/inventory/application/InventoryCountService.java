@@ -688,48 +688,27 @@ public class InventoryCountService {
             throw ApiException.badRequest("Nothing counted yet — enter at least one physical count.");
         }
         boolean overwrite = Boolean.TRUE.equals(force);
-        // Gaps h-00 F7: hold the counted cells' quant locks until this transaction ends, so the on-hand, lot and
-        // ledger reads below see one state (a movement committing between them was erased from the variance).
-        stock.lockQuants(str(head, "locationId"), counted);
-        List<Posting> all = postings(head, counted, overwrite);
-        List<Posting> stale = all.stream().filter(p -> p.movements() > 0).toList();
-        if (!stale.isEmpty() && overwrite && (forceReason == null || forceReason.trim().isEmpty())) {
-            throw ApiException.badRequest(
-                    "A reason is required to force-submit a count over lines that moved after being counted.");
-        }
-        List<Posting> variance = all.stream().filter(p -> p.delta().signum() != 0).toList();
-        long missingReason = variance.stream().filter(p -> p.line().get("reason") == null
-                || str(p.line(), "reason").trim().isEmpty()).count();
-        if (missingReason > 0) {
-            throw ApiException.badRequest("A reason is required for " + missingReason + " line(s) with a variance.");
-        }
-        assertSerials(head, variance);
-
-        BigDecimal value = Money.ZERO;
-        BigDecimal magnitude = Money.ZERO;
-        for (Posting p : variance) {
-            magnitude = magnitude.add(p.delta().abs());
-            value = value.add(p.delta().abs().multiply(p.unitCost()));
-        }
-        value = value.setScale(2, RoundingMode.HALF_UP);
-        LinkedHashSet<String> makers = new LinkedHashSet<>();
-        if (head.get("startedById") != null) {
-            makers.add(str(head, "startedById"));
-        }
-        counted.forEach(l -> {
-            if (l.get("countedById") != null) {
-                makers.add(str(l, "countedById"));
-            }
-        });
-        Map<String, Object> snapshot = Obj.of("countId", id, "countCode", head.get("countCode"), "countType",
-                head.get("countType"), "locationId", head.get("locationId"), "amount", JsNumbers.js(value),
-                "varianceValue", JsNumbers.js(value), "varianceQty", JsNumbers.js(magnitude), "lines", variance.size(),
-                "makerIds", String.join(",", makers));
-        Map<String, Object> approval = newTx.execute(s -> approvals.checkOrRequestApproval(APPROVAL_TYPE, id, snapshot));
+        // Hardening R5b (P2-1): the approval gate opens its own connection, so it runs before any quant lock is held
+        // (as the adjustment approval does), on the variance measured without locks. The cells are then locked (gaps
+        // h-00 F7: the on-hand, lot and ledger reads see one state) and the variance measured again; if a movement
+        // committed in between and changed it in a way the gate could judge differently, the submit is refused (submit
+        // again: the gate then sees the new value); otherwise the locked measurement posts.
+        Measured pre = measure(head, counted, overwrite, forceReason);
+        Map<String, Object> approval = newTx.execute(s -> approvals.checkOrRequestApproval(APPROVAL_TYPE, id,
+                pre.snapshot()));
         if (approval != null && Boolean.TRUE.equals(approval.get("needsApproval"))) {
             throw ApiException.forbidden("Inventory count submission requires approval. Request ID: "
                     + approval.get("requestId") + ".");
         }
+        stock.lockQuants(str(head, "locationId"), counted);
+        Measured locked = measure(head, counted, overwrite, forceReason);
+        if (gateOutcomeMayChange(approval, pre, locked)) {
+            throw ApiException.conflict("Stock moved while the count was being submitted; submit it again.");
+        }
+        List<Posting> stale = locked.stale();
+        List<Posting> variance = locked.variance();
+        BigDecimal value = locked.value();
+        LinkedHashSet<String> makers = locked.makers();
         if (!variance.isEmpty()) {
             // A count submit posts a stock adjustment: the adjustment maker-checker pair applies (counters ≠ submitter).
             sod.assertSeparated(SegregationOfDutiesService.STOCK_ADJUSTMENT, "InventoryCountSession", id,
@@ -764,7 +743,7 @@ public class InventoryCountService {
             List<String> serials = p.delta().signum() < 0 ? serialList(l.get("missingSerials"))
                     : serialList(l.get("foundSerials"));
             items.add(new CountVariance(str(l, "productId"), str(l, "variantId"), str(l, "unit"), str(l, "batchNumber"),
-                    p.nowQty(), p.nowQty().add(p.delta()), p.delta(), serials));
+                    p.nowQty(), p.nowQty().add(p.delta()), p.delta(), serials, str(l, "batchId")));
         }
         String responsible = session.get("startedById") != null && !str(session, "startedById").isEmpty()
                 ? str(session, "startedById") : user != null ? user : "";
@@ -779,6 +758,66 @@ public class InventoryCountService {
         auditSubmit(id, session, staleView, forcedOver, forceReason, str(adj, "id"), value);
         Map<String, Object> out = session(id);
         return full(out);
+    }
+
+    /** A count's variance as measured for {@link #submit}: lines, value, units and the approval snapshot. */
+    /**
+     * Whether the variance measured under the locks could change the approval decision taken on the unlocked one: an
+     * approval granted for a smaller variance, or no workflow before but one would apply to the new variance. A
+     * variance that did not grow past an approval, or that still needs none, posts as measured under the locks.
+     */
+    private boolean gateOutcomeMayChange(Map<String, Object> approval, Measured pre, Measured locked) {
+        if (locked.value().compareTo(pre.value()) == 0 && locked.magnitude().compareTo(pre.magnitude()) == 0) {
+            return false;
+        }
+        if (approval != null) {
+            return locked.value().compareTo(pre.value()) > 0 || locked.magnitude().compareTo(pre.magnitude()) > 0;
+        }
+        return approvals.wouldRequireApproval(APPROVAL_TYPE, locked.snapshot());
+    }
+
+    private record Measured(List<Posting> stale, List<Posting> variance, BigDecimal value, BigDecimal magnitude,
+            LinkedHashSet<String> makers, Map<String, Object> snapshot) {}
+
+    /** The postings of the counted lines with the submit validations (reasons, force reason, serial units). */
+    private Measured measure(Map<String, Object> head, List<Map<String, Object>> counted, boolean overwrite,
+            String forceReason) {
+        String id = str(head, "id");
+        List<Posting> all = postings(head, counted, overwrite);
+        List<Posting> stale = all.stream().filter(p -> p.movements() > 0).toList();
+        if (!stale.isEmpty() && overwrite && (forceReason == null || forceReason.trim().isEmpty())) {
+            throw ApiException.badRequest(
+                    "A reason is required to force-submit a count over lines that moved after being counted.");
+        }
+        List<Posting> variance = all.stream().filter(p -> p.delta().signum() != 0).toList();
+        long missingReason = variance.stream().filter(p -> p.line().get("reason") == null
+                || str(p.line(), "reason").trim().isEmpty()).count();
+        if (missingReason > 0) {
+            throw ApiException.badRequest("A reason is required for " + missingReason + " line(s) with a variance.");
+        }
+        assertSerials(head, variance);
+
+        BigDecimal value = Money.ZERO;
+        BigDecimal magnitude = Money.ZERO;
+        for (Posting p : variance) {
+            magnitude = magnitude.add(p.delta().abs());
+            value = value.add(p.delta().abs().multiply(p.unitCost()));
+        }
+        value = value.setScale(2, RoundingMode.HALF_UP);
+        LinkedHashSet<String> makers = new LinkedHashSet<>();
+        if (head.get("startedById") != null) {
+            makers.add(str(head, "startedById"));
+        }
+        counted.forEach(l -> {
+            if (l.get("countedById") != null) {
+                makers.add(str(l, "countedById"));
+            }
+        });
+        Map<String, Object> snapshot = Obj.of("countId", id, "countCode", head.get("countCode"), "countType",
+                head.get("countType"), "locationId", head.get("locationId"), "amount", JsNumbers.js(value),
+                "varianceValue", JsNumbers.js(value), "varianceQty", JsNumbers.js(magnitude), "lines", variance.size(),
+                "makerIds", String.join(",", makers));
+        return new Measured(stale, variance, value, magnitude, makers, snapshot);
     }
 
     /**

@@ -202,12 +202,15 @@ public class RentalReturnService {
             }
             boolean missing = Boolean.TRUE.equals(line.get("isMissing"));
             double quantity = PosSql.num(line.get("quantity"));
-            if (!damaged && !missing) {
-                posting.cleaningCompleteTransfer(agreementId, lineProduct(line.get("agreementLineId")), quantity);
-            } else if (damaged) {
-                posting.returnTransfer(agreementId, lineProduct(line.get("agreementLineId")), quantity, "damaged");
-            }
             Object unitId = line.get("unitId");
+            String stockUnit = unitId != null ? (String) unitId : lineUnit(line.get("agreementLineId"));
+            if (!damaged && !missing) {
+                posting.cleaningCompleteTransfer(agreementId, lineProduct(line.get("agreementLineId")), quantity,
+                        stockUnit);
+            } else if (damaged) {
+                posting.returnTransfer(agreementId, lineProduct(line.get("agreementLineId")), quantity, "damaged",
+                        stockUnit);
+            }
             if (unitId != null) {
                 String live = "id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL";
                 if (damaged) {
@@ -224,6 +227,12 @@ public class RentalReturnService {
             }
         }
         return committed;
+    }
+
+    /** The rental unit of an agreement line (null when the line names none). */
+    private String lineUnit(Object agreementLineId) {
+        Map<String, Object> line = db.first(RentalAgreementLine.class, BY_ID, agreementLineId, RentalRows.org());
+        return line == null ? null : (String) line.get("unitId");
     }
 
     private String lineProduct(Object agreementLineId) {

@@ -84,6 +84,18 @@ public final class StockMove {
     /** Issue / transfer: only these serial units ({@code InventorySerial} ids) may move. Null = any in-stock serial. */
     public List<String> pinnedSerialIds;
     /**
+     * Hardening R5b (P2-2): with {@code true} the pinned lots / serial units are only drawn first, then the quant's
+     * other lots / units cover the rest (FEFO / oldest first), instead of restricting the move to them. Used where the
+     * units to bring back are known but may since have partly moved (transfer and production reversals, rental units).
+     */
+    public boolean pinFallback;
+    /**
+     * Hardening R5b (P2-2): adjust only — the exact lot ({@code InventoryBatch.id}) a count line counted. A loss is
+     * issued from that lot and a gain goes back into it, so another lot with the same number at the location never
+     * absorbs the variance. Null = the lot by {@link #batchNumber} (or the quant's lots in FEFO order).
+     */
+    public String lotId;
+    /**
      * Issue / transfer of an AVCO quant without lots: the unit cost the units entered this quant at (a transit
      * transfer line's dispatch cost). The quant's average is re-derived so its remaining value stays exact.
      */
@@ -237,6 +249,17 @@ public final class StockMove {
         this.pinnedBatchIds = batchIds;
         this.pinnedSerialIds = serialIds;
         this.carriedUnitCost = unitCost;
+        return this;
+    }
+
+    /**
+     * Hardening R5b: draw these lots / serial units first and the quant's others after them ({@link #pinFallback}).
+     * Empty or null lists prefer nothing.
+     */
+    public StockMove prefer(List<String> batchIds, List<String> serialIds) {
+        this.pinnedBatchIds = batchIds == null || batchIds.isEmpty() ? null : batchIds;
+        this.pinnedSerialIds = serialIds == null || serialIds.isEmpty() ? null : serialIds;
+        this.pinFallback = true;
         return this;
     }
 
