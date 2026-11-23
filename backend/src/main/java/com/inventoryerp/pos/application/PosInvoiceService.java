@@ -604,6 +604,9 @@ public class PosInvoiceService {
             return;
         }
         for (Map<String, Object> it : items) {
+            if (it.get("rentalFeeType") != null) {
+                continue; // R1: a fee line needs no stock
+            }
             if (it.get("comboId") != null) {
                 List<Map<String, Object>> comps = SqlRows.list(jdbc.sql("SELECT ci.\"productId\", ci.quantity,"
                         + " p.\"salesUomId\" FROM \"ComboItem\" ci JOIN \"Combo\" c ON c.id = ci.\"comboId\""
@@ -1470,7 +1473,7 @@ public class PosInvoiceService {
         Map<List<String>, BigDecimal> byCell = new LinkedHashMap<>();
         for (Map<String, Object> it : db.list(OrderItem.class, "\"orderId\" = ? AND cancelled = false AND \"organizationId\" = ?",
                 orderId, orgId)) {
-            if (it.get("rentalAgreementLineId") != null || it.get("repairOrderLineId") != null) {
+            if (noStockLine(it)) {
                 continue;
             }
             BigDecimal lineQty = dec(it.get("quantity"));
@@ -1518,8 +1521,7 @@ public class PosInvoiceService {
         String orgId = org();
         String location = null;
         for (Map<String, Object> it : items) {
-            if (it.get("productId") == null || it.get("variantId") != null || it.get("rentalAgreementLineId") != null
-                    || it.get("repairOrderLineId") != null) {
+            if (it.get("productId") == null || it.get("variantId") != null || noStockLine(it)) {
                 continue;
             }
             Map<String, Object> p = SqlRows.one(jdbc.sql("SELECT name, \"hasVariants\", \"trackInventory\","
@@ -1539,6 +1541,16 @@ public class PosInvoiceService {
                 throw ApiException.badRequest("Choose a variant for " + p.get("name"));
             }
         }
+    }
+
+    /**
+     * A line that never moves stock from a POS bill: a rental agreement line or repair line (their own module moves the
+     * goods) and — R1 (P0-1), a permanent rule — any fee or charge line ({@code rentalFeeType} set), whatever product
+     * it names: a fee bills money, never goods.
+     */
+    static boolean noStockLine(Map<String, Object> it) {
+        return it.get("rentalAgreementLineId") != null || it.get("repairOrderLineId") != null
+                || it.get("rentalFeeType") != null;
     }
 
     /** The register location of a cash session (its own, else its register's), or null. */
@@ -1885,7 +1897,7 @@ public class PosInvoiceService {
         String[] lastError = {null};
         Set<String> posted = new LinkedHashSet<>(alreadyPosted);
         for (Map<String, Object> it : items) {
-            if (it.get("rentalAgreementLineId") != null || it.get("repairOrderLineId") != null) {
+            if (noStockLine(it)) {
                 continue;
             }
             String invoiceItemId = invoiceItemByLine.get(PosSql.intOf(it.get("lineNumber")));

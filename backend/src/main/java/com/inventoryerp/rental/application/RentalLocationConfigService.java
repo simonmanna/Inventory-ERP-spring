@@ -15,7 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * The five rental inventory locations (port of {@code rental-location-config.service.ts}). Checkout is an internal
  * stock transfer between them (RENT-STOCK → RENT-OUT and back on return); the role → InventoryLocation mapping is
- * bootstrapped per org on first use (idempotent) with {@code virtual} locations.
+ * bootstrapped per org on first use (idempotent) with {@code virtual} locations, together with the four non-stock
+ * fee products (R1, P0-1).
  */
 @Service
 public class RentalLocationConfigService {
@@ -30,6 +31,16 @@ public class RentalLocationConfigService {
             new Boot("cleaning", "RENT-CLEAN", "Rental Cleaning"),
             new Boot("repair", "RENT-REPAIR", "Rental Repair"),
             new Boot("damaged", "RENT-DAMAGED", "Rental Damaged"));
+
+    /**
+     * R1 (P0-1): the fee products a rental bills (checkout rent, extension / swap delta, late fees, damage). Non-stock
+     * services: a fee line never moves stock.
+     */
+    static final List<Boot> FEE_PRODUCTS = List.of(
+            new Boot("rental", "RENT-FEE", "Rental fee"),
+            new Boot("extension", "RENT-EXTEND", "Rental extension fee"),
+            new Boot("late", "RENT-LATE", "Rental late fee"),
+            new Boot("damage", "RENT-DAMAGE", "Rental damage charge"));
 
     private final PosDb db;
 
@@ -56,7 +67,25 @@ public class RentalLocationConfigService {
                             .formatted(RentalRows.NOW, RentalRows.NOW, RentalRows.NOW))
                     .params(orgId, row.role(), locationId).update();
         }
+        ensureFeeProducts(orgId);
         log.debug("Rental locations ensured for org {}", orgId);
+    }
+
+    /**
+     * Create the four rental fee products as non-stock services when the org has no product with that code yet
+     * (idempotent; an existing product with the code — even deactivated or deleted — is left as it is, and a missing
+     * active one is then refused at billing).
+     */
+    private void ensureFeeProducts(String orgId) {
+        for (Boot fee : FEE_PRODUCTS) {
+            db.jdbc().sql("""
+                            INSERT INTO "Product" (id, "organizationId", code, name, "productType", "costingMethod",
+                              "costPrice", "salesPrice", "trackInventory", "updatedAt")
+                            SELECT gen_random_uuid()::text, ?, ?, ?, 'service', 'AVCO', 0, 0, false, %s
+                            WHERE NOT EXISTS (SELECT 1 FROM "Product" WHERE "organizationId" = ? AND code = ?)
+                            ON CONFLICT ("organizationId", code) DO NOTHING""".formatted(RentalRows.NOW))
+                    .params(orgId, fee.code(), fee.name(), orgId, fee.code()).update();
+        }
     }
 
     /** Tx-aware role → InventoryLocation id, ensuring bootstrap first. */

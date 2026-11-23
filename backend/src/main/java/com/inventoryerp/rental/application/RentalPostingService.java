@@ -94,12 +94,12 @@ public class RentalPostingService {
     /** Checkout invoice: one order + one invoice covering every line of the agreement (fee product RENT-FEE). */
     @Transactional
     public Map<String, Object> checkoutInvoice(Map<String, Object> agreement, List<Map<String, Object>> lines) {
-        Map<String, Object> feeProduct = feeProduct("RENT-FEE");
+        String feeProductId = requireFeeProduct("RENT-FEE");
         List<FeeLine> fees = new java.util.ArrayList<>();
         for (Map<String, Object> l : lines) {
             double qty = RentalRows.num(l.get("quantity"));
             double divisor = qty == 0 || Double.isNaN(qty) ? 1 : qty;
-            fees.add(new FeeLine(feeProduct != null ? (String) feeProduct.get("id") : (String) l.get("productId"),
+            fees.add(new FeeLine(feeProductId,
                     "Rental " + l.get("ratePeriod") + " — " + agreement.get("agreementNumber"),
                     l.get("quantity") == null ? 1 : qty,
                     RentalRows.num(l.get("lineTotal")) / divisor, "rental"));
@@ -112,6 +112,20 @@ public class RentalPostingService {
     Map<String, Object> feeProduct(String code) {
         return db.first(com.inventoryerp.core.domain.Product.class, "\"organizationId\" = ? AND code = ? AND"
                 + " \"isActive\" = true AND \"deletedAt\" IS NULL", RentalRows.org(), code);
+    }
+
+    /**
+     * R1 (P0-1, owner-approved 2026-11-23): the id of the active fee product {@code code}. A fee line never falls back
+     * to the rented product — billing that product would issue the rented item a second time — so a missing (deleted
+     * or deactivated) fee product is refused. The four fee products are created with the rental locations
+     * ({@link RentalLocationConfigService#ensureForOrg}).
+     */
+    public String requireFeeProduct(String code) {
+        Map<String, Object> p = feeProduct(code);
+        if (p == null) {
+            throw ApiException.badRequest("Rental fee product " + code + " is not configured");
+        }
+        return (String) p.get("id");
     }
 
     /**

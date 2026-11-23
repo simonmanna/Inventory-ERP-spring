@@ -125,14 +125,13 @@ public class RentalSwapService {
                 "rental_swap", swapId, meta);
 
         if (delta > 0) {
-            Map<String, Object> fee = posting.feeProduct("RENT-EXTEND");
-            if (fee != null) {
-                posting.createFeeInvoice(agreementId, (String) agreement.get("partnerId"),
-                        (String) agreement.get("branchId"), "rental",
-                        List.of(new RentalPostingService.FeeLine((String) fee.get("id"), "Swap rate delta — "
-                                + agreement.get("agreementNumber"), 1, delta, "rental")),
-                        RentalRows.str(dto, "paymentMode"));
-            }
+            // R1 (P0-1): refused when the fee product is missing, instead of swapping without billing the delta.
+            String feeProductId = posting.requireFeeProduct("RENT-EXTEND");
+            posting.createFeeInvoice(agreementId, (String) agreement.get("partnerId"),
+                    (String) agreement.get("branchId"), "rental",
+                    List.of(new RentalPostingService.FeeLine(feeProductId, "Swap rate delta — "
+                            + agreement.get("agreementNumber"), 1, delta, "rental")),
+                    RentalRows.str(dto, "paymentMode"));
         }
         return swap;
     }

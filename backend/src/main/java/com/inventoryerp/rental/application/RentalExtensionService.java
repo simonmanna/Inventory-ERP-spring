@@ -114,11 +114,12 @@ public class RentalExtensionService {
         db.update(RentalAgreementLine.class, Obj.of("dueAt", newDueAt), "id = ? AND \"organizationId\" = ?",
                 line.get("id"), orgId);
 
-        Map<String, Object> fee = posting.feeProduct("RENT-EXTEND");
-        if (fee != null && amount > 0) {
+        if (amount > 0) {
+            // R1 (P0-1): refused when the fee product is missing, instead of extending without billing.
+            String feeProductId = posting.requireFeeProduct("RENT-EXTEND");
             posting.createFeeInvoice(agreementId, (String) agreement.get("partnerId"),
                     (String) agreement.get("branchId"), "extension",
-                    List.of(new RentalPostingService.FeeLine((String) fee.get("id"), "Extension (" + units + " " + period
+                    List.of(new RentalPostingService.FeeLine(feeProductId, "Extension (" + units + " " + period
                             + ") — " + agreement.get("agreementNumber"), 1, amount, "extension")),
                     RentalRows.str(dto, "paymentMode"));
         }

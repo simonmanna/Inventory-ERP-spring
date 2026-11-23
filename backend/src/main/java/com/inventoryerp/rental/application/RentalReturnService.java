@@ -278,17 +278,14 @@ public class RentalReturnService {
             deposit.apply(agreementId, apply, "Settlement of " + returnNumber);
         }
         if (settlementTotal - apply > 0) {
-            String fallback = (String) db.first(RentalAgreementLine.class, "\"agreementId\" = ? AND \"organizationId\" = ?",
-                    agreementId, orgId).get("productId");
+            // R1 (P0-1): a fee line bills its fee product, never the rented product (that would issue it again).
             List<RentalPostingService.FeeLine> fees = new ArrayList<>();
             if (lateFeeTotal > 0) {
-                Map<String, Object> p = rows.productByCode("RENT-LATE", false);
-                fees.add(new RentalPostingService.FeeLine(p != null ? (String) p.get("id") : fallback,
+                fees.add(new RentalPostingService.FeeLine(posting.requireFeeProduct("RENT-LATE"),
                         "Late fees — " + returnNumber, 1, lateFeeTotal, "late"));
             }
             if (damageTotal > 0) {
-                Map<String, Object> p = rows.productByCode("RENT-DAMAGE", false);
-                fees.add(new RentalPostingService.FeeLine(p != null ? (String) p.get("id") : fallback,
+                fees.add(new RentalPostingService.FeeLine(posting.requireFeeProduct("RENT-DAMAGE"),
                         "Damage charges — " + returnNumber, 1, damageTotal, "damage"));
             }
             posting.createFeeInvoice(agreementId, (String) agreement.get("partnerId"),
