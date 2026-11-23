@@ -28,6 +28,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 const fmt = (n: number | string) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
@@ -154,6 +155,8 @@ export function RentalAgreementDetailPage() {
           )}
         </div>
       </div>
+
+      <GatePassPanel sourceType="rental" sourceId={agreement.id} />
 
       <Tabs defaultValue="lines">
         <TabsList>

@@ -214,6 +214,8 @@ const RentalDashboardPage = lazy(() => import('@/pages/rental/RentalDashboardPag
 const RentalAgreementsPage = lazy(() => import('@/pages/rental/RentalAgreementsPage').then((m) => ({ default: m.RentalAgreementsPage })));
 const RentalAgreementCreatePage = lazy(() => import('@/pages/rental/RentalAgreementCreatePage').then((m) => ({ default: m.RentalAgreementCreatePage })));
 const RentalAgreementDetailPage = lazy(() => import('@/pages/rental/RentalAgreementDetailPage').then((m) => ({ default: m.RentalAgreementDetailPage })));
+const GateCheckPage = lazy(() => import('@/pages/gate-pass/GateCheckPage').then((m) => ({ default: m.GateCheckPage })));
+const GatePassesPage = lazy(() => import('@/pages/gate-pass/GatePassesPage').then((m) => ({ default: m.GatePassesPage })));
 const RentalUnitsPage = lazy(() => import('@/pages/rental/RentalUnitsPage').then((m) => ({ default: m.RentalUnitsPage })));
 const RentalCatalogPage = lazy(() => import('@/pages/rental/RentalCatalogPage').then((m) => ({ default: m.RentalCatalogPage })));
 const RentalReturnsPage = lazy(() => import('@/pages/rental/RentalReturnsPage').then((m) => ({ default: m.RentalReturnsPage })));
@@ -578,6 +580,9 @@ export function App() {
             <Route path="/rental/catalog" element={<RentalCatalogPage />} />
             <Route path="/rental/returns" element={<RentalReturnsPage />} />
             <Route path="/rental/reports" element={<RequireReport reportId="rental.reports"><RentalReportsPage /></RequireReport>} />
+            {/* Gate pass (ADR-S085): gate / security check and the register */}
+            <Route path="/gate" element={<RequirePermission permission={PERMISSIONS.gatePass.check}><GateCheckPage /></RequirePermission>} />
+            <Route path="/gate-passes" element={<RequirePermission permission={[PERMISSIONS.gatePass.read, PERMISSIONS.gatePass.check]}><GatePassesPage /></RequirePermission>} />
             {/* Fleet & logistics (ADR-S009) — sub-modules 1.1–1.9 register their screens in pages/fleet/routes.tsx */}
             {fleetRoutes}
             {/* Quality management (ADR-S013) — core-available, quality:* permissions */}

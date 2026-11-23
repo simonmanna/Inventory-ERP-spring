@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, RotateCcw, Send, X } from 'lucide-react';
+import { DoorOpen, Plus, RotateCcw, Send, X } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ import { notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { formatMoney } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 interface DebitNote {
   id: string;
@@ -40,6 +41,7 @@ export function DebitNotesPage() {
   const qc = useQueryClient();
   const org = useAuthStore((s) => s.organization);
   const [direction, setDirection] = useState('');
+  const [gatePassFor, setGatePassFor] = useState<string | null>(null);
   const [status, setStatus] = useState('');
   const list = useQuery<DebitNote[]>({
     queryKey: ['debit-notes', direction, status],
@@ -171,7 +173,15 @@ export function DebitNotesPage() {
                     <RotateCcw className="mr-1 h-3 w-3 text-destructive" />{tx('Reverse')}
                   </Button>
                 )}
+                {n.direction === 'inbound' && n.reason === 'returned_goods' && (n.status === 'draft' || n.status === 'posted') && (
+                  <Button size="sm" variant="ghost" onClick={() => setGatePassFor(gatePassFor === n.id ? null : n.id)}>
+                    <DoorOpen className="mr-1 h-3 w-3" />{tx('Gate pass')}
+                  </Button>
+                )}
               </div>
+              {gatePassFor === n.id && n.direction === 'inbound' && n.reason === 'returned_goods' && (
+                <GatePassPanel sourceType="supplier_return" sourceId={n.id} compact />
+              )}
             </CardContent>
           </Card>
         ))}

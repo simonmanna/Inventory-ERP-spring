@@ -11,6 +11,7 @@ import type { CashSale, DeliveryStatus } from '@/features/sales/cash-sales-api';
 import type { HandoverForm } from '@/pages/sales/handover-draft';
 import { HandoverDeliveryView, TRAVEL_ONLY, type HandoverLineView } from '@/pages/sales/delivery/HandoverDeliveryView';
 import { openPdf } from '@/pages/sales/delivery/delivery-docs';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 /** A branch cash sale stores pickup / delivery only, on the sale itself, from the sale's stock location. */
 export const CASH_SALE_METHODS: PlanMethod[] = ['pickup', 'delivery'];
@@ -108,6 +109,7 @@ export function CashSaleDelivery({ sale, busy, run }: { sale: CashSale; busy: bo
         customerName: sale.customerName ?? sale.partnerName, deliveredAt: sale.deliveredAt, returns: sale.returns ?? [], currency: sale.currencyCode,
         onNote: (mode) => void openPdf(`/sales/cash-sales/${sale.id}/delivery-note`, `DN-${sale.number}.pdf`, mode),
       }} />
+    <GatePassPanel sourceType="cash_sale" sourceId={sale.id} className="mt-4" />
     </div>
   );
 }

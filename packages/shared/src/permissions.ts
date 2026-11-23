@@ -1373,6 +1373,17 @@ export const PERMISSIONS = {
     /// Project dashboards, task analysis, timesheet analysis and workload.
     read: 'project_report:read',
   },
+  // ---- Gate pass (gate-out document beside every delivery, ADR-S085) ----
+  gatePass: {
+    /// See gate passes, the register and their PDFs.
+    read: 'gate_pass:read',
+    /// Issue a gate pass for a delivery, cash sale, invoice, transfer, pick order, rental, repair or supplier return.
+    issue: 'gate_pass:issue',
+    /// Void an unused gate pass (with a reason).
+    void: 'gate_pass:void',
+    /// Gate / security: verify a pass and record the gate-out or a refusal.
+    check: 'gate_pass:check',
+  },
 } as const;
 
 type PermissionLeaf<T> = T extends string ? T : T extends object ? PermissionLeaf<T[keyof T]> : never;

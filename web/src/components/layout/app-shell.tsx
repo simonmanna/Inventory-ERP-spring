@@ -136,7 +136,7 @@ import {
   PackagePlus,
   Siren,
   UsersRound,
-  Telescope,
+  Telescope, DoorOpen
 } from 'lucide-react';
 import { PERMISSIONS, REPORT_CATALOG } from '@erp/shared';
 import { useCanViewReport } from '@/features/reports/access-api';
@@ -495,6 +495,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/warehouse', label: tx('Warehouse Management'), icon: Warehouse, permission: PERMISSIONS.warehouse.read, group: 'Stock Movements' },
       { to: '/warehouse/tablet', label: tx('Warehouse tablet'), icon: Smartphone, permission: PERMISSIONS.inventory.move, group: 'Stock Movements' },
       { to: '/labels', label: tx('Label Printing'), icon: Tag, permission: PERMISSIONS.label.print, group: 'Stock Movements' },
+      { to: '/gate', label: tx('Gate check'), icon: DoorOpen, permission: PERMISSIONS.gatePass.check, group: 'Gate passes' },
+      { to: '/gate-passes', label: tx('Gate passes'), icon: DoorOpen, permission: PERMISSIONS.gatePass.read, group: 'Gate passes' },
       { to: '/beverage', label: tx('Alcohol Dashboard'), icon: Wine, permission: PERMISSIONS.beverage.read, flag: 'VITE_ENABLE_BEVERAGE', group: 'Beverage' },
       { to: '/beverage/count', label: tx('Bottle Count'), icon: Scale, permission: PERMISSIONS.beverage.count, flag: 'VITE_ENABLE_BEVERAGE', group: 'Beverage' },
       { to: '/inventory/ledger', label: tx('Stock Ledger'), icon: ScrollText, permission: 'inventory:read', group: 'Reporting' },

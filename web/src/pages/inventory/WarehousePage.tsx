@@ -15,6 +15,7 @@ import { tx } from '@/lib/i18n/tx';
 import { useAuthStore } from '@/stores/auth.store';
 import { useProducts } from '@/features/products/api';
 import { fmtQty } from '@/features/inventory/stock-levels';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 import {
   useAbc,
   usePickOrder,
@@ -607,6 +608,7 @@ function PickOrderDetail({ id }: { id: string }) {
             {tx('Packages')}: {data.packages.map((p) => p.code).join(', ')}
           </p>
         )}
+        <GatePassPanel sourceType="pick_order" sourceId={data.id} />
       </CardContent>
     </Card>
   );
