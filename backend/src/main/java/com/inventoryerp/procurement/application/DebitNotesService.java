@@ -577,7 +577,9 @@ public class DebitNotesService {
                     Issued issueRes = stock.issue(move);
                     BigDecimal cost = issueRes == null ? Money.ZERO : Money.dec(issueRes.totalValue());
                     if (cost.signum() > 0) {
-                        postingLines.add(Line.credit(stockValAccount, JsNumbers.dec(cost), null));
+                        postingLines.add(com.inventoryerp.inventory.application.StockPostingService.stampLine(
+                                Line.credit(stockValAccount, JsNumbers.dec(cost), null), (String) ln.get("productId"),
+                                (String) location.get("id")));
                     }
                     // Return variance: supplier credit (price) plus GRNI cleared vs the stock cost removed.
                     BigDecimal diff = apPriceFunctional.add(grniValue).subtract(cost);

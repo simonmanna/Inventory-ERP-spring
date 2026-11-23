@@ -290,7 +290,9 @@ Approved by the owner 2026-11-23 (inventory hardening R3, financial integrity, r
   corrections, landed cost — one voucher line per product now), standard costing (receipt PPV entry, revaluations,
   return variance), revaluation / NRV, cost-policy rounding (one line per product now), material ledger, quality
   downgrade (gross lines per product when two products are involved), project / fleet / quarry issues and
-  `reverseLedgerSource` (which keeps the original line's keys, or stamps the reversed product) carries
+  `reverseLedgerSource` (which keeps the original line's keys, or stamps the reversed product), supplier-claim stock
+  adjustments and debit-note returns (stock credits per product and warehouse now), lineage-exception releases of a
+  voucher's on-hand share (one line per product) and branch transfers carries
   `dimensions.inventoryProductId` (and `inventoryLocationId` when the posting has one location). Both keys are reserved:
   they cannot be analytic dimension codes, so dimension validation and reports ignore them.
 - **Per-product GL check and its cutover.** The integrity report gains `valuation_vs_gl_by_product` (a value check: the
@@ -301,8 +303,8 @@ Approved by the owner 2026-11-23 (inventory hardening R3, financial integrity, r
   (data only) for every organisation that existed at deploy; an organisation created later has no marker, so its whole
   history counts. History before the cutover is reconciled by source document through the existing tie-out. A line
   without the key is attributed through its source document when all ledger rows of that document are one product;
-  what is left is one `unattributed` failing row (a posting path that does not stamp: supplier claims, debit notes,
-  lineage-exception and branch-transfer clearing entries are known ones). The CM-1 adjunct accounts (price differences
+  what is left is one `unattributed` failing row (a posting path that does not stamp; landed-cost accrual entries
+  post only to the 1396 adjunct and to consumption accounts, so they never reach a checked account). The CM-1 adjunct accounts (price differences
   1396, NRV allowance 1397) and their value-only components stay with the organisation-level tie-out, and so does a
   branch split (revaluations and landed cost post per product, not per location). Test `StandardCostingIntegrityIT`.
 

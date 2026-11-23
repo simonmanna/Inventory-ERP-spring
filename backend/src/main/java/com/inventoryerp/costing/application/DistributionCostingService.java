@@ -364,8 +364,10 @@ public class DistributionCostingService {
         List<Line> lines = new ArrayList<>();
         if (value.signum() > 0) {
             String stockAccount = stockPosting.stockAccount(in.productId(), value);
-            lines.add(new Line(stockAccount, JsNumbers.dec(value), null, null, text, toBranch, null, null));
-            lines.add(new Line(stockAccount, null, JsNumbers.dec(value), null, text, fromBranch, null, null));
+            lines.add(StockPostingService.stampLine(new Line(stockAccount, JsNumbers.dec(value), null, null, text,
+                    toBranch, null, null), in.productId(), in.toLocationId()));
+            lines.add(StockPostingService.stampLine(new Line(stockAccount, null, JsNumbers.dec(value), null, text,
+                    fromBranch, null, null), in.productId(), in.fromLocationId()));
             if (clearing) {
                 String c = clearingAccount();
                 lines.add(new Line(c, JsNumbers.dec(value), null, null, text + " · due from destination", fromBranch,

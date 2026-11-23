@@ -2028,4 +2028,10 @@ Not verified yet: the tours driven by hand in a browser.
 
 ## Inventory hardening R3 (financial integrity, gate G2; owner-approved 2026-11-23)
 
-- [x] STANDARD without a standard receives at `costPrice` with PPV; STANDARD returns at the standard with PPV (COGS at original cost); serial + STANDARD refused; product key on stock journal lines and the `valuation_vs_gl_by_product` integrity check from the V613 cutover (`StandardCostingIntegrityIT`, `InventoryIntegrityIT`)
+- [x] STANDARD without a standard receives at `costPrice` with PPV; STANDARD returns at the standard with PPV (COGS at original cost); serial + STANDARD refused; product key on stock journal lines and the `valuation_vs_gl_by_product` integrity check from the V613 cutover (`StandardCostingIntegrityIT`, `InventoryIntegrityIT`); supplier claims, debit notes, lineage-exception voucher releases and branch transfers stamp their stock lines too
+- Tests run 2026-11-23 on a private owner-split Postgres (`fastTest`): StandardCostingIntegrityIT, InventoryIntegrityIT,
+  InventoryCostPolicyIT, ValuationGapsIT, InventoryValuationReportIT, InventoryAuditConservationIT,
+  InventoryReturnsIdentityIT, PeriodCloseChecklistIT, ProcurementIntegrityIT, ValuationIntegrityIT,
+  StandardProcessCostingIT, all 11 LandedCost*IT, ProductUnitsIT, AnalyticDimensionIT, QualityLotsIT, CashSaleIT,
+  InventoryUnitTest green; InventoryHardeningIT 6/7 (`ledgerGuardBypass` needs the Testcontainers owner URL, unchanged
+  by R3); ModularityTests + ArchitectureTests green. Full `./gradlew build` not run.

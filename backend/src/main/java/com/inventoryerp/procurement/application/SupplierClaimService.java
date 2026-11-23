@@ -808,6 +808,8 @@ public class SupplierClaimService {
         }
         Map<String, Fx> fxByReceipt = new HashMap<>();
         Map<String, BigDecimal> net = new LinkedHashMap<>();
+        // Hardening R3: stock credits per (account, product, warehouse) so each line carries its product dimension.
+        Map<List<String>, BigDecimal> stockNet = new LinkedHashMap<>();
         BigDecimal grni = Money.ZERO;
         BigDecimal apNet = Money.ZERO;
         BigDecimal apFunctional = Money.ZERO;
@@ -876,7 +878,8 @@ public class SupplierClaimService {
                 Issued issued = stock.issue(move);
                 BigDecimal cost = issued == null ? Money.ZERO : Money.dec(issued.totalValue());
                 if (cost.signum() > 0) {
-                    net.merge(stockPosting.stockAccount(productId, cost), cost, BigDecimal::add);
+                    stockNet.merge(List.of(stockPosting.stockAccount(productId, cost), productId,
+                            (String) l.get("warehouseId")), cost, BigDecimal::add);
                 }
                 BigDecimal diff = lineFunctional.subtract(cost);
                 if (diff.signum() != 0) {
@@ -922,6 +925,15 @@ public class SupplierClaimService {
                 out.add(Line.credit(e.getKey(), JsNumbers.dec(v), label));
             } else if (v.signum() < 0) {
                 out.add(Line.debit(e.getKey(), JsNumbers.dec(v.negate()), label));
+            }
+        }
+        for (Map.Entry<List<String>, BigDecimal> e : stockNet.entrySet()) {
+            BigDecimal v = e.getValue();
+            List<String> k = e.getKey();
+            if (v.signum() != 0) {
+                Line line = v.signum() > 0 ? Line.credit(k.get(0), JsNumbers.dec(v), label)
+                        : Line.debit(k.get(0), JsNumbers.dec(v.negate()), label);
+                out.add(StockPostingService.stampLine(line, k.get(1), k.get(2)));
             }
         }
         if (taxFunctional.signum() > 0) {
