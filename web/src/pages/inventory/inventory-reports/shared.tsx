@@ -19,6 +19,12 @@ export const qty = (v: number | string | null | undefined) => {
 
 export const money = (v: number | string | null | undefined) => formatMoney(Number(v ?? 0));
 
+/**
+ * A cost or stock value that the server hides (null) from a caller without `inventory_valuation:read`: shown as a
+ * dash instead of a zero.
+ */
+export const cost = (v: number | string | null | undefined) => (v === null ? '—' : money(v));
+
 export const MOVE_TYPES: { value: string; label: string; group: string }[] = [
   { value: 'receipt', label: tx('Receipt'), group: 'Received' },
   { value: 'return_in', label: tx('Customer return'), group: 'Received' },

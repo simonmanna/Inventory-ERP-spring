@@ -1192,9 +1192,25 @@ public class StockDocService {
         }
     }
 
-    /** Document lists (newest first) with the Nest includes per kind. */
+    /** Most documents one list returns by default, and at most (hardening R5a, spec deviation 23). */
+    public static final int LIST_DEFAULT = 500;
+
+    public static final int LIST_MAX = 2000;
+
+    /** Document lists (newest first) with the Nest includes per kind: the newest {@value #LIST_DEFAULT}. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String kind, String status) {
+        return list(kind, status, null, null, null);
+    }
+
+    /**
+     * Document lists (newest first) with the Nest includes per kind. Hardening R5a: the list stays a plain array (the
+     * screens filter it in the browser) but holds at most {@code limit} documents (default {@value #LIST_DEFAULT}, at
+     * most {@value #LIST_MAX}); {@code dateFrom} / {@code dateTo} (business days, or ISO instants) narrow it to a window
+     * so older documents stay reachable. The branch scope is applied in SQL, before the limit.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> list(String kind, String status, String dateFrom, String dateTo, String limit) {
         String table = switch (kind) {
             case "out" -> "StockOut";
             case "waste" -> "WasteRecord";
@@ -1207,11 +1223,42 @@ public class StockDocService {
             case "adjustment" -> StockAdjustment.class;
             default -> StockTransfer.class;
         };
-        var spec = status != null
-                ? jdbc.sql("SELECT * FROM \"" + table + "\" WHERE \"organizationId\" = ? AND status::text = ?"
-                        + " ORDER BY \"createdAt\" DESC").params(org(), status)
-                : jdbc.sql("SELECT * FROM \"" + table + "\" WHERE \"organizationId\" = ? ORDER BY \"createdAt\" DESC")
-                        .param(org());
+        int max = LIST_DEFAULT;
+        if (limit != null && !limit.isBlank()) {
+            double n = JsNumbers.number(limit);
+            if (Double.isNaN(n) || n < 1) {
+                throw ApiException.badRequest("limit must be a positive number");
+            }
+            max = (int) Math.min(LIST_MAX, n);
+        }
+        StringBuilder where = new StringBuilder(" WHERE \"organizationId\" = ?");
+        List<Object> params = new ArrayList<>(List.of(org()));
+        if (status != null) {
+            where.append(" AND status::text = ?");
+            params.add(status);
+        }
+        if (dateFrom != null && !dateFrom.isBlank()) {
+            where.append(" AND \"createdAt\" >= ?");
+            params.add(SqlRows.ts(InventoryQueryService.bound(dateFrom, true)));
+        }
+        if (dateTo != null && !dateTo.isBlank()) {
+            where.append(" AND \"createdAt\" <= ?");
+            params.add(SqlRows.ts(InventoryQueryService.bound(dateTo, false)));
+        }
+        com.inventoryerp.core.application.BranchScopeService.DataScope access = scope.current();
+        if (access.restricted()) {
+            // A transfer row names its ends fromLocId / toLocId (there is no fromLocationId column).
+            if ("transfer".equals(kind)) {
+                where.append(" AND (\"fromLocId\" = ANY(?::text[]) OR \"toLocId\" = ANY(?::text[]))");
+                params.add(access.locationArray());
+                params.add(access.locationArray());
+            } else {
+                where.append(" AND \"locationId\" = ANY(?::text[])");
+                params.add(access.locationArray());
+            }
+        }
+        var spec = jdbc.sql("SELECT * FROM \"" + table + "\"" + where + " ORDER BY \"createdAt\" DESC, id DESC LIMIT "
+                + max).params(params);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(type, spec)) {
             if (reachable(kind, row)) {

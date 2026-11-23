@@ -238,12 +238,16 @@ class InventoryAuditRemediationIT extends InventoryAuditSupport {
         assertThat(num(rowA.get("aging").get("d0_30"))).isEqualByComparingTo("5");
         assertThat(num(rowA.get("consumedQty"))).isEqualByComparingTo("5");
         assertThat(num(rowA.get("turnover")).signum()).isPositive();
-        assertThat(rowD.get("status").asString()).isEqualTo("dead");
+        // Hardening R5a (inventory deviation 34): never consumed is aged from its receipt, so stock received today is
+        // active; dead / slow ageing of old receipts is covered by InventoryReportsHardeningIT.stockHealthAge.
+        assertThat(rowD.get("status").asString()).isEqualTo("active");
         assertThat(num(rowD.get("value"))).isEqualByComparingTo("400");
-        assertThat(num(res.get("summary").get("deadValue"))).isGreaterThanOrEqualTo(new BigDecimal("400"));
+        assertThat(num(rowD.get("consumedQty"))).isZero();
+        JsonNode onlyActive = okA(200, "GET", "/inventory/reports/stock-health?locationId=" + loc + "&status=active",
+                null);
+        assertThat(onlyActive.get("rows")).hasSize(2);
         JsonNode onlyDead = okA(200, "GET", "/inventory/reports/stock-health?locationId=" + loc + "&status=dead", null);
-        assertThat(onlyDead.get("rows")).isNotEmpty();
-        onlyDead.get("rows").forEach(r -> assertThat(r.get("status").asString()).isEqualTo("dead"));
+        assertThat(onlyDead.get("rows")).isEmpty();
     }
 
     static JsonNode row(JsonNode res, String productId) {
