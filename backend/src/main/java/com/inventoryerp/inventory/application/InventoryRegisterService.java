@@ -62,6 +62,7 @@ public class InventoryRegisterService {
             Map.entry("stock_out", "Stock-out document"), Map.entry("waste", "Waste / damage record"),
             Map.entry("stock_adjust", "Stock adjustment"), Map.entry("stock_adjustment", "Stock adjustment"),
             Map.entry("stock_transfer", "Stock transfer"), Map.entry("repair_part_issue", "Repair part issue"),
+            Map.entry("repair_part_return", "Repair part return"),
             Map.entry("production", "Production"), Map.entry("opening_backfill", "Opening balance (backfill)"),
             Map.entry("manual", "Manual / unreferenced"), Map.entry("opening_balance", "Opening balance"));
 

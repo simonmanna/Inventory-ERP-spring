@@ -15,6 +15,7 @@ import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -114,6 +115,10 @@ public class InventoryReportsService {
     public static String localIso(Instant i) {
         return i.atZone(BusinessZone.get()).toLocalDate().toString();
     }
+
+    /** Signed ledger value: {@code totalValue} is stored positive and is an outflow when the quantity falls. */
+    private static final String SIGNED_VALUE =
+            "CASE WHEN \"quantityChange\" >= 0 THEN COALESCE(\"totalValue\", 0) ELSE -COALESCE(\"totalValue\", 0) END";
 
     record Range(Instant start, Instant end) {}
 
@@ -278,13 +283,16 @@ public class InventoryReportsService {
                 + " SUM(\"totalValue\") AS v, count(*) AS n FROM \"InventoryLedger\" WHERE " + window
                 + " GROUP BY \"productId\", type").params(wp).query().listOfRows();
         Map<String, BigDecimal> opening = new HashMap<>();
+        // Hardening R5a: Σ signed ledger value up to the end, the closing value of a period that has ended.
+        Map<String, BigDecimal> ledgerValue = new HashMap<>();
         if (r.start() != null) {
             Map<String, Object> op = new HashMap<>(base);
             op.put("start", SqlRows.ts(r.start()));
-            for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", SUM(\"quantityChange\") AS q FROM \"InventoryLedger\""
-                    + " WHERE " + baseSql + " AND \"createdAt\" < :start GROUP BY \"productId\"").params(op).query()
-                    .listOfRows()) {
+            for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", SUM(\"quantityChange\") AS q, SUM(" + SIGNED_VALUE
+                    + ") AS v FROM \"InventoryLedger\" WHERE " + baseSql + " AND \"createdAt\" < :start"
+                    + " GROUP BY \"productId\"").params(op).query().listOfRows()) {
                 opening.put((String) g.get("productId"), d(g.get("q")));
+                ledgerValue.put((String) g.get("productId"), d(g.get("v")));
             }
         }
         // h-01 F10: closing = opening + every movement of the window, so only the opening sum reads the history before
@@ -300,9 +308,11 @@ public class InventoryReportsService {
             cp.put("end", SqlRows.ts(r.end()));
         }
         Map<String, BigDecimal> closing = new HashMap<>(opening);
-        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", SUM(\"quantityChange\") AS q FROM \"InventoryLedger\""
-                + " WHERE " + closingSql + " GROUP BY \"productId\"").params(cp).query().listOfRows()) {
+        for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", SUM(\"quantityChange\") AS q, SUM(" + SIGNED_VALUE
+                + ") AS v FROM \"InventoryLedger\" WHERE " + closingSql + " GROUP BY \"productId\"").params(cp).query()
+                .listOfRows()) {
             closing.merge((String) g.get("productId"), d(g.get("q")), BigDecimal::add);
+            ledgerValue.merge((String) g.get("productId"), d(g.get("v")), BigDecimal::add);
         }
         Set<String> universe = new LinkedHashSet<>();
         typed.forEach(g -> universe.add((String) g.get("productId")));
@@ -400,7 +410,10 @@ public class InventoryReportsService {
             BigDecimal valueIn = Money.round(a.valueIn, 2);
             BigDecimal valueOut = Money.round(a.valueOut, 2);
             BigDecimal valueAdjusted = Money.round(a.valueAdjusted, 2);
-            BigDecimal closingValue = Money.round(closingQty.multiply(avgCost), 2);
+            // Hardening R5a: a period that has ended is valued from the ledger (Σ signed value up to its end), not at
+            // today's average cost; a period ending today keeps the value by costing method.
+            BigDecimal closingValue = endsToday ? Money.round(closingQty.multiply(avgCost), 2)
+                    : Money.round(ledgerValue.getOrDefault(id, Money.ZERO), 2);
             BigDecimal ledgerDrift = endsToday ? r6(current.subtract(closingQty)) : null;
             Map<String, Object> row = Obj.of("productId", id, "code", p.get("code"), "name", p.get("name"), "sku",
                     p.get("sku"), "categoryId", p.get("cid"), "category", p.get("cname"), "uom", p.get("uom"),
@@ -495,6 +508,7 @@ public class InventoryReportsService {
         }
 
         List<ValuationRow> rows = new ArrayList<>();
+        boolean cost = seesCost();
         for (Map<String, Object> p : products) {
             String productId = str(p, "id");
             Map<String, BigDecimal> productValues = values.getOrDefault(productId, new HashMap<>());
@@ -541,7 +555,7 @@ public class InventoryReportsService {
                 if (lq.signum() != 0) {
                     Map<String, Object> l = locMeta.get(e.getKey());
                     l.put("quantity", js(lq));
-                    l.put("value", js(e.getValue()[1], 2));
+                    l.put("value", cost ? js(e.getValue()[1], 2) : null);
                     locations.add(l);
                 }
             }
@@ -550,8 +564,8 @@ public class InventoryReportsService {
             BigDecimal retail2 = Money.round(qty.multiply(salesPrice), 2);
             rows.add(new ValuationRow(Obj.of("productId", p.get("id"), "code", p.get("code"), "name", p.get("name"),
                     "sku", p.get("sku"), "isActive", p.get("isActive"), "categoryId", p.get("cid"), "category",
-                    p.get("cname"), "uom", p.get("uom"), "quantity", js(qty6), "avgCost", js(avgCost, 4), "value",
-                    js(value2), "salesPrice", js(salesPrice), "retailValue", js(retail2),
+                    p.get("cname"), "uom", p.get("uom"), "quantity", js(qty6), "avgCost", cost ? js(avgCost, 4) : null,
+                    "value", cost ? js(value2) : null, "salesPrice", js(salesPrice), "retailValue", js(retail2),
                     "minQuantity", min.signum() != 0 ? js(min) : null, "reorderQty",
                     p.get("reorderQty") != null ? js(d(p.get("reorderQty"))) : null, "stockStatus", stockStatus,
                     "lastMovedAt", lastMovedAt, "locations", locations),
@@ -590,7 +604,7 @@ public class InventoryReportsService {
             BigDecimal share = totalValue.signum() != 0
                     ? c[1].multiply(HUNDRED).divide(totalValue, 10, RoundingMode.HALF_UP) : Money.ZERO;
             cats.add(Obj.of("category", e.getKey(), "items", categoryItems.get(e.getKey()), "quantity", js(c[0], 6),
-                    "value", js(c[1], 2), "share", js(share, 1)));
+                    "value", cost ? js(c[1], 2) : null, "share", cost ? js(share, 1) : null));
             catValues.add(c[1]);
         }
         List<Integer> order = new ArrayList<>();
@@ -600,7 +614,7 @@ public class InventoryReportsService {
         order.sort((a, b) -> catValues.get(b).compareTo(catValues.get(a)));
         List<Map<String, Object>> data = filtered.stream().map(ValuationRow::json).toList();
         return Obj.of("data", data, "totals", Obj.of("items", filtered.size(),
-                        "quantity", js(totalQty, 6), "value", js(totalValue, 2),
+                        "quantity", js(totalQty, 6), "value", cost ? js(totalValue, 2) : null,
                         "retailValue", js(totalRetail, 2),
                         "inStock", count(rows, "in_stock"), "low", count(rows, "low"), "out", count(rows, "out"),
                         "negative", count(rows, "negative")),
@@ -839,8 +853,20 @@ public class InventoryReportsService {
 
     // ------------------------------------------------------------------ 7. stock health
 
-    /** Aging buckets, turnover, days of cover and slow / dead classification per quant. */
+    /**
+     * The stock-health report for the caller: {@link #stockHealth} with the cost fields {@code null} unless the caller
+     * holds {@code inventory_valuation:read} (hardening R5a).
+     */
+    public Map<String, Object> stockHealthReport(Map<String, String> query) {
+        return stockHealth(query, seesCost());
+    }
+
+    /** Aging buckets, turnover, days of cover and slow / dead classification per quant, with values (internal use). */
     public Map<String, Object> stockHealth(Map<String, String> query) {
+        return stockHealth(query, true);
+    }
+
+    private Map<String, Object> stockHealth(Map<String, String> query, boolean cost) {
         Map<String, String> q = scope.apply(query);
         Instant now = Instant.now();
         double sd = JsNumbers.number(q.getOrDefault("slowDays", "90"));
@@ -853,12 +879,16 @@ public class InventoryReportsService {
         long periodDays = Math.max(1, Math.round((end.toEpochMilli() - start.toEpochMilli()) / 86_400_000.0));
         List<String> ids = scopedProductIds(q);
         if (ids != null && ids.isEmpty()) {
-            return Obj.of("summary", emptyHealthSummary(slowDays, deadDays, start, end), "rows", List.of());
+            return Obj.of("summary", emptyHealthSummary(slowDays, deadDays, start, end, cost), "rows", List.of());
         }
         Map<String, Object> params = new HashMap<>();
         params.put("org", org());
         params.put("start", SqlRows.ts(start));
         params.put("end", SqlRows.ts(end));
+        // Hardening R5a: the movement scan reads only what the report can use: from the earlier of the period start
+        // and the dead-stock horizon (older movements cannot change a status or a period figure).
+        Instant horizon = now.minusMillis(deadDays * 86_400_000L);
+        params.put("horizon", SqlRows.ts(start.isBefore(horizon) ? start : horizon));
         String scope = "";
         if (notBlank(q.get("locationId"))) {
             params.put("loc", q.get("locationId"));
@@ -908,19 +938,24 @@ public class InventoryReportsService {
                   SELECT l."productId", COALESCE(l."variantId", '') AS vkey, l."locationId",
                          MAX(l."createdAt") FILTER (WHERE l."quantityChange" < 0 AND l.type IN ('issue', 'production_consume')) AS last_consumed_at,
                          MAX(l."createdAt") FILTER (WHERE l."quantityChange" > 0 AND l.type IN ('receipt', 'return_in', 'production_output', 'transfer_in', 'opening_balance')) AS last_inbound_at,
+                         MAX(l."createdAt") FILTER (WHERE l."quantityChange" > 0 AND l.type IN ('receipt', 'return_in', 'production_output', 'opening_balance')) AS last_receipt_at,
                          COALESCE(SUM(-l."quantityChange") FILTER (WHERE l."quantityChange" < 0 AND l.type IN ('issue', 'production_consume') AND l."createdAt" BETWEEN :start AND :end), 0) AS consumed_qty,
                          COALESCE(SUM(l."totalValue") FILTER (WHERE l."quantityChange" < 0 AND l.type IN ('issue', 'production_consume') AND l."createdAt" BETWEEN :start AND :end), 0) AS consumed_value,
                          COALESCE(SUM(l."quantityChange") FILTER (WHERE l."createdAt" > :start), 0) AS net_since_start,
                          COALESCE(SUM(l."quantityChange") FILTER (WHERE l."createdAt" > :end), 0) AS net_since_end
                     FROM "InventoryLedger" l
                     JOIN quant qt ON qt."productId" = l."productId" AND qt."variantKey" = COALESCE(l."variantId", '') AND qt."locationId" = l."locationId"
-                   WHERE l."organizationId" = :org
+                   WHERE l."organizationId" = :org AND l."createdAt" >= :horizon
                    GROUP BY l."productId", COALESCE(l."variantId", ''), l."locationId"
                 )
                 SELECT qt."productId", qt."variantId", qt."variantKey", pv.name AS variant_name, qt."locationId", loc.name AS location_name,
                        p.code, p.name, u.code AS uom, c.name AS category, qt.on_hand,
                        a.b0_30, a.b31_60, a.b61_90, a.b91_180, a.b180_plus, a.weighted_age,
-                       m.last_consumed_at, m.last_inbound_at, m.consumed_qty, m.consumed_value, m.net_since_start, m.net_since_end
+                       m.last_consumed_at, m.last_inbound_at, m.last_receipt_at, m.consumed_qty, m.consumed_value, m.net_since_start, m.net_since_end,
+                       EXISTS (SELECT 1 FROM "InventoryLedger" ol WHERE ol."organizationId" = :org AND ol."productId" = qt."productId"
+                                  AND COALESCE(ol."variantId", '') = qt."variantKey" AND ol."locationId" = qt."locationId"
+                                  AND ol."quantityChange" > 0 AND ol."createdAt" < :horizon
+                                  AND ol.type IN ('receipt', 'return_in', 'production_output', 'opening_balance')) AS old_receipt
                   FROM quant qt
                   JOIN "Product" p ON p.id = qt."productId"
                   JOIN "InventoryLocation" loc ON loc.id = qt."locationId"
@@ -946,6 +981,7 @@ public class InventoryReportsService {
             }
         }
         List<Map<String, Object>> out = new ArrayList<>();
+        List<BigDecimal> values = new ArrayList<>();
         for (Map<String, Object> r : rows) {
             BigDecimal onHandDec = d(r.get("on_hand"));
             double onHand = onHandDec.doubleValue();
@@ -960,7 +996,16 @@ public class InventoryReportsService {
             Instant lastConsumed = (Instant) r.get("last_consumed_at");
             Long daysSince = lastConsumed == null ? null
                     : (long) Math.floor((now.toEpochMilli() - lastConsumed.toEpochMilli()) / (double) dayMs);
-            String status = daysSince == null || daysSince > deadDays ? "dead" : daysSince > slowDays ? "slow" : "active";
+            // Hardening R5a: a quant never consumed (within the horizon) is aged from its last true receipt at the
+            // location (receipt, customer return, production output, opening balance), or else from its last arrival
+            // by transfer; a transfer or a reversal does not make old stock look fresh when a receipt is known (a
+            // receipt older than the horizon makes the quant dead).
+            Instant received = r.get("last_receipt_at") != null ? (Instant) r.get("last_receipt_at")
+                    : Boolean.TRUE.equals(r.get("old_receipt")) ? null : (Instant) r.get("last_inbound_at");
+            Instant reference = lastConsumed != null ? lastConsumed : received;
+            Long idleDays = reference == null ? null
+                    : (long) Math.floor((now.toEpochMilli() - reference.toEpochMilli()) / (double) dayMs);
+            String status = idleDays == null || idleDays > deadDays ? "dead" : idleDays > slowDays ? "slow" : "active";
             double dailyUse = consumedQty / periodDays;
             double attributed = n(r.get("b0_30")) + n(r.get("b31_60")) + n(r.get("b61_90")) + n(r.get("b91_180"))
                     + n(r.get("b180_plus"));
@@ -969,45 +1014,57 @@ public class InventoryReportsService {
                     r.get("variant_name"), "locationId",
                     r.get("locationId"), "location", r.get("location_name"), "code", r.get("code"), "name", r.get("name"),
                     "category", r.get("category"), "uom", r.get("uom"), "onHand", js(onHandDec, 6), "unitCost",
-                    js(unitDec, 6), "value", js(value), "aging", Obj.of("d0_30", js(round(n(r.get("b0_30")), 6)),
+                    cost ? js(unitDec, 6) : null, "value", cost ? js(value) : null, "aging", Obj.of("d0_30", js(round(n(r.get("b0_30")), 6)),
                             "d31_60", js(round(n(r.get("b31_60")), 6)), "d61_90", js(round(n(r.get("b61_90")), 6)),
                             "d91_180", js(round(n(r.get("b91_180")), 6)),
                             "d180_plus", js(round(n(r.get("b180_plus")) + unattributed, 6))),
                     "weightedAgeDays", r.get("weighted_age") == null ? null : Math.round(n(r.get("weighted_age"))),
                     "lastConsumedAt", lastConsumed, "lastInboundAt", r.get("last_inbound_at"), "daysSinceConsumed",
                     daysSince, "consumedQty", js(round(consumedQty, 6)), "consumedValue",
-                    js(d(r.get("consumed_value")), 2), "turnover",
+                    cost ? js(d(r.get("consumed_value")), 2) : null, "turnover",
                     avgQty > 0 ? js(round(consumedQty / avgQty, 2)) : null, "daysOfCover",
                     dailyUse > 0 ? Math.round(onHand / dailyUse) : null, "status", status));
+            values.add(value);
         }
         String statusFilter = q.get("status");
         List<Map<String, Object>> filtered = statusFilter != null && !statusFilter.isEmpty() && !"all".equals(statusFilter)
                 ? out.stream().filter(r -> statusFilter.equals(r.get("status"))).toList() : out;
-        Map<String, Object> summary = emptyHealthSummary(slowDays, deadDays, start, end);
+        Map<String, Object> summary = emptyHealthSummary(slowDays, deadDays, start, end, cost);
         summary.put("quants", out.size());
-        summary.put("totalValue", js(sumValue(out, null)));
-        summary.put("activeValue", js(sumValue(out, "active")));
-        summary.put("slowValue", js(sumValue(out, "slow")));
-        summary.put("deadValue", js(sumValue(out, "dead")));
+        summary.put("totalValue", cost ? js(sumValue(out, values, null)) : null);
+        summary.put("activeValue", cost ? js(sumValue(out, values, "active")) : null);
+        summary.put("slowValue", cost ? js(sumValue(out, values, "slow")) : null);
+        summary.put("deadValue", cost ? js(sumValue(out, values, "dead")) : null);
         summary.put("slowCount", out.stream().filter(r -> "slow".equals(r.get("status"))).count());
         summary.put("deadCount", out.stream().filter(r -> "dead".equals(r.get("status"))).count());
         summary.put("truncated", rows.size() >= 5000);
         return Obj.of("summary", summary, "rows", filtered);
     }
 
-    private static BigDecimal sumValue(List<Map<String, Object>> rows, String status) {
+    private static BigDecimal sumValue(List<Map<String, Object>> rows, List<BigDecimal> values, String status) {
         BigDecimal s = Money.ZERO;
-        for (Map<String, Object> r : rows) {
-            if (status == null || status.equals(r.get("status"))) {
-                s = s.add(d(r.get("value")));
+        for (int i = 0; i < rows.size(); i++) {
+            if (status == null || status.equals(rows.get(i).get("status"))) {
+                s = s.add(values.get(i));
             }
         }
         return Money.round(s, 2);
     }
 
-    private static Map<String, Object> emptyHealthSummary(int slowDays, int deadDays, Instant start, Instant end) {
+    /**
+     * Hardening R5a: unit costs and stock values on the inventory reports are shown only to a caller holding {@code
+     * inventory_valuation:read} (the permission of the cost explanation and the integrity checks); without it the
+     * fields come back {@code null} and the screens show a dash. Quantities stay visible under {@code inventory:read}.
+     */
+    static boolean seesCost() {
+        return TenantContext.has(Permissions.INVENTORY_VALUATION__READ);
+    }
+
+    private static Map<String, Object> emptyHealthSummary(int slowDays, int deadDays, Instant start, Instant end,
+            boolean cost) {
         return Obj.of("slowDays", slowDays, "deadDays", deadDays, "start", localIso(start), "end", localIso(end),
-                "quants", 0, "totalValue", 0, "activeValue", 0, "slowValue", 0, "deadValue", 0, "slowCount", 0,
+                "quants", 0, "totalValue", cost ? 0 : null, "activeValue", cost ? 0 : null, "slowValue",
+                cost ? 0 : null, "deadValue", cost ? 0 : null, "slowCount", 0,
                 "deadCount", 0, "truncated", false);
     }
 }

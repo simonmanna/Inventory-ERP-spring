@@ -358,7 +358,7 @@ public class WarehouseOutboundService {
     @Transactional
     public Map<String, Object> pack(String id, String packageType, BigDecimal weightKg, List<PackItem> items) {
         Map<String, Object> o = order(id, true);
-        store.operable(SqlRows.str(o, "locationId"));
+        store.finishable(SqlRows.str(o, "locationId"));
         if (((Number) o.get("steps")).intValue() != 3) {
             throw ApiException.badRequest("Only a three-step pick order is packed");
         }
@@ -421,7 +421,7 @@ public class WarehouseOutboundService {
     @Transactional
     public Map<String, Object> ship(String id, String carrier, String trackingRef) {
         Map<String, Object> o = order(id, true);
-        store.operable(SqlRows.str(o, "locationId"));
+        store.finishable(SqlRows.str(o, "locationId"));
         int steps = ((Number) o.get("steps")).intValue();
         String status = SqlRows.str(o, "status");
         if ("shipped".equals(status)) {
@@ -620,7 +620,7 @@ public class WarehouseOutboundService {
     public Map<String, Object> cancel(String id, String returnBinId) {
         Map<String, Object> o = order(id, true);
         String locationId = SqlRows.str(o, "locationId");
-        store.operable(locationId);
+        store.finishable(locationId);
         String status = SqlRows.str(o, "status");
         if ("shipped".equals(status) || "cancelled".equals(status)) {
             throw ApiException.badRequest("A " + status + " pick order cannot be cancelled");
@@ -716,7 +716,8 @@ public class WarehouseOutboundService {
         jdbc.sql("INSERT INTO \"WarehouseWave\" (id, \"organizationId\", \"locationId\", code, status, notes, \"createdBy\","
                         + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, 'open', ?, ?, " + NOW + ", " + NOW + ")")
                 .params(id, org(), locationId, code, notes, user()).update();
-        for (String orderId : new LinkedHashSet<>(pickOrderIds)) {
+        // Hardening R5a: lock the orders in id order, so two waves over overlapping orders cannot deadlock.
+        for (String orderId : new java.util.TreeSet<>(pickOrderIds)) {
             Map<String, Object> o = order(orderId, true);
             if (!locationId.equals(o.get("locationId"))) {
                 throw ApiException.badRequest("Pick order " + o.get("code") + " is in another location");

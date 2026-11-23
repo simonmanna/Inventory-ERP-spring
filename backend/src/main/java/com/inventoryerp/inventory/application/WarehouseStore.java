@@ -121,6 +121,15 @@ public class WarehouseStore {
         return loc;
     }
 
+    /**
+     * Hardening R5a: {@link #location} for finishing work that already exists (complete or cancel a task, pack, ship
+     * or cancel a pick order). Switching warehouse management off blocks new work only ({@link #operable}), so open
+     * orders and tasks can still be finished or cleared afterwards.
+     */
+    Map<String, Object> finishable(String locationId) {
+        return location(locationId);
+    }
+
     Map<String, Object> product(String productId) {
         Map<String, Object> p = lookups.product(productId);
         if (p == null) {

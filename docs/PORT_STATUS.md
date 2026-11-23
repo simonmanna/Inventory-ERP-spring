@@ -2041,3 +2041,10 @@ Not verified yet: the tours driven by hand in a browser.
   StandardProcessCostingIT, all 11 LandedCost*IT, ProductUnitsIT, AnalyticDimensionIT, QualityLotsIT, CashSaleIT,
   InventoryUnitTest green; InventoryHardeningIT 6/7 (`ledgerGuardBypass` needs the Testcontainers owner URL, unchanged
   by R3); ModularityTests + ArchitectureTests green. Full `./gradlew build` not run.
+
+- [x] R5a operational hardening (owner-approved deviations 33–43 + negative-stock policy in
+  [inventory](spec/inventory.md#deviations), repair deviation 6, V615): report day bounds, batched includes,
+  tolerance 400, stock-health age, past closing value from the ledger, cost fields behind `inventory_valuation:read`,
+  request limits, bounded document lists, keys on approve / dispatch / ship, warehouse move holds / disabled-settings
+  finishing / reconcile stale moves / read-only ABC, repair part variant + engine cost + `POST /repair/parts/:id/return`
+  — `InventoryReportsHardeningIT`, `WarehouseHardeningIT`, `NegativeStockPolicyIT`, `RepairIT`

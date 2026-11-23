@@ -287,59 +287,84 @@ public class InventoryQueryService {
         // Phase I2 (audit C-2): value by costing method.
         BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(productId), loc).get(productId);
         BigDecimal value = qv == null ? Money.ZERO : qv[1];
+        // Hardening R5a: every include below is read with one query per relation (was one or two per row).
+        Map<String, Map<String, Object>> itemLocations = refs("id, code, name, type::text AS type",
+                "InventoryLocation", idsOf(items, "locationId"));
         for (Map<String, Object> i : items) {
             onHand = onHand.add(dec(i, "quantity"));
-            i.put("location", SqlRows.one(jdbc.sql("SELECT id, code, name, type::text AS type FROM \"InventoryLocation\""
-                    + " WHERE id = ?").param(i.get("locationId"))));
+            i.put("location", ref(itemLocations, i.get("locationId"), null));
         }
         List<Map<String, Object>> batches = new ArrayList<>();
         if (Boolean.TRUE.equals(product.get("batchTracking"))) {
             batches = SqlRows.list(InventoryBatch.class, jdbc.sql("SELECT * FROM \"InventoryBatch\" WHERE"
                     + " \"organizationId\" = ? AND \"productId\" = ? AND \"isActive\" = true" + locFilter
                     + " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC").params(params));
+            Map<String, Map<String, Object>> batchLocations = locationRefs(idsOf(batches, "locationId"));
             for (Map<String, Object> b : batches) {
-                b.put("location", locationRef(b.get("locationId")));
+                b.put("location", ref(batchLocations, b.get("locationId"), null));
             }
         }
         List<Map<String, Object>> ledger = SqlRows.list(InventoryLedger.class, jdbc.sql("SELECT * FROM \"InventoryLedger\""
                 + " WHERE \"organizationId\" = ? AND \"productId\" = ?" + locFilter + " ORDER BY \"createdAt\" DESC"
                 + " LIMIT 100").params(params));
+        Map<String, Map<String, Object>> ledgerLocations = locationRefs(idsOf(ledger, "locationId"));
+        Map<String, Map<String, Object>> ledgerBatches = refs("id, \"batchNumber\"", "InventoryBatch",
+                idsOf(ledger, "batchId"));
         for (Map<String, Object> l : ledger) {
-            l.put("location", SqlRows.one(jdbc.sql("SELECT code, name FROM \"InventoryLocation\" WHERE id = ?")
-                    .param(l.get("locationId"))));
-            l.put("batch", l.get("batchId") == null ? null : SqlRows.one(jdbc.sql("SELECT \"batchNumber\" FROM"
-                    + " \"InventoryBatch\" WHERE id = ?").param(l.get("batchId"))));
+            l.put("location", ref(ledgerLocations, l.get("locationId"), "id"));
+            l.put("batch", l.get("batchId") == null ? null : ref(ledgerBatches, l.get("batchId"), "id"));
         }
         List<Map<String, Object>> menuProducts = SqlRows.list(
                 jdbc.sql("SELECT * FROM \"MenuProduct\" WHERE \"organizationId\" = ? AND \"productId\" = ?")
                         .params(org(), productId));
+        Map<String, Map<String, Object>> menuItems = refs("id, code, name", "MenuItem",
+                idsOf(menuProducts, "menuItemId"));
         for (Map<String, Object> mp : menuProducts) {
-            mp.put("menuItem", SqlRows.one(jdbc.sql("SELECT id, code, name FROM \"MenuItem\" WHERE id = ?")
-                    .param(mp.get("menuItemId"))));
+            mp.put("menuItem", ref(menuItems, mp.get("menuItemId"), null));
         }
         List<Map<String, Object>> poLines = new ArrayList<>();
         for (Map<String, Object> raw : jdbc.sql("SELECT pl.* FROM \"PurchaseOrderLine\" pl JOIN \"PurchaseOrder\" o"
                         + " ON o.id = pl.\"purchaseOrderId\" WHERE pl.\"organizationId\" = ? AND pl.\"productId\" = ?"
                         + " ORDER BY o.\"createdAt\" DESC LIMIT 50")
                 .params(org(), productId).query().listOfRows()) {
-            Map<String, Object> line = SqlRows.normalize(raw);
-            Map<String, Object> order = SqlRows.one(jdbc.sql("SELECT id, \"orderNumber\", status::text AS status,"
-                    + " \"createdAt\", \"partnerId\" FROM \"PurchaseOrder\" WHERE id = ?").param(line.get("purchaseOrderId")));
+            poLines.add(SqlRows.normalize(raw));
+        }
+        Map<String, Map<String, Object>> orders = refs("id, \"orderNumber\", status::text AS status, \"createdAt\","
+                + " \"partnerId\"", "PurchaseOrder", idsOf(poLines, "purchaseOrderId"));
+        Map<String, Map<String, Object>> partners = refs("id, name", "Partner", idsOf(orders.values(), "partnerId"));
+        for (Map<String, Object> line : poLines) {
+            Map<String, Object> order = ref(orders, line.get("purchaseOrderId"), null);
             if (order != null) {
                 Object partnerId = order.remove("partnerId");
-                order.put("partner", partnerId == null ? null : SqlRows.one(jdbc.sql("SELECT id, name FROM \"Partner\""
-                        + " WHERE id = ?").param(partnerId)));
+                order.put("partner", partnerId == null ? null : ref(partners, partnerId, null));
             }
             line.put("order", order);
-            poLines.add(line);
         }
         return Obj.of("product", product, "items", items, "totalOnHand", JsNumbers.js(onHand), "totalValue",
                 JsNumbers.js(value), "batches", batches, "recentLedger", ledger, "menuProducts", menuProducts,
                 "purchaseOrderLines", poLines);
     }
 
-    private Map<String, Object> locationRef(Object id) {
-        return SqlRows.one(jdbc.sql("SELECT id, code, name FROM \"InventoryLocation\" WHERE id = ?").param(id));
+    /**
+     * Hardening R5a: {@code columns} (must include {@code id}) of the org's rows of {@code table} with these ids, keyed
+     * by id, in one query.
+     */
+    private Map<String, Map<String, Object>> refs(String columns, String table, List<String> ids) {
+        return byId(SqlRows.list(jdbc.sql("SELECT " + columns + " FROM \"" + table + "\" WHERE id IN (:ids)"
+                + " AND \"organizationId\" = :org").param("ids", ids).param("org", org())), false);
+    }
+
+    /** A fresh copy of the looked-up row ({@code null} when absent), without the {@code drop} column. */
+    private static Map<String, Object> ref(Map<String, Map<String, Object>> rows, Object id, String drop) {
+        Map<String, Object> found = id == null ? null : rows.get(id.toString());
+        if (found == null) {
+            return null;
+        }
+        Map<String, Object> copy = new LinkedHashMap<>(found);
+        if (drop != null) {
+            copy.remove(drop);
+        }
+        return copy;
     }
 
     /** {@code {id, code, name}} of each location, by id (one query). */
@@ -444,32 +469,37 @@ public class InventoryQueryService {
         }
         if (notBlank(q.get("dateFrom"))) {
             where.append(" AND \"createdAt\" >= ?");
-            params.add(SqlRows.ts(EntityPatch.toInstant(q.get("dateFrom"))));
+            params.add(SqlRows.ts(bound(q.get("dateFrom"), true)));
         }
         if (notBlank(q.get("dateTo"))) {
             where.append(" AND \"createdAt\" <= ?");
-            params.add(SqlRows.ts(EntityPatch.toInstant(q.get("dateTo"))));
+            params.add(SqlRows.ts(bound(q.get("dateTo"), false)));
         }
         List<Map<String, Object>> rows = SqlRows.list(InventoryLedger.class, jdbc.sql("SELECT * FROM \"InventoryLedger\""
                 + " WHERE" + where + " ORDER BY \"createdAt\" DESC LIMIT " + size + " OFFSET " + (page - 1) * size)
                 .params(params));
         long total = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE" + where).params(params)
                 .query(Long.class).single();
-        for (Map<String, Object> r : rows) {
-            includeLedger(r);
-        }
+        includeLedger(rows);
         return PageResult.of(rows, page, size, total);
     }
 
-    /** product {id, code, name}, variant {id, name}, location {id, code, name}, batch {id, batchNumber, expiryDate}. */
-    void includeLedger(Map<String, Object> r) {
-        r.put("product", SqlRows.one(jdbc.sql("SELECT id, code, name FROM \"Product\" WHERE id = ?")
-                .param(r.get("productId"))));
-        r.put("variant", r.get("variantId") == null ? null : SqlRows.one(jdbc.sql("SELECT id, name FROM"
-                + " \"ProductVariant\" WHERE id = ?").param(r.get("variantId"))));
-        r.put("location", locationRef(r.get("locationId")));
-        r.put("batch", r.get("batchId") == null ? null : SqlRows.one(jdbc.sql("SELECT id, \"batchNumber\","
-                + " \"expiryDate\" FROM \"InventoryBatch\" WHERE id = ?").param(r.get("batchId"))));
+    /**
+     * product {id, code, name}, variant {id, name}, location {id, code, name}, batch {id, batchNumber, expiryDate}.
+     * Hardening R5a: one query per relation for the whole page (was four per row).
+     */
+    void includeLedger(List<Map<String, Object>> rows) {
+        Map<String, Map<String, Object>> products = refs("id, code, name", "Product", idsOf(rows, "productId"));
+        Map<String, Map<String, Object>> variants = refs("id, name", "ProductVariant", idsOf(rows, "variantId"));
+        Map<String, Map<String, Object>> locations = locationRefs(idsOf(rows, "locationId"));
+        Map<String, Map<String, Object>> batches = refs("id, \"batchNumber\", \"expiryDate\"", "InventoryBatch",
+                idsOf(rows, "batchId"));
+        for (Map<String, Object> r : rows) {
+            r.put("product", ref(products, r.get("productId"), null));
+            r.put("variant", r.get("variantId") == null ? null : ref(variants, r.get("variantId"), null));
+            r.put("location", ref(locations, r.get("locationId"), null));
+            r.put("batch", r.get("batchId") == null ? null : ref(batches, r.get("batchId"), null));
+        }
     }
 
     // ------------------------------------------------------------------ report feeds
@@ -632,11 +662,11 @@ public class InventoryQueryService {
         }
         if (notBlank(start)) {
             where.append(" AND \"createdAt\" >= ?");
-            params.add(SqlRows.ts(EntityPatch.toInstant(start)));
+            params.add(SqlRows.ts(bound(start, true)));
         }
         if (notBlank(end)) {
             where.append(" AND \"createdAt\" <= ?");
-            params.add(SqlRows.ts(EntityPatch.toInstant(end)));
+            params.add(SqlRows.ts(bound(end, false)));
         }
         List<Map<String, Object>> grouped = jdbc.sql("SELECT \"productId\", type::text AS type, SUM(\"quantityChange\") AS q,"
                 + " SUM(\"totalValue\") AS v FROM \"InventoryLedger\" WHERE" + where + " GROUP BY \"productId\", type")
@@ -802,6 +832,24 @@ public class InventoryQueryService {
         return Obj.of("summary", Obj.of("cells", rows.size(), "clean", rows.isEmpty(), "totalValuationExposure",
                 JsNumbers.dec(total), "zeroCostBasisCells", rows.stream().filter(r -> Boolean.TRUE.equals(
                         r.get("zeroCostBasis"))).count()), "rows", rows);
+    }
+
+    private static final java.util.regex.Pattern DATE_ONLY = java.util.regex.Pattern.compile("^\\d{4}-\\d{2}-\\d{2}$");
+
+    /**
+     * Hardening R5a: a date-only bound is the org's business day (start of day, or the inclusive end of day), like the
+     * other inventory reports; a full ISO instant is used as given. An unparseable value is a 400.
+     */
+    static Instant bound(String value, boolean start) {
+        String v = value.trim();
+        if (DATE_ONLY.matcher(v).matches()) {
+            return InventoryReportsService.parseLocalDay(v, start);
+        }
+        try {
+            return EntityPatch.toInstant(v);
+        } catch (RuntimeException e) {
+            throw ApiException.badRequest("Invalid date: " + value);
+        }
     }
 
     static boolean notBlank(String s) {

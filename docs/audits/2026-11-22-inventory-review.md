@@ -34,16 +34,16 @@ batch order from the plan's batch sections; map them back to the review text bef
 | P1-11 | Order-level stock timings (`at_confirmation`, `at_fulfillment_complete`) can double-post when the timing changes | R4 | open | — |
 | P1-12 | Order cancel does not reverse a posted `pos_order` issue (or partial / returned states) | R4 | open | — |
 | P1-13 | Offline transfer receipt waiting for its dispatch is not crash-safe and can be applied twice | R1 | fixed (R1) | `SyncInventoryRecoveryIT` |
-| P2-1 | Lock order: count submit, reservations per-quant lock, `createWave` id order, approval gates before locks | R5 | open | — |
+| P2-1 | Lock order: count submit, reservations per-quant lock, `createWave` id order, approval gates before locks | R5 | partly fixed (R5a: `createWave` locks in id order; count submit / reservation lock order and approval gates stay with the rest of R5) | code review (lock order; no IT) |
 | P2-2 | Transfer reversals do not pin ledger lots; count lines by lot number; serial insert without conflict check; production reversal does not issue the produced lot | R5 | open | — |
 | P2-3 | Transfer ledger values ignore serial / standard cost; AVCO residue not swept at zero; landed cost without `CostingLocks.shareProduct` | R5 | open | — |
-| P2-4 | Reports: `/ledger` and `/movements` day parsing, N+1 includes, bad `tolerance` not a 400, stock-health fallback, `closingValue` source, cost fields without `inventory_valuation:read` | R5 | open | — |
-| P2-5 | Validation: `@Positive` / `@Size` missing on stock-out lines, lists, notes and replenishment DTOs | R5 | open | — |
-| P2-6 | Warehouse: moves ignore `reservedInBin`, disabling settings blocks open work, reconcile pass 2 leaves stale tasks, ABC GET writes | R5 | open | — |
-| P2-7 | Integration: repair parts without variant, engine cost or reversal route; rental transfers without variant and serial | R5 | open | — |
-| P2-8 | Stock-document lists unpaged; Idempotency-Key not required on approve / dispatch / ship | R5 | open | — |
-| P2-9 | Missing index `StockTransferItem(organizationId, productId)` | R5 | open | — |
-| P2-10 | Negative-stock policy undocumented and without concurrency / offline ITs | R5 | open | — |
+| P2-4 | Reports: `/ledger` and `/movements` day parsing, N+1 includes, bad `tolerance` not a 400, stock-health fallback, `closingValue` source, cost fields without `inventory_valuation:read` | R5 | fixed (R5a) | `InventoryReportsHardeningIT` |
+| P2-5 | Validation: `@Positive` / `@Size` missing on stock-out lines, lists, notes and replenishment DTOs | R5 | fixed (R5a) | `InventoryReportsHardeningIT.requestLimits` |
+| P2-6 | Warehouse: moves ignore `reservedInBin`, disabling settings blocks open work, reconcile pass 2 leaves stale tasks, ABC GET writes | R5 | fixed (R5a) | `WarehouseHardeningIT` |
+| P2-7 | Integration: repair parts without variant, engine cost or reversal route; rental transfers without variant and serial | R5 | partly fixed (R5a: repair parts get the variant, the engine cost and `POST /repair/parts/:id/return`; rental transfers stay with R1/R5) | `RepairIT.parts`, `RepairIT.partReturn` |
+| P2-8 | Stock-document lists unpaged; Idempotency-Key not required on approve / dispatch / ship | R5 | fixed (R5a: lists capped + date window, keys required on approve / dispatch / ship; stock-out approve keeps the key optional — no client calls it) | `InventoryReportsHardeningIT.boundedDocumentLists`, `WarehouseHardeningIT.keysRequired` |
+| P2-9 | Missing index `StockTransferItem(organizationId, productId)` | R5 | fixed (R5a, V615) | migration `V615__inventory_hardening_r5a.sql` |
+| P2-10 | Negative-stock policy undocumented and without concurrency / offline ITs | R5 | fixed (R5a: policy documented as it behaves; ITs) | `NegativeStockPolicyIT` |
 | P2-11 | Audit trail: no `recordedOffline` in ledger detail; `reversesLedgerId`, performer and approver not shown | R5 | open | — |
 
 ## R0 notes and deviations from the plan

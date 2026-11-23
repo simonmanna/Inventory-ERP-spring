@@ -519,6 +519,11 @@ public class WarehouseSetupService {
      * they wait for their pick order are not excess (h-01 F2): they stay. Bins are emptied in a fixed order: pickable
      * bins (storage, then receiving) before output / quarantine, each by pick sequence and code, lots expiring first,
      * and quantity not held by open tasks before held quantity. Nothing is posted to the ledger.
+     *
+     * <p>Hardening R5a: the second pass may take quantity that open <em>move</em> tasks hold; those moves are then
+     * cancelled (newest first, until what is left in the cell covers the moves still open), so no open task is left
+     * pointing at stock that is gone. Quantity held by open <em>pick</em> tasks belongs to a released order and is
+     * never taken; excess that only pick-held stock could cover stays and is reported in {@code heldByPicks}.
      */
     @Transactional
     public Map<String, Object> reconcile(String locationId, String productId) {
@@ -528,6 +533,8 @@ public class WarehouseSetupService {
                         + (productId == null ? "" : " AND \"productId\" = ?") + " ORDER BY \"productId\", \"variantKey\"")
                 .params(productId == null ? List.of(org(), locationId) : List.of(org(), locationId, productId)));
         List<Map<String, Object>> removed = new ArrayList<>();
+        List<String> cancelled = new ArrayList<>();
+        List<Map<String, Object>> heldByPicks = new ArrayList<>();
         for (Map<String, Object> k : keys) {
             String prod = SqlRows.str(k, "productId");
             String variant = SqlRows.str(k, "variantKey");
@@ -542,7 +549,11 @@ public class WarehouseSetupService {
                     + " s.quantity, coalesce((SELECT sum(t.quantity) FROM \"WarehouseTask\" t WHERE t.\"fromBinId\" = s.\"binId\""
                     + "   AND t.\"organizationId\" = s.\"organizationId\""
                     + "   AND t.\"productId\" = s.\"productId\" AND t.\"variantKey\" = s.\"variantKey\""
-                    + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type IN ('pick', 'move')), 0) AS held"
+                    + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type IN ('pick', 'move')), 0) AS held,"
+                    + " coalesce((SELECT sum(t.quantity) FROM \"WarehouseTask\" t WHERE t.\"fromBinId\" = s.\"binId\""
+                    + "   AND t.\"organizationId\" = s.\"organizationId\""
+                    + "   AND t.\"productId\" = s.\"productId\" AND t.\"variantKey\" = s.\"variantKey\""
+                    + "   AND t.\"batchKey\" = s.\"batchKey\" AND t.status = 'open' AND t.type = 'pick'), 0) AS held_pick"
                     + " FROM \"WarehouseBinStock\" s JOIN \"WarehouseBin\" b ON b.id = s.\"binId\""
                     + " LEFT JOIN \"InventoryBatch\" ib ON ib.id = s.\"batchKey\""
                     + " WHERE s.\"organizationId\" = ? AND s.\"locationId\" = ? AND s.\"productId\" = ?"
@@ -559,7 +570,8 @@ public class WarehouseSetupService {
                     }
                     String cellKey = c.get("binId") + "|" + c.get("batchKey");
                     BigDecimal qty = SqlRows.dec(c, "quantity").subtract(take.getOrDefault(cellKey, BigDecimal.ZERO));
-                    BigDecimal free = pass == 0 ? qty.subtract(SqlRows.dec(c, "held")).max(BigDecimal.ZERO) : qty;
+                    BigDecimal free = qty.subtract(SqlRows.dec(c, pass == 0 ? "held" : "held_pick"))
+                            .max(BigDecimal.ZERO);
                     BigDecimal t = free.min(rest);
                     if (t.signum() > 0) {
                         take.merge(cellKey, t, BigDecimal::add);
@@ -574,14 +586,51 @@ public class WarehouseSetupService {
                     continue;
                 }
                 store.removeStock(store.bin(SqlRows.str(c, "binId")), prod, variant, SqlRows.str(c, "batchKey"), t);
+                cancelled.addAll(cancelStaleMoves(SqlRows.str(c, "binId"), prod, variant, SqlRows.str(c, "batchKey"),
+                        SqlRows.dec(c, "quantity").subtract(t).subtract(SqlRows.dec(c, "held_pick"))));
                 removed.add(Obj.of("binId", c.get("binId"), "binCode", c.get("code"), "productId", prod, "productName",
                         store.productName(prod), "variantKey", variant, "batchKey", c.get("batchKey"), "quantity", t));
+            }
+            if (rest.signum() > 0) {
+                heldByPicks.add(Obj.of("productId", prod, "productName", store.productName(prod), "variantKey", variant,
+                        "quantity", rest));
             }
         }
         if (!removed.isEmpty()) {
             audit.recordInTx(AuditInput.of("WarehouseBinStock", locationId, "reconcile", null, Obj.of("removed",
-                    removed)));
+                    removed, "cancelledTasks", cancelled)));
         }
-        return Obj.of("locationId", locationId, "reconciled", removed.size(), "removed", removed);
+        return Obj.of("locationId", locationId, "reconciled", removed.size(), "removed", removed, "cancelledTasks",
+                cancelled, "heldByPicks", heldByPicks);
+    }
+
+    /**
+     * Cancel the open move tasks out of one bin cell, newest first, until the moves still open fit in {@code room}
+     * (what the cell holds after the reconcile, less what open picks hold). Returns the cancelled task ids.
+     */
+    private List<String> cancelStaleMoves(String binId, String productId, String variant, String batch,
+            BigDecimal room) {
+        List<Map<String, Object>> moves = SqlRows.list(jdbc.sql("SELECT id, quantity FROM \"WarehouseTask\""
+                + " WHERE \"organizationId\" = ? AND \"fromBinId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                + " AND \"batchKey\" = ? AND status = 'open' AND type = 'move' ORDER BY \"createdAt\" DESC, id DESC"
+                + " FOR UPDATE").params(org(), binId, productId, variant, batch));
+        BigDecimal open = BigDecimal.ZERO;
+        for (Map<String, Object> m : moves) {
+            open = open.add(SqlRows.dec(m, "quantity"));
+        }
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> m : moves) {
+            if (open.compareTo(room.max(BigDecimal.ZERO)) <= 0) {
+                break;
+            }
+            String id = SqlRows.str(m, "id");
+            jdbc.sql("UPDATE \"WarehouseTask\" SET status = 'cancelled', \"updatedAt\" = " + NOW + " WHERE id = ?")
+                    .param(id).update();
+            audit.recordInTx(AuditInput.of("WarehouseTask", id, "update", Obj.of("status", "open"), Obj.of("status",
+                    "cancelled", "reason", "reconcile")));
+            open = open.subtract(SqlRows.dec(m, "quantity"));
+            out.add(id);
+        }
+        return out;
     }
 }

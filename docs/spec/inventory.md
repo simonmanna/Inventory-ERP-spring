@@ -153,7 +153,8 @@ has the same count / idempotency gaps (the warehouse module is a Spring extensio
     `/inventory/counts/:id/submit` (400 `An Idempotency-Key header is required for this operation so a retry can never
     charge twice.`); Nest accepts a missing key. Document approve / reverse / receive routes keep the key optional:
     each posts behind an atomic status claim (a second run answers 400/409 and posts nothing), and the creates only
-    write pending documents. Web screens send one key per action.
+    write pending documents. Web screens send one key per action. (R5a: transfer approve / dispatch, adjustment and waste approve and
+    warehouse ship now require it — deviation 41.)
 
 Approved by the owner — valuation, reports and infrastructure hardening (`phase/inv-hardening`, migration `V470`); Nest
 has the same gaps:
@@ -338,6 +339,82 @@ gate G3). The Spring app is independent of Nest since 2026-11-18, so these are h
     quarantine and rental's role locations are created through `VirtualLocationService.ensure` instead of direct
     inserts. Tests: `InventoryBranchScopeIT`; `WarehouseReplenishmentGapsIT.scanSurvivesABrokenRule` now soft-deletes
     the source in SQL to simulate legacy data.
+
+Approved by the owner — hardening R5a, 2026-11-23 ([review](../audits/2026-11-22-inventory-review.md), migration
+`V615`). Spring-only; Nest has the same gaps:
+
+33. **Report day bounds.** `GET /inventory/ledger` (`dateFrom` / `dateTo`) and `GET /inventory/reports/movements`
+    (`start` / `end`): a date-only value is the organisation's business day (start of day / end of day inclusive), as
+    on the other inventory reports; a full ISO instant is used as given; an unparseable value is 400 `Invalid date:
+    …` (was UTC midnight, losing the last day; a bad value was a 500).
+34. **Batched includes.** `/inventory/ledger` and `GET /inventory/items/:productId` read each include (product,
+    variant, location, lot, menu item, purchase order, partner) with one query per relation for the whole page; the
+    JSON is unchanged.
+35. **Reconciliation tolerance.** `GET /inventory/reports/reconciliation?tolerance=` non-numeric, infinite or negative
+    → 400 `tolerance must be a non-negative number` (was a 500). Other numeric query parameters of the inventory
+    controllers already fall back to their defaults.
+36. **Stock-health age.** A quant never consumed within the scan horizon is aged from its last true receipt at the
+    location (`receipt`, `return_in`, `production_output`, `opening_balance`), or, when it only ever arrived by
+    transfer, from its last `transfer_in`; Nest marked every never-consumed quant `dead`, even one received today. A
+    transfer or reversal into a location with a known receipt does not make old stock look fresh. The movement scan
+    reads only from the earlier of the period start and now − `deadDays`; `lastConsumedAt` / `lastInboundAt` are
+    reported within that window. The aging buckets still date transferred stock from its arrival at the location.
+37. **Closing value of a past period.** `GET /inventory/reports/item-movements`: when the period ends before today,
+    `closingValue` is Σ signed ledger value up to its end (was closing quantity × today's average cost). A period ending
+    today keeps the value by costing method.
+38. **Cost fields need `inventory_valuation:read`.** `GET /inventory/reports/valuation` (`avgCost`, `value`,
+    `locations[].value`, `totals.value`, `byCategory[].value` / `share`) and `GET /inventory/reports/stock-health`
+    (`unitCost`, `value`, `consumedValue`, `summary.totalValue|activeValue|slowValue|deadValue`) answer those fields
+    `null` to a caller without `inventory_valuation:read`; quantities, statuses and retail values stay. The screens
+    show a dash. The analytics inventory dashboard reads stock health internally with values, as before.
+39. **Request limits.** Stock-out lines `qty` must be positive; stock documents, direct stock and transfer receipts
+    take at most 1,000 lines (`items must contain no more than 1000 elements`), notes 2,000 and reasons 1,000
+    characters; warehouse pick orders and packs 1,000 lines, waves 200 pick orders, notes 2,000, bin-adjust reasons
+    1,000; replenishment rules: ids ≤ 64 characters, quantities ≤ 99,999,999,999,999 (the column range), `leadTimeDays`
+    0–3,650; dismiss reasons 1,000; requisitions ≤ 500 alert ids. The web forms enter lines by hand, far below these
+    caps.
+40. **Bounded stock-document lists.** `GET /inventory/stock-outs`, `/adjustments` and `/transfers` stay plain arrays
+    (the screens filter them in the browser) of the newest 500 documents; `limit` (1–2,000, else 400 `limit must be a
+    positive number`) and `dateFrom` / `dateTo` (business days or ISO instants) reach older ones. The branch scope is
+    applied in SQL before the limit. `GET /inventory/waste` already had its 500 cap.
+41. **Idempotency-Key required** on `POST /inventory/transfers/:id/approve`, `/transfers/:id/dispatch`,
+    `/adjustments/:id/approve`, `/waste/:id/approve` and `/warehouse/pick-orders/:id/ship` (400 `An Idempotency-Key
+    header is required …`). The web sends one on each (`idempotentPost`); Android does not call them.
+    `POST /inventory/stock-outs/:id/approve` keeps the key optional: no client calls it yet.
+42. **Warehouse.** A move task takes only what open pick / move tasks leave in its bin (`reservedInBin`), at creation
+    and at completion (`Not enough stock in bin X for P; open picks hold part of it`). With warehouse management
+    switched off, open work can still be finished: task complete / cancel and pick-order pack / ship / cancel; new
+    tasks, pick orders, releases, waves, putaway generation and reconcile stay refused. Reconcile's second pass may take
+    stock held by open move tasks and cancels those moves (newest first, until the remaining moves fit); it never
+    takes stock held by open picks — excess only pick-held stock could cover stays and is reported in `heldByPicks`
+    (response also lists `cancelledTasks`). `GET /warehouse/locations/:id/abc` is read-only (the latest submitted
+    count is read, and stored by classify / cycle-count generation). ABC consumption no longer counts `transfer_out`
+    (a central store feeding branches classifies by its own issues). `createWave` locks its orders in id order.
+43. **Index (V615)** `StockTransferItem(organizationId, productId)` for the incoming-transfer supply of replenishment.
+
+### Negative stock policy (as built; R5a evidence for gate G3)
+
+- `inventory.allowNegativeStock` (`SettingRegistry`) defaults to **on**: every issue may take a quant below zero
+  unless the item's `stockPolicy` is `block` (and a lot-tracked `block` item never goes short).
+- **Off ("strict")**: back-office issues (stock-outs, waste, direct stock out, production, repair parts …) are refused
+  with `Insufficient stock for …`; direct stock-out also checks availability up front.
+- **POS is never blocked at the till.** Checkout enqueues a `StockPostingJob`; the drain (`pos*` / `menu_recipe`
+  sources) is exempt from the strict setting and follows the item stock policy only. With the default policy `warn`
+  two terminals selling the last unit both post and the quant ends at −1, strict or not. With policy `block` the
+  second sale's line is refused inside its job: the job goes back to `pending` with `lastError` `1 line(s) could not
+  be deducted and need review: Insufficient stock …`, an alert is raised, it retries with back-off and becomes
+  `failed` after `maxAttempts`; it is handled in the Posting Monitor (`/pos/posting-monitor`). Stock never goes below
+  zero then.
+- **Offline issues** (`stock.out` pushed through `/sync/push`) reuse direct stock-out. Allowed: the issue posts and an
+  `offline_negative_stock` exception records the shortfall (`/sync/stock-discrepancies`). Strict: the op **fails**
+  (`status: failed`, `httpStatus 400`, `code BUSINESS_RULE`, not retryable, dead-lettered) and nothing moves — unlike
+  offline transfer dispatches, which are kept and held (`offline_held_posting`).
+- **Transfers** never take their source below zero, whatever the setting (`Insufficient stock at source`), but they
+  ignore sales reservations: a dispatch may leave a location over-reserved (only `processing_job_input`
+  reservations block an issue); the integrity `reservations` check reports it as `over_reserved`.
+- Tests: `NegativeStockPolicyIT` (two terminals permissive / strict-warn / strict-block, offline after online sale
+  permissive / strict, dispatch over reservations, partial receipts + damage + short + recall with the integrity
+  report green after each step), `SyncInventoryIT`, `StockConcurrencyIT`.
 
 Same as Nest, kept on purpose:
 

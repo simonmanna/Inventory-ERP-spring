@@ -135,10 +135,11 @@ public class WarehouseController {
             String sourceRef,
             Integer priority,
             @Pattern(regexp = DATE, message = "scheduledDate must be a valid ISO 8601 date string") String scheduledDate,
-            String notes,
+            @Size(max = 2000, message = "notes must be shorter than or equal to 2000 characters") String notes,
             @Min(value = 1, message = "steps must not be less than 1")
             @Max(value = 3, message = "steps must not be greater than 3") Integer steps,
-            @NotEmpty(message = "lines should not be empty") List<@Valid PickLineRequest> lines) {}
+            @NotEmpty(message = "lines should not be empty")
+            @Size(max = 1000, message = "lines must contain no more than 1000 elements") List<@Valid PickLineRequest> lines) {}
 
     public record PackItemRequest(
             @NotBlank(message = "lineId should not be empty") String lineId,
@@ -147,7 +148,7 @@ public class WarehouseController {
     public record PackRequest(
             String packageType,
             @DecimalMin(value = "0", message = "weightKg must not be less than 0") BigDecimal weightKg,
-            List<@Valid PackItemRequest> items) {}
+            @Size(max = 1000, message = "items must contain no more than 1000 elements") List<@Valid PackItemRequest> items) {}
 
     public record ShipRequest(String carrier, String trackingRef) {}
 
@@ -155,8 +156,9 @@ public class WarehouseController {
 
     public record CreateWaveRequest(
             @NotBlank(message = "locationId should not be empty") String locationId,
-            @NotEmpty(message = "pickOrderIds should not be empty") List<String> pickOrderIds,
-            String notes) {}
+            @NotEmpty(message = "pickOrderIds should not be empty")
+            @Size(max = 200, message = "pickOrderIds must contain no more than 200 elements") List<String> pickOrderIds,
+            @Size(max = 2000, message = "notes must be shorter than or equal to 2000 characters") String notes) {}
 
     public record AdjustBinRequest(
             @NotBlank(message = "productId should not be empty") String productId,
@@ -164,7 +166,8 @@ public class WarehouseController {
             String batchId,
             @DecimalMin(value = "0", message = "newQty must not be less than 0") BigDecimal newQty,
             BigDecimal delta,
-            @NotBlank(message = "reason should not be empty") String reason) {}
+            @NotBlank(message = "reason should not be empty")
+            @Size(max = 1000, message = "reason must be shorter than or equal to 1000 characters") String reason) {}
 
     public record ReconcileRequest(String productId) {}
 
@@ -401,7 +404,7 @@ public class WarehouseController {
                         : dto.items().stream().map(i -> new PackItem(i.lineId(), i.quantity())).toList());
     }
 
-    @Idempotent
+    @Idempotent(required = true)
     @PostMapping("/pick-orders/{id}/ship")
     @RequirePermissions(Permissions.WAREHOUSE__OPERATE)
     public Map<String, Object> ship(@PathVariable String id, @Valid @RequestBody(required = false) ShipRequest dto) {

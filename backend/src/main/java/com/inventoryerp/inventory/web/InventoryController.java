@@ -27,6 +27,7 @@ import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.validation.OneOf;
+import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.PageQuery;
 import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
@@ -60,6 +61,11 @@ public class InventoryController {
     private static final String STR = "must be a string";
     private static final String EMPTY = "should not be empty";
     private static final String ARR = "must be an array";
+    /** Hardening R5a: caps on document lines and free text (the web forms enter lines by hand). */
+    static final int MAX_LINES = 1000;
+    private static final String LINES = "must contain no more than " + MAX_LINES + " elements";
+    private static final String NOTES = "must be shorter than or equal to 2000 characters";
+    private static final String REASON = "must be shorter than or equal to 1000 characters";
 
     /** {@code CreateLocationDto}. */
     public record CreateLocationRequest(
@@ -90,7 +96,7 @@ public class InventoryController {
             @OneOf({"FEFO", "FIFO", "MANUAL", "SERIAL"}) String distStrategy,
             String batchNumber,
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String expiryDate,
-            String notes) {}
+            @Size(max = 2000, message = NOTES) String notes) {}
 
     /** {@code DirectStockInDto} / {@code DirectStockOutDto}. */
     public record DirectStockRequest(
@@ -98,8 +104,8 @@ public class InventoryController {
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
             String approvedById,
             @Size(max = 128, message = "must be shorter than or equal to 128 characters") String approverPin,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid DirectStockItem> items,
-            String notes) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid DirectStockItem> items,
+            @Size(max = 2000, message = NOTES) String notes) {}
 
     /** {@code StockOutItemDto}. */
     public record StockOutLine(
@@ -107,7 +113,7 @@ public class InventoryController {
             String variantId,
             String unit,
             String batchNumber,
-            @NotNull(message = NUM) BigDecimal qty,
+            @NotNull(message = NUM) @Positive(message = "must be a positive number") BigDecimal qty,
             @OneOf({"FEFO", "FIFO", "MANUAL", "SERIAL"}) String distStrategy) {}
 
     /** {@code WasteItemDto}. */
@@ -143,9 +149,9 @@ public class InventoryController {
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             @OneOf({"general_use", "kitchen_testing", "training", "damaged", "sample", "expired", "complimentary",
                     "other"}) String category,
-            String reason,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid StockOutLine> items) {}
+            @Size(max = 1000, message = REASON) String reason,
+            @Size(max = 2000, message = NOTES) String notes,
+            @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid StockOutLine> items) {}
 
     /** {@code CreateWasteDto}. */
     public record CreateWasteRequest(
@@ -154,8 +160,8 @@ public class InventoryController {
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             @OneOf({"expired", "spoiled", "burnt", "contaminated", "breakage", "other", "overmixed", "packaging_defect",
                     "qc_rejection"}) String category,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid WasteLine> items) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid WasteLine> items) {}
 
     /** {@code CreateStockAdjustmentDto}. */
     public record CreateAdjustmentRequest(
@@ -163,8 +169,8 @@ public class InventoryController {
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
             @OneOf({"cycle_count", "damaged", "expired", "theft", "found", "initial_count", "other"}) String reason,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid AdjustmentLine> items) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid AdjustmentLine> items) {}
 
     /** {@code CreateStockTransferDto}. */
     public record CreateTransferRequest(
@@ -173,8 +179,8 @@ public class InventoryController {
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String toLocationId,
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String responsibleById,
             @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String approvedById,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid TransferLine> items) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid TransferLine> items) {}
 
     /** {@code ReceiveStockTransferLineDto}. */
     public record ReceiveLineRequest(
@@ -185,14 +191,16 @@ public class InventoryController {
 
     /** {@code ReceiveStockTransferDto}. */
     public record ReceiveTransferRequest(
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid ReceiveLineRequest> lines,
-            String notes) {}
+            @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid ReceiveLineRequest> lines,
+            @Size(max = 2000, message = NOTES) String notes) {}
 
     /** {@code ApproveAdjustmentDto}. */
-    public record ApproveAdjustmentRequest(Boolean force, String forceReason) {}
+    public record ApproveAdjustmentRequest(Boolean force, @Size(max = 1000, message = REASON) String forceReason) {}
 
     /** {@code ReverseStockDocDto}. */
-    public record ReverseRequest(@NotNull(message = "must be a string") @NotEmpty(message = EMPTY) String reason) {}
+    public record ReverseRequest(
+            @NotNull(message = "must be a string") @NotEmpty(message = EMPTY) @Size(max = 1000, message = REASON)
+            String reason) {}
 
     private final LocationService locations;
     private final StockDocService stockDocs;
@@ -379,7 +387,16 @@ public class InventoryController {
     @RequirePermissions(Permissions.INVENTORY__READ)
     public Map<String, Object> reconciliation(@RequestParam Map<String, String> query) {
         String tol = query.get("tolerance");
-        return queries.getStockReconciliation(query.get("locationId"), tol != null ? JsNumbers.number(tol) : null,
+        Double tolerance = null;
+        if (tol != null) {
+            // Hardening R5a: a non-numeric or negative tolerance is a 400 (it reached new BigDecimal("NaN"), a 500).
+            double n = JsNumbers.number(tol);
+            if (Double.isNaN(n) || Double.isInfinite(n) || n < 0) {
+                throw ApiException.badRequest("tolerance must be a non-negative number");
+            }
+            tolerance = n;
+        }
+        return queries.getStockReconciliation(query.get("locationId"), tolerance,
                 "true".equals(query.get("includeMatched")));
     }
 
@@ -396,7 +413,7 @@ public class InventoryController {
     @GetMapping("/reports/stock-health")
     @RequirePermissions(Permissions.INVENTORY__READ)
     public Map<String, Object> stockHealth(@RequestParam Map<String, String> query) {
-        return reports.stockHealth(query);
+        return reports.stockHealthReport(query);
     }
 
     @GetMapping("/reports/negative-stock")
@@ -419,8 +436,10 @@ public class InventoryController {
 
     @GetMapping("/stock-outs")
     @RequirePermissions(Permissions.INVENTORY_DOC__READ)
-    public List<Map<String, Object>> listStockOuts(@RequestParam(required = false) String status) {
-        return stockDocs.list("out", status);
+    public List<Map<String, Object>> listStockOuts(@RequestParam(required = false) String status,
+            @RequestParam(required = false) String dateFrom, @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String limit) {
+        return stockDocs.list("out", status, dateFrom, dateTo, limit);
     }
 
     @PostMapping("/stock-outs/{id}/approve")
@@ -467,7 +486,7 @@ public class InventoryController {
     }
 
     @PostMapping("/waste/{id}/approve")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY_DOC__APPROVE)
     public Map<String, Object> approveWaste(@PathVariable String id) {
         return stockDocs.approveWaste(id);
@@ -494,12 +513,14 @@ public class InventoryController {
 
     @GetMapping("/adjustments")
     @RequirePermissions(Permissions.INVENTORY_DOC__READ)
-    public List<Map<String, Object>> listAdjustments(@RequestParam(required = false) String status) {
-        return stockDocs.list("adjustment", status);
+    public List<Map<String, Object>> listAdjustments(@RequestParam(required = false) String status,
+            @RequestParam(required = false) String dateFrom, @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String limit) {
+        return stockDocs.list("adjustment", status, dateFrom, dateTo, limit);
     }
 
     @PostMapping("/adjustments/{id}/approve")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY_DOC__APPROVE)
     public Map<String, Object> approveAdjustment(@PathVariable String id,
             @Valid @RequestBody(required = false) ApproveAdjustmentRequest dto) {
@@ -528,12 +549,14 @@ public class InventoryController {
 
     @GetMapping("/transfers")
     @RequirePermissions(Permissions.INVENTORY_DOC__READ)
-    public List<Map<String, Object>> listTransfers(@RequestParam(required = false) String status) {
-        return stockDocs.list("transfer", status);
+    public List<Map<String, Object>> listTransfers(@RequestParam(required = false) String status,
+            @RequestParam(required = false) String dateFrom, @RequestParam(required = false) String dateTo,
+            @RequestParam(required = false) String limit) {
+        return stockDocs.list("transfer", status, dateFrom, dateTo, limit);
     }
 
     @PostMapping("/transfers/{id}/approve")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY_DOC__APPROVE)
     public Map<String, Object> approveTransfer(@PathVariable String id) {
         return stockDocs.approveTransfer(id);
@@ -546,7 +569,7 @@ public class InventoryController {
     }
 
     @PostMapping("/transfers/{id}/dispatch")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVENTORY_DOC__UPDATE)
     public Map<String, Object> dispatchTransfer(@PathVariable String id) {
         return stockDocs.dispatchTransfer(id);

@@ -52,7 +52,7 @@ public class WarehouseAbcService {
         Settings s = store.settings(locationId);
         List<Item> items = jdbc.sql("WITH used AS (SELECT \"productId\", sum(abs(\"totalValue\")) AS v"
                         + " FROM \"InventoryLedger\" WHERE \"organizationId\" = :org AND \"locationId\" = :loc"
-                        + " AND \"quantityChange\" < 0 AND type::text IN ('issue', 'transfer_out', 'production_consume',"
+                        + " AND \"quantityChange\" < 0 AND type::text IN ('issue', 'production_consume',"
                         + " 'internal_use') AND \"createdAt\" >= (now() at time zone 'utc') - make_interval(days => :days)"
                         + " GROUP BY \"productId\"),"
                         + " stocked AS (SELECT DISTINCT \"productId\" FROM \"StockItem\" WHERE \"organizationId\" = :org"
@@ -63,6 +63,7 @@ public class WarehouseAbcService {
                 .param("org", org()).param("loc", locationId).param("days", s.abcLookbackDays())
                 .query((rs, n) -> new Item(rs.getString("productId"), rs.getBigDecimal("v"))).list();
         List<Classified> classes = AbcClassifier.classify(items, s.abcAPercent(), s.abcBPercent());
+        refreshCounted(locationId);
         for (Classified c : classes) {
             jdbc.sql("INSERT INTO \"WarehouseAbcClass\" (id, \"organizationId\", \"locationId\", \"productId\", \"abcClass\","
                             + " \"consumptionValue\", \"cumulativeShare\", \"classifiedAt\") VALUES (?, ?, ?, ?, ?, ?, ?, " + NOW
@@ -102,15 +103,25 @@ public class WarehouseAbcService {
 
     private List<Map<String, Object>> rows(String locationId) {
         Settings s = store.settings(locationId);
+        // Hardening R5a: the latest submitted count is read here (no write on a GET); refreshCounted stores it on the
+        // write paths (classify, generate a cycle count).
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT a.*, p.name AS \"productName\", p.sku,"
-                + " s.status::text AS \"lastSessionStatus\" FROM \"WarehouseAbcClass\" a"
+                + " s.status::text AS \"lastSessionStatus\", c.at AS \"countedAt\" FROM \"WarehouseAbcClass\" a"
                 + " JOIN \"Product\" p ON p.id = a.\"productId\" LEFT JOIN \"InventoryCountSession\" s"
-                + " ON s.id = a.\"lastSessionId\" WHERE a.\"organizationId\" = ? AND a.\"locationId\" = ?"
-                + " ORDER BY a.\"abcClass\", a.\"consumptionValue\" DESC, p.name").params(org(), locationId));
+                + " ON s.id = a.\"lastSessionId\" LEFT JOIN (SELECT l.\"productId\", max(cs.\"submittedAt\") AS at"
+                + " FROM \"InventoryCountLine\" l JOIN \"InventoryCountSession\" cs ON cs.id = l.\"sessionId\""
+                + " WHERE cs.\"organizationId\" = ? AND cs.\"locationId\" = ? AND cs.status = 'submitted'"
+                + " AND cs.\"deletedAt\" IS NULL AND l.\"countedQty\" IS NOT NULL GROUP BY l.\"productId\") c"
+                + " ON c.\"productId\" = a.\"productId\" WHERE a.\"organizationId\" = ? AND a.\"locationId\" = ?"
+                + " ORDER BY a.\"abcClass\", a.\"consumptionValue\" DESC, p.name")
+                .params(org(), locationId, org(), locationId));
         Instant now = Instant.now();
         for (Map<String, Object> r : rows) {
             char cls = SqlRows.str(r, "abcClass").charAt(0);
-            Instant last = (Instant) r.get("lastCountedAt");
+            Instant stored = (Instant) r.get("lastCountedAt");
+            Instant counted = (Instant) r.remove("countedAt");
+            Instant last = counted != null && (stored == null || stored.isBefore(counted)) ? counted : stored;
+            r.put("lastCountedAt", last);
             Instant due = last == null ? null : last.plus(s.countDays(cls), ChronoUnit.DAYS);
             r.put("countEveryDays", s.countDays(cls));
             r.put("nextCountDue", due);
@@ -120,10 +131,10 @@ public class WarehouseAbcService {
         return rows;
     }
 
-    @Transactional
+    /** The classes of a location with their count schedule. Read-only (hardening R5a). */
+    @Transactional(readOnly = true)
     public Map<String, Object> list(String locationId) {
         store.location(locationId);
-        refreshCounted(locationId);
         List<Map<String, Object>> rows = rows(locationId);
         return Obj.of("locationId", locationId, "rows", rows, "due", rows.stream()
                 .filter(r -> Boolean.TRUE.equals(r.get("due")) && !Boolean.TRUE.equals(r.get("scheduled"))).count());
