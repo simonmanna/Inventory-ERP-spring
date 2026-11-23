@@ -42,7 +42,8 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Scheduled jobs
 
-— (POS stock posting drain lives in pos).
+- `InventoryIntegrityJob` (daily 03:10 UTC, ShedLock `inventory-integrity-check`, off with `app.jobs.enabled=false`):
+  see "Integrity checks (R0)". The POS stock posting drain lives in pos.
 
 ## Notes and pitfalls
 
@@ -152,7 +153,8 @@ has the same count / idempotency gaps (the warehouse module is a Spring extensio
     `/inventory/counts/:id/submit` (400 `An Idempotency-Key header is required for this operation so a retry can never
     charge twice.`); Nest accepts a missing key. Document approve / reverse / receive routes keep the key optional:
     each posts behind an atomic status claim (a second run answers 400/409 and posts nothing), and the creates only
-    write pending documents. Web screens send one key per action.
+    write pending documents. Web screens send one key per action. (R5a: transfer approve / dispatch, adjustment and waste approve and
+    warehouse ship now require it — deviation 41.)
 
 Approved by the owner — valuation, reports and infrastructure hardening (`phase/inv-hardening`, migration `V470`); Nest
 has the same gaps:
@@ -238,6 +240,242 @@ Approved by the owner — accounting and costing review 2026-11-17
     value per location, price-difference and NRV adjuncts, value-only changes, every movement with running quantity,
     value and unit cost). Messages: `productId should not be empty`, `limit must not be less than 1`, `limit must be
     an integer number`, 404 `Product not found` / `Location not found`. Test: `CostExplanationIT`.
+
+Approved by the owner 2026-11-23 (inventory hardening R1, corruption blockers, release gate G1):
+
+- **Returns restore the original identity and cost.** `StockReversalService.returnFromSource` returns goods against
+  their original outflow rows: each unit comes back with the lot (into the very `InventoryBatch` row when it returns to
+  the location it left, never a new lot), expiry, serial, location and unit cost of the row it left on. The new ledger
+  row names that row in `InventoryLedger.reversesLedgerId` (V611, FK + index); `reverseLedgerSource` sets it too. The
+  quantity is allocated across the rows in their original order, net of what earlier returns brought back (net of
+  their own reversals); more is refused with 400 `Cannot return more than was issued`, a source without issue rows
+  with 400 `No stock issue was found to return against`. Callers: cash-sale void, invoice cancel, credit-note restock,
+  sales return (into the chosen receiving location: same lot number / expiry / serial / cost), production
+  cancel / reversal (`returnMaterials`, GL still the line's WIP clearance), debit-note reversal. `receiveReturn`
+  forwards `batchNumber` / `expiry` / `serials` it is given. Rows written before V611 carry no link, so returns made
+  before this change are not netted (the callers' own guards still apply). POS refunds are unchanged (they already
+  restock at the issue location and cost and refuse tracked items). Tests `InventoryReturnsIdentityIT`,
+  `CashSaleIT.voidLinksTheIssueRows`.
+- **Credit-note reversal takes back what the note restocked**, row by row: the same lot / serial, at the cost it came
+  back at (the carried cost of an unlotted AVCO quant), naming the restock row, so the invoice's issue becomes
+  returnable again.
+- **Fee lines never move stock.** A POS bill line with `rentalFeeType` set is skipped by the stock issue, the
+  reservation, the variant check and the ATP check, whatever product it names (see rental.md).
+- **A credit note refuses to restock without an issue to return against** (see invoicing.md).
+- **Offline refund / void drains or holds; offline receipt applies exactly once** (see sync.md).
+
+Approved by the owner 2026-11-23 (inventory hardening R3, financial integrity, release gate G2):
+
+- **A STANDARD product without an active standard cost is governed by its cost price.** Issues and the valuation
+  already used `costPrice`; receipts now enter stock (quant, lot, serial, ledger row) at it too, and a valued receipt
+  (goods receipt, bill, direct stock-in) posts Dr stock at the cost price, Cr GRNI at actual, the difference to purchase
+  price variance (5905) through `StandardCostService.postReceipt`, recorded in the variance register. A cost price of 0
+  is a valid standard (everything to PPV). With neither a standard nor a cost price, a valued receipt is refused with
+  400 `Set a cost price or an active standard cost for STANDARD product <name> before receiving it`; unvalued internal
+  receipts (transfers, returns) keep the old behaviour. Production output (single-leg, stage and process costing) uses
+  the same governing standard (`StandardCostService.governingStandard`).
+- **STANDARD returns enter at the standard; the difference goes to PPV.** `receiveReturn` and `returnFromSource`
+  (also with `postRestockGl=false`, where the caller reverses the original cost) bring the unit back at the governing
+  standard and post `original cost − standard` against the stock account (positive: Dr PPV / Cr stock; negative: Dr
+  stock / Cr PPV), so the stock account ends at the standard while COGS is reversed at the original issue cost. The
+  difference is recorded in the variance register (kind `purchase_price`, the return's source). `reverseLedgerSource`
+  is unchanged: it already squares a value difference as a stock adjustment.
+- **Serial tracking and STANDARD costing are exclusive.** Refused with 400: creating or updating a product to
+  STANDARD + serial (`Serial-tracked products cannot use STANDARD costing: each unit keeps its own cost (use SPECIFIC,
+  AVCO or FIFO)`; turning serial tracking — or SERIAL picking — on for a STANDARD product: `A STANDARD-costed product
+  cannot become serial-tracked: ...`), activating a standard cost for a serial-tracked product, and a STANDARD cost price
+  change (revaluation) of a serial-tracked product. A legacy product that already has both is left as it is (an
+  unrelated edit still saves) and is listed by block (i) of `docs/audits/2026-11-22-inventory-data-checks.sql`.
+- **Stock journal lines carry their product.** Every journal line on an inventory control account posted by the stock
+  engine (`StockPostingService`: issues, receipts, return restocks, adjustments, transfers, production, cost
+  corrections, landed cost — one voucher line per product now), standard costing (receipt PPV entry, revaluations,
+  return variance), revaluation / NRV, cost-policy rounding (one line per product now), material ledger, quality
+  downgrade (gross lines per product when two products are involved), project / fleet / quarry issues and
+  `reverseLedgerSource` (which keeps the original line's keys, or stamps the reversed product), supplier-claim stock
+  adjustments and debit-note returns (stock credits per product and warehouse now), lineage-exception releases of a
+  voucher's on-hand share (one line per product) and branch transfers carries
+  `dimensions.inventoryProductId` (and `inventoryLocationId` when the posting has one location). Both keys are reserved:
+  they cannot be analytic dimension codes, so dimension validation and reports ignore them.
+- **Per-product GL check and its cutover.** The integrity report gains `valuation_vs_gl_by_product` (a value check: the
+  monitor raises `integrity_valuation_vs_gl_by_product` and it holds the period close; not raised while
+  `inventory.glTieOut.enabled` is off). Per product: Σ (debit − credit) of the stock-account lines carrying the product
+  = Σ signed ledger value of the rows recorded since the cutover, tolerance 0.01; rows show costing method, quantity,
+  sub-ledger value, GL value and difference. The cutover is the setting `inventory.productGlCutoverAt` written by V613
+  (data only) for every organisation that existed at deploy; an organisation created later has no marker, so its whole
+  history counts. History before the cutover is reconciled by source document through the existing tie-out. A line
+  without the key is attributed through its source document when all ledger rows of that document are one product;
+  what is left is one `unattributed` failing row (a posting path that does not stamp; landed-cost accrual entries
+  post only to the 1396 adjunct and to consumption accounts, so they never reach a checked account). The CM-1 adjunct accounts (price differences
+  1396, NRV allowance 1397) and their value-only components stay with the organisation-level tie-out, and so does a
+  branch split (revaluations and landed cost post per product, not per location). Test `StandardCostingIntegrityIT`.
+
+Owner-approved hardening 2026-11-23, batch R2 of the inventory hardening plan (branch security and master data,
+gate G3). The Spring app is independent of Nest since 2026-11-18, so these are hardening rules, not parity gaps:
+
+31. **Branch scope on stock actions.** A user with a data scope (BR-1) is checked on the side of the document the
+    action belongs to. A refusal is 403 `This location is outside your data access`.
+    - Reversals (`POST /inventory/{stock-outs|waste|adjustments|transfers}/:id/reverse`): the document's location, for a
+      transfer its source. The check runs inside the reversing transaction after the header row lock. Engine reversals
+      other modules run (`reverseLedgerSource` from procurement, fleet, quarry, manufacturing) are not user-scoped.
+    - Transfers: approve, dispatch, recall and cancel need the source; receive needs the destination; reads and create
+      stay reachable from either end. Dispatch, receive, recall and cancel check after the header lock; approve checks
+      before its approval gate (which runs in its own transaction) and the status claim serialises it. Offline
+      `transfer.dispatch` / `transfer.receive` inherit the same rules (a 403 is not a business refusal: the op is
+      dead-lettered for a supervisor, not held).
+    - Reservations (`/inventory/reservations`): reserve needs the location in scope and 404s `Product not found` /
+      `Location not found`; release, consume, the source list and the overview touch or show only the caller's
+      locations, and an overview `locationId` outside them is 403. `GET /inventory/reservations` without both
+      `sourceType` and `sourceId` is paged (`page`, `pageSize`, at most 200 rows). The engine methods sales, POS and
+      manufacturing call are unchanged (no user scope).
+    - Replenishment: a transfer rule's `sourceLocationId` must be in scope when it is set or changed; a kept source is
+      not re-checked, so a branch user can still edit the levels of a rule an unrestricted user set up.
+32. **Location guards.** `DELETE /inventory/locations/:id`, `isActive: false`, a `type` change or a `branchId` change
+    is refused (400 `Location <code> cannot be deleted|deactivated|retyped|moved to another branch while it still has
+    <what> (<n>); move or close them first`) while the location has non-zero stock, stock in warehouse bins, open
+    transfers (draft, pending, approved, in transit, partially received; from, to or through it), draft counts, active
+    reservations, or active replenishment / reorder rules (as location or transfer source). The system transit
+    location is never deleted, deactivated or retyped (400 `The transit location is system-managed; it cannot be
+    deleted|retyped|deactivated`); no user can type a location `transit` (unchanged DTO rule). Manufacturing's QC
+    quarantine and rental's role locations are created through `VirtualLocationService.ensure` instead of direct
+    inserts. Tests: `InventoryBranchScopeIT`; `WarehouseReplenishmentGapsIT.scanSurvivesABrokenRule` now soft-deletes
+    the source in SQL to simulate legacy data.
+
+Approved by the owner — hardening R5a, 2026-11-23 ([review](../audits/2026-11-22-inventory-review.md), migration
+`V615`). Spring-only; Nest has the same gaps:
+
+33. **Report day bounds.** `GET /inventory/ledger` (`dateFrom` / `dateTo`) and `GET /inventory/reports/movements`
+    (`start` / `end`): a date-only value is the organisation's business day (start of day / end of day inclusive), as
+    on the other inventory reports; a full ISO instant is used as given; an unparseable value is 400 `Invalid date:
+    …` (was UTC midnight, losing the last day; a bad value was a 500).
+34. **Batched includes.** `/inventory/ledger` and `GET /inventory/items/:productId` read each include (product,
+    variant, location, lot, menu item, purchase order, partner) with one query per relation for the whole page; the
+    JSON is unchanged.
+35. **Reconciliation tolerance.** `GET /inventory/reports/reconciliation?tolerance=` non-numeric, infinite or negative
+    → 400 `tolerance must be a non-negative number` (was a 500). Other numeric query parameters of the inventory
+    controllers already fall back to their defaults.
+36. **Stock-health age.** A quant never consumed within the scan horizon is aged from its last true receipt at the
+    location (`receipt`, `return_in`, `production_output`, `opening_balance`), or, when it only ever arrived by
+    transfer, from its last `transfer_in`; Nest marked every never-consumed quant `dead`, even one received today. A
+    transfer or reversal into a location with a known receipt does not make old stock look fresh. The movement scan
+    reads only from the earlier of the period start and now − `deadDays`; `lastConsumedAt` / `lastInboundAt` are
+    reported within that window. The aging buckets still date transferred stock from its arrival at the location.
+37. **Closing value of a past period.** `GET /inventory/reports/item-movements`: when the period ends before today,
+    `closingValue` is Σ signed ledger value up to its end (was closing quantity × today's average cost). A period ending
+    today keeps the value by costing method.
+38. **Cost fields need `inventory_valuation:read`.** `GET /inventory/reports/valuation` (`avgCost`, `value`,
+    `locations[].value`, `totals.value`, `byCategory[].value` / `share`) and `GET /inventory/reports/stock-health`
+    (`unitCost`, `value`, `consumedValue`, `summary.totalValue|activeValue|slowValue|deadValue`) answer those fields
+    `null` to a caller without `inventory_valuation:read`; quantities, statuses and retail values stay. The screens
+    show a dash. The analytics inventory dashboard reads stock health internally with values, as before.
+39. **Request limits.** Stock-out lines `qty` must be positive; stock documents, direct stock and transfer receipts
+    take at most 1,000 lines (`items must contain no more than 1000 elements`), notes 2,000 and reasons 1,000
+    characters; warehouse pick orders and packs 1,000 lines, waves 200 pick orders, notes 2,000, bin-adjust reasons
+    1,000; replenishment rules: ids ≤ 64 characters, quantities ≤ 99,999,999,999,999 (the column range), `leadTimeDays`
+    0–3,650; dismiss reasons 1,000; requisitions ≤ 500 alert ids. The web forms enter lines by hand, far below these
+    caps.
+40. **Bounded stock-document lists.** `GET /inventory/stock-outs`, `/adjustments` and `/transfers` stay plain arrays
+    (the screens filter them in the browser) of the newest 500 documents; `limit` (1–2,000, else 400 `limit must be a
+    positive number`) and `dateFrom` / `dateTo` (business days or ISO instants) reach older ones. The branch scope is
+    applied in SQL before the limit. `GET /inventory/waste` already had its 500 cap.
+41. **Idempotency-Key required** on `POST /inventory/transfers/:id/approve`, `/transfers/:id/dispatch`,
+    `/adjustments/:id/approve`, `/waste/:id/approve` and `/warehouse/pick-orders/:id/ship` (400 `An Idempotency-Key
+    header is required …`). The web sends one on each (`idempotentPost`); Android does not call them.
+    `POST /inventory/stock-outs/:id/approve` keeps the key optional: no client calls it yet.
+42. **Warehouse.** A move task takes only what open pick / move tasks leave in its bin (`reservedInBin`), at creation
+    and at completion (`Not enough stock in bin X for P; open picks hold part of it`). With warehouse management
+    switched off, open work can still be finished: task complete / cancel and pick-order pack / ship / cancel; new
+    tasks, pick orders, releases, waves, putaway generation and reconcile stay refused. Reconcile's second pass may take
+    stock held by open move tasks and cancels those moves (newest first, until the remaining moves fit); it never
+    takes stock held by open picks — excess only pick-held stock could cover stays and is reported in `heldByPicks`
+    (response also lists `cancelledTasks`). `GET /warehouse/locations/:id/abc` is read-only (the latest submitted
+    count is read, and stored by classify / cycle-count generation). ABC consumption no longer counts `transfer_out`
+    (a central store feeding branches classifies by its own issues). `createWave` locks its orders in id order.
+43. **Index (V615)** `StockTransferItem(organizationId, productId)` for the incoming-transfer supply of replenishment.
+
+Approved by the owner — owner-approved hardening R5b 2026-11-23 ([review](../audits/2026-11-22-inventory-review.md),
+P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same gaps. Test:
+`InventoryEngineHardeningIT`.
+
+44. **Engine lock order everywhere.** Every path that locks quants takes the costing locks first (organisation key
+    shared, product key shared, products sorted), then the per-quant advisory locks, then the `StockItem` rows, cells
+    sorted by (product, variant, location): count submit (`StockService.lockQuants`), landed-cost and lineage layer
+    writers (`LayerCostWriter.lockQuants`, `LineageFollower.raiseAverage`, `CostingLocks.shareProduct`), transfer and
+    transit reversals (`StockService.lockCells` over the received cells, the losses and the source; the transit
+    reversal used to lock the destination before the losses). Reservations (`StockReservationService.reserve` /
+    `lockCell`, `SalesAtpService`) take the quant's advisory lock before its row; multi-line reservations (sales
+    orders, POS invoices, processing-job inputs) run in that sorted order.
+45. **Approval gates before locks.** Count submit measures the variance without locks, runs the approval gate (its
+    own transaction), then locks and measures again. When the locked variance differs and the gate could judge it
+    differently (it grew past an approval granted for less, or a workflow would now apply), the submit is refused with
+    409 `Stock moved while the count was being submitted; submit it again.`; otherwise the locked variance posts.
+    Adjustment, stock-out, waste and transfer approvals, revaluation, lineage write-off and warehouse manual ship
+    already gate before any quant lock (they hold only their own document row while the gate runs); kept as is.
+46. **Reversals and production bring back their own lots and serials.** A transfer reversal issues, at the
+    destination, the lots and serials the transfer delivered there (recorded in `StockTransferLayer` from R5b on for
+    immediate and transit receipts; transfers received before R5b fall back to oldest-first). A production reversal
+    issues the produced lot (the `production_output` ledger lots, else the lots with the produced batch numbers). Both
+    prefer these lots and fall back to the normal order for any remainder (`StockMove.prefer`).
+47. **Count lot lines post by lot id.** A count line of one lot adjusts that lot row (loss and gain), even when two lots
+    share a batch number; the "no lot" line of a lot-tracked product keeps the engine's normal order.
+48. **Serial receipt race.** A new serial is inserted with `ON CONFLICT DO NOTHING`; when another receipt won, the
+    receipt is refused with 400 `Serial <number> is already in stock at <location>` (or `Serial number(s) already exist
+    for this product: <number> (<status>)` when it is not in stock) instead of a 500. Returns and reinstated serials
+    keep their update path.
+49. **Transfer values.** A serial transfer is valued at the moved serials' own costs (plus the average for any
+    unserialised part), not at the source average. A STANDARD quant's average is the governing standard on receipt
+    (PPV takes the difference) and a transfer of a non-lot STANDARD product moves at that standard.
+50. **AVCO residue at zero.** When a non-lot, non-serial AVCO quant reaches zero through an issue, a non-layer
+    adjustment or a transfer, a rounding residue of the quant's ledger value below 1.00 is cleared in the same
+    transaction: a value-only `cost_adjustment` row (quantity 0, notes `AVCO rounding residue at zero stock (…)`) and
+    its journal (Dr COGS / Cr stock or the reverse, cost-correction posting key, not mirrored by reversals). Only when
+    the move posts GL; a residue of 1.00 or more is left for the integrity report.
+51. **Rental units move their variant and serial.** Rental checkout, return, swap and cleaning transfers carry the
+    rental unit's `variantId` and prefer its `inventorySerialId`.
+52. **Ledger detail audit trail (additive JSON).** `GET /inventory/ledger/:id` entries and lines add `reverses`
+    (`{id, ledgerCode}` of the row named by `reversesLedgerId`, else `null`), `performedByName`, `responsibleByName`,
+    `approvedByName` and `recordedOffline` (from the source transfer, adjustment or goods receipt; `false` otherwise).
+53. **More cost fields need `inventory_valuation:read`.** Without it `GET /inventory/ledger` and `/inventory/ledger/:id`
+    answer `unitCost` / `totalValue` (and the detail's `totals.totalValue`) as `null`;
+    `GET /inventory/reports/item-movements` answers `valueIn`, `valueOut`, `valueAdjusted`, `avgCost`, `closingValue`
+    and the same totals as `null`; `GET /inventory/reports/movements` answers `netValue` and `byType.*.value` as
+    `null`. Quantities stay. The movement report, ledger and movement-detail screens show a dash.
+
+### Negative stock policy (as built; R5a evidence for gate G3)
+
+- `inventory.allowNegativeStock` (`SettingRegistry`) defaults to **on**: every issue may take a quant below zero
+  unless the item's `stockPolicy` is `block` (and a lot-tracked `block` item never goes short).
+- **Off ("strict")**: back-office issues (stock-outs, waste, direct stock out, production, repair parts …) are refused
+  with `Insufficient stock for …`; direct stock-out also checks availability up front.
+- **POS is never blocked at the till.** Checkout enqueues a `StockPostingJob`; the drain (`pos*` / `menu_recipe`
+  sources) is exempt from the strict setting and follows the item stock policy only. With the default policy `warn`
+  two terminals selling the last unit both post and the quant ends at −1, strict or not. With policy `block` the
+  second sale's line is refused inside its job: the job goes back to `pending` with `lastError` `1 line(s) could not
+  be deducted and need review: Insufficient stock …`, an alert is raised, it retries with back-off and becomes
+  `failed` after `maxAttempts`; it is handled in the Posting Monitor (`/pos/posting-monitor`). Stock never goes below
+  zero then.
+- **Offline issues** (`stock.out` pushed through `/sync/push`) reuse direct stock-out. Allowed: the issue posts and an
+  `offline_negative_stock` exception records the shortfall (`/sync/stock-discrepancies`). Strict: the op **fails**
+  (`status: failed`, `httpStatus 400`, `code BUSINESS_RULE`, not retryable, dead-lettered) and nothing moves — unlike
+  offline transfer dispatches, which are kept and held (`offline_held_posting`).
+- **Transfers** never take their source below zero, whatever the setting (`Insufficient stock at source`), but they
+  ignore sales reservations: a dispatch may leave a location over-reserved (only `processing_job_input`
+  reservations block an issue); the integrity `reservations` check reports it as `over_reserved`.
+- Tests: `NegativeStockPolicyIT` (two terminals permissive / strict-warn / strict-block, offline after online sale
+  permissive / strict, dispatch over reservations, partial receipts + damage + short + recall with the integrity
+  report green after each step), `SyncInventoryIT`, `StockConcurrencyIT`.
+
+Approved by the owner 2026-11-23 (inventory hardening R4, workflow integrity, release gate G1):
+
+- **Pick orders net the reversal of their source document.** `WarehouseStore.DOC_ISSUES` (what a sourced pick order's
+  document has taken out at the location) now also counts the document's own reversal rows (`stock_out_reversal`,
+  `stock_transfer_reversal`) and every return that names one of its issue rows (`reversesLedgerId`: credit notes, sales
+  returns), net of the rows that in turn took such a return back (a cancelled credit note). A pick order sourced to a
+  reversed stock-out therefore has nothing to ship against (`Post stock-out … before shipping …`).
+- **A stock-out or transfer with a live pick order cannot be reversed.** `reverseDocument` refuses with 400
+  `<Stock-out|Transfer> <code> has open pick order(s) <codes>; ship or cancel them before reversing it` while a pick
+  order sourced to it is draft / released / picking / picked / packed. Test `WarehouseIT.pickOrderAndDocumentReversal`.
+- **Order-timed POS stock follows the order** (cancel, void, reopen) and **POS jobs are one per sale** — see pos.md.
+  `StockReversalService.returnableByProduct` (new, read) gives what a source can still return per product.
 
 Same as Nest, kept on purpose:
 
@@ -335,3 +573,35 @@ buy / manufacture lines go out on `inventory.replenishment.requested` tagged wit
 and manufacturing each take their own). Alerts carry `route`, `documentType`, `documentId`, `documentNumber`. Incoming
 supply adds `TransferIncomingSupply` (inventory) and `ProductionIncomingSupply` (manufacturing). Details:
 `docs/adr/ADR-S027-replenishment-mrp-completion.md`.
+
+## Integrity checks (R0)
+
+Hardening batch R0 ([review](../audits/2026-11-22-inventory-review.md)). Spring-only, read-only.
+
+`GET /inventory/reports/integrity?locationId=` (`inventory_valuation:read`). The location goes through the user's data
+scope like `/reports/reconciliation`. Response: `{checkedAt, locationId, ok, rowLimit: 5000, checks: [{key, ok,
+skipped, invariant, tolerance, failures, truncated, rows, note}]}`. `failures` counts every breaking row; at most 5,000
+rows per check come back. Decimals in rows are exact decimal strings.
+
+| key | invariant | tolerance |
+|---|---|---|
+| `ledger_vs_quant` | Σ ledger `quantityChange` = `StockItem.quantity` per (product, variant, location) | 0.000001 |
+| `quant_vs_lots` | lot-tracked: max(0, qty) = Σ `InventoryBatch.quantity` | 0.000001 |
+| `quant_vs_serials` | in-stock serials ≤ max(0, qty); = qty where `inventory.serialPolicy` is `required` | exact |
+| `serial_state` | issued serial: latest movement an outflow; in-stock serial: latest movement an inflow | exact |
+| `valuation_vs_subledger` | per product: current valuation by costing method = Σ signed ledger `totalValue` | 0.01 per product |
+| `valuation_vs_gl` | the GL tie-out (organisation level; skipped under a location filter) | `inventory.glTieOut.tolerance` |
+| `transit` | per open transit transfer and product: dispatched − received − damaged − short − recalled = ledger balance at the transit location; Σ open per product = transit-location quantity (organisation level) | 0.000001 |
+| `reservations` | none negative; reserved ≤ on-hand + incoming per cell; none on a missing / closed / cancelled `invoice`, `sales_order_line`, `production_order` or `processing_job_input` | exact |
+| `offline_queue` | no open `offline_awaiting_dispatch` older than 24 h on an `in_transit` / `partially_received` transfer | — |
+
+The quantity checks share the reconciliation CTE (`InventoryQueryService.reconciliationCells`); the value checks call
+`accounting.InventoryValuationService` (`currentValueByQuant`, `glTieOut`).
+
+`InventoryIntegrityMonitor` (run daily by `InventoryIntegrityJob`, every organisation holding stock): one open
+`InventoryException` of kind `integrity_<key>` per failing check (payload: check, invariant, tolerance, failures, first
+20 rows, product ids), one in-app alert per run that raised something, never a duplicate while one of the kind is open,
+never a correction. `integrity_valuation_vs_gl` is not raised while `inventory.glTieOut.enabled` is off. The value kinds
+(`integrity_valuation_vs_subledger`, `integrity_valuation_vs_gl`) hold the period close and are the blocking checklist
+item `inventory_integrity_value`; the quantity kinds never hold a close. Test: `InventoryIntegrityIT`,
+`PeriodCloseChecklistIT`.

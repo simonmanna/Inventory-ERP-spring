@@ -7,6 +7,7 @@ import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
 import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.CreditNoteService;
 import com.inventoryerp.invoicing.application.CreditNoteService.CreditNoteInput;
@@ -226,10 +227,24 @@ public class SalesReturnService {
             }
             BigDecimal issueCost = issueUnitCost(str(l.get("orderLineId")));
             if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
-                StockMove m = StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
-                        .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).reference(str(r.get("number")))
-                        .source("sales_return", id).sourceLine(str(l.get("id")));
-                stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
+                List<String> issueCodes = issueLedgerCodes(str(l.get("orderLineId")));
+                if (!issueCodes.isEmpty()) {
+                    // R1: the goods come back on the lot, expiry and serial the delivery issued them from, at that
+                    // cost, into the receiving location; the delivery's rows are the authority.
+                    stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(
+                            StockReversalService.IssueSource.ledgerCodes(issueCodes),
+                            List.of(new StockReversalService.ReturnLine(str(l.get("productId")),
+                                    str(l.get("variantId")), qty, str(l.get("uomId")), dec(l.get("uomFactor")), null,
+                                    null, str(l.get("id")))),
+                            "sales_return", id, str(r.get("number")), null, null, location, true, null));
+                } else {
+                    // Goods not delivered through a recorded stock issue (legacy): restock at the delivery cost if
+                    // known, else the current cost, without lot identity (as before R1).
+                    StockMove m = StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
+                            .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).reference(str(r.get("number")))
+                            .source("sales_return", id).sourceLine(str(l.get("id")));
+                    stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
+                }
             }
             db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?", qty, issueCost, l.get("id"));
         }
@@ -240,6 +255,23 @@ public class SalesReturnService {
                 "number", r.get("number"), "orderId", r.get("orderId")));
         audit.record(AuditInput.of("SalesReturn", id, "update", null, Obj.of("status", "received", "location", location)));
         return get(id);
+    }
+
+    /** R1: the stock moves that issued an order line's goods (the dispatch of its delivery-order load lines). */
+    private List<String> issueLedgerCodes(String orderLineId) {
+        return db.rows("SELECT DISTINCT ll.\"stockLedgerCode\" AS code FROM \"FleetLoadLine\" ll JOIN"
+                + " \"FleetDeliveryOrderLine\" dl ON dl.id = ll.\"deliveryOrderLineId\" WHERE dl.\"sourceLineId\" = ?"
+                + " AND"
+                + " ll.\"organizationId\" = ? AND ll.\"stockLedgerCode\" IS NOT NULL", orderLineId, org()).stream()
+                .map(x -> str(x.get("code"))).toList();
+    }
+
+    private StockReversalService stockReturns;
+
+    /** R1: returns are posted against the delivery's original issue. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
     }
 
     /** SG-7: what the goods cost when they left, so the return reverses that and not today's average. Per base unit. */

@@ -2,6 +2,7 @@ package com.inventoryerp.inventory.application;
 
 import static com.inventoryerp.inventory.application.StockService.NOW;
 
+import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.inventory.domain.StockReservation;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
@@ -10,6 +11,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.PageResult;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -24,6 +26,10 @@ import org.springframework.transaction.annotation.Transactional;
  * Soft stock reservations → available-to-promise (port of {@code stock-reservation.service.ts}). A reservation
  * holds quantity for a source document without touching the ledger; re-reserving a line sets its quantity.
  * Absent filters are dropped like Prisma drops {@code undefined} where keys.
+ *
+ * <p>The unscoped methods are the engine API other modules (sales, POS, manufacturing) call inside their own flows.
+ * The {@code ...ForUser} methods and {@link #overview} serve the {@code /inventory/reservations} routes and apply the
+ * caller's branch scope (R2): a restricted user reserves, releases, consumes and sees only their locations' rows.
  */
 @Service
 public class StockReservationService {
@@ -32,12 +38,20 @@ public class StockReservationService {
     public record Reserve(String productId, String variantId, String locationId, BigDecimal quantity,
             String sourceType, String sourceId, String reason) {}
 
+    /** The most rows {@code GET /inventory/reservations} returns when it is not keyed by one source. */
+    static final int LIST_MAX = 200;
+
     private final JdbcClient jdbc;
     private final SettingResolverService settings;
+    private final LocationScope scope;
+    private final InventoryLookups lookups;
 
-    public StockReservationService(JdbcClient jdbc, SettingResolverService settings) {
+    public StockReservationService(JdbcClient jdbc, SettingResolverService settings, LocationScope scope,
+            InventoryLookups lookups) {
         this.jdbc = jdbc;
         this.settings = settings;
+        this.scope = scope;
+        this.lookups = lookups;
     }
 
     /** {@code none | order | invoice}. */
@@ -46,11 +60,17 @@ public class StockReservationService {
         return settings.resolveString("inventory.reservationMode", SettingContext.EMPTY);
     }
 
-    /** Reserve (idempotent per source line) under the StockItem row lock. */
+    /**
+     * Reserve (idempotent per source line) under the quant lock: the engine's lock order (costing locks, the quant's
+     * advisory lock, then the {@code StockItem} row; hardening R5b), so a reservation never holds the row while a stock
+     * move holding the advisory lock waits for it. A caller reserving several lines feeds them in lock order
+     * ({@link StockMove#inLockOrder}).
+     */
     @Transactional
     public Map<String, Object> reserve(Reserve dto) {
         String org = TenantContext.organizationId();
         String variantKey = dto.variantId() == null ? "" : dto.variantId();
+        StockService.lockCellAdvisory(jdbc, org, dto.productId(), dto.variantId(), dto.locationId());
         jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
                         + " AND \"locationId\" = ? FOR UPDATE")
                 .params(org, dto.productId(), variantKey, dto.locationId()).query().listOfRows();
@@ -66,6 +86,35 @@ public class StockReservationService {
                 .params(UUID.randomUUID().toString(), org, dto.productId(), dto.variantId(), variantKey,
                         dto.locationId(), dto.quantity(), dto.sourceType(), dto.sourceId(), dto.reason(),
                         TenantContext.userId()));
+    }
+
+    /**
+     * Hardening R5b (P2-1): lock one stock cell in the engine's order (costing locks, quant advisory lock, then the
+     * {@code StockItem} row) for a caller that measures free stock before it reserves (sales ATP). Locks last until the
+     * caller's transaction ends.
+     */
+    @Transactional
+    public void lockCell(String productId, String variantId, String locationId) {
+        String org = TenantContext.organizationId();
+        StockService.lockCellAdvisory(jdbc, org, productId, variantId, locationId);
+        jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                        + " AND \"locationId\" = ? FOR UPDATE")
+                .params(org, productId, variantId == null ? "" : variantId, locationId).query().listOfRows();
+    }
+
+    /**
+     * {@code POST /inventory/reservations}: {@link #reserve} after checking that the product and location exist and
+     * that the location is in the caller's scope. A source line's row is keyed by its cell, so the only row a re-reserve
+     * can overwrite is one at a location the caller may use.
+     */
+    @Transactional
+    public Map<String, Object> reserveForUser(Reserve dto) {
+        if (lookups.product(dto.productId()) == null) {
+            throw ApiException.notFound("Product not found");
+        }
+        lookups.requireLocation(dto.locationId());
+        scope.assertAllowed(dto.locationId());
+        return reserve(dto);
     }
 
     /**
@@ -95,9 +144,25 @@ public class StockReservationService {
         return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt"));
     }
 
+    /** {@code POST /inventory/reservations/release}: {@link #release} limited to the caller's locations. */
+    @Transactional
+    public Map<String, Object> releaseForUser(String sourceType, String sourceId) {
+        return Obj.of("released", close(sourceType, sourceId, "released", "releasedAt", scope.current()));
+    }
+
+    /** {@code POST /inventory/reservations/consume}: {@link #consume} limited to the caller's locations. */
+    @Transactional
+    public Map<String, Object> consumeForUser(String sourceType, String sourceId) {
+        return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt", scope.current()));
+    }
+
     private int close(String sourceType, String sourceId, String status, String stamp) {
+        return close(sourceType, sourceId, status, stamp, DataScope.OPEN);
+    }
+
+    private int close(String sourceType, String sourceId, String status, String stamp, DataScope access) {
         List<Object> params = new ArrayList<>(List.of(status));
-        String where = filters(sourceType, sourceId, params);
+        String where = filters(sourceType, sourceId, params) + locationFilter("\"locationId\"", access, params);
         return jdbc.sql("UPDATE \"StockReservation\" SET status = ?::\"StockReservationStatus\", \"" + stamp + "\" = "
                 + NOW + ", \"updatedAt\" = " + NOW + " WHERE" + where + " AND status = 'active'").params(params).update();
     }
@@ -114,6 +179,15 @@ public class StockReservationService {
             params.add(sourceId);
         }
         return sb.toString();
+    }
+
+    /** {@code AND <column> = ANY(<allowed>)} for a restricted user, nothing for an unrestricted one. */
+    private static String locationFilter(String column, DataScope access, List<Object> params) {
+        if (!access.restricted()) {
+            return "";
+        }
+        params.add(access.locationArray());
+        return " AND " + column + " = ANY(?::text[])";
     }
 
     /** Sum of active reservations for a stock line. */
@@ -168,13 +242,40 @@ public class StockReservationService {
     }
 
     /**
+     * {@code GET /inventory/reservations}: a source's reservations, newest first, limited to the caller's locations.
+     * Keyed by both {@code sourceType} and {@code sourceId} it returns every row of that source; otherwise it is paged
+     * ({@code page}, {@code pageSize}, at most {@value #LIST_MAX} rows) so an unkeyed call cannot dump the table.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> listForUser(String sourceType, String sourceId, String page, String pageSize) {
+        List<Object> params = new ArrayList<>();
+        String where = filters(sourceType, sourceId, params) + locationFilter("\"locationId\"", scope.current(), params);
+        String paging = "";
+        if (sourceType == null || sourceId == null) {
+            int size = Math.min(LIST_MAX, Math.max(1, intParam(pageSize, LIST_MAX)));
+            int number = Math.max(1, intParam(page, 1));
+            paging = " LIMIT ? OFFSET ?";
+            params.add(size);
+            params.add((number - 1) * size);
+        }
+        return SqlRows.list(StockReservation.class, jdbc.sql("SELECT * FROM \"StockReservation\" WHERE" + where
+                + " ORDER BY \"createdAt\" DESC, id" + paging).params(params));
+    }
+
+    /**
      * The reservations screen (INV-1): reservations with product and location names and the cell's on-hand quantity,
-     * filtered by {@code status}, {@code productId}, {@code locationId}, {@code sourceType} and search {@code q}.
+     * filtered by {@code status}, {@code productId}, {@code locationId}, {@code sourceType} and search {@code q}. A
+     * restricted user sees only their locations' rows, and a {@code locationId} filter outside them is refused (R2).
      */
     @Transactional(readOnly = true)
     public PageResult<Map<String, Object>> overview(Map<String, String> q) {
         StringBuilder where = new StringBuilder(" WHERE r.\"organizationId\" = ?");
         List<Object> params = new ArrayList<>(List.of(TenantContext.organizationId()));
+        DataScope access = scope.current();
+        if (present(q.get("locationId"))) {
+            scope.assertAllowed(q.get("locationId"));
+        }
+        where.append(locationFilter("r.\"locationId\"", access, params));
         if (present(q.get("status"))) {
             where.append(" AND r.status::text = ?");
             params.add(q.get("status"));

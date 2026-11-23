@@ -222,4 +222,95 @@ class SyncInventoryReplayIT extends ApiTestSupport {
         assertThat(onHand()).isEqualByComparingTo("45");
         assertTieOut();
     }
+
+    @Test
+    @Order(6)
+    @DisplayName("6. R1: a sale and its void in one push — the void drains the sale's stock posting and restocks once,"
+            + " never dead-lettered; a re-push replays without a second restock")
+    void saleAndVoidInOnePush() {
+        drain();
+        BigDecimal before = onHand();
+        long returns = ledger("return_in");
+        String session = jdbc.sql("SELECT id FROM \"CashSession\" WHERE \"cashRegisterId\" = ? AND status::text = 'open'")
+                .param(registerId).query(String.class).single();
+        String sale = "sale-" + UUID.randomUUID();
+        List<Map<String, Object>> ops = List.of(
+                op(7, "sale.checkout", Map.of("clientId", sale, "cashSessionId", session, "lines", List.of(Map.of(
+                        "productId", water, "description", "Water", "quantity", 3, "unitPrice", 100)), "tenders",
+                        List.of(Map.of("method", "cash", "amount", 300)))),
+                op(8, "sale.void", Map.of("invoiceId", sale, "reason", "rung up on the wrong table", "overrideById",
+                        adminId, "overridePin", managerPin, "cashSessionId", session, "stockDisposition", "restock")));
+        JsonNode res = push(ops);
+        assertThat(res.get("results").get(0).get("status").asString()).as(res.toString()).isEqualTo("applied");
+        assertThat(res.get("results").get(1).get("status").asString()).as(res.toString()).isEqualTo("applied");
+        assertThat(onHand()).as("issued by the drain, then restocked").isEqualByComparingTo(before);
+        assertThat(ledger("return_in")).isEqualTo(returns + 1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"SyncOpDeadLetter\" WHERE \"deviceId\" = ? AND \"opId\" = ?")
+                .params(deviceId, ops.get(1).get("opId")).query(Long.class).single()).isZero();
+
+        JsonNode again = push(ops);
+        again.get("results").forEach(r -> assertThat(r.get("status").asString()).isEqualTo("replayed"));
+        drain();
+        assertThat(ledger("return_in")).as("no second restock").isEqualTo(returns + 1);
+        assertThat(onHand()).isEqualByComparingTo(before);
+        assertTieOut();
+    }
+
+    @Test
+    @Order(7)
+    @DisplayName("7. R1/R4: an offline sale whose stock posting cannot complete, refunded in the same push — the refund"
+            + " applies with the restock held (offline_held_posting), never dead-lettered; a re-push adds nothing")
+    void refundWithHeldStock() {
+        String suffix = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String held = ok(201, "POST", "/products", Map.of("code", "RH-" + suffix, "name", "Held water " + suffix,
+                "productType", "stockable", "trackInventory", true, "costPrice", 40, "salesPrice", 100)).get("id")
+                .asString();
+        // strict for this item only, with the item policy "block": its POS issue fails and the job stays pending
+        jdbc.sql("UPDATE \"Product\" SET \"stockPolicy\" = 'block' WHERE id = ?").param(held).update();
+        ok(200, "PUT", "/settings/inventory.allowNegativeStock", Map.of("value", false, "scopeType", "product",
+                "scopeId", held));
+        String session = jdbc.sql("SELECT id FROM \"CashSession\" WHERE \"cashRegisterId\" = ? AND status::text = 'open'")
+                .param(registerId).query(String.class).single();
+        String sale = "sale-" + UUID.randomUUID();
+        List<Map<String, Object>> ops = List.of(
+                op(20, "sale.checkout", Map.of("clientId", sale, "cashSessionId", session, "lines", List.of(Map.of(
+                        "productId", held, "description", "Held water", "quantity", 2, "unitPrice", 100)), "tenders",
+                        List.of(Map.of("method", "cash", "amount", 200)))),
+                op(21, "sale.refund", Map.of("invoiceId", sale, "reason", "customer changed mind", "overrideById",
+                        adminId, "overridePin", managerPin, "cashSessionId", session, "stockDisposition", "restock",
+                        "lines", List.of(Map.of("lineNumber", 1, "quantity", 1)))));
+        JsonNode res = push(ops);
+        assertThat(res.get("results").get(0).get("status").asString()).as(res.toString()).isEqualTo("applied");
+        assertThat(res.get("results").get(1).get("status").asString()).as(res.toString()).isEqualTo("applied");
+        String invoiceId = jdbc.sql("SELECT DISTINCT \"invoiceId\" FROM \"InvoiceItem\" WHERE \"productId\" = ?")
+                .param(held).query(String.class).single();
+        String job = jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                .query(String.class).single();
+        assertThat(jdbc.sql("SELECT status FROM \"StockPostingJob\" WHERE id = ?").param(job).query(String.class)
+                .single()).as("the sale's posting could not complete").isEqualTo("pending");
+        assertThat(jdbc.sql("SELECT count(*) FROM \"SyncOpDeadLetter\" WHERE \"deviceId\" = ? AND \"opId\" = ?")
+                .params(deviceId, ops.get(1).get("opId")).query(Long.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT count(*) FROM \"PosRefund\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                .query(Long.class).single()).as("the refund applied").isEqualTo(1);
+        String heldSql = "SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND kind ="
+                + " 'offline_held_posting' AND payload::text LIKE ?";
+        assertThat(jdbc.sql(heldSql).params(demoOrg, "%" + invoiceId + "%").query(Long.class).single())
+                .as("the restock is held for review").isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"productId\" = ?").param(held)
+                .query(Long.class).single()).as("nothing issued, nothing restocked").isZero();
+
+        JsonNode again = push(ops);
+        again.get("results").forEach(r -> assertThat(r.get("status").asString()).isEqualTo("replayed"));
+        assertThat(jdbc.sql("SELECT count(*) FROM \"PosRefund\" WHERE \"invoiceId\" = ?").param(invoiceId)
+                .query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql(heldSql).params(demoOrg, "%" + invoiceId + "%").query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"productId\" = ?").param(held)
+                .query(Long.class).single()).isZero();
+
+        // leave DEMO clean: the job can never post (no stock, blocked) and is abandoned with its exceptions
+        jdbc.sql("UPDATE \"StockPostingJob\" SET status = 'abandoned' WHERE id = ?").param(job).update();
+        jdbc.sql("UPDATE \"InventoryException\" SET status = 'discarded' WHERE \"organizationId\" = ? AND status ="
+                + " 'open' AND (\"invoiceId\" = ? OR payload::text LIKE ?)").params(demoOrg, invoiceId,
+                        "%" + invoiceId + "%").update();
+    }
 }

@@ -144,6 +144,19 @@ when `app.jobs.enabled` and `app.modules.rental`). Per org in its tenant scope: 
   the rented-out location, as checkout moved it out; Nest returned 1 whatever the line quantity, so swapping a line of
   2 left 3 out. Test `RentalIT.swapMovesTheLineQuantity`.
 
+- **Fee lines never re-issue the rented item (R1, P0-1, owner-approved 2026-11-23).** Nest (and the port) billed a
+  checkout / late / damage fee on the rented product when the `RENT-FEE` / `RENT-LATE` / `RENT-DAMAGE` product was
+  missing, so the POS stock issue took the rented item out a second time. Now:
+  - a missing (deleted or deactivated) fee product is refused with 400 `Rental fee product <CODE> is not configured`
+    — checkout, settlement, extension and swap alike (extension / swap used to skip the invoice silently);
+  - the four fee products (`RENT-FEE`, `RENT-EXTEND`, `RENT-LATE`, `RENT-DAMAGE`) are created as non-stock `service`
+    products (`trackInventory = false`) when the rental locations are bootstrapped
+    (`RentalLocationConfigService.ensureForOrg`, idempotent; an existing product with the code is left alone). Not by a
+    migration, not at startup. There is no rental demo seed to extend.
+  - **Permanent rule:** a fee or charge line never moves stock unless it names a physical product line — the POS
+    stock issue (and its reservation, variant and ATP checks) skips every order item with `rentalFeeType` set.
+  Tests `InventoryReturnsIdentityIT.feeLineNeverMovesStock`, `.feeProductsAreServicesAndMissingIsRefused`.
+
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 
 - Deposits are a sub-ledger only: collection, refund, forfeit and application post no journal entry.

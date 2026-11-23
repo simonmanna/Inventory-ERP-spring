@@ -686,9 +686,19 @@ public class StockDocService {
      * One count variance to post: the change to apply ({@code delta}, against the on-hand read under the quant lock),
      * the lot it belongs to (by number; null = the quant without a named lot) and the serial units that went missing
      * (loss) or were found (gain). {@code qtySystem} / {@code qtyActual} are what the adjustment document shows.
+     * Hardening R5b (P2-2): {@code lotId} is the exact lot ({@code InventoryBatch.id}) the count line counted, when
+     * known: the variance is issued from / received into that lot, never another lot with the same number. A line
+     * without a lot (the quant's units outside any named lot) has neither: a loss is issued from the quant's lots in
+     * FEFO order and a gain goes into its newest lot, as before.
      */
     public record CountVariance(String productId, String variantId, String unit, String batchNumber,
-            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {}
+            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId) {
+
+        public CountVariance(String productId, String variantId, String unit, String batchNumber,
+                BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {
+            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, null);
+        }
+    }
 
     /**
      * Post a count's variances as one completed stock adjustment ({@code cycle_count}) inside the caller's
@@ -744,6 +754,7 @@ public class StockDocService {
                     .people(responsibleById, user);
             m.deltaQuantity = l.delta();
             m.openingBalance = opening;
+            m.lotId = l.lotId();
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
@@ -812,14 +823,18 @@ public class StockDocService {
         return withItems(transfer(id));
     }
 
-    /** Approve a transfer: immediate posts it; transit only authorises dispatch. */
+    /**
+     * Approve a transfer: immediate posts it; transit only authorises dispatch. The source location must be in the
+     * caller's scope (R2: source-side action). The header is not row-locked here because the approval gate runs in its
+     * own transaction; the status claim below serialises concurrent approvals and a transfer's locations never change.
+     */
     @Transactional
     public Map<String, Object> approveTransfer(String id) {
         Map<String, Object> doc = transfer(id);
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
+        scope.assertAllowed(str(doc, "fromLocId"));
         List<Map<String, Object>> items = items("StockTransferItem", StockTransferItem.class, "transferId", id);
         assertPostable(str(doc, "status"), doc.get("postedAt"));
         BigDecimal magnitude = BigDecimal.ZERO;
@@ -854,7 +869,7 @@ public class StockDocService {
                             dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                     .source("stock_transfer", str(doc, "transferCode")).notes(str(doc, "notes"))
                     .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
-            stock.transfer(m);
+            recordArrivedLayers(id, str(item, "id"), stock.transfer(m), true);
             jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyTransferred\" = ? WHERE id = ?")
                     .params(dec(item, "qtyRequested"), item.get("id")).update();
         }
@@ -907,15 +922,24 @@ public class StockDocService {
                 .param(org()).query(String.class).optional().orElse(null);
     }
 
-    /** Row-lock the transfer header and return it with fresh items; must be a transit transfer. */
-    private Map<String, Object> lockTransfer(String id) {
+    /**
+     * Row-lock the transfer header and check the caller's scope on the side the action belongs to (R2): the source for
+     * approve, dispatch, recall and cancel; the destination for a receipt. Reads stay reachable from either end.
+     */
+    private Map<String, Object> lockedTransfer(String id, boolean sourceSide) {
         jdbc.sql("SELECT id FROM \"StockTransfer\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(id, org()).query().listOfRows();
         Map<String, Object> doc = transfer(id);
         if (doc == null) {
             throw ApiException.notFound("Transfer not found");
         }
-        scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
+        scope.assertAllowed(str(doc, sourceSide ? "fromLocId" : "toLocId"));
+        return doc;
+    }
+
+    /** {@link #lockedTransfer} with fresh items; must be a transit transfer. */
+    private Map<String, Object> lockTransfer(String id, boolean sourceSide) {
+        Map<String, Object> doc = lockedTransfer(id, sourceSide);
         if (!"transit".equals(str(doc, "mode"))) {
             throw ApiException.badRequest(doc.get("transferCode")
                     + " is an immediate transfer; it has no dispatch or receipt stages");
@@ -933,7 +957,7 @@ public class StockDocService {
     public Map<String, Object> dispatchTransfer(String id) {
         String transit = ensureTransitLocation();
         return tx.execute(s -> {
-            Map<String, Object> doc = lockTransfer(id);
+            Map<String, Object> doc = lockTransfer(id, true);
             if (!"approved".equals(str(doc, "status")) || doc.get("dispatchedAt") != null) {
                 throw ApiException.badRequest("Only an approved, undispatched transfer can be dispatched ("
                         + doc.get("transferCode") + " is " + doc.get("status") + ")");
@@ -963,7 +987,7 @@ public class StockDocService {
     /** Record one destination receipt splitting outstanding transit qty into received / damaged / short. */
     @Transactional
     public Map<String, Object> receiveTransfer(String id, List<ReceiveLine> lines, String notes) {
-        Map<String, Object> doc = lockTransfer(id);
+        Map<String, Object> doc = lockTransfer(id, false);
         String status = str(doc, "status");
         String code = str(doc, "transferCode");
         if (!"in_transit".equals(status) && !"partially_received".equals(status)) {
@@ -1022,9 +1046,10 @@ public class StockDocService {
                 if (notes != null && !notes.isEmpty()) {
                     n.add(notes);
                 }
-                stock.transfer(pinTransit(StockMove.transfer(str(item, "productId"), transitLocId, str(doc, "toLocId"),
-                                received).variant(str(item, "variantId")).source("stock_transfer_receipt", code)
-                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id")));
+                recordArrivedLayers(id, str(item, "id"), stock.transfer(pinTransit(StockMove.transfer(
+                        str(item, "productId"), transitLocId, str(doc, "toLocId"), received)
+                        .variant(str(item, "variantId")).source("stock_transfer_receipt", code)
+                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id"))), false);
             }
             if (damaged.signum() > 0) {
                 stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, damaged)
@@ -1070,7 +1095,7 @@ public class StockDocService {
         if (reason == null || reason.trim().isEmpty()) {
             throw ApiException.badRequest("A reason is required to recall a transfer");
         }
-        Map<String, Object> doc = lockTransfer(id);
+        Map<String, Object> doc = lockTransfer(id, true);
         String status = str(doc, "status");
         String code = str(doc, "transferCode");
         if (!"in_transit".equals(status) && !"partially_received".equals(status)) {
@@ -1114,10 +1139,10 @@ public class StockDocService {
         return done;
     }
 
-    /** Cancel a transfer that has not moved any stock yet. */
+    /** Cancel a transfer that has not moved any stock yet; the source location must be in the caller's scope. */
     @Transactional
     public Map<String, Object> cancelTransfer(String id) {
-        Map<String, Object> doc = getTransfer(id);
+        Map<String, Object> doc = lockedTransfer(id, true);
         int upd = jdbc.sql("UPDATE \"StockTransfer\" SET status = 'cancelled', \"updatedBy\" = ?, \"updatedAt\" = " + NOW
                         + " WHERE id = ? AND \"organizationId\" = ? AND \"postedAt\" IS NULL AND \"dispatchedAt\" IS NULL"
                         + " AND status IN ('draft', 'pending', 'approved')")
@@ -1141,6 +1166,23 @@ public class StockDocService {
         for (StockMove.MovedLayer layer : moved.layers()) {
             jdbc.sql(sql).params(UUID.randomUUID().toString(), org(), transferId, itemId, layer.batchId(),
                     layer.serialId(), layer.quantity(), layer.unitCost()).update();
+        }
+    }
+
+    /**
+     * Hardening R5b (P2-2): remember the lots a transfer line created at its destination (and, for an immediate
+     * transfer, the serial units it moved; a transit line's serials are its dispatch layers already), so a reversal
+     * moves back exactly these units. Only identified layers are recorded — never a row without lot and serial, which
+     * {@link #pinTransit} reads as the dispatch cost — and lots at the destination never match a move out of transit.
+     */
+    private void recordArrivedLayers(String transferId, String itemId, StockMove.Transferred moved, boolean serials) {
+        String sql = "INSERT INTO \"StockTransferLayer\" (id, \"organizationId\", \"transferId\", \"transferItemId\","
+                + " \"batchId\", \"serialId\", quantity, \"unitCost\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        for (StockMove.MovedLayer layer : moved.layers()) {
+            if (layer.batchId() != null || (serials && layer.serialId() != null)) {
+                jdbc.sql(sql).params(UUID.randomUUID().toString(), org(), transferId, itemId, layer.batchId(),
+                        layer.serialId(), layer.quantity(), layer.unitCost()).update();
+            }
         }
     }
 
@@ -1192,9 +1234,25 @@ public class StockDocService {
         }
     }
 
-    /** Document lists (newest first) with the Nest includes per kind. */
+    /** Most documents one list returns by default, and at most (hardening R5a, spec deviation 23). */
+    public static final int LIST_DEFAULT = 500;
+
+    public static final int LIST_MAX = 2000;
+
+    /** Document lists (newest first) with the Nest includes per kind: the newest {@value #LIST_DEFAULT}. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String kind, String status) {
+        return list(kind, status, null, null, null);
+    }
+
+    /**
+     * Document lists (newest first) with the Nest includes per kind. Hardening R5a: the list stays a plain array (the
+     * screens filter it in the browser) but holds at most {@code limit} documents (default {@value #LIST_DEFAULT}, at
+     * most {@value #LIST_MAX}); {@code dateFrom} / {@code dateTo} (business days, or ISO instants) narrow it to a window
+     * so older documents stay reachable. The branch scope is applied in SQL, before the limit.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> list(String kind, String status, String dateFrom, String dateTo, String limit) {
         String table = switch (kind) {
             case "out" -> "StockOut";
             case "waste" -> "WasteRecord";
@@ -1207,11 +1265,42 @@ public class StockDocService {
             case "adjustment" -> StockAdjustment.class;
             default -> StockTransfer.class;
         };
-        var spec = status != null
-                ? jdbc.sql("SELECT * FROM \"" + table + "\" WHERE \"organizationId\" = ? AND status::text = ?"
-                        + " ORDER BY \"createdAt\" DESC").params(org(), status)
-                : jdbc.sql("SELECT * FROM \"" + table + "\" WHERE \"organizationId\" = ? ORDER BY \"createdAt\" DESC")
-                        .param(org());
+        int max = LIST_DEFAULT;
+        if (limit != null && !limit.isBlank()) {
+            double n = JsNumbers.number(limit);
+            if (Double.isNaN(n) || n < 1) {
+                throw ApiException.badRequest("limit must be a positive number");
+            }
+            max = (int) Math.min(LIST_MAX, n);
+        }
+        StringBuilder where = new StringBuilder(" WHERE \"organizationId\" = ?");
+        List<Object> params = new ArrayList<>(List.of(org()));
+        if (status != null) {
+            where.append(" AND status::text = ?");
+            params.add(status);
+        }
+        if (dateFrom != null && !dateFrom.isBlank()) {
+            where.append(" AND \"createdAt\" >= ?");
+            params.add(SqlRows.ts(InventoryQueryService.bound(dateFrom, true)));
+        }
+        if (dateTo != null && !dateTo.isBlank()) {
+            where.append(" AND \"createdAt\" <= ?");
+            params.add(SqlRows.ts(InventoryQueryService.bound(dateTo, false)));
+        }
+        com.inventoryerp.core.application.BranchScopeService.DataScope access = scope.current();
+        if (access.restricted()) {
+            // A transfer row names its ends fromLocId / toLocId (there is no fromLocationId column).
+            if ("transfer".equals(kind)) {
+                where.append(" AND (\"fromLocId\" = ANY(?::text[]) OR \"toLocId\" = ANY(?::text[]))");
+                params.add(access.locationArray());
+                params.add(access.locationArray());
+            } else {
+                where.append(" AND \"locationId\" = ANY(?::text[])");
+                params.add(access.locationArray());
+            }
+        }
+        var spec = jdbc.sql("SELECT * FROM \"" + table + "\"" + where + " ORDER BY \"createdAt\" DESC, id DESC LIMIT "
+                + max).params(params);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : SqlRows.list(type, spec)) {
             if (reachable(kind, row)) {

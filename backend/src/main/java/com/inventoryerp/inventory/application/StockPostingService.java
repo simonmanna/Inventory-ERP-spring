@@ -1,6 +1,7 @@
 package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
@@ -17,8 +18,11 @@ import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -44,9 +48,12 @@ public class StockPostingService {
     private final CostResolver costResolver;
     private final InventoryPostingRuleService rules;
     private final CostLineageService lineage;
+    private final InventoryValuationService valuation;
 
     public StockPostingService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
-            CostResolver costResolver, InventoryPostingRuleService rules, CostLineageService lineage) {
+            CostResolver costResolver, InventoryPostingRuleService rules, CostLineageService lineage,
+            InventoryValuationService valuation) {
+        this.valuation = valuation;
         this.jdbc = jdbc;
         this.posting = posting;
         this.determination = determination;
@@ -112,6 +119,7 @@ public class StockPostingService {
         if (lines == null) {
             lines = fallbackLinesIssue(mt, resolution.totalValue(), name);
         }
+        lines = stamp(lines, p.productId(), p.locationId());
         if (!lines.isEmpty()) {
             String key = p.postingKey() != null ? p.postingKey()
                     : "inventory:issue:" + p.sourceType() + ":" + p.sourceId() + ":" + p.productId() + ":"
@@ -136,8 +144,22 @@ public class StockPostingService {
             lines = List.of(Line.debit(determination.mapped("stock_valuation"), v, "Return restock · " + name),
                     Line.credit(determination.mapped("cogs"), v, "COGS reversal · " + name));
         }
+        lines = stamp(lines, productId, null);
         post("INV", date, description != null ? description : "Return restock " + name, sourceType, sourceId, null,
                 lines);
+    }
+
+    /** The stock account a return restock debits (RETURN_RESTOCK rule, else {@code stock_valuation}). */
+    public String returnStockAccount(String productId, BigDecimal amount) {
+        List<Line> ruled = resolveLines("RETURN_RESTOCK", productId, amount.signum() > 0 ? amount : BigDecimal.ONE);
+        if (ruled != null) {
+            for (Line r : ruled) {
+                if (r.debit() != null && Money.dec(r.debit()).signum() > 0) {
+                    return r.accountId();
+                }
+            }
+        }
+        return determination.mapped("stock_valuation");
     }
 
     /** Capitalise a stock receipt: Dr Stock Valuation / Cr GRNI-Accrued. */
@@ -159,6 +181,7 @@ public class StockPostingService {
             lines = List.of(Line.debit(determination.mapped("stock_valuation"), v, "Stock receipt"),
                     Line.credit(determination.mapped("grni_accrued"), v, "GRNI accrual"));
         }
+        lines = stamp(lines, productId, null);
         post("INV", date, description != null ? description : "Stock receipt", sourceType, sourceId, null, lines);
         return new Resolution(unitCost, totalValue, unitCost, null);
     }
@@ -167,11 +190,11 @@ public class StockPostingService {
     public List<Line> receiptLines(String productId, BigDecimal totalValue) {
         List<Line> lines = totalValue.signum() > 0 ? resolveLines("STOCK_IN", productId, totalValue) : null;
         if (lines != null) {
-            return lines;
+            return stamp(lines, productId, null);
         }
         String v = JsNumbers.dec(totalValue);
-        return List.of(Line.debit(determination.mapped("stock_valuation"), v, "Stock receipt"),
-                Line.credit(determination.mapped("grni_accrued"), v, "GRNI accrual"));
+        return List.of(stampLine(Line.debit(determination.mapped("stock_valuation"), v, "Stock receipt"), productId,
+                null), Line.credit(determination.mapped("grni_accrued"), v, "GRNI accrual"));
     }
 
     /** The WIP account production posts to (falls back to stock valuation, like the production legs). */
@@ -298,6 +321,7 @@ public class StockPostingService {
                     ? List.of(Line.debit(cogs, v, label), Line.credit(sv, v, label))
                     : List.of(Line.debit(sv, v, label), Line.credit(cogs, v, label));
         }
+        lines = stamp(lines, productId, null);
         post("INV", date, description != null ? description : "Negative-stock cost correction · " + name, sourceType,
                 sourceId, postingKey, lines);
         log.warn("[stock] negative-stock cost correction {} posted for {} ({}:{})", JsNumbers.dec(amount), name,
@@ -339,7 +363,8 @@ public class StockPostingService {
             BigDecimal cap = Money.dec(l.capitalized());
             BigDecimal exp = Money.dec(l.expensed());
             if (cap.signum() > 0) {
-                lines.add(Line.debit(landedAccount(l.productId(), cap), JsNumbers.dec(cap), description));
+                lines.add(stampLine(Line.debit(landedAccount(l.productId(), cap), JsNumbers.dec(cap), description),
+                        l.productId(), null));
                 credit = credit.add(cap);
             }
             BigDecimal wip = Money.dec(l.wip());
@@ -396,25 +421,28 @@ public class StockPostingService {
             String description) {
         List<Line> lines = new ArrayList<>();
         BigDecimal cogsTotal = Money.ZERO;
-        Map<String, BigDecimal> byAccount = new java.util.LinkedHashMap<>();
+        // R3: one capitalisation line per account and product (stamped with the product), WIP per account.
+        Map<List<String>, BigDecimal> byAccount = new java.util.LinkedHashMap<>();
         BigDecimal wipTotal = Money.ZERO;
         for (LandedLine l : landed) {
             BigDecimal cap = Money.dec(l.capitalized());
             if (cap.signum() != 0) {
-                byAccount.merge(landedAccount(l.productId(), cap.abs()), cap, BigDecimal::add);
+                byAccount.merge(java.util.Arrays.asList(landedAccount(l.productId(), cap.abs()), l.productId()), cap,
+                        BigDecimal::add);
             }
             cogsTotal = cogsTotal.add(Money.dec(l.expensed()));
             wipTotal = wipTotal.add(Money.dec(l.wip()));
         }
         if (wipTotal.signum() != 0) {
-            byAccount.merge(determination.mapped("wip"), wipTotal, BigDecimal::add);
+            byAccount.merge(java.util.Arrays.asList(determination.mapped("wip"), null), wipTotal, BigDecimal::add);
         }
         // A credit voucher (LC-1) has negative amounts: they are credits on the same accounts.
-        byAccount.forEach((acc, v) -> {
+        byAccount.forEach((key, v) -> {
             if (v.signum() > 0) {
-                lines.add(Line.debit(acc, JsNumbers.dec(v), description));
+                lines.add(stampLine(Line.debit(key.get(0), JsNumbers.dec(v), description), key.get(1), null));
             } else if (v.signum() < 0) {
-                lines.add(Line.credit(acc, JsNumbers.dec(v.negate()), description));
+                lines.add(stampLine(Line.credit(key.get(0), JsNumbers.dec(v.negate()), description), key.get(1),
+                        null));
             }
         });
         if (cogsTotal.signum() > 0) {
@@ -438,8 +466,8 @@ public class StockPostingService {
         BigDecimal total = Money.ZERO;
         for (Map.Entry<String, BigDecimal> e : unabsorbedByProduct.entrySet()) {
             if (e.getValue().signum() > 0) {
-                lines.add(Line.debit(landedAccount(e.getKey(), e.getValue()), JsNumbers.dec(e.getValue()),
-                        description));
+                lines.add(stampLine(Line.debit(landedAccount(e.getKey(), e.getValue()), JsNumbers.dec(e.getValue()),
+                        description), e.getKey(), null));
                 total = total.add(e.getValue());
             }
         }
@@ -491,6 +519,7 @@ public class StockPostingService {
                             l.costCenterId(), l.dimensions())
                     : l).toList();
         }
+        lines = stamp(lines, productId, null);
         post("ADJ", date, description != null ? description : "Stock adjustment", sourceType, sourceId, null, lines);
     }
 
@@ -504,12 +533,12 @@ public class StockPostingService {
         List<Line> out = resolveLines("STOCK_TRANSFER_OUT", productId, totalValue);
         if (out != null && !out.isEmpty()) {
             post("INV", date, description != null ? description : "Transfer out · " + name, sourceType, sourceId,
-                    null, out);
+                    null, stamp(out, productId, fromLocationId));
         }
         List<Line> in = resolveLines("STOCK_TRANSFER_IN", productId, totalValue);
         if (in != null && !in.isEmpty()) {
             post("INV", date, description != null ? description : "Transfer in · " + name, sourceType, sourceId,
-                    null, in);
+                    null, stamp(in, productId, toLocationId));
         }
     }
 
@@ -549,6 +578,7 @@ public class StockPostingService {
             lines = List.of(Line.debit(wip, v, "Production consume · " + name),
                     Line.credit(sv, v, "Production consume · " + name));
         }
+        lines = stamp(lines, productId, null);
         post("INV", date, description != null ? description : "Production consume · " + name, sourceType, sourceId,
                 null, lines);
     }
@@ -590,7 +620,7 @@ public class StockPostingService {
                 lines.add(Line.credit(wip, v, text));
             }
         }
-        post("INV", date, label, sourceType, sourceId, null, lines);
+        post("INV", date, label, sourceType, sourceId, null, stamp(lines, productId, null));
     }
 
     /** Production output: Dr Stock Valuation / Cr WIP. */
@@ -608,6 +638,7 @@ public class StockPostingService {
             lines = List.of(Line.debit(sv, v, "Production output · " + name),
                     Line.credit(wip, v, "Production output · " + name));
         }
+        lines = stamp(lines, productId, null);
         post("INV", date, description != null ? description : "Production output · " + name, sourceType, sourceId,
                 null, lines);
     }
@@ -670,6 +701,43 @@ public class StockPostingService {
                         Line.credit(determination.mapped("wip"), v, label))));
     }
 
+    // ------------------------------------------------------------------ product dimension (hardening R3)
+
+    /**
+     * Hardening R3 (2026-11-23): stamp the product (and the location, when given) on every line of {@code lines} that
+     * posts to an inventory account (the accounts of the GL tie-out,
+     * {@link InventoryValuationService#inventoryAccountIds}), as the reserved dimension keys
+     * {@link InventoryValuationService#PRODUCT_DIMENSION} / {@link InventoryValuationService#LOCATION_DIMENSION}. Other
+     * lines and existing dimensions are kept. The per-product GL check of the integrity report sums stock-account lines
+     * by this key.
+     */
+    public List<Line> stamp(List<Line> lines, String productId, String locationId) {
+        if (productId == null || lines == null || lines.isEmpty()) {
+            return lines;
+        }
+        Set<String> stock = new HashSet<>(valuation.inventoryAccountIds());
+        List<Line> out = new ArrayList<>(lines.size());
+        for (Line l : lines) {
+            out.add(stock.contains(l.accountId()) ? stampLine(l, productId, locationId) : l);
+        }
+        return out;
+    }
+
+    /** {@code line} with the product (and location) dimension keys added; a key the line already carries is kept. */
+    public static Line stampLine(Line line, String productId, String locationId) {
+        if (productId == null) {
+            return line;
+        }
+        Map<String, Object> dims = line.dimensions() == null ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(line.dimensions());
+        dims.putIfAbsent(InventoryValuationService.PRODUCT_DIMENSION, productId);
+        if (locationId != null) {
+            dims.putIfAbsent(InventoryValuationService.LOCATION_DIMENSION, locationId);
+        }
+        return new Line(line.accountId(), line.debit(), line.credit(), line.partnerId(), line.description(),
+                line.branchId(), line.costCenterId(), dims, line.currencyId(), line.foreignAmount());
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** Rule-engine lines, or {@code null} when no rule is configured (caller falls back). */
@@ -717,6 +785,7 @@ public class StockPostingService {
                     ? List.of(Line.credit(credit, v, label), Line.debit(debit, v, label))
                     : List.of(Line.debit(debit, v, label), Line.credit(credit, v, label));
         }
+        lines = stamp(lines, productId, null);
         post("INV", date, description != null ? description : labelPrefix + name, sourceType, sourceId, null, lines);
     }
 

@@ -13,9 +13,10 @@ import com.inventoryerp.inventory.application.StockMove.Received;
 import com.inventoryerp.inventory.application.StandardCostService;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockReservationService;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockReservationService.Reserve;
 import com.inventoryerp.inventory.application.StockService;
-import com.inventoryerp.inventory.domain.InventoryLocation;
+import com.inventoryerp.inventory.application.VirtualLocationService;
 import com.inventoryerp.inventory.domain.StockItem;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.approvals.ControlledActionService;
@@ -104,6 +105,14 @@ public class ProductionService {
     private final ProductVariantService variants;
 
     private com.inventoryerp.kernel.settings.SettingResolverService settings;
+
+    private VirtualLocationService virtualLocations;
+
+    /** Setter-injected like {@link #setSettings}: system locations are created through the inventory API (R2). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setVirtualLocations(VirtualLocationService virtualLocations) {
+        this.virtualLocations = virtualLocations;
+    }
 
     /** Optional (setter) so the many existing constructions stay as they are. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -573,8 +582,9 @@ public class ProductionService {
         if (qtyProducedBase.signum() <= 0) {
             throw ApiException.badRequest("Produced quantity resolves to 0 in base units.");
         }
-        // ADR-S008: a standard-governed output is received at its standard; the rest of WIP becomes variances.
-        BigDecimal standardUnit = standards.activeStandard(str(order, "outputProductId")).orElse(null);
+        // ADR-S008: a standard-governed output is received at its standard; the rest of WIP becomes variances. R3: a
+        // STANDARD output without an active standard is governed by its cost price.
+        BigDecimal standardUnit = standards.governingStandard(str(order, "outputProductId")).orElse(null);
         BigDecimal outputUnitCost = standardUnit != null ? standardUnit : Money.div(pool, qtyProducedBase);
         BigDecimal outputValue = standardUnit != null
                 ? standardUnit.multiply(qtyProducedBase).setScale(6, java.math.RoundingMode.HALF_UP) : pool;
@@ -849,14 +859,19 @@ public class ProductionService {
         // 1) Finished goods out, value back into WIP (Dr WIP / Cr Stock Valuation).
         // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
         // gets the output's value back, the difference is a stock adjustment gain / loss.
+        // Hardening R5b (P2-2): the produced lot goes back first (then other lots, FEFO, for any part of it that left).
         BigDecimal fgIssued = stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, fgBase)
-                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)).totalValue();
+                .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)
+                .prefer(producedLots(code, str(order, "outputProductId"), str(order, "outputVariantId"), fgLocationId),
+                        null)).totalValue();
         stockPosting.postProductionReversal(str(order, "outputProductId"), fgIssued, fgValue, date,
                 "production_reversal", code, "Production reversal · " + code);
         // 1b) By-products out, their value back into WIP (Dr WIP / Cr Stock Valuation).
         for (Map<String, Object> bp : byproducts) {
             BigDecimal bpIssued = stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
-                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)).totalValue();
+                    .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)
+                    .prefer(producedLots(code, str(bp, "productId"), str(bp, "variantId"), fgLocationId), null))
+                    .totalValue();
             BigDecimal bpValue = bp.get("totalCost") == null ? BigDecimal.ZERO : dec(bp, "totalCost");
             stockPosting.postProductionReversal(str(bp, "productId"), bpIssued, bpValue, date, "production_reversal",
                     code, "Production reversal (by-product) · " + code);
@@ -895,6 +910,31 @@ public class ProductionService {
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "cancel", null, Obj.of("orderCode", code, "reversed",
                 JsNumbers.dec(fgValue))));
         return updated;
+    }
+
+    /**
+     * Hardening R5b (P2-2): the lots this order's output receipts created for a product, as they stand at
+     * {@code locationId}: the receipt's own lot when it is still there, else (a QC-held order whose output moved to
+     * quarantine) the lots there with the produced batch numbers. Empty for products without lots (the output receipt
+     * names no serial units, so none are pinned).
+     */
+    private List<String> producedLots(String orderCode, String productId, String variantId, String locationId) {
+        List<Map<String, Object>> produced = db.jdbc().sql("SELECT b.id, b.\"locationId\", b.\"batchNumber\" FROM"
+                        + " \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ?"
+                        + " AND l.\"referenceType\" = ? AND l.\"referenceId\" = ? AND l.type = 'production_output'"
+                        + " AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ? ORDER BY l.\"createdAt\"")
+                .params(MfgDb.org(), SOURCE, orderCode, productId, variantId).query().listOfRows();
+        List<String> here = produced.stream().filter(b -> locationId.equals(b.get("locationId")))
+                .map(b -> (String) b.get("id")).toList();
+        if (!here.isEmpty() || produced.isEmpty()) {
+            return here;
+        }
+        return db.jdbc().sql("SELECT id FROM \"InventoryBatch\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND"
+                        + " \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND \"batchNumber\" = ANY(?::text[])"
+                        + " AND quantity > 0")
+                .params(MfgDb.org(), productId, variantId, locationId,
+                        produced.stream().map(b -> (String) b.get("batchNumber")).distinct().toArray(String[]::new))
+                .query(String.class).list();
     }
 
     // ================================================================== menu item, list, get
@@ -999,12 +1039,28 @@ public class ProductionService {
             }
             BigDecimal unitCost = base.signum() > 0 && line.get("totalCost") != null
                     ? Money.div(dec(line, "totalCost"), base) : dec(line, "unitCost");
-            stock.receive(StockMove.of(str(line, "productId"), str(order, "locationId"), base)
-                    .variant(str(line, "variantId")).unitCost(unitCost).moveType("receipt")
-                    .source(sourceType, code));
+            if (ledgerQty(str(line, "ledgerCode"), false) != null) {
+                // R1: back onto the lot, expiry, serial, location and cost the consume move took them from (what is
+                // still not returned); the WIP clearance below stays the line's consumed cost.
+                stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(
+                        StockReversalService.IssueSource.ledgerCodes(List.of(str(line, "ledgerCode"))), null,
+                        sourceType, code, null, null, date, null, false, "receipt"));
+            } else {
+                stock.receive(StockMove.of(str(line, "productId"), str(order, "locationId"), base)
+                        .variant(str(line, "variantId")).unitCost(unitCost).moveType("receipt")
+                        .source(sourceType, code));
+            }
             stockPosting.postProductionOutput(str(line, "productId"), dec(line, "totalCost"), date, sourceType, code,
                     description);
         }
+    }
+
+    private StockReversalService stockReturns;
+
+    /** R1: consumed materials are returned against their consume move. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
     }
 
     /**
@@ -1099,18 +1155,12 @@ public class ProductionService {
         return resolveQuarantineLocation();
     }
 
-    /** The virtual QC quarantine location, auto-created (and committed) once per org. */
+    /**
+     * The virtual QC quarantine location, auto-created (and committed in its own transaction) once per org through the
+     * inventory API — the same location quality lots use.
+     */
     private String resolveQuarantineLocation() {
-        return newTx.execute(s -> {
-            String existing = db.jdbc().sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ?"
-                            + " AND \"deletedAt\" IS NULL AND code = 'QC-QUARANTINE' LIMIT 1")
-                    .param(MfgDb.org()).query(String.class).optional().orElse(null);
-            if (existing != null) {
-                return existing;
-            }
-            return str(db.insert(InventoryLocation.class, Obj.of("code", "QC-QUARANTINE", "name", "QC Quarantine",
-                    "type", "virtual", "isActive", true, "createdBy", TenantContext.userId())), "id");
-        });
+        return virtualLocations.ensure(VirtualLocationService.QC_QUARANTINE, "QC Quarantine");
     }
 
     /** 404 {@code Location not found} unless the location is live in this organization. */

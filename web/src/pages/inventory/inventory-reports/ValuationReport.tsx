@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { date } from '@/lib/format';
-import { DataTable, Kpi, KpiGrid, ReportState, money, qty, type Column } from './shared';
+import { DataTable, Kpi, KpiGrid, ReportState, cost, money, qty, type Column } from './shared';
 import { FilterBar, type useReportFilters } from './filters';
 import { tx } from '@/lib/i18n/tx';
 
@@ -16,8 +16,9 @@ interface ValuationRow {
   category: string | null;
   uom: string | null;
   quantity: number;
-  avgCost: number;
-  value: number;
+  /** null without inventory_valuation:read. */
+  avgCost: number | null;
+  value: number | null;
   salesPrice: number;
   retailValue: number;
   minQuantity: number | null;
@@ -28,8 +29,8 @@ interface ValuationRow {
 
 interface ValuationResponse {
   data: ValuationRow[];
-  totals: { items: number; quantity: number; value: number; retailValue: number; inStock: number; low: number; out: number; negative: number };
-  byCategory: { category: string; items: number; quantity: number; value: number; share: number }[];
+  totals: { items: number; quantity: number; value: number | null; retailValue: number; inStock: number; low: number; out: number; negative: number };
+  byCategory: { category: string; items: number; quantity: number; value: number | null; share: number | null }[];
 }
 
 const STATUS: Record<ValuationRow['stockStatus'], { label: string; className: string }> = {
@@ -62,9 +63,9 @@ export function ValuationReport({ ctl }: { ctl: ReturnType<typeof useReportFilte
     },
     { key: 'quantity', header: tx('On Hand'), align: 'right', render: (r) => <span className={cn('font-semibold', r.quantity < 0 && 'text-destructive')}>{qty(r.quantity)}</span>, sort: (r) => r.quantity, footer: qty(t?.quantity) },
     { key: 'minQuantity', header: tx('Par'), align: 'right', render: (r) => (r.minQuantity != null ? qty(r.minQuantity) : '—'), sort: (r) => r.minQuantity },
-    { key: 'avgCost', header: tx('Avg Cost'), align: 'right', render: (r) => money(r.avgCost), sort: (r) => r.avgCost },
-    { key: 'value', header: tx('Stock Value'), align: 'right', render: (r) => <span className="font-semibold">{money(r.value)}</span>, sort: (r) => r.value, footer: money(t?.value) },
-    { key: 'share', header: tx('% of Value'), align: 'right', render: (r) => (t?.value ? `${((r.value / t.value) * 100).toFixed(1)}%` : '—'), sort: (r) => r.value },
+    { key: 'avgCost', header: tx('Avg Cost'), align: 'right', render: (r) => cost(r.avgCost), sort: (r) => r.avgCost ?? 0 },
+    { key: 'value', header: tx('Stock Value'), align: 'right', render: (r) => <span className="font-semibold">{cost(r.value)}</span>, sort: (r) => r.value ?? 0, footer: t ? cost(t.value) : money(0) },
+    { key: 'share', header: tx('% of Value'), align: 'right', render: (r) => (t?.value && r.value != null ? `${((r.value / t.value) * 100).toFixed(1)}%` : '—'), sort: (r) => r.value ?? 0 },
     { key: 'retailValue', header: tx('Retail Value'), align: 'right', render: (r) => (r.salesPrice ? money(r.retailValue) : '—'), sort: (r) => r.retailValue, footer: money(t?.retailValue) },
     { key: 'lastMovedAt', header: tx('Last Moved'), render: (r) => <span className="whitespace-nowrap text-xs text-muted-foreground">{date(r.lastMovedAt)}</span>, sort: (r) => r.lastMovedAt },
   ];
@@ -83,8 +84,8 @@ export function ValuationReport({ ctl }: { ctl: ReturnType<typeof useReportFilte
       <ReportState query={report}>
         {t && (
           <KpiGrid>
-            <Kpi label={tx('Stock value (cost)')} value={money(t.value)} hint={tx('{{items}} item(s) shown', { items: t.items })} />
-            <Kpi label={tx('Retail value')} value={money(t.retailValue)} hint={t.retailValue > t.value ? tx('Potential margin {{v1}}', { v1: money(t.retailValue - t.value) }) : undefined} />
+            <Kpi label={tx('Stock value (cost)')} value={cost(t.value)} hint={tx('{{items}} item(s) shown', { items: t.items })} />
+            <Kpi label={tx('Retail value')} value={money(t.retailValue)} hint={t.value != null && t.retailValue > t.value ? tx('Potential margin {{v1}}', { v1: money(t.retailValue - t.value) }) : undefined} />
             {statusTile('in_stock', tx('In stock'), t.inStock, 'good')}
             {statusTile('low', tx('Low stock'), t.low, 'warn')}
             {statusTile('out', tx('Out of stock'), t.out)}
@@ -100,10 +101,10 @@ export function ValuationReport({ ctl }: { ctl: ReturnType<typeof useReportFilte
                 <div key={c.category} className="grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-3 text-sm">
                   <span className="truncate" title={c.category}>{c.category}</span>
                   <div className="h-2 overflow-hidden rounded bg-muted">
-                    <div className="h-full rounded bg-primary" style={{ width: `${Math.max(1, c.share)}%` }} />
+                    <div className="h-full rounded bg-primary" style={{ width: `${Math.max(1, c.share ?? 0)}%` }} />
                   </div>
                   <span className="whitespace-nowrap font-mono text-xs tabular-nums">
-                    {money(c.value)} · {c.share}% · {c.items} {tx('item(s)')}
+                    {cost(c.value)} · {c.share == null ? '—' : `${c.share}%`} · {c.items} {tx('item(s)')}
                   </span>
                 </div>
               ))}

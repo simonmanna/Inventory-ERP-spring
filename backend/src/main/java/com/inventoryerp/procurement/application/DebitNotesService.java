@@ -17,6 +17,7 @@ import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.core.domain.Partner;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockMove.Issued;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -576,7 +577,9 @@ public class DebitNotesService {
                     Issued issueRes = stock.issue(move);
                     BigDecimal cost = issueRes == null ? Money.ZERO : Money.dec(issueRes.totalValue());
                     if (cost.signum() > 0) {
-                        postingLines.add(Line.credit(stockValAccount, JsNumbers.dec(cost), null));
+                        postingLines.add(com.inventoryerp.inventory.application.StockPostingService.stampLine(
+                                Line.credit(stockValAccount, JsNumbers.dec(cost), null), (String) ln.get("productId"),
+                                (String) location.get("id")));
                     }
                     // Return variance: supplier credit (price) plus GRNI cleared vs the stock cost removed.
                     BigDecimal diff = apPriceFunctional.add(grniValue).subtract(cost);
@@ -891,6 +894,14 @@ public class DebitNotesService {
                 "residualBefore", JsNumbers.dec(residual), "residualAfter", JsNumbers.dec(newResidual)));
     }
 
+    private StockReversalService stockReturns;
+
+    /** R1: goods back from the supplier return against the shipment's own rows. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
+    }
+
     /** Receive back what a return-to-vendor shipped out, at the cost it left at (once per note; no GL of its own). */
     private void bringBackReturnedStock(String id, String number) {
         long done = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note_reversal'"
@@ -898,20 +909,20 @@ public class DebitNotesService {
         if (done > 0) {
             return;
         }
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
-                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note' AND"
-                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0 ORDER BY \"productId\","
-                + " \"variantId\" NULLS FIRST, \"createdAt\", id").params(id, org()))) {
-            try {
-                stock.receive(StockMove.of((String) r.get("productId"), (String) r.get("locationId"),
-                        Money.dec(r.get("quantityChange")).negate()).variant((String) r.get("variantId"))
-                        .unitCost(Money.dec(r.get("unitCost"))).moveType("reversal_in")
-                        .source("debit_note_reversal", id).reference(number)
-                        .notes("Goods back from supplier on reversal of debit note " + number));
-            } catch (ApiException e) {
-                throw ApiException.badRequest("Cannot reverse debit note " + number + ": the returned goods cannot be"
-                        + " taken back into stock (" + e.getMessage() + ")");
-            }
+        long shipped = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'debit_note' AND"
+                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0").params(id, org())
+                .query(Long.class).single();
+        if (shipped == 0) {
+            return;
+        }
+        try {
+            // R1: back onto the lot, expiry, serial, location and cost each unit was shipped out from.
+            stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(
+                    StockReversalService.IssueSource.of("debit_note", id), null, "debit_note_reversal", id, number,
+                    "Goods back from supplier on reversal of debit note " + number, null, null, false, "reversal_in"));
+        } catch (ApiException e) {
+            throw ApiException.badRequest("Cannot reverse debit note " + number + ": the returned goods cannot be"
+                    + " taken back into stock (" + e.getMessage() + ")");
         }
     }
 

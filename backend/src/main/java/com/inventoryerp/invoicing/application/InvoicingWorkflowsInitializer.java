@@ -243,16 +243,27 @@ public class InvoicingWorkflowsInitializer {
         if (done > 0) {
             return;
         }
-        for (Map<String, Object> issue : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
-                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" ="
-                + " 'sales_invoice' AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0"
-                + " ORDER BY \"productId\", \"variantId\" NULLS FIRST, \"createdAt\", id").params(invoiceId, org))) {
-            stock.receiveReturn(StockMove.of((String) issue.get("productId"), (String) issue.get("locationId"),
-                    d(issue.get("quantityChange")).negate()).variant((String) issue.get("variantId"))
-                    .unitCost(d(issue.get("unitCost"))).source("sales_invoice_cancel", invoiceId)
-                    .reference(number).date(posting.reversalDate(issueDate))
-                    .notes("Return of auto-issued stock on cancellation of invoice " + number));
+        long issued = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_invoice' AND"
+                + " \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" < 0").params(invoiceId, org)
+                .query(Long.class).single();
+        if (issued == 0) {
+            return;
         }
+        // R1: back onto the lot, serial, location and cost each unit left on (net of what credit notes returned).
+        stockReturns.returnFromSource(new com.inventoryerp.inventory.application.StockReversalService.ReturnFromSource(
+                com.inventoryerp.inventory.application.StockReversalService.IssueSource.of("sales_invoice", invoiceId),
+                null, "sales_invoice_cancel", invoiceId, number,
+                "Return of auto-issued stock on cancellation of invoice " + number, posting.reversalDate(issueDate),
+                null, true, null));
+    }
+
+
+    private com.inventoryerp.inventory.application.StockReversalService stockReturns;
+
+    /** R1: returns are posted against their original issue (lot, expiry, serial, location and cost). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(com.inventoryerp.inventory.application.StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
     }
 
     // ------------------------------------------------------------------ credit note

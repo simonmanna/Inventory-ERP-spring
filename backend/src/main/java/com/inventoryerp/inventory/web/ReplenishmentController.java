@@ -6,6 +6,9 @@ import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
@@ -30,21 +33,48 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/inventory/replenishment")
 public class ReplenishmentController {
 
-    /** {@code POST /rules}: one rule per product and location. */
-    public record CreateRuleRequest(String productId, String locationId, BigDecimal minQty, BigDecimal maxQty,
-            BigDecimal reorderQty, String supplierId, BigDecimal leadTimeDays, Boolean autoRequisition, String route,
-            String sourceLocationId, String variantId) {}
+    private static final String ID_LEN = "must be shorter than or equal to 64 characters";
+    private static final String QTY_MAX = "must not be greater than 99999999999999";
+
+    /**
+     * {@code POST /rules}: one rule per product and location. Hardening R5a: lengths and the column range are checked
+     * here; the business checks (levels, route, source, variant) stay in the service with their own messages.
+     */
+    public record CreateRuleRequest(
+            @Size(max = 64, message = "productId " + ID_LEN) String productId,
+            @Size(max = 64, message = "locationId " + ID_LEN) String locationId,
+            @DecimalMax(value = "99999999999999", message = "minQty " + QTY_MAX) BigDecimal minQty,
+            @DecimalMax(value = "99999999999999", message = "maxQty " + QTY_MAX) BigDecimal maxQty,
+            @DecimalMax(value = "99999999999999", message = "reorderQty " + QTY_MAX) BigDecimal reorderQty,
+            @Size(max = 64, message = "supplierId " + ID_LEN) String supplierId,
+            @DecimalMin(value = "0", message = "leadTimeDays cannot be negative")
+            @DecimalMax(value = "3650", message = "leadTimeDays must not be greater than 3650") BigDecimal leadTimeDays,
+            Boolean autoRequisition,
+            @Size(max = 32, message = "route must be one of: buy, manufacture, transfer") String route,
+            @Size(max = 64, message = "sourceLocationId " + ID_LEN) String sourceLocationId,
+            @Size(max = 64, message = "variantId " + ID_LEN) String variantId) {}
 
     /** {@code PATCH /rules/:id}: omitted = unchanged, explicit {@code null} clears (maxQty, reorderQty, supplierId). */
-    public record UpdateRuleRequest(BigDecimal minQty, BigDecimal maxQty, BigDecimal reorderQty, String supplierId,
-            BigDecimal leadTimeDays, Boolean autoRequisition, Boolean isActive, String route,
-            String sourceLocationId) {}
+    public record UpdateRuleRequest(
+            @DecimalMax(value = "99999999999999", message = "minQty " + QTY_MAX) BigDecimal minQty,
+            @DecimalMax(value = "99999999999999", message = "maxQty " + QTY_MAX) BigDecimal maxQty,
+            @DecimalMax(value = "99999999999999", message = "reorderQty " + QTY_MAX) BigDecimal reorderQty,
+            @Size(max = 64, message = "supplierId " + ID_LEN) String supplierId,
+            @DecimalMin(value = "0", message = "leadTimeDays cannot be negative")
+            @DecimalMax(value = "3650", message = "leadTimeDays must not be greater than 3650") BigDecimal leadTimeDays,
+            Boolean autoRequisition,
+            Boolean isActive,
+            @Size(max = 32, message = "route must be one of: buy, manufacture, transfer") String route,
+            @Size(max = 64, message = "sourceLocationId " + ID_LEN) String sourceLocationId) {}
 
     /** {@code POST /alerts/:id/dismiss}. */
-    public record DismissRequest(String reason) {}
+    public record DismissRequest(
+            @Size(max = 1000, message = "reason must be shorter than or equal to 1000 characters") String reason) {}
 
     /** {@code POST /requisition}. */
-    public record RequisitionRequest(List<String> alertIds) {}
+    public record RequisitionRequest(
+            @Size(max = 500, message = "alertIds must contain no more than 500 elements")
+            List<@Size(max = 64, message = ID_LEN) String> alertIds) {}
 
     private final ReplenishmentService replenishment;
 

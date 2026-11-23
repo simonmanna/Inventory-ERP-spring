@@ -196,6 +196,11 @@ public class SettingsService {
             row.put("value", d.value());
             row.put("source", d.source());
             row.put("scopeId", d.scopeId());
+            // Hardening R4: an organization still on a value that can no longer be selected sees why.
+            String warning = SettingRegistry.deprecationWarning(def, d.value());
+            if (warning != null) {
+                row.put("warning", warning);
+            }
             out.add(row);
         }
         return out;

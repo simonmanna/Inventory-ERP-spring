@@ -14,6 +14,7 @@ import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.ProductSizingService;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.BranchSaleRecognitionService;
 import com.inventoryerp.invoicing.application.BranchSaleRecognitionService.SaleLine;
@@ -1397,6 +1398,15 @@ public class CashSaleService {
                 DomainEvents.SALES_CASH_SALE_INVOICE_CANCELLED);
     }
 
+
+    private StockReversalService stockReturns;
+
+    /** R1: returns are posted against their original issue (lot, expiry, serial, location and cost). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
+    }
+
     // ------------------------------------------------------------------ void (P6)
 
     /**
@@ -1427,13 +1437,14 @@ public class CashSaleService {
         requireExecution(s, "confirmed");
         String number = str(s.get("number"));
         recognition.reverseAccrual(str(s.get("accrualJournalEntryId")), "Void of cash sale " + number + ": " + reason);
-        for (Map<String, Object> issue : db.rows("SELECT \"productId\", \"variantId\", \"locationId\", \"quantityChange\","
-                + " \"unitCost\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\" = 'cash_sale' AND"
-                + " \"referenceId\" = ? AND \"quantityChange\" < 0 ORDER BY \"createdAt\", id", org(), id)) {
-            stock.receiveReturn(StockMove.of(str(issue.get("productId")), str(issue.get("locationId")),
-                    dec(issue.get("quantityChange")).negate()).variant(str(issue.get("variantId")))
-                    .unitCost(dec(issue.get("unitCost"))).source("cash_sale_void", id).reference(number)
-                    .notes("Goods returned on void of cash sale " + number));
+        // R1: every unit comes back on the lot, serial, location and cost it left on (what is still not returned).
+        boolean issued = db.rows("SELECT 1 FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceType\" = 'cash_sale' AND \"referenceId\" = ? AND \"quantityChange\" < 0 LIMIT 1",
+                org(), id).size() > 0;
+        if (issued) {
+            stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(
+                    StockReversalService.IssueSource.of("cash_sale", id), null, "cash_sale_void", id, number,
+                    "Goods returned on void of cash sale " + number, null, null, true, null));
         }
         for (Map<String, Object> dep : deposits.cashSaleDeposits(id)) {
             if (!"open".equals(dep.get("status")) || !"cash_sale".equals(dep.get("source"))) {

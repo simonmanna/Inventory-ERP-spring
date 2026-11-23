@@ -431,19 +431,22 @@ class RepairIT extends ApiTestSupport {
         Res noLoc = as("POST", "/repair/parts/" + pid + "/issue", Map.of());
         assertThat(noLoc.body().get("message").asString()).isEqualTo("A source location is required to issue a part");
 
+        // Hardening R5a: the part cost is the engine's issued cost (= COGS), whatever unitCost the body names.
         JsonNode issued = ok(201, "POST", "/repair/parts/" + pid + "/issue", Map.of("locationId", warehouseId,
                 "unitCost", 55));
         assertThat(issued.get("status").asString()).isEqualTo("issued");
-        assertThat(issued.get("totalCost").asString()).isEqualTo("110");
         assertThat(issued.get("locationId").asString()).isEqualTo(warehouseId);
         Map<String, Object> mv = jdbc.sql("SELECT \"quantityChange\" AS q, abs(\"totalValue\") AS v,"
                 + " \"locationId\" AS loc FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
-                + " AND \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?").params(demoOrg, id).query()
+                + " AND \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?").params(demoOrg, pid).query()
                 .singleRow();
         assertThat((BigDecimal) mv.get("q")).isEqualByComparingTo("-2");
         assertThat(mv.get("loc")).isEqualTo(warehouseId);
+        assertThat(new BigDecimal(issued.get("totalCost").asString())).isEqualByComparingTo((BigDecimal) mv.get("v"));
+        assertThat(new BigDecimal(issued.get("unitCost").asString()).multiply(new BigDecimal("2")))
+                .isEqualByComparingTo((BigDecimal) mv.get("v"));
         // COGS at issue time: Dr expense / Cr stock valuation, balanced, for the ledger value of the relief.
-        assertThat(assertJournalBalanced("repair_part_issue", id)).isEqualByComparingTo((BigDecimal) mv.get("v"));
+        assertThat(assertJournalBalanced("repair_part_issue", pid)).isEqualByComparingTo((BigDecimal) mv.get("v"));
         assertThat(as("POST", "/repair/parts/" + pid + "/issue", Map.of("locationId", warehouseId)).body()
                 .get("message").asString()).isEqualTo("Part already issued");
         assertThat(as("DELETE", "/repair/parts/" + pid, null).body().get("message").asString())
@@ -482,7 +485,52 @@ class RepairIT extends ApiTestSupport {
                 .sorted().toList();
         assertThat(statuses).containsExactly(201, 400);
         assertThat(count("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
-                + " \"referenceType\" = 'repair_part_issue' AND \"referenceId\" = ?", demoOrg, id)).isEqualTo(2);
+                + " \"referenceType\" = 'repair_part_issue' AND \"referenceId\" IN (SELECT id FROM \"RepairPart\""
+                + " WHERE \"repairOrderId\" = ?)", demoOrg, id)).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("hardening R5a: an issued part returns to stock (issue and COGS reversed), once; legacy issues refused")
+    void partReturn() {
+        String id = order(Map.of()).get("id").asString();
+        String pid = ok(201, "POST", "/repair/orders/" + id + "/parts", Map.of("productId", partProductId,
+                "quantity", 1)).get("id").asString();
+        BigDecimal before = jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\""
+                + " = ? AND \"variantKey\" = ''").params(partProductId, warehouseId).query(BigDecimal.class).single();
+        JsonNode issued = ok(201, "POST", "/repair/parts/" + pid + "/issue", Map.of("locationId", warehouseId));
+        BigDecimal cost = new BigDecimal(issued.get("totalCost").asString());
+
+        String path = "/repair/parts/" + pid + "/return";
+        Res noKey = money("POST", path, Map.of("reason", "wrong part"), null);
+        assertThat(noKey.status()).isEqualTo(400);
+        assertThat(noKey.body().get("message").asString()).isEqualTo(KEY_REQUIRED);
+        Res returned = money("POST", path, Map.of("reason", "wrong part"), key());
+        assertThat(returned.status()).as(returned.raw().body()).isEqualTo(200);
+        assertThat(returned.body().get("status").asString()).isEqualTo("returned");
+        Map<String, Object> back = jdbc.sql("SELECT \"quantityChange\" AS q, \"totalValue\" AS v, type::text AS type"
+                + " FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\" = 'repair_part_return'"
+                + " AND \"referenceId\" = ?").params(demoOrg, pid).query().singleRow();
+        assertThat((BigDecimal) back.get("q")).isEqualByComparingTo("1");
+        assertThat(back.get("type")).isEqualTo("reversal_in");
+        assertThat((BigDecimal) back.get("v")).isEqualByComparingTo(cost);
+        assertThat(jdbc.sql("SELECT quantity FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ? AND"
+                + " \"variantKey\" = ''").params(partProductId, warehouseId).query(BigDecimal.class).single())
+                .isEqualByComparingTo(before);
+        assertThat(assertJournalBalanced("repair_part_return", pid)).isEqualByComparingTo(cost);
+
+        assertThat(money("POST", path, Map.of(), key()).body().get("message").asString())
+                .isEqualTo("Only an issued part can be returned to stock");
+        assertThat(as("POST", "/repair/parts/" + pid + "/issue", Map.of("locationId", warehouseId)).body()
+                .get("message").asString()).isEqualTo("Part was returned to stock; reserve it again to issue it");
+
+        // a part issued before R5a (its rows reference the repair order) cannot be told apart: refused
+        String legacy = ok(201, "POST", "/repair/orders/" + id + "/parts", Map.of("productId", partProductId))
+                .get("id").asString();
+        jdbc.sql("UPDATE \"RepairPart\" SET status = 'issued' WHERE id = ?").param(legacy).update();
+        assertThat(money("POST", "/repair/parts/" + legacy + "/return", Map.of(), key()).body().get("message")
+                .asString()).startsWith("This part was issued before part returns were recorded per part");
+        assertThat(money("POST", "/repair/parts/" + UUID.randomUUID() + "/return", Map.of(), key()).status())
+                .isEqualTo(404);
     }
 
     @Test
@@ -851,6 +899,6 @@ class RepairIT extends ApiTestSupport {
         assertThat(ok(200, "PATCH", "/repair/labour-types/" + lt, Map.of("organizationId", demoOrg, "price", 9))
                 .get("price").asString()).isEqualTo("9");
 
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.repair")).isEqualTo(64);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.repair")).isEqualTo(65);
     }
 }

@@ -497,7 +497,12 @@ class WarehouseReplenishmentGapsIT extends ApiTestSupport {
         String transferRule = rule(cement, store, Map.of("route", "transfer", "sourceLocationId", source,
                 "autoRequisition", true));
         String buyRule = rule(product("Lime", null), store2, Map.of("autoRequisition", true));
-        assertThat(as("DELETE", "/inventory/locations/" + source, null).status()).isEqualTo(204);
+        // R2: the API now refuses to delete a location an active rule draws from; simulate a source deleted before
+        // that guard existed (legacy data) to keep proving the scan isolates the broken rule.
+        Res refused = as("DELETE", "/inventory/locations/" + source, null);
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).contains("active replenishment rules (1)");
+        jdbc.sql("UPDATE \"InventoryLocation\" SET \"deletedAt\" = now() WHERE id = ?").param(source).update();
         try {
             JsonNode scan = ok(201, "POST", "/inventory/replenishment/scan", null);
             assertThat(scan.get("requestFailed").asInt()).isGreaterThanOrEqualTo(1);

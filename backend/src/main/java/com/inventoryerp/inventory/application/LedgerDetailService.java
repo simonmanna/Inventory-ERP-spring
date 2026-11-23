@@ -103,9 +103,14 @@ public class LedgerDetailService {
             all.add(entry);
         }
         include(all);
+        boolean cost = InventoryReportsService.seesCost();
+        if (!cost) {
+            // Hardening R5b: unit cost and value need inventory_valuation:read (null otherwise).
+            all.forEach(r -> InventoryReportsService.hideCost(r, "unitCost", "totalValue"));
+        }
         return Obj.of("entry", entry, "lines", lines, "totals", Obj.of("lines", count, "quantityIn",
-                JsNumbers.js(in), "quantityOut", JsNumbers.js(out), "totalValue", JsNumbers.js(total), "truncated",
-                count > lines.size()), "source", resolveSource(refType, refId));
+                JsNumbers.js(in), "quantityOut", JsNumbers.js(out), "totalValue", cost ? JsNumbers.js(total) : null,
+                "truncated", count > lines.size()), "source", resolveSource(refType, refId));
     }
 
     /** Product (with its unit), variant, location and lot of each line, one query per kind for all lines. */
@@ -130,6 +135,71 @@ public class LedgerDetailService {
             r.put("location", copy(locations.get(str(r, "locationId"))));
             r.put("batch", r.get("batchId") == null ? null : copy(batches.get(str(r, "batchId"))));
         }
+        includeAudit(rows);
+    }
+
+    /**
+     * Hardening R5b (P2-11, additive fields): the audit trail of each line — {@code reverses} ({@code {id, ledgerCode}}
+     * of the row it returns or reverses, or null), the names of who performed, was responsible for and approved it
+     * ({@code performedByName} / {@code responsibleByName} / {@code approvedByName}), and {@code recordedOffline}: the
+     * source document (stock transfer, stock adjustment or goods receipt — the documents that carry the flag, V596) was
+     * recorded on a device while offline and synced later. Derived on read; no ledger column.
+     */
+    private void includeAudit(List<Map<String, Object>> rows) {
+        Map<String, Map<String, Object>> reversed = byId(rows, "reversesLedgerId", "SELECT id, \"ledgerCode\" FROM"
+                + " \"InventoryLedger\" WHERE id IN (:ids) AND \"organizationId\" = :org");
+        Set<String> userIds = new LinkedHashSet<>();
+        for (Map<String, Object> r : rows) {
+            for (String k : List.of("performedBy", "responsibleById", "approvedById")) {
+                if (r.get(k) != null) {
+                    userIds.add(str(r, k));
+                }
+            }
+        }
+        Map<String, String> names = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            for (Map<String, Object> u : SqlRows.list(jdbc.sql("SELECT id, trim(concat_ws(' ', \"firstName\","
+                    + " \"lastName\")) AS name FROM \"User\" WHERE id IN (:ids) AND \"organizationId\" = :org")
+                    .param("ids", List.copyOf(userIds)).param("org", org()))) {
+                names.put(str(u, "id"), str(u, "name"));
+            }
+        }
+        Map<String, Boolean> offline = new HashMap<>();
+        for (Map<String, Object> r : rows) {
+            String key = r.get("referenceType") + "|" + r.get("referenceId");
+            if (!offline.containsKey(key)) {
+                offline.put(key, recordedOffline(str(r, "referenceType"), str(r, "referenceId")));
+            }
+            r.put("reverses", r.get("reversesLedgerId") == null ? null
+                    : copy(reversed.get(str(r, "reversesLedgerId"))));
+            r.put("performedByName", r.get("performedBy") == null ? null : names.get(str(r, "performedBy")));
+            r.put("responsibleByName", r.get("responsibleById") == null ? null
+                    : names.get(str(r, "responsibleById")));
+            r.put("approvedByName", r.get("approvedById") == null ? null : names.get(str(r, "approvedById")));
+            r.put("recordedOffline", offline.get(key));
+        }
+    }
+
+    /** The {@code recordedOffline} flag of a line's source document (false when it has none). */
+    private boolean recordedOffline(String referenceType, String referenceId) {
+        if (referenceType == null || referenceId == null) {
+            return false;
+        }
+        String sql = switch (referenceType) {
+            case "stock_transfer", "stock_transfer_dispatch", "stock_transfer_receipt", "stock_transfer_loss",
+                    "stock_transfer_recall" -> "SELECT \"recordedOffline\" FROM \"StockTransfer\" WHERE (id = ? OR"
+                    + " \"transferCode\" = ?) AND \"organizationId\" = ? LIMIT 1";
+            case "stock_adjustment", "adjustment" -> "SELECT \"recordedOffline\" FROM \"StockAdjustment\" WHERE (id = ? OR"
+                    + " \"adjCode\" = ?) AND \"organizationId\" = ? LIMIT 1";
+            case "goods_receipt" -> "SELECT \"recordedOffline\" FROM \"GoodsReceiptNote\" WHERE (id = ? OR"
+                    + " \"receiptNumber\" = ?) AND \"organizationId\" = ? LIMIT 1";
+            default -> null;
+        };
+        if (sql == null) {
+            return false;
+        }
+        return Boolean.TRUE.equals(jdbc.sql(sql).params(referenceId, referenceId, org()).query(Boolean.class)
+                .optional().orElse(false));
     }
 
     private Map<String, Map<String, Object>> byId(List<Map<String, Object>> rows, String key, String sql) {
@@ -193,9 +263,16 @@ public class LedgerDetailService {
                         "SELECT id, \"agreementNumber\" AS code, status::text AS status, \"startAt\" AS date, \"partnerId\""
                                 + " FROM \"RentalAgreement\" WHERE (id = ? OR \"agreementNumber\" = ?) AND \"organizationId\" = ?",
                         referenceId, "Rental ", true);
-                case "repair_part_issue" -> doc(base, "repair_order", "SELECT id, \"repairNumber\" AS code, status::text"
-                        + " AS status, \"createdAt\" AS date, \"partnerId\" FROM \"RepairOrder\" WHERE (id = ? OR"
-                        + " \"repairNumber\" = ?) AND \"organizationId\" = ?", referenceId, "Repair ", true);
+                // Hardening R5a: a part issue (and its return) references the repair part since R5a, the repair
+                // order before; both lead to the order.
+                case "repair_part_issue", "repair_part_return" -> {
+                    Map<String, Object> d = SqlRows.one(jdbc.sql("SELECT id, \"repairNumber\" AS code,"
+                            + " status::text AS status, \"createdAt\" AS date, \"partnerId\" FROM \"RepairOrder\""
+                            + " WHERE (id = ? OR \"repairNumber\" = ? OR id = (SELECT rp.\"repairOrderId\" FROM"
+                            + " \"RepairPart\" rp WHERE rp.id = ? AND rp.\"organizationId\" = ?)) AND \"organizationId\" = ?"
+                            + " LIMIT 1").params(referenceId, referenceId, referenceId, org(), org()));
+                    yield d == null ? null : fill(base, "repair_order", d, "Repair " + d.get("code"));
+                }
                 case "stock_out" -> stockDoc(base, "stock_out", "StockOut", "outCode", "Stock Out ", referenceId);
                 case "waste", "expiry_write_off" -> stockDoc(base, "waste", "WasteRecord", "wasteCode", "Waste ",
                         referenceId);

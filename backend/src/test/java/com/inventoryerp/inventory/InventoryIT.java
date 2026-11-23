@@ -796,7 +796,8 @@ class InventoryIT extends ApiTestSupport {
         Res unknown = as("GET", "/inventory/reports/register/nope", null);
         assertThat(unknown.body().get("message").asString()).isEqualTo("Unknown report: nope");
         JsonNode health = ok(200, "GET", "/inventory/reports/stock-health?locationId=" + loc, null);
-        assertThat(health.get("rows").get(0).get("status").asString()).isEqualTo("dead");
+        // Hardening R5a (deviation 34): never consumed = aged from its receipt; received today is active (Nest: dead).
+        assertThat(health.get("rows").get(0).get("status").asString()).isEqualTo("active");
         assertThat(ok(200, "GET", "/inventory/reports/negative-stock", null).get("summary")).isNotNull();
         assertThat(ok(200, "GET", "/inventory/reports/expiring?days=10", null).isArray()).isTrue();
         assertThat(ok(200, "GET", "/inventory/reports/reorder", null).isArray()).isTrue();
@@ -860,7 +861,7 @@ class InventoryIT extends ApiTestSupport {
     @DisplayName("authorization: every inventory route answers 401 without a token and 403 without its permission")
     void authorizationMatrix() {
         // 144: GET /inventory/cost-explanation (accounting and costing review) and GET /inventory/staff-options
-        // (readiness blocker UB1) joined the 142 routes.
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(144);
+        // (readiness blocker UB1) joined the 142 routes; 145: GET /inventory/reports/integrity (hardening R0).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(145);
     }
 }

@@ -129,6 +129,20 @@ in Nest).
    error: `1.005` rounds to `1.01` where Node gives `1`. A non-numeric `unitPrice` / `unitCost` (JS `NaN`) answers 500
    instead of storing `NaN`.
 5. Notifications are sent after the transaction commits (same title, body and payload).
+6. **Parts: variant, engine cost, return (hardening R5a, owner-approved 2026-11-23, migration `V615`).**
+   - `RepairPart.variantId` (new column): taken from the reservation body and passed to the stock engine on issue
+     (`variantId` in the issue body overrides it).
+   - On issue the part's `unitCost` / `totalCost` become the engine's issued cost (what COGS was charged); a
+     `unitCost` in the issue body no longer overrides it. Job cost = COGS.
+   - The issue's ledger rows reference the part (`repair_part_issue` / part id, source line = part id); before R5a
+     they referenced the repair order. Ledger detail resolves both to the repair order.
+   - `POST /repair/parts/:id/return` (`repair:parts`, `Idempotency-Key` required, 200): reverses that part's issue rows
+     through `StockReversalService.reverseLedgerSource` (`reversal_in` at the issued cost, COGS journal mirrored,
+     `repair_part_return` / part id) and sets the part `returned` (new `RepairPartStatus` value). Errors: 404 `Repair
+     part not found`, 400 `Only an issued part can be returned to stock`, 400 `This part was issued before part
+     returns were recorded per part; return its stock with a stock adjustment` (rows of a pre-R5a issue cannot be told
+     apart from the order's other parts). A returned part cannot be issued again (`Part was returned to stock; reserve
+     it again to issue it`) and can be deleted.
 
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 
@@ -186,9 +200,9 @@ diffs, all explained above:
   balanced payment journal, replay, already paid); warranties and claims; contracts, schedules and the housekeeping
   cron (generation, roll-forward, no regeneration on the next run, warranty expiry); dashboard and reports; tenant
   isolation (reads and writes by id from another organization, cross-tenant parent references, tenant hop, unknown and
-  injected keys); 401/403 matrix over all 64 routes. JaCoCo line coverage of `repair.application`: 97.9 %.
+  injected keys); part return (R5a); 401/403 matrix over all 65 routes. JaCoCo line coverage of `repair.application`: 97.9 %.
 
 ## Status
 
-64/64 routes implemented and verified by `RepairIT` + `RepairMathTest` (2026-10-28). Open: parity run against a live
+64/64 routes implemented and verified by `RepairIT` + `RepairMathTest` (2026-10-28); plus the Spring-only `POST /repair/parts/:id/return` (R5a, 2026-11-23). Open: parity run against a live
 Nest, browser walkthrough of the repair screens, owner review of the deviations above.

@@ -239,7 +239,15 @@ public class LineageExceptionService {
     private String release(Followed f, BigDecimal open, Map<String, Object> adj, boolean voucher, boolean standard,
             String text) {
         Map<String, BigDecimal> debits = new LinkedHashMap<>();
+        // Hardening R3: a voucher's on-hand share posts to the product's stock account, one line per product (and
+        // location) carrying the product dimension.
+        Map<List<String>, BigDecimal> stockDebits = new LinkedHashMap<>();
         for (Placement p : f.placements()) {
+            if (voucher && !standard && "on_hand".equals(p.target())) {
+                stockDebits.merge(java.util.Arrays.asList(stockPosting.landedAccount(p.productId(), p.amount().abs()),
+                        p.productId(), p.locationId()), p.amount(), BigDecimal::add);
+                continue;
+            }
             String account = voucher ? switch (p.target()) {
                 case "on_hand" -> standard ? lineage.priceDifferenceAccount()
                         : stockPosting.landedAccount(p.productId(), p.amount().abs());
@@ -259,6 +267,11 @@ public class LineageExceptionService {
         debits.forEach((acc, v) -> {
             if (v.signum() != 0) {
                 lines.add(signed(acc, v, text));
+            }
+        });
+        stockDebits.forEach((k, v) -> {
+            if (v.signum() != 0) {
+                lines.add(StockPostingService.stampLine(signed(k.get(0), v, text), k.get(1), k.get(2)));
             }
         });
         String entryId = lines.size() >= 2 ? post(lines, text, (String) adj.get("id")) : null;

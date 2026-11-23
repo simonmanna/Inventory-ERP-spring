@@ -267,6 +267,7 @@ public class ProcessingJobService {
         Map<String, Object> job = db.insert(ProcessingJob.class, d);
         String id = str(job, "id");
         boolean anyTraceable = false;
+        List<Object[]> toReserve = new java.util.ArrayList<>();
         for (JobInputLine l : dto.inputs()) {
             Map<String, Object> ti = byInput.get(l.templateInputId());
             if (ti == null) {
@@ -292,7 +293,16 @@ public class ProcessingJobService {
             row.put("basisSource", l.basisQty() != null ? "measured" : "template_factor");
             row.put("manualSharePct", l.manualSharePct());
             Map<String, Object> input = db.insert(ProcessingJobInput.class, row);
-            reserve(input, location, str(job, "code"), p);
+            toReserve.add(new Object[] {input, p});
+        }
+        // Hardening R5b (P2-1): reservations in the engine's lock order (product), not the template's.
+        toReserve.sort(java.util.Comparator.comparing(r -> String.valueOf(((Map<?, ?>) r[0]).get("productId"))));
+        for (Object[] r : toReserve) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> input = (Map<String, Object>) r[0];
+            @SuppressWarnings("unchecked")
+            Map<String, Object> product = (Map<String, Object>) r[1];
+            reserve(input, location, str(job, "code"), product);
         }
         if (!anyTraceable) {
             throw ApiException.badRequest("A job needs at least one traceable input");

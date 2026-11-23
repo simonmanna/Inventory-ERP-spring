@@ -2001,6 +2001,12 @@ against a live Superset.
 
 Not verified yet: the dashboards rendered in a browser through the ERP web app.
 
+## Inventory hardening R2 — branch security and master data (owner-approved 2026-11-23, gate G3)
+
+- [x] R2 branch scope on reversals, transfer source/destination actions, reservations and replenishment transfer
+  sources; location delete/deactivate/retype/branch-move guards; transit location protected; system locations via
+  `VirtualLocationService` ([spec deviations 31–32](spec/inventory.md#deviations)) — `InventoryBranchScopeIT`
+
 ## Guide: in-app guided tours (ADR-S079, extension: no Nest counterpart)
 
 [Spec](spec/guide.md). 3 routes: `GuideController` (`GET /guide/progress`, `PUT|DELETE /guide/progress/{tourKey}`).
@@ -2014,3 +2020,43 @@ Migration V580. Web: Learn button in the header, overlay in `AppShell`. Tests: `
 - [ ] G4 AI chat behind `AssistantResolver` (own ADR)
 
 Not verified yet: the tours driven by hand in a browser.
+
+## Inventory hardening R0 (2026-11-22 review, Spring-only)
+
+- [x] R0 `GET /api/v1/inventory/reports/integrity` (`inventory_valuation:read`), daily `InventoryIntegrityMonitor`
+  (`integrity_*` exceptions; value kinds hold the period close), read-only data checks
+  `docs/audits/2026-11-22-inventory-data-checks.sql` — `InventoryIntegrityIT`, `PeriodCloseChecklistIT`;
+  [review](audits/2026-11-22-inventory-review.md)
+
+## Inventory hardening R1 (corruption blockers, gate G1; owner-approved 2026-11-23)
+
+- [x] Returns restore lot / expiry / serial / location / cost via `returnFromSource`; `InventoryLedger.reversesLedgerId` (V611); rental fee lines never move stock; credit note refuses without issue rows; offline refund drains or holds; offline receipt exactly once (`InventoryReturnsIdentityIT`, `SyncInventoryRecoveryIT`)
+
+## Inventory hardening R5b (engine hardening, gates G3 / G4; owner-approved 2026-11-23)
+
+- [x] Engine lock order (count submit, reservations, landed cost, reversals), approval gates before locks, transfer and
+  production reversals pin their own lots / serials, count lots by id, serial insert race → 400, serial / STANDARD
+  transfer values, AVCO residue sweep at zero, rental variant + serial, ledger detail audit fields, cost fields behind
+  `inventory_valuation:read` ([spec deviations 44–53](spec/inventory.md#deviations), recovery runbook
+  [OPERATIONS 8a](OPERATIONS.md)) — `InventoryEngineHardeningIT`; no migration
+
+## Inventory hardening R3 (financial integrity, gate G2; owner-approved 2026-11-23)
+
+- [x] STANDARD without a standard receives at `costPrice` with PPV; STANDARD returns at the standard with PPV (COGS at original cost); serial + STANDARD refused; product key on stock journal lines and the `valuation_vs_gl_by_product` integrity check from the V613 cutover (`StandardCostingIntegrityIT`, `InventoryIntegrityIT`); supplier claims, debit notes, lineage-exception voucher releases and branch transfers stamp their stock lines too
+- Tests run 2026-11-23 on a private owner-split Postgres (`fastTest`): StandardCostingIntegrityIT, InventoryIntegrityIT,
+  InventoryCostPolicyIT, ValuationGapsIT, InventoryValuationReportIT, InventoryAuditConservationIT,
+  InventoryReturnsIdentityIT, PeriodCloseChecklistIT, ProcurementIntegrityIT, ValuationIntegrityIT,
+  StandardProcessCostingIT, all 11 LandedCost*IT, ProductUnitsIT, AnalyticDimensionIT, QualityLotsIT, CashSaleIT,
+  InventoryUnitTest green; InventoryHardeningIT 6/7 (`ledgerGuardBypass` needs the Testcontainers owner URL, unchanged
+  by R3); ModularityTests + ArchitectureTests green. Full `./gradlew build` not run.
+
+- [x] R5a operational hardening (owner-approved deviations 33–43 + negative-stock policy in
+  [inventory](spec/inventory.md#deviations), repair deviation 6, V615): report day bounds, batched includes,
+  tolerance 400, stock-health age, past closing value from the ledger, cost fields behind `inventory_valuation:read`,
+  request limits, bounded document lists, keys on approve / dispatch / ship, warehouse move holds / disabled-settings
+  finishing / reconcile stale moves / read-only ABC, repair part variant + engine cost + `POST /repair/parts/:id/return`
+  — `InventoryReportsHardeningIT`, `WarehouseHardeningIT`, `NegativeStockPolicyIT`, `RepairIT`
+
+## Inventory hardening R4 (workflow integrity, gate G1; owner-approved 2026-11-23)
+
+- [x] Order-level timings deprecated (stored values keep working, with a warning); one POS job per sale (`sale:<orderId>`); order cancel abandons / waits / returns at original cost and lot; voided fired line issued once; pick orders net source reversals and block reversing a live source (`OrderCancelStockIT`, `WarehouseIT.pickOrderAndDocumentReversal`, `SyncInventoryReplayIT` 7)

@@ -48,7 +48,7 @@ import tools.jackson.databind.JsonNode;
  * and the measuring helpers of the harness (on-hand, ledger sum, open lots, account balance). Isolation keeps the GL
  * balances and the tie-out of a suite free of what other suites post into DEMO.
  */
-abstract class InventoryAuditSupport extends ApiTestSupport {
+public abstract class InventoryAuditSupport extends ApiTestSupport {
 
     @Autowired
     protected StockService stock;

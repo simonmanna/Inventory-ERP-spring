@@ -150,6 +150,50 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("inventory integrity (R0): an open value finding blocks the close; a quantity finding does not")
+    void integrityValueFindingBlocks() {
+        String period = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status,"
+                + " \"updatedAt\") VALUES (?, ?, 'Integrity 2008-07', '2008-07-01', '2008-07-31 23:59:59', 'open', now())")
+                .params(period, otherOrg).update();
+        Map<String, String> auth = Map.of("Authorization", "Bearer " + otherToken);
+        String path = "/fiscal-periods/" + period + "/close-checklist";
+        String quantity = exception(otherOrg, "integrity_ledger_vs_quant", "2008-07-03 03:10:00");
+        try {
+            JsonNode checklist = call("GET", path, null, otherToken).body();
+            assertThat(check(checklist, "inventory_exceptions").get("count").asInt()).isZero();
+            assertThat(check(checklist, "inventory_integrity_value").get("ok").asBoolean()).isTrue();
+            assertThat(check(checklist, "inventory_integrity_value").get("blocking").asBoolean()).isTrue();
+            Res passes = call("POST", "/fiscal-periods/" + period + "/close", null, withKey(auth));
+            assertThat(passes.body().get("message").asString()).startsWith("Nothing to close for 'Integrity 2008-07'");
+
+            String value = exception(otherOrg, "integrity_valuation_vs_gl", "2008-07-03 03:10:00");
+            JsonNode blocked = call("GET", path, null, otherToken).body();
+            assertThat(check(blocked, "inventory_integrity_value").get("count").asInt()).isEqualTo(1);
+            assertThat(check(blocked, "inventory_exceptions").get("count").asInt()).isZero();
+            assertThat(blocked.get("readyToClose").asBoolean()).isFalse();
+            Res refused = call("POST", "/fiscal-periods/" + period + "/close", null, withKey(auth));
+            assertThat(refused.status()).isEqualTo(400);
+            assertThat(refused.body().get("message").asString()).isEqualTo("Cannot close 'Integrity 2008-07': 1 open"
+                    + " inventory integrity finding(s) on stock value (valuation vs stock ledger or GL). Investigate"
+                    + " and resolve them in the Posting Monitor before closing.");
+            jdbc.sql("UPDATE \"InventoryException\" SET status = 'resolved' WHERE id = ?").param(value).update();
+            assertThat(check(call("GET", path, null, otherToken).body(), "inventory_integrity_value").get("ok")
+                    .asBoolean()).isTrue();
+        } finally {
+            jdbc.sql("UPDATE \"InventoryException\" SET status = 'resolved' WHERE \"organizationId\" = ? AND kind LIKE"
+                    + " 'integrity%'").param(otherOrg).update();
+        }
+        assertThat(quantity).isNotNull();
+    }
+
+    static Map<String, String> withKey(Map<String, String> headers) {
+        Map<String, String> h = new LinkedHashMap<>(headers);
+        h.put("Idempotency-Key", UUID.randomUUID().toString());
+        return h;
+    }
+
+    @Test
     @DisplayName("tenant isolation and authorization")
     void isolation() {
         assertThat(call("GET", "/fiscal-periods/" + periodId + "/close-checklist", null,

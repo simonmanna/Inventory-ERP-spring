@@ -435,7 +435,9 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
                     .params(to, batchTracking, productId, org()).update();
             if (productDelta.signum() != 0) {
                 // h-02 F6: each product's rounding on the stock account its movements post to.
-                byAccount.merge(stockPosting.stockAccount(productId, productDelta.abs()), productDelta, BigDecimal::add);
+                // R3: one line per product (stamped with it), account first.
+                byAccount.merge(stockPosting.stockAccount(productId, productDelta.abs()) + "|" + productId,
+                        productDelta, BigDecimal::add);
             }
         }
         BigDecimal diff = after.subtract(before).setScale(6, RoundingMode.HALF_UP);
@@ -550,8 +552,10 @@ public class InventoryCostPolicyService implements ProductCostingPolicy {
             if (v.signum() == 0) {
                 continue;
             }
-            lines.add(v.signum() > 0 ? Line.debit(e.getKey(), JsNumbers.dec(v), description)
-                    : Line.credit(e.getKey(), JsNumbers.dec(v.negate()), description));
+            String[] key = e.getKey().split("\\|", 2);
+            String product = key.length > 1 ? key[1] : null;
+            lines.add(StockPostingService.stampLine(v.signum() > 0 ? Line.debit(key[0], JsNumbers.dec(v), description)
+                    : Line.credit(key[0], JsNumbers.dec(v.negate()), description), product, null));
             total = total.add(v);
         }
         if (total.signum() > 0) {

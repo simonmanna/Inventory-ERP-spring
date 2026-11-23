@@ -884,7 +884,7 @@ public class StageExecutionService implements StageCheckpointResults {
     /** One stocked output: receipt at the allocated value (standard-governed: at standard + yield variance). */
     private void receive(Ctx c, String pid, String role, String productId, String variantId, String locationId,
             BigDecimal qty, BigDecimal value, String batch, String expiry, Instant date, String outputId) {
-        BigDecimal standard = standards.activeStandard(productId).orElse(null);
+        BigDecimal standard = standards.governingStandard(productId).orElse(null);
         BigDecimal stockValue = standard != null ? standard.multiply(qty).setScale(SCALE, RoundingMode.HALF_UP) : value;
         BigDecimal unit = standard != null ? standard
                 : qty.signum() > 0 ? value.divide(qty, SCALE, RoundingMode.HALF_UP) : BigDecimal.ZERO;

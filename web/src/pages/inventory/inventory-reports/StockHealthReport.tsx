@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
 import { date } from '@/lib/format';
-import { DataTable, Kpi, KpiGrid, ReportState, money, qty, type Column } from './shared';
+import { DataTable, Kpi, KpiGrid, ReportState, cost, qty, type Column } from './shared';
 import { Field, FilterBar, type useReportFilters } from './filters';
 import { tx } from '@/lib/i18n/tx';
 
@@ -14,17 +14,17 @@ type Ctl = ReturnType<typeof useReportFilters>;
 interface HealthRow {
   productId: string; variantId: string | null; locationId: string; location: string;
   code: string; name: string; category: string | null; uom: string | null;
-  onHand: number; unitCost: number; value: number;
+  onHand: number; unitCost: number | null; value: number | null; // null without inventory_valuation:read
   aging: { d0_30: number; d31_60: number; d61_90: number; d91_180: number; d180_plus: number };
   weightedAgeDays: number | null; lastConsumedAt: string | null; daysSinceConsumed: number | null;
-  consumedQty: number; consumedValue: number; turnover: number | null; daysOfCover: number | null;
+  consumedQty: number; consumedValue: number | null; turnover: number | null; daysOfCover: number | null;
   status: 'active' | 'slow' | 'dead';
 }
 
 interface HealthReport {
   summary: {
     slowDays: number; deadDays: number; start: string; end: string; quants: number;
-    totalValue: number; activeValue: number; slowValue: number; deadValue: number;
+    totalValue: number | null; activeValue: number | null; slowValue: number | null; deadValue: number | null;
     slowCount: number; deadCount: number; truncated: boolean;
   };
   rows: HealthRow[];
@@ -56,7 +56,7 @@ export function StockHealthReport({ ctl }: { ctl: Ctl }) {
     { key: 'location', header: tx('Location'), render: (r) => r.location, sort: (r) => r.location },
     { key: 'status', header: tx('Status'), render: (r) => <Badge variant={STATUS_BADGE[r.status].variant}>{STATUS_BADGE[r.status].label}</Badge>, sort: (r) => r.status },
     { key: 'onHand', header: tx('On Hand'), align: 'right', render: (r) => qty(r.onHand), sort: (r) => r.onHand },
-    { key: 'value', header: tx('Value'), align: 'right', render: (r) => money(r.value), sort: (r) => r.value, footer: money(rows.reduce((t, r) => t + r.value, 0)) },
+    { key: 'value', header: tx('Value'), align: 'right', render: (r) => cost(r.value), sort: (r) => r.value ?? 0, footer: s?.totalValue === null ? '—' : cost(rows.reduce((t, r) => t + (r.value ?? 0), 0)) },
     { key: 'd0_30', header: '0–30d', align: 'right', render: (r) => qty(r.aging.d0_30), sort: (r) => r.aging.d0_30 },
     { key: 'd31_60', header: '31–60d', align: 'right', render: (r) => qty(r.aging.d31_60), sort: (r) => r.aging.d31_60 },
     { key: 'd61_90', header: '61–90d', align: 'right', render: (r) => qty(r.aging.d61_90), sort: (r) => r.aging.d61_90 },
@@ -102,9 +102,9 @@ export function StockHealthReport({ ctl }: { ctl: Ctl }) {
       <ReportState query={report}>
         {s && (
           <KpiGrid>
-            <Kpi label={tx('Stock value')} value={money(s.totalValue)} hint={tx('{{quants}} item-locations on hand', { quants: s.quants })} />
-            <Kpi label={tx('Slow-moving')} value={money(s.slowValue)} hint={tx('{{slowCount}} lines · no use in {{slowDays}}+ days', { slowCount: s.slowCount, slowDays: s.slowDays })} tone={s.slowCount ? 'warn' : 'good'} />
-            <Kpi label={tx('Dead stock')} value={money(s.deadValue)} hint={tx('{{deadCount}} lines · no use in {{deadDays}}+ days', { deadCount: s.deadCount, deadDays: s.deadDays })} tone={s.deadCount ? 'bad' : 'good'} />
+            <Kpi label={tx('Stock value')} value={cost(s.totalValue)} hint={tx('{{quants}} item-locations on hand', { quants: s.quants })} />
+            <Kpi label={tx('Slow-moving')} value={cost(s.slowValue)} hint={tx('{{slowCount}} lines · no use in {{slowDays}}+ days', { slowCount: s.slowCount, slowDays: s.slowDays })} tone={s.slowCount ? 'warn' : 'good'} />
+            <Kpi label={tx('Dead stock')} value={cost(s.deadValue)} hint={tx('{{deadCount}} lines · no use in {{deadDays}}+ days', { deadCount: s.deadCount, deadDays: s.deadDays })} tone={s.deadCount ? 'bad' : 'good'} />
             <Kpi label={tx('Turnover period')} value={`${s.start} → ${s.end}`} hint={tx('Used quantity ÷ average on hand')} />
           </KpiGrid>
         )}

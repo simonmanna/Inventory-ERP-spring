@@ -111,8 +111,9 @@ public class FleetFuelPostingService {
                 Map<String, Object> entry = posting.post(new PostingRequest("INV", at, label + " from tank "
                         + tank.get("code"), null, null, SOURCE_TYPE, id, null, key(id), null, null, null, List.of(
                                 expenseLine(v, label, log),
-                                Line.credit(stockPosting.stockAccount((String) tank.get("productId"), value), v,
-                                        "Fuel issued · tank " + tank.get("code")))));
+                                StockPostingService.stampLine(Line.credit(stockPosting.stockAccount(
+                                        (String) tank.get("productId"), value), v, "Fuel issued · tank "
+                                        + tank.get("code")), (String) tank.get("productId"), null))));
                 entryId = (String) entry.get("id");
             }
             BigDecimal unit = issued.unitCost() == null ? BigDecimal.ZERO : issued.unitCost();

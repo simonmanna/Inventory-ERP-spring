@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PostingRequest;
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.CostResolver;
 import com.inventoryerp.inventory.application.CostResolver.Layer;
@@ -220,7 +221,10 @@ class InventoryUnitTest {
                 default -> "acc-" + inv.getArgument(0);
             });
             JdbcClient jdbc = mock(JdbcClient.class, Answers.RETURNS_DEEP_STUBS);
-            svc = new StockPostingService(jdbc, posting, determination, new CostResolver(), rules, null);
+            // Hardening R3: stock-account lines carry the product dimension; the valuation service names those accounts.
+            InventoryValuationService valuation = mock(InventoryValuationService.class);
+            when(valuation.inventoryAccountIds()).thenReturn(List.of("acc-stockval"));
+            svc = new StockPostingService(jdbc, posting, determination, new CostResolver(), rules, null, valuation);
         }
 
         @AfterEach
@@ -252,6 +256,8 @@ class InventoryUnitTest {
             assertThat(credit(r).accountId()).isEqualTo("acc-cogs");
             assertThat(d(debit(r).debit())).isEqualByComparingTo("150");
             assertThat(d(credit(r).credit())).isEqualByComparingTo("150");
+            assertThat(debit(r).dimensions()).containsEntry(InventoryValuationService.PRODUCT_DIMENSION, "p1");
+            assertThat(credit(r).dimensions()).isNull();
         }
 
         @Test

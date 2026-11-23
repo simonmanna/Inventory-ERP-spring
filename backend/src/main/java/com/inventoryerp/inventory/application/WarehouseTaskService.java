@@ -294,7 +294,9 @@ public class WarehouseTaskService {
             BigDecimal held = jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"WarehouseBinStock\" WHERE \"binId\" = ?"
                     + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"batchKey\" = ?")
                     .params(fromBinId, productId, variant, batch).query(BigDecimal.class).single();
-            if (held.compareTo(quantity) < 0) {
+            // Hardening R5a: stock that open pick / move tasks will take out of the bin is not free to move.
+            BigDecimal free = held.subtract(store.reservedInBin(fromBinId, productId, variant, batch));
+            if (free.compareTo(quantity) < 0) {
                 throw ApiException.badRequest("Not enough stock in bin " + from.get("code") + " for "
                         + store.productName(productId));
             }
@@ -315,7 +317,7 @@ public class WarehouseTaskService {
     public Map<String, Object> complete(String id, BigDecimal quantity, String toBinId) {
         Map<String, Object> t = lockTask(id);
         String locationId = SqlRows.str(t, "locationId");
-        store.operable(locationId);
+        store.finishable(locationId);
         if (!"open".equals(t.get("status"))) {
             throw ApiException.badRequest("Task is already " + t.get("status"));
         }
@@ -342,8 +344,19 @@ public class WarehouseTaskService {
                     store.addStock(store.stockBin(target, locationId), productId, variant, batch, qty);
                 }
                 case "move" -> {
-                    store.removeStock(store.stockBin(SqlRows.str(t, "fromBinId"), locationId), productId, variant, batch,
-                            qty);
+                    // Hardening R5a: the bin must still hold this move's quantity after what the other open pick /
+                    // move tasks from the bin will take (this task's own quantity is part of reservedInBin).
+                    String fromBin = SqlRows.str(t, "fromBinId");
+                    BigDecimal held = jdbc.sql("SELECT coalesce(sum(quantity), 0) FROM \"WarehouseBinStock\""
+                            + " WHERE \"binId\" = ? AND \"organizationId\" = ? AND \"productId\" = ?"
+                            + " AND \"variantKey\" = ? AND \"batchKey\" = ?")
+                            .params(fromBin, org(), productId, variant, batch).query(BigDecimal.class).single();
+                    BigDecimal others = store.reservedInBin(fromBin, productId, variant, batch).subtract(taskQty);
+                    if (held.subtract(others).compareTo(qty) < 0) {
+                        throw ApiException.badRequest("Not enough stock in bin " + store.bin(fromBin).get("code")
+                                + " for " + store.productName(productId) + "; open picks hold part of it");
+                    }
+                    store.removeStock(store.stockBin(fromBin, locationId), productId, variant, batch, qty);
                     store.addStock(store.stockBin(target, locationId), productId, variant, batch, qty);
                 }
                 case "pick" -> {
@@ -368,7 +381,7 @@ public class WarehouseTaskService {
     @Transactional
     public Map<String, Object> cancel(String id) {
         Map<String, Object> t = lockTask(id);
-        store.operable(SqlRows.str(t, "locationId"));
+        store.finishable(SqlRows.str(t, "locationId"));
         if (!"open".equals(t.get("status"))) {
             throw ApiException.badRequest("Task is already " + t.get("status"));
         }

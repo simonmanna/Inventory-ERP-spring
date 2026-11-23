@@ -215,8 +215,11 @@ public class SalesAtpService {
         boolean open = SalesOrderService.OPEN.contains(o.get("status"));
         BigDecimal reservedTotal = BigDecimal.ZERO;
         BigDecimal shortTotal = BigDecimal.ZERO;
-        for (Map<String, Object> l : db.rows("SELECT l.*, p.\"trackInventory\" FROM \"SalesOrderLine\" l LEFT JOIN"
-                + " \"Product\" p ON p.id = l.\"productId\" WHERE l.\"orderId\" = ? ORDER BY l.\"sortOrder\"", orderId)) {
+        // Hardening R5b (P2-1): lines in the engine's lock order (product, variant), so two orders reserving the same
+        // items lock their cells in the same sequence.
+        for (Map<String, Object> l : com.inventoryerp.inventory.application.StockMove.inLockOrder(db.rows("SELECT l.*,"
+                + " p.\"trackInventory\" FROM \"SalesOrderLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\""
+                + " WHERE l.\"orderId\" = ? ORDER BY l.\"sortOrder\"", orderId))) {
             if (!open || l.get("productId") == null || !Boolean.TRUE.equals(l.get("trackInventory"))) {
                 releaseLine(str(l.get("id")));
                 continue;
@@ -247,8 +250,8 @@ public class SalesAtpService {
         BigDecimal reservable = BigDecimal.ZERO;
         if (location != null && desired.signum() > 0) {
             // lock the stock cell, then measure what is free (other sources' active reservations) inside the lock
-            db.rows("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
-                    + " AND \"locationId\" = ? FOR UPDATE", org(), productId, variantKey, location);
+            // Hardening R5b (P2-1): the engine's lock order (costing, quant advisory, then the row).
+            reservations.lockCell(productId, variantId, location);
             Map<String, Object> cell = db.row("""
                     SELECT COALESCE((SELECT sum(quantity) FROM "StockItem" WHERE "organizationId" = ? AND "productId" = ?
                                AND "locationId" = ? AND (? = '' OR "variantKey" = ?)), 0) AS onhand,

@@ -415,7 +415,7 @@ public class ProcessCostingService {
                 throw ApiException.badRequest("Process " + code + " is the last process: set its output product and"
                         + " output location before closing");
             }
-            BigDecimal std = standards.activeStandard(productId).orElse(null);
+            BigDecimal std = standards.governingStandard(productId).orElse(null);
             BigDecimal unit = std != null ? std : r.unitCost();
             BigDecimal value = std != null ? std.multiply(unitsCompleted).setScale(6, RoundingMode.HALF_UP) : completed;
             stock.receive(StockMove.of(productId, locationId, unitsCompleted).unitCost(unit)

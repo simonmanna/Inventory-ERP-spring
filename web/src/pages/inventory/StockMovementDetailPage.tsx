@@ -18,8 +18,9 @@ interface LedgerLine {
   qtyBefore: number;
   quantityChange: number;
   balanceAfter: number;
-  unitCost: number;
-  totalValue: number;
+  /** Null without `inventory_valuation:read` (hardening R5b): formatMoney shows a dash. */
+  unitCost: number | null;
+  totalValue: number | null;
   referenceType: string | null;
   referenceId: string | null;
   notes: string | null;
@@ -34,7 +35,7 @@ interface LedgerLine {
 interface LedgerDetail {
   entry: LedgerLine;
   lines: LedgerLine[];
-  totals: { lines: number; quantityIn: number; quantityOut: number; totalValue: number };
+  totals: { lines: number; quantityIn: number; quantityOut: number; totalValue: number | null };
   source: LedgerSourceRef | null;
 }
 

@@ -40,7 +40,8 @@ public class AnalyticDimensionService {
 
     /** The cost centre, addressed as a dimension in rules and reports. */
     public static final String COST_CENTER = "costCenter";
-    private static final Set<String> RESERVED = Set.of(COST_CENTER, CostCenterRulesService.SPLIT_DIMENSION);
+    private static final Set<String> RESERVED = Set.of(COST_CENTER, CostCenterRulesService.SPLIT_DIMENSION,
+            InventoryValuationService.PRODUCT_DIMENSION, InventoryValuationService.LOCATION_DIMENSION);
     private static final Pattern CODE = Pattern.compile("^[A-Za-z][A-Za-z0-9_]{0,39}$");
     /** The closing journal moves whole P&amp;L balances; dimension requirements do not apply to it. */
     private static final Set<String> EXEMPT_SOURCES = Set.of("period_close", "fiscal_year_close");

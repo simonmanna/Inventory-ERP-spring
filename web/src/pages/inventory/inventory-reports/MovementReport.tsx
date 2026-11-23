@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { dateTime } from '@/lib/format';
-import { DataTable, Kpi, KpiGrid, moveTypeLabel, ReportState, money, qty, type Column } from './shared';
+import { DataTable, Kpi, KpiGrid, moveTypeLabel, ReportState, cost, money, qty, type Column } from './shared';
 import { FilterBar, type useReportFilters } from './filters';
 import { tx } from '@/lib/i18n/tx';
 
@@ -19,10 +19,11 @@ interface MovementRow {
   qtyOut: number;
   netQty: number;
   closingQty: number;
-  valueIn: number;
-  valueOut: number;
-  avgCost: number;
-  closingValue: number;
+  /** Null without `inventory_valuation:read` (hardening R5b): shown as a dash. */
+  valueIn: number | null;
+  valueOut: number | null;
+  avgCost: number | null;
+  closingValue: number | null;
   movements: number;
   byGroup: Record<string, number>;
   minQuantity: number | null;
@@ -34,7 +35,8 @@ interface MovementResponse {
   data: MovementRow[];
   totals: {
     items: number; openingQty: number; qtyIn: number; qtyOut: number; netQty: number;
-    closingQty: number; valueIn: number; valueOut: number; closingValue: number; movements: number; driftItems: number;
+    closingQty: number; valueIn: number | null; valueOut: number | null; closingValue: number | null; movements: number;
+    driftItems: number;
   };
   meta: { start: string | null; end: string | null };
 }
@@ -169,10 +171,11 @@ export function MovementReport({ ctl }: { ctl: ReturnType<typeof useReportFilter
     },
     { key: 'currentOnHand', header: tx('On Hand (cached)'), align: 'right', render: (r) => qty(r.currentOnHand), sort: (r) => r.currentOnHand, hidden: true },
     { key: 'ledgerDrift', header: tx('Ledger Drift'), align: 'right', render: (r) => qty(r.ledgerDrift), sort: (r) => r.ledgerDrift, hidden: true },
-    { key: 'valueIn', header: tx('Value In'), align: 'right', render: (r) => money(r.valueIn), sort: (r) => r.valueIn, footer: money(t?.valueIn) },
-    { key: 'valueOut', header: tx('Value Out'), align: 'right', render: (r) => money(r.valueOut), sort: (r) => r.valueOut, footer: money(t?.valueOut) },
-    { key: 'avgCost', header: tx('Avg Cost'), align: 'right', render: (r) => money(r.avgCost), sort: (r) => r.avgCost },
-    { key: 'closingValue', header: tx('Closing Value'), align: 'right', render: (r) => <span className="font-semibold">{money(r.closingValue)}</span>, sort: (r) => r.closingValue, footer: money(t?.closingValue) },
+    { key: 'valueIn', header: tx('Value In'), align: 'right', render: (r) => cost(r.valueIn), sort: (r) => r.valueIn ?? 0, footer: cost(t ? t.valueIn : 0) },
+    { key: 'valueOut', header: tx('Value Out'), align: 'right', render: (r) => cost(r.valueOut), sort: (r) => r.valueOut ?? 0, footer: cost(t ? t.valueOut : 0) },
+    { key: 'avgCost', header: tx('Avg Cost'), align: 'right', render: (r) => cost(r.avgCost), sort: (r) => r.avgCost ?? 0 },
+    { key: 'closingValue', header: tx('Closing Value'), align: 'right', render: (r) => <span className="font-semibold">{cost(r.closingValue)}</span>, sort: (r) => r.closingValue ?? 0,
+      footer: cost(t ? t.closingValue : 0) },
     { key: 'movements', header: tx('Moves'), align: 'right', render: (r) => r.movements, sort: (r) => r.movements, footer: t?.movements },
   ];
 
@@ -220,10 +223,10 @@ export function MovementReport({ ctl }: { ctl: ReturnType<typeof useReportFilter
           {t && (
             <KpiGrid>
               <Kpi label={tx('Items')} value={t.items.toLocaleString()} hint={periodLabel} />
-              <Kpi label={tx('Value received (in)')} value={money(t.valueIn)} tone="good" hint={`${qty(t.qtyIn)} units`} />
-              <Kpi label={tx('Value issued (out)')} value={money(t.valueOut)} tone="bad" hint={`${qty(t.qtyOut)} units`} />
+              <Kpi label={tx('Value received (in)')} value={cost(t.valueIn)} tone="good" hint={`${qty(t.qtyIn)} units`} />
+              <Kpi label={tx('Value issued (out)')} value={cost(t.valueOut)} tone="bad" hint={`${qty(t.qtyOut)} units`} />
               <Kpi label={tx('Net quantity')} value={qty(t.netQty)} tone={t.netQty < 0 ? 'bad' : t.netQty > 0 ? 'good' : undefined} />
-              <Kpi label={tx('Closing stock value')} value={money(t.closingValue)} hint={tx('Closing qty × current avg cost')} />
+              <Kpi label={tx('Closing stock value')} value={cost(t.closingValue)} hint={tx('Closing qty × current avg cost')} />
               <Kpi
                 label={tx('Ledger movements')}
                 value={t.movements.toLocaleString()}
