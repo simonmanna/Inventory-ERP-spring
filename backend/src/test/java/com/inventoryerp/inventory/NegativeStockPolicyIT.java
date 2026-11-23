@@ -297,4 +297,25 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         assertThat(onHand(p, alt)).isEqualByComparingTo("4");
         assertThat(quantInvariantBreaks()).isEmpty();
     }
+
+    @Test
+    @DisplayName("(e) a receipt into negative stock at a new cost: the cost correction is a value-only ledger row, so"
+            + " valuation, sub-ledger and GL stay equal")
+    void receiptIntoNegativeStockCorrectionIsLedgered() {
+        String p = product("NEG-COST");
+        issue(p, main, 3, null); // sold short at the zero average (no value, no GL)
+        assertThat(onHand(p, main)).isEqualByComparingTo("-3");
+        receive(p, 1, 100); // one unit at 100: the three short units are re-costed at 100 (Dr COGS 300 / Cr stock)
+        assertThat(onHand(p, main)).isEqualByComparingTo("-2");
+
+        Map<String, Object> row = jdbc.sql("SELECT \"quantityChange\", \"totalValue\", \"qtyBefore\", \"balanceAfter\""
+                + " FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND type = 'cost_adjustment'")
+                .params(org, p).query().singleRow();
+        assertThat((BigDecimal) row.get("quantityChange")).isEqualByComparingTo("0");
+        assertThat((BigDecimal) row.get("totalValue")).isEqualByComparingTo("-300");
+        assertThat((BigDecimal) row.get("qtyBefore")).isEqualByComparingTo("-2");
+        assertThat((BigDecimal) row.get("balanceAfter")).isEqualByComparingTo("-2");
+        assertThat(ledgerSum(p, main)).isEqualByComparingTo("-2");
+        assertIntegrityGreen("receipt into negative stock at a new cost");
+    }
 }

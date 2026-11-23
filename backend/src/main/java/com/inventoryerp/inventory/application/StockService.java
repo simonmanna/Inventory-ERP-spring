@@ -463,7 +463,7 @@ public class StockService {
         }
         // Every receipt into a negative quant squares the value of the units issued short (not only purchase receipts):
         // production output, returns, reversals, quality moves and adjustments-in all leave stock and GL apart otherwise.
-        postCostCorrection(org, dto.productId, productName, correction,
+        postCostCorrection(org, dto.productId, variantId, dto.locationId, currentQty, productName, correction,
                 glCtx != null && glCtx.date() != null ? glCtx.date() : dto.date != null ? dto.date : Instant.now(),
                 glCtx != null && glCtx.sourceType() != null ? glCtx.sourceType()
                         : dto.sourceType != null ? dto.sourceType : "stock_receipt",
@@ -1382,7 +1382,8 @@ public class StockService {
                     dto.sourceId != null ? dto.sourceId : ledgerCode,
                     "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(qty));
         }
-        postCostCorrection(org, dto.productId, str(product, "name"), serialAvg != null ? serialAvg.correction()
+        postCostCorrection(org, dto.productId, variantId, dto.toLocationId, newToQty, str(product, "name"),
+                serialAvg != null ? serialAvg.correction()
                         : batchTracking ? layerCorrection
                         : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
                 dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode);
@@ -1623,9 +1624,14 @@ public class StockService {
     /**
      * Post the value difference of units received into a negative quant (Dr COGS / Cr stock when the receipt costs
      * more than they were issued at). One entry per stock move: the posting key is the ledger code.
+     *
+     * <p>The correction changes the quant's value without moving quantity, so it is also recorded as a value-only
+     * {@code cost_adjustment} ledger row (as the AVCO residue sweep is): Σ ledger value then stays equal to the
+     * valuation and to the stock-account GL. Reversals skip zero-quantity rows and do not mirror the journal.
      */
-    private void postCostCorrection(String org, String productId, String productName, BigDecimal amount, Instant date,
-            String sourceType, String sourceId, String ledgerCode) {
+    private void postCostCorrection(String org, String productId, String variantId, String locationId,
+            BigDecimal balance, String productName, BigDecimal amount, Instant date, String sourceType, String sourceId,
+            String ledgerCode) {
         if (amount == null) {
             return;
         }
@@ -1633,6 +1639,9 @@ public class StockService {
         if (rounded.signum() == 0) {
             return;
         }
+        insertLedger(org, seq.next("stock_move", "STK/", 6), productId, variantId, locationId, null, null,
+                "cost_adjustment", balance, Money.ZERO, balance, Money.ZERO, rounded.negate(), sourceType,
+                sourceId, "Negative-stock cost correction (" + ledgerCode + ")", null, null, null);
         stockPosting.postNegativeStockCostCorrection(productId, rounded, date, sourceType, sourceId,
                 "Negative-stock cost correction · " + productName, COST_CORRECTION_KEY + org + ":" + ledgerCode);
     }

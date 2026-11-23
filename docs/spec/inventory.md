@@ -439,6 +439,11 @@ P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same
     `GET /inventory/reports/item-movements` answers `valueIn`, `valueOut`, `valueAdjusted`, `avgCost`, `closingValue`
     and the same totals as `null`; `GET /inventory/reports/movements` answers `netValue` and `byType.*.value` as
     `null`. Quantities stay. The movement report, ledger and movement-detail screens show a dash.
+54. **Negative-stock cost corrections are ledgered (post-merge fix 2026-11-23).** A receipt or transfer-in into a
+    negative AVCO quant at a different cost still posts the correction journal (Dr COGS / Cr stock or the reverse);
+    it now also writes a value-only `cost_adjustment` ledger row (quantity 0, value = −correction, balance = the quant
+    balance) with the same reference, as the AVCO residue sweep does, so Σ ledger value = valuation = GL. Reversals
+    skip zero-quantity rows and keep not mirroring the journal.
 
 ### Negative stock policy (as built; R5a evidence for gate G3)
 

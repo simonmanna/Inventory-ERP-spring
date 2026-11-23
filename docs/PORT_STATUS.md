@@ -2034,6 +2034,10 @@ Not verified yet: the tours driven by hand in a browser.
 
 ## Inventory hardening R5b (engine hardening, gates G3 / G4; owner-approved 2026-11-23)
 
+- [x] Post-merge fix: negative-stock cost corrections write a value-only `cost_adjustment` ledger row (spec deviation
+  54, `NegativeStockPolicyIT` (e)); DEMO `SRV-001` repaired once by the owner-approved backfill script in
+  `docs/audits/`.
+
 - [x] Engine lock order (count submit, reservations, landed cost, reversals), approval gates before locks, transfer and
   production reversals pin their own lots / serials, count lots by id, serial insert race → 400, serial / STANDARD
   transfer values, AVCO residue sweep at zero, rental variant + serial, ledger detail audit fields, cost fields behind

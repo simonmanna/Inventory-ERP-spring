@@ -73,6 +73,17 @@ KernelUnitTest 8; `ModularityTests` 2 and `ArchitectureTests` 5 (`test` task, af
 - Lots, serials and values: deviations 46–50. Rental: 51. Ledger detail and cost gating: 52–53.
 - No migration (V616 unused).
 
+## Post-merge fix (2026-11-23): negative-stock cost corrections in the ledger
+
+Found while rehearsing the deploy on a copy of live: the integrity report flagged DEMO `SRV-001` in
+`valuation_vs_subledger`. A receipt into a negative AVCO quant at a new cost posts the negative-stock cost correction
+journal, but wrote no ledger row, so Σ ledger value drifted from the valuation and the GL (which agreed). Every such
+receipt would have raised `integrity_valuation_vs_subledger` and blocked period close. Fixed in the engine
+([spec deviation 54](../spec/inventory.md#deviations)); `NegativeStockPolicyIT` (e) proves it (fails without the fix).
+The one historical case on live (`SRV-001`, the only cost-correction journal in any organisation) was repaired with
+the owner's approval by `2026-11-23-srv001-cost-correction-backfill.sql` (rehearsed on a restored copy); the product,
+a service that should not count stock, was then zeroed by a stock-in at cost 0 and set to not track inventory.
+
 ## R0 notes and deviations from the plan
 
 - **Serials vs quantity.** The default serial policy (`capture_optional`) allows quantity-only movements, so a quant may
