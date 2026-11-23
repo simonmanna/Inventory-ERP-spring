@@ -263,6 +263,49 @@ Approved by the owner 2026-11-23 (inventory hardening R1, corruption blockers, r
 - **A credit note refuses to restock without an issue to return against** (see invoicing.md).
 - **Offline refund / void drains or holds; offline receipt applies exactly once** (see sync.md).
 
+Approved by the owner 2026-11-23 (inventory hardening R3, financial integrity, release gate G2):
+
+- **A STANDARD product without an active standard cost is governed by its cost price.** Issues and the valuation
+  already used `costPrice`; receipts now enter stock (quant, lot, serial, ledger row) at it too, and a valued receipt
+  (goods receipt, bill, direct stock-in) posts Dr stock at the cost price, Cr GRNI at actual, the difference to purchase
+  price variance (5905) through `StandardCostService.postReceipt`, recorded in the variance register. A cost price of 0
+  is a valid standard (everything to PPV). With neither a standard nor a cost price, a valued receipt is refused with
+  400 `Set a cost price or an active standard cost for STANDARD product <name> before receiving it`; unvalued internal
+  receipts (transfers, returns) keep the old behaviour. Production output (single-leg, stage and process costing) uses
+  the same governing standard (`StandardCostService.governingStandard`).
+- **STANDARD returns enter at the standard; the difference goes to PPV.** `receiveReturn` and `returnFromSource`
+  (also with `postRestockGl=false`, where the caller reverses the original cost) bring the unit back at the governing
+  standard and post `original cost − standard` against the stock account (positive: Dr PPV / Cr stock; negative: Dr
+  stock / Cr PPV), so the stock account ends at the standard while COGS is reversed at the original issue cost. The
+  difference is recorded in the variance register (kind `purchase_price`, the return's source). `reverseLedgerSource`
+  is unchanged: it already squares a value difference as a stock adjustment.
+- **Serial tracking and STANDARD costing are exclusive.** Refused with 400: creating or updating a product to
+  STANDARD + serial (`Serial-tracked products cannot use STANDARD costing: each unit keeps its own cost (use SPECIFIC,
+  AVCO or FIFO)`; turning serial tracking — or SERIAL picking — on for a STANDARD product: `A STANDARD-costed product
+  cannot become serial-tracked: ...`), activating a standard cost for a serial-tracked product, and a STANDARD cost price
+  change (revaluation) of a serial-tracked product. A legacy product that already has both is left as it is (an
+  unrelated edit still saves) and is listed by block (i) of `docs/audits/2026-11-22-inventory-data-checks.sql`.
+- **Stock journal lines carry their product.** Every journal line on an inventory control account posted by the stock
+  engine (`StockPostingService`: issues, receipts, return restocks, adjustments, transfers, production, cost
+  corrections, landed cost — one voucher line per product now), standard costing (receipt PPV entry, revaluations,
+  return variance), revaluation / NRV, cost-policy rounding (one line per product now), material ledger, quality
+  downgrade (gross lines per product when two products are involved), project / fleet / quarry issues and
+  `reverseLedgerSource` (which keeps the original line's keys, or stamps the reversed product) carries
+  `dimensions.inventoryProductId` (and `inventoryLocationId` when the posting has one location). Both keys are reserved:
+  they cannot be analytic dimension codes, so dimension validation and reports ignore them.
+- **Per-product GL check and its cutover.** The integrity report gains `valuation_vs_gl_by_product` (a value check: the
+  monitor raises `integrity_valuation_vs_gl_by_product` and it holds the period close; not raised while
+  `inventory.glTieOut.enabled` is off). Per product: Σ (debit − credit) of the stock-account lines carrying the product
+  = Σ signed ledger value of the rows recorded since the cutover, tolerance 0.01; rows show costing method, quantity,
+  sub-ledger value, GL value and difference. The cutover is the setting `inventory.productGlCutoverAt` written by V613
+  (data only) for every organisation that existed at deploy; an organisation created later has no marker, so its whole
+  history counts. History before the cutover is reconciled by source document through the existing tie-out. A line
+  without the key is attributed through its source document when all ledger rows of that document are one product;
+  what is left is one `unattributed` failing row (a posting path that does not stamp: supplier claims, debit notes,
+  lineage-exception and branch-transfer clearing entries are known ones). The CM-1 adjunct accounts (price differences
+  1396, NRV allowance 1397) and their value-only components stay with the organisation-level tie-out, and so does a
+  branch split (revaluations and landed cost post per product, not per location). Test `StandardCostingIntegrityIT`.
+
 Same as Nest, kept on purpose:
 
 - Prisma tenancy emulation: explicit `organizationId` + `deletedAt IS NULL` on soft-delete models; relation

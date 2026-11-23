@@ -2025,3 +2025,7 @@ Not verified yet: the tours driven by hand in a browser.
 ## Inventory hardening R1 (corruption blockers, gate G1; owner-approved 2026-11-23)
 
 - [x] Returns restore lot / expiry / serial / location / cost via `returnFromSource`; `InventoryLedger.reversesLedgerId` (V611); rental fee lines never move stock; credit note refuses without issue rows; offline refund drains or holds; offline receipt exactly once (`InventoryReturnsIdentityIT`, `SyncInventoryRecoveryIT`)
+
+## Inventory hardening R3 (financial integrity, gate G2; owner-approved 2026-11-23)
+
+- [x] STANDARD without a standard receives at `costPrice` with PPV; STANDARD returns at the standard with PPV (COGS at original cost); serial + STANDARD refused; product key on stock journal lines and the `valuation_vs_gl_by_product` integrity check from the V613 cutover (`StandardCostingIntegrityIT`, `InventoryIntegrityIT`)

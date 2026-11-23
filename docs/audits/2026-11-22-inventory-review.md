@@ -20,20 +20,20 @@ batch order from the plan's batch sections; map them back to the review text bef
 | R0-a | No automated reconciliation: ledger vs quant vs lots vs serials, valuation vs stock ledger vs GL, transit, reservations, offline queue | R0 | done | `InventoryIntegrityIT` |
 | R0-b | No daily monitor raising integrity findings; value findings do not hold the period close | R0 | done | `InventoryIntegrityIT`, `PeriodCloseChecklistIT` |
 | R0-c | No read-only assessment of historical data before repairs | R0 | done (queries written and validated on a test DB; not run on live data) | `docs/audits/2026-11-22-inventory-data-checks.sql` |
-| P0-1 | Rental fee lines (RENT / LATE / DAMAGE / EXTEND) issue stock on the POS invoice; a missing fee product falls back to the rented product | R1 | open | — |
-| P1-1 | Returns and reversals (cash-sale void, invoice cancel, credit-note restock, sales return, production `returnMaterials`, debit-note reversal) rebuild lot, expiry and serial identity from the product's current config: new auto-numbered lots, serials left `issued` | R1 | open | — |
-| P1-2 | Credit note on a cash-sale or fleet invoice finds no issue rows and falls back to a default location and today's cost | R1 | open | — |
-| P1-3 | Offline refund / void runs before the invoice's pending stock jobs are drained | R1 | open | — |
+| P0-1 | Rental fee lines (RENT / LATE / DAMAGE / EXTEND) issue stock on the POS invoice; a missing fee product falls back to the rented product | R1 | fixed (R1) | `RentalIT` |
+| P1-1 | Returns and reversals (cash-sale void, invoice cancel, credit-note restock, sales return, production `returnMaterials`, debit-note reversal) rebuild lot, expiry and serial identity from the product's current config: new auto-numbered lots, serials left `issued` | R1 | fixed (R1) | `InventoryReturnsIdentityIT`, `CashSaleIT` |
+| P1-2 | Credit note on a cash-sale or fleet invoice finds no issue rows and falls back to a default location and today's cost | R1 | fixed (R1) | `InventoryReturnsIdentityIT` |
+| P1-3 | Offline refund / void runs before the invoice's pending stock jobs are drained | R1 | fixed (R1) | `SyncInventoryRecoveryIT` |
 | P1-4 | Stock reversal does not re-check the user's branch scope inside the moving transaction | R2 | open | — |
-| P1-5 | Transfer approve / dispatch / recall / cancel / receive do not re-check source or destination scope after the transfer lock | R2 | open | — |
-| P1-6 | Reservations: reserve, release, consume, list and overview not scope-checked or filtered; list unbounded | R2 | open | — |
-| P1-7 | Locations can be removed, deactivated, retyped or moved to another branch while they hold stock or live documents; manufacturing and rental insert locations directly | R2 | open | — |
-| P1-8 | STANDARD receipt with no active standard enters at actual cost without PPV | R3 | open | — |
-| P1-9 | STANDARD returns not received at the standard; serial-tracked products accepted as STANDARD | R3 | open | — |
-| P1-10 | Stock journals carry no product dimension: no product-level GL reconciliation | R3 | open | — |
+| P1-5 | Transfer approve / dispatch / recall / cancel / receive do not re-check source or destination scope after the transfer lock | R2 | fixed on fix/inventory-r2 (separate branch) | see that branch |
+| P1-6 | Reservations: reserve, release, consume, list and overview not scope-checked or filtered; list unbounded | R2 | fixed on fix/inventory-r2 (separate branch) | see that branch |
+| P1-7 | Locations can be removed, deactivated, retyped or moved to another branch while they hold stock or live documents; manufacturing and rental insert locations directly | R2 | fixed on fix/inventory-r2 (separate branch) | see that branch |
+| P1-8 | STANDARD receipt with no active standard enters at actual cost without PPV | R3 | fixed (R3) | `StandardCostingIntegrityIT` |
+| P1-9 | STANDARD returns not received at the standard; serial-tracked products accepted as STANDARD | R3 | fixed (R3) | `StandardCostingIntegrityIT` |
+| P1-10 | Stock journals carry no product dimension: no product-level GL reconciliation | R3 | fixed (R3; per-product GL from the V613 cutover) | `StandardCostingIntegrityIT`, `InventoryIntegrityIT` |
 | P1-11 | Order-level stock timings (`at_confirmation`, `at_fulfillment_complete`) can double-post when the timing changes | R4 | open | — |
 | P1-12 | Order cancel does not reverse a posted `pos_order` issue (or partial / returned states) | R4 | open | — |
-| P1-13 | Offline transfer receipt waiting for its dispatch is not crash-safe and can be applied twice | R1 | open | — |
+| P1-13 | Offline transfer receipt waiting for its dispatch is not crash-safe and can be applied twice | R1 | fixed (R1) | `SyncInventoryRecoveryIT` |
 | P2-1 | Lock order: count submit, reservations per-quant lock, `createWave` id order, approval gates before locks | R5 | open | — |
 | P2-2 | Transfer reversals do not pin ledger lots; count lines by lot number; serial insert without conflict check; production reversal does not issue the produced lot | R5 | open | — |
 | P2-3 | Transfer ledger values ignore serial / standard cost; AVCO residue not swept at zero; landed cost without `CostingLocks.shareProduct` | R5 | open | — |
