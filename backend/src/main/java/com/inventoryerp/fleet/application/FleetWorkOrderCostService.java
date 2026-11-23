@@ -137,7 +137,7 @@ public class FleetWorkOrderCostService {
         String entry = null;
         if (value.signum() > 0) {
             entry = post("INV", w, label, key, value, maintenanceExpenseAccount(),
-                    stockPosting.stockAccount(in.productId(), value), true, at);
+                    stockPosting.stockAccount(in.productId(), value), true, at, in.productId());
         }
         Map<String, Object> data = base(w, lineId, "part", trim(in.description()) == null ? label : in.description());
         data.put("productId", in.productId());
@@ -179,7 +179,7 @@ public class FleetWorkOrderCostService {
         String entry = null;
         if (value.signum() > 0) {
             entry = post("INV", w, label, key, value, stockPosting.stockAccount(productId, value),
-                    maintenanceExpenseAccount(), false);
+                    maintenanceExpenseAccount(), false, Instant.now(), productId);
         }
         db.update(FleetWorkOrderLine.class, lineId, Obj.of("returnedQuantity",
                 SqlRows.dec(part, "returnedQuantity").add(in.quantity())));
@@ -363,14 +363,22 @@ public class FleetWorkOrderCostService {
 
     private String post(String journal, Map<String, Object> w, String label, String key, BigDecimal amount,
             String debit, String credit, boolean debitIsExpense, Instant at) {
+        return post(journal, w, label, key, amount, debit, credit, debitIsExpense, at, null);
+    }
+
+    /** As above; {@code stockProductId} (R3) is stamped on the stock-account side (the product it moves). */
+    private String post(String journal, Map<String, Object> w, String label, String key, BigDecimal amount,
+            String debit, String credit, boolean debitIsExpense, Instant at, String stockProductId) {
         String cc = (String) w.get("costCenterId");
         Map<String, Object> dims = new LinkedHashMap<>();
         dims.put("vehicleId", w.get("vehicleId"));
         dims.put("workOrderId", w.get("id"));
         String v = JsNumbers.dec(amount);
         List<Line> lines = new ArrayList<>();
-        lines.add(new Line(debit, v, null, null, label, null, debitIsExpense ? cc : null, dims));
-        lines.add(new Line(credit, null, v, null, label, null, debitIsExpense ? null : cc, dims));
+        Line dr = new Line(debit, v, null, null, label, null, debitIsExpense ? cc : null, dims);
+        Line cr = new Line(credit, null, v, null, label, null, debitIsExpense ? null : cc, dims);
+        lines.add(debitIsExpense ? dr : StockPostingService.stampLine(dr, stockProductId, null));
+        lines.add(debitIsExpense ? StockPostingService.stampLine(cr, stockProductId, null) : cr);
         Map<String, Object> je = posting.post(new PostingRequest(journal, at, label, null, null, SOURCE,
                 (String) w.get("id"), null, key, (String) w.get("branchId"), null, dims, lines));
         return (String) je.get("id");

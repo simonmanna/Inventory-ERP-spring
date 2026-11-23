@@ -189,13 +189,34 @@ public class StockService {
         m.traceFactor = t.factor();
         Received res = receiveCore(m, null);
         BigDecimal totalValue = unitCost.multiply(baseQty);
+        String sourceType = dto.sourceType != null ? dto.sourceType : "return_restock";
+        String sourceId = dto.sourceId != null ? dto.sourceId : dto.reference != null ? dto.reference : dto.productId;
         if (totalValue.signum() > 0) {
-            stockPosting.postReturnRestock(dto.productId, totalValue, date,
-                    dto.sourceType != null ? dto.sourceType : "return_restock",
-                    dto.sourceId != null ? dto.sourceId : dto.reference != null ? dto.reference : dto.productId,
+            stockPosting.postReturnRestock(dto.productId, totalValue, date, sourceType, sourceId,
                     "Return restock · " + JsNumbers.dec(dto.quantity));
         }
+        postStandardReturnVariance(dto.productId, baseQty, totalValue, res,
+                stockPosting.returnStockAccount(dto.productId, totalValue), date, sourceType, sourceId);
         return res;
+    }
+
+    /**
+     * Hardening R3 (P1-9): a STANDARD product comes back at its governing standard (quant, lot, ledger row), while the
+     * GL restock — the caller's or {@link #receiveReturn}'s — reverses the original issue cost ({@code originalValue}).
+     * The difference goes to purchase price variance against {@code stockAccountId} (see
+     * {@link StandardCostService#postReturnVariance}), so the stock account ends at the standard and the COGS reversal
+     * stays at the original cost. Nothing for other costing methods (they come back at the original cost).
+     */
+    void postStandardReturnVariance(String productId, BigDecimal quantity, BigDecimal originalValue, Received res,
+            String stockAccountId, Instant date, String sourceType, String sourceId) {
+        StandardCostService std = standards.getIfAvailable();
+        Map<String, Object> product = lookups.product(productId);
+        if (std == null || product == null || !"STANDARD".equals(str(product, "costingMethod"))) {
+            return;
+        }
+        std.postReturnVariance(productId, stockAccountId, quantity, originalValue, res.totalValue(),
+                date != null ? date : Instant.now(), sourceType, sourceId,
+                "Return at standard · " + str(product, "name") + " · " + JsNumbers.dec(quantity));
     }
 
     /** Base units of a returned {@code quantity} in {@code uomId} (snapshot {@code uomFactor} first). */
@@ -284,9 +305,16 @@ public class StockService {
                 dto.unitCost != null ? dto.unitCost : Money.ZERO);
         BigDecimal qty = base[0];
         BigDecimal actualUnitCost = base[1];
-        // ADR-S008: a standard-governed product enters stock at its standard; the difference is PPV (below).
+        // ADR-S008: a standard-governed product enters stock at its standard; the difference is PPV (below). Hardening
+        // R3 (P1-8): a STANDARD product without an active standard cost is governed by its cost price (what issues and
+        // the valuation use), so it enters at that price too; with neither, a valued receipt is refused.
         StandardCostService std = "STANDARD".equals(costing) ? standards.getIfAvailable() : null;
-        BigDecimal standardUnit = std == null ? null : std.activeStandard(dto.productId).orElse(null);
+        BigDecimal standardUnit = std == null ? null
+                : std.activeStandard(dto.productId).orElse((BigDecimal) product.get("costPrice"));
+        if (std != null && standardUnit == null && glCtx != null) {
+            throw ApiException.badRequest("Set a cost price or an active standard cost for STANDARD product "
+                    + productName + " before receiving it");
+        }
         BigDecimal unitCost = standardUnit != null ? standardUnit : actualUnitCost;
         List<String> serials = dto.serialNumbers == null ? List.of() : dto.serialNumbers;
         if (bool(product, "serialTracking")) {

@@ -247,25 +247,47 @@ public class QualityDecisionService {
         }
         String fromAccount = stockPosting.stockAccount(fromProduct, carried);
         String toAccount = stockPosting.stockAccount(toProduct, newValue.signum() > 0 ? newValue : carried);
-        if (fromAccount.equals(toAccount) && writeDown.signum() <= 0) {
+        boolean sameProduct = fromProduct.equals(toProduct);
+        if (fromAccount.equals(toAccount) && writeDown.signum() <= 0 && sameProduct) {
             return null;
         }
         String label = "Quality downgrade " + code;
-        Map<String, BigDecimal> net = new LinkedHashMap<>();
-        net.merge(toAccount, newValue, BigDecimal::add);
-        if (writeDown.signum() > 0) {
-            net.merge(accounts.mapped("stock_adjustment_expense"), writeDown, BigDecimal::add);
-        }
-        net.merge(fromAccount, carried.negate(), BigDecimal::add);
         List<Line> lines = new ArrayList<>();
-        net.forEach((account, amount) -> {
-            BigDecimal a = amount.setScale(2, RoundingMode.HALF_UP);
-            if (a.signum() > 0) {
-                lines.add(Line.debit(account, JsNumbers.dec(a), label));
-            } else if (a.signum() < 0) {
-                lines.add(Line.credit(account, JsNumbers.dec(a.negate()), label));
+        if (sameProduct) {
+            Map<String, BigDecimal> net = new LinkedHashMap<>();
+            net.merge(toAccount, newValue, BigDecimal::add);
+            if (writeDown.signum() > 0) {
+                net.merge(accounts.mapped("stock_adjustment_expense"), writeDown, BigDecimal::add);
             }
-        });
+            net.merge(fromAccount, carried.negate(), BigDecimal::add);
+            net.forEach((account, amount) -> {
+                BigDecimal a = amount.setScale(2, RoundingMode.HALF_UP);
+                if (a.signum() > 0) {
+                    lines.add(StockPostingService.stampLine(Line.debit(account, JsNumbers.dec(a), label),
+                            account.equals(toAccount) ? toProduct : null, null));
+                } else if (a.signum() < 0) {
+                    lines.add(StockPostingService.stampLine(Line.credit(account, JsNumbers.dec(a.negate()), label),
+                            account.equals(fromAccount) ? fromProduct : null, null));
+                }
+            });
+        } else {
+            // Hardening R3: gross lines per product (stamped), so each product's stock-account value follows its
+            // ledger — also when both products post to one account.
+            BigDecimal in = newValue.setScale(2, RoundingMode.HALF_UP);
+            BigDecimal loss = writeDown.setScale(2, RoundingMode.HALF_UP);
+            if (in.signum() > 0) {
+                lines.add(StockPostingService.stampLine(Line.debit(toAccount, JsNumbers.dec(in), label), toProduct,
+                        null));
+            }
+            if (loss.signum() > 0) {
+                lines.add(Line.debit(accounts.mapped("stock_adjustment_expense"), JsNumbers.dec(loss), label));
+            }
+            BigDecimal out = in.add(loss);
+            if (out.signum() > 0) {
+                lines.add(StockPostingService.stampLine(Line.credit(fromAccount, JsNumbers.dec(out), label),
+                        fromProduct, null));
+            }
+        }
         if (lines.isEmpty()) {
             return null;
         }

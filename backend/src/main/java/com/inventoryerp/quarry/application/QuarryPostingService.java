@@ -89,8 +89,9 @@ public class QuarryPostingService {
         Map<String, Object> dims = Obj.of("quarrySiteId", site.get("id"), "extractionLogId", id);
         List<Line> lines = new ArrayList<>();
         if (r.capitalised().signum() > 0) {
-            lines.add(new Line(stockPosting.stockAccount(productId, r.capitalised()), dec(r.capitalised()), null, null,
-                    label + " · ROM stock " + QuarryCostCalculator.plain(r.netTonnes()) + " t", null, cc, dims));
+            lines.add(StockPostingService.stampLine(new Line(stockPosting.stockAccount(productId, r.capitalised()),
+                    dec(r.capitalised()), null, null, label + " · ROM stock "
+                    + QuarryCostCalculator.plain(r.netTonnes()) + " t", null, cc, dims), productId, null));
         }
         if (r.lossCost().signum() > 0) {
             lines.add(new Line(lossAccount(), dec(r.lossCost()), null, null, label + " · losses "
@@ -135,8 +136,8 @@ public class QuarryPostingService {
             }
             String stock = stockPosting.stockAccount(e.getKey(), e.getValue());
             String v = dec(e.getValue());
-            lines.add(isReturn ? new Line(stock, v, null, null, label, null, null, null)
-                    : new Line(stock, null, v, null, label, null, null, null));
+            lines.add(StockPostingService.stampLine(isReturn ? new Line(stock, v, null, null, label, null, null, null)
+                    : new Line(stock, null, v, null, label, null, null, null), e.getKey(), null));
         }
         String v = dec(total);
         lines.add(isReturn ? new Line(expense, null, v, null, label, null, cc, dims)

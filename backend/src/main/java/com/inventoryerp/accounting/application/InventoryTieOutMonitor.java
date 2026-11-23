@@ -41,7 +41,7 @@ public class InventoryTieOutMonitor {
      * The quantity integrity kinds are findings for the Posting Monitor and never hold a close.
      */
     public static final List<String> INTEGRITY_VALUE_KINDS = List.of(INTEGRITY_KIND_PREFIX + "valuation_vs_subledger",
-            INTEGRITY_KIND_PREFIX + "valuation_vs_gl");
+            INTEGRITY_KIND_PREFIX + "valuation_vs_gl", INTEGRITY_KIND_PREFIX + "valuation_vs_gl_by_product");
 
     private static final Logger log = LoggerFactory.getLogger(InventoryTieOutMonitor.class);
 

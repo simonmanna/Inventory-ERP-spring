@@ -42,6 +42,21 @@ public class InventoryValuationService {
     /** JE sourceType used by the GL-gap catch-up script. */
     public static final String GL_GAP_BACKFILL_SOURCE = "inventory_gl_gap_backfill";
 
+    /**
+     * Hardening R3 (2026-11-23): {@code JournalLine.dimensions} key naming the product whose stock a stock-account line
+     * moves. Reserved: it can never be an analytic dimension code, so dimension validation and reports ignore it.
+     */
+    public static final String PRODUCT_DIMENSION = "inventoryProductId";
+
+    /** Hardening R3: {@code JournalLine.dimensions} key naming the stock location of a line, when known. */
+    public static final String LOCATION_DIMENSION = "inventoryLocationId";
+
+    /**
+     * Hardening R3: organisation setting holding the instant from which stock journal lines carry
+     * {@link #PRODUCT_DIMENSION} (written by V613 for the organisations that existed then; absent = from the start).
+     */
+    public static final String PRODUCT_GL_CUTOVER_SETTING = "inventory.productGlCutoverAt";
+
     /** Valued ledger row {@code l} with no non-draft inventory journal entry referencing it. */
     private static final String UNPOSTED_PREDICATE = "NOT EXISTS ("
             + " SELECT 1 FROM \"JournalEntry\" e JOIN \"JournalLine\" jl ON jl.\"journalEntryId\" = e.id"

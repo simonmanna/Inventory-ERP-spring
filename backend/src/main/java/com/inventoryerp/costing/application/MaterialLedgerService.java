@@ -8,6 +8,7 @@ import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.costing.application.MaterialLedgerCalculator.Input;
 import com.inventoryerp.costing.application.MaterialLedgerCalculator.Result;
 import com.inventoryerp.inventory.application.CostLineageService;
+import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
@@ -249,12 +250,14 @@ public class MaterialLedgerService {
             BigDecimal d = SqlRows.dec(l, "delta");
             deltas.put((String) l.get("productId"), d);
             String text = "Actual cost revaluation · " + l.get("name");
+            String productId = (String) l.get("productId");
             if (d.signum() > 0) {
-                lines.add(PostingRequest.Line.debit(stock, d, text));
+                lines.add(StockPostingService.stampLine(PostingRequest.Line.debit(stock, d, text), productId, null));
                 lines.add(PostingRequest.Line.credit(reval, d, text));
             } else {
                 lines.add(PostingRequest.Line.debit(reval, d.negate(), text));
-                lines.add(PostingRequest.Line.credit(stock, d.negate(), text));
+                lines.add(StockPostingService.stampLine(PostingRequest.Line.credit(stock, d.negate(), text), productId,
+                        null));
             }
         }
         String entryId = null;

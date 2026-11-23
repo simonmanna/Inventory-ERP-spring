@@ -431,6 +431,21 @@ public class ProductService extends BaseCrudService<Product> {
         if ("SERIAL".equals(picking)) {
             serial = true;
         }
+        // Hardening R3 (P1-10): a serial unit keeps its own cost, which STANDARD costing (quants and lots at the
+        // standard, revalued on a change) never moves. Refused when the request creates the combination; a legacy
+        // product that already has both is listed by the data checks and left as it is.
+        if ("STANDARD".equals(costing) && Boolean.TRUE.equals(serial)) {
+            boolean wasStandard = existing != null && "STANDARD".equals(enumValue(existing.getCostingMethod()));
+            boolean wasSerial = existing != null && Boolean.TRUE.equals(existing.getSerialTracking());
+            if (!wasStandard) {
+                throw ApiException.badRequest("Serial-tracked products cannot use STANDARD costing: each unit keeps its"
+                        + " own cost (use SPECIFIC, AVCO or FIFO)");
+            }
+            if (!wasSerial) {
+                throw ApiException.badRequest("A STANDARD-costed product cannot become serial-tracked: each unit would"
+                        + " keep its own cost; change its costing method first");
+            }
+        }
         if (batch != null) {
             data.put("batchTracking", batch);
         }

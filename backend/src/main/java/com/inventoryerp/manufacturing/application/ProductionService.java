@@ -574,8 +574,9 @@ public class ProductionService {
         if (qtyProducedBase.signum() <= 0) {
             throw ApiException.badRequest("Produced quantity resolves to 0 in base units.");
         }
-        // ADR-S008: a standard-governed output is received at its standard; the rest of WIP becomes variances.
-        BigDecimal standardUnit = standards.activeStandard(str(order, "outputProductId")).orElse(null);
+        // ADR-S008: a standard-governed output is received at its standard; the rest of WIP becomes variances. R3: a
+        // STANDARD output without an active standard is governed by its cost price.
+        BigDecimal standardUnit = standards.governingStandard(str(order, "outputProductId")).orElse(null);
         BigDecimal outputUnitCost = standardUnit != null ? standardUnit : Money.div(pool, qtyProducedBase);
         BigDecimal outputValue = standardUnit != null
                 ? standardUnit.multiply(qtyProducedBase).setScale(6, java.math.RoundingMode.HALF_UP) : pool;

@@ -825,7 +825,7 @@ public class LandedCostVoucherService {
                     default -> determination.mapped("cogs");
                 };
             }
-            reclass.add(signedLine(account, amount, text, null));
+            reclass.add(StockPostingService.stampLine(signedLine(account, amount, text, null), product, null));
             reclass.add(signedLine(other, amount.negate(), text, wip ? null : cc));
         }));
         if (!reclass.isEmpty()) {

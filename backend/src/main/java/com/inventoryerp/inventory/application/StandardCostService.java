@@ -123,6 +123,54 @@ public class StandardCostService {
     }
 
     /**
+     * Hardening R3 (2026-11-23): the standard a STANDARD product's stock is carried at — its active standard cost, else
+     * its {@code costPrice} (what issues and the valuation use). Empty for other costing methods, and for a STANDARD
+     * product with neither (no standard to receive at).
+     */
+    public Optional<BigDecimal> governingStandard(String productId) {
+        Optional<BigDecimal> active = activeStandard(productId);
+        if (active.isPresent()) {
+            return active;
+        }
+        String orgId = TenantContext.optionalOrganizationId();
+        if (orgId == null || productId == null) {
+            return Optional.empty();
+        }
+        return jdbc.sql("SELECT \"costPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"costingMethod\"::text = 'STANDARD' AND \"costPrice\" IS NOT NULL").params(productId, orgId)
+                .query(BigDecimal.class).optional();
+    }
+
+    /**
+     * Hardening R3: a return of a STANDARD product entered stock at the standard ({@code standardValue}) while its GL
+     * restock (or the caller's) took back the original issue cost ({@code originalValue}). The difference goes to
+     * purchase price variance against the stock account, so the stock account holds the standard and the COGS
+     * reversal stays at the original cost: original &gt; standard → Dr PPV / Cr stock, else Dr stock / Cr PPV. It is
+     * recorded in the variance register like a receipt variance. Returns the variance (original − standard).
+     */
+    public BigDecimal postReturnVariance(String productId, String stockAccountId, BigDecimal quantity,
+            BigDecimal originalValue, BigDecimal standardValue, Instant date, String sourceType, String sourceId,
+            String description) {
+        BigDecimal actual = originalValue.setScale(6, RoundingMode.HALF_UP);
+        BigDecimal standard = standardValue.setScale(6, RoundingMode.HALF_UP);
+        BigDecimal variance = actual.subtract(standard);
+        if (variance.signum() == 0) {
+            return variance;
+        }
+        String ppv = varianceAccount("purchase_price");
+        String v = JsNumbers.dec(variance.abs());
+        Line stock = StockPostingService.stampLine(variance.signum() > 0 ? Line.credit(stockAccountId, v, description)
+                : Line.debit(stockAccountId, v, description), productId, null);
+        Line pv = variance.signum() > 0 ? Line.debit(ppv, v, "Purchase price variance (return at standard)")
+                : Line.credit(ppv, v, "Purchase price variance (return at standard)");
+        Map<String, Object> je = posting.post(PostingRequest.of("INV", date, description, sourceType, sourceId, null,
+                variance.signum() > 0 ? List.of(pv, stock) : List.of(stock, pv)));
+        recordVariance(productId, "purchase_price", sourceType, sourceId, quantity, standard, actual, variance,
+                je == null ? null : (String) je.get("id"));
+        return variance;
+    }
+
+    /**
      * Receipt of a governed product: Dr stock at standard, Cr the receipt's credit (GRNI / rule) at actual, the
      * difference to purchase price variance. Returns the variance (positive = unfavourable).
      */
@@ -429,8 +477,13 @@ public class StandardCostService {
             // and the quants in the engine's order.
             CostingLocks.lockProduct(jdbc, org(), productId);
             Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, name, \"costingMethod\"::text AS method,"
-                    + " \"costPrice\", \"batchTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?"
-                    + " FOR NO KEY UPDATE").params(productId, org()));
+                    + " \"costPrice\", \"batchTracking\", \"serialTracking\" FROM \"Product\" WHERE id = ? AND"
+                    + " \"organizationId\" = ? FOR NO KEY UPDATE").params(productId, org()));
+            // Hardening R3 (P1-10): a serial unit keeps its own cost, which a standard revaluation does not move.
+            if (Boolean.TRUE.equals(product.get("serialTracking"))) {
+                throw ApiException.badRequest("Serial-tracked products keep specific identification; standard cost does"
+                        + " not apply");
+            }
             String method = (String) product.get("method");
             if (!"STANDARD".equals(method) && !Boolean.TRUE.equals(s.get("convertMethod"))) {
                 throw ApiException.badRequest(product.get("name") + " is costed at " + method + "; set convertMethod to"
@@ -500,9 +553,10 @@ public class StandardCostService {
             String sv = stockPosting.stockAccount(productId, diff.abs());
             String reval = varianceAccount("revaluation");
             String v = JsNumbers.dec(diff.abs());
-            List<Line> lines = diff.signum() > 0
-                    ? List.of(Line.debit(sv, v, description), Line.credit(reval, v, description))
-                    : List.of(Line.debit(reval, v, description), Line.credit(sv, v, description));
+            Line stock = StockPostingService.stampLine(diff.signum() > 0 ? Line.debit(sv, v, description)
+                    : Line.credit(sv, v, description), productId, null);
+            List<Line> lines = diff.signum() > 0 ? List.of(stock, Line.credit(reval, v, description))
+                    : List.of(Line.debit(reval, v, description), stock);
             Map<String, Object> posted = posting.post(PostingRequest.of("INV", Instant.now(), description, sourceType,
                     sourceId, postingKey, lines));
             je = posted == null ? null : (String) posted.get("id");
@@ -533,10 +587,15 @@ public class StandardCostService {
         // Readiness gaps h-02 F2: serialised with the product's stock moves like a standard activation.
         CostingLocks.lockProduct(jdbc, org(), productId);
         Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, name, \"costingMethod\"::text AS method,"
-                + " \"batchTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? FOR NO KEY UPDATE")
-                .params(productId, org()));
+                + " \"batchTracking\", \"serialTracking\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?"
+                + " FOR NO KEY UPDATE").params(productId, org()));
         if (product == null) {
             throw ApiException.notFound("Product not found");
+        }
+        // Hardening R3 (P1-10): serial units keep their own cost; revaluing quants and lots would leave them apart.
+        if (Boolean.TRUE.equals(product.get("serialTracking"))) {
+            throw ApiException.badRequest(product.get("name") + " is serial-tracked: each unit keeps its own cost, so"
+                    + " STANDARD costing does not apply; switch it to SPECIFIC or AVCO costing");
         }
         String description = "Cost price change · " + product.get("name") + ": " + JsNumbers.dec(nz(oldCost)) + " → "
                 + JsNumbers.dec(nz(newCost));

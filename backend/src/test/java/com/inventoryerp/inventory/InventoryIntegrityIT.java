@@ -261,7 +261,10 @@ class InventoryIntegrityIT extends InventoryAuditSupport {
                 + " HAVING sum(debit - credit) < -1 ORDER BY 1 LIMIT 1").param(s.org().id()).query(String.class).single();
         jdbc.sql("UPDATE \"ProductCategory\" SET \"inventoryAccountId\" = ? WHERE id = ?")
                 .params(contra, s.org().categoryId()).update();
-        JsonNode c = onlyFailing(s, "valuation_vs_gl");
+        // R3: the per-product GL check counts the same accounts, so it sees the contra lines too.
+        JsonNode r = report(s, "");
+        assertThat(failing(r)).as(r.toString()).containsExactly("valuation_vs_gl", "valuation_vs_gl_by_product");
+        JsonNode c = check(r, "valuation_vs_gl");
         assertThat(c.get("rows").get(0).get("withinTolerance").asBoolean()).isFalse();
         assertThat(c.get("note").asString()).startsWith("variance ");
     }

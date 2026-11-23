@@ -47,16 +47,19 @@ public class InventoryIntegrityService {
     public static final String SERIAL_STATE = "serial_state";
     public static final String VALUATION_VS_SUBLEDGER = "valuation_vs_subledger";
     public static final String VALUATION_VS_GL = "valuation_vs_gl";
+    /** Hardening R3: per product, Σ stock-account GL (product-stamped lines) = Σ ledger value since the cutover. */
+    public static final String VALUATION_VS_GL_BY_PRODUCT = "valuation_vs_gl_by_product";
     public static final String TRANSIT = "transit";
     public static final String RESERVATIONS = "reservations";
     public static final String OFFLINE_QUEUE = "offline_queue";
 
     /** Every check, in report order. */
     public static final List<String> CHECKS = List.of(LEDGER_VS_QUANT, QUANT_VS_LOTS, QUANT_VS_SERIALS, SERIAL_STATE,
-            VALUATION_VS_SUBLEDGER, VALUATION_VS_GL, TRANSIT, RESERVATIONS, OFFLINE_QUEUE);
+            VALUATION_VS_SUBLEDGER, VALUATION_VS_GL, VALUATION_VS_GL_BY_PRODUCT, TRANSIT, RESERVATIONS, OFFLINE_QUEUE);
 
     /** The checks on stock value (the ones that hold a period close when the monitor raises them). */
-    public static final List<String> VALUE_CHECKS = List.of(VALUATION_VS_SUBLEDGER, VALUATION_VS_GL);
+    public static final List<String> VALUE_CHECKS = List.of(VALUATION_VS_SUBLEDGER, VALUATION_VS_GL,
+            VALUATION_VS_GL_BY_PRODUCT);
 
     /** Kind of the offline transfer receipt waiting for its dispatch (sync module, {@code SyncStockService}). */
     static final String OFFLINE_AWAITING = "offline_awaiting_dispatch";
@@ -130,6 +133,7 @@ public class InventoryIntegrityService {
         checks.add(serialState(loc));
         checks.add(valuationVsSubledger(loc));
         checks.add(valuationVsGl(loc));
+        checks.add(valuationVsGlByProduct(loc));
         checks.add(transit(loc));
         checks.add(reservations(loc));
         checks.add(offlineQueue(loc));
@@ -319,6 +323,133 @@ public class InventoryIntegrityService {
                 + t.get("glBalance") + ")" + (t.get("warning") != null ? "; " + t.get("warning") : "");
         List<Map<String, Object>> rows = within ? List.of() : List.of(new LinkedHashMap<>(t));
         return check(VALUATION_VS_GL, invariant, tolerance, new Found(within ? 0 : 1, rows), note);
+    }
+
+    /**
+     * Hardening R3: the GL per product. From the cutover ({@code inventory.productGlCutoverAt}, written by V613; absent
+     * = the whole history) every stock-account journal line carries its product
+     * ({@link InventoryValuationService#PRODUCT_DIMENSION}). Per product, Σ (debit − credit) of those lines on the
+     * inventory control accounts must equal Σ signed {@code InventoryLedger.totalValue} of the rows recorded since the
+     * cutover, within 0.01. A line without the key is attributed by its source document when every ledger row of that
+     * document (reference or ledger code) is one product; the rest is reported as one {@code unattributed} row (a
+     * posting path that does not stamp). The CM-1 adjunct accounts (price differences, NRV allowance) and their
+     * value-only components are left to the organisation-level tie-out; so is the branch split (product-level
+     * postings — revaluations, landed cost — have no single location). Organisation level: skipped under a location
+     * filter, and while no stamped line exists.
+     */
+    private IntegrityCheck valuationVsGlByProduct(String loc) {
+        String invariant = "per product since the cutover: Σ stock-account GL (debit − credit) = Σ signed"
+                + " InventoryLedger.totalValue";
+        if (loc != null) {
+            return new IntegrityCheck(VALUATION_VS_GL_BY_PRODUCT, true, true, invariant, VALUE_TOLERANCE, 0, false,
+                    List.of(), "Organisation-level check: run the report without a location filter");
+        }
+        String org = org();
+        String cutover = jdbc.sql("SELECT value #>> '{}' FROM \"Setting\" WHERE \"organizationId\" = ? AND key = ?"
+                        + " AND \"scopeType\" = 'organization' LIMIT 1")
+                .params(org, InventoryValuationService.PRODUCT_GL_CUTOVER_SETTING).query(String.class).optional()
+                .orElse("1970-01-01 00:00:00");
+        Set<String> accounts = new LinkedHashSet<>(valuation.inventoryAccountIds());
+        accounts.removeAll(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ?"
+                + " AND key IN ('inventory_price_difference', 'inventory_nrv_allowance')").param(org)
+                .query(String.class).list());
+        String note = "cutover " + cutover;
+        if (accounts.isEmpty()) {
+            return new IntegrityCheck(VALUATION_VS_GL_BY_PRODUCT, true, true, invariant, VALUE_TOLERANCE, 0, false,
+                    List.of(), "No inventory control account is mapped");
+        }
+        Map<String, Object> p = new HashMap<>();
+        p.put("org", org);
+        p.put("cut", cutover);
+        p.put("accts", List.copyOf(accounts));
+        p.put("key", InventoryValuationService.PRODUCT_DIMENSION);
+        Map<String, BigDecimal> gl = new LinkedHashMap<>();
+        BigDecimal unattributed = BigDecimal.ZERO;
+        long unattributedLines = 0;
+        boolean anyStamped = false;
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("""
+                WITH gl AS (SELECT e."sourceId" AS sid, jl.dimensions ->> :key AS pid, jl.debit - jl.credit AS amt
+                              FROM "JournalLine" jl JOIN "JournalEntry" e ON e.id = jl."journalEntryId"
+                             WHERE e."organizationId" = :org AND e.status::text <> 'draft'
+                               AND jl."accountId" IN (:accts) AND e."createdAt" >= CAST(:cut AS timestamp)),
+                     src AS (SELECT x.sid, MIN(x.pid) AS pid FROM (
+                               SELECT l."referenceId" AS sid, l."productId" AS pid FROM "InventoryLedger" l
+                                WHERE l."organizationId" = :org AND l."createdAt" >= CAST(:cut AS timestamp)
+                                  AND l."valuationComponent" IS NULL AND l."referenceId" IS NOT NULL
+                               UNION ALL
+                               SELECT l."ledgerCode", l."productId" FROM "InventoryLedger" l
+                                WHERE l."organizationId" = :org AND l."createdAt" >= CAST(:cut AS timestamp)
+                                  AND l."valuationComponent" IS NULL) x
+                              GROUP BY x.sid HAVING COUNT(DISTINCT x.pid) = 1)
+                SELECT COALESCE(g.pid, s.pid) AS product_id, SUM(g.amt) AS amount, COUNT(*) AS lines,
+                       BOOL_OR(g.pid IS NOT NULL) AS stamped
+                  FROM gl g LEFT JOIN src s ON g.pid IS NULL AND s.sid = g.sid
+                 GROUP BY 1""").params(p))) {
+            String pid = (String) r.get("product_id");
+            if (Boolean.TRUE.equals(r.get("stamped"))) {
+                anyStamped = true;
+            }
+            if (pid == null) {
+                unattributed = unattributed.add(SqlRows.dec(r, "amount"));
+                unattributedLines += ((Number) r.get("lines")).longValue();
+            } else {
+                gl.merge(pid, SqlRows.dec(r, "amount"), BigDecimal::add);
+            }
+        }
+        if (!anyStamped) {
+            return new IntegrityCheck(VALUATION_VS_GL_BY_PRODUCT, true, true, invariant, VALUE_TOLERANCE, 0, false,
+                    List.of(), "No product-stamped stock journal line yet (" + note + ")");
+        }
+        Map<String, BigDecimal> ledger = new LinkedHashMap<>();
+        for (Map<String, Object> r : SqlRows.list(jdbc.sql("""
+                SELECT l."productId" AS product_id, SUM(CASE WHEN l."quantityChange" >= 0
+                       THEN COALESCE(l."totalValue", 0) ELSE -COALESCE(l."totalValue", 0) END) AS value
+                  FROM "InventoryLedger" l WHERE l."organizationId" = :org
+                   AND l."createdAt" >= CAST(:cut AS timestamp) AND l."valuationComponent" IS NULL
+                 GROUP BY 1""").params(p))) {
+            ledger.put((String) r.get("product_id"), SqlRows.dec(r, "value"));
+        }
+        Set<String> ids = new LinkedHashSet<>(ledger.keySet());
+        ids.addAll(gl.keySet());
+        List<String> failing = new ArrayList<>();
+        for (String id : ids) {
+            BigDecimal d = ledger.getOrDefault(id, BigDecimal.ZERO).subtract(gl.getOrDefault(id, BigDecimal.ZERO));
+            if (d.abs().compareTo(VALUE_TOLERANCE) > 0) {
+                failing.add(id);
+            }
+        }
+        Map<String, Map<String, Object>> products = new HashMap<>();
+        Map<String, BigDecimal> qty = new HashMap<>();
+        if (!failing.isEmpty()) {
+            SqlRows.list(jdbc.sql("SELECT id, code, name, \"costingMethod\"::text AS method FROM \"Product\""
+                    + " WHERE \"organizationId\" = :org AND id IN (:ids)").param("org", org).param("ids", failing))
+                    .forEach(r -> products.put((String) r.get("id"), r));
+            SqlRows.list(jdbc.sql("SELECT \"productId\" AS id, SUM(quantity) AS qty FROM \"StockItem\" WHERE"
+                    + " \"organizationId\" = :org AND \"productId\" IN (:ids) GROUP BY 1").param("org", org)
+                    .param("ids", failing)).forEach(r -> qty.put((String) r.get("id"), SqlRows.dec(r, "qty")));
+        }
+        java.util.function.Function<String, BigDecimal> diff = id -> ledger.getOrDefault(id, BigDecimal.ZERO)
+                .subtract(gl.getOrDefault(id, BigDecimal.ZERO)).abs();
+        failing.sort((a, b) -> diff.apply(b).compareTo(diff.apply(a)));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        boolean unattributedFails = unattributed.abs().compareTo(VALUE_TOLERANCE) > 0;
+        if (unattributedFails) {
+            rows.add(render(Obj.of("productId", null, "unattributed", true, "lines", unattributedLines, "glValue",
+                    unattributed)));
+        }
+        for (String id : failing) {
+            if (rows.size() == ROW_LIMIT) {
+                break;
+            }
+            Map<String, Object> pr = products.getOrDefault(id, Map.of());
+            BigDecimal l = ledger.getOrDefault(id, BigDecimal.ZERO);
+            BigDecimal g = gl.getOrDefault(id, BigDecimal.ZERO);
+            rows.add(render(Obj.of("productId", id, "code", pr.get("code"), "name", pr.get("name"), "costingMethod",
+                    pr.get("method"), "quantity", qty.getOrDefault(id, BigDecimal.ZERO), "subledgerValue", l,
+                    "glValue", g, "difference", l.subtract(g))));
+        }
+        return check(VALUATION_VS_GL_BY_PRODUCT, invariant, VALUE_TOLERANCE,
+                new Found(failing.size() + (unattributedFails ? 1 : 0), rows), note);
     }
 
     /** {@code inventory.glTieOut.tolerance} (base currency), never below 0; 1 when unset. */

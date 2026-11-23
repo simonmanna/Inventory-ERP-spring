@@ -540,7 +540,8 @@ public class FleetTyreService {
             Map<String, Object> entry = posting.post(new PostingRequest("INV", at, desc, null, null, "fleet_tyre", id,
                     null, "fleet:tyre:issue:" + id, null, null, null, List.of(
                             new Line(expense, value, null, null, desc, null, (String) v.get("costCenterId"), dims),
-                            new Line(stockAccount, null, value, null, desc, null, null, null))));
+                            StockPostingService.stampLine(new Line(stockAccount, null, value, null, desc, null, null,
+                                    null), productId, null))));
             journalId = (String) entry.get("id");
         }
         Map<String, Object> data = Obj.of("stockIssuedAt", Instant.now(), "stockLedgerCode", issued.ledgerCode(),

@@ -270,4 +270,25 @@ SELECT o."organizationId", o.id AS "orderId", o."orderNumber", o."cancelledAt",
 HAVING sum(l."quantityChange") < -0.000001
  ORDER BY o."organizationId", o."cancelledAt";
 
+-- ---------------------------------------------------------------------------------------------------------------
+-- (i) P1-10 STANDARD-costed products that are serial-tracked (R3).
+-- A row = a product costed at STANDARD with serial tracking on. Serial units keep their own unit cost, which a STANDARD
+-- revaluation (cost price change, standard activation) never moves, so stock, sub-ledger and GL drift apart after the
+-- first change. Since R3 the combination can no longer be created, and a cost price change / standard activation of
+-- such a product is refused; existing ones are listed here and left as they are.
+-- Remedy (manual): once the product holds no stock, switch it to SPECIFIC (or AVCO) costing; while it holds stock,
+-- keep its cost price unchanged, or issue / transfer the stock out first.
+SELECT p."organizationId", p.id AS "productId", p.code, p.name, p."costPrice",
+       COALESCE(sum(s.quantity), 0) AS "onHand",
+       (SELECT count(*) FROM "InventorySerial" sr WHERE sr."organizationId" = p."organizationId"
+           AND sr."productId" = p.id AND sr.status::text = 'in_stock') AS "serialsInStock",
+       (SELECT count(*) FROM "InventorySerial" sr WHERE sr."organizationId" = p."organizationId"
+           AND sr."productId" = p.id AND sr.status::text = 'in_stock'
+           AND sr."unitCost" IS DISTINCT FROM p."costPrice") AS "serialsOffStandard"
+  FROM "Product" p
+  LEFT JOIN "StockItem" s ON s."organizationId" = p."organizationId" AND s."productId" = p.id
+ WHERE p."costingMethod"::text = 'STANDARD' AND p."serialTracking" = true AND p."deletedAt" IS NULL
+ GROUP BY p."organizationId", p.id, p.code, p.name, p."costPrice"
+ ORDER BY p."organizationId", p.name;
+
 ROLLBACK;

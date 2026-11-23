@@ -283,12 +283,13 @@ public class InventoryRevaluationService {
             }
             String debitSide = nrv ? allowance : stockPosting.stockAccount(productId, amount.abs());
             String v = JsNumbers.dec(amount.abs());
+            // R3: the stock side carries the product (and location) it revalues.
             if (amount.signum() > 0) {
-                lines.add(Line.debit(debitSide, v, text));
+                lines.add(StockPostingService.stampLine(Line.debit(debitSide, v, text), productId, locationId));
                 lines.add(Line.credit(offset, v, text));
             } else {
                 lines.add(Line.debit(offset, v, text));
-                lines.add(Line.credit(debitSide, v, text));
+                lines.add(StockPostingService.stampLine(Line.credit(debitSide, v, text), productId, locationId));
             }
             rows.add(new Object[] {productId, variantId, locationId, amount});
             total = total.add(amount);

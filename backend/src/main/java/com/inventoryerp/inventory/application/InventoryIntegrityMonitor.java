@@ -68,7 +68,8 @@ public class InventoryIntegrityMonitor {
         boolean tieOutEnabled = settings.resolveBool("inventory.glTieOut.enabled", SettingContext.EMPTY);
         List<String> raised = new ArrayList<>();
         for (IntegrityCheck c : report.failing()) {
-            if (InventoryIntegrityService.VALUATION_VS_GL.equals(c.key()) && !tieOutEnabled) {
+            if ((InventoryIntegrityService.VALUATION_VS_GL.equals(c.key())
+                    || InventoryIntegrityService.VALUATION_VS_GL_BY_PRODUCT.equals(c.key())) && !tieOutEnabled) {
                 continue;
             }
             if (Boolean.TRUE.equals(tx.execute(st -> raise(orgId, c)))) {

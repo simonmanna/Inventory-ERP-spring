@@ -176,8 +176,8 @@ public class ProjectCostService {
         if (value.signum() > 0) {
             stockAccount = stockPosting.stockAccount(in.productId(), value);
             lines.add(debit(p, w, siteId, value, text));
-            lines.add(new Line(stockAccount, null, JsNumbers.dec(value), null, text, branch(p), null,
-                    Obj.of("projectId", projectId)));
+            lines.add(StockPostingService.stampLine(new Line(stockAccount, null, JsNumbers.dec(value), null, text,
+                    branch(p), null, Obj.of("projectId", projectId)), in.productId(), null));
         }
         String je = post(lines, text, date, "project_issue", id, p);
         insert(id, projectId, (String) w.get("id"), siteId, "material", "project_issue", id, in.productId(), date,

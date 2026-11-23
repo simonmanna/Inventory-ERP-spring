@@ -4,6 +4,7 @@ import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 import static com.inventoryerp.inventory.application.StockService.NOW;
 
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.StockMove.Issued;
@@ -326,6 +327,11 @@ public class StockReversalService {
         }
 
         String baseCurrency = journals.isEmpty() ? null : posting.baseCurrency();
+        // R3: the product of an entry posted before stock lines carried it — its movement (ledger code), else the only
+        // product the reversed rows move.
+        Map<String, String> productByCode = new LinkedHashMap<>();
+        rows.forEach(r -> productByCode.put(str(r, "ledgerCode"), str(r, "productId")));
+        String onlyProduct = glValue.size() == 1 ? glValue.keySet().iterator().next() : null;
         for (Map<String, Object> je : journals) {
             List<PostingRequest.Line> lines = new ArrayList<>();
             for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT * FROM \"JournalLine\" WHERE \"journalEntryId\" = ?")
@@ -335,6 +341,8 @@ public class StockReversalService {
                     lines.add(mirrored);
                 }
             }
+            String entryProduct = productByCode.getOrDefault(str(je, "sourceId"), onlyProduct);
+            lines = stockPosting.stamp(lines, entryProduct, null);
             posting.post(new PostingRequest(str(je, "_journalCode"), Instant.now(),
                     "Reversal of " + je.get("entryNumber") + " · " + p.notes(), null, null, p.reversalSourceType(),
                     p.reversalSourceId(), "reversal", "inventory:reversal:" + org + ":" + je.get("id"),
@@ -459,7 +467,17 @@ public class StockReversalService {
                 m.traceUomId = (String) a[2];
                 m.traceFactor = (BigDecimal) a[3];
             }
-            Received res = p.postRestockGl() ? stock.receiveReturn(m) : stock.receive(m);
+            Received res;
+            if (p.postRestockGl()) {
+                res = stock.receiveReturn(m);
+            } else {
+                res = stock.receive(m);
+                // R3 (P1-9): the caller reverses the original cost in the GL; a STANDARD unit comes back at standard.
+                BigDecimal original = dec(r, "unitCost").multiply(qty);
+                stock.postStandardReturnVariance(str(r, "productId"), qty, original, res,
+                        stockPosting.stockAccount(str(r, "productId"), original), p.date(), p.sourceType(),
+                        p.sourceId());
+            }
             out.add(new ReturnedRow(res.ledgerCode(), str(r, "id"), str(r, "productId"), str(r, "variantId"), location,
                     batchNumber, serial, qty, dec(r, "unitCost"), dec(r, "unitCost").multiply(qty)));
         }
@@ -525,6 +543,24 @@ public class StockReversalService {
     }
 
     /**
+     * The stock product / location keys (R3) of a stored line's {@code dimensions} (JSON tree or map); null when none.
+     * Other dimensions are not carried to the reversal (as before), so a value retired since cannot block it.
+     */
+    static Map<String, Object> dimensions(Object raw) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String key : List.of(InventoryValuationService.PRODUCT_DIMENSION,
+                InventoryValuationService.LOCATION_DIMENSION)) {
+            Object v = raw instanceof Map<?, ?> m ? m.get(key)
+                    : raw instanceof tools.jackson.databind.JsonNode n && n.isObject() && n.get(key) != null
+                            && n.get(key).isValueNode() && !n.get(key).isNull() ? n.get(key).asString() : null;
+            if (v != null) {
+                out.put(key, String.valueOf(v));
+            }
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /**
      * The inverse of one journal line, or {@code null} for an empty line. Gap fix h03-F3: amounts are the line's
      * functional (base) amounts; a line carried in a foreign currency stores its debit/credit in that currency, so
      * re-posting those as base left the reversal unbalanced (a foreign GRN could not be reversed). Such a line keeps
@@ -544,9 +580,11 @@ public class StockReversalService {
             return null;
         }
         String desc = ("Reversal: " + (l.get("description") == null ? "" : l.get("description"))).trim();
+        // R3: the reversal keeps the line's dimensions (the stock product / location keys among them).
         PostingRequest.Line line = new PostingRequest.Line(str(l, "accountId"),
                 baseCredit.signum() > 0 ? JsNumbers.dec(baseCredit) : null,
-                baseDebit.signum() > 0 ? JsNumbers.dec(baseDebit) : null, str(l, "partnerId"), desc, null, null, null);
+                baseDebit.signum() > 0 ? JsNumbers.dec(baseDebit) : null, str(l, "partnerId"), desc, null, null,
+                dimensions(l.get("dimensions")));
         String currency = str(l, "currencyId");
         BigDecimal foreign = debit.signum() > 0 ? debit : credit;
         if (currency != null && !currency.isBlank() && !currency.equalsIgnoreCase(baseCurrency)
