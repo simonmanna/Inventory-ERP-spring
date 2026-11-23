@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
-import { Plus, Trash2, Save, Undo2, Truck, PackageCheck, CornerUpLeft, X } from 'lucide-react';
+import { Fragment, useState } from 'react';
+import { Plus, Trash2, Save, Undo2, Truck, PackageCheck, CornerUpLeft, X, DoorOpen } from 'lucide-react';
 import { ReasonDialog } from '@/features/inventory/reason-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,7 @@ import {
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 interface Product { id: string; code: string; name: string }
 
@@ -85,6 +86,7 @@ export function StockTransfersPage() {
   const [lines, setLines] = useState<TransferLine[]>(() => [newLine()]);
   const [statusFilter, setStatusFilter] = useState('');
   const [confirming, setConfirming] = useState<{ action: 'approve' | 'cancel'; transfer: StockTransfer } | null>(null);
+  const [gatePassFor, setGatePassFor] = useState<string | null>(null);
 
   const { data: transfers, isLoading } = useTransfers(statusFilter || undefined);
   const paged = useClientPage(transfers, 25, statusFilter);
@@ -233,8 +235,10 @@ export function StockTransfersPage() {
               {paged.pageRows.map((tr) => {
                 const fromLoc = locMap.get(tr.fromLocId);
                 const toLoc = locMap.get(tr.toLocId);
+                const gateable = !['cancelled', 'rejected', 'reversed'].includes(tr.status);
                 return (
-                  <tr key={tr.id} className="border-b hover:bg-muted/30">
+                  <Fragment key={tr.id}>
+                  <tr className="border-b hover:bg-muted/30">
                     <td className="px-3 py-2 font-mono text-xs font-medium">{tr.transferCode}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{dateTime(tr.createdAt)}</td>
                     <td className="px-3 py-2">
@@ -281,9 +285,20 @@ export function StockTransfersPage() {
                           <Undo2 className="mr-1 h-3.5 w-3.5" />{tx('Reverse')}
                         </Button>
                       )}
+                      {gateable && (
+                        <Button size="sm" variant="ghost" onClick={() => setGatePassFor(gatePassFor === tr.id ? null : tr.id)}>
+                          <DoorOpen className="mr-1 h-3.5 w-3.5" />{tx('Gate pass')}
+                        </Button>
+                      )}
                       </div>
                     </td>
                   </tr>
+                  {gateable && gatePassFor === tr.id && (
+                    <tr className="border-b bg-muted/20">
+                      <td colSpan={8} className="px-3 py-2"><GatePassPanel sourceType="stock_transfer" sourceId={tr.id} /></td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

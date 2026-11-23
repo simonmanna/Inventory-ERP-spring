@@ -31,6 +31,7 @@ public final class DocumentNumberCatalog {
                 new Entry("stock_adj", "Stock adjustment", "Inventory", "ADJ-", 5, false),
                 new Entry("stock_out", "Stock out", "Inventory", "SO-", 5, false),
                 new Entry("stock_transfer", "Stock transfer", "Inventory", "TRF-", 5, false),
+                new Entry("gate_pass", "Gate pass", "Inventory", "GP-{YYYY}-", 5, true),
                 new Entry("waste_doc", "Waste", "Inventory", "WST-", 5, false),
                 new Entry("inv_count", "Inventory count", "Inventory", "CNT-", 5, false),
                 new Entry("production_order", "Production order", "Production", "MO-", 5, false),

@@ -24,6 +24,7 @@ import { PickedCell } from './HandoverDeliveryView';
 import { DeliveryWeighbridgeTab, WeighSummary } from './DeliveryWeighbridge';
 import { CustomerWeightDialog, CustomerWeightPanel, customerWeightNoteLine } from './CustomerWeight';
 import { QuantityBucketsPanel } from './DeliveryQuantities';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 type LineCol = 'product' | 'scheduled' | 'deadline' | 'planned' | 'picked' | 'dispatched' | 'delivered' | 'returned' | 'rejected'
   | 'damaged' | 'shortage' | 'batch';
@@ -126,6 +127,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
                 {d.stage === 'cancelled' ? tx('Cancelled') : d.attemptFailed ? tx('Attempt failed') : tx('Returned')}: {d.cancelReason ?? d.returnReason}
               </p>
             )}
+            <GatePassPanel sourceType="delivery" sourceId={d.id} />
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
                 <TabsTrigger value="details">{tx('Details')}</TabsTrigger>

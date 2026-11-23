@@ -12,6 +12,7 @@ import { openPdf, type ReturnView } from './delivery/delivery-docs';
 import { tx } from '@/lib/i18n/tx';
 import type { HandoverForm } from './handover-draft';
 import { HandoverDeliveryView, handoverBody, type HandoverLineView, type HandoverStatus } from './delivery/HandoverDeliveryView';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 export type { HandoverStatus } from './delivery/HandoverDeliveryView';
 
@@ -115,6 +116,7 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
     : !ready ? `${readyHint}. ${tx('You can plan the handover now; dispatch and delivery wait for it.')}` : null;
 
   return (
+    <div>
     <HandoverDeliveryView form={f} onChange={setF} status={status} lines={lines} stockLocationName={h.locationName} issuedLabel={issuedLabel}
       planLocked={!editable || done} receiptLocked={!editable} actions={actions || undefined} notice={notice}
       completed={done ? `${collect ? tx('Collected') : tx('Delivered')} ${h.deliveredAt ? date(h.deliveredAt) : ''}${h.deliveredByName ? ` · ${h.deliveredByName}` : ''}` : undefined}
@@ -127,5 +129,8 @@ export function HandoverTab({ path, canEdit, readyHint, sourceLabel, issuedLabel
         deliveredAt: h.deliveredAt, returns: h.returns ?? [], currency,
         onNote: (mode) => void openPdf(`${path}/note`, `${(h.deliveryNoteNumber ?? 'delivery-note').replace(/\//g, '-')}.pdf`, mode),
       } : undefined} />
+    {/* a cash sale's invoice mirrors the sale: its gate pass is issued on the cash sale */}
+    <GatePassPanel sourceType={mirrored ? 'cash_sale' : h.sourceType} sourceId={mirrored ? h.cashSaleId : h.sourceId} className="mt-4" />
+    </div>
   );
 }

@@ -1051,5 +1051,11 @@
   },
   "projectReport": {
     "read": "project_report:read"
+  },
+  "gatePass": {
+    "read": "gate_pass:read",
+    "issue": "gate_pass:issue",
+    "void": "gate_pass:void",
+    "check": "gate_pass:check"
   }
 }

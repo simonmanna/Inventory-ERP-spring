@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 const fmt = (n: number | string) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
@@ -126,6 +127,8 @@ export function RepairOrderDetailPage() {
           )}
         </div>
       </div>
+
+      {['ready_pickup', 'delivered', 'closed'].includes(order.status) && <GatePassPanel sourceType="repair" sourceId={order.id} />}
 
       <OrderTabs order={order} exec={exec} running={run?.label} />
     </div>

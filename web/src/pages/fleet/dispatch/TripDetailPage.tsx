@@ -14,6 +14,7 @@ import { DiscrepancyStatusPill, Item, TripStatusPill } from './dispatch-ui';
 import { carrierText } from './dispatch-format';
 import { TripActions } from './TripActions';
 import { WeighTicketsCard } from './WeighTicketsCard';
+import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
 
 const DISTANCE_SOURCE: Record<string, string> = {
   telematics: tx('GPS'), odometer: tx('Odometer'), site: tx('Site distance'), manual: tx('Entered'),
@@ -118,6 +119,8 @@ export function TripDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <GatePassPanel sourceType="delivery" sourceId={t.id} />
 
       <Card>
         <CardHeader><CardTitle className="text-base">{tx('Products')}</CardTitle></CardHeader>
