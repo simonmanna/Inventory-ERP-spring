@@ -193,9 +193,16 @@ public class LedgerDetailService {
                         "SELECT id, \"agreementNumber\" AS code, status::text AS status, \"startAt\" AS date, \"partnerId\""
                                 + " FROM \"RentalAgreement\" WHERE (id = ? OR \"agreementNumber\" = ?) AND \"organizationId\" = ?",
                         referenceId, "Rental ", true);
-                case "repair_part_issue" -> doc(base, "repair_order", "SELECT id, \"repairNumber\" AS code, status::text"
-                        + " AS status, \"createdAt\" AS date, \"partnerId\" FROM \"RepairOrder\" WHERE (id = ? OR"
-                        + " \"repairNumber\" = ?) AND \"organizationId\" = ?", referenceId, "Repair ", true);
+                // Hardening R5a: a part issue (and its return) references the repair part since R5a, the repair
+                // order before; both lead to the order.
+                case "repair_part_issue", "repair_part_return" -> {
+                    Map<String, Object> d = SqlRows.one(jdbc.sql("SELECT id, \"repairNumber\" AS code,"
+                            + " status::text AS status, \"createdAt\" AS date, \"partnerId\" FROM \"RepairOrder\""
+                            + " WHERE (id = ? OR \"repairNumber\" = ? OR id = (SELECT rp.\"repairOrderId\" FROM"
+                            + " \"RepairPart\" rp WHERE rp.id = ? AND rp.\"organizationId\" = ?)) AND \"organizationId\" = ?"
+                            + " LIMIT 1").params(referenceId, referenceId, referenceId, org(), org()));
+                    yield d == null ? null : fill(base, "repair_order", d, "Repair " + d.get("code"));
+                }
                 case "stock_out" -> stockDoc(base, "stock_out", "StockOut", "outCode", "Stock Out ", referenceId);
                 case "waste", "expiry_write_off" -> stockDoc(base, "waste", "WasteRecord", "wasteCode", "Waste ",
                         referenceId);

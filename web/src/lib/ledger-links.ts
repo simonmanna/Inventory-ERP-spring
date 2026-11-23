@@ -108,6 +108,7 @@ const REFERENCE_LABELS: Record<string, string> = {
   rental_return: tx('Rental Return'),
   rental_inspect: tx('Rental Inspection'),
   repair_part_issue: tx('Repair Part Issue'),
+  repair_part_return: tx('Repair Part Return'),
   min_stock: tx('Min-Stock Top-Up'),
   manual: tx('Manual Entry'),
 };

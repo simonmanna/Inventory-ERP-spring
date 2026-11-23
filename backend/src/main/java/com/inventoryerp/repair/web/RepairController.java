@@ -362,6 +362,15 @@ public class RepairController {
         return parts.issuePart(id, dto);
     }
 
+    /** Hardening R5a: return an issued part to stock (reverses its issue and COGS). */
+    @PostMapping("/parts/{id}/return")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.REPAIR__PARTS)
+    public Map<String, Object> returnPart(@PathVariable String id,
+            @RequestBody(required = false) Map<String, Object> dto) {
+        return parts.returnPart(id, dto);
+    }
+
     @DeleteMapping("/parts/{id}")
     @RequirePermissions(Permissions.REPAIR__PARTS)
     public Map<String, Object> deletePart(@PathVariable String id) {
