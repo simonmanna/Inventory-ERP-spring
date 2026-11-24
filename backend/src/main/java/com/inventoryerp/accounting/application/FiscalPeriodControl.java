@@ -1,9 +1,12 @@
 package com.inventoryerp.accounting.application;
 
+import com.inventoryerp.kernel.settings.SettingResolverService;
+import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -15,15 +18,34 @@ import org.springframework.transaction.annotation.Transactional;
  * Period control (port of {@code posting/fiscal-period.service.ts}). A posting date is rejected when it is
  * on/before the org's {@code booksLockDate}, inside a closed/locked fiscal period, or — with
  * {@code requireFiscalPeriod} — not covered by any period. The covering period row is held FOR SHARE so a
- * concurrent close cannot flip it between the check and the write.
+ * concurrent close cannot flip it between the check and the write. Since finance readiness audit B1 (P2-2) a date more
+ * than {@value #FUTURE_LIMIT_SETTING} days after today is refused too (a mistyped year; 0 = no limit).
  */
 @Service
 public class FiscalPeriodControl {
 
-    private final JdbcClient jdbc;
+    /** Setting: the furthest posting date ahead, in days after today (0 = no limit). */
+    public static final String FUTURE_LIMIT_SETTING = "accounting.futurePostingLimitDays";
 
-    public FiscalPeriodControl(JdbcClient jdbc) {
+    private final JdbcClient jdbc;
+    private final SettingResolverService settings;
+
+    public FiscalPeriodControl(JdbcClient jdbc, SettingResolverService settings) {
         this.jdbc = jdbc;
+        this.settings = settings;
+    }
+
+    /** The organisation's furthest posting date ahead, in days after today; 0 = no limit. */
+    public int futurePostingLimitDays() {
+        Object value = settings.resolve(FUTURE_LIMIT_SETTING, SettingContext.EMPTY);
+        if (value instanceof Number n) {
+            return Math.max(0, n.intValue());
+        }
+        try {
+            return value == null ? 0 : Math.max(0, Integer.parseInt(String.valueOf(value).trim()));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** UTC {@code YYYY-MM-DD} like {@code toISOString().slice(0, 10)}. */
@@ -69,6 +91,15 @@ public class FiscalPeriodControl {
             Instant lock = org.booksLockDate().toLocalDateTime().toInstant(ZoneOffset.UTC);
             if (!local.isAfter(lock)) {
                 throw ApiException.badRequest("Books are locked through " + day(lock) + "; cannot post on " + day(local));
+            }
+        }
+        int ahead = futurePostingLimitDays();
+        if (ahead > 0) {
+            LocalDate day = local.atOffset(ZoneOffset.UTC).toLocalDate();
+            LocalDate today = AccountingDay.of(Instant.now(), zone);
+            if (day.isAfter(today.plusDays(ahead))) {
+                throw ApiException.badRequest("Posting date " + day + " is more than " + ahead + " days after today ("
+                        + today + "); check the date");
             }
         }
         jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND \"startDate\" <= ? AND \"endDate\" >= ?"

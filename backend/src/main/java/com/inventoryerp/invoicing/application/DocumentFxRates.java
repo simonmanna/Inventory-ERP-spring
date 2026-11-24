@@ -64,6 +64,11 @@ public class DocumentFxRates {
         return c == null || c.toString().isBlank() ? base() : c.toString().trim().toUpperCase();
     }
 
+    /** Whether a document is in a currency other than the organisation's base currency. */
+    public boolean isForeign(Map<String, Object> doc) {
+        return !currencyOf(doc).equalsIgnoreCase(base());
+    }
+
     /** Rate a journal entry was posted at, or null when it cannot be told. */
     public BigDecimal entryRate(String journalEntryId) {
         if (journalEntryId == null) {

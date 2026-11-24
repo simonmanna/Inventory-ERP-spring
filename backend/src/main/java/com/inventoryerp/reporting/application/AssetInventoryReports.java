@@ -46,6 +46,15 @@ public class AssetInventoryReports implements ReportProvider {
     static final List<FilterKey> PERIOD_BRANCH = List.of(FilterKey.PERIOD, FilterKey.BRANCH);
     static final List<String> WRITE_OFF_TYPES = List.of("waste", "expiry_write_off", "internal_use", "promo_sample");
 
+    /**
+     * The asset is on the books by the as-of date: an asset capitalised from a project from its capitalisation date,
+     * when the cost moved from construction in progress to the fixed-asset account (its purchase date is its in-service
+     * date, possibly later); any other asset from its purchase date. Parameters: the as-of date, then the exclusive end.
+     */
+    static final String HELD_BY = " AND coalesce((SELECT min(pc.\"capitalisationDate\") FROM \"ProjectCapitalisationAsset\" pa"
+            + " JOIN \"ProjectCapitalisation\" pc ON pc.id = pa.\"capitalisationId\" WHERE pa.\"assetId\" = a.id) <= ?::date,"
+            + " a.\"purchaseDate\" IS NULL OR a.\"purchaseDate\" < ?)";
+
     private final JdbcClient jdbc;
     private final LedgerAggregator ledger;
 
@@ -372,7 +381,7 @@ public class AssetInventoryReports implements ReportProvider {
         LocalDate asOf = ctx.asOf();
         boolean disposed = "yes".equals(ctx.request().option("includeDisposed"));
         List<Object> p = new ArrayList<>(List.of(BudgetFigures.YM.format(asOf), SqlRows.ts(ctx.endExclusive(asOf)),
-                ctx.organizationId(), SqlRows.ts(ctx.endExclusive(asOf))));
+                ctx.organizationId(), asOf.toString(), SqlRows.ts(ctx.endExclusive(asOf))));
         String b = branch(ctx, "a.\"branchId\"", p);
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT a.id, a.\"assetCode\", a.name,"
                 + " coalesce(c.name, 'Uncategorised') AS category, coalesce(br.name, '—') AS branch, a.location,"
@@ -381,8 +390,8 @@ public class AssetInventoryReports implements ReportProvider {
                 + " a.id AND d.\"isPosted\" AND d.period <= ?), 0) AS accumulated, (SELECT min(x.\"disposalDate\") FROM"
                 + " \"AssetDisposal\" x WHERE x.\"assetId\" = a.id AND x.\"disposalDate\" < ?) AS \"disposedOn\""
                 + " FROM \"Asset\" a LEFT JOIN \"AssetCategory\" c ON c.id = a.\"categoryId\" LEFT JOIN \"Branch\" br ON"
-                + " br.id = a.\"branchId\" WHERE a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL AND"
-                + " (a.\"purchaseDate\" IS NULL OR a.\"purchaseDate\" < ?)" + b + " ORDER BY c.name, a.\"assetCode\"")
+                + " br.id = a.\"branchId\" WHERE a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL" + HELD_BY + b
+                + " ORDER BY c.name, a.\"assetCode\"")
                 .params(p));
         Tables.Builder t = new Tables.Builder(ctx.zone(), text("assetCode", "Code"), text("name", "Asset"),
                 text("category", "Category"), text("branch", "Branch"), date("purchaseDate", "Acquired"),
@@ -539,10 +548,9 @@ public class AssetInventoryReports implements ReportProvider {
                 + " coalesce(sum((SELECT sum(CASE WHEN i.kind = 'impairment' THEN i.amount ELSE -i.amount END) FROM"
                 + " \"AssetImpairment\" i WHERE i.\"assetId\" = a.id AND i.\"impairmentDate\" < ?)), 0) AS imp"
                 + " FROM \"Asset\" a LEFT JOIN \"AssetAcquisition\" q ON q.\"assetId\" = a.id"
-                + " WHERE a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL AND (a.\"purchaseDate\" IS NULL OR"
-                + " a.\"purchaseDate\" < ?) AND NOT EXISTS (SELECT 1 FROM \"AssetDisposal\" x WHERE x.\"assetId\" ="
-                + " a.id AND x.\"disposalDate\" < ?)").params(end, BudgetFigures.YM.format(asOf), end,
-                ctx.organizationId(), end, end));
+                + " WHERE a.\"organizationId\" = ? AND a.\"deletedAt\" IS NULL" + HELD_BY + " AND NOT EXISTS (SELECT 1"
+                + " FROM \"AssetDisposal\" x WHERE x.\"assetId\" = a.id AND x.\"disposalDate\" < ?)").params(end,
+                BudgetFigures.YM.format(asOf), end, ctx.organizationId(), asOf.toString(), end, end));
         Map<String, AccountInfo> accounts = ledger.accounts(ctx.organizationId());
         java.util.Set<String> costIds = new java.util.LinkedHashSet<>();
         java.util.Set<String> accIds = new java.util.LinkedHashSet<>();

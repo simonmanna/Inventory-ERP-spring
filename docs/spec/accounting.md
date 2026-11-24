@@ -691,10 +691,7 @@ Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (release 
   accumulated depreciation and impairment accounts, as of today (organisation time), tolerance 0.01 per line. One row
   per line that differs: register, GL, difference = register − GL, as the report shows it. The audit's tolerance is
   per asset category; the register is compared with its accounts in total, as the report does, because categories
-  share accounts. An asset counts in the register from its acquisition date, which for an asset capitalised from a
-  project is its in-service date: a capitalisation posted before the in-service date shows as a difference until that
-  date, in the report as here. The granite quarry demo seed (`GraniteQuarryDemoSeed`) posts fixed-asset opening
-  balances and depreciation without register assets, so I10 fails for a seeded GQDEMO until its assets are registered.
+  share accounts. Which assets count on a date, and the granite quarry demo seed's plant: fix step B0 below.
 - **I12 `cash_drawers`.** Each closed cash session: its own journals moved its drawer account by its counted cash less
   its opening float, tolerance 0.01. Its own journals are the ones the session reconciliation already ties to it: the
   entries of its payments (not cancelled), of its drawer movements without a payment (the movement's entry, else its
@@ -703,6 +700,93 @@ Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (release 
   session that differs, has no drawer account or has no count (every close stores one; only direct SQL leaves it
   empty).
 - Both run in `GET /reports/accounting/integrity` and the nightly ledger monitor (finding and alert).
+
+## Finance readiness audit B0: the asset register (owner-approved 2026-11-24)
+
+The owner asked on 2026-11-24 to fix the issues the audit found and to register the granite quarry demo company's
+plant. Tests: `FixedAssetReconciliationIT` (`capitalisedBeforeInService`), `GraniteQuarryDemoSeedIT` (I10 ties on a
+fresh seed).
+
+- **An asset counts from the day it is on the books.** In `fa.register` and `fa.reconciliation`, and so in I10, an
+  asset capitalised from a project counts from its first project capitalisation date, the day the capitalisation posts
+  it to the cost account. Any other asset counts from its purchase date. Before B0 a capitalised asset counted from its
+  in-service date, which the capitalisation also stores as its purchase date. A capitalisation dated before the
+  in-service date therefore showed its whole cost as a difference until that date.
+- **The granite quarry demo seed registers its plant.** `GraniteQuarryDemoSeed` posts the plant as an opening balance
+  and its first month of depreciation as a journal. It now also adds the category "Plant and machinery", the crusher
+  plant (`AST-GQ-CRUSHER`) and the block machine (`AST-GQ-BLOCK`). These are straight line over 240 months, with the
+  month's depreciation recorded as posted by the seed's month-end depreciation journal. They are register rows only:
+  an acquisition or a depreciation run would post the plant to the GL a second time.
+- **A company seeded before B0** gets the same rows from `docs/audits/2026-11-24-register-gqdemo-plant.sql`. It runs
+  as a dry run by default and needs `-v apply=1` to commit. It writes an `AuditLog` row per row and posts no journal
+  entry. It stops and changes nothing unless all of these hold:
+  - both seed journals are posted in the same month;
+  - the opening journal debits the fixed-asset account by the plant's cost;
+  - the depreciation journal credits accumulated depreciation by the month's charge;
+  - no `AST-GQ-*` asset exists yet;
+  - afterwards, the register ties to those accounts.
+
+  After applying it, run the integrity check.
+
+## Finance readiness audit B1: period coverage (owner-approved 2026-11-24)
+
+Audit finding P2-2: periods were optional, nothing could set the books lock date, postings in gaps or years ahead
+went through silently, and nothing warned when next year had no periods. The owner approved Wave B on 2026-11-24.
+Everything below is new; Nest has none of it. Tests: `PeriodControlsIT`, `FiscalPeriodCoveragePlanTest`.
+
+- **Period controls, `GET` and `PUT /fiscal-periods/controls`.** GET needs `fiscal_period:read` and PUT needs
+  `fiscal_period:update`. PUT replaces the whole set:
+  - `booksLockDate`: nothing dated on or before it posts, whatever the period's status. It is a date: it locks its
+    whole day, stored as `23:59:59.999` org-local wall clock, like a period end (A1). It must be before today, and no
+    draft journal entry may be dated on or before it. Moving it earlier or removing it reopens posted history, so it
+    also needs `fiscal_period:reopen` (403 "Missing required permission(s): fiscal_period:reopen").
+  - `requireFiscalPeriod` (off by default): a posting on a day no open period covers is refused. Turning it on needs an
+    open period covering today.
+  - `autoCreatePeriods` (setting `accounting.autoCreatePeriods`, on by default): see the next point.
+  - `futurePostingLimitDays` (setting `accounting.futurePostingLimitDays`, 0–36500, default 3650): see the last point.
+
+  The response adds `today`, `periodsThrough` (end of the last period), `openPeriodCoversToday` and
+  `autoCreateLeadDays`. Each change is audited: the lock date and the switch on `Organization`, the settings by the
+  settings service. The fiscal periods page shows them as a "Period controls" card.
+- **Next year's periods are created ahead.** A nightly job (03:25 UTC, `FiscalPeriodCoverageJob`) checks every
+  organization that has fiscal periods. When the last period ends within 60 days, it creates the next fiscal year with
+  its periods through `FiscalYearService.create`:
+  - after a period of a fiscal year: a year from the next day, with that year's periodicity;
+  - after a period of no fiscal year (onboarding and the seed create one yearly period): the fiscal year that holds
+    the next day (`accounting.fiscalYearStartMonth`), with the periodicity of that period's length.
+
+  It sends an in-app notice when it creates a year. With the setting off, or when the year cannot be created (for
+  example a year already exists there without periods), it raises an alert instead, at most once a week. An
+  organization without periods is left alone.
+- **A posting far in the future is refused.** "Posting date D is more than N days after today (T); check the date".
+  The check sits in `FiscalPeriodControl`, so it covers every posting, reversal and draft. The default of ten years
+  catches a mistyped year (2062 for 2026) without refusing legitimate postings dated ahead. The test suite deliberately
+  posts payroll several years ahead. 366 suits a business that never posts into next year early.
+- **Postings outside every period** are already reported nightly: integrity check I5 (`uncovered_day`, A0).
+
+## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
+
+The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.
+
+- **A cash or bank account with history is kept.** `DELETE /accounts/cash-flow/:id` first refuses an account in
+  active use by a register, payment method or open shift, as Nest does. Since B5 it then makes the checks of
+  `DELETE /accounts/:id`, with the same messages. It refuses:
+  - a protected or system account;
+  - an account with child accounts;
+  - an account with journal lines ("Account has journal entries and cannot be deleted. Deprecate it instead so
+    history is preserved.");
+  - an account in an account mapping.
+
+  Nest soft-deletes such an account, which drops its balance from every report that skips deleted accounts.
+  Test: `CashAccountDeleteIT`.
+- **A foreign payable is relieved at the bill's posting rate.** Two routes relieve a foreign bill at its carrying
+  rate, the rate it posted at (`DocumentFxRates.documentRate`):
+  - a bill write-off, `POST /vendor-bills/:id/write-off`;
+  - a supplier claim settled against a bill, `POST /procurement/claims/:id/settle`.
+
+  A bill that stores the default rate 1 ("not stated", FX-1) posted at the rate table's rate. Passing that stored 1 on
+  made the relief post at the table rate of the day. Once the rate had moved, the payable's base did not clear, and the
+  AP tie-out (I8) showed the difference. Nest has the same flaw. Tests: the B5 tests in `ArApTieOutIT`.
 
 ## Extensions beyond Nest (ADR-S005)
 

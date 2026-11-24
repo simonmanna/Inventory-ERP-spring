@@ -68,15 +68,17 @@ public class CashFlowService {
     private final AuditService audit;
     private final CurrencyService currency;
     private final AccountDeterminationService determination;
+    private final AccountService accountService;
 
     public CashFlowService(JdbcClient jdbc, PostingService posting, AccountResolverService accounts, AuditService audit,
-            CurrencyService currency, AccountDeterminationService determination) {
+            CurrencyService currency, AccountDeterminationService determination, AccountService accountService) {
         this.jdbc = jdbc;
         this.posting = posting;
         this.accounts = accounts;
         this.audit = audit;
         this.currency = currency;
         this.determination = determination;
+        this.accountService = accountService;
     }
 
     private static Map<String, Object> body(Object... kv) {
@@ -241,6 +243,9 @@ public class CashFlowService {
         if (registers > 0 || methods > 0 || openSessions > 0) {
             throw ApiException.badRequest("Account is in active use by a register, payment method or open shift");
         }
+        // Finance readiness audit B5: the checks of DELETE /accounts/:id too, so an account with history, children or a
+        // mapping is never soft-deleted out of the reports (Nest deletes it here without them).
+        accountService.assertDeletable(id);
         jdbc.sql("UPDATE \"Account\" SET \"deletedAt\" = now(), \"isActive\" = false, \"updatedAt\" = now() WHERE id = ?")
                 .param(id).update();
         accounts.invalidate(orgId);
