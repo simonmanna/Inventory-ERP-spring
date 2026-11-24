@@ -464,9 +464,14 @@ class PlmIT extends MfgTestSupport {
         return TenantContext.run(TenantContext.TenantStore.organization(demoOrg), () -> {
             List<String> applied = new java.util.ArrayList<>();
             for (String id : changes.dueChanges()) {
-                String n = changes.autoApply(id);
-                if (n != null) {
-                    applied.add(n);
+                // Like PlmEffectivityJob: a change that cannot switch over (another suite's stale one) is skipped.
+                try {
+                    String n = changes.autoApply(id);
+                    if (n != null) {
+                        applied.add(n);
+                    }
+                } catch (com.inventoryerp.shared.web.ApiException skipped) {
+                    // the job records the failure on that change and carries on
                 }
             }
             return applied;

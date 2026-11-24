@@ -302,33 +302,39 @@ class PlmIntegrityIT extends MfgTestSupport {
         JsonNode eco = ok(201, "POST", PLM + "/changes", Map.of("type", "bom", "bomId", bomId, "stockDisposition",
                 "none", "effectivity", "date", "effectiveDate", LocalDate.now().plusDays(5).toString()));
         String ecoId = eco.get("id").asString();
-        okAs(approver(), 201, "POST", ECO + ecoId + "/approve", null);
-        assertThat(ok(201, "POST", PLM + "/changes/" + ecoId + "/apply", null).get("applyQueued").asBoolean()).isTrue();
-        jdbc.sql("UPDATE \"EngineeringChange\" SET \"effectiveDate\" = ? WHERE id = ?")
-                .params(LocalDate.now().minusDays(2), ecoId).update();
-        JsonNode other = ok(201, "POST", "/manufacturing/boms", Map.of("name", "Other", "outputProductId", out,
-                "outputQuantity", 1, "lines", List.of(Map.of("componentProductId", flour, "quantity", 2))));
-        ok(201, "POST", "/manufacturing/boms/" + other.get("id").asString() + "/activate", null);
+        try {
+            okAs(approver(), 201, "POST", ECO + ecoId + "/approve", null);
+            assertThat(ok(201, "POST", PLM + "/changes/" + ecoId + "/apply", null).get("applyQueued").asBoolean())
+                    .isTrue();
+            jdbc.sql("UPDATE \"EngineeringChange\" SET \"effectiveDate\" = ? WHERE id = ?")
+                    .params(LocalDate.now().minusDays(2), ecoId).update();
+            JsonNode other = ok(201, "POST", "/manufacturing/boms", Map.of("name", "Other", "outputProductId", out,
+                    "outputQuantity", 1, "lines", List.of(Map.of("componentProductId", flour, "quantity", 2))));
+            ok(201, "POST", "/manufacturing/boms/" + other.get("id").asString() + "/activate", null);
 
-        for (int run = 0; run < 2; run++) {
-            TenantContext.run(TenantContext.TenantStore.organization(demoOrg), () -> {
-                try {
-                    changes.autoApply(ecoId);
-                    throw new AssertionError("the stale change must not apply");
-                } catch (com.inventoryerp.shared.web.ApiException e) {
-                    changes.recordAutoApplyFailure(ecoId, e.getMessage());
-                }
-            });
+            for (int run = 0; run < 2; run++) {
+                TenantContext.run(TenantContext.TenantStore.organization(demoOrg), () -> {
+                    try {
+                        changes.autoApply(ecoId);
+                        throw new AssertionError("the stale change must not apply");
+                    } catch (com.inventoryerp.shared.web.ApiException e) {
+                        changes.recordAutoApplyFailure(ecoId, e.getMessage());
+                    }
+                });
+            }
+            List<Map<String, Object>> lines = jdbc.sql("SELECT message, \"userId\" FROM \"PlmChangeActivity\" WHERE"
+                    + " \"changeId\" = ? AND message LIKE 'Automatic switch-over failed:%'").param(ecoId).query()
+                    .listOfRows();
+            assertThat(lines).hasSize(1);
+            assertThat(lines.getFirst().get("userId")).isEqualTo("system");
+            assertThat((String) lines.getFirst().get("message")).endsWith("which is no longer the active version.");
+            JsonNode detail = ok(200, "GET", PLM + "/changes/" + ecoId, null);
+            assertThat(detail.get("activity").get(0).get("userName").asString()).isEqualTo("System");
+            assertThat(detail.get("status").asString()).isEqualTo("approved");
+        } finally {
+            // Leave no due change behind: other suites run the effectivity job over the whole organization.
+            as("POST", PLM + "/changes/" + ecoId + "/cancel", Map.of("reason", "cleanup"));
         }
-        List<Map<String, Object>> lines = jdbc.sql("SELECT message, \"userId\" FROM \"PlmChangeActivity\" WHERE"
-                + " \"changeId\" = ? AND message LIKE 'Automatic switch-over failed:%'").param(ecoId).query()
-                .listOfRows();
-        assertThat(lines).hasSize(1);
-        assertThat(lines.getFirst().get("userId")).isEqualTo("system");
-        assertThat((String) lines.getFirst().get("message")).endsWith("which is no longer the active version.");
-        JsonNode detail = ok(200, "GET", PLM + "/changes/" + ecoId, null);
-        assertThat(detail.get("activity").get(0).get("userName").asString()).isEqualTo("System");
-        assertThat(detail.get("status").asString()).isEqualTo("approved");
     }
 
     @Test
