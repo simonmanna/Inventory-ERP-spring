@@ -67,6 +67,9 @@ public abstract class ApiTestSupport {
     protected com.inventoryerp.kernel.events.OutboxWorker outboxWorker;
 
     @Autowired
+    protected com.inventoryerp.kernel.security.PermissionService permissionService;
+
+    @Autowired
     @Qualifier("requestMappingHandlerMapping")
     protected RequestMappingHandlerMapping mappings;
 
@@ -407,6 +410,85 @@ public abstract class ApiTestSupport {
                 }
             }
         }
+        assertThat(failures).isEmpty();
+        return checked;
+    }
+
+    /** A DEMO user whose role holds exactly {@code permissions}; returns the access token. */
+    protected String tokenHolding(String... permissions) {
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                        + " VALUES (?, ?, ?, false, ?, now())")
+                .params(role, demoOrg, "Some-" + role, permissions).update();
+        String email = "some-" + UUID.randomUUID() + "@demo.test";
+        createUser(demoOrg, email, "Some@12345", role);
+        return login("DEMO", email, "Some@12345");
+    }
+
+    /** Every permission of the catalogue except {@code without} (and the customer-portal marker: a staff user). */
+    protected static String[] everyPermissionBut(java.util.Collection<String> without) {
+        return Permissions.ALL.stream()
+                .filter(p -> !without.contains(p) && !Permissions.PORTAL__CUSTOMER.equals(p))
+                .toArray(String[]::new);
+    }
+
+    /**
+     * Finance audit A4 (release gate G3): the wrong-permission matrix. Every write route (POST, PUT, PATCH, DELETE) of
+     * controllers in {@code packagePrefix} that declares permissions answers 403, with the Nest message, to a user who
+     * holds every permission of the catalogue except the route's own. So no other permission, and no set of them,
+     * opens a route (for example {@code journal_entry:create} posting an entry). The request stops at the guard: no
+     * handler runs. Returns the number of checked routes.
+     */
+    protected int assertWrongPermissionMatrix(String packagePrefix) {
+        Set<String> writes = Set.of("POST", "PUT", "PATCH", "DELETE");
+        // routes by the permissions they declare: one role edit per distinct set, not one user per route
+        Map<List<String>, List<String[]>> byPermissions = new LinkedHashMap<>();
+        for (var entry : mappings.getHandlerMethods().entrySet()) {
+            HandlerMethod hm = entry.getValue();
+            if (!hm.getBeanType().getPackageName().startsWith(packagePrefix)) {
+                continue;
+            }
+            RequirePermissions perms = AnnotatedElementUtils.findMergedAnnotation(hm.getMethod(), RequirePermissions.class);
+            if (perms == null) {
+                perms = AnnotatedElementUtils.findMergedAnnotation(hm.getBeanType(), RequirePermissions.class);
+            }
+            if (perms == null) {
+                continue;
+            }
+            for (String pattern : entry.getKey().getPatternValues()) {
+                for (var m : entry.getKey().getMethodsCondition().getMethods()) {
+                    if (writes.contains(m.name())) {
+                        byPermissions.computeIfAbsent(List.of(perms.value()), k -> new ArrayList<>())
+                                .add(new String[] {m.name(), pattern});
+                    }
+                }
+            }
+        }
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                        + " VALUES (?, ?, ?, false, ?, now())")
+                .params(role, demoOrg, "AllButOne-" + role, new String[0]).update();
+        String email = "all-but-one-" + UUID.randomUUID() + "@demo.test";
+        createUser(demoOrg, email, "AllBut@12345", role);
+        String token = login("DEMO", email, "AllBut@12345");
+        List<String> failures = new ArrayList<>();
+        int checked = 0;
+        for (var group : byPermissions.entrySet()) {
+            jdbc.sql("UPDATE \"Role\" SET permissions = ? WHERE id = ?")
+                    .params(everyPermissionBut(group.getKey()), role).update();
+            permissionService.evictAll();
+            String expected = "Missing required permission(s): " + String.join(", ", group.getKey());
+            for (String[] route : group.getValue()) {
+                checked++;
+                String path = route[1].replace("/api/v1", "").replaceAll("\\{[^}]+}", UUID.randomUUID().toString());
+                Res denied = call(route[0], path, "DELETE".equals(route[0]) ? null : Map.of(), token);
+                if (denied.status() != 403 || !expected.equals(denied.body().get("message").asString())) {
+                    failures.add(route[0] + " " + route[1] + " holding every permission but " + group.getKey() + " → "
+                            + denied.status() + " " + denied.raw().body());
+                }
+            }
+        }
+        permissionService.evictAll();
         assertThat(failures).isEmpty();
         return checked;
     }

@@ -16,14 +16,14 @@ import {
   useYearClosingBalances,
   type CloseChecklistSignOff,
 } from '@/features/accounting/api';
-import { date, dateTime } from '@/lib/format';
+import { dateTime, wallDate } from '@/lib/format';
 import { apiMessage, notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 
 const LABELS: Record<string, string> = {
   earlier_years_closed: tx('Earlier fiscal years closed'),
-  periods_closed: tx('Every period with postings closed'),
+  periods_closed: tx('Every period with profit and loss closed'),
   profit_and_loss_closed: tx('Profit and loss closed to retained earnings'),
   trial_balance: tx('Trial balance balances'),
   draft_journals: tx('No draft journal entries in the year'),
@@ -101,7 +101,7 @@ export default function FiscalYearClosePage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{tx('Year-end close')}: {y.name}</h1>
-          <p className="text-sm text-muted-foreground">{date(y.startDate)} – {date(y.endDate)}</p>
+          <p className="text-sm text-muted-foreground">{wallDate(y.startDate)} – {wallDate(y.endDate)}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={closed ? 'secondary' : c.readyToClose ? 'default' : 'destructive'}>
@@ -177,7 +177,7 @@ export default function FiscalYearClosePage() {
       {closed && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">{tx('Closing balances')} · {date(y.endDate)}</CardTitle>
+            <CardTitle className="text-base">{tx('Closing balances')} · {wallDate(y.endDate)}</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>

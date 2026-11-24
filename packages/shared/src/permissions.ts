@@ -63,6 +63,12 @@ export const PERMISSIONS = {
     read: 'tax:read',
     update: 'tax:update',
     delete: 'tax:delete',
+    /**
+     * Finance readiness audit A4 (owner decision 2026-11-23): settle a VAT period (post the offset entry and lock the
+     * period's tax postings) and undo the latest settlement. Used to need only journal_entry:create, the maker's
+     * permission. V652 grants it to Administrator and to every role that holds journal_entry:post.
+     */
+    settle: 'tax:settle',
   },
   // ---- Withholding tax certificates (ADR-S071; Spring-native) ----
   withholding: {

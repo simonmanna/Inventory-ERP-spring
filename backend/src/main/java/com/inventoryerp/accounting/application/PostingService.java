@@ -40,8 +40,9 @@ import org.springframework.transaction.annotation.Transactional;
  * The one writer of JournalEntry/JournalLine (port of {@code posting.service.ts}, ADR-009): validates
  * double-entry rules, enforces period control, numbers atomically per journal/year and joins the caller's
  * transaction so a document's state change and its posting commit together. {@code postingKey} makes a
- * posting idempotent (only a {@code posted} entry is replayed); reversal suffixes the original key so the
- * canonical slot can be re-posted. Manual entries go through draft → post (maker-checker).
+ * posting idempotent (only a {@code posted} entry is replayed; a replay with other lines is reported, finance audit A6,
+ * {@link PostingKeyReplayGuard}); reversal suffixes the original key so the canonical slot can be re-posted. Manual
+ * entries go through draft → post (maker-checker).
  *
  * <p>Control-account policy (owner decision, V518): a user's entry (staged draft, approved draft) and what recurring
  * templates / deferral schedules check for themselves ({@link #assertManualPostingAllowed}) never reach a designated
@@ -51,12 +52,14 @@ import org.springframework.transaction.annotation.Transactional;
  * control-account line, the {@code journal_entry:control_adjust} permission for maker and checker, a second user to
  * post it, and an audit row on stage, post and reversal.
  *
- * <p>Document reversals (owner decision 2026-11-17): {@link #reverse} itself has no source-type restriction — it is the
- * GL step of every document-level reversal workflow (invoice cancel, bill void, credit / debit note reversal, payment
- * void, …), which call it in their own transaction. The user-facing generic reversal routes check
- * {@link SubledgerSources#assertGenericReversible} first, so an entry a customer / supplier sub-ledger owns is only ever
- * reversed by its document's workflow. {@code reverse} refuses an entry that is no longer {@code posted} (400), so a
- * workflow replay can never mirror an entry twice; the document's status check makes the replay a no-op first.
+ * <p>Document reversals (owner decision 2026-11-17, widened by finance readiness audit A2): {@link #reverse} itself has
+ * no source-type restriction — it is the GL step of every document- and process-level reversal workflow (invoice cancel,
+ * bill void, credit / debit note reversal, payment void, period reopen, payroll-run reversal, …), which call it in
+ * their own transaction. The user-facing generic reversal routes check {@link SubledgerSources#assertGenericReversible}
+ * first, so only manual entries and allow-listed sources ({@code recurring_entry}) are reversed there; every other entry
+ * only by the workflow of the document or process that posted it. {@code reverse} refuses an entry that is no longer
+ * {@code posted} (400), so a workflow replay can never mirror an entry twice; the document's status check makes the
+ * replay a no-op first.
  */
 @Service
 public class PostingService {
@@ -74,6 +77,7 @@ public class PostingService {
     private final AnalyticDimensionService analyticDimensions;
     private final AuditService audit;
     private CostingDimensionGuard costingDimensions;
+    private PostingKeyReplayGuard replayGuard;
 
     public PostingService(EntityManager em, JdbcClient jdbc, EventBus events, SequenceService sequence,
             FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts,
@@ -94,6 +98,12 @@ public class PostingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCostingDimensions(CostingDimensionGuard costingDimensions) {
         this.costingDimensions = costingDimensions;
+    }
+
+    /** Finance audit A6: compares a replayed posting key's request with its entry; optional like the costing guard. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setReplayGuard(PostingKeyReplayGuard replayGuard) {
+        this.replayGuard = replayGuard;
     }
 
     /** Post a balanced entry; returns the entry with {@code lines}. */
@@ -124,7 +134,12 @@ public class PostingService {
                     .setParameter("status", JournalEntryStatus.POSTED)
                     .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
             if (existing != null) {
-                return render(existing);
+                // Finance audit A6 (P2-12): the same key with other lines is a second posting the replay would drop.
+                List<JournalLine> stored = lines(existing.getId());
+                if (replayGuard != null) {
+                    replayGuard.check(existing, request, stored);
+                }
+                return render(existing, stored);
             }
         }
         Journal journal = journal(request.journalCode());
@@ -324,7 +339,9 @@ public class PostingService {
         if ("tax_settlement".equals(sourceType)) {
             return null;
         }
-        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?")
+        // a reversed settlement locks nothing (finance audit A3)
+        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?"
+                        + " AND \"reversedAt\" IS NULL")
                 .param(org).query((rs, n) -> rs.getTimestamp(1) == null ? null
                         : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .optional().orElse(null);

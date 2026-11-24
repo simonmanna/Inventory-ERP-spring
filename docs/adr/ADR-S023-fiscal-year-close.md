@@ -32,6 +32,12 @@ checklist, no carried-forward snapshot and nothing that opens the next year. Boo
    periods stay closed (reopen them one by one with the existing period reopen).
 6. Permissions reuse `fiscal_period:read|create|update|reopen`. Every new table has the tenant RLS policy (V214).
 
+Amended 2026-11-24 (finance readiness audit A3, owner-approved deviation): the period close closes a period with no
+profit and loss to close (no closing entry), so point 4 no longer applies as written. The checklist item counts open
+periods whose profit and loss does not net to zero ("Every period with profit and loss closed"), and the year close
+also closes open periods that have postings but no profit and loss, through the period close and its checks
+(`zeroProfitAndLossPeriodsClosed`). See `docs/spec/accounting.md`, "Finance readiness audit A3".
+
 ## Consequences
 
 - No change to existing routes or JSON. `FiscalPeriod` JSON from the parity routes does not show `fiscalYearId`.

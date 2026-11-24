@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ChevronRight, ArrowLeft, ScrollText, FileText, RotateCcw, ExternalLink, CheckCircle2, Trash2, ShieldAlert } from 'lucide-react';
-import { PERMISSIONS } from '@erp/shared';
+import { isGenericReversalSource, PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -118,9 +118,11 @@ export function JournalEntryDetailPage() {
     } catch { /* toasted by useDiscardJournalEntry */ }
   };
 
-  // Document reversals (owner decision 2026-11-17): an entry posted by a customer / supplier document is reversed by
-  // that document's own workflow; the server refuses the generic reverse, so the button gives way to a link.
+  // Document reversals (owner decision 2026-11-17, widened by finance audit A2): only manual entries and recurring-journal
+  // runs are reversed here. Anything else is reversed by the document or process that posted it; the server refuses the
+  // generic reverse and names that action (sourceDocument), so the button gives way to a link or a hint.
   const sourceDocument = entry.sourceDocument ?? null;
+  const genericReversal = !sourceDocument && isGenericReversalSource(entry.sourceType);
   const sourceLink = sourceDocument?.path
     ? { path: sourceDocument.path, label: sourceDocument.label }
     : entry.sourceType && entry.sourceId
@@ -196,7 +198,7 @@ export function JournalEntryDetailPage() {
                 {tx('Open')} {sourceDocument.label} {sourceDocument.number ?? ''}
               </Button>
             )}
-            {entry.status === 'posted' && !sourceDocument && has(PERMISSIONS.journalEntry.reverse) && (
+            {entry.status === 'posted' && genericReversal && has(PERMISSIONS.journalEntry.reverse) && (
               <Button variant="outline" size="sm" className="border-amber-300 text-amber-700 hover:bg-amber-50 gap-1.5" onClick={() => setReverseConfirm(true)} disabled={reverse.isPending}>
                 <RotateCcw className="h-4 w-4" />
                 {reverse.isPending ? tx('Reversing…') : tx('Reverse')}
@@ -211,8 +213,8 @@ export function JournalEntryDetailPage() {
         {entry.status === 'posted' && sourceDocument && (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             {sourceDocument.viaReversal
-              ? tx('This entry reverses an entry posted by a sub-ledger document and cannot be reversed itself.')
-              : tx('This entry was posted by a sub-ledger document and cannot be reversed here.')}{' '}
+              ? tx('This entry reverses an entry posted by a document or process and cannot be reversed itself.')
+              : tx('This entry was posted by a document or process and cannot be reversed here.')}{' '}
             <span className="font-medium">{sourceDocument.label} {sourceDocument.number ?? ''}</span>
             {sourceDocument.action && !sourceDocument.viaReversal ? ` · ${tx('Use')}: ${sourceDocument.action}` : ''}
           </div>

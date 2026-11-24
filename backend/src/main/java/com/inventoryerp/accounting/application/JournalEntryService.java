@@ -8,7 +8,6 @@ import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.shared.web.EntityJson;
 import com.inventoryerp.shared.web.PageResult;
 import com.inventoryerp.accounting.domain.JournalEntryStatus;
-import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import jakarta.persistence.EntityManager;
@@ -137,8 +136,8 @@ public class JournalEntryService {
             }
             return lm;
         }).toList());
-        // Additive (document reversals, owner decision 2026-11-17): the sub-ledger document an entry belongs to, so the
-        // web hides the generic Reverse and links the document-level action instead.
+        // Additive (document reversals, owner decision 2026-11-17; every refused source since finance readiness audit
+        // A2): the document or process an entry belongs to, so the web hides the generic Reverse and names the action.
         SubledgerSources.SourceDocument source = subledger.resolve(id);
         if (source != null) {
             m.put("sourceDocument", source.toMap());
@@ -202,34 +201,15 @@ public class JournalEntryService {
     }
 
     /**
-     * The generic reversal ({@code POST /journal-entries/{id}/reverse}). An entry posted by a customer / supplier
-     * sub-ledger document (invoice, bill, credit / debit note, payment, deposit, POS sale, …) — or the reversal of one —
-     * is refused with the document-level action to use instead ({@link SubledgerSources}); the document workflows
-     * reverse their own entries through {@link PostingService#reverse} directly. Manual entries, control-account
-     * adjustments, recurring / deferral and other system entries stay reversible here.
+     * The generic reversal ({@code POST /journal-entries/{id}/reverse}). It accepts manual entries and allow-listed
+     * sources only (finance readiness audit A2, {@link SubledgerSources}): an entry posted by a sub-ledger document,
+     * a period close, a VAT settlement, an FX revaluation or any other process — or the reversal of one — is refused
+     * with the action that reverses it; those workflows reverse their own entries through {@link PostingService#reverse}
+     * directly. Reversing a control-account adjustment needs {@code journal_entry:control_adjust}.
      */
     @Transactional
     public Map<String, Object> reverse(String id, Instant date, String description) {
         subledger.assertGenericReversible(id);
-        // FX-1: the automatic reversal of an FX revaluation belongs to the revaluation lifecycle; reversing it by hand
-        // would turn an unrealised gain or loss into a permanent one. Re-run the revaluation instead.
-        Boolean revaluationReversal = jdbc.sql("SELECT EXISTS (SELECT 1 FROM \"JournalEntry\" e JOIN \"JournalEntry\" o"
-                        + " ON o.id = e.\"reversalOfId\" WHERE e.id = ? AND e.\"organizationId\" = ?"
-                        + " AND o.\"sourceType\" = 'fx_revaluation')")
-                .params(id, TenantContext.organizationId()).query(Boolean.class).single();
-        if (Boolean.TRUE.equals(revaluationReversal)) {
-            throw ApiException.badRequest("This entry is the automatic reversal of an FX revaluation and cannot be"
-                    + " reversed by hand; run the FX revaluation again for the date instead");
-        }
-        // Control-account policy (V518): reversing a control-account adjustment posts to AR / AP again, so it needs
-        // the same permission as staging or posting one (the reversal itself is audited by PostingService).
-        Boolean adjustment = jdbc.sql("SELECT \"controlAdjustment\" FROM \"JournalEntry\" WHERE id = ? AND"
-                        + " \"organizationId\" = ?")
-                .params(id, TenantContext.organizationId()).query(Boolean.class).optional().orElse(false);
-        if (Boolean.TRUE.equals(adjustment) && !TenantContext.has(Permissions.JOURNAL_ENTRY__CONTROL_ADJUST)) {
-            throw ApiException.forbidden("Reversing a control-account adjustment requires "
-                    + Permissions.JOURNAL_ENTRY__CONTROL_ADJUST);
-        }
         return posting.reverse(id, date, description);
     }
 }

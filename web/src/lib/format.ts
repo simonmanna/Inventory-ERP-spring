@@ -79,6 +79,22 @@ export function date(value?: string | Date | null): string {
   return d.toLocaleDateString();
 }
 
+/**
+ * A stored org-local wall-clock bound (fiscal period / year start or end, ADR-S070) as a local Date on the same
+ * calendar day. The API sends these as `YYYY-MM-DDTHH:mm:ss.sssZ`, but they are clock readings, not instants:
+ * `new Date(value)` would show a period ending `…T23:59:59.999Z` as the next day east of UTC.
+ */
+export function wallDay(value: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+}
+
+/** {@link date} for a wall-clock bound: the stored calendar day in every browser time zone. */
+export function wallDate(value?: string | null): string {
+  if (!value) return '-';
+  return wallDay(value).toLocaleDateString();
+}
+
 export function dateTime(value?: string | Date | null): string {
   if (!value) return '-';
   const d = typeof value === 'string' ? new Date(value) : value;

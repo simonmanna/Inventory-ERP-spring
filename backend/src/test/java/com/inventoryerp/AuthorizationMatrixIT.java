@@ -18,4 +18,11 @@ class AuthorizationMatrixIT extends ApiTestSupport {
         int checked = assertAuthorizationMatrix("com.inventoryerp");
         assertThat(checked).isGreaterThan(2000);
     }
+
+    @Test
+    @DisplayName("A4: every write route answers 403 to a user holding every permission but the route's own")
+    void everyWriteRouteRefusesEveryOtherPermission() {
+        int checked = assertWrongPermissionMatrix("com.inventoryerp");
+        assertThat(checked).isGreaterThan(1000);
+    }
 }

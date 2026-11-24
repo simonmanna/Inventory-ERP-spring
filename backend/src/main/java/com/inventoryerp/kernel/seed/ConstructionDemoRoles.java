@@ -62,7 +62,7 @@ final class ConstructionDemoRoles {
                             "invoice:create", "invoice:update", "invoice:post", "invoice:send", "credit_note:read",
                             "credit_note:create", "credit_note:post", "payment:read", "payment:create",
                             "payment:allocate", "journal_entry:read", "journal_entry:create", "journal_entry:post",
-                            "account:read", "account_mapping:read", "fiscal_period:read", "report:accounting",
+                            "tax:settle", "account:read", "account_mapping:read", "fiscal_period:read", "report:accounting",
                             "report:ar", "expense:read", "expense:create", "expense:post", "fleet_freight:read",
                             "fleet_freight:bill", "credit_control:read", "analytics:view", "analytics:finance"))),
             new Staff("gm@construction.test", "Martin", "Manager", "General Manager",

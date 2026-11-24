@@ -125,11 +125,14 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
         assertThat(check(checklist, "inventory_exceptions").get("count").asInt()).isZero();
         assertThat(checklist.get("readyToClose").asBoolean()).isTrue();
 
-        // The close passes the inventory-exception gate (it stops later: nothing to close in an empty period).
+        // The close passes the inventory-exception gate: the empty period closes without a closing entry (finance
+        // audit A3; it used to stop with "Nothing to close"). Reopened for the next step.
         Res close = call("POST", "/fiscal-periods/" + period + "/close", null, Map.of("Authorization", "Bearer " + otherToken,
                 "Idempotency-Key", UUID.randomUUID().toString()));
-        assertThat(close.status()).isEqualTo(400);
-        assertThat(close.body().get("message").asString()).startsWith("Nothing to close for 'Tie-out 2008-06'");
+        assertThat(close.status()).as(close.raw().body()).isEqualTo(200);
+        assertThat(close.body().get("journalEntryId").isNull()).isTrue();
+        assertThat(call("POST", "/fiscal-periods/" + period + "/reopen", null, Map.of("Authorization", "Bearer "
+                + otherToken, "Idempotency-Key", UUID.randomUUID().toString())).status()).isEqualTo(200);
 
         // A sale-line exception still blocks, with the sale-line message; the tie-out item is unchanged.
         exception(otherOrg, "missing_recipe", "2008-06-04 10:00:00");
@@ -164,8 +167,11 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
             assertThat(check(checklist, "inventory_exceptions").get("count").asInt()).isZero();
             assertThat(check(checklist, "inventory_integrity_value").get("ok").asBoolean()).isTrue();
             assertThat(check(checklist, "inventory_integrity_value").get("blocking").asBoolean()).isTrue();
+            // Passes the gate: the empty period closes (finance audit A3), and is reopened for the next step.
             Res passes = call("POST", "/fiscal-periods/" + period + "/close", null, withKey(auth));
-            assertThat(passes.body().get("message").asString()).startsWith("Nothing to close for 'Integrity 2008-07'");
+            assertThat(passes.status()).as(passes.raw().body()).isEqualTo(200);
+            assertThat(call("POST", "/fiscal-periods/" + period + "/reopen", null, withKey(auth)).status())
+                    .isEqualTo(200);
 
             String value = exception(otherOrg, "integrity_valuation_vs_gl", "2008-07-03 03:10:00");
             JsonNode blocked = call("GET", path, null, otherToken).body();
