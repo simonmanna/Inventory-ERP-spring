@@ -215,7 +215,8 @@ class ControlAccountPolicyIT extends AccountingFixtures {
     }
 
     @Test
-    @DisplayName("[control-accounts] sub-ledger (system) postings and their reversal through the API still reach AR")
+    @DisplayName("[control-accounts] sub-ledger (system) postings and their engine reversal still reach AR; the generic"
+            + " route leaves a system entry to the process that posted it")
     void systemPostingsAndReversalsAllowed() {
         Books b = freshBooks();
         String arCode = mappedCode(b.org(), "accounts_receivable");
@@ -224,9 +225,11 @@ class ControlAccountPolicyIT extends AccountingFixtures {
         String day = LocalDate.now().toString();
         String entryId = postJe(b, day, List.of(dr(arCode, 70).partner(customer), cr(revenueCode, 70)));
         assertThat(status(entryId)).isEqualTo("posted");
-        Res reversed = as(b, "POST", "/journal-entries/" + entryId + "/reverse", null);
-        assertThat(reversed.status()).as(reversed.raw().body()).isEqualTo(200);
-        String reversalId = reversed.body().get("id").asString();
+        // Finance readiness audit A2: only manual and recurring entries are reversed generically; the process that
+        // posted a system entry reverses it through the engine, partners mirrored.
+        Res generic = as(b, "POST", "/journal-entries/" + entryId + "/reverse", null);
+        assertThat(generic.status()).as(generic.raw().body()).isEqualTo(400);
+        String reversalId = (String) inTenant(b.org(), b.ownerId(), () -> posting.reverse(entryId, null, null)).get("id");
         assertThat(lines(reversalId)).anySatisfy(l -> {
             assertThat(l.get("code")).isEqualTo(arCode);
             assertThat(l.get("partnerId")).isEqualTo(customer);

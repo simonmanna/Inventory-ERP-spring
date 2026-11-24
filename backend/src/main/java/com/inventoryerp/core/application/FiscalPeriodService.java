@@ -2,6 +2,7 @@ package com.inventoryerp.core.application;
 
 import com.inventoryerp.core.domain.FiscalPeriod;
 import com.inventoryerp.core.domain.FiscalPeriodStatus;
+import com.inventoryerp.kernel.common.WallClockDays;
 import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -10,6 +11,7 @@ import jakarta.persistence.EntityManager;
 import java.sql.Timestamp;
 import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -28,7 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
  *   <li>the dates of a period change only while it is open and no posted journal entry falls in its current or its
  *       new range; a period is deleted only on the same conditions;
  *   <li>the periods of one organization never overlap and never end before they start (also enforced in the
- *       database by the {@code fiscal_period_no_overlap} trigger, V512).
+ *       database by the {@code fiscal_period_no_overlap} trigger, V512);
+ *   <li>a date-only {@code endDate} is stored as 23:59:59.999 of that day, where Nest stores 00:00 and loses the last
+ *       day (owner-approved deviation, finance readiness audit 2026-11-23 P1-1).
  * </ul>
  *
  * Bounds are stored as org-local wall clock (ADR-S070); the posted-entry check compares them with
@@ -63,6 +67,10 @@ public class FiscalPeriodService extends BaseCrudService<FiscalPeriod> {
     public Map<String, Object> create(Record dto) {
         String organizationId = TenantContext.organizationId();
         FiscalPeriod row = EntityPatch.apply(newInstance(), dto);
+        Object end = EntityPatch.data(dto).get("endDate");
+        if (end != null) {
+            row.setEndDate(endDate(end));
+        }
         lockPeriods(organizationId);
         assertRange(row.getStartDate(), row.getEndDate());
         assertNoOverlap(organizationId, null, row.getStartDate(), row.getEndDate());
@@ -88,7 +96,7 @@ public class FiscalPeriodService extends BaseCrudService<FiscalPeriod> {
         lockRow(id, organizationId);
         FiscalPeriod row = require(id);
         Instant start = data.containsKey("startDate") ? date(data.get("startDate"), "startDate") : row.getStartDate();
-        Instant end = data.containsKey("endDate") ? date(data.get("endDate"), "endDate") : row.getEndDate();
+        Instant end = data.containsKey("endDate") ? endDate(data.get("endDate")) : row.getEndDate();
         boolean moved = !start.equals(row.getStartDate()) || !end.equals(row.getEndDate());
         if (moved) {
             if (row.getStatus() != FiscalPeriodStatus.OPEN) {
@@ -104,6 +112,7 @@ public class FiscalPeriodService extends BaseCrudService<FiscalPeriod> {
             assertNoOverlap(organizationId, row.getId(), start, end);
         }
         EntityPatch.apply(row, dto);
+        row.setEndDate(end);
         em.flush();
         return render(row);
     }
@@ -146,6 +155,18 @@ public class FiscalPeriodService extends BaseCrudService<FiscalPeriod> {
             throw ApiException.badRequest(field + " must be a valid ISO 8601 date string");
         }
         return EntityPatch.toInstant(value.toString());
+    }
+
+    /**
+     * A request end date: a bare {@code YYYY-MM-DD} ends at 23:59:59.999 of that day (finance audit P1-1); a full ISO
+     * timestamp is an explicit wall-clock value and is stored as given.
+     */
+    private static Instant endDate(Object value) {
+        if (value == null) {
+            throw ApiException.badRequest("endDate must be a valid ISO 8601 date string");
+        }
+        String v = value.toString().trim();
+        return WallClockDays.isDateOnly(v) ? WallClockDays.endInstant(LocalDate.parse(v)) : EntityPatch.toInstant(v);
     }
 
     private static void assertRange(Instant start, Instant end) {

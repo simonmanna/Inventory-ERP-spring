@@ -115,6 +115,40 @@ export function useTaxSettlementPreview(from: string, to: string) {
   });
 }
 
+/** A VAT settlement on record (`GET /tax-settlements`, newest first; a reversed one carries `reversedAt`). */
+export interface TaxSettlement {
+  id: string;
+  periodFrom: string;
+  periodTo: string;
+  journalEntryId: string | null;
+  reversedAt: string | null;
+}
+
+/**
+ * Undo the latest VAT settlement in force (finance audit A3): reverses its offset entry and unlocks its period, which
+ * can then be corrected and settled again.
+ */
+export function useUndoLatestTaxSettlement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const settlements = (await api.get<TaxSettlement[]>('/tax-settlements')).data;
+      const latest = settlements.find((s) => !s.reversedAt);
+      if (!latest) throw new Error(tx('No VAT settlement to undo'));
+      return await idempotentPost<TaxSettlement>(`/tax-settlements/${latest.id}/reverse`);
+    },
+    onSuccess: () => {
+      notify.success(tx('VAT settlement undone; the period is unlocked'));
+      qc.invalidateQueries({ queryKey: ['tax-settlement-preview'] });
+    },
+    onError: (e) =>
+      notify.error(
+        tx('Could not undo the VAT settlement'),
+        apiMessage(e, e instanceof Error ? e.message : tx('Please try again')),
+      ),
+  });
+}
+
 export function useSettleTax() {
   const qc = useQueryClient();
   return useMutation({

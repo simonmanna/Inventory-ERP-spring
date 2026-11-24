@@ -136,6 +136,10 @@ app:
   errors:
     expose-detail: ${EXPOSE_ERROR_DETAIL:false}
   read-only: ${READ_ONLY_MODE:false}
+  # Finance audit A4: in the prod profile the API refuses to start when its database role (DB_USER) is a superuser,
+  # has BYPASSRLS or owns the tables, because tenant row-level security does not apply to such a role. `warn` only
+  # logs it (emergency start).
+  db-role-check: ${APP_DB_ROLE_CHECK:fail}
   # Business "local" zone for receipts, report days and date filters (Nest: host TZ). JVM/JDBC stay UTC.
   timezone: ${APP_TIMEZONE:UTC}
   throttle:

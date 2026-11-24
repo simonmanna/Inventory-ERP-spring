@@ -30,8 +30,8 @@ public class AccountingWorkflowsInitializer {
         registry.register(new WorkflowDefinition("journal_entry", "draft", List.of(
                 new Transition("posted", "reversed", "reverse", "journal_entry:reverse", null,
                         ctx -> {
-                            // A generic route like JournalEntryService.reverse: sub-ledger entries are reversed by
-                            // their document's own workflow (owner decision 2026-11-17).
+                            // A generic route like JournalEntryService.reverse, with the same guard: manual and
+                            // allow-listed entries only (finance readiness audit A2, SubledgerSources).
                             subledger.assertGenericReversible(ctx.entityId());
                             posting.reverse(ctx.entityId(), null, "Reversal of " + ctx.entity().get("entryNumber"));
                         },

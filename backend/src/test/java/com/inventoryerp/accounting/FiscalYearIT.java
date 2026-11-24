@@ -91,7 +91,7 @@ class FiscalYearIT extends ApiTestSupport {
         Res blocked = as(b, "POST", "/fiscal-years/" + fyId + "/close", Map.of());
         assertThat(blocked.status()).isEqualTo(400);
         assertThat(blocked.body().get("message").asString()).startsWith("Cannot close FY" + y
-                + ": Every period with postings closed; Profit and loss closed to retained earnings");
+                + ": Every period with profit and loss closed; Profit and loss closed to retained earnings");
 
         okAs(b, 200, "POST", "/fiscal-periods/" + periodId + "/close", null);
         list = okAs(b, 200, "GET", "/fiscal-years/" + fyId + "/close-checklist", null);

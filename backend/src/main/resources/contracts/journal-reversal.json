@@ -1,0 +1,6 @@
+{
+  "genericReversalSourceTypes": [
+    "recurring_entry"
+  ],
+  "reversalSourceType": "reversal"
+}

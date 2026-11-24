@@ -1239,14 +1239,18 @@ export interface JournalEntryRow {
   _count?: { lines: number };
 }
 
-/** The sub-ledger document behind a journal entry (document reversals, owner decision 2026-11-17). */
+/**
+ * The document or process behind a journal entry that the generic reverse refuses (document reversals, owner decision
+ * 2026-11-17; every source but manual entries and recurring-journal runs since finance audit A2).
+ */
 export interface JournalSourceDocument {
   documentType: string;
   label: string;
-  id: string;
+  /** Null when the entry names its document by number only, or names none. */
+  id: string | null;
   number: string | null;
   sourceType: string;
-  /** The document-level reversal action, e.g. "Cancel the invoice"; null when the document has none. */
+  /** The action that reverses (or corrects) the entry, e.g. "cancel the invoice", "reopen the fiscal period". */
   action: string | null;
   route: string | null;
   /** Web path of the document, when it has a page. */

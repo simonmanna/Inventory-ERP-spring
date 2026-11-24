@@ -96,7 +96,7 @@ class Acc8PostingIntegrityIT extends AccountingFixtures {
         // A manual VAT correction yesterday (an invoice's own entry is reversed by cancelling the invoice instead).
         jdbc.sql("UPDATE \"Account\" SET \"allowManualPosting\" = true WHERE id = ?")
                 .param(mapped(b.org(), "tax_payable")).update();
-        String entry = postJe(b, yesterday, List.of(JeLine.dr(mappedCode(b.org(), "default_cash"), 40),
+        String entry = postManualJe(b, yesterday, List.of(JeLine.dr(mappedCode(b.org(), "default_cash"), 40),
                 JeLine.cr(mappedCode(b.org(), "tax_payable"), 40)));
         okAs(b, 200, "POST", "/tax-settlements", Map.of("from", from, "to", yesterday));
 

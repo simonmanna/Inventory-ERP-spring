@@ -57,7 +57,8 @@
     "create": "tax:create",
     "read": "tax:read",
     "update": "tax:update",
-    "delete": "tax:delete"
+    "delete": "tax:delete",
+    "settle": "tax:settle"
   },
   "withholding": {
     "read": "withholding:read",

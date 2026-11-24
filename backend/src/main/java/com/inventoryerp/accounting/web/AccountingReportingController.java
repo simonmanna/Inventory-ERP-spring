@@ -2,6 +2,8 @@ package com.inventoryerp.accounting.web;
 
 import com.inventoryerp.accounting.application.DetailedReportService;
 import com.inventoryerp.accounting.application.FinancialReportsService;
+import com.inventoryerp.accounting.application.LedgerIntegrityService;
+import com.inventoryerp.accounting.application.LedgerIntegrityService.IntegrityReport;
 import com.inventoryerp.accounting.application.PosGlReconciliationService;
 import com.inventoryerp.accounting.application.ReportSnapshotService;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -29,13 +31,15 @@ public class AccountingReportingController {
     private final DetailedReportService detailed;
     private final PosGlReconciliationService posGlRecon;
     private final ReportSnapshotService snapshots;
+    private final LedgerIntegrityService integrity;
 
     public AccountingReportingController(FinancialReportsService reports, DetailedReportService detailed,
-            PosGlReconciliationService posGlRecon, ReportSnapshotService snapshots) {
+            PosGlReconciliationService posGlRecon, ReportSnapshotService snapshots, LedgerIntegrityService integrity) {
         this.reports = reports;
         this.detailed = detailed;
         this.posGlRecon = posGlRecon;
         this.snapshots = snapshots;
+        this.integrity = integrity;
     }
 
     /** Per-account opening balance, every posted line with a running balance, and the closing balance. */
@@ -107,9 +111,24 @@ public class AccountingReportingController {
         return posGlRecon.reconcile(from, to);
     }
 
-    /** Operator-triggered: rebuild the snapshots of the current org now, then the AR/AP tie-out. */
+    /**
+     * Spring-only (finance readiness audit A0): the ledger integrity checks — entries balance, FX lines, trial balance,
+     * account classification, period coverage, closed periods, reversal links, VAT settlements, inventory tie-out.
+     * Read-only; at most 5,000 rows per check.
+     */
+    @GetMapping("/integrity")
+    public IntegrityReport integrity() {
+        return integrity.run();
+    }
+
+    /**
+     * Operator-triggered: rebuild the snapshots of the current org now, then the AR/AP tie-out. Finance audit A4
+     * (deviation; Nest: {@code report:accounting} only): a heavy write over the whole ledger, so it also needs
+     * {@code fiscal_period:update}, the period-end permission, not only the read permission of the reports.
+     */
     @PostMapping("/rebuild-snapshots")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions({Permissions.REPORT__ACCOUNTING, Permissions.FISCAL_PERIOD__UPDATE})
     public Map<String, Object> rebuildSnapshots() {
         Instant asOf = Instant.now();
         String organizationId = TenantContext.organizationId();
