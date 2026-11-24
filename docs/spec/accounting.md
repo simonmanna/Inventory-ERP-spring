@@ -957,7 +957,7 @@ each organisation with journal entries.
   - lines and accounts belong to the entry's organization;
   - each reversal points at an original that is reversed by it, and mirrors it account by account.
 
-  It also runs the I10 (fixed assets) and I12 (cash drawers) tie-outs from `LedgerIntegrityService`, but only in the organizations the class created; the shared DEMO history is excluded. A class that corrupts the ledger on purpose opts out with `@LedgerInvariantsCheck.Skip("reason")`. Two classes do: `LedgerIntegrityIT` and `Acc0ControlsIT`.
+  It also runs the I10 (fixed assets) and I12 (cash drawers) tie-outs from `LedgerIntegrityService`, but only in the organizations the class created; the shared DEMO history is excluded. A class that corrupts the ledger on purpose opts out with `@LedgerInvariantsCheck.Skip("reason")`. Three classes do: `LedgerIntegrityIT`, `Acc0ControlsIT` and `AssetAndDrawerIntegrityIT`. The I10 and I12 tie-outs run only for a register the class used (a test may post to an asset or drawer account as a plain account).
 - **`FinanceGapsB6IT`** covers:
   - Cross-tenant refusals: journal read and reverse, period close and reopen, treasury transfer, withdraw, tax-settlement reverse and session force-close. Nothing is written to the other organization's books.
   - Replay with the same key: a journal reversal and a period close.
