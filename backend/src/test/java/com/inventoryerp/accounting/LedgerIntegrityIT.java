@@ -68,8 +68,9 @@ class LedgerIntegrityIT extends AccountingFixtures {
         String sale = postJe(clean, day.toString(), List.of(dr(CASH, 1000), cr(revenue, 1000)));
         String ccy = testCurrency();
         rate(clean, ccy, baseCurrency(clean.org()), day.toString(), "1.08");
+        // Not on the receivable: a receivable with no document behind it is an AR / AP tie-out difference (I8, A5).
         postJe(clean, "GEN", day.toString(), ccy, "1.08", null, null,
-                List.of(dr(receivableCode(clean), 100).partner(partner(clean)), cr(revenue, 100)));
+                List.of(dr(accountCodeOfSection(clean.org(), "operating_expense"), 100), cr(revenue, 100)));
         inTenant(clean.org(), clean.ownerId(), () -> posting.reverse(sale, null, null));
         JsonNode cleanReport = report(clean);
         assertThat(failing(cleanReport)).as(cleanReport.toString()).isEmpty();
@@ -80,20 +81,21 @@ class LedgerIntegrityIT extends AccountingFixtures {
         Books broken = freshBooks();
         fiscalYears(broken, day);
         Instant at = Instant.parse(day + "T09:00:00Z");
-        String recv = receivableCode(broken);
+        // The foreign lines go to an expense account: on the receivable with no document they would also break I8.
+        String expense = accountCodeOfSection(broken.org(), "operating_expense");
         String rev = accountCodeOfSection(broken.org(), "revenue");
         // I1: a posted entry with one all-zero line (balanced, so the database lets it through).
         String zero = insertPosted(broken, at, null, Raw.base(CASH, "0", "0"));
         // I3: balanced in base and in EUR, but line 1 carries 120 for 100 × 1.1.
-        String drift = insertPosted(broken, at, ccy, new Raw(recv, "100", "0", ccy, "1.1", "120", "0"),
+        String drift = insertPosted(broken, at, ccy, new Raw(expense, "100", "0", ccy, "1.1", "120", "0"),
                 new Raw(rev, "0", "100", ccy, "1.2", "0", "120"));
         // I2: balanced in base, 100 against 90 in its own currency.
-        String unbalanced = insertPosted(broken, at, ccy, new Raw(recv, "100", "0", ccy, "1.1", "110", "0"),
+        String unbalanced = insertPosted(broken, at, ccy, new Raw(expense, "100", "0", ccy, "1.1", "110", "0"),
                 new Raw(rev, "0", "90", ccy, "1.22222222", "0", "110"));
         // Not a defect: a base-only FX adjustment line (amount 0, base 16), the shape of a payment allocation's
         // realised-FX line. A restored copy of real books showed it as a false positive of I3 before amount-0 lines
         // were exempted.
-        insertPosted(broken, at, ccy, new Raw(recv, "0", "0", ccy, "1", "16", "0"), Raw.base(rev, "0", "16"));
+        insertPosted(broken, at, ccy, new Raw(expense, "0", "0", ccy, "1", "16", "0"), Raw.base(rev, "0", "16"));
         // I7: marked reversed with no reversal entry.
         String orphan = postJe(broken, day.toString(), List.of(dr(CASH, 5), cr(rev, 5)));
         jdbc.sql("UPDATE \"JournalEntry\" SET status = 'reversed', \"updatedAt\" = now() WHERE id = ?").param(orphan)
@@ -379,17 +381,5 @@ class LedgerIntegrityIT extends AccountingFixtures {
             }
         });
         return id;
-    }
-
-    /** The receivable control account (foreign lines live on receivable / payable accounts, FX-2 C). */
-    private String receivableCode(Books b) {
-        return jdbc.sql("SELECT a.code FROM \"Account\" a JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\" WHERE"
-                + " a.\"organizationId\" = ? AND c.key = 'receivable' AND a.\"isPostable\" AND a.\"isActive\""
-                + " AND a.\"deletedAt\" IS NULL ORDER BY a.code LIMIT 1").param(b.org()).query(String.class).single();
-    }
-
-    private String partner(Books b) {
-        return okAs(b, 201, "POST", "/partners", Map.of("code", "LI-" + UUID.randomUUID().toString().substring(0, 6),
-                "name", "Integrity partner", "isCustomer", true)).get("id").asString();
     }
 }

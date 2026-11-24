@@ -8,6 +8,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -42,9 +44,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * entry was not reversed while it stayed closed;
  * <li>I7 {@value #REVERSAL_LINKS}: every reversal is the single, exact mirror of its original;
  * <li>I11 {@value #TAX_LOCK}: every VAT settlement's offset entry is posted, and the settled figures are unchanged;
+ * <li>I8 {@value #AR_AP_TIEOUT} (step A5): the customer and supplier sub-ledgers tie to their control accounts, per
+ * partner, in base currency ({@link SubledgerTieOut}, the measure of the AR / AP reconciliation reports);
  * <li>I9 {@value #INVENTORY_GL}: inventory valuation ties to the GL (the inventory GL tie-out).
  * </ul>
- * I8 (AR/AP), I10 (fixed assets), I12 (cash drawers) and I13 (posting-key reuse) come with later steps of the plan.
+ * I10 (fixed assets), I12 (cash drawers) and I13 (posting-key reuse) come with later steps of the plan.
  */
 @Service
 public class LedgerIntegrityService {
@@ -70,11 +74,12 @@ public class LedgerIntegrityService {
     public static final String CLOSED_PERIODS = "closed_periods";
     public static final String REVERSAL_LINKS = "reversal_links";
     public static final String TAX_LOCK = "tax_lock";
+    public static final String AR_AP_TIEOUT = "ar_ap_tieout";
     public static final String INVENTORY_GL = "inventory_gl";
 
     /** Every check, in report order. */
     public static final List<String> CHECKS = List.of(ENTRY_BALANCED, ENTRY_CURRENCY_BALANCED, FX_LINES, TRIAL_BALANCE,
-            ACCOUNT_CLASSIFICATION, PERIOD_COVERAGE, CLOSED_PERIODS, REVERSAL_LINKS, TAX_LOCK, INVENTORY_GL);
+            ACCOUNT_CLASSIFICATION, PERIOD_COVERAGE, CLOSED_PERIODS, REVERSAL_LINKS, TAX_LOCK, AR_AP_TIEOUT, INVENTORY_GL);
 
     /** Report sections of profit-and-loss accounts (the ones a period close carries to retained earnings). */
     static final String PNL_SECTIONS = "('revenue', 'contra_revenue', 'cogs', 'operating_expense', 'other_income',"
@@ -108,13 +113,15 @@ public class LedgerIntegrityService {
     private final JdbcClient jdbc;
     private final InventoryValuationService valuation;
     private final SettingResolverService settings;
+    private final ObjectProvider<SubledgerTieOut> tieOuts;
     private final TransactionTemplate readOnly;
 
     public LedgerIntegrityService(JdbcClient jdbc, InventoryValuationService valuation,
-            SettingResolverService settings, PlatformTransactionManager txm) {
+            SettingResolverService settings, ObjectProvider<SubledgerTieOut> tieOuts, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.valuation = valuation;
         this.settings = settings;
+        this.tieOuts = tieOuts;
         this.readOnly = new TransactionTemplate(txm);
         this.readOnly.setReadOnly(true);
     }
@@ -124,11 +131,12 @@ public class LedgerIntegrityService {
     }
 
     /**
-     * Run every check for the current organisation. The ledger checks share one read-only transaction; the inventory
-     * tie-out runs in its own, so a failure to compute it cannot spoil the others.
+     * Run every check for the current organisation. The ledger checks share one read-only transaction; the AR / AP and
+     * inventory tie-outs run in their own, so a failure to compute one cannot spoil the others.
      */
     public IntegrityReport run() {
         List<IntegrityCheck> checks = new ArrayList<>(readOnly.execute(s -> ledgerChecks()));
+        checks.add(arApTieOut());
         checks.add(inventoryGl());
         return new IntegrityReport(Instant.now(), checks.stream().allMatch(IntegrityCheck::ok), ROW_LIMIT,
                 List.copyOf(checks));
@@ -451,6 +459,49 @@ public class LedgerIntegrityService {
         return check(TAX_LOCK, "every VAT settlement in force has its offset entry posted (an undone one, its reversal),"
                 + " and output / input VAT of each settled period still equal the settled figures", TOLERANCE,
                 merge(entries, figures), null);
+    }
+
+    // ------------------------------------------------------------------ I8: AR / AP sub-ledgers
+
+    /**
+     * I8 (finance audit A5): each side's sub-ledger against its control accounts as of today, org-local — one row per
+     * partner that differs (difference = sub-ledger − GL, as the reconciliation reports show it), plus a total row when
+     * the totals differ though no single partner does.
+     */
+    private IntegrityCheck arApTieOut() {
+        String invariant = "customer / supplier sub-ledger (open items at their posting rate less unapplied payments,"
+                + " base currency) = receivable / payable control accounts, per partner and in total";
+        SubledgerTieOut tieOut = tieOuts.getIfAvailable();
+        if (tieOut == null) {
+            return skipped(AR_AP_TIEOUT, invariant, SubledgerTieOut.TOLERANCE, "no sub-ledger tie-out is available");
+        }
+        try {
+            LocalDate today = LocalDate.now(AccountingDay.zone(jdbc, org()));
+            List<Map<String, Object>> rows = new ArrayList<>();
+            long failures = 0;
+            for (String side : List.of("AR", "AP")) {
+                SubledgerTieOut.Measure m = tieOut.measure(side, today);
+                for (SubledgerTieOut.PartnerDifference d : m.differences()) {
+                    failures++;
+                    if (rows.size() < ROW_LIMIT) {
+                        rows.add(render(row("side", side, "partnerId", d.partnerId(), "partner", d.partner(),
+                                "subledger", d.subledger(), "gl", d.gl(), "difference", d.difference())));
+                    }
+                }
+                if (m.differences().isEmpty() && !m.balanced()) {
+                    failures++;
+                    rows.add(render(row("side", side, "partnerId", null, "partner", "(total)", "subledger",
+                            m.subledger(), "gl", m.gl(), "difference", m.subledger().subtract(m.gl()))));
+                }
+            }
+            return check(AR_AP_TIEOUT, invariant, SubledgerTieOut.TOLERANCE, new Found(failures, failures > rows.size(),
+                    rows), "as of " + today);
+        } catch (RuntimeException e) {
+            log.warn("[ledger-integrity] AR/AP tie-out failed for {}: {}", org(), e.toString());
+            String why = e instanceof ApiException ? e.getMessage() : "see the server log";
+            return new IntegrityCheck(AR_AP_TIEOUT, false, false, invariant, SubledgerTieOut.TOLERANCE, 0, false,
+                    List.of(), "the tie-out could not be computed: " + why);
+        }
     }
 
     private IntegrityCheck inventoryGl() {

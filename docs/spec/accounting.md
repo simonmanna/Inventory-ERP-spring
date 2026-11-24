@@ -624,6 +624,38 @@ gate G3). Tests: `GlControlPermissionsIT`, `DatabaseRoleValidatorIT`, `Authoriza
   `GlControlPermissionsIT` fixes the permissions of 23 general-ledger controls (journals, period and year end, VAT,
   snapshots, dashboard, treasury, FX, allocations, opening balances) in a table, so weakening one shows in review.
 
+## Finance readiness audit A5: receivables and payables tie-out (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (finding P2-5). Tests: `ArApTieOutIT`.
+
+- **One measure for the tie-out (P2-5, deviation).** Nest's tie-out (`tieout.service.ts`: the nightly snapshot behind
+  `GET /reports/accounting/tieout`) compares the one mapped `accounts_receivable` / `accounts_payable` account with the
+  residuals of sales invoices, POS invoices and vendor bills, each summed in its own currency. A foreign-currency
+  document counted at face value against a base-currency ledger, credit and debit notes and unapplied payments were left
+  out, and differences between partners that cancel out did not show. The snapshot now uses the measure of the
+  `ar.reconciliation` / `ap.reconciliation` reports (`SubledgerTieOut`): open items in base currency at their posting
+  rate, less payments not yet applied, against every receivable / payable account, per partner. A side is balanced when
+  its totals agree and no partner differs (tolerance 0.01). The variance keeps its sign (GL − sub-ledger) and the
+  response its fields; `arDetails` / `apDetails` keep `glBalance` and `subLedgerBalance` and add `asOf`, `basis`,
+  `partnersDiffering` and up to 50 `partners`, largest difference first. A snapshot no longer needs the AR / AP account
+  mappings.
+- **Open items at their posting rate.** A foreign-currency document created through the API stores rate 1, meaning
+  "not stated" (FX-1), and posts at the rate table's rate. The reports measured its residual at the stored 1. They now
+  use the rate its journal entry posted at (the entry's rate snapshot, else base ÷ amount of its lines), as payments
+  already do (`DocumentFxRates`); a base-currency document is measured at 1. An open item's `currency` is now its code,
+  empty for the base currency: the reports looked the currency up by id, but documents store the code, so it was always
+  empty.
+- **Unapplied payments on their own side.** A payment counts as unapplied for customers only when its entry posted the
+  partner's leg to a receivable account, and for suppliers only to a payable account, the rule payment allocation
+  already applies (FX-2). A customer's credit-note refund (outbound, against the receivable) counted as an unapplied
+  supplier payment in the AP reconciliation, ageing and tie-out.
+- **Integrity check I8, `ar_ap_tieout`.** `GET /reports/accounting/integrity` lists each partner that differs today
+  (side, partner, sub-ledger, GL, difference = sub-ledger − GL, as the reconciliation reports show it), plus a total row
+  when the totals differ though no single partner does. The nightly ledger monitor opens a finding and alerts on it.
+- **Close checklist.** An advisory item `ar_ap_tieout` counts the partners that differ at the period's last day. It is
+  measured in its own read-only transaction: a failure to compute it shows on the item and leaves the rest of the
+  checklist alone.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
@@ -767,7 +799,7 @@ Spring-only: Nest has no counterpart. Audit record: `docs/audits/2026-11-23-fina
 `AccountingReportingController`.
 - It runs read-only checks I1–I7, I9 and I11 of the audit: entries balance in base and in their own currency, FX lines,
   trial balance, account classification, period coverage, closed periods, reversal links, VAT settlements and the
-  inventory tie-out.
+  inventory tie-out. Since A5 it also runs I8, the AR / AP tie-out per partner (section A5 above).
 - It returns `{checkedAt, ok, rowLimit, checks[]}`. Each check lists at most 5,000 rows.
 
 **Nightly job.** `LedgerIntegrityJob` (03:10 UTC, ShedLock `ledger-integrity-check`) runs `LedgerIntegrityMonitor` for
