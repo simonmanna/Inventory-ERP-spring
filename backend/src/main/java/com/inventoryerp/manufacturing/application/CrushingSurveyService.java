@@ -5,6 +5,8 @@ import static com.inventoryerp.kernel.crud.SqlRows.str;
 
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockMove.Adjusted;
+import com.inventoryerp.inventory.application.StockReversalService;
+import com.inventoryerp.inventory.application.StockReversalService.LedgerSource;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -35,7 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
  * density = surveyed tonnes. Submitting snapshots the book stock and the variance; a second person with
  * {@code crushing_survey:approve} approves it, which applies the variance to the stock on hand through the inventory
  * adjustment ({@link StockService#adjust}: ADJUSTMENT_GAIN / LOSS through the posting engine, sourceType
- * {@code crushing_survey}), or rejects it. A posted survey can be reversed (the opposite adjustment).
+ * {@code crushing_survey}), or rejects it. A posted survey can be reversed (its own movement and journal reversed at
+ * the posted value). Integrity fix 2026-11-24 (MV-2): one submitted survey per stockpile × product, book stock as of
+ * the survey date, no gain at zero cost, tonnes only.
  */
 @Service
 public class CrushingSurveyService {
@@ -48,13 +52,16 @@ public class CrushingSurveyService {
     private final SequenceService seq;
     private final AuditService audit;
     private final StockService stock;
+    private final StockReversalService stockReversal;
 
-    public CrushingSurveyService(CrushingSupport rows, SequenceService seq, AuditService audit, StockService stock) {
+    public CrushingSurveyService(CrushingSupport rows, SequenceService seq, AuditService audit, StockService stock,
+            StockReversalService stockReversal) {
         this.rows = rows;
         this.db = rows.db();
         this.seq = seq;
         this.audit = audit;
         this.stock = stock;
+        this.stockReversal = stockReversal;
     }
 
     private static final String SELECT = """
@@ -144,11 +151,27 @@ public class CrushingSurveyService {
     public Map<String, Object> submit(String id) {
         Map<String, Object> v = rows.require(CrushingStockpileSurvey.class, id, true, "Stockpile survey not found");
         status(v, "draft", "submitted");
+        // Integrity fix 2026-11-24 (MV-2a): one survey of a stockpile × product waits for approval at a time, and a
+        // survey older than one already posted cannot be applied (both would correct the same book stock).
+        lockPile(v);
+        String waiting = db.jdbc().sql("SELECT code FROM \"CrushingStockpileSurvey\" WHERE \"organizationId\" = ?"
+                + " AND \"stockpileId\" = ? AND \"productId\" = ? AND status = 'submitted' AND \"deletedAt\" IS NULL"
+                + " AND id <> ? LIMIT 1").params(MfgDb.org(), v.get("stockpileId"), v.get("productId"), id)
+                .query(String.class).optional().orElse(null);
+        if (waiting != null) {
+            throw ApiException.badRequest("Stockpile survey " + waiting + " of this stockpile and product is already"
+                    + " waiting for approval; approve or reject it first");
+        }
+        refuseLaterPosted(v);
         Map<String, Object> k = rows.stockpile(str(v, "stockpileId"));
         String loc = str(k, "locationId");
-        BigDecimal book = rows.onHand(str(v, "productId"), loc);
+        rows.requireTonnes(str(v, "productId"));
+        // Integrity fix 2026-11-24 (MV-2b): the book stock as of the end of the survey date (business time zone), not
+        // the stock at submission — movements after the survey are not part of what the surveyor measured.
+        BigDecimal book = bookAsOf(str(v, "productId"), loc, localDate(v.get("surveyDate")));
         CrushingCalculator.SurveyVariance sv = CrushingCalculator.surveyVariance(dec(v, "surveyedTonnes"), book);
         BigDecimal unit = rows.averageCost(str(v, "productId"), loc);
+        requireGainCost(sv.tonnes(), unit, k, str(v, "productId"));
         db.update(CrushingStockpileSurvey.class, id, Obj.of("status", "submitted", "bookTonnes", book,
                 "varianceTonnes", sv.tonnes(), "variancePct", sv.pct(), "unitCost", unit, "varianceValue",
                 sv.tonnes().multiply(unit).setScale(2, RoundingMode.HALF_UP), "submittedAt", Instant.now(),
@@ -169,7 +192,23 @@ public class CrushingSurveyService {
         if (Objects.equals(v.get("submittedBy"), TenantContext.userId())) {
             throw ApiException.forbidden("The person who submitted a stockpile survey cannot approve it");
         }
+        lockPile(v);
+        // Integrity fix 2026-11-24 (MV-2a): a survey posted since this one's book snapshot already corrected it.
+        String since = db.jdbc().sql("SELECT code FROM \"CrushingStockpileSurvey\" WHERE \"organizationId\" = ?"
+                + " AND \"stockpileId\" = ? AND \"productId\" = ? AND status = 'posted' AND \"deletedAt\" IS NULL"
+                + " AND id <> ? AND (\"decidedAt\" > ? OR \"surveyDate\" > ?) LIMIT 1").params(MfgDb.org(),
+                v.get("stockpileId"), v.get("productId"), id, MfgDb.param(v.get("submittedAt")),
+                MfgDb.param(v.get("surveyDate"))).query(String.class).optional().orElse(null);
+        if (since != null) {
+            throw ApiException.badRequest("Stockpile survey " + since + " of this stockpile and product was posted after"
+                    + " the book snapshot of " + v.get("code") + "; reject it and record a new survey");
+        }
         BigDecimal delta = dec(v, "varianceTonnes");
+        if (delta.signum() > 0) {
+            Map<String, Object> k = rows.stockpile(str(v, "stockpileId"));
+            requireGainCost(delta, rows.averageCost(str(v, "productId"), str(k, "locationId")), k,
+                    str(v, "productId"));
+        }
         Map<String, Object> upd = new LinkedHashMap<>();
         upd.put("status", "posted");
         upd.put("decidedAt", Instant.now());
@@ -203,15 +242,81 @@ public class CrushingSurveyService {
     public Map<String, Object> reverse(String id, String reason) {
         Map<String, Object> v = rows.require(CrushingStockpileSurvey.class, id, true, "Stockpile survey not found");
         status(v, "posted", "reversed");
+        lockPile(v);
         BigDecimal delta = dec(v, "varianceTonnes");
         if (delta.signum() != 0) {
-            adjust(v, delta.negate(), SOURCE_REVERSAL, "Reversal of stockpile survey " + v.get("code") + ": " + reason);
+            // Integrity fix 2026-11-24 (MV-2c): reverse the survey's own movement and journal at the value it was
+            // posted at (a loss comes back at its stored unit cost), not a new adjustment at today's average.
+            Map<String, Object> k = rows.stockpile(str(v, "stockpileId"));
+            BigDecimal current = rows.onHand(str(v, "productId"), str(k, "locationId"));
+            if (current.subtract(delta).signum() < 0) {
+                throw ApiException.badRequest("Stockpile " + k.get("code") + " now holds "
+                        + current.stripTrailingZeros().toPlainString() + " t; applying "
+                        + delta.negate().stripTrailingZeros().toPlainString() + " t would take it below zero");
+            }
+            stockReversal.reverseLedgerSource(new LedgerSource(SOURCE, id, SOURCE_REVERSAL, id, List.of(SOURCE),
+                    "Reversal of stockpile survey " + v.get("code") + ": " + reason, null));
         }
         db.update(CrushingStockpileSurvey.class, id, Obj.of("status", "reversed", "reversedAt", Instant.now(),
                 "reversedBy", TenantContext.userId(), "reversalReason", reason, "updatedBy", TenantContext.userId()));
         audit.recordInTx(AuditInput.of("CrushingStockpileSurvey", id, "cancel", null, Obj.of("code", v.get("code"),
                 "reason", reason)));
         return get(id);
+    }
+
+    /** MV-2a: serialises submit / approve / reverse of one stockpile × product. */
+    private void lockPile(Map<String, Object> v) {
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param("crushing-survey:" + MfgDb.org()
+                + ":" + v.get("stockpileId") + ":" + v.get("productId")).query().listOfRows();
+    }
+
+    /** MV-2a: a survey dated before one already posted for the same stockpile × product cannot be submitted. */
+    private void refuseLaterPosted(Map<String, Object> v) {
+        Map<String, Object> later = SqlRows.one(db.jdbc().sql("SELECT code, \"surveyDate\" FROM"
+                + " \"CrushingStockpileSurvey\" WHERE \"organizationId\" = ? AND \"stockpileId\" = ? AND \"productId\" = ?"
+                + " AND status = 'posted' AND \"deletedAt\" IS NULL AND \"surveyDate\" > ? ORDER BY \"surveyDate\" DESC"
+                + " LIMIT 1").params(MfgDb.org(), v.get("stockpileId"), v.get("productId"),
+                MfgDb.param(v.get("surveyDate"))));
+        if (later != null) {
+            throw ApiException.badRequest("Stockpile survey " + later.get("code") + " of " + later.get("surveyDate")
+                    + " is already posted for this stockpile and product; a survey of " + v.get("surveyDate")
+                    + " can no longer be applied");
+        }
+    }
+
+    /**
+     * MV-2b: on-hand at the end of {@code date} (business time zone) = on hand now − every movement recorded after
+     * it. Today (or later) is simply the stock on hand.
+     */
+    BigDecimal bookAsOf(String productId, String locationId, LocalDate date) {
+        BigDecimal now = rows.onHand(productId, locationId);
+        if (date == null || !date.isBefore(LocalDate.now(BusinessZone.get()))) {
+            return now;
+        }
+        Instant end = date.plusDays(1).atStartOfDay(BusinessZone.get()).toInstant();
+        BigDecimal after = db.jdbc().sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\""
+                + " WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND \"createdAt\" >= ?")
+                .params(MfgDb.org(), productId, locationId, MfgDb.param(end)).query(BigDecimal.class).single();
+        return now.subtract(after).setScale(3, RoundingMode.HALF_UP);
+    }
+
+    private static LocalDate localDate(Object d) {
+        if (d == null || d instanceof LocalDate) {
+            return (LocalDate) d;
+        }
+        if (d instanceof java.sql.Date sd) {
+            return sd.toLocalDate();
+        }
+        return LocalDate.parse(String.valueOf(d).substring(0, 10));
+    }
+
+    /** MV-2d: a gain is valued at the stock's average / the product cost; refused when that is zero. */
+    private void requireGainCost(BigDecimal delta, BigDecimal unitCost, Map<String, Object> k, String productId) {
+        if (delta.signum() > 0 && (unitCost == null || unitCost.signum() <= 0)) {
+            throw ApiException.badRequest("Stockpile " + k.get("code") + " has no cost for "
+                    + rows.product(productId).get("name") + "; set the product's cost price before a survey adds"
+                    + " stock");
+        }
     }
 
     private Adjusted adjust(Map<String, Object> v, BigDecimal delta, String sourceType, String notes) {
@@ -246,6 +351,7 @@ public class CrushingSurveyService {
             throw ApiException.badRequest("Stockpile " + k.get("code") + " is inactive");
         }
         rows.product(in.productId());
+        rows.requireTonnes(in.productId());
         LocalDate date = CrushingSupport.date(in.surveyDate());
         if (date.isAfter(LocalDate.now(BusinessZone.get()))) {
             throw ApiException.badRequest("The survey date cannot be in the future");
