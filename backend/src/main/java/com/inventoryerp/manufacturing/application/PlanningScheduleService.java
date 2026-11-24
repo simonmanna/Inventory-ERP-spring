@@ -22,7 +22,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -131,8 +131,8 @@ public class PlanningScheduleService {
             throw ApiException.badRequest("No open work orders to schedule.");
         }
         lockCenters(steps);
-        Map<String, Slot> placed = backward(steps, due);
         Instant now = Instant.now().truncatedTo(ChronoUnit.MINUTES);
+        Map<String, Slot> placed = backward(steps, due, now);
         boolean feasible = !placed.get(str(steps.getFirst().wo(), "id")).start().isBefore(now);
         if (!feasible) {
             placed = forward(steps, now);
@@ -233,8 +233,12 @@ public class PlanningScheduleService {
                 .query(BigDecimal.class).optional().orElse(null);
     }
 
-    /** Last operation first, each ending where the next one's start and curing lag allow. */
-    private Map<String, Slot> backward(List<Step> steps, Instant due) {
+    /**
+     * Last operation first, each ending where the next one's start and curing lag allow. Load that ends by
+     * {@code now} is left out of the calendars (MP-6): a placement that needs a minute before now is infeasible
+     * whatever occupies it, and is then placed forward from now.
+     */
+    private Map<String, Slot> backward(List<Step> steps, Instant due, Instant now) {
         Map<String, Slot> out = new LinkedHashMap<>();
         Map<String, PlanningCalendar> calendars = new LinkedHashMap<>();
         String orderId = str(steps.getFirst().wo(), "productionOrderId");
@@ -244,7 +248,7 @@ public class PlanningScheduleService {
             if (i == 0) {
                 cursor = cursor.minus(s.curingDays(), ChronoUnit.DAYS);
             }
-            Slot slot = calendar(calendars, s, orderId, null).backward(cursor, s.minutes());
+            Slot slot = calendar(calendars, s, orderId, now).backward(cursor, s.minutes());
             requireSlot(slot, s);
             out.put(str(s.wo(), "id"), slot);
             cursor = slot.start();
@@ -266,7 +270,7 @@ public class PlanningScheduleService {
             if (i > 0) {
                 cursor = cursor.plus(s.curingDays(), ChronoUnit.DAYS);
             }
-            Slot slot = calendar(calendars, s, orderId, null).forward(cursor, s.minutes());
+            Slot slot = calendar(calendars, s, orderId, from).forward(cursor, s.minutes());
             requireSlot(slot, s);
             out.put(str(s.wo(), "id"), slot);
             cursor = i == 0 ? slot.end().plus(s.curingDays(), ChronoUnit.DAYS) : slot.end();
@@ -280,27 +284,49 @@ public class PlanningScheduleService {
         }
     }
 
-    private PlanningCalendar calendar(Map<String, PlanningCalendar> cache, Step s, String orderId, String except) {
+    private PlanningCalendar calendar(Map<String, PlanningCalendar> cache, Step s, String orderId,
+            Instant endsAfter) {
         String wcId = str(s.wo(), "workCenterId");
-        return wcId == null ? new PlanningCalendar(Map.of(), Set.of(), List.of(), 1)
-                : cache.computeIfAbsent(wcId, id -> calendarOf(id, orderId, except));
+        return wcId == null ? new PlanningCalendar(Map.of(), Set.of(), List.of(), 1, zone())
+                : cache.computeIfAbsent(wcId, id -> calendarOf(id, orderId, null, endsAfter));
     }
 
-    /** The calendar of a centre with the load of other orders (and other work orders) on it. */
-    PlanningCalendar calendarOf(String wcId, String exceptOrderId, String exceptWorkOrderId) {
+    /** The organization's zone (MP-7): work-centre windows are local, like the shop-floor shifts. */
+    ZoneId zone() {
+        return ShopFloorSupport.zoneOf(db);
+    }
+
+    /**
+     * The calendar of a centre with the load of other orders (and other work orders) on it. Integrity fix 2026-11-24
+     * (MP-6): only load ending after {@code endsAfter} is read (null = all); a search from {@code endsAfter} never
+     * meets the rest.
+     */
+    PlanningCalendar calendarOf(String wcId, String exceptOrderId, String exceptWorkOrderId, Instant endsAfter) {
         Map<String, Object> wc = db.byId(WorkCenter.class, wcId);
         List<Instant[]> busy = new ArrayList<>();
+        List<Object> params = new ArrayList<>(List.of(MfgDb.org(), wcId));
+        if (endsAfter != null) {
+            params.add(MfgDb.param(endsAfter));
+        }
         for (Map<String, Object> b : SqlRows.list(db.jdbc().sql("SELECT id, \"productionOrderId\", \"plannedStartAt\","
                 + " \"plannedEndAt\" FROM \"WorkOrder\" WHERE \"organizationId\" = ? AND \"workCenterId\" = ?"
                 + " AND status NOT IN ('completed', 'cancelled') AND \"plannedStartAt\" IS NOT NULL"
-                + " AND \"plannedEndAt\" IS NOT NULL").params(MfgDb.org(), wcId))) {
+                + " AND \"plannedEndAt\" IS NOT NULL" + (endsAfter != null ? " AND \"plannedEndAt\" > ?" : ""))
+                .params(params))) {
             if (str(b, "productionOrderId").equals(exceptOrderId) || str(b, "id").equals(exceptWorkOrderId)) {
                 continue;
             }
             busy.add(new Instant[] {(Instant) b.get("plannedStartAt"), (Instant) b.get("plannedEndAt")});
         }
         return new PlanningCalendar(shifts(wcId), closures(wcId), busy,
-                wc != null && wc.get("parallelSlots") instanceof Number n ? n.intValue() : 1);
+                wc != null && wc.get("parallelSlots") instanceof Number n ? n.intValue() : 1, zone());
+    }
+
+    /** The calendar of a centre without its load (capacity: working minutes only). */
+    PlanningCalendar calendarOnly(String wcId) {
+        Map<String, Object> wc = db.byId(WorkCenter.class, wcId);
+        return new PlanningCalendar(shifts(wcId), closures(wcId), List.of(),
+                wc != null && wc.get("parallelSlots") instanceof Number n ? n.intValue() : 1, zone());
     }
 
     Map<Integer, List<int[]>> shifts(String wcId) {
@@ -357,12 +383,18 @@ public class PlanningScheduleService {
      */
     @Transactional
     public Map<String, Object> reschedule(String workOrderId, RescheduleInput dto) {
+        // Integrity fix 2026-11-24 (MP-11): the order first (advisory, then row), then the work order, the same
+        // order every other leg locks in; the unlocked read only finds the order.
+        Map<String, Object> peek = db.byId(WorkOrder.class, workOrderId);
+        if (peek == null) {
+            throw ApiException.notFound("Work order not found");
+        }
+        Map<String, Object> order = lockOrder(str(peek, "productionOrderId"));
         Map<String, Object> wo = lockWorkOrder(workOrderId);
         String status = str(wo, "status");
         if (!"pending".equals(status) && !"paused".equals(status)) {
             throw ApiException.badRequest("Cannot reschedule a " + status + " work order.");
         }
-        Map<String, Object> order = lockOrder(str(wo, "productionOrderId"));
         String wcId = dto.workCenterId() != null && !dto.workCenterId().isBlank() ? dto.workCenterId()
                 : str(wo, "workCenterId");
         if (wcId != null && db.byId(WorkCenter.class, wcId) == null) {
@@ -376,8 +408,8 @@ public class PlanningScheduleService {
         moved.put("workCenterId", wcId);
         long minutes = minutes(moved, qty);
         Instant asked = EntityPatch.toInstant(dto.startAt());
-        PlanningCalendar calendar = wcId == null ? new PlanningCalendar(Map.of(), Set.of(), List.of(), 1)
-                : calendarOf(wcId, null, workOrderId);
+        PlanningCalendar calendar = wcId == null ? new PlanningCalendar(Map.of(), Set.of(), List.of(), 1, zone())
+                : calendarOf(wcId, null, workOrderId, asked.truncatedTo(ChronoUnit.MINUTES));
         Slot slot = calendar.forward(asked, minutes);
         if (slot == null) {
             throw ApiException.badRequest("No capacity at this work centre within two years.");
@@ -456,7 +488,7 @@ public class PlanningScheduleService {
     @Transactional(readOnly = true)
     public Map<String, Object> gantt(String from, String to, String workCenterId) {
         Instant f = from != null && !from.isEmpty() ? EntityPatch.toInstant(from)
-                : Instant.now().truncatedTo(ChronoUnit.DAYS);
+                : LocalDate.now(zone()).atStartOfDay(zone()).toInstant();
         Instant t = to != null && !to.isEmpty() ? EntityPatch.toInstant(to) : f.plus(14, ChronoUnit.DAYS);
         if (t.isBefore(f)) {
             throw ApiException.badRequest("to must not be before from");
@@ -525,8 +557,8 @@ public class PlanningScheduleService {
 
     private List<String> closedBetween(String wcId, Instant from, Instant to) {
         List<String> out = new ArrayList<>();
-        LocalDate a = from.atZone(ZoneOffset.UTC).toLocalDate();
-        LocalDate b = to.atZone(ZoneOffset.UTC).toLocalDate();
+        LocalDate a = from.atZone(zone()).toLocalDate();
+        LocalDate b = to.atZone(zone()).toLocalDate();
         for (LocalDate d : closures(wcId)) {
             if (!d.isBefore(a) && !d.isAfter(b)) {
                 out.add(d.toString());
@@ -539,6 +571,8 @@ public class PlanningScheduleService {
     // ================================================================== locks
 
     private Map<String, Object> lockOrder(String orderId) {
+        // Integrity fix 2026-11-24 (MP-11): the one per-order advisory lock before the row lock, as every other leg.
+        db.lockProductionOrder(orderId);
         Map<String, Object> order = SqlRows.one(ProductionOrder.class, db.jdbc().sql("SELECT * FROM \"ProductionOrder\""
                 + " WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(orderId, MfgDb.org()));
         if (order == null) {
@@ -567,7 +601,6 @@ public class PlanningScheduleService {
     }
 
     private void lockCenter(String wcId) {
-        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param("wc:" + MfgDb.org() + ":" + wcId)
-                .query().listOfRows();
+        ShopFloorSupport.lockWorkCenter(db, wcId);
     }
 }

@@ -3,7 +3,6 @@ package com.inventoryerp.manufacturing.application;
 import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.shared.web.ApiException;
@@ -11,7 +10,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -41,23 +40,25 @@ public class PlanningReportService {
         this.shifts = shifts;
     }
 
-    private record Range(LocalDate from, LocalDate to) {
+    /** Integrity fix 2026-11-24 (MP-7): report days are the organization's days, like the shop-floor shifts. */
+    private record Range(LocalDate from, LocalDate to, ZoneId zone) {
         Instant start() {
-            return from.atStartOfDay(ZoneOffset.UTC).toInstant();
+            return from.atStartOfDay(zone).toInstant();
         }
 
         Instant end() {
-            return to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            return to.plusDays(1).atStartOfDay(zone).toInstant();
         }
     }
 
-    private static Range range(String from, String to) {
-        LocalDate t = CrushingSupport.date(to) != null ? CrushingSupport.date(to) : LocalDate.now(BusinessZone.get());
+    private Range range(String from, String to) {
+        ZoneId zone = ShopFloorSupport.zoneOf(db);
+        LocalDate t = CrushingSupport.date(to) != null ? CrushingSupport.date(to) : LocalDate.now(zone);
         LocalDate f = CrushingSupport.date(from) != null ? CrushingSupport.date(from) : t.withDayOfMonth(1);
         if (t.isBefore(f)) {
             throw ApiException.badRequest("to must not be before from");
         }
-        return new Range(f, t);
+        return new Range(f, t, zone);
     }
 
     private static BigDecimal pct(BigDecimal part, BigDecimal whole) {
@@ -203,7 +204,7 @@ public class PlanningReportService {
     /** Actual output against each target overlapping the period, up to today, with the pro-rata target to date. */
     public Map<String, Object> productionVsTarget(String from, String to) {
         Range r = range(from, to);
-        LocalDate today = LocalDate.now(BusinessZone.get());
+        LocalDate today = LocalDate.now(r.zone());
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> t : shifts.targets(r.from(), r.to(), null)) {
             LocalDate start = (LocalDate) t.get("periodFrom");
@@ -228,8 +229,9 @@ public class PlanningReportService {
     private BigDecimal actual(Map<String, Object> t, LocalDate from, LocalDate to) {
         java.sql.Date a = java.sql.Date.valueOf(from);
         java.sql.Date b = java.sql.Date.valueOf(to);
-        Object start = MfgDb.param(from.atStartOfDay(ZoneOffset.UTC).toInstant());
-        Object end = MfgDb.param(to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant());
+        ZoneId zone = ShopFloorSupport.zoneOf(db);
+        Object start = MfgDb.param(from.atStartOfDay(zone).toInstant());
+        Object end = MfgDb.param(to.plusDays(1).atStartOfDay(zone).toInstant());
         return switch (str(t, "scope")) {
             case "work_center" -> db.jdbc().sql("SELECT coalesce(sum(\"qtyGood\"), 0) FROM"
                     + " \"ShopFloorProductionReport\""

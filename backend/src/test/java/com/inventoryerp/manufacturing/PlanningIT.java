@@ -6,7 +6,7 @@ import com.inventoryerp.manufacturing.web.PlanningController;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,12 +19,15 @@ import tools.jackson.databind.JsonNode;
 /** Advanced planning (Track C 2.5, ADR-S017): demand, pegging, backward scheduling, Gantt, capacity, shift plans. */
 class PlanningIT extends MfgTestSupport {
 
+    /** The DEMO organization's zone: work-centre calendars are local (integrity fix 2026-11-24, MP-7). */
+    static final ZoneId ZONE = ZoneId.of("Africa/Kampala");
+
     static final String P = "/manufacturing/planning";
 
-    final LocalDate monday = LocalDate.now(ZoneOffset.UTC).plusWeeks(3).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+    final LocalDate monday = LocalDate.now(ZONE).plusWeeks(3).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
 
     Instant at(LocalDate day, int hour) {
-        return day.atTime(hour, 0).toInstant(ZoneOffset.UTC);
+        return day.atTime(hour, 0).atZone(ZONE).toInstant();
     }
 
     /** A work centre working Monday to Friday, 08:00 to 17:00. */
@@ -126,7 +129,7 @@ class PlanningIT extends MfgTestSupport {
         routing(bomId, wc);
         String orderId = order(bomId);
         JsonNode out = ok(200, "POST", P + "/orders/" + orderId + "/schedule-backward",
-                Map.of("dueAt", LocalDate.now(ZoneOffset.UTC).minusDays(2).toString()));
+                Map.of("dueAt", LocalDate.now(ZONE).minusDays(2).toString()));
         assertThat(out.get("feasible").asBoolean()).isFalse();
         assertThat(out.get("scheduleMode").asString()).isEqualTo("forward");
         assertThat(out.get("lateMinutes").asLong()).isPositive();

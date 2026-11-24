@@ -231,6 +231,19 @@ public class PlanningDemandService {
         return date == null || date.isBefore(now) ? now : date;
     }
 
+    /** Target quantity (base units) of open plans' lines that have no production order yet. */
+    BigDecimal openPlanned(String productId) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"uomId\", coalesce(sum(l.\"targetQty\"), 0)"
+                + " AS qty FROM \"ProductionPlanLine\" l JOIN \"ProductionPlan\" p ON p.id = l.\"planId\""
+                + " WHERE l.\"organizationId\" = ? AND l.\"productId\" = ? AND p.\"deletedAt\" IS NULL"
+                + " AND p.status IN ('draft', 'confirmed') AND l.\"generatedOrderId\" IS NULL GROUP BY l.\"uomId\"")
+                .params(MfgDb.org(), productId))) {
+            sum = sum.add(mrp.toBase(productId, str(r, "uomId"), dec(r, "qty")));
+        }
+        return sum;
+    }
+
     private BigDecimal supply(String productId) {
         return mrp.onHand(productId, null).subtract(mrp.reservedByOthers(productId, null))
                 .add(mrp.openProductionOutput(productId)).add(mrp.openCoProductOutput(productId));
@@ -383,7 +396,10 @@ public class PlanningDemandService {
             }
             List<Allocation> open = new ArrayList<>();
             BigDecimal net = BigDecimal.ZERO;
-            for (Allocation a : DemandNetting.allocate(supply(productId), e.getValue())) {
+            // Integrity fix 2026-11-24 (MP-8): lines of open (draft / confirmed) plans not yet turned into orders are
+            // supply too, so planning the same demand twice makes nothing new.
+            for (Allocation a : DemandNetting.allocate(supply(productId).add(openPlanned(productId)),
+                    e.getValue())) {
                 if (a.uncovered().signum() > 0) {
                     open.add(a);
                     net = net.add(a.uncovered());

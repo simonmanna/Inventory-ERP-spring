@@ -84,8 +84,9 @@ public class MrpPlanningService {
         for (Map<String, Object> p : db.list(ProductPlanning.class, productId != null ? " AND \"productId\" = ?"
                 + " ORDER BY \"createdAt\" ASC" : " ORDER BY \"createdAt\" ASC",
                 productId != null ? new Object[] {productId} : new Object[0])) {
-            p.put("product", SqlRows.one(db.jdbc().sql("SELECT id, code, name FROM \"Product\" WHERE id = ?")
-                    .param(p.get("productId"))));
+            // Integrity fix 2026-11-24 (MP-12): product lookups carry the tenant predicate.
+            p.put("product", SqlRows.one(db.jdbc().sql("SELECT id, code, name FROM \"Product\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?").params(p.get("productId"), MfgDb.org())));
             out.add(p);
         }
         return out;
@@ -130,7 +131,7 @@ public class MrpPlanningService {
         }
         // Defaults: products with an active BOM are made, the rest bought; the product's minimum is the reorder point.
         Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT \"minQuantity\", \"supplierId\" FROM \"Product\""
-                + " WHERE id = ?").param(productId));
+                + " WHERE id = ? AND \"organizationId\" = ?").params(productId, MfgDb.org()));
         boolean make = boms.findActive(productId, "") != null;
         return new Params(productId, make ? "make" : "buy", 0, BigDecimal.ZERO,
                 p == null ? BigDecimal.ZERO : dec(p, "minQuantity"), BigDecimal.ZERO, BigDecimal.ZERO,
@@ -147,11 +148,15 @@ public class MrpPlanningService {
         if (locationId != null) {
             production.requireLocation(locationId);
         }
+        // Integrity fix 2026-11-24 (MP-3): one run per organization at a time (the nightly job included): two runs
+        // would each supersede the other's proposals and leave two "completed" runs.
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param("mrp-run:" + MfgDb.org())
+                .query().listOfRows();
         Instant now = Instant.now();
         Instant horizonEnd = now.plus(horizon, ChronoUnit.DAYS);
 
         Map<String, List<Demand>> demand = new LinkedHashMap<>();
-        collectIndependentDemand(demand, horizonEnd, now);
+        collectIndependentDemand(demand, horizonEnd, now, locationId);
         // Reorder-point / safety-stock products are planned even without demand.
         for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT \"productId\" FROM \"ProductPlanning\" WHERE"
                 + " \"organizationId\" = ? AND \"isActive\" = true AND (\"safetyStock\" > 0 OR \"reorderPoint\" > 0)")
@@ -191,7 +196,9 @@ public class MrpPlanningService {
                 BigDecimal grossQty = gross.stream().map(Demand::qty).reduce(BigDecimal.ZERO, BigDecimal::add);
                 BigDecimal onHand = onHand(productId, locationId);
                 BigDecimal reserved = reservedByOthers(productId, locationId);
-                BigDecimal receipts = openPurchase(productId).add(openProductionOutput(productId))
+                // Integrity fix 2026-11-24 (MP-9): a location-scoped run counts the production output landing at
+                // that location; purchase orders carry no warehouse, so they stay organization-wide.
+                BigDecimal receipts = openPurchase(productId).add(openProductionOutput(productId, locationId))
                         .add(openCoProductOutput(productId))
                         .add(plannedCoProducts.getOrDefault(productId, BigDecimal.ZERO));
                 BigDecimal projected = onHand.subtract(reserved).add(receipts).subtract(grossQty);
@@ -246,9 +253,10 @@ public class MrpPlanningService {
                         subcontract++;
                     }
                     for (ExplodedMaterial m : BomService.explode(BomService.explodable(bom), qty).materials()) {
+                        // Integrity fix 2026-11-24 (MP-12): a BOM line's quantity is in its unit; netting is in base.
                         demand.computeIfAbsent(m.componentProductId(), k -> new ArrayList<>()).add(new Demand(
-                                m.qtyPlanned(), release, Obj.of("type", "planned_order", "id", plannedOrder.get("id"),
-                                        "productId", productId)));
+                                toBase(m.componentProductId(), m.uomId(), m.qtyPlanned()), release,
+                                Obj.of("type", "planned_order", "id", plannedOrder.get("id"), "productId", productId)));
                         llc.merge(m.componentProductId(), level + 1, Math::max);
                     }
                     addPlannedCoProducts(plannedCoProducts, bom, qty);
@@ -305,7 +313,11 @@ public class MrpPlanningService {
         }
         List<Map<String, Object>> firmed = new ArrayList<>();
         Map<String, List<Map<String, Object>>> buys = new LinkedHashMap<>();
-        for (Map<String, Object> po : db.children(MrpPlannedOrder.class, "runId", runId, "\"lowLevelCode\" ASC")) {
+        // Integrity fix 2026-11-24 (MP-4): the run's planned orders are locked (in a fixed order) before their status
+        // is read, so a concurrent firm / cancel of one of them waits and is then seen.
+        for (Map<String, Object> po : SqlRows.list(MrpPlannedOrder.class, db.jdbc().sql("SELECT * FROM"
+                + " \"MrpPlannedOrder\" WHERE \"runId\" = ? AND \"organizationId\" = ? ORDER BY \"lowLevelCode\" ASC,"
+                + " id ASC FOR UPDATE").params(runId, MfgDb.org()))) {
             if (!"planned".equals(po.get("status")) || (ids != null && !ids.contains(str(po, "id")))) {
                 continue;
             }
@@ -327,7 +339,22 @@ public class MrpPlanningService {
     @Transactional
     public Map<String, Object> cancel(String plannedOrderId) {
         requirePlanned(plannedOrderId);
-        return db.update(MrpPlannedOrder.class, plannedOrderId, Obj.of("status", "cancelled"));
+        return markPlanned(plannedOrderId, Obj.of("status", "cancelled"));
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MP-4): the status change of a planned order only applies while it is still
+     * {@code planned}; a lost race is the same 400 as {@link #requirePlanned}.
+     */
+    private Map<String, Object> markPlanned(String id, Map<String, Object> data) {
+        List<Map<String, Object>> rows = db.updateWhere(MrpPlannedOrder.class, data, "id = ? AND \"organizationId\" = ?"
+                + " AND status = 'planned'", id, MfgDb.org());
+        if (rows.isEmpty()) {
+            Map<String, Object> now = db.byId(MrpPlannedOrder.class, id);
+            throw ApiException.badRequest("Planned order is already " + (now == null ? "gone" : now.get("status"))
+                    + ".");
+        }
+        return rows.getFirst();
     }
 
     private Map<String, Object> firmMake(Map<String, Object> po, Map<String, Object> run) {
@@ -337,8 +364,8 @@ public class MrpPlanningService {
                 str(po, "locationId"), null, null, dec(po, "quantity"),
                 (release.isBefore(now) ? now : release).toString(), null, null, null,
                 "MRP " + run.get("runNumber"), null, null));
-        return db.update(MrpPlannedOrder.class, str(po, "id"), Obj.of("status", "firmed", "firmedDocType",
-                "production_order", "firmedDocId", order.get("id")));
+        return markPlanned(str(po, "id"), Obj.of("status", "firmed", "firmedDocType", "production_order",
+                "firmedDocId", order.get("id")));
     }
 
     /**
@@ -348,8 +375,8 @@ public class MrpPlanningService {
      */
     private Map<String, Object> firmSubcontract(Map<String, Object> po, Map<String, Object> run) {
         Map<String, Object> firmed = firmMake(po, run);
-        Map<String, Object> product = SqlRows.one(db.jdbc().sql("SELECT code, name FROM \"Product\" WHERE id = ?")
-                .param(po.get("productId")));
+        Map<String, Object> product = SqlRows.one(db.jdbc().sql("SELECT code, name FROM \"Product\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(po.get("productId"), MfgDb.org()));
         String label = "Subcontract " + (product == null ? po.get("productId") : product.get("code") + " "
                 + product.get("name")) + " · MRP " + run.get("runNumber");
         Map<String, Object> pr = db.insert(PurchaseRequest.class, Obj.of("requestNumber",
@@ -377,7 +404,7 @@ public class MrpPlanningService {
         int i = 0;
         for (Map<String, Object> po : group) {
             Map<String, Object> product = SqlRows.one(db.jdbc().sql("SELECT \"uomId\", \"purchaseUomId\" FROM"
-                    + " \"Product\" WHERE id = ?").param(po.get("productId")));
+                    + " \"Product\" WHERE id = ? AND \"organizationId\" = ?").params(po.get("productId"), MfgDb.org()));
             BigDecimal qty = dec(po, "quantity");
             Object unit = product == null ? null : product.get("uomId");
             if (product != null && product.get("purchaseUomId") != null
@@ -389,14 +416,15 @@ public class MrpPlanningService {
             db.insert(PurchaseRequestLine.class, Obj.of("purchaseRequestId", pr.get("id"), "productId",
                     po.get("productId"), "description", "MRP " + run.get("runNumber"), "quantity", qty,
                     "unitOfMeasureId", unit, "lineNumber", i++));
-            out.add(db.update(MrpPlannedOrder.class, str(po, "id"), Obj.of("status", "firmed", "firmedDocType",
-                    "purchase_request", "firmedDocId", pr.get("id"))));
+            out.add(markPlanned(str(po, "id"), Obj.of("status", "firmed", "firmedDocType", "purchase_request",
+                    "firmedDocId", pr.get("id"))));
         }
         return out;
     }
 
     private Map<String, Object> requirePlanned(String id) {
-        Map<String, Object> po = db.byId(MrpPlannedOrder.class, id);
+        // Integrity fix 2026-11-24 (MP-4): locked, so two firms (or a firm and a cancel) of one order serialise.
+        Map<String, Object> po = db.byIdForUpdate(MrpPlannedOrder.class, id);
         if (po == null) {
             throw ApiException.notFound("Planned order not found");
         }
@@ -408,7 +436,8 @@ public class MrpPlanningService {
 
     // ================================================================== demand & supply
 
-    private void collectIndependentDemand(Map<String, List<Demand>> demand, Instant horizonEnd, Instant now) {
+    private void collectIndependentDemand(Map<String, List<Demand>> demand, Instant horizonEnd, Instant now,
+            String locationId) {
         // Open back-office orders (not POS tickets in service): every product line.
         for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT i.\"productId\", i.quantity, o.id, o.\"openedAt\""
                 + " FROM \"OrderItem\" i JOIN \"Order\" o ON o.id = i.\"orderId\" WHERE o.\"organizationId\" = ?"
@@ -418,7 +447,9 @@ public class MrpPlanningService {
                     Obj.of("type", "order", "id", r.get("id")));
         }
         // Proforma documents (quotes / advance orders) due inside the horizon.
-        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\", l.quantity, d.id, d.\"dueDate\""
+        // Integrity fix 2026-11-24 (MP-12): document lines in base units (their frozen factor).
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\","
+                + " l.quantity * coalesce(nullif(l.\"uomFactor\", 0), 1) AS quantity, d.id, d.\"dueDate\""
                 + " FROM \"DocumentLine\" l JOIN \"Document\" d ON d.id = l.\"documentId\" WHERE d.\"organizationId\" = ?"
                 + " AND d.\"documentType\" = 'proforma_invoice' AND d.status IN ('draft', 'submitted', 'approved',"
                 + " 'confirmed', 'issued', 'active') AND l.\"productId\" IS NOT NULL"
@@ -427,22 +458,26 @@ public class MrpPlanningService {
                     Obj.of("type", "document", "id", r.get("id")));
         }
         // Production requests not yet consolidated into a plan.
-        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\", l.quantity, r.id,"
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\", l.quantity, l.\"uomId\", r.id,"
                 + " coalesce(l.\"neededBy\", r.\"neededBy\") AS due FROM \"ProductionRequestLine\" l JOIN"
                 + " \"ProductionRequest\" r ON r.id = l.\"requestId\" WHERE l.\"organizationId\" = ?"
                 + " AND r.\"deletedAt\" IS NULL AND r.status IN ('submitted', 'approved') AND l.\"plannedLineId\" IS NULL")
                 .param(MfgDb.org()))) {
-            add(demand, str(r, "productId"), dec(r, "quantity"), max(now, (Instant) r.get("due")),
-                    Obj.of("type", "production_request", "id", r.get("id")));
+            add(demand, str(r, "productId"), toBase(str(r, "productId"), str(r, "uomId"), dec(r, "quantity")),
+                    max(now, (Instant) r.get("due")), Obj.of("type", "production_request", "id", r.get("id")));
         }
-        // Remaining materials of open (unconsumed) production orders.
-        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT m.\"productId\","
+        // Remaining materials of open (unconsumed) production orders, in base units (MP-12); a location-scoped run
+        // only counts orders consuming at that location (MP-9).
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT m.\"productId\", m.\"uomId\","
                 + " greatest(m.\"qtyPlanned\" - m.\"qtyConsumed\", 0) AS qty, o.id, o.\"scheduledFor\""
                 + " FROM \"ProductionMaterial\" m JOIN \"ProductionOrder\" o ON o.id = m.\"orderId\""
-                + " WHERE o.\"organizationId\" = ? AND o.status IN ('draft', 'confirmed')").param(MfgDb.org()))) {
+                + " WHERE o.\"organizationId\" = ? AND o.status IN ('draft', 'confirmed')"
+                + (locationId != null ? " AND o.\"locationId\" = ?" : ""))
+                .params(locationId != null ? List.of(MfgDb.org(), locationId) : List.of(MfgDb.org())))) {
             if (dec(r, "qty").signum() > 0) {
-                add(demand, str(r, "productId"), dec(r, "qty"), max(now, (Instant) r.get("scheduledFor")),
-                        Obj.of("type", "production_order", "id", r.get("id")));
+                add(demand, str(r, "productId"), toBase(str(r, "productId"), str(r, "uomId"), dec(r, "qty")),
+                        max(now, (Instant) r.get("scheduledFor")), Obj.of("type", "production_order", "id",
+                                r.get("id")));
             }
         }
     }
@@ -506,8 +541,14 @@ public class MrpPlanningService {
                 .query(BigDecimal.class).single();
     }
 
-    private BigDecimal openPurchase(String productId) {
-        return db.jdbc().sql("SELECT coalesce(sum(greatest(l.quantity - l.\"receivedQuantity\", 0)), 0) FROM"
+    /**
+     * Remaining quantity of open purchase-order lines, in base units. Integrity fix 2026-11-24 (MP-1): a line is
+     * ordered in its purchase unit; its frozen {@code uomFactor} (base units per purchase unit, as goods receipts use
+     * it) converts the remainder; no factor = base unit.
+     */
+    BigDecimal openPurchase(String productId) {
+        return db.jdbc().sql("SELECT coalesce(sum(greatest(l.quantity - l.\"receivedQuantity\", 0)"
+                + " * coalesce(nullif(l.\"uomFactor\", 0), 1)), 0) FROM"
                 + " \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\""
                 + " WHERE l.\"organizationId\" = ? AND l.\"productId\" = ? AND o.\"deletedAt\" IS NULL"
                 + " AND o.status IN ('draft', 'submitted', 'approved', 'active', 'sent', 'acknowledged',"
@@ -515,10 +556,39 @@ public class MrpPlanningService {
     }
 
     BigDecimal openProductionOutput(String productId) {
-        return db.jdbc().sql("SELECT coalesce(sum(greatest(\"plannedQty\" - \"producedQty\", 0)), 0) FROM"
-                + " \"ProductionOrder\" WHERE \"organizationId\" = ? AND \"outputProductId\" = ?"
-                + " AND status IN ('draft', 'confirmed', 'in_progress')").params(MfgDb.org(), productId)
-                .query(BigDecimal.class).single();
+        return openProductionOutput(productId, null);
+    }
+
+    /**
+     * Output still to come from open orders, in base units (integrity fix 2026-11-24, MP-12: an order's quantities are
+     * in its unit); with {@code locationId} only orders whose output lands there (MP-9).
+     */
+    BigDecimal openProductionOutput(String productId, String locationId) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT \"uomId\","
+                + " coalesce(sum(greatest(\"plannedQty\" - \"producedQty\", 0)), 0) AS qty FROM \"ProductionOrder\""
+                + " WHERE \"organizationId\" = ? AND \"outputProductId\" = ?"
+                + " AND status IN ('draft', 'confirmed', 'in_progress')"
+                + (locationId != null ? " AND coalesce(\"outputLocationId\", \"locationId\") = ?" : "")
+                + " GROUP BY \"uomId\"").params(locationId != null ? List.of(MfgDb.org(), productId, locationId)
+                        : List.of(MfgDb.org(), productId)))) {
+            sum = sum.add(toBase(productId, str(r, "uomId"), dec(r, "qty")));
+        }
+        return sum;
+    }
+
+    /**
+     * {@code qty} of {@code productId} in {@code uomId}, in the product's base unit (integrity fix 2026-11-24, MP-2 /
+     * MP-12). A unit that does not convert keeps the quantity as it is (the previous behaviour) rather than failing
+     * the whole run.
+     */
+    BigDecimal toBase(String productId, String uomId, BigDecimal qty) {
+        if (qty == null || uomId == null || uomId.isBlank() || productId == null) {
+            return qty;
+        }
+        BigDecimal factor = uom.tryFactorToBase(productId, uomId);
+        return factor == null || factor.signum() <= 0 || factor.compareTo(BigDecimal.ONE) == 0 ? qty
+                : qty.multiply(factor);
     }
 
     /** Co-product quantity still to come from open orders of BOMs that yield {@code productId} as a co-product. */
