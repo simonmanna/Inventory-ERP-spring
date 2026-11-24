@@ -728,6 +728,42 @@ fresh seed).
 
   After applying it, run the integrity check.
 
+## Finance readiness audit B1: period coverage (owner-approved 2026-11-24)
+
+Audit finding P2-2: periods were optional, nothing could set the books lock date, postings in gaps or years ahead
+went through silently, and nothing warned when next year had no periods. The owner approved Wave B on 2026-11-24.
+Everything below is new; Nest has none of it. Tests: `PeriodControlsIT`, `FiscalPeriodCoveragePlanTest`.
+
+- **Period controls, `GET` and `PUT /fiscal-periods/controls`.** GET needs `fiscal_period:read` and PUT needs
+  `fiscal_period:update`. PUT replaces the whole set:
+  - `booksLockDate`: nothing dated on or before it posts, whatever the period's status. It is a date: it locks its
+    whole day, stored as `23:59:59.999` org-local wall clock, like a period end (A1). It must be before today, and no
+    draft journal entry may be dated on or before it. Moving it earlier or removing it reopens posted history, so it
+    also needs `fiscal_period:reopen` (403 "Missing required permission(s): fiscal_period:reopen").
+  - `requireFiscalPeriod` (off by default): a posting on a day no open period covers is refused. Turning it on needs an
+    open period covering today.
+  - `autoCreatePeriods` (setting `accounting.autoCreatePeriods`, on by default): see the next point.
+  - `futurePostingLimitDays` (setting `accounting.futurePostingLimitDays`, 0–36500, default 3650): see the last point.
+
+  The response adds `today`, `periodsThrough` (end of the last period), `openPeriodCoversToday` and
+  `autoCreateLeadDays`. Each change is audited: the lock date and the switch on `Organization`, the settings by the
+  settings service. The fiscal periods page shows them as a "Period controls" card.
+- **Next year's periods are created ahead.** A nightly job (03:25 UTC, `FiscalPeriodCoverageJob`) checks every
+  organization that has fiscal periods. When the last period ends within 60 days, it creates the next fiscal year with
+  its periods through `FiscalYearService.create`:
+  - after a period of a fiscal year: a year from the next day, with that year's periodicity;
+  - after a period of no fiscal year (onboarding and the seed create one yearly period): the fiscal year that holds
+    the next day (`accounting.fiscalYearStartMonth`), with the periodicity of that period's length.
+
+  It sends an in-app notice when it creates a year. With the setting off, or when the year cannot be created (for
+  example a year already exists there without periods), it raises an alert instead, at most once a week. An
+  organization without periods is left alone.
+- **A posting far in the future is refused.** "Posting date D is more than N days after today (T); check the date".
+  The check sits in `FiscalPeriodControl`, so it covers every posting, reversal and draft. The default of ten years
+  catches a mistyped year (2062 for 2026) without refusing legitimate postings dated ahead. The test suite deliberately
+  posts payroll several years ahead. 366 suits a business that never posts into next year early.
+- **Postings outside every period** are already reported nightly: integrity check I5 (`uncovered_day`, A0).
+
 ## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
 
 The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.

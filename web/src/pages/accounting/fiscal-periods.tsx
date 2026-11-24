@@ -37,6 +37,7 @@ import {
 import { wallDay } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
+import { PeriodControlsCard } from './period-controls-card';
 
 const STATUS_BADGE: Record<FiscalPeriod['status'], { label: string; className: string }> = {
   open: { label: tx('Open'), className: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' },
@@ -121,6 +122,9 @@ function FiscalPeriodsPage() {
           </Button>
         )}
       </div>
+
+      {/* Books lock date, required periods, next year's periods, furthest date ahead (finance audit B1) */}
+      <PeriodControlsCard />
 
       {/* Table */}
       <Card>
