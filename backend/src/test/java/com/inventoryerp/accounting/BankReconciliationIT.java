@@ -69,6 +69,25 @@ class BankReconciliationIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("B4: lines without a bank reference are not imported twice; identical lines in one file both stay")
+    void importWithoutReferenceIsDeduplicated() {
+        String account = account();
+        Map<String, Object> fee = Map.of("postedAt", today, "description", "Bank charge", "amount", -15);
+        Map<String, Object> fee2 = Map.of("postedAt", today, "description", "Bank charge", "amount", "-15.000");
+        Map<String, Object> other = Map.of("postedAt", today, "description", "Interest", "amount", 3);
+        JsonNode first = importLines(account, List.of(fee, fee2, other));
+        assertThat(first.get("imported").asInt()).as("two identical charges in one statement are two lines")
+                .isEqualTo(3);
+        JsonNode again = importLines(account, List.of(fee, fee2, other));
+        assertThat(again.get("imported").asInt()).as("re-importing the same statement").isZero();
+        assertThat(again.get("skipped").asInt()).isEqualTo(3);
+        JsonNode overlap = importLines(account, List.of(fee, fee2, fee, other));
+        assertThat(overlap.get("imported").asInt()).as("only the third identical charge is new").isEqualTo(1);
+        assertThat(ok(200, "GET", "/bank-reconciliation/lines?bankAccountId=" + account, null).get("meta").get("total")
+                .asInt()).isEqualTo(4);
+    }
+
+    @Test
     @DisplayName("import is idempotent on externalRef")
     void importIdempotent() {
         String account = account();

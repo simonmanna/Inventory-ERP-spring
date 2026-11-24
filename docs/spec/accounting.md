@@ -764,6 +764,39 @@ Everything below is new; Nest has none of it. Tests: `PeriodControlsIT`, `Fiscal
   posts payroll several years ahead. 366 suits a business that never posts into next year early.
 - **Postings outside every period** are already reported nightly: integrity check I5 (`uncovered_day`, A0).
 
+## Finance readiness audit B4: database and deployment hardening (owner-approved 2026-11-24)
+
+Audit finding P2-11 and the database items of the P3 list.
+
+- **Guard functions (V655 and `afterMigrate`):** every trigger function in `public`, plus `evidence_purge_enabled` and
+  `evidence_row_changed`, runs with `search_path = public, pg_temp`. They name tables unqualified, so before this a
+  temporary table could shadow `"JournalEntry"` and blind a guard. `afterMigrate` repeats the pin, so trigger functions
+  added later are covered too.
+  - Deviation from the plan: they are not made `SECURITY DEFINER`. Pinning the path closes the hole, and the guards keep
+    running as the caller, under its row-level security.
+- **Constraints (V655):**
+  - The V499/V320 CHECKs (`JournalLine_amounts_non_negative`, `JournalLine_one_side`, `CurrencyRate_rate_positive`) are
+    validated.
+  - New: `JournalLine_exchangeRate_positive`, a unique `reversalOfId` (an entry is reversed at most once), and foreign
+    keys on `reversalOfId` and `reversedEntryId`.
+  - Each is validated only when existing rows pass. Otherwise it stays `NOT VALID` (still enforced on new rows) with a
+    WARNING, so an old database cannot block startup. The live database passed every check read-only on 2026-11-24.
+- **Bank statement duplicates (V656):**
+  - Every statement line carries `dedupeKey`, unique per bank account, and the import inserts with
+    `ON CONFLICT DO NOTHING` (counted as `skipped`).
+  - The key is the bank reference, else the UTC day, amount, description hash and the line's occurrence among identical
+    lines of the same file.
+  - Re-importing a statement, an overlapping statement, or two imports racing no longer duplicate lines; two identical
+    charges in one statement both stay.
+  - Limit: a second statement holding a genuinely new line identical to one already imported (same day, amount and
+    description, no reference) is skipped; the response counts it.
+  - Before, only lines with a reference were checked, and with a racy count.
+- **Separate migration step and backup role** (`docs/OPERATIONS.md` 4b):
+  - `java -jar app.jar --migrate-only` migrates as the owner and exits.
+  - The API runs with `SPRING_FLYWAY_ENABLED=false` and without the owner's login.
+  - `pg_dump` uses a backup role (`pg_read_all_data`, `BYPASSRLS`, `CREATEDB`).
+  - `docker-compose.prod.yml` gains a one-shot `migrate` service. It also stops giving the API role the owner's password.
+
 ## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
 
 The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.
