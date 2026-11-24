@@ -22,7 +22,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * for the current organisation and keeps one open {@code LedgerIntegrityFinding} per failing check: opened when the check
  * starts failing, refreshed while it keeps failing, resolved once it passes. Opening findings raises one in-app alert;
  * a check that stays broken does not alert again. The inventory GL tie-out is left to {@link InventoryTieOutMonitor},
- * which already alerts on it. Nothing is corrected.
+ * which already alerts on it; the AR / AP tie-out (I8, finance audit A5) is one of the checks recorded here. Nothing is
+ * corrected.
  */
 @Service
 public class LedgerIntegrityMonitor {
