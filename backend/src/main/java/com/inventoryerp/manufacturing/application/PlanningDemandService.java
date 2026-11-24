@@ -17,7 +17,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -65,9 +64,10 @@ public class PlanningDemandService {
         this.pegs = pegs;
     }
 
-    private record Horizon(LocalDate from, LocalDate to) {
+    // Integrity fix 2026-11-24 (MP-7): day boundaries in the org timezone, like the work-centre calendars.
+    private record Horizon(LocalDate from, LocalDate to, java.time.ZoneId zone) {
         Instant end() {
-            return to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            return to.plusDays(1).atStartOfDay(zone).toInstant();
         }
 
         long days() {
@@ -75,13 +75,13 @@ public class PlanningDemandService {
         }
     }
 
-    private static Horizon horizon(String from, String to) {
+    private Horizon horizon(String from, String to) {
         LocalDate f = parse(from) != null ? parse(from) : LocalDate.now(BusinessZone.get());
         LocalDate t = parse(to) != null ? parse(to) : f.plusDays(DEFAULT_DAYS);
         if (t.isBefore(f)) {
             throw ApiException.badRequest("to must not be before from");
         }
-        return new Horizon(f, t);
+        return new Horizon(f, t, ShopFloorSupport.zoneOf(db));
     }
 
     private static LocalDate parse(String d) {
@@ -117,7 +117,7 @@ public class PlanningDemandService {
     /** Every requirement due by the end of the horizon (overdue ones included). */
     List<Demand> collect(LocalDate from, LocalDate to, boolean forecast, String method, int weeks,
             boolean stockPolicy) {
-        Horizon h = new Horizon(from, to);
+        Horizon h = new Horizon(from, to, ShopFloorSupport.zoneOf(db));
         List<Demand> out = new ArrayList<>();
         Set<String> scheduledOrders = new HashSet<>();
         Instant now = Instant.now();
@@ -131,7 +131,7 @@ public class PlanningDemandService {
                 scheduledOrders.add(str(r, "sourceId"));
             }
             if (dec(r, "qty").signum() > 0) {
-                Instant due = ((LocalDate) r.get("requestedDate")).atStartOfDay(ZoneOffset.UTC).toInstant();
+                Instant due = ((LocalDate) r.get("requestedDate")).atStartOfDay(h.zone()).toInstant();
                 out.add(new Demand("delivery_order", str(r, "id"), str(r, "lineId"), str(r, "code"), str(r,
                         "productId"),
                         str(r, "partnerId"), str(r, "siteId"), due, DemandNetting.priority(str(r, "priority")),
@@ -229,6 +229,19 @@ public class PlanningDemandService {
 
     private static Instant later(Instant now, Instant date) {
         return date == null || date.isBefore(now) ? now : date;
+    }
+
+    /** Target quantity (base units) of open plans' lines that have no production order yet. */
+    BigDecimal openPlanned(String productId) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"uomId\", coalesce(sum(l.\"targetQty\"), 0)"
+                + " AS qty FROM \"ProductionPlanLine\" l JOIN \"ProductionPlan\" p ON p.id = l.\"planId\""
+                + " WHERE l.\"organizationId\" = ? AND l.\"productId\" = ? AND p.\"deletedAt\" IS NULL"
+                + " AND p.status IN ('draft', 'confirmed') AND l.\"generatedOrderId\" IS NULL GROUP BY l.\"uomId\"")
+                .params(MfgDb.org(), productId))) {
+            sum = sum.add(mrp.toBase(productId, str(r, "uomId"), dec(r, "qty")));
+        }
+        return sum;
     }
 
     private BigDecimal supply(String productId) {
@@ -383,7 +396,10 @@ public class PlanningDemandService {
             }
             List<Allocation> open = new ArrayList<>();
             BigDecimal net = BigDecimal.ZERO;
-            for (Allocation a : DemandNetting.allocate(supply(productId), e.getValue())) {
+            // Integrity fix 2026-11-24 (MP-8): lines of open (draft / confirmed) plans not yet turned into orders are
+            // supply too, so planning the same demand twice makes nothing new.
+            for (Allocation a : DemandNetting.allocate(supply(productId).add(openPlanned(productId)),
+                    e.getValue())) {
                 if (a.uncovered().signum() > 0) {
                     open.add(a);
                     net = net.add(a.uncovered());

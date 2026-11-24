@@ -222,6 +222,9 @@ public class CrushingProfileService {
         List<Map<String, Object>> lines = lines(id);
         List<GradingLineInput> inputs = lines.stream().map(CrushingProfileService::input).toList();
         validateLines(inputs, str(g, "feedProductId"), stages.size(), true);
+        // Integrity fix 2026-11-24 (MV-7): feed and every fraction are counted in tonnes.
+        rows.requireTonnes(str(g, "feedProductId"));
+        lines.forEach(l -> rows.requireTonnes(str(l, "productId")));
         Map<String, Object> main = lines.stream().filter(l -> "main".equals(l.get("role"))).findFirst().orElseThrow();
         BigDecimal recovery = lines.stream().map(l -> dec(l, "expectedPct")).reduce(BigDecimal.ZERO, BigDecimal::add);
 

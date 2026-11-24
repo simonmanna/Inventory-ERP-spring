@@ -1,5 +1,6 @@
 package com.inventoryerp.manufacturing.web;
 
+import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
@@ -89,6 +90,8 @@ public class ProductionController {
 
     @PostMapping("/{id}/qc")
     @ResponseStatus(HttpStatus.CREATED)
+    // Integrity fix 2026-11-24 (MC-7): no @Idempotent here — the interceptor answers 200 even without a key, which
+    // would break the 201 contract; the quarantine bound in recordQc already stops a retry moving stock twice.
     @RequirePermissions(Permissions.PRODUCTION_ORDER__QC)
     public Map<String, Object> recordQc(@PathVariable String id, @Valid @RequestBody RecordQc dto) {
         return production.recordQc(id, dto);

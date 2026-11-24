@@ -19,7 +19,8 @@ import java.util.Map;
  *       (quantity × unit market value), {@code net_realisable_value} (review 2026-11-17: quantity × (unit sales
  *       value − the separable costs per unit still to come after the split-off, never below zero), the NRV method for
  *       joint products that are processed further before they can be sold) or {@code fixed_pct} (the outputs'
- *       percentages; the main output takes 100 − Σ others when it has none). A basis that sums to zero falls back to quantity, then to the main
+ *       percentages; the main output takes 100 − Σ others when it has none; renormalised over the outputs with a
+ *       quantity in this posting). A basis that sums to zero falls back to quantity, then to the main
  *       output.</li>
  *   <li><b>Rounding</b>: every share is rounded down to {@code scale} and the remaining units go to the largest
  *       remainders (ties: list order), so the shares always sum <em>exactly</em> to the joint cost.</li>
@@ -77,7 +78,10 @@ public final class JointCostAllocator {
             BigDecimal v;
             switch (s.valuation()) {
                 case "nrv" -> v = nz(s.nrvUnitValue()).multiply(s.quantity()).setScale(scale, RoundingMode.HALF_UP);
-                case "carve_pct" -> v = total.multiply(nz(s.fixedPct())).divide(HUNDRED, scale, RoundingMode.HALF_UP);
+                // Integrity fix 2026-11-24 (MS-2): an output not made in this posting takes no share of it.
+                case "carve_pct" -> v = s.quantity().signum() > 0
+                        ? total.multiply(nz(s.fixedPct())).divide(HUNDRED, scale, RoundingMode.HALF_UP)
+                        : BigDecimal.ZERO.setScale(scale);
                 case "zero" -> v = BigDecimal.ZERO.setScale(scale);
                 default -> {
                     continue;
@@ -176,7 +180,11 @@ public final class JointCostAllocator {
                 case "market_value" -> s.quantity().multiply(nz(s.marketValue()));
                 case "net_realisable_value" -> s.quantity().multiply(nz(s.marketValue()).subtract(nz(
                         s.separableCostPerUnit())).max(BigDecimal.ZERO));
-                case "fixed_pct" -> "main".equals(s.role()) && !mainHasPct
+                // Integrity fix 2026-11-24 (MS-2): the percentages are renormalised over the outputs made in this
+                // posting; an output with no quantity (the main output too) takes nothing. Before, a partial posting
+                // valued co-products it did not make and expensed that value as scrap.
+                case "fixed_pct" -> s.quantity().signum() <= 0 ? BigDecimal.ZERO
+                        : "main".equals(s.role()) && !mainHasPct
                         ? HUNDRED.subtract(othersPct).max(BigDecimal.ZERO) : nz(s.fixedPct());
                 default -> s.quantity();
             };

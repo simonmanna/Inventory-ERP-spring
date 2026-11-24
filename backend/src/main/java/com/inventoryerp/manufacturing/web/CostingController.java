@@ -98,8 +98,9 @@ public class CostingController {
 
     @GetMapping("/engineering-changes")
     @RequirePermissions(Permissions.BOM__READ)
-    public List<Map<String, Object>> changes(@RequestParam(required = false) String status) {
-        return engineering.list(status);
+    public List<Map<String, Object>> changes(@RequestParam(required = false) String status,
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset) {
+        return engineering.list(status, limit, offset);
     }
 
     @GetMapping("/engineering-changes/{id}")

@@ -197,6 +197,12 @@ public final class SettingRegistry {
                 "Maximum amount for a single manual store-credit issue. 0 disables manual issuance entirely.", 0, null,
                 false, ORG_ONLY);
 
+        // ---- Manufacturing / PLM (Integrity fix 2026-11-24 (ML-4), owner decision: default refuse) ----
+        def("plm.allowSelfApproval", "manufacturing", "bool", "PLM: Allow Approving Own Changes",
+                "When off (default), the person who raised or owns an engineering change cannot approve it (stage"
+                        + " approval or fast-track), and the requester of a change request cannot review it.",
+                false, null, false, ORG_ONLY);
+
         // ---- Rental ----
         def("rental.autoHoldMinutes", "rental", "number", "Reservation Hold (minutes)",
                 "How long a reservation hold stays valid before the cron worker expires it.", 60, null, false, ORG_ONLY);

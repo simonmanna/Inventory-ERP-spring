@@ -15,6 +15,7 @@ import com.inventoryerp.manufacturing.application.StageCommands.StageConversion;
 import com.inventoryerp.manufacturing.application.StageCommands.StageIssue;
 import com.inventoryerp.manufacturing.application.StageCommands.StageOutput;
 import com.inventoryerp.manufacturing.application.StageCommands.StageQcDecision;
+import com.inventoryerp.manufacturing.application.StageCommands.StageQcScrap;
 import com.inventoryerp.manufacturing.application.StageCommands.StageReversal;
 import com.inventoryerp.manufacturing.application.StageExecutionService;
 import com.inventoryerp.manufacturing.application.StageSetupService;
@@ -123,7 +124,7 @@ public class MultiStageController {
     @RequirePermissions(Permissions.PRODUCTION_ORDER__CANCEL)
     public Map<String, Object> reverseOrder(@PathVariable String id,
             @Valid @RequestBody(required = false) StageReversal dto) {
-        return stages.reverseOrder(id, dto == null ? null : dto.reason());
+        return stages.reverseOrderViaRoute(id, dto == null ? null : dto.reason());
     }
 
     @PostMapping("/production-orders/{id}/child-orders")
@@ -146,21 +147,21 @@ public class MultiStageController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.PRODUCTION_ORDER__START)
     public Map<String, Object> issue(@PathVariable String id, @Valid @RequestBody StageIssue dto) {
-        return stages.issue(id, dto);
+        return stages.issueViaRoute(id, dto);
     }
 
     @PostMapping("/production-stages/{id}/output")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.PRODUCTION_ORDER__COMPLETE)
     public Map<String, Object> output(@PathVariable String id, @Valid @RequestBody StageOutput dto) {
-        return stages.output(id, dto);
+        return stages.outputViaRoute(id, dto);
     }
 
     @PostMapping("/production-stages/{id}/conversion-costs")
     @Idempotent(required = true)
     @RequirePermissions(Permissions.PRODUCTION_ORDER__COMPLETE)
     public Map<String, Object> conversion(@PathVariable String id, @Valid @RequestBody StageConversion dto) {
-        return stages.conversion(id, dto);
+        return stages.conversionViaRoute(id, dto);
     }
 
     @PostMapping("/production-stages/{id}/qc-decision")
@@ -168,7 +169,15 @@ public class MultiStageController {
     @RequirePermissions(Permissions.PRODUCTION_ORDER__QC)
     public Map<String, Object> qcDecision(@PathVariable String id, @Valid @RequestBody StageQcDecision dto) {
         return stages.recordResult(id, new CheckpointDecision("passed".equals(dto.result()), dto.reference(),
-                dto.notes()));
+                dto.notes(), dto.postingId()));
+    }
+
+    /** Integrity fix 2026-11-24 (MS-8): scrap a failed QC lot (its held quantity leaves quarantine as waste). */
+    @PostMapping("/stage-postings/{id}/qc-scrap")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.PRODUCTION_ORDER__QC)
+    public Map<String, Object> qcScrap(@PathVariable String id, @Valid @RequestBody StageQcScrap dto) {
+        return stages.qcScrap(id, dto);
     }
 
     @PostMapping("/stage-postings/{id}/reverse")
@@ -176,7 +185,7 @@ public class MultiStageController {
     @RequirePermissions(Permissions.PRODUCTION_ORDER__CANCEL)
     public Map<String, Object> reversePosting(@PathVariable String id,
             @Valid @RequestBody(required = false) StageReversal dto) {
-        return stages.reversePosting(id, dto == null ? null : dto.reason());
+        return stages.reversePostingViaRoute(id, dto == null ? null : dto.reason());
     }
 
     // ------------------------------------------------------------------ report

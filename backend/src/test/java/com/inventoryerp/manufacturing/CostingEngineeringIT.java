@@ -12,6 +12,31 @@ import tools.jackson.databind.JsonNode;
 /** ADR-S006 package D: cost roll-up, standard cost + variances, subcontracting, where-used, substitutes, ECOs. */
 class CostingEngineeringIT extends MfgTestSupport {
 
+    private String approverToken;
+
+    /**
+     * A second DEMO administrator: since 2026-11-24 (ML-4, {@code plm.allowSelfApproval} off by default) the person
+     * who raised a change cannot approve it.
+     */
+    String approver() {
+        if (approverToken == null) {
+            String role = jdbc.sql("SELECT r.id FROM \"Role\" r JOIN \"_UserRoles\" ur ON ur.\"A\" = r.id"
+                    + " JOIN \"User\" u ON u.id = ur.\"B\" WHERE u.email = 'admin@demo.test' LIMIT 1")
+                    .query(String.class).single();
+            String email = "plm-approver-" + suffix() + "@demo.test";
+            createUser(demoOrg, email, "Approver@12345", role);
+            approverToken = login("DEMO", email, "Approver@12345");
+        }
+        return approverToken;
+    }
+
+    /** Call as the second administrator; must answer {@code status}. */
+    JsonNode okAs(String token, int status, String method, String path, Object body) {
+        Res r = call(method, path, body, token);
+        assertThat(r.status()).as(method + " " + path + " → " + r.raw().body()).isEqualTo(status);
+        return r.body();
+    }
+
     static BigDecimal num(JsonNode n) {
         return new BigDecimal(n.asString());
     }
@@ -136,7 +161,10 @@ class CostingEngineeringIT extends MfgTestSupport {
         String ecoId = eco.get("id").asString();
         assertThat(as("POST", "/manufacturing/engineering-changes/" + ecoId + "/apply", null).body().get("message")
                 .asString()).isEqualTo("Only an approved change can be applied (status draft).");
-        ok(201, "POST", "/manufacturing/engineering-changes/" + ecoId + "/approve", null);
+        Res own = as("POST", "/manufacturing/engineering-changes/" + ecoId + "/approve", null);
+        assertThat(own.status()).isEqualTo(403);
+        assertThat(own.body().get("message").asString()).isEqualTo("You cannot approve a change you raised.");
+        okAs(approver(), 201, "POST", "/manufacturing/engineering-changes/" + ecoId + "/approve", null);
         JsonNode applied = ok(201, "POST", "/manufacturing/engineering-changes/" + ecoId + "/apply", null);
         assertThat(applied.get("status").asString()).isEqualTo("applied");
         assertThat(ok(200, "GET", "/manufacturing/boms/" + bomId, null).get("status").asString()).isEqualTo("archived");

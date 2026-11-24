@@ -155,9 +155,10 @@ class ManufacturingIT extends MfgTestSupport {
         assertThat(balance(wipAccount)).isEqualByComparingTo(wipBefore);
         assertThat(balance(scrapAccount)).isEqualByComparingTo(scrapBefore.add(BigDecimal.valueOf(20000)));
         assertThat(onHand(cake, warehouse)).isEqualByComparingTo("0");
+        // Integrity fix 2026-11-24 (MC-1): a zero-yield order is reversible; the write-off comes back.
         Res rev = as("POST", "/manufacturing/production-orders/" + id + "/reverse", Map.of());
-        assertThat(rev.body().get("message").asString())
-                .isEqualTo("A scrapped (zero-yield) order has no output to reverse.");
+        assertThat(rev.status()).as(rev.raw().body()).isIn(200, 201);
+        assertThat(balance(scrapAccount)).isEqualByComparingTo(scrapBefore);
     }
 
     @Test
@@ -431,7 +432,7 @@ class ManufacturingIT extends MfgTestSupport {
     void authorization() {
         // 131 + 26 precast (ADR-S014, 2.4) + 41 shop-floor (ADR-S015, 2.7) + 36 crushing routes (ADR-S016, 2.3)
         // + 25 planning (ADR-S017, 2.5, incl. the forecast route) + 9 costing routes (ADR-S018, 2.8)
-        // + 25 processing routes (ADR-S060) + 38 PLM routes (ADR-S063).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(334);
+        // + 25 processing routes (ADR-S060) + 38 PLM routes (ADR-S063) + 1 stage QC scrap (integrity 2026-11-24).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.manufacturing")).isEqualTo(335);
     }
 }

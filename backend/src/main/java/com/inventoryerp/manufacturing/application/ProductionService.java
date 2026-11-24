@@ -251,6 +251,16 @@ public class ProductionService {
         }
         if (dto.outputs() != null) {
             dto.outputs().forEach(o -> getProduct(o.productId()));
+            // Integrity fix 2026-11-24 (deviation: Nest took any %): by-products take their share of the cost pool
+            // before the main output; more than 100 % in total left the main output at a negative cost.
+            BigDecimal byproductPct = dto.outputs().stream()
+                    .filter(o -> o.kind() == null || "byproduct".equals(o.kind()))
+                    .map(o -> o.costAllocationPct() != null ? o.costAllocationPct() : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (byproductPct.compareTo(HUNDRED) > 0) {
+                throw ApiException.badRequest("By-product cost allocation totals " + JsNumbers.dec(byproductPct)
+                        + "%; it cannot exceed 100%.");
+            }
         }
         requireLocation(outputLocationId);
 
@@ -427,8 +437,12 @@ public class ProductionService {
                     throw ApiException.badRequest("Product " + ov.substituteProductId()
                             + " is not an approved substitute for " + line.get("productName") + ".");
                 }
+                // Integrity fix 2026-11-24 (MC-13): the ratio is substitute base units per component BASE unit and
+                // the substitute is issued in its base unit; the line quantity is in the BOM line's unit, so it is
+                // converted to the component's base unit first (a 500 g line no longer issued 500 kg).
+                BigDecimal componentBase = uom.toBase(qty, str(line, "uomId"), productId, productUnit(productId), true);
                 productId = ov.substituteProductId();
-                qty = BomService.mul(qty, dec(substitute, "ratio"));
+                qty = BomService.mul(componentBase, dec(substitute, "ratio"));
             }
             StockMove move = StockMove.of(productId, str(order, "locationId"), qty)
                     .variant(substitute != null ? null : str(line, "variantId"))
@@ -491,7 +505,8 @@ public class ProductionService {
         }
         String quarantineId = Boolean.TRUE.equals(pre.get("qcRequired")) ? resolveQuarantineLocation() : null;
         if (dto.qtyProduced() == null || dto.qtyProduced().signum() <= 0) {
-            authorizeLossWriteOff(pre, dec(pre, "materialCost"));
+            // Integrity fix 2026-11-24 (MC-1): the loss written off includes the order's overhead.
+            authorizeLossWriteOff(pre, dec(pre, "materialCost").add(dec(pre, "overheadCost")));
         }
 
         lock(id);
@@ -508,13 +523,18 @@ public class ProductionService {
 
         // Zero-yield batch: materials are in WIP and gone — expense it (Dr Stock Adj Expense / Cr WIP).
         if (dto.qtyProduced() == null || dto.qtyProduced().signum() <= 0) {
-            stockPosting.postProductionScrap(materialCost, date, SOURCE, code, "Production scrap · " + code);
+            // Integrity fix 2026-11-24 (MC-1; deviation: Nest wrote off the materials only and never absorbed the
+            // order's overhead, so the period's absorbed-overhead credit and the loss both missed it): absorb the
+            // overhead into WIP as a producing order does, then write off materials + overhead.
+            absorbOverhead(id, code, overhead, date);
+            BigDecimal loss = materialCost.add(overhead);
+            stockPosting.postProductionScrap(loss, date, SOURCE, code, "Production scrap · " + code);
             Map<String, Object> data = new LinkedHashMap<>();
             data.put("status", "completed");
             data.put("producedQty", BigDecimal.ZERO);
             data.put("scrapQty", order.get("plannedQty"));
             data.put("outputUnitCost", BigDecimal.ZERO);
-            data.put("totalCost", materialCost);
+            data.put("totalCost", loss);
             data.put("completedAt", date);
             data.put("postedAt", Instant.now());
             data.put("notes", dto.notes() != null ? dto.notes() : order.get("notes"));
@@ -522,7 +542,7 @@ public class ProductionService {
             Map<String, Object> scrapped = withLines(db.update(ProductionOrder.class, id, data), true, true);
             reservations.release(SOURCE, id);
             audit.recordInTx(AuditInput.of("ProductionOrder", id, "post", null,
-                    Obj.of("orderCode", code, "scrapped", JsNumbers.dec(materialCost))));
+                    Obj.of("orderCode", code, "scrapped", JsNumbers.dec(loss))));
             orderEvent("manufacturing.order.completed", scrapped, null);
             return scrapped;
         }
@@ -533,9 +553,7 @@ public class ProductionService {
         BigDecimal byproductCredit = BigDecimal.ZERO;
 
         // Absorb overhead into WIP so the output credit (which includes it) still nets WIP to zero.
-        if (overhead.signum() > 0) {
-            stockPosting.postOverheadAbsorption(overhead, date, SOURCE, code, "Overhead · " + code);
-        }
+        absorbOverhead(id, code, overhead, date);
 
         List<Map<String, Object>> outputs = outputs(order);
         Map<String, Object> mainLine = outputs.stream().filter(o -> "output".equals(o.get("kind"))).findFirst()
@@ -562,6 +580,12 @@ public class ProductionService {
                     iso(order.get("mfgDate")), code, date, str(bp, "id"), value);
             pool = pool.subtract(value);
             byproductCredit = byproductCredit.add(value);
+        }
+        if (pool.signum() < 0) {
+            // Integrity fix 2026-11-24: orders created before the 100 % cap.
+            throw ApiException.badRequest("By-products of " + code + " take more than the order's cost ("
+                    + JsNumbers.dec(byproductCredit) + " of " + JsNumbers.dec(materialCost.add(overhead))
+                    + "); correct their cost allocation %.");
         }
 
         // 1b) Review 2026-11-17 (rework costing): an abnormal rework — a defect that is not part of the normal process —
@@ -690,6 +714,15 @@ public class ProductionService {
             throw ApiException.badRequest("Order is not awaiting QC.");
         }
         String code = str(order, "orderCode");
+        // Integrity fix 2026-11-24 (MC-7; deviation: Nest took any quantities): a decision covers at most what this
+        // order still holds in quarantine (base units — the output was received, and QC moves stock, in base units).
+        BigDecimal decided = passed.add(failed).add(rework);
+        BigDecimal held = producedOnHand(code, str(order, "outputProductId"), str(order, "outputVariantId"),
+                quarantineId);
+        if (decided.compareTo(held) > 0) {
+            throw ApiException.badRequest("QC quantities (passed + failed + rework = " + JsNumbers.dec(decided)
+                    + ") exceed the " + JsNumbers.dec(held) + " of order " + code + " still in quarantine.");
+        }
         if (passed.signum() > 0) {
             stock.transfer(StockMove.transfer(str(order, "outputProductId"), quarantineId, destinationId, passed)
                     .variant(str(order, "outputVariantId")).source("production_qc", code).notes("QC pass " + code));
@@ -737,6 +770,9 @@ public class ProductionService {
     @Transactional
     public Map<String, Object> cancelOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
+        // Integrity fix 2026-11-24 (deviation: Nest flipped without a lock): lock and read once, so a start that
+        // consumed the materials in between cannot be flipped to cancelled with its materials stranded in WIP.
+        lock(id);
         Map<String, Object> pre = getOrThrow(id, true, false);
         refuseIfMultiStage(pre, true);
         if ("completed".equals(pre.get("status"))) {
@@ -745,10 +781,14 @@ public class ProductionService {
         if ("cancelled".equals(pre.get("status"))) {
             return pre;
         }
+        // Integrity fix 2026-11-24 (MC-8; deviation: the release ran in its own committed transaction before the
+        // cancel was known to succeed — a later failure, e.g. inside a PLM ECO apply, left the order confirmed with its
+        // reservations gone): released in this transaction, under a savepoint so a failure is still ignored (Nest:
+        // .catch(() => undefined)).
         try {
-            newTx.executeWithoutResult(s -> reservations.release(SOURCE, id));
-        } catch (RuntimeException ignored) {
-            // Nest: .catch(() => undefined)
+            Savepoints.run(db.jdbc(), () -> reservations.release(SOURCE, id));
+        } catch (RuntimeException e) {
+            log.warn("reservation release failed for {}: {}", pre.get("orderCode"), e.getMessage());
         }
         if (pre.get("consumedAt") == null) {
             Map<String, Object> data = new LinkedHashMap<>();
@@ -762,11 +802,7 @@ public class ProductionService {
         }
 
         Instant date = Instant.now();
-        lock(id);
-        Map<String, Object> order = getOrNull(id, true, false);
-        if (order == null || "cancelled".equals(order.get("status"))) {
-            return order;
-        }
+        Map<String, Object> order = pre;
         if (order.get("postedAt") != null) {
             throw ApiException.badRequest("Order already completed.");
         }
@@ -801,6 +837,8 @@ public class ProductionService {
     @Transactional
     public Map<String, Object> reverseOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
+        // Integrity fix 2026-11-24: lock before the checks, so they read what the reversal will act on.
+        lock(id);
         Map<String, Object> pre = getOrThrow(id, true, false);
         refuseIfMultiStage(pre, false);
         // ADR-S006 A5: a QC-held order can be reversed too (its finished goods sit in quarantine).
@@ -812,18 +850,16 @@ public class ProductionService {
             throw ApiException.badRequest("Order already reversed.");
         }
         if (dec(pre, "producedQty").signum() <= 0) {
-            throw ApiException.badRequest("A scrapped (zero-yield) order has no output to reverse.");
+            // Integrity fix 2026-11-24 (MC-1; deviation: Nest refused): a zero-yield order reverses too.
+            return reverseZeroYield(pre, reason);
         }
         String fgLocationId = held ? resolveQuarantineLocation()
                 : pre.get("outputLocationId") != null ? str(pre, "outputLocationId") : str(pre, "locationId");
         // Review N3: producedQty is in the order's unit; the finished goods were received in base units.
         Map<String, Object> mainOut = mainOutput(pre);
         BigDecimal fgBase = producedBase(pre, mainOut);
-        BigDecimal fgQty = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
-                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
-                .params(MfgDb.org(), pre.get("outputProductId"),
-                        pre.get("outputVariantId") != null ? pre.get("outputVariantId") : "", fgLocationId)
-                .query(BigDecimal.class).optional().orElse(null);
+        BigDecimal fgQty = producedOnHand(str(pre, "orderCode"), str(pre, "outputProductId"),
+                str(pre, "outputVariantId"), fgLocationId);
         if (fgQty == null || fgQty.compareTo(fgBase) < 0) {
             throw ApiException.badRequest(
                     "Cannot reverse: finished goods are no longer fully in stock (sold or moved).");
@@ -838,11 +874,8 @@ public class ProductionService {
             if (bpBase == null) {
                 continue;
             }
-            BigDecimal onHand = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
-                            + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
-                    .params(MfgDb.org(), bp.get("productId"), bp.get("variantId") != null ? bp.get("variantId") : "",
-                            fgLocationId)
-                    .query(BigDecimal.class).optional().orElse(null);
+            BigDecimal onHand = producedOnHand(str(pre, "orderCode"), str(bp, "productId"), str(bp, "variantId"),
+                    fgLocationId);
             if (onHand == null || onHand.compareTo(bpBase) < 0) {
                 throw ApiException.badRequest(
                         "Cannot reverse: by-products are no longer fully in stock (sold or moved).");
@@ -855,11 +888,7 @@ public class ProductionService {
         BigDecimal fgValue = mainOut != null && mainOut.get("totalCost") != null && dec(mainOut, "totalCost").signum() > 0
                 ? dec(mainOut, "totalCost") : BomService.mul(dec(pre, "outputUnitCost"), fgBase);
 
-        lock(id);
-        Map<String, Object> order = getOrNull(id, true, false);
-        if (order == null || order.get("reversedAt") != null) {
-            throw ApiException.badRequest("Order already reversed.");
-        }
+        Map<String, Object> order = pre;
         String code = str(order, "orderCode");
         // 1) Finished goods out, value back into WIP (Dr WIP / Cr Stock Valuation).
         // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
@@ -888,10 +917,7 @@ public class ProductionService {
         // into WIP and step 2 took only the materials out, so WIP kept a debit equal to the overhead and the period's
         // absorbed-overhead credit stayed as if the order had produced.
         BigDecimal overhead = dec(order, "overheadCost");
-        if (overhead.signum() > 0) {
-            stockPosting.postOverheadAbsorptionReversal(overhead, date, "production_reversal", code,
-                    "Overhead absorption reversed · " + code);
-        }
+        reverseOverheadAbsorption(code, overhead, date);
         // 2c) Review 2026-11-17 (rework costing): the loss an abnormal rework expensed goes back into WIP with it
         // (Dr WIP / Cr Stock Adjustment Expense); steps 2 and 2b took the whole rework cost out of WIP.
         BigDecimal reworkLoss = dec(order, "reworkLoss");
@@ -923,6 +949,40 @@ public class ProductionService {
      * quarantine) the lots there with the produced batch numbers. Empty for products without lots (the output receipt
      * names no serial units, so none are pinned).
      */
+    /**
+     * Integrity fix 2026-11-24 (deviation: Nest compared the product's whole stock at the location): how much of what
+     * this order produced is still at {@code locationId} — the least of the stock there, the order's own net movements
+     * there (its output receipts and its QC transfers / write-offs; not its consumption, which a rework order draws from
+     * the same product) and, for lot-tracked products, what is left in its lots.
+     * Other stock of the same product (another order's output in the same quarantine, say) no longer lets a reversal
+     * pass after part of this output was released, wasted at QC, sold or moved.
+     */
+    private BigDecimal producedOnHand(String orderCode, String productId, String variantId, String locationId) {
+        BigDecimal here = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
+                .params(MfgDb.org(), productId, variantId != null ? variantId : "", locationId)
+                .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+        BigDecimal own = db.jdbc().sql("SELECT coalesce(sum(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
+                        + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND \"locationId\" = ? AND \"referenceId\" = ? AND ((\"referenceType\" = ?"
+                        + " AND type = 'production_output') OR \"referenceType\" = 'production_qc')")
+                .params(MfgDb.org(), productId, variantId, locationId, orderCode, SOURCE).query(BigDecimal.class)
+                .single();
+        BigDecimal left = here.min(own);
+        boolean lotted = db.jdbc().sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                        + " AND \"referenceType\" = ? AND \"referenceId\" = ? AND type = 'production_output'"
+                        + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"batchId\" IS NOT NULL")
+                .params(MfgDb.org(), SOURCE, orderCode, productId, variantId).query(Long.class).single() > 0;
+        if (!lotted) {
+            return left;
+        }
+        List<String> lots = producedLots(orderCode, productId, variantId, locationId);
+        BigDecimal inLots = lots.isEmpty() ? BigDecimal.ZERO : db.jdbc().sql("SELECT coalesce(sum(quantity), 0) FROM"
+                        + " \"InventoryBatch\" WHERE \"organizationId\" = ? AND id = ANY(?::text[]) AND \"locationId\" = ?")
+                .params(MfgDb.org(), lots.toArray(String[]::new), locationId).query(BigDecimal.class).single();
+        return left.min(inLots);
+    }
+
     private List<String> producedLots(String orderCode, String productId, String variantId, String locationId) {
         List<Map<String, Object>> produced = db.jdbc().sql("SELECT b.id, b.\"locationId\", b.\"batchNumber\" FROM"
                         + " \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ?"
@@ -940,6 +1000,93 @@ public class ProductionService {
                 .params(MfgDb.org(), productId, variantId, locationId,
                         produced.stream().map(b -> (String) b.get("batchNumber")).distinct().toArray(String[]::new))
                 .query(String.class).list();
+    }
+
+    // ================================================================== overhead absorption (MC-1 / MC-3)
+
+    private static final String RATED_OVERHEAD = "Overhead (work-centre rate) · ";
+
+    /**
+     * Integrity fix 2026-11-24 (MC-3; deviation: Nest credited all of a plain order's overhead to overhead absorbed):
+     * Dr WIP for the order's overhead. The part absorbed at a work-centre rate that names a credit account
+     * ({@code WorkCenterCostRate.creditAccountId}, as the multi-stage path credits it) credits that account in one
+     * journal; the rest (BOM overhead, resource labour, rates without an account) credits overhead absorbed.
+     */
+    private void absorbOverhead(String orderId, String code, BigDecimal overhead, Instant date) {
+        if (overhead.signum() <= 0) {
+            return;
+        }
+        List<Map<String, Object>> rated = SqlRows.list(db.jdbc().sql("SELECT r.\"creditAccountId\" AS account,"
+                + " sum(a.amount) AS amount FROM \"ProductionCostAbsorption\" a JOIN \"WorkCenterCostRate\" r ON"
+                + " r.\"organizationId\" = a.\"organizationId\" AND r.\"workCenterId\" = a.\"workCenterId\""
+                + " WHERE a.\"organizationId\" = ? AND a.\"orderId\" = ? AND a.\"stageId\" IS NULL"
+                + " AND r.\"creditAccountId\" IS NOT NULL GROUP BY 1 ORDER BY 1").params(MfgDb.org(), orderId));
+        BigDecimal ratedTotal = BigDecimal.ZERO;
+        List<com.inventoryerp.accounting.application.PostingRequest.Line> credits = new ArrayList<>();
+        String label = RATED_OVERHEAD + code;
+        for (Map<String, Object> r : rated) {
+            BigDecimal amount = dec(r, "amount").min(overhead.subtract(ratedTotal));
+            if (amount.signum() <= 0) {
+                continue;
+            }
+            credits.add(com.inventoryerp.accounting.application.PostingRequest.Line.credit(str(r, "account"),
+                    JsNumbers.dec(amount), label));
+            ratedTotal = ratedTotal.add(amount);
+        }
+        if (!credits.isEmpty()) {
+            List<com.inventoryerp.accounting.application.PostingRequest.Line> lines = new ArrayList<>();
+            lines.add(com.inventoryerp.accounting.application.PostingRequest.Line.debit(stockPosting.wipAccount(),
+                    JsNumbers.dec(ratedTotal), label));
+            lines.addAll(credits);
+            posting.post(com.inventoryerp.accounting.application.PostingRequest.of("INV", date, label, SOURCE, code,
+                    null, lines));
+        }
+        stockPosting.postOverheadAbsorption(overhead.subtract(ratedTotal), date, SOURCE, code, "Overhead · " + code);
+    }
+
+    /** Mirror of {@link #absorbOverhead}: the rated journal is reversed, the rest leaves overhead absorbed again. */
+    private void reverseOverheadAbsorption(String code, BigDecimal overhead, Instant date) {
+        if (overhead.signum() <= 0) {
+            return;
+        }
+        String je = db.jdbc().sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = ?"
+                + " AND \"sourceId\" = ? AND description = ? AND status = 'posted' AND \"reversalOfId\" IS NULL"
+                + " ORDER BY \"createdAt\" DESC LIMIT 1").params(MfgDb.org(), SOURCE, code, RATED_OVERHEAD + code)
+                .query(String.class).optional().orElse(null);
+        BigDecimal rated = BigDecimal.ZERO;
+        if (je != null) {
+            rated = db.jdbc().sql("SELECT coalesce(sum(debit), 0) FROM \"JournalLine\" WHERE \"journalEntryId\" = ?")
+                    .param(je).query(BigDecimal.class).single();
+            posting.reverse(je, date, "Overhead absorption reversed · " + code);
+        }
+        stockPosting.postOverheadAbsorptionReversal(overhead.subtract(rated).max(BigDecimal.ZERO), date,
+                "production_reversal", code, "Overhead absorption reversed · " + code);
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MC-1): undo a zero-yield order — materials back to stock (Dr Stock Valuation / Cr WIP),
+     * the loss written off back into WIP (Dr WIP / Cr Stock Adjustment Expense) and the overhead it absorbed out of it
+     * again. Orders scrapped before the fix wrote off the materials only ({@code totalCost} = materials) and absorbed
+     * no overhead; {@code totalCost − materialCost} is what was absorbed.
+     */
+    private Map<String, Object> reverseZeroYield(Map<String, Object> order, String reason) {
+        Instant date = Instant.now();
+        String code = str(order, "orderCode");
+        BigDecimal written = order.get("totalCost") == null ? dec(order, "materialCost") : dec(order, "totalCost");
+        BigDecimal absorbed = written.subtract(dec(order, "materialCost")).max(BigDecimal.ZERO);
+        returnMaterials(order, "production_reversal", date, "Production reversal · " + code);
+        stockPosting.postProductionScrapReversal(written, date, "production_reversal", code,
+                "Production scrap reversed · " + code);
+        reverseOverheadAbsorption(code, absorbed, date);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("status", "cancelled");
+        data.put("reversedAt", date);
+        data.put("reversalReason", reason);
+        data.put("updatedBy", TenantContext.userId());
+        Map<String, Object> updated = withLines(db.update(ProductionOrder.class, str(order, "id"), data), true, true);
+        audit.recordInTx(AuditInput.of("ProductionOrder", str(order, "id"), "cancel", null, Obj.of("orderCode", code,
+                "reversed", JsNumbers.dec(written))));
+        return updated;
     }
 
     // ================================================================== menu item, list, get
@@ -1062,6 +1209,14 @@ public class ProductionService {
 
     private StockReversalService stockReturns;
 
+    private com.inventoryerp.accounting.application.PostingService posting;
+
+    /** Integrity fix 2026-11-24 (MC-3): overhead absorbed at a work-centre rate credits the rate's account. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPosting(com.inventoryerp.accounting.application.PostingService posting) {
+        this.posting = posting;
+    }
+
     /** R1: consumed materials are returned against their consume move. */
     @org.springframework.beans.factory.annotation.Autowired
     void setStockReturns(StockReversalService stockReturns) {
@@ -1126,8 +1281,7 @@ public class ProductionService {
 
     /** Serialise concurrent start/complete/cancel of one order (double-tap guard). */
     private void lock(String orderId) {
-        String key = "production:" + MfgDb.org() + ":" + orderId;
-        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param(key).query().listOfRows();
+        db.lockProductionOrder(orderId);
     }
 
     private BigDecimal estimateMaterialValue(Map<String, Object> order) {

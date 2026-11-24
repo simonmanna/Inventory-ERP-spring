@@ -61,6 +61,10 @@ public class ForecastService {
     /** {@code weeks} to average (default 4), {@code targetDate} to forecast (default tomorrow). */
     @Transactional(readOnly = true)
     public Map<String, Object> forecast(Double weeksParam, String targetDate) {
+        // Integrity fix 2026-11-24 (MP-12): a positive weeks is bounded (1..104); missing / non-positive is 4, as before.
+        if (weeksParam != null && weeksParam > 0 && (weeksParam < 1 || weeksParam > 104)) {
+            throw com.inventoryerp.shared.web.ApiException.badRequest("weeks must be between 1 and 104");
+        }
         double weeks = weeksParam != null && weeksParam > 0 ? weeksParam : 4;
         long now = System.currentTimeMillis();
         Instant since = Instant.ofEpochMilli(now - (long) (weeks * 7 * DAY_MS));

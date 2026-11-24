@@ -190,7 +190,7 @@ public class PrecastController {
     @RequirePermissions(Permissions.PRODUCTION_ORDER__COMPLETE)
     @Operation(summary = "Record a pressing run (backflush, breakage) and start a curing batch")
     public Map<String, Object> press(@PathVariable String id, @Valid @RequestBody PressingRun dto) {
-        return production.press(id, dto);
+        return production.pressViaRoute(id, dto);
     }
 
     // ------------------------------------------------------------------ curing batches

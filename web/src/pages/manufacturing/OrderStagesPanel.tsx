@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Coins, GitFork, Layers, PackageMinus, PackagePlus, ShieldAlert, ShieldCheck, Undo2, XCircle } from 'lucide-react';
+import { CheckCircle2, Coins, GitFork, Layers, PackageMinus, PackagePlus, ShieldAlert, ShieldCheck, Trash2, Undo2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ import {
   useOrderTree,
   useReverseStagePosting,
   useReverseStagedOrder,
+  useScrapQcLot,
   useStageConversion,
   useStageIssue,
   useStageOutput,
@@ -61,6 +62,7 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
   const reverseOrder = useReverseStagedOrder();
   const reversePosting = useReverseStagePosting();
   const qc = useStageQcDecision();
+  const scrapLot = useScrapQcLot();
   const [dlg, setDlg] = useState<Dlg>(null);
 
   const productName = useMemo(() => {
@@ -169,6 +171,53 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
                         {canOutput && <Button size="sm" onClick={() => setDlg({ kind: 'output', stage: s })}><PackagePlus className="mr-1 h-3 w-3" /> {tx('Output')}</Button>}
                         {canOutput && <Button size="sm" variant="ghost" onClick={() => setDlg({ kind: 'conversion', stage: s })}><Coins className="mr-1 h-3 w-3" /> {tx('Cost')}</Button>}
                       </div>
+                    )}
+                    {s.qcGate && (s.qcLots?.length ?? 0) > 0 && (
+                      <ul className="mt-2 space-y-1 border-t pt-2">
+                        {(s.qcLots ?? []).map((lot) => {
+                          const held = Number(lot.qtyHeld) > 0;
+                          const decidable = canQc && held && ['in_progress', 'qc_hold', 'confirmed'].includes(staged.status);
+                          return (
+                            <li key={lot.postingId} className="flex flex-wrap items-center justify-between gap-1 text-xs">
+                              <span className="flex flex-wrap items-center gap-1">
+                                <span className="font-mono">{lot.code}</span>
+                                {lot.batchNumber && <span className="text-muted-foreground">· {lot.batchNumber}</span>}
+                                <Badge variant={lot.qcStatus === 'passed' ? 'outline' : lot.qcStatus === 'failed' ? 'destructive' : 'secondary'}>
+                                  {lot.qcStatus}
+                                </Badge>
+                                <span className="text-muted-foreground">{tx('Held')}: {qty(lot.qtyHeld)}</span>
+                                {lot.qcStatus === 'curing' && lot.qcPassDueAt && (
+                                  <span className="text-muted-foreground">· {tx('due')} {new Date(lot.qcPassDueAt).toLocaleString()}</span>
+                                )}
+                              </span>
+                              {decidable && (
+                                <span className="flex gap-1">
+                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={qc.isPending}
+                                    onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'passed', postingId: lot.postingId } }), tx('QC passed — lot released.'))}>
+                                    <ShieldCheck className="mr-1 h-3 w-3" /> {tx('Pass')}
+                                  </Button>
+                                  {lot.qcStatus !== 'failed' && (
+                                    <Button size="sm" variant="ghost" className="h-6 px-2" disabled={qc.isPending}
+                                      onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'failed', postingId: lot.postingId } }), tx('QC failed — lot stays in quarantine.'))}>
+                                      <XCircle className="mr-1 h-3 w-3" /> {tx('Fail')}
+                                    </Button>
+                                  )}
+                                  {lot.qcStatus === 'failed' && (
+                                    <Button size="sm" variant="destructive" className="h-6 px-2" disabled={scrapLot.isPending}
+                                      onClick={() => {
+                                        const reason = window.prompt(tx('Why is this lot scrapped?'));
+                                        if (!reason || !reason.trim()) return;
+                                        run(scrapLot.mutateAsync({ postingId: lot.postingId, body: { reason: reason.trim() } }), tx('Lot scrapped from quarantine.'));
+                                      }}>
+                                      <Trash2 className="mr-1 h-3 w-3" /> {tx('Scrap')}
+                                    </Button>
+                                  )}
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
                     )}
                     {s.qcGate && canQc && ['pending', 'failed'].includes(s.qcStatus) && Number(s.qtyQuarantined) > 0 && ['in_progress', 'qc_hold', 'confirmed'].includes(staged.status) && (
                       <div className="mt-2 flex flex-wrap gap-1">

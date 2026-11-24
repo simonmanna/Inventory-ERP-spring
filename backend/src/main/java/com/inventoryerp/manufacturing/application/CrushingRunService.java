@@ -201,7 +201,7 @@ public class CrushingRunService {
         BigDecimal feed = dec(run, "feedTonnes");
         List<Map<String, Object>> outs = outputs(id);
         Map<String, Object> profile = db.byId(CrushingGradingProfile.class, str(run, "profileId"));
-        int stageCount = plants.stages(str(run, "plantId")).size();
+        int stageCount = stageCount(run, profile);
         List<Fraction> fractions = new ArrayList<>();
         List<BigDecimal> tonnes = new ArrayList<>();
         List<Map<String, Object>> fractionRows = new ArrayList<>();
@@ -239,6 +239,7 @@ public class CrushingRunService {
         out.put("recirculatedTonnes", run.get("recirculatedTonnes"));
         out.put("circulatingLoadPct", CrushingCalculator.pctOf(dec(run, "recirculatedTonnes"), feed));
         out.put("balanceError", balanceError);
+        out.put("stageCount", stageCount);
         Map<String, Object> plant = db.byId(CrushingPlant.class, str(run, "plantId"));
         CrushingCalculator.Performance perf = CrushingCalculator.performance(feed, decOr(run, "operatingHours"),
                 dec(run, "downtimeHours"), decOr(plant, "designCapacityTph"));
@@ -274,6 +275,27 @@ public class CrushingRunService {
             out.put("estimated", false);
         }
         return out;
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MV-5): the stage count the post will use — the operations of the profile's routing
+     * (fixed when it was activated; the order is staged from its BOM's routing), not the plant's current circuit, which
+     * may have changed since. Falls back to the plant circuit only for a profile without a routing.
+     */
+    private int stageCount(Map<String, Object> run, Map<String, Object> profile) {
+        String routingId = profile == null ? null : str(profile, "routingId");
+        if (routingId == null && profile != null && profile.get("bomId") != null) {
+            Map<String, Object> bom = db.byId(com.inventoryerp.manufacturing.domain.Bom.class, str(profile, "bomId"));
+            routingId = bom == null ? null : str(bom, "routingId");
+        }
+        if (routingId != null) {
+            int ops = db.jdbc().sql("SELECT count(*) FROM \"RoutingOperation\" WHERE \"routingId\" = ?"
+                    + " AND \"organizationId\" = ?").params(routingId, MfgDb.org()).query(Integer.class).single();
+            if (ops > 0) {
+                return ops;
+            }
+        }
+        return plants.stages(str(run, "plantId")).size();
     }
 
     /** Diesel × price, kWh × tariff (per unit) and crew hours × rate — computed from the readings. */

@@ -142,7 +142,13 @@ public final class StageCommands {
             @NotNull(message = "result must be one of the following values: passed, failed")
             @OneOf({"passed", "failed"}) String result,
             String reference,
-            String notes) {}
+            String notes,
+            String postingId) {}
+
+    /** Integrity fix 2026-11-24 (MS-8): {@code POST /stage-postings/{id}/qc-scrap} — scrap a failed QC lot. */
+    public record StageQcScrap(
+            @NotNull(message = "reason " + STR) @Size(min = 1, message = "reason " + EMPTY) String reason,
+            String wasteCategory) {}
 
     /** Reversal body. */
     public record StageReversal(String reason) {}

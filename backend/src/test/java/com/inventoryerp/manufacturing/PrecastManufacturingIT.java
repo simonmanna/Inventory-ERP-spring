@@ -77,6 +77,23 @@ class PrecastManufacturingIT extends MfgTestSupport {
         return LocalDate.now(ZoneOffset.UTC).minusDays(d).toString();
     }
 
+    /**
+     * Integrity fix 2026-11-24 (MV-1): the pressing route refuses a date more than a day back, so a batch "pressed
+     * {@code days} ago" is pressed now and its curing clock (batch start / curing-until and the pressing posting the
+     * gate's hold counts from) moved to midnight UTC of that day — what a date-only run used to record. Returns the
+     * batch as the curing-batch route shows it.
+     */
+    JsonNode pressAgo(String orderId, Map<String, Object> body, int days) {
+        String batchId = keyed(BASE + "/orders/" + orderId + "/pressing-runs", body).get("batch").get("id").asString();
+        java.sql.Timestamp at = java.sql.Timestamp.valueOf(LocalDate.now(ZoneOffset.UTC).minusDays(days)
+                .atStartOfDay());
+        jdbc.sql("UPDATE \"PrecastCuringBatch\" SET \"startedAt\" = ?, \"curingUntil\" = CAST(? AS timestamp) + make_interval(days =>"
+                + " \"minCuringDays\") WHERE id = ?").params(at, at, batchId).update();
+        jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"postedAt\" = ? WHERE id = (SELECT \"pressingPostingId\""
+                + " FROM \"PrecastCuringBatch\" WHERE id = ?)").params(at, batchId).update();
+        return ok(200, "GET", BASE + "/curing-batches/" + batchId, null);
+    }
+
     long unbalancedEntries() {
         return jdbc.sql("SELECT count(*) FROM (SELECT je.id FROM \"JournalEntry\" je JOIN \"JournalLine\" jl ON"
                 + " jl.\"journalEntryId\" = je.id WHERE je.\"organizationId\" = ? AND je.\"sourceType\" IN"
@@ -183,9 +200,8 @@ class PrecastManufacturingIT extends MfgTestSupport {
         assertThat(cure.get("qcCheckpointCode").asString()).isEqualTo(p.checkpoint());
 
         // Pressing run 10 days ago: 196 good, 4 broken at the press; the last run completes pressing.
-        JsonNode pressed = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 196, "qtyBroken", 4,
-                "cycles", 20, "palletLocation", "Row A", "shift", "day", "lastRun", true, "date", daysAgo(10)));
-        JsonNode batch = pressed.get("batch");
+        JsonNode batch = pressAgo(orderId, Map.of("qtyGood", 196, "qtyBroken", 4, "cycles", 20, "palletLocation",
+                "Row A", "shift", "day", "lastRun", true), 10);
         String batchId = batch.get("id").asString();
         assertThat(batch.get("status").asString()).isEqualTo("curing");
         assertThat(batch.get("pallets").asInt()).isEqualTo(2);
@@ -294,8 +310,8 @@ class PrecastManufacturingIT extends MfgTestSupport {
         ok(201, "POST", "/manufacturing/work-orders/" + wo + "/start", null);
         ok(201, "POST", "/manufacturing/work-orders/" + wo + "/complete", Map.of("labourMins", 240));
 
-        String batchId = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 196, "qtyBroken", 4,
-                "cycles", 20, "lastRun", true, "date", daysAgo(10))).get("batch").get("id").asString();
+        String batchId = pressAgo(orderId, Map.of("qtyGood", 196, "qtyBroken", 4, "cycles", 20, "lastRun", true), 10)
+                .get("id").asString();
         // The pressing stage has closed, so the four hours land on the curing stage: 40 + 80 + 20.
         JsonNode absorbed = keyed("/manufacturing/costing/orders/" + orderId + "/absorb", null);
         assertThat(num(absorbed.get("total"))).isEqualByComparingTo("140");
@@ -361,6 +377,9 @@ class PrecastManufacturingIT extends MfgTestSupport {
         // Time passes: the job passes the gate once the hold is over.
         jdbc.sql("UPDATE \"ProductionOrderStage\" SET \"qcPassDueAt\" = now() - interval '1 minute' WHERE \"orderId\" = ?"
                 + " AND \"qcStatus\" = 'curing'").param(orderId).update();
+        // Integrity fix 2026-11-24: the due time is per lot (the batch's cubing posting).
+        jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"qcPassDueAt\" = now() - interval '1 minute'"
+                + " WHERE \"orderId\" = ? AND \"qcStatus\" = 'curing'").param(orderId).update();
         jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"postedAt\" = \"postedAt\" - interval '8 days'"
                 + " WHERE \"orderId\" = ?").param(orderId).update();
         // Jobs are off in tests (app.jobs.enabled=false): drive the tick directly, as FleetMaintenanceIT does.
@@ -371,6 +390,44 @@ class PrecastManufacturingIT extends MfgTestSupport {
         assertThat(released.get("qcStatus").asString()).isEqualTo("passed");
         assertThat(released.get("qcReference").asString()).isEqualTo("Cube test 7.4");
         assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("100");
+        assertThat(unbalancedEntries()).isZero();
+    }
+
+    @Test
+    @DisplayName("integrity 2026-11-24: the strength gate is per batch — a pass releases its own blocks, never a failed batch's")
+    void gatePerBatch() {
+        Plant p = plant(7);
+        String orderId = order(p, 200).get("id").asString();
+        String b1 = pressAgo(orderId, Map.of("qtyGood", 100), 10).get("id").asString();
+        String b2 = pressAgo(orderId, Map.of("qtyGood", 100, "lastRun", true), 9).get("id").asString();
+        keyed(BASE + "/curing-batches/" + b1 + "/cube", Map.of("qtyGood", 100));
+        keyed(BASE + "/curing-batches/" + b2 + "/cube", Map.of("qtyGood", 100));
+        String quarantine = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ?"
+                + " AND code = 'QC-QUARANTINE' AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).single();
+        BigDecimal held0 = onHand(p.block(), quarantine);
+
+        JsonNode failed = keyed(BASE + "/curing-batches/" + b1 + "/gate-decision", Map.of("result", "failed",
+                "reference", "Cube test 2.1"));
+        assertThat(failed.get("status").asString()).isEqualTo("failed");
+        JsonNode passed = keyed(BASE + "/curing-batches/" + b2 + "/gate-decision", Map.of("result", "passed",
+                "reference", "Cube test 7.9"));
+        assertThat(passed.get("status").asString()).isEqualTo("released");
+        assertThat(passed.get("qcStatus").asString()).isEqualTo("passed");
+        // Only batch 2's blocks are sellable; batch 1's stay in quarantine and the batch stays failed.
+        assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("100");
+        assertThat(onHand(p.block(), quarantine)).isEqualByComparingTo(held0.subtract(BigDecimal.valueOf(100)));
+        JsonNode first = ok(200, "GET", BASE + "/curing-batches/" + b1, null);
+        assertThat(first.get("status").asString()).isEqualTo("failed");
+        assertThat(first.get("qcStatus").asString()).isEqualTo("failed");
+        JsonNode stage = ok(200, "GET", "/manufacturing/production-orders/" + orderId + "/stages", null).get("stages")
+                .get(1);
+        assertThat(stage.get("qcStatus").asString()).isEqualTo("failed");
+        assertThat(stage.get("qcLots")).hasSize(2);
+
+        // A 28-day retest of batch 1 passes it on its own.
+        keyed(BASE + "/curing-batches/" + b1 + "/gate-decision", Map.of("result", "passed", "reference", "Cube 28d"));
+        assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("200");
+        assertThat(ok(200, "GET", BASE + "/curing-batches/" + b1, null).get("status").asString()).isEqualTo("released");
         assertThat(unbalancedEntries()).isZero();
     }
 
@@ -485,6 +542,92 @@ class PrecastManufacturingIT extends MfgTestSupport {
         other.put("Idempotency-Key", UUID.randomUUID().toString());
         assertThat(call("POST", BASE + "/curing-batches/" + batchId + "/cube", Map.of("qtyGood", 50), other).status())
                 .isEqualTo(404);
+    }
+
+    // ------------------------------------------------------------------ integrity fix 2026-11-24 (verticals)
+
+    @Test
+    @DisplayName("MV-1: a pressing run dated more than a day back or in the future is refused (curing hold)")
+    void pressDateWindow() {
+        Plant p = plant(7);
+        String orderId = order(p, 300).get("id").asString();
+        LocalDate today = LocalDate.now(com.inventoryerp.kernel.common.BusinessZone.get());
+        String window = "is outside the allowed window (" + today.minusDays(1) + " … " + today + ").";
+        Res old = keyedRes(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 100, "date",
+                today.minusDays(10).toString()));
+        assertThat(old.status()).isEqualTo(400);
+        assertThat(old.body().get("message").asString()).isEqualTo("Pressing date " + today.minusDays(10) + " "
+                + window);
+        Res future = keyedRes(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 100, "date",
+                today.plusDays(1).toString()));
+        assertThat(future.status()).isEqualTo(400);
+        assertThat(future.body().get("message").asString()).endsWith(window);
+        assertThat(ok(200, "GET", BASE + "/curing-batches?orderId=" + orderId, null).get("data")).isEmpty();
+        JsonNode yesterday = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 100, "date",
+                today.minusDays(1).toString()));
+        assertThat(yesterday.get("batch").get("ready").asBoolean()).isFalse();
+    }
+
+    @Test
+    @DisplayName("MV-4: two concurrent pressing runs of one order get distinct batch codes (order lock first)")
+    void concurrentPressingRuns() throws Exception {
+        Plant p = plant(7);
+        String orderId = order(p, 400).get("id").asString();
+        ExecutorService pool = Executors.newFixedThreadPool(4);
+        CountDownLatch go = new CountDownLatch(1);
+        List<Future<Res>> futures = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            futures.add(pool.submit(() -> {
+                go.await();
+                return keyedRes(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 50));
+            }));
+        }
+        go.countDown();
+        java.util.Set<String> codes = new java.util.HashSet<>();
+        for (Future<Res> f : futures) {
+            Res r = f.get();
+            assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+            codes.add(r.body().get("batch").get("code").asString());
+        }
+        pool.shutdown();
+        assertThat(codes).hasSize(4);
+        assertThat(unbalancedEntries()).isZero();
+    }
+
+    @Test
+    @DisplayName("MV-3: the curing tick opens the final lot of any released batch (no 2-day window), never a"
+            + " batch whose cubing was reversed")
+    void tickOpensMissedFinalLots() {
+        Plant p = plant(0);
+        JsonNode qs = ok(201, "POST", "/quality/specifications", Map.of("code", "QS-" + suffix(), "name",
+                "Block 28-day strength", "productId", p.block(), "parameters", List.of(Map.of("code", "CS28", "name",
+                        "28-day compressive strength", "kind", "numeric", "unit", "N/mm²", "minValue", 7))));
+        ok(200, "POST", "/quality/specifications/" + qs.get("id").asString() + "/activate", null);
+        ok(201, "POST", "/quality/inspection-plans", Map.of("code", "QP-" + suffix(), "name", "Final strength",
+                "stage", "final", "productId", p.block(), "specificationId", qs.get("id").asString(),
+                "samplingMethod", "fixed", "sampleSize", 1));
+        String[] batches = new String[2];
+        for (int i = 0; i < 2; i++) {
+            String orderId = order(p, 100).get("id").asString();
+            batches[i] = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 100, "lastRun", true))
+                    .get("batch").get("id").asString();
+            keyed(BASE + "/curing-batches/" + batches[i] + "/cube", Map.of("qtyGood", 100));
+            assertThat(keyed(BASE + "/curing-batches/" + batches[i] + "/gate-decision", Map.of("result", "passed"))
+                    .get("status").asString()).isEqualTo("released");
+        }
+        // Batch 0 was released five days ago and missed by the job (outage); batch 1's cubing has been reversed.
+        jdbc.sql("UPDATE \"PrecastCuringBatch\" SET \"releasedAt\" = now() - interval '5 days' WHERE id IN (?, ?)")
+                .params(batches[0], batches[1]).update();
+        jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"reversedAt\" = now() WHERE id = (SELECT \"cubingPostingId\""
+                + " FROM \"PrecastCuringBatch\" WHERE id = ?)").param(batches[1]).update();
+        new PrecastCuringJob(mfgDb, precast).runForOrg(demoOrg);
+        assertThat(ok(200, "GET", BASE + "/curing-batches/" + batches[0], null).get("finalLotId").isNull()).isFalse();
+        assertThat(jdbc.sql("SELECT \"finalLotId\" FROM \"PrecastCuringBatch\" WHERE id = ?").param(batches[1])
+                .query(String.class).optional().orElse(null)).isNull();
+        // A second tick opens nothing twice.
+        new PrecastCuringJob(mfgDb, precast).runForOrg(demoOrg);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"QualityInspectionLot\" WHERE \"sourceType\" = 'precast_batch'"
+                + " AND \"sourceId\" = ?").param(batches[0]).query(Long.class).single()).isEqualTo(1);
     }
 
     @Test

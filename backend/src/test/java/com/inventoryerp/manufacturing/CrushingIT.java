@@ -402,6 +402,14 @@ class CrushingIT extends MfgTestSupport {
         JsonNode piles = ok(200, "GET", "/manufacturing/crushing/stockpiles?kind=product", null);
         assertThat(piles.toString()).contains(s.pile20());
 
+        // Integrity fix 2026-11-24: the generic stage routes refuse the run's order (the run would stay "posted").
+        String runOrder = run.get("productionOrderId").asString();
+        Res generic = keyed("/manufacturing/production-orders/" + runOrder + "/stages/reverse",
+                Map.of("reason", "Bypass"), adminToken);
+        assertThat(generic.status()).isEqualTo(400);
+        assertThat(generic.body().get("message").asString()).isEqualTo("This order belongs to crushing run "
+                + run.get("code").asString() + "; use the crushing run's routes.");
+
         // Reversal: stock back, run reversed, GL still balanced.
         Res noKey = as("POST", "/manufacturing/crushing/runs/" + id + "/reverse", Map.of("reason", "Wrong belt scale"));
         assertThat(noKey.status()).isEqualTo(400);
@@ -499,6 +507,117 @@ class CrushingIT extends MfgTestSupport {
         assertThat(okCount).isEqualTo(1);
         assertThat(onHand(rom, s.romLoc())).isEqualByComparingTo("500");
         assertThat(unbalancedEntries()).isZero();
+    }
+
+    // ------------------------------------------------------------------ integrity fix 2026-11-24 (verticals)
+
+    BigDecimal reversalValue(String surveyId) {
+        return jdbc.sql("SELECT coalesce(sum(jl.debit), 0) FROM \"JournalEntry\" je JOIN \"JournalLine\" jl ON"
+                + " jl.\"journalEntryId\" = je.id WHERE je.\"organizationId\" = ? AND je.\"sourceType\" ="
+                + " 'crushing_survey_reversal' AND je.\"sourceId\" = ?").params(demoOrg, surveyId)
+                .query(BigDecimal.class).single();
+    }
+
+    String survey(Setup s, String pile, String product, String date, double volume) {
+        return money("/manufacturing/crushing/stockpile-surveys", Map.of("stockpileId", pile, "productId", product,
+                "surveyDate", date, "volumeM3", volume, "bulkDensity", 1.6)).get("id").asString();
+    }
+
+    @Test
+    @DisplayName("MV-2: one submitted survey per pile × product, book as of the survey date, reversal at the posted"
+            + " cost, no gain at zero cost")
+    void surveyIntegrity() {
+        Setup s = setup(0);
+        String approver = user("Survey approver", "crushing:read", "crushing_survey:approve");
+        String yesterday = LocalDate.parse(today).minusDays(1).toString();
+
+        // MV-2b: the 500 t came in today, after the survey of yesterday measured 480 t → book 0, variance +480.
+        stockIn(s.loc10(), p10, 500, 12);
+        String back = survey(s, s.pile10(), p10, yesterday, 300);
+        JsonNode submitted = ok(200, "POST", "/manufacturing/crushing/stockpile-surveys/" + back + "/submit", null);
+        assertThat(dec(submitted.get("bookTonnes"))).isEqualByComparingTo("0");
+        assertThat(dec(submitted.get("varianceTonnes"))).isEqualByComparingTo("480");
+
+        // MV-2a: a second survey of the same pile × product cannot be submitted while the first waits.
+        String second = survey(s, s.pile10(), p10, today, 300);
+        Res twice = as("POST", "/manufacturing/crushing/stockpile-surveys/" + second + "/submit", null);
+        assertThat(twice.status()).isEqualTo(400);
+        assertThat(msg(twice)).isEqualTo("Stockpile survey " + submitted.get("code").asString() + " of this stockpile"
+                + " and product is already waiting for approval; approve or reject it first");
+        Res approved = keyed("/manufacturing/crushing/stockpile-surveys/" + back + "/approve", null, approver);
+        assertThat(approved.status()).as(approved.raw().body()).isEqualTo(200);
+        assertThat(onHand(p10, s.loc10())).isEqualByComparingTo("980");
+        // ... and a survey dated before one already posted can no longer be applied.
+        String older = survey(s, s.pile10(), p10, LocalDate.parse(today).minusDays(2).toString(), 300);
+        Res stale = as("POST", "/manufacturing/crushing/stockpile-surveys/" + older + "/submit", null);
+        assertThat(stale.status()).isEqualTo(400);
+        assertThat(msg(stale)).endsWith("is already posted for this stockpile and product; a survey of "
+                + LocalDate.parse(today).minusDays(2) + " can no longer be applied");
+
+        // MV-2c: a 20 t loss at 12 / t, then stock at 24 / t: the reversal brings the 20 t back at 12 (240), not at
+        // the new average.
+        stockIn(s.loc20(), p20, 500, 12);
+        String loss = survey(s, s.pile20(), p20, today, 300);
+        ok(200, "POST", "/manufacturing/crushing/stockpile-surveys/" + loss + "/submit", null);
+        assertThat(keyed("/manufacturing/crushing/stockpile-surveys/" + loss + "/approve", null, approver).status())
+                .isEqualTo(200);
+        stockIn(s.loc20(), p20, 500, 24);
+        JsonNode reversed = call("POST", "/manufacturing/crushing/stockpile-surveys/" + loss + "/reverse",
+                Map.of("reason", "Wrong density"), key(approver, UUID.randomUUID().toString())).body();
+        assertThat(reversed.get("status").asString()).as(reversed.toString()).isEqualTo("reversed");
+        assertThat(onHand(p20, s.loc20())).isEqualByComparingTo("1000");
+        assertThat(reversalValue(loss)).isEqualByComparingTo("240");
+        assertThat(unbalancedEntries()).isZero();
+
+        // MV-2d: a gain on an empty pile of a product without a cost price is refused.
+        String gain = survey(s, s.pileDust(), dust, today, 100);
+        Res free = as("POST", "/manufacturing/crushing/stockpile-surveys/" + gain + "/submit", null);
+        assertThat(free.status()).isEqualTo(400);
+        assertThat(msg(free)).startsWith("Stockpile ").endsWith("; set the product's cost price before a survey adds"
+                + " stock");
+    }
+
+    @Test
+    @DisplayName("MV-5: the run preview counts the stages the post will use (profile routing), not today's circuit")
+    void previewStageCountFollowsProfileRouting() {
+        Setup s = setup(0);
+        String runId = draftRun(runBody(s, 1000)).get("id").asString();
+        assertThat(ok(200, "GET", "/manufacturing/crushing/runs/" + runId + "/preview", null).get("stageCount")
+                .asInt()).isEqualTo(3);
+        Map<String, Object> body = new HashMap<>(plantBody(s.plant().get("code").asString(), s.siteId(), s.romPile(),
+                "Screening"));
+        @SuppressWarnings("unchecked")
+        List<Object> stages = new ArrayList<>((List<Object>) body.get("stages"));
+        stages.add(Map.of("name", "Wash screen", "kind", "screening", "units", List.of(Map.of("code", "WSH", "name",
+                "Wash screen", "kind", "screen", "meterKind", "kwh"))));
+        body.put("stages", stages);
+        assertThat(ok(200, "PUT", "/manufacturing/crushing/plants/" + s.plantId(), body).get("stages")).hasSize(4);
+        assertThat(ok(200, "GET", "/manufacturing/crushing/runs/" + runId + "/preview", null).get("stageCount")
+                .asInt()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("MV-7: a feed / fraction / survey product stocked in kilograms is refused (crushing counts tonnes)")
+    void tonnesOnly() {
+        Setup s = setup(0);
+        String kg = jdbc.sql("SELECT id FROM \"UnitOfMeasure\" WHERE \"organizationId\" = ? AND code = 'KG'"
+                + " AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).optional().orElse(null);
+        org.junit.jupiter.api.Assumptions.assumeTrue(kg != null, "DEMO has no KG unit");
+        String feedKg = product("ROM in kg");
+        jdbc.sql("UPDATE \"Product\" SET \"uomId\" = ? WHERE id = ?").params(kg, feedKg).update();
+        String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(feedKg).query(String.class).single();
+        JsonNode draft = ok(201, "POST", "/manufacturing/crushing/grading-profiles", Map.of("plantId", s.plantId(),
+                "name", "Kg split " + sfx, "feedProductId", feedKg, "lines", List.of(line(p20, "main", null, 60,
+                        s.pile20(), null))));
+        Res refused = as("POST", "/manufacturing/crushing/grading-profiles/" + draft.get("id").asString()
+                + "/activate", null);
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(msg(refused)).isEqualTo("Product " + name + " is stocked in Kilogram (KG); crushing quantities are"
+                + " tonnes, so its stock unit must be the tonne");
+        Res survey = keyed("/manufacturing/crushing/stockpile-surveys", Map.of("stockpileId", s.romPile(),
+                "productId", feedKg, "surveyDate", today, "volumeM3", 10, "bulkDensity", 1.6), adminToken);
+        assertThat(survey.status()).isEqualTo(400);
+        assertThat(msg(survey)).endsWith("so its stock unit must be the tonne");
     }
 
     @Test

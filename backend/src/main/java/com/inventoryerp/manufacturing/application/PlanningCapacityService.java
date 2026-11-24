@@ -3,7 +3,6 @@ package com.inventoryerp.manufacturing.application;
 import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
-import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.manufacturing.application.CapacityCalculator.AggregatePlan;
@@ -14,7 +13,7 @@ import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -50,19 +49,21 @@ public class PlanningCapacityService {
         this.mrp = mrp;
     }
 
-    private record Period(LocalDate from, LocalDate to) {
+    /** Integrity fix 2026-11-24 (MP-7): days are cut in the organization's zone, like the centre calendars. */
+    private record Period(LocalDate from, LocalDate to, ZoneId zone) {
         Instant start() {
-            return from.atStartOfDay(ZoneOffset.UTC).toInstant();
+            return from.atStartOfDay(zone).toInstant();
         }
 
         Instant end() {
-            return to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            return to.plusDays(1).atStartOfDay(zone).toInstant();
         }
     }
 
-    private static Period period(String from, String to) {
+    private Period period(String from, String to) {
+        ZoneId zone = ShopFloorSupport.zoneOf(db);
         LocalDate f = CrushingSupport.date(from) != null ? CrushingSupport.date(from)
-                : LocalDate.now(BusinessZone.get());
+                : LocalDate.now(zone);
         LocalDate t = CrushingSupport.date(to) != null ? CrushingSupport.date(to) : f.plusDays(13);
         if (t.isBefore(f)) {
             throw ApiException.badRequest("to must not be before from");
@@ -70,7 +71,7 @@ public class PlanningCapacityService {
         if (ChronoUnit.DAYS.between(f, t) > MAX_DAYS) {
             throw ApiException.badRequest("A capacity period can cover at most " + MAX_DAYS + " days");
         }
-        return new Period(f, t);
+        return new Period(f, t, zone);
     }
 
     /** Load vs capacity per work centre in {@code bucket} (day, default, or week) periods; bottleneck flagged. */
@@ -106,7 +107,7 @@ public class PlanningCapacityService {
 
     private Map<String, Object> centre(Map<String, Object> c, Period p, String size) {
         String id = str(c, "id");
-        PlanningCalendar cal = schedule.calendarOf(id, null, null);
+        PlanningCalendar cal = schedule.calendarOnly(id);
         int slots = c.get("parallelSlots") instanceof Number n ? Math.max(1, n.intValue()) : 1;
         long resourceMinutes = db.jdbc().sql("SELECT coalesce(sum(\"capacityMinsPerDay\"), 0)::bigint FROM \"Resource\""
                 + " WHERE \"organizationId\" = ? AND \"workCenterId\" = ? AND \"isActive\" = true")
@@ -125,8 +126,8 @@ public class PlanningCapacityService {
         LocalDate d = p.from();
         while (!d.isAfter(p.to())) {
             LocalDate end = "week".equals(size) ? min(d.plusDays(6), p.to()) : d;
-            Instant a = d.atStartOfDay(ZoneOffset.UTC).toInstant();
-            Instant b = end.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            Instant a = d.atStartOfDay(p.zone()).toInstant();
+            Instant b = end.plusDays(1).atStartOfDay(p.zone()).toInstant();
             long capacity = 0;
             for (LocalDate day = d; !day.isAfter(end); day = day.plusDays(1)) {
                 long minutes = cal.workingMinutes(day);
@@ -207,7 +208,7 @@ public class PlanningCapacityService {
         if (c.workCenterId() == null) {
             return null;
         }
-        return schedule.calendarOf(c.workCenterId(), null, null).workingMinutesBetween(p.start(), p.end());
+        return schedule.calendarOnly(c.workCenterId()).workingMinutesBetween(p.start(), p.end());
     }
 
     private List<Map<String, Object>> plants(Period p) {

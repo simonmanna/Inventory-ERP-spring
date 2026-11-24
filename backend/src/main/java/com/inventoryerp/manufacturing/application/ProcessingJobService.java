@@ -502,9 +502,10 @@ public class ProcessingJobService {
         return n > 0;
     }
 
+    /** Integrity fix 2026-11-24 (MS-6): latest by the posting sequence (createdAt / code text could tie or misorder). */
     private String latestPosting(String orderId) {
         return db.jdbc().sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND \"orderId\" = ?"
-                + " ORDER BY \"createdAt\" DESC, code DESC LIMIT 1").params(MfgDb.org(), orderId).query(String.class)
+                + " ORDER BY seq DESC LIMIT 1").params(MfgDb.org(), orderId).query(String.class)
                 .optional().orElse(null);
     }
 
@@ -595,12 +596,22 @@ public class ProcessingJobService {
         }
         List<Measured> lines = new ArrayList<>();
         BigDecimal outputBasis = BigDecimal.ZERO;
+        java.util.Set<String> seen = new java.util.HashSet<>();
         for (JobOutputLine l : dto.lines()) {
             Map<String, Object> row = rows.get(l.templateOutputId());
             if (row == null) {
                 throw ApiException.badRequest("Output line " + l.templateOutputId() + " does not belong to this job");
             }
+            // Integrity fix 2026-11-24 (MS-3): one line per output. A repeated line was received once but counted twice
+            // in the basis and the genealogy; a line with a measured basis but no quantity put basis without stock.
+            if (!seen.add(l.templateOutputId())) {
+                throw ApiException.badRequest("Output line " + l.templateOutputId() + " is listed twice");
+            }
             Measured m = measure(l, row);
+            if (l.quantity().signum() == 0 && m.basis().signum() > 0) {
+                throw ApiException.badRequest("Output line " + l.templateOutputId()
+                        + " has a measured basis but no quantity");
+            }
             lines.add(m);
             outputBasis = outputBasis.add(m.basis());
         }

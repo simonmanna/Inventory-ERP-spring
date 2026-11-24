@@ -124,10 +124,15 @@ public class PlmRequestService {
 
     @Transactional
     public Map<String, Object> review(String id, ReviewRequest dto) {
-        Map<String, Object> r = require(id);
+        Map<String, Object> r = lock(id); // Integrity fix 2026-11-24 (ML-6)
         if (!"new".equals(r.get("status"))) {
             throw ApiException.badRequest("Change request " + r.get("number") + " was already reviewed (status "
                     + r.get("status") + ").");
+        }
+        // Integrity fix 2026-11-24 (ML-4): separation of duties unless the organization allows self-approval.
+        if (TenantContext.userId() != null && TenantContext.userId().equals(r.get("requestedById"))
+                && !plm.selfApprovalAllowed()) {
+            throw ApiException.forbidden("You cannot review a request you raised.");
         }
         String note = PlmSupport.blank(dto.note());
         if ("reject".equals(dto.decision()) && note == null) {
@@ -141,7 +146,8 @@ public class PlmRequestService {
     /** Create the ECO for a new / accepted request (the ECO links back and the request becomes converted). */
     @Transactional
     public Map<String, Object> convert(String id, ConvertRequest dto) {
-        Map<String, Object> r = require(id);
+        // Integrity fix 2026-11-24 (ML-6): the request row is locked; a concurrent convert waits, then sees converted.
+        Map<String, Object> r = lock(id);
         if (!Set.of("new", "accepted").contains(str(r, "status"))) {
             throw ApiException.badRequest("Change request " + r.get("number") + " is " + r.get("status") + ".");
         }
@@ -209,6 +215,11 @@ public class PlmRequestService {
             r.put("reviewedByName", names.get(str(r, "reviewedById")));
         });
         return rows;
+    }
+
+    private Map<String, Object> lock(String id) {
+        require(id);
+        return db.byIdForUpdate(PlmChangeRequest.class, id);
     }
 
     private Map<String, Object> require(String id) {

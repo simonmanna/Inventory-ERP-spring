@@ -1,9 +1,11 @@
 package com.inventoryerp.manufacturing.application;
 
+import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.shared.web.ApiException;
+import com.inventoryerp.manufacturing.domain.ProductionStagePosting;
 import com.inventoryerp.manufacturing.spi.StageCheckpoint;
 import com.inventoryerp.manufacturing.spi.StageCheckpointResults;
 import com.inventoryerp.manufacturing.spi.StageCheckpointResults.CheckpointDecision;
@@ -11,6 +13,7 @@ import com.inventoryerp.manufacturing.spi.StageQcCheckpointHook;
 import com.inventoryerp.quality.application.QualityCommands.OpenLot;
 import com.inventoryerp.quality.application.QualityLotService;
 import jakarta.annotation.PostConstruct;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -32,11 +35,13 @@ public class QualityStageGateBridge implements StageQcCheckpointHook {
     private final QualityLotService lots;
     private final StageCheckpointResults results;
     private final EventBus events;
+    private final MfgDb db;
 
-    public QualityStageGateBridge(QualityLotService lots, StageCheckpointResults results, EventBus events) {
+    public QualityStageGateBridge(QualityLotService lots, StageCheckpointResults results, EventBus events, MfgDb db) {
         this.lots = lots;
         this.results = results;
         this.events = events;
+        this.db = db;
     }
 
     @PostConstruct
@@ -46,9 +51,13 @@ public class QualityStageGateBridge implements StageQcCheckpointHook {
 
     @Override
     public void checkpointOpened(StageCheckpoint cp) {
-        lots.openLotIfPlanned(new OpenLot("in_process", cp.productId(), null, cp.batchNumber(), cp.quantity(), null,
+        Map<String, Object> lot = lots.openLotIfPlanned(new OpenLot("in_process", cp.productId(), null, cp.batchNumber(), cp.quantity(), null,
                 cp.locationId(), SOURCE_TYPE, cp.orderId(), cp.stageId(), cp.orderCode(), cp.checkpointCode(), null,
                 null, null, "source", false, "Stage " + cp.stageSequence() + " · " + cp.stageName()));
+        // Integrity fix 2026-11-24: the inspection lot decides this posting's QC lot only.
+        if (lot != null && lot.get("id") != null && cp.postingId() != null) {
+            db.update(ProductionStagePosting.class, cp.postingId(), Obj.of("qcLotId", lot.get("id")));
+        }
     }
 
     void onDecided(JsonNode p) {
@@ -69,13 +78,24 @@ public class QualityStageGateBridge implements StageQcCheckpointHook {
         }
         TenantContext.run(TenantStore.organization(orgId), () -> {
             try {
+                String posting = postingOfLot(stageId, p.path("lotId").asString(""));
                 results.recordResult(stageId, new CheckpointDecision(passed, p.path("lotNumber").asString(null),
-                        "Quality lot " + p.path("lotNumber").asString("") + " · " + decision));
+                        "Quality lot " + p.path("lotNumber").asString("") + " · " + decision, posting));
             } catch (ApiException e) {
                 // e.g. the order was cancelled or the stage has no gate any more: the manual route still applies
                 log.info("Stage gate not updated from quality lot {}: {}", p.path("lotNumber").asString(""),
                         e.getMessage());
             }
         });
+    }
+
+    /** The QC lot (gated output posting) an inspection lot was opened for; null for lots opened before V625. */
+    private String postingOfLot(String stageId, String lotId) {
+        if (lotId.isEmpty()) {
+            return null;
+        }
+        return db.jdbc().sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND \"stageId\" = ?"
+                + " AND \"qcLotId\" = ? AND \"reversedAt\" IS NULL LIMIT 1").params(MfgDb.org(), stageId, lotId)
+                .query(String.class).optional().orElse(null);
     }
 }

@@ -25,9 +25,31 @@ public class PlmGate {
     private static final Set<String> NOT_PRODUCIBLE = Set.of("concept", "design", "obsolete");
 
     private final MfgDb db;
+    private final PlmSupport plm;
 
-    public PlmGate(MfgDb db) {
+    public PlmGate(MfgDb db, PlmSupport plm) {
         this.db = db;
+        this.plm = plm;
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (ML-2): approval freezes an ECO's content. Editing the draft BOM of an approved ECO is
+     * refused; editing the draft BOM of a draft ECO voids the approvals it already has. Locks the ECO row, so the edit
+     * and a concurrent approval serialise.
+     */
+    public void requireBomEditable(Map<String, Object> bom) {
+        List<Map<String, Object>> ecos = SqlRows.list(db.jdbc().sql("SELECT * FROM \"EngineeringChange\" WHERE"
+                + " \"organizationId\" = ? AND \"newBomId\" = ? AND status IN ('draft', 'approved') ORDER BY id FOR UPDATE")
+                .params(MfgDb.org(), bom.get("id")));
+        for (Map<String, Object> eco : ecos) {
+            if ("approved".equals(eco.get("status"))) {
+                throw ApiException.badRequest("BOM " + bom.get("code") + " is part of approved change "
+                        + eco.get("number") + "; it can no longer be edited.");
+            }
+        }
+        for (Map<String, Object> eco : ecos) {
+            plm.reopenAfterEdit(eco, "BOM " + bom.get("code"));
+        }
     }
 
     /** The product's lifecycle state, or null when it is not under PLM. */

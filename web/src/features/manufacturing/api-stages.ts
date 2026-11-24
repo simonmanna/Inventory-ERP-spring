@@ -29,7 +29,7 @@ export interface StagePostingLine {
 export interface StagePosting {
   id: string;
   code: string;
-  kind: 'issue' | 'output' | 'conversion' | 'qc_release';
+  kind: 'issue' | 'output' | 'conversion' | 'qc_release' | 'qc_scrap';
   postedAt: string;
   qtyGood: string;
   qtyScrap: string;
@@ -39,6 +39,16 @@ export interface StagePosting {
   notes: string | null;
   reversedAt: string | null;
   lines: StagePostingLine[];
+}
+
+/** One QC lot of a gated stage (integrity 2026-11-24): a gated output posting, decided and released on its own. */
+export interface StageQcLot {
+  postingId: string;
+  code: string;
+  qcStatus: 'pending' | 'curing' | 'passed' | 'failed';
+  qtyHeld: string;
+  batchNumber: string | null;
+  qcPassDueAt: string | null;
 }
 
 export interface OrderStage {
@@ -69,6 +79,8 @@ export interface OrderStage {
   wipValue: string;
   intermediateAvailable: string;
   blockedBy: string | null;
+  /** Gated stages only. */
+  qcLots?: StageQcLot[];
   materials: ProductionMaterial[];
   outputs: (ProductionOutput & { outputRole?: OutputRole | null })[];
   postings: StagePosting[];
@@ -234,6 +246,10 @@ export const useStageConversion = () =>
 export const useStageQcDecision = () =>
   useStageMutation(({ stageId, body }: { stageId: string; body: Body }) =>
     idempotentPost(`/manufacturing/production-stages/${stageId}/qc-decision`, body));
+/** Integrity 2026-11-24: scrap a failed QC lot (its held quantity leaves quarantine as waste). */
+export const useScrapQcLot = () =>
+  useStageMutation(({ postingId, body }: { postingId: string; body: { reason: string; wasteCategory?: string } }) =>
+    idempotentPost(`/manufacturing/stage-postings/${postingId}/qc-scrap`, body));
 export const useReverseStagePosting = () =>
   useStageMutation(({ postingId, reason }: { postingId: string; reason: string }) =>
     idempotentPost(`/manufacturing/stage-postings/${postingId}/reverse`, { reason }));

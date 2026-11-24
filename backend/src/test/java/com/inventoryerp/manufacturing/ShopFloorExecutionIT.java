@@ -248,6 +248,23 @@ class ShopFloorExecutionIT extends MfgTestSupport {
         assertThat(oee.get("workCenters")).hasSize(1);
         assertThat(num(oee.get("workCenters").get(0).get("goodQty"))).isEqualByComparingTo("40");
         assertThat(oee.get("total").get("shifts").asInt()).isGreaterThanOrEqualTo(1);
+        // Integrity fix 2026-11-24 (MP-13): an approved shift keeps the OEE it was signed off with, whatever the
+        // profile's ideal rate becomes later.
+        JsonNode signed = approved.body();
+        ok(200, "PUT", SF + "/work-center-profiles/" + wc, Map.of("idealRatePerHour", 6000));
+        JsonNode later = ok(200, "GET", SF + "/oee?workCenterId=" + wc + "&from=" + sr.get("shiftDate").asString()
+                + "&to=" + sr.get("shiftDate").asString(), null);
+        JsonNode shiftLine = null;
+        for (JsonNode line : later.get("shifts")) {
+            if (line.get("shiftReportId").asString().equals(shiftReportId)) {
+                shiftLine = line;
+            }
+        }
+        assertThat(shiftLine).isNotNull();
+        assertThat(signed.get("performance").isNull()).isFalse();
+        assertThat(num(shiftLine.get("performance"))).isEqualByComparingTo(num(signed.get("performance")));
+        assertThat(num(shiftLine.get("oee"))).isEqualByComparingTo(num(signed.get("oee").get("oee")));
+        ok(200, "PUT", SF + "/work-center-profiles/" + wc, Map.of("idealRatePerHour", 60));
         assertThat(as("GET", SF + "/oee?from=2026-02-01&to=2026-01-01", null).body().get("message").asString())
                 .isEqualTo("from must not be after to.");
         assertThat(ok(200, "GET", SF + "/production-reports?workCenterId=" + wc + "&source=operator", null).get("meta")

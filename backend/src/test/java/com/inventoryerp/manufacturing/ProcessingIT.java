@@ -496,6 +496,59 @@ class ProcessingIT extends MfgTestSupport {
     }
 
     @Test
+    @DisplayName("integrity 2026-11-24 (MS-3): an output listed twice, or with a measured basis but no quantity, is refused")
+    void duplicateOutputLines() {
+        String raw = item("DupRaw", true, "raw", 0);
+        String done = item("DupDone", true, "finished", 10);
+        String lot = "DU-" + suffix();
+        grn(raw, 20, 10, lot);
+        JsonNode t = simple(90, raw, done);
+        String id = keyed(BASE + "/jobs", job(t, lot, 20)).get("id").asString();
+        keyed(BASE + "/jobs/" + id + "/start", null);
+        String out = firstId(t, "outputs");
+        Res twice = keyedRes(BASE + "/jobs/" + id + "/output", Map.of("lines", List.of(outLine(out, 4), outLine(out, 4))));
+        assertThat(twice.status()).isEqualTo(400);
+        assertThat(twice.body().get("message").asString()).isEqualTo("Output line " + out + " is listed twice");
+        Map<String, Object> measured = outLine(out, 0);
+        measured.put("weight", 3);
+        Res noQty = keyedRes(BASE + "/jobs/" + id + "/output", Map.of("lines", List.of(measured)));
+        assertThat(noQty.status()).isEqualTo(400);
+        assertThat(noQty.body().get("message").asString()).isEqualTo("Output line " + out
+                + " has a measured basis but no quantity");
+        JsonNode after = ok(200, "GET", BASE + "/jobs/" + id, null);
+        assertThat(after.get("status").asString()).isEqualTo("in_progress");
+    }
+
+    @Test
+    @DisplayName("integrity 2026-11-24: the generic stage routes refuse a processing job's order")
+    void genericStageRoutesRefuseJobs() {
+        String raw = item("Raw", true, "raw", 0);
+        String done = item("Done", true, "finished", 10);
+        String lot = "GS-" + suffix();
+        grn(raw, 11, 10, lot);
+        JsonNode j = run(simple(100, raw, done), lot, 10, 10, 0, null);
+        String orderId = j.get("orderId").asString();
+        String expected = "This order belongs to processing job " + j.get("code").asString()
+                + "; use the processing job's routes.";
+        Res wholeOrder = keyedRes("/manufacturing/production-orders/" + orderId + "/stages/reverse",
+                Map.of("reason", "Bypass"));
+        assertThat(wholeOrder.status()).isEqualTo(400);
+        assertThat(wholeOrder.body().get("message").asString()).isEqualTo(expected);
+        String posting = jdbc.sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"orderId\" = ?"
+                + " AND \"reversedAt\" IS NULL ORDER BY \"createdAt\" DESC, code DESC LIMIT 1").param(orderId)
+                .query(String.class).single();
+        Res onePosting = keyedRes("/manufacturing/stage-postings/" + posting + "/reverse", Map.of("reason", "Bypass"));
+        assertThat(onePosting.body().get("message").asString()).isEqualTo(expected);
+        String stage = jdbc.sql("SELECT id FROM \"ProductionOrderStage\" WHERE \"orderId\" = ? LIMIT 1").param(orderId)
+                .query(String.class).single();
+        Res output = keyedRes("/manufacturing/production-stages/" + stage + "/output", Map.of("qtyGood", 1));
+        assertThat(output.body().get("message").asString()).isEqualTo(expected);
+        // The job's own route still reverses it.
+        assertThat(keyed(BASE + "/jobs/" + j.get("id").asString() + "/reverse", Map.of("reason", "Wrong")).get("status")
+                .asString()).isEqualTo("reversed");
+    }
+
+    @Test
     @DisplayName("reversal is refused while a lot has moved, even with other stock on hand, and names the document")
     void reversalChecksTheLot() {
         String raw = item("Raw", true, "raw", 0);

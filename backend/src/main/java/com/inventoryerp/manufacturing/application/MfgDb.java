@@ -145,6 +145,15 @@ public class MfgDb {
             return data;
         }
         for (Map.Entry<String, Object> e : body.entrySet()) {
+            // Integrity fix 2026-11-24 (MC-12; deviation: Prisma took any column of the spread body): system columns
+            // cannot be written through a PATCH, and a cost rate cannot be negative.
+            if (SYSTEM_COLUMNS.contains(e.getKey())) {
+                throw com.inventoryerp.shared.web.ApiException.badRequest("property " + e.getKey()
+                        + " should not exist");
+            }
+            if ("costPerHour".equals(e.getKey()) && e.getValue() != null && negative(e.getValue())) {
+                throw com.inventoryerp.shared.web.ApiException.badRequest("costPerHour must not be less than 0");
+            }
             if (!cols.contains(e.getKey())) {
                 throw new IllegalStateException("Invalid `prisma." + entity.getSimpleName() + ".update()` invocation:"
                         + " Unknown argument `" + e.getKey() + "`.");
@@ -156,6 +165,25 @@ public class MfgDb {
             }
         }
         return data;
+    }
+
+    /** MC-12: columns a spread body may not set. */
+    static final java.util.Set<String> SYSTEM_COLUMNS = java.util.Set.of("id", "organizationId", "createdAt",
+            "createdBy", "updatedAt", "updatedBy", "deletedAt");
+
+    /** MC-12: a number (or numeric string) below zero; anything unparsable is left to the column. */
+    static boolean negative(Object v) {
+        try {
+            return com.inventoryerp.kernel.common.Money.dec(v).signum() < 0;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** True when a live row of {@code table} with this id exists in the current organization. */
+    boolean exists(String table, String id) {
+        return jdbc().sql("SELECT count(*) FROM \"" + table + "\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"deletedAt\" IS NULL").params(id, org()).query(Long.class).single() > 0;
     }
 
     /**
@@ -178,6 +206,24 @@ public class MfgDb {
         params.addAll(scopeParams(entity));
         return SqlRows.one(entity, jdbc.sql("SELECT * FROM \"" + table(entity) + "\" WHERE id = ? AND "
                 + scope(entity, null) + " LIMIT 1").params(params));
+    }
+
+    /** {@link #byId} with {@code FOR UPDATE} (the row stays locked until the transaction ends), or null. */
+    Map<String, Object> byIdForUpdate(Class<?> entity, String id) {
+        List<Object> params = new ArrayList<>(List.of(id));
+        params.addAll(scopeParams(entity));
+        return SqlRows.one(entity, jdbc.sql("SELECT * FROM \"" + table(entity) + "\" WHERE id = ? AND "
+                + scope(entity, null) + " LIMIT 1 FOR UPDATE").params(params));
+    }
+
+    /**
+     * Integrity fix 2026-11-24: the one per-order lock. Every leg that moves a production order's stock, WIP or cost
+     * (start / complete / cancel / reverse / QC, stage postings, overhead absorption, work-order costing) takes it
+     * first, before any row lock, so the legs serialise and always lock in the same order (no deadlock).
+     */
+    void lockProductionOrder(String orderId) {
+        String key = "production:" + org() + ":" + orderId;
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param(key).query().listOfRows();
     }
 
     /** Rows of {@code entity} under the tenancy scope: {@code extra} is {@code " AND ... ORDER BY ..."}. */

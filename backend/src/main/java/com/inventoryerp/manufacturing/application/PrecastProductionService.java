@@ -52,6 +52,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class PrecastProductionService implements StageGateListener {
 
     static final String FINAL_SOURCE = "precast_batch";
+    /** MV-3: final inspection lots the curing tick opens per organization and run at most. */
+    static final int FINAL_LOTS_PER_TICK = 200;
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     private final MfgDb db;
@@ -177,9 +179,44 @@ public class PrecastProductionService implements StageGateListener {
         return o;
     }
 
+    /** Integrity fix 2026-11-24 (MV-1): how far back a pressing run may be dated on the route, in days. */
+    static final int PRESS_BACKDATE_DAYS = 1;
+
+    /**
+     * {@code POST /orders/:id/pressing-runs}: {@link #press} with the pressing date inside the allowed window.
+     * Integrity fix 2026-11-24 (MV-1): the curing clock starts at the pressing date, so a run dated in the future or
+     * days back skipped (or stretched) the minimum curing hold. The route now accepts today and yesterday only
+     * (business time zone); trusted in-process callers (the demo seed back-filling history) call {@link #press}.
+     */
+    @Transactional
+    public Map<String, Object> pressViaRoute(String orderId, PressingRun in) {
+        checkPressDate(in.date(), Instant.now());
+        return press(orderId, in);
+    }
+
+    /** MV-1: the pressing date must lie in [today − {@value #PRESS_BACKDATE_DAYS} day, now] (business time zone). */
+    static void checkPressDate(String date, Instant now) {
+        if (!has(date)) {
+            return;
+        }
+        java.time.ZoneId zone = com.inventoryerp.kernel.common.BusinessZone.get();
+        java.time.LocalDate today = now.atZone(zone).toLocalDate();
+        java.time.LocalDate earliest = today.minusDays(PRESS_BACKDATE_DAYS);
+        String d = date.trim();
+        Instant at = EntityPatch.toInstant(d);
+        java.time.LocalDate day = d.length() <= 10 ? java.time.LocalDate.parse(d) : at.atZone(zone).toLocalDate();
+        if (day.isBefore(earliest) || day.isAfter(today) || at.isAfter(now.plus(Duration.ofMinutes(5)))) {
+            throw ApiException.badRequest("Pressing date " + d + " is outside the allowed window (" + earliest
+                    + " … " + today + ").");
+        }
+    }
+
     /** A pressing run: the pressing stage output (backflush, breakage) and a new curing batch. */
     @Transactional
     public Map<String, Object> press(String orderId, PressingRun in) {
+        // Integrity fix 2026-11-24 (MV-4): the order lock before the batch count, so two concurrent runs of one order
+        // never compute the same batch code (it used to be taken only inside the stage output, after the count).
+        db.lockProductionOrder(orderId);
         Map<String, Object> o = order(orderId);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> st = (List<Map<String, Object>>) o.get("stages");
@@ -264,7 +301,9 @@ public class PrecastProductionService implements StageGateListener {
             + " WHEN b.\"cubingPostingId\" IS NOT NULL AND cp.\"reversedAt\" IS NOT NULL THEN 'curing'"
             + " ELSE b.status END AS \"effectiveStatus\", o.\"orderCode\", o.status AS \"orderStatus\","
             + " p.name AS \"productName\", p.sku AS \"productSku\", a.code AS \"curingAreaCode\","
-            + " a.name AS \"curingAreaName\", st.\"qcStatus\", st.\"qcReference\", st.\"qcPassDueAt\","
+            + " a.name AS \"curingAreaName\", COALESCE(cp.\"qcStatus\", st.\"qcStatus\") AS \"qcStatus\","
+            + " COALESCE(cp.\"qcReference\", st.\"qcReference\") AS \"qcReference\","
+            + " CASE WHEN cp.\"qcStatus\" IS NOT NULL THEN cp.\"qcPassDueAt\" ELSE st.\"qcPassDueAt\" END AS \"qcPassDueAt\","
             + " st.\"qcCheckpointCode\", m.\"targetMaturity\", m.\"datumTemperatureC\""
             + " FROM \"PrecastCuringBatch\" b JOIN \"ProductionOrder\" o ON o.id = b.\"orderId\""
             + " JOIN \"ProductionStagePosting\" pp ON pp.id = b.\"pressingPostingId\""
@@ -514,22 +553,29 @@ public class PrecastProductionService implements StageGateListener {
             throw ApiException.badRequest("Batch " + b.get("code") + " is " + b.get("status")
                     + "; only a cubed batch waits for its strength gate.");
         }
+        // Integrity fix 2026-11-24: the decision covers this batch's lot (its cubing posting) only.
         stages.recordResult(str(b, "stageId"), new CheckpointDecision("passed".equals(in.result()),
-                has(in.reference()) ? in.reference().trim() : str(b, "code"), in.notes()));
+                has(in.reference()) ? in.reference().trim() : str(b, "code"), in.notes(), str(b, "cubingPostingId")));
         return batch(id);
     }
 
     /** Batches of a gated stage follow its decision ({@link StageGateListener}). */
     @Override
-    public void gateDecided(String stageId, String qcStatus) {
+    public void gateDecided(String stageId, String qcStatus, List<String> postingIds) {
+        // Integrity fix 2026-11-24: only the batches whose lot (cubing posting) was decided follow the decision.
+        if (postingIds == null || postingIds.isEmpty()) {
+            return;
+        }
+        String[] lots = postingIds.toArray(String[]::new);
         if ("passed".equals(qcStatus)) {
             db.jdbc().sql("UPDATE \"PrecastCuringBatch\" SET status = 'released', \"releasedAt\" = " + MfgDb.NOW
                     + ", \"updatedAt\" = " + MfgDb.NOW + " WHERE \"organizationId\" = ? AND \"stageId\" = ?"
-                    + " AND status IN ('cubed', 'failed')").params(MfgDb.org(), stageId).update();
+                    + " AND \"cubingPostingId\" = ANY(?::text[]) AND status IN ('cubed', 'failed')")
+                    .params(MfgDb.org(), stageId, lots).update();
         } else if ("failed".equals(qcStatus)) {
             db.jdbc().sql("UPDATE \"PrecastCuringBatch\" SET status = 'failed', \"updatedAt\" = " + MfgDb.NOW
-                    + " WHERE \"organizationId\" = ? AND \"stageId\" = ? AND status = 'cubed'")
-                    .params(MfgDb.org(), stageId).update();
+                    + " WHERE \"organizationId\" = ? AND \"stageId\" = ? AND \"cubingPostingId\" = ANY(?::text[])"
+                    + " AND status = 'cubed'").params(MfgDb.org(), stageId, lots).update();
         }
     }
 
@@ -601,29 +647,45 @@ public class PrecastProductionService implements StageGateListener {
 
     /**
      * One organization's curing tick: passes the gates whose curing hold has ended (a pass recorded while curing)
-     * and opens final inspection lots for batches released in the last two days. Each step in its own transaction.
+     * and opens final inspection lots for released batches without one (at most {@value #FINAL_LOTS_PER_TICK} per run).
+     * Each step in its own transaction.
      */
     public Map<String, Object> tick() {
         int passed = 0;
         int finalLots = 0;
-        List<String> due = db.jdbc().sql("SELECT id FROM \"ProductionOrderStage\" WHERE \"organizationId\" = ?"
-                + " AND \"qcStatus\" = 'curing' AND \"qcPassDueAt\" <= ?").params(MfgDb.org(),
-                MfgDb.param(Instant.now())).query(String.class).list();
-        for (String stageId : due) {
+        // Integrity fix 2026-11-24: per lot — each gated output posting whose pass waited for the curing hold.
+        List<Map<String, Object>> due = db.jdbc().sql("SELECT id, \"stageId\", \"qcReference\" FROM"
+                + " \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND \"qcStatus\" = 'curing'"
+                + " AND \"reversedAt\" IS NULL AND \"qcPassDueAt\" <= ?").params(MfgDb.org(),
+                MfgDb.param(Instant.now())).query().listOfRows();
+        for (Map<String, Object> lot : due) {
+            String stageId = (String) lot.get("stageId");
             try {
-                Map<String, Object> s = db.byId(ProductionOrderStage.class, stageId);
-                stages.recordResult(stageId, new CheckpointDecision(true, str(s, "qcReference"),
-                        "Minimum curing time reached"));
+                stages.recordResult(stageId, new CheckpointDecision(true, (String) lot.get("qcReference"),
+                        "Minimum curing time reached", (String) lot.get("id")));
                 passed++;
             } catch (ApiException e) {
+                db.jdbc().sql("UPDATE \"ProductionStagePosting\" SET \"qcStatus\" = 'pending', \"qcPassDueAt\" = NULL"
+                        + " WHERE \"organizationId\" = ? AND id = ?").params(MfgDb.org(), lot.get("id")).update();
                 db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "pending", "qcPassDueAt", null));
             }
         }
-        List<String> released = db.jdbc().sql("SELECT id FROM \"PrecastCuringBatch\" WHERE \"organizationId\" = ?"
-                + " AND status = 'released' AND \"finalLotId\" IS NULL AND \"qtyGood\" > 0 AND \"releasedAt\" >= ?")
-                .params(MfgDb.org(), MfgDb.param(Instant.now().minus(Duration.ofDays(2)))).query(String.class).list();
+        // Integrity fix 2026-11-24 (MV-3): released by effective status (a reversed pressing / cubing no longer
+        // counts), no two-day window (a batch missed by an outage still gets its lot), capped per run, newest first;
+        // the batch is row-locked and re-checked before the lot opens, so the final-inspection route cannot race it.
+        List<String> released = db.jdbc().sql("SELECT x.id FROM (" + BATCH_SELECT + ") x WHERE"
+                + " x.\"effectiveStatus\" = 'released' AND x.\"finalLotId\" IS NULL AND x.\"qtyGood\" > 0"
+                + " ORDER BY x.\"releasedAt\" DESC NULLS LAST, x.id LIMIT " + FINAL_LOTS_PER_TICK)
+                .params(MfgDb.org()).query(String.class).list();
         for (String id : released) {
-            Boolean opened = tx.execute(s -> openFinalLot(batch(id)) != null);
+            Boolean opened = tx.execute(s -> {
+                Map<String, Object> b = lockBatch(id);
+                if (!"released".equals(b.get("status")) || b.get("finalLotId") != null
+                        || dec(b, "qtyGood").signum() <= 0) {
+                    return false;
+                }
+                return openFinalLot(b) != null;
+            });
             if (Boolean.TRUE.equals(opened)) {
                 finalLots++;
             }

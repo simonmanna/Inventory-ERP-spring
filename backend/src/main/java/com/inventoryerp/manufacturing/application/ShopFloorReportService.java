@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -217,8 +218,10 @@ public class ShopFloorReportService {
         Map<String, Agg> byWc = new LinkedHashMap<>();
         Agg all = new Agg();
         List<Map<String, Object>> shifts = new ArrayList<>();
+        // Integrity fix 2026-11-24 (MP-13): profile rates and shift rows are read once per report, not per row.
+        Map<String, Object> lookups = new HashMap<>();
         for (Map<String, Object> r : rows) {
-            OeeCalculator.Result res = effective(r, now);
+            OeeCalculator.Result res = effective(r, now, lookups);
             Map<String, Object> line = Obj.of("shiftReportId", r.get("id"), "code", r.get("code"), "workCenterId",
                     r.get("workCenterId"), "workCenterCode", r.get("workCenterCode"), "workCenterName",
                     r.get("workCenterName"), "shiftCode", r.get("shiftCode"), "shiftDate", r.get("shiftDate"),
@@ -275,17 +278,30 @@ public class ShopFloorReportService {
 
     /** Snapshot for submitted / approved reports, live otherwise. */
     OeeCalculator.Result effective(Map<String, Object> r, Instant now) {
+        return effective(r, now, new HashMap<>());
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MP-13): a submitted / approved report shows the OEE it was signed off with (its stored
+     * availability, performance, quality and OEE), not one recomputed from today's profile rate. Its ideal minutes
+     * (for totals over several shifts) follow from the stored performance × run minutes.
+     */
+    private OeeCalculator.Result effective(Map<String, Object> r, Instant now, Map<String, Object> lookups) {
         if ("open".equals(r.get("status")) || r.get("plannedMinutes") == null) {
-            return oee(r, now);
+            return oee(r, now, lookups);
         }
         BigDecimal good = dec(r, "goodQty");
         BigDecimal scrap = dec(r, "scrapQty");
-        Map<String, Object> profile = sf.profile(str(r, "workCenterId"));
-        BigDecimal rate = profile == null || profile.get("idealRatePerHour") == null ? null
-                : dec(profile, "idealRatePerHour");
-        return OeeCalculator.compute(((Number) r.get("plannedMinutes")).longValue(),
-                ((Number) r.get("downtimeMinutes")).longValue(), OeeCalculator.idealMinutes(good.add(scrap), rate), good,
-                scrap);
+        long planned = ((Number) r.get("plannedMinutes")).longValue();
+        long down = ((Number) r.get("downtimeMinutes")).longValue();
+        long run = r.get("runMinutes") instanceof Number n ? n.longValue() : Math.max(0, planned - down);
+        BigDecimal performance = r.get("performance") == null ? null : dec(r, "performance");
+        BigDecimal ideal = performance == null ? null
+                : performance.multiply(BigDecimal.valueOf(run)).setScale(6, java.math.RoundingMode.HALF_UP);
+        return new OeeCalculator.Result(planned, down, run, good, scrap, good.add(scrap), ideal,
+                r.get("availability") == null ? null : dec(r, "availability"), performance,
+                r.get("quality") == null ? null : dec(r, "quality"), r.get("oee") == null ? null : dec(r, "oee"),
+                performance != null && performance.compareTo(BigDecimal.ONE) >= 0);
     }
 
     private Map<String, Object> oeeView(Map<String, Object> r, Instant now) {
@@ -294,21 +310,34 @@ public class ShopFloorReportService {
 
     /** Live OEE of a shift report: the elapsed part of its window while it runs. */
     OeeCalculator.Result oee(Map<String, Object> r, Instant now) {
+        return oee(r, now, new HashMap<>());
+    }
+
+    private OeeCalculator.Result oee(Map<String, Object> r, Instant now, Map<String, Object> lookups) {
         Instant ws = (Instant) r.get("startsAt");
         Instant end = (Instant) r.get("endsAt");
         Instant we = now.isBefore(end) ? now : end;
         BigDecimal[] counts = counts(str(r, "id"));
-        Map<String, Object> profile = sf.profile(str(r, "workCenterId"));
-        BigDecimal rate = profile == null || profile.get("idealRatePerHour") == null ? null
-                : dec(profile, "idealRatePerHour");
+        String rateKey = "rate:" + r.get("workCenterId");
+        if (!lookups.containsKey(rateKey)) {
+            Map<String, Object> profile = sf.profile(str(r, "workCenterId"));
+            lookups.put(rateKey, profile == null || profile.get("idealRatePerHour") == null ? null
+                    : dec(profile, "idealRatePerHour"));
+        }
+        BigDecimal rate = (BigDecimal) lookups.get(rateKey);
         BigDecimal ideal = OeeCalculator.idealMinutes(counts[0].add(counts[1]), rate);
         if (!we.isAfter(ws)) {
             return OeeCalculator.compute(0, 0, ideal, counts[0], counts[1]);
         }
         long elapsed = ChronoUnit.MINUTES.between(ws, we);
         long length = Math.max(1, ChronoUnit.MINUTES.between(ws, end));
-        Map<String, Object> shift = db.byId(com.inventoryerp.manufacturing.domain.ShopFloorShift.class,
-                str(r, "shiftId"));
+        String shiftKey = "shift:" + r.get("shiftId");
+        if (!lookups.containsKey(shiftKey)) {
+            lookups.put(shiftKey, db.byId(com.inventoryerp.manufacturing.domain.ShopFloorShift.class,
+                    str(r, "shiftId")));
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> shift = (Map<String, Object>) lookups.get(shiftKey);
         long breakMins = shift == null ? 0 : Math.round(((Number) shift.get("breakMinutes")).doubleValue() * elapsed
                 / length);
         List<Stop> stops = new ArrayList<>();

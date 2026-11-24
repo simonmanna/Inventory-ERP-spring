@@ -158,6 +158,99 @@ Approved by the owner 2026-11-17 (accounting and costing review,
 | Rework | `POST /production-orders/:id/rework` (extension, ADR-S006 C) | the rework's cost always stayed in the units | `treatment`: `normal` (default, unchanged) or `abnormal`. Abnormal: at completion the units come back at the cost they carried and the extra cost is expensed (Dr Stock Adjustment Expense / Cr WIP). Orders carry `reworkTreatment` and `reworkLoss`; a reversal takes the loss back (V534) |
 
 
+Approved by the owner 2026-11-24 (manufacturing production-readiness review, step 1; `V625`; code markers
+`Integrity fix 2026-11-24`; tests `ManufacturingIntegrityIT`, `MultiStageProductionIT.stageGatePerLot`,
+`PrecastManufacturingIT.gatePerBatch`, `ProcessingIT.genericStageRoutesRefuseJobs`, `CrushingIT` run reversal):
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MI-1 | `POST /production-stages/:id/qc-decision`, `/precast/curing-batches/:id/gate-decision`, quality-lot bridge, curing job (extensions, ADR-S011/S014) | one pass released the stage's whole quarantine, failed and uninspected lots included; a pass flipped every `failed` precast batch to `released` | per lot: each gated output posting is a lot with its own `qcStatus` (`pending`/`curing`/`passed`/`failed`). A pass releases only that lot's held quantity (its batch); the stage gate passes once no lot is held. `qc-decision` takes an optional `postingId`; without it the decision covers the undecided lots, and is refused (`Stage <n> · <name> holds lots awaiting QC (…) and failed lots (…); decide each lot by its postingId.`) when undecided and failed lots are both held. A failed lot can still pass on a retest. Precast decides the batch's cubing posting; the quality bridge decides the posting its inspection lot was opened for. Stage view adds `qcLots` |
+| MI-2 | `POST /production-orders/:id/cancel` | a draft/confirmed order was flipped to `cancelled` without the order lock (Nest), so a concurrent start could consume its materials into WIP and leave them there | the order lock is taken and the order read once before either branch |
+| MI-3 | `POST /production-orders/:id/reverse` | finished goods "fully in stock" = the product's whole stock at the location (Nest), so another order's stock (e.g. in the shared quarantine) let a partly released / sold output reverse | the least of the stock there, the order's own net ledger movements there and, for lot-tracked products, its own lots; checks run under the order lock |
+| MI-4 | `POST /manufacturing/costing/orders/:id/absorb`, `POST /work-orders/:id/start\|pause\|complete` | absorb row-locked the order but complete used an advisory lock, so absorbed overhead could miss the completion's posting; work-order complete had no lock (double-tap costed the time twice) | every leg takes the same per-order lock first (`MfgDb.lockProductionOrder`); work orders are re-read under it with a row lock |
+| MI-5 | `POST /production-orders` (`outputs[].costAllocationPct`) | any % (Nest), so by-products could take more than the cost pool and leave the main output at a negative cost | each ≤ 100 (`must not be greater than 100`), by-products together ≤ 100 (`By-product cost allocation totals <n>%; it cannot exceed 100%.`); completion refuses a negative remaining pool for older orders |
+| MI-6 | `POST /production-stages/:id/issue\|output\|conversion-costs`, `/stage-postings/:id/reverse`, `/production-orders/:id/stages/reverse` (extensions) | worked on any order, so a processing job's or crushing run's order could be posted / reversed behind its back | refused: `This order belongs to processing job <code>; use the processing job's routes.` / `… crushing run <code>; use the crushing run's routes.` |
+
+
+Approved by the owner 2026-11-24 (production-readiness review, steps 2–4 — "build all the fixes"; `V627`, `V628`;
+code markers `Integrity fix 2026-11-24 (<id>)`; owner decisions: PLM self-approval is an org setting, default refuse;
+work-centre calendars in the org timezone). Tests: `ManufacturingCoreIntegrityIT`, `StageIntegrityIT`,
+`PlanningIntegrityIT`, `PlmIntegrityIT`, `PlanningCalendarTest`, additions to `PrecastManufacturingIT`, `CrushingIT`,
+`ProcessingIT`, `ShopFloorExecutionIT`.
+
+Core and costing:
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MC-1 | engine zero-yield complete / `POST /production-orders/:id/reverse` | the absorbed overhead was neither posted nor written off; zero-yield orders could not be reversed | overhead absorbed then written off with the materials (`totalCost` = both); reversible |
+| MC-2 | `GET /boms/:id/cost`, `POST /boms/:id/product-standard` | the standard carried the whole run, so by-products made a recurring false favourable variance | the BOM's co-/by-product share is deducted first (same allocator as completion) |
+| MC-3 | `POST /production-orders/:id/complete`, `/reverse` | absorbed cost always credited overhead absorbed | the work-centre rate's credit account when it names one |
+| MC-4 | `POST /process-costing/periods/:id/close` | the next process's open period was written without a lock | locked `FOR UPDATE` and re-checked open |
+| MC-5 | `POST /process-costing/periods/:id/materials`, `/costs` | `Idempotency-Key` optional | required |
+| MC-6 | `GET /reports/variances`, order variances | reversed orders included | excluded |
+| MC-7 | `POST /production-orders/:id/qc` | any quantities | passed + failed + rework ≤ what the order still holds in quarantine (`QC quantities (passed + failed + rework = <n>) exceed the <held> of order <code> still in quarantine.`); no `Idempotency-Key` (the interceptor would turn 201 into 200) — the bound stops a retry moving stock twice |
+| MC-8 | `POST /production-orders/:id/cancel` (also ECO apply) | reservations released in their own committed transaction before the cancel was known to succeed | released in the caller's transaction (savepoint); a failing release now fails the cancel instead of being ignored |
+| MC-9 | `PATCH /work-orders/:id/assign`, `POST /requests` | unknown ids → 500 (FK) | 404 `Resource not found` / `Work centre not found` / `Product <id> not found` |
+| MC-10 | `POST /plans`, `/plans/:id/confirm` | duplicate orders / double-claimed request lines under concurrency | plan row locked, lines re-read, claims conditional (409 `Some open request lines were consolidated into another plan meanwhile. Try again.`) |
+| MC-11 | `POST /boms/:id/activate` | no lock, no cycle re-check (mutual drafts could both activate) | serialised, re-read, cycle re-checked |
+| MC-12 | `PATCH /resources/:id`, `/work-centers/:id` | any column (incl. `id`, `organizationId`) and negative cost accepted | `property <col> should not exist`; `costPerHour must not be less than 0` |
+| MC-13 | `POST /production-orders/:id/start` | substitute quantity taken in the BOM line's unit as base | converted to the component's base unit |
+
+Multi-stage and processing:
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MS-1 | `POST /production-stages/:id/issue`, `/output`; QC release | intermediate (and a QC release) taken at the location's blended average / oldest lot, possibly another order's | this order's own lots, or the cost its units entered at; WIP out of stage N = WIP into N+1 |
+| MS-2 | `POST /production-stages/:id/output` | `fixed_pct` valued outputs with quantity 0 and expensed it as scrap; main good 0 sent its share to residue scrap | percentages renormalised over the outputs made in the posting; the rest stays in WIP unless the posting completes the stage |
+| MS-3 | `POST /processing/jobs/:id/output`, `/jobs/post` | a repeated output line, or basis without quantity, was accepted | 400 `Output line <id> is listed twice` / `Output line <id> has a measured basis but no quantity` |
+| MS-4 | `POST /stage-postings/:id/reverse`, `/production-orders/:id/stages/reverse` | the variance journal was reversed but its register rows stayed | register rows offset (as ACR-13) |
+| MS-5 | same | stock check summed every lot at the location | checked lot by lot, under the order lock |
+| MS-6 | reversal routes, absorb | latest posting by `createdAt`, then code text | by the posting's `seq` (V627); absorb links the posting `conversion` returns (`posting` added to its response) |
+| MS-8 | NEW `POST /stage-postings/:id/qc-scrap` (`production_order:qc`, `Idempotency-Key` required) | — | scraps a failed lot's held quantity as waste (`Lot <code> has not failed QC (<status>); only a failed lot can be scrapped.`, `Lot <code> holds nothing in quarantine.`); loss write-off through the controlled-action gate |
+
+Precast and crushing:
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MV-1 | `POST /precast/orders/:id/pressing-runs` | any ISO date; the curing clock started at it | today or yesterday (business zone): `Pressing date <d> is outside the allowed window (<from> … <to>).` |
+| MV-2 | `/crushing/stockpile-surveys` create, submit, approve, reverse | several open surveys per pile; book read at submit; reversal at today's average; a gain at cost 0 | one submitted survey per pile × product (V628 index); book as of the survey date; reversal mirrors the posted value; a gain needs a cost |
+| MV-3 | precast curing job | final lots only for batches released in the last 2 days, by table status, unlocked | any released batch (effective status), at most 200 per run, batch row-locked |
+| MV-4 | `POST /precast/orders/:id/pressing-runs` | concurrent runs could build the same batch code (500) | order lock first |
+| MV-5 | `GET /crushing/runs/:id/preview` | stage count from the plant's current circuit | from the profile routing, as post does; adds `stageCount` |
+| MV-7 | grading profile activate, survey create/update/submit | any stock unit | a unit other than the tonne (or none / `UNIT`) is refused |
+| MV-8 | precast order costing | material query without org filter | filtered |
+
+MRP, planning and shop floor:
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MP-1 | `POST /mrp/runs` | open PO remainders counted in purchase units | × `uomFactor` (base units) |
+| MP-2 | `POST /mrp/run` (legacy) | needs in the line's unit and POs in the PO unit against base on-hand | everything in base before netting |
+| MP-3 | `POST /mrp/runs`, nightly run | not serialised (duplicate planned orders) | advisory lock per organization |
+| MP-4 | `POST /mrp/planned-orders/:id/firm`, `/cancel`, `/mrp/runs/:id/firm` | unlocked; double firm possible | row lock + conditional update; the loser gets 400 |
+| MP-5 | `POST /shop-floor/production-orders/:id/schedule` | no locks (double-booked slots) | order lock, then the work-centre locks |
+| MP-6/7 | work-centre calendars, schedule, Gantt, capacity, MRP capacity, planning reports, demand horizon / delivery due dates | minute stepping; UTC windows and days | boundary jumping (same results); org timezone |
+| MP-8 | `POST /planning/plans/from-demand` | a repeat created a duplicate plan | open plan lines net the demand; a repeat → 400 |
+| MP-9 | `POST /mrp/runs` with `locationId` | production output / material demand org-wide | scoped to the location (purchase / sales documents have no warehouse and stay org-wide) |
+| MP-10/11 | machine poll; reschedule / backward schedule | DB transaction held across HTTP; inverted lock order | no transaction across HTTP; order lock first |
+| MP-12 | `GET /reports/forecast` | `weeks` unbounded | `weeks must be between 1 and 104` |
+| MP-13 | `GET /shop-floor/oee` | approved shifts recomputed from the current rate | their stored snapshot |
+
+PLM:
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| ML-1 | `/plm/changes/:id/apply`, `/cancel`, `/engineering-changes/:id/approve`, `/reject`, `/apply`, effectivity job | ECO read unlocked (double apply re-ran dispositions) | row lock, status re-checked |
+| ML-2 | `PATCH /boms/:id`, `/plm/documents`, `PATCH /plm/changes/:id` | an approved ECO's content stayed editable | `BOM <code> is part of approved change <number>; it can no longer be edited.` / `Document <number> is part of approved change <number>; …`; editing a draft ECO after an approval voids the approvals |
+| ML-3 | `POST /boms/:id/revise`, `POST /plm/changes` (bom), apply | any source status; a stale base could revert an applied change | `BOM <code> v<n> is <status>; only the active version can be revised.`; `Change <number> was raised against <code> v<n>, which is no longer the active version.` |
+| ML-4 | `/plm/changes/:id/decisions`, `/engineering-changes/:id/approve`, `/plm/requests/:id/review` | self-approval allowed; fast-track for any type | 403 `You cannot approve a change you raised.` / `You cannot review a request you raised.` unless org setting `plm.allowSelfApproval` (default false); fast-track BOM changes only (`Only a BOM change can be fast-tracked; use the PLM approval stages.`) |
+| ML-5 | stage move / decide, `PATCH /plm/stages/:id` | a last stage requiring approval was skipped | enforced; `Stage <name> has <n> change(s) awaiting its approval; move them first.` |
+| ML-6/7 | request review / convert, lifecycle transition | unlocked | row locks |
+| ML-8 | effectivity job | null user; failures only in the log | `system` actor; the failure reason is recorded on the ECO |
+| ML-9 | `GET /plm/overview` | overdue against DB `CURRENT_DATE` | the org calendar |
+| ML-11 | `GET /plm/items`, `/plm/items/:id`, `/engineering-changes` | unbounded | optional `limit` / `offset` (1–1000) |
+
+
 ## Status
 
 Done. Parity: 61/61 Nest routes (42 in the generated table + 19 phase-4 routes). ADR-S006: packages A–D complete

@@ -202,7 +202,8 @@ public class PlmChangeService {
         }
         Map<String, Object> request = null;
         if (PlmSupport.blank(dto.requestId()) != null) {
-            request = db.byId(PlmChangeRequest.class, dto.requestId());
+            // Integrity fix 2026-11-24 (ML-6): the request row is locked, so it converts into one ECO only.
+            request = db.byIdForUpdate(PlmChangeRequest.class, dto.requestId());
             if (request == null) {
                 throw ApiException.notFound("Change request not found");
             }
@@ -315,7 +316,7 @@ public class PlmChangeService {
 
     @Transactional
     public Map<String, Object> update(String id, UpdateChange dto) {
-        Map<String, Object> eco = engineering.require(id);
+        Map<String, Object> eco = lock(id);
         if (!"draft".equals(eco.get("status"))) {
             throw ApiException.badRequest("Only a draft change can be edited (status " + eco.get("status") + ").");
         }
@@ -372,6 +373,8 @@ public class PlmChangeService {
         if (!data.isEmpty()) {
             db.update(EngineeringChange.class, id, data);
             plm.activity(id, "edited", "Edited " + String.join(", ", data.keySet()) + ".");
+            // Integrity fix 2026-11-24 (ML-2): an edit after an approval voids it (as moving backwards does).
+            plm.reopenAfterEdit(eco, "the change");
         }
         return get(id);
     }
@@ -379,7 +382,7 @@ public class PlmChangeService {
     /** Replace the operations of a routing ECO's new routing (routings are otherwise immutable). */
     @Transactional
     public Map<String, Object> saveRoutingOperations(String id, List<RoutingOperationInput> operations) {
-        Map<String, Object> eco = engineering.require(id);
+        Map<String, Object> eco = lock(id);
         if (!"routing".equals(eco.get("type")) || eco.get("newRoutingId") == null) {
             throw ApiException.badRequest("Change " + eco.get("number") + " is not a routing change.");
         }
@@ -409,6 +412,7 @@ public class PlmChangeService {
         }
         copyStageSetups(str(eco, "routingId"), newRouting);
         plm.activity(id, "edited", "Routing operations updated (" + operations.size() + ").");
+        plm.reopenAfterEdit(eco, "the routing operations");
         return get(id);
     }
 
@@ -421,12 +425,13 @@ public class PlmChangeService {
 
     @Transactional
     public Map<String, Object> linkDocuments(String id, List<String> documentIds) {
-        Map<String, Object> eco = engineering.require(id);
+        Map<String, Object> eco = lock(id);
         if (!"draft".equals(eco.get("status"))) {
             throw ApiException.badRequest("Only a draft change can be edited (status " + eco.get("status") + ").");
         }
         documents.linkToChange(id, str(eco, "productId"), documentIds);
         plm.activity(id, "edited", "Attached " + documentIds.size() + " document(s).");
+        plm.reopenAfterEdit(eco, "the documents");
         return get(id);
     }
 
@@ -457,6 +462,9 @@ public class PlmChangeService {
         if (!approvers.isEmpty() && approvers.stream().noneMatch(a -> me.equals(a.get("userId")))) {
             throw ApiException.forbidden("You are not an approver of stage " + stage.get("name") + ".");
         }
+        if ("approved".equals(dto.decision())) {
+            plm.requireNotOwnChange(eco); // Integrity fix 2026-11-24 (ML-4)
+        }
         db.updateWhere(PlmChangeApproval.class, Obj.of("voided", true), "\"organizationId\" = ? AND \"changeId\" = ?"
                 + " AND \"stageId\" = ? AND \"userId\" = ? AND NOT voided", MfgDb.org(), id, stage.get("id"), me);
         String comment = PlmSupport.blank(dto.comment());
@@ -470,6 +478,8 @@ public class PlmChangeService {
                 Map<String, Object> next = nextStage(stage);
                 if (next != null) {
                     move(eco, next);
+                } else {
+                    approveAtLastStage(eco, stage); // Integrity fix 2026-11-24 (ML-5)
                 }
             }
         }
@@ -482,10 +492,15 @@ public class PlmChangeService {
      */
     @Transactional
     public Map<String, Object> approveDirect(String id) {
-        Map<String, Object> eco = engineering.require(id);
+        // Integrity fix 2026-11-24 (ML-1, ML-4): locked and re-checked; BOM changes only; not your own change.
+        Map<String, Object> eco = lock(id);
         if (!"draft".equals(eco.get("status"))) {
             throw ApiException.badRequest("Only a draft change can be approved (status " + eco.get("status") + ").");
         }
+        if (!"bom".equals(eco.get("type"))) {
+            throw ApiException.badRequest("Only a BOM change can be fast-tracked; use the PLM approval stages.");
+        }
+        plm.requireNotOwnChange(eco);
         Map<String, Object> stage = stages.stageOf(eco);
         Map<String, Object> last = stages.last();
         db.insert(PlmChangeApproval.class, Obj.of("changeId", id, "stageId", stage.get("id"), "userId",
@@ -507,7 +522,8 @@ public class PlmChangeService {
      */
     @Transactional
     public Map<String, Object> apply(String id, boolean force) {
-        Map<String, Object> eco = engineering.require(id);
+        Map<String, Object> eco = lock(id); // Integrity fix 2026-11-24 (ML-1): one apply at a time, status re-read
+
         if (!"approved".equals(eco.get("status"))) {
             throw ApiException.badRequest("Only an approved change can be applied (status " + eco.get("status") + ").");
         }
@@ -543,7 +559,7 @@ public class PlmChangeService {
     /** ADR-S006 route {@code POST /engineering-changes/:id/reject} and the PLM cancel: drop the draft artefacts. */
     @Transactional
     public Map<String, Object> cancel(String id, String reason) {
-        Map<String, Object> eco = engineering.require(id);
+        Map<String, Object> eco = lock(id); // Integrity fix 2026-11-24 (ML-1): cannot race an apply
         if (!PlmSupport.OPEN_CHANGE.contains(str(eco, "status"))) {
             throw ApiException.badRequest("Cannot reject a " + eco.get("status") + " change.");
         }
@@ -578,12 +594,31 @@ public class PlmChangeService {
     /** Job step (own transaction): apply one candidate when nothing blocks it; returns its number when applied. */
     @Transactional
     public String autoApply(String id) {
-        Map<String, Object> eco = engineering.require(id);
+        Map<String, Object> eco = lock(id); // Integrity fix 2026-11-24 (ML-1): a manual apply may have won the race
         if (!"approved".equals(eco.get("status")) || pendingReason(eco, false) != null) {
             return null;
         }
         doApply(eco);
         return str(eco, "number");
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (ML-8): the job records why an automatic switch-over failed on the ECO itself (once per
+     * distinct reason, so the hourly retry does not flood the log).
+     */
+    @Transactional
+    public void recordAutoApplyFailure(String id, String reason) {
+        Map<String, Object> eco = plm.lockChange(id);
+        if (eco == null || !"approved".equals(eco.get("status"))) {
+            return;
+        }
+        String message = "Automatic switch-over failed: " + reason;
+        String last = db.jdbc().sql("SELECT message FROM \"PlmChangeActivity\" WHERE \"organizationId\" = ? AND"
+                + " \"changeId\" = ? ORDER BY \"createdAt\" DESC, id DESC LIMIT 1").params(MfgDb.org(), id)
+                .query(String.class).optional().orElse(null);
+        if (!message.equals(last)) {
+            plm.activity(id, "status", message);
+        }
     }
 
     List<String> dueOrganizations() {
@@ -693,6 +728,7 @@ public class PlmChangeService {
         Map<String, Object> disposition = null;
         switch (str(eco, "type")) {
             case "bom" -> {
+                requireBaseStillActive(eco);
                 Map<String, Object> bom = boms.activate(str(eco, "newBomId"));
                 summary.add("Activated " + bom.get("code") + " v" + bom.get("version") + ".");
                 disposition = dispositions.execute(eco);
@@ -774,7 +810,10 @@ public class PlmChangeService {
                     + " \"changeId\" = ? AND \"stageId\" = ANY(?::text[]) AND NOT voided")
                     .params(MfgDb.org(), id, later.toArray(String[]::new)).update();
         }
-        boolean last = target.get("id").equals(stages.last().get("id"));
+        // Integrity fix 2026-11-24 (ML-5): a last stage that requires approval is entered as draft; its approval
+        // (decide) is what approves the change.
+        boolean last = target.get("id").equals(stages.last().get("id"))
+                && !Boolean.TRUE.equals(target.get("requiresApproval"));
         Map<String, Object> data = Obj.of("stageId", target.get("id"), "status", last ? "approved" : "draft");
         if (last) {
             data.put("approvedById", TenantContext.userId());
@@ -856,10 +895,45 @@ public class PlmChangeService {
         return null;
     }
 
-    private Map<String, Object> lockOpen(String id) {
+    /** 404 when unknown, else the ECO row locked {@code FOR UPDATE} (statuses are re-checked on the locked row). */
+    private Map<String, Object> lock(String id) {
         engineering.require(id);
-        Map<String, Object> eco = SqlRows.one(EngineeringChange.class, db.jdbc().sql("SELECT * FROM"
-                + " \"EngineeringChange\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, MfgDb.org()));
+        return plm.lockChange(id);
+    }
+
+    /** Integrity fix 2026-11-24 (ML-5): the approval of a last stage that requires one approves the change. */
+    private void approveAtLastStage(Map<String, Object> eco, Map<String, Object> stage) {
+        String id = str(eco, "id");
+        Map<String, Object> data = Obj.of("status", "approved", "approvedById", TenantContext.userId(), "approvedAt",
+                Instant.now());
+        db.update(EngineeringChange.class, id, data);
+        eco.putAll(data);
+        plm.activity(id, "status", "Approved at " + stage.get("name") + ".");
+        plm.event(DomainEvents.PLM_CHANGE_APPROVED, Obj.of("changeId", id, "number", eco.get("number")));
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (ML-3): a BOM change applies only on top of the version it was raised against; when
+     * that version is no longer the active one (archived by another activation, deleted) the change is stale. The
+     * base row is locked so a concurrent activation of the same output waits.
+     */
+    private void requireBaseStillActive(Map<String, Object> eco) {
+        if (eco.get("bomId") == null) {
+            return;
+        }
+        Map<String, Object> base = SqlRows.one(db.jdbc().sql("SELECT code, version, status::text AS status,"
+                + " \"deletedAt\" FROM \"Bom\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(eco.get("bomId"), MfgDb.org()));
+        if (base != null && "active".equals(base.get("status")) && base.get("deletedAt") == null) {
+            return;
+        }
+        throw ApiException.badRequest("Change " + eco.get("number") + " was raised against "
+                + (base == null ? "?" : base.get("code") + " v" + base.get("version"))
+                + ", which is no longer the active version.");
+    }
+
+    private Map<String, Object> lockOpen(String id) {
+        Map<String, Object> eco = lock(id);
         if (!PlmSupport.OPEN_CHANGE.contains(str(eco, "status"))) {
             throw ApiException.badRequest("Change " + eco.get("number") + " is " + eco.get("status") + ".");
         }

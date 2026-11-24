@@ -148,9 +148,54 @@ public class CostingService {
         BigDecimal good = goodQuantity(bom, outputQty);
         out.put("expectedYieldPct", yieldPct(bom));
         out.put("expectedGoodQuantity", good);
-        out.put("unitCost", good.signum() > 0 ? Money.div(total, good) : BigDecimal.ZERO);
+        // Integrity fix 2026-11-24 (MC-2; deviation: the roll-up gave the main output the whole run's cost): the
+        // BOM's by-products / co-products take their share of the run first, valued as stage completion values them
+        // (JointCostAllocator over the BOM's co-product setup and allocation rule), so a standard-costed run does not
+        // book a recurring favourable variance for the by-product credit.
+        BigDecimal mainCost = mainShare(bom, total, good);
+        out.put("coProductCost", total.subtract(mainCost));
+        out.put("mainOutputCost", mainCost);
+        out.put("unitCost", good.signum() > 0 ? Money.div(mainCost, good) : BigDecimal.ZERO);
         out.put("breakdown", lines);
         return out;
+    }
+
+    /**
+     * The main output's part of {@code total} after the BOM's co-products ({@code BomCoProduct}) take theirs, by the
+     * BOM's effective allocation rule (BOM override, organization default, else {@code quantity}). The whole total
+     * without co-products.
+     */
+    private BigDecimal mainShare(Map<String, Object> bom, BigDecimal total, BigDecimal good) {
+        List<Map<String, Object>> co = SqlRows.list(db.jdbc().sql("SELECT c.*, p.\"salesPrice\" FROM \"BomCoProduct\" c"
+                + " JOIN \"Product\" p ON p.id = c.\"productId\" WHERE c.\"organizationId\" = ? AND c.\"bomId\" = ?"
+                + " ORDER BY c.sequence").params(MfgDb.org(), bom.get("id")));
+        if (co.isEmpty() || total.signum() <= 0) {
+            return total;
+        }
+        Map<String, Object> rule = SqlRows.one(db.jdbc().sql("SELECT * FROM \"MfgCostAllocationRule\" WHERE"
+                + " \"organizationId\" = ? AND (\"bomId\" = ? OR \"bomId\" IS NULL) ORDER BY \"bomId\" NULLS LAST LIMIT 1")
+                .params(MfgDb.org(), bom.get("id")));
+        BigDecimal mainMarket = opt(rule, "mainMarketValue");
+        if (mainMarket == null) {
+            mainMarket = db.jdbc().sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ?")
+                    .param(bom.get("outputProductId")).query(BigDecimal.class).optional().orElse(null);
+        }
+        List<JointCostAllocator.Share> shares = new ArrayList<>();
+        shares.add(new JointCostAllocator.Share("main", "main", good, "allocated", opt(rule, "mainWeightPerUnit"),
+                mainMarket, null, null, opt(rule, "mainSeparableCostPerUnit")));
+        for (Map<String, Object> c : co) {
+            BigDecimal market = c.get("marketValue") != null ? dec(c, "marketValue") : opt(c, "salesPrice");
+            BigDecimal nrv = c.get("nrvUnitValue") != null ? dec(c, "nrvUnitValue") : opt(c, "salesPrice");
+            shares.add(new JointCostAllocator.Share(str(c, "id"), str(c, "role"), dec(c, "quantity"),
+                    str(c, "valuation"), opt(c, "weightPerUnit"), market, opt(c, "fixedPct"), nrv,
+                    opt(c, "separableCostPerUnit")));
+        }
+        return JointCostAllocator.allocate(total, shares, rule == null ? "quantity" : str(rule, "method"), 6).values()
+                .get("main");
+    }
+
+    private static BigDecimal opt(Map<String, Object> row, String key) {
+        return row == null || row.get(key) == null ? null : dec(row, key);
     }
 
     private static BigDecimal yieldPct(Map<String, Object> bom) {
@@ -233,8 +278,13 @@ public class CostingService {
         if (qty.signum() <= 0) {
             throw ApiException.badRequest("The BOM output quantity must be positive to derive a unit standard");
         }
-        java.util.function.Function<String, BigDecimal> perUnit = k -> Money.div(dec(frozen, k), qty)
-                .setScale(6, java.math.RoundingMode.HALF_UP);
+        // MC-2: each element scaled to the main output's share of the run (the frozen totals stay whole-run, as
+        // the analytic variances compare them with the whole run's actuals).
+        BigDecimal runTotal = dec(frozen, "totalCost");
+        BigDecimal mainTotal = BomService.mul(dec(frozen, "unitCost"), qty);
+        java.util.function.Function<String, BigDecimal> perUnit = k -> (runTotal.signum() > 0
+                ? Money.div(Money.div(BomService.mul(dec(frozen, k), mainTotal), runTotal), qty)
+                : Money.div(dec(frozen, k), qty)).setScale(6, java.math.RoundingMode.HALF_UP);
         return productStandards.create(new com.inventoryerp.inventory.application.StandardCostService.StandardInput(
                 str(bom, "outputProductId"), effectiveFrom != null ? effectiveFrom
                         : java.time.LocalDate.now(com.inventoryerp.kernel.common.BusinessZone.get()).toString(),
@@ -361,6 +411,8 @@ public class CostingService {
                 + " \"ProductionVariance\" v JOIN \"ProductionOrder\" o ON o.id = v.\"orderId\" WHERE"
                 + " v.\"organizationId\" = ?");
         List<Object> params = new ArrayList<>(List.of(MfgDb.org()));
+        // Integrity fix 2026-11-24 (MC-6): a reversed order's variances no longer count.
+        sql.append(" AND o.\"reversedAt\" IS NULL");
         if (orderId != null) {
             sql.append(" AND v.\"orderId\" = ?");
             params.add(orderId);
@@ -481,13 +533,17 @@ public class CostingService {
             BigDecimal onHand = stockAt(str(m, "productId"), loc);
             BigDecimal shortage = required.subtract(onHand).max(BigDecimal.ZERO);
             List<Map<String, Object>> subs = new ArrayList<>();
+            String baseUom = db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(m.get("productId"), MfgDb.org()).query(String.class).optional().orElse(null);
+            BigDecimal shortageBase = uom.toBase(shortage, str(m, "uomId"), str(m, "productId"), baseUom, false);
             if (order.get("bomId") != null) {
                 for (Map<String, Object> s : SqlRows.list(db.jdbc().sql("SELECT s.\"productId\", s.ratio, p.name FROM"
                         + " \"BomLineSubstitute\" s JOIN \"BomLine\" l ON l.id = s.\"bomLineId\" LEFT JOIN \"Product\" p"
                         + " ON p.id = s.\"productId\" WHERE l.\"bomId\" = ? AND l.\"componentProductId\" = ?"
                         + " ORDER BY s.priority").params(order.get("bomId"), m.get("productId")))) {
                     BigDecimal subOnHand = stockAt(str(s, "productId"), loc);
-                    BigDecimal needed = BomService.mul(shortage, dec(s, "ratio"));
+                    // MC-13: the ratio is per component base unit; the shortage is in the material line's unit.
+                    BigDecimal needed = BomService.mul(shortageBase, dec(s, "ratio"));
                     subs.add(Obj.of("productId", s.get("productId"), "name", s.get("name"), "ratio", s.get("ratio"),
                             "onHand", JsNumbers.dec(subOnHand), "covers", shortage.signum() > 0
                                     && subOnHand.compareTo(needed) >= 0));

@@ -48,6 +48,10 @@ public class ResourceService {
         Object costPerHour = rest.remove("costPerHour");
         Map<String, Object> data = MfgDb.spread(Resource.class, rest);
         if (costPerHour != null) {
+            // Integrity fix 2026-11-24 (MC-12): a cost rate cannot be negative.
+            if (MfgDb.negative(costPerHour)) {
+                throw com.inventoryerp.shared.web.ApiException.badRequest("costPerHour must not be less than 0");
+            }
             data.put("costPerHour", Money.dec(costPerHour));
         }
         data.put("updatedBy", TenantContext.userId());
