@@ -376,6 +376,28 @@ public class PostingService {
      */
     @Transactional
     public Map<String, Object> stageDraft(PostingRequest request, String controlAdjustmentReason) {
+        return stageDraft(request, controlAdjustmentReason, null);
+    }
+
+    /**
+     * As {@link #stageDraft(PostingRequest, String)}, with the draft's maker: {@code makerId} (else the current user)
+     * is the creator who may not approve it. A {@code postingKey} is kept on the draft, and a second stage of the same
+     * key returns the draft (or entry) already there: finance audit B5 moved this out of the recurring service's raw
+     * SQL.
+     */
+    @Transactional
+    public Map<String, Object> stageDraft(PostingRequest request, String controlAdjustmentReason, String makerId) {
+        if (request.postingKey() != null) {
+            jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|' || ?, 0))")
+                    .params(TenantContext.organizationId(), request.postingKey()).query().listOfRows();
+            JournalEntry existing = em.createQuery("select e from JournalEntry e where e.organizationId = :org"
+                            + " and e.postingKey = :key", JournalEntry.class)
+                    .setParameter("org", TenantContext.organizationId()).setParameter("key", request.postingKey())
+                    .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+            if (existing != null) {
+                return render(existing, lines(existing.getId()));
+            }
+        }
         if (request.lines() == null || request.lines().size() < 2) {
             throw ApiException.badRequest("A journal entry requires at least two lines");
         }
@@ -413,7 +435,8 @@ public class PostingService {
         entry.setBranchId(request.branchId());
         entry.setCostCenterId(request.costCenterId());
         entry.setDimensions(entryDims == null ? null : EntityJson.toJson(entryDims));
-        entry.setCreatedBy(TenantContext.userId());
+        entry.setCreatedBy(makerId != null ? makerId : TenantContext.userId());
+        entry.setPostingKey(request.postingKey());
         if (adjustment) {
             entry.setControlAdjustment(true);
             entry.setControlAdjustmentReason(controlAdjustmentReason.strip());

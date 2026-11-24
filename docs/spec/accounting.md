@@ -787,6 +787,26 @@ The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below 
   A bill that stores the default rate 1 ("not stated", FX-1) posted at the rate table's rate. Passing that stored 1 on
   made the relief post at the table rate of the day. Once the rate had moved, the payable's base did not clear, and the
   AP tie-out (I8) showed the difference. Nest has the same flaw. Tests: the B5 tests in `ArApTieOutIT`.
+- **Close checklist reminders** (`GET /fiscal-periods/:id/close-checklist`). Five new advisory items, none blocking:
+  - `vat_settled`: tax was posted in the period, and no unreversed VAT settlement reaches the period end;
+  - `depreciation_posted`: depreciation computed for the period's months but not posted;
+  - `payroll_posted`: payroll runs whose pay period ends in the period and are not posted to the GL (reversed runs
+    excluded);
+  - `recurring_failed`: failed recurring journal runs dated in the period;
+  - `deferrals_released`: deferral releases due by the period end that are still planned.
+
+  The AR/AP tie-out item already exists (A5).
+- **First use of a system account** (`ensureByCode`): two requests creating the same missing account at once both
+  inserted it, and the second failed on the unique code (a 500). Creation is now serialised per organization and code,
+  under a transaction advisory lock taken only when the account is missing, and the lookup runs again under the lock.
+- **Expense form currency:** the amount label shows the organization's currency instead of a hard-coded "UGX".
+- **Supplier debit note lines** go into the posting engine as exact decimals. Before, they went through a JavaScript-style double, which loses cents above about 10^13. The other posting callers already pass decimal strings.
+- **Recurring drafts through the engine:**
+  - `PostingService.stageDraft` now keeps a draft's posting key (`recurring:<template>:<date>`) and its maker.
+  - Staging the same key again returns the existing entry.
+  - Before, the recurring service patched both onto the draft afterwards with raw SQL.
+- **Bank rules after an import:** a line a rule could not auto-post is now logged at WARN, with the count, the line
+  and the reason. Before, it was logged only at DEBUG, so nobody saw it. The line stays unmatched, as before.
 
 ## Extensions beyond Nest (ADR-S005)
 
