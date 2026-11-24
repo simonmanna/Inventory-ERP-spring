@@ -51,10 +51,12 @@ public class CostingService {
     private final UomConversionService uom;
 
     private final com.inventoryerp.inventory.application.StandardCostService productStandards;
+    private final PlmGate plmGate;
 
     public CostingService(MfgDb db, BomService boms, UomConversionService uom,
-            com.inventoryerp.inventory.application.StandardCostService productStandards) {
+            com.inventoryerp.inventory.application.StandardCostService productStandards, PlmGate plmGate) {
         this.productStandards = productStandards;
+        this.plmGate = plmGate;
         this.db = db;
         this.boms = boms;
         this.uom = uom;
@@ -177,8 +179,9 @@ public class CostingService {
                 .params(MfgDb.org(), bom.get("id")));
         BigDecimal mainMarket = opt(rule, "mainMarketValue");
         if (mainMarket == null) {
-            mainMarket = db.jdbc().sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ?")
-                    .param(bom.get("outputProductId")).query(BigDecimal.class).optional().orElse(null);
+            // Integrity fix 2026-11-24 (MR-10): tenancy predicate.
+            mainMarket = db.jdbc().sql("SELECT \"salesPrice\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(bom.get("outputProductId"), MfgDb.org()).query(BigDecimal.class).optional().orElse(null);
         }
         List<JointCostAllocator.Share> shares = new ArrayList<>();
         shares.add(new JointCostAllocator.Share("main", "main", good, "allocated", opt(rule, "mainWeightPerUnit"),
@@ -486,7 +489,9 @@ public class CostingService {
     /** Replace the substitutes of one BOM line. */
     @Transactional
     public List<Map<String, Object>> saveSubstitutes(String bomId, String lineId, List<SubstituteInput> subs) {
-        boms.getOrThrow(bomId);
+        Map<String, Object> bom = boms.getOrThrow(bomId);
+        // Integrity fix 2026-11-24 (MR-2): the draft version of an approved ECO is frozen (as PATCH /boms/:id).
+        plmGate.requireBomEditable(bom);
         Map<String, Object> line = SqlRows.one(BomLine.class, db.jdbc().sql("SELECT * FROM \"BomLine\" WHERE id = ?"
                 + " AND \"bomId\" = ? AND \"organizationId\" = ?").params(lineId, bomId, MfgDb.org()));
         if (line == null) {

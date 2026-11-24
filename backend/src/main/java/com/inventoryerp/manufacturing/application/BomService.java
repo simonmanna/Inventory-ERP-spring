@@ -308,10 +308,27 @@ public class BomService {
      * else the newest active version; effective-dated BOMs outside their window are excluded.
      */
     Map<String, Object> resolveForOrder(String outputProductId, String variantId, String bomId) {
+        return resolveForOrder(outputProductId, variantId, bomId, null);
+    }
+
+    /**
+     * As {@link #resolveForOrder(String, String, String)}, effectivity checked at {@code at} (the order's scheduled
+     * date; now when null).
+     */
+    Map<String, Object> resolveForOrder(String outputProductId, String variantId, String bomId, java.time.Instant at) {
         if (bomId != null && !bomId.isEmpty()) {
             Map<String, Object> bom = getOrThrow(bomId);
             if (!"active".equals(bom.get("status"))) {
                 throw ApiException.badRequest("BOM " + bom.get("code") + " is " + bom.get("status") + ", not active.");
+            }
+            // Integrity fix 2026-11-24 (MR-1; deviation: Nest applied effectivity only to the implicit lookup): a named
+            // BOM must be effective on the order's date too (same window test as findActive; null bounds are open).
+            java.time.Instant when = at != null ? at : java.time.Instant.now();
+            java.time.Instant from = (java.time.Instant) bom.get("effectiveFrom");
+            java.time.Instant to = (java.time.Instant) bom.get("effectiveTo");
+            if ((from != null && from.isAfter(when)) || (to != null && to.isBefore(when))) {
+                throw ApiException.badRequest("BOM " + bom.get("code") + " is not effective on "
+                        + when.atZone(java.time.ZoneOffset.UTC).toLocalDate() + ".");
             }
             return bom;
         }

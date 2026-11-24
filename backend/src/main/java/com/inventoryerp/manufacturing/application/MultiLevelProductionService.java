@@ -78,6 +78,9 @@ public class MultiLevelProductionService {
      */
     @Transactional
     public Map<String, Object> childOrders(String orderId, ChildOrders dto) {
+        // Integrity fix 2026-11-24 (MR-4): under the order lock, so two concurrent calls cannot both see a material
+        // unpegged and create duplicate child orders (each later consuming the same components).
+        db.lockProductionOrder(orderId);
         Map<String, Object> parent = db.byId(ProductionOrder.class, orderId);
         if (parent == null) {
             throw ApiException.notFound("Production order not found");

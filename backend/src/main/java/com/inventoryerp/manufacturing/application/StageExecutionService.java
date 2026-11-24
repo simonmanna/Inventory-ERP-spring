@@ -637,14 +637,18 @@ public class StageExecutionService implements StageCheckpointResults {
         Instant curingUntil = null;
         if (decision.passed()) {
             // ADR-S014 (2.4): a pass before the minimum curing time is over waits (lot status curing) until it is due.
-            Instant due = CuringHold.passDueAt(s, curingStart(s));
-            boolean waits = due != null && now.isBefore(due);
+            // Integrity fix 2026-11-24 (MR-6): the clock runs per lot — from the newest previous-stage output at or
+            // before the lot was posted — and a lot already curing keeps its due time. The stage-wide clock (newest
+            // output of the previous stage) pushed every lot back each time more was pressed, so with daily pressing
+            // no lot was ever released.
             Ctx c = null;
             for (QcLot lot : targets) {
-                if (waits && lot.held().signum() > 0) {
+                Instant due = "curing".equals(lot.status()) && lot.passDueAt() != null ? lot.passDueAt()
+                        : CuringHold.passDueAt(s, curingStart(s, lot.postedAt()));
+                if (due != null && now.isBefore(due) && lot.held().signum() > 0) {
                     db.update(ProductionStagePosting.class, lot.postingId(), Obj.of("qcStatus", "curing", "qcPassDueAt",
                             due, "qcReference", decision.reference(), "qcDecidedAt", now, "qcDecidedBy", me));
-                    curingUntil = due;
+                    curingUntil = curingUntil == null || due.isBefore(curingUntil) ? due : curingUntil;
                     continue;
                 }
                 if (lot.held().signum() > 0) {
@@ -694,7 +698,7 @@ public class StageExecutionService implements StageCheckpointResults {
 
     /** One QC lot: a gated output posting, its status and what of it is still in quarantine. */
     record QcLot(String postingId, String code, String status, BigDecimal held, String batchNumber,
-            Instant passDueAt) {}
+            Instant passDueAt, Instant postedAt) {}
 
     /**
      * The QC lots of a gated stage in posting order. {@code held} = the lot's main output received into quarantine
@@ -742,7 +746,7 @@ public class StageExecutionService implements StageCheckpointResults {
             held = held.subtract(legacy);
             unlinked = unlinked.subtract(legacy);
             out.add(new QcLot(id, str(p, "code"), str(p, "qcStatus"), held, batches.get(id),
-                    p.get("qcPassDueAt") == null ? null : (Instant) p.get("qcPassDueAt")));
+                    p.get("qcPassDueAt") == null ? null : (Instant) p.get("qcPassDueAt"), (Instant) p.get("postedAt")));
         }
         return out;
     }
@@ -777,13 +781,15 @@ public class StageExecutionService implements StageCheckpointResults {
         // it entered quarantine at — never at the blended average of every order's held stock.
         String quarantine = production.quarantineLocation();
         Layers layers = lotLayers(lot, str(s, "outputProductId"), quarantine);
-        stock.transfer(StockMove.transfer(str(s, "outputProductId"), quarantine, dest, lot.held())
+        // Integrity fix 2026-11-24 (MR-8): the release line records the transfer's ledger code, so the next stage's
+        // issue finds the released lot's layers (MS-1) and a reversal checks the lot it brought, not the location.
+        String ledgerCode = stock.transfer(StockMove.transfer(str(s, "outputProductId"), quarantine, dest, lot.held())
                 .variant(Boolean.TRUE.equals(s.get("isLast")) ? str(order, "outputVariantId") : null)
                 .pin(layers.batchIds().isEmpty() ? null : layers.batchIds(), null, layers.unit())
                 .batch(lot.batchNumber()).source(SOURCE, pid)
-                .notes("Stage QC pass · " + post.get("code") + " (lot " + lot.code() + ")"));
-        line(pid, s, "qc_release", str(s, "outputProductId"), lot.held(), BigDecimal.ZERO, dest, null, null, null, null,
-                decision.reference());
+                .notes("Stage QC pass · " + post.get("code") + " (lot " + lot.code() + ")")).ledgerCode();
+        line(pid, s, "qc_release", str(s, "outputProductId"), lot.held(), BigDecimal.ZERO, dest, ledgerCode, null, null,
+                null, decision.reference());
         return lot.held();
     }
 
@@ -800,6 +806,19 @@ public class StageExecutionService implements StageCheckpointResults {
             throw ApiException.notFound("Stage posting not found");
         }
         String orderId = str(p, "orderId");
+        // Integrity fix 2026-11-24 (MR-11): the loss write-off is authorised (its own transaction) before the order lock
+        // and the stage row lock are taken, as ProductionService#recordQc does, so the approval transaction never runs
+        // while this one holds them; the checks below run again under the locks.
+        Map<String, Object> preStage = stage(str(p, "stageId"));
+        QcLot preLot = qcLots(str(preStage, "id")).stream().filter(l -> l.postingId().equals(postingId)).findFirst()
+                .orElse(null);
+        boolean authorized = preLot != null && "failed".equals(preLot.status()) && preLot.held().signum() > 0;
+        if (authorized) {
+            BigDecimal preUnit = lotLayers(preLot, str(preStage, "outputProductId"), production.quarantineLocation())
+                    .unit();
+            authorizeLossWriteOff(order(orderId), preUnit == null ? BigDecimal.ZERO
+                    : scale(preUnit.multiply(preLot.held())));
+        }
         lockOrder(orderId);
         Map<String, Object> s = lockStage(str(p, "stageId"));
         Map<String, Object> order = order(orderId);
@@ -822,7 +841,9 @@ public class StageExecutionService implements StageCheckpointResults {
         String product = str(s, "outputProductId");
         Layers layers = lotLayers(lot, product, quarantine);
         BigDecimal unit = layers.unit();
-        authorizeLossWriteOff(order, unit == null ? BigDecimal.ZERO : scale(unit.multiply(lot.held())));
+        if (!authorized) { // the lot failed / filled after the unlocked read: authorise now (rare)
+            authorizeLossWriteOff(order, unit == null ? BigDecimal.ZERO : scale(unit.multiply(lot.held())));
+        }
         Ctx c = ctx(s, order);
         Map<String, Object> post = newPosting(c, "qc_scrap", Instant.now(), dto.reason());
         String pid = str(post, "id");
@@ -887,6 +908,27 @@ public class StageExecutionService implements StageCheckpointResults {
      * that entered curing), else the stage's own latest output; null when nothing was posted.
      */
     Instant curingStart(Map<String, Object> stage) {
+        return curingStart(stage, null);
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MR-6): the curing start of one lot posted at {@code lotPostedAt} — the newest output of
+     * the stage before it at or before that time, else the lot's own posting time. Null {@code lotPostedAt}: the
+     * stage-wide start above.
+     */
+    Instant curingStart(Map<String, Object> stage, Instant lotPostedAt) {
+        if (lotPostedAt != null) {
+            String prevId = null;
+            for (Map<String, Object> e : stages(str(stage, "orderId"))) {
+                if (num(e) < num(stage)) {
+                    prevId = str(e, "id");
+                }
+            }
+            Instant start = prevId == null ? null : maxPostedAt("SELECT max(\"postedAt\") FROM"
+                    + " \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND \"stageId\" = ? AND kind = 'output'"
+                    + " AND \"reversedAt\" IS NULL AND \"postedAt\" <= ?", prevId, MfgDb.param(lotPostedAt));
+            return start != null ? start : lotPostedAt;
+        }
         List<Map<String, Object>> all = stages(str(stage, "orderId"));
         String prevId = null;
         for (Map<String, Object> e : all) {
@@ -900,8 +942,10 @@ public class StageExecutionService implements StageCheckpointResults {
         return start != null ? start : maxPostedAt(sql, str(stage, "id"));
     }
 
-    private Instant maxPostedAt(String sql, String stageId) {
-        java.time.LocalDateTime at = db.jdbc().sql(sql).params(MfgDb.org(), stageId)
+    private Instant maxPostedAt(String sql, String stageId, Object... more) {
+        List<Object> params = new ArrayList<>(List.of(MfgDb.org(), stageId));
+        params.addAll(List.of(more));
+        java.time.LocalDateTime at = db.jdbc().sql(sql).params(params)
                 .query(java.time.LocalDateTime.class).optional().orElse(null);
         return at == null ? null : at.toInstant(java.time.ZoneOffset.UTC);
     }
@@ -1215,17 +1259,22 @@ public class StageExecutionService implements StageCheckpointResults {
         // the cost it entered the stage location at — so the value leaving stage N's output is the value entering
         // N + 1. Before, the issue took the location's blended average / oldest layer, and possibly another order's lot.
         List<String> codes = new ArrayList<>();
+        List<String> releases = new ArrayList<>();
         for (Map<String, Object> l : lines) {
             if (c.prev.get("id").equals(l.get("stageId")) && from != null && from.equals(l.get("locationId"))
                     && l.get("ledgerCode") != null
                     && ("main_output".equals(l.get("role")) || "qc_release".equals(l.get("role")))) {
                 codes.add(str(l, "ledgerCode"));
+                if ("qc_release".equals(l.get("role"))) {
+                    releases.add(str(l, "postingId"));
+                }
             }
         }
         List<String> reversed = db.jdbc().sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"organizationId\" = ?"
                 + " AND \"orderId\" = ? AND \"reversedAt\" IS NOT NULL").params(MfgDb.org(), c.orderId)
                 .query(String.class).list();
-        Layers in = withReturns(receiptLayers(codes, product, from), reversed, product, from);
+        Layers in = withReleasedLots(withReturns(receiptLayers(codes, product, from), reversed, product, from),
+                releases, product, from);
         BigDecimal outQty = BigDecimal.ZERO;
         BigDecimal outValue = BigDecimal.ZERO;
         for (Map<String, Object> l : lines) {
@@ -1298,6 +1347,35 @@ public class StageExecutionService implements StageCheckpointResults {
                 + " AND \"locationId\" = :loc AND \"quantityChange\" > 0 AND \"batchId\" IS NOT NULL")
                 .param("org", MfgDb.org()).param("type", SOURCE_REVERSAL).param("ids", reversedPostingIds)
                 .param("product", productId).param("loc", locationId).query(String.class).list()) {
+            if (!ids.contains(b)) {
+                ids.add(b);
+            }
+        }
+        return new Layers(ids, layers.qty(), layers.value());
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MR-8): a transfer's ledger rows name no lot, so the lots a QC release delivered to
+     * {@code locationId} are found by the released lot's batch numbers (its quarantine receipt), as the transfer chose
+     * them at the destination.
+     */
+    Layers withReleasedLots(Layers layers, List<String> releasePostingIds, String productId, String locationId) {
+        if (releasePostingIds.isEmpty() || productId == null || locationId == null) {
+            return layers;
+        }
+        List<String> ids = new ArrayList<>(layers.batchIds());
+        for (String b : db.jdbc().sql("SELECT DISTINCT db.id FROM \"ProductionStagePosting\" rp"
+                + " JOIN \"ProductionStagePostingLine\" ol ON ol.\"organizationId\" = rp.\"organizationId\""
+                + " AND ol.\"postingId\" = rp.\"releasesPostingId\" AND ol.role = 'main_output'"
+                + " JOIN \"InventoryLedger\" il ON il.\"organizationId\" = ol.\"organizationId\""
+                + " AND il.\"ledgerCode\" = ol.\"ledgerCode\" AND il.\"quantityChange\" > 0 AND il.\"batchId\" IS NOT NULL"
+                + " JOIN \"InventoryBatch\" sb ON sb.id = il.\"batchId\" AND sb.\"organizationId\" = il.\"organizationId\""
+                + " JOIN \"InventoryBatch\" db ON db.\"organizationId\" = sb.\"organizationId\""
+                + " AND db.\"productId\" = sb.\"productId\" AND db.\"batchNumber\" = sb.\"batchNumber\""
+                + " AND db.\"locationId\" = :loc WHERE rp.\"organizationId\" = :org AND rp.id IN (:ids)"
+                + " AND rp.\"reversedAt\" IS NULL AND sb.\"productId\" = :product")
+                .param("org", MfgDb.org()).param("ids", releasePostingIds).param("product", productId)
+                .param("loc", locationId).query(String.class).list()) {
             if (!ids.contains(b)) {
                 ids.add(b);
             }

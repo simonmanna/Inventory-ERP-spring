@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Sparkles, PackagePlus, Wand2, CheckCircle2, ClipboardList } from 'lucide-react';
+import { MfgPageHeader } from './mfg-ui';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -37,20 +38,15 @@ export function ManufacturingPlanningPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold"><ClipboardList className="h-6 w-6" /> {tx('Planning')}</h1>
-          <p className="text-sm text-muted-foreground">{tx('Demand → requests → plan → orders. Never auto-starts.')}</p>
-        </div>
-        {canPlan && (
-          <div className="flex gap-2">
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={ClipboardList} title={tx('Planning')} subtitle={tx('Demand → requests → plan → orders. Never auto-starts.')}
+        actions={canPlan && (
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => run(() => mrp.mutateAsync({ path: 'scan-min-stock' }), tx('Scanned min-stock.'))}><PackagePlus className="mr-2 h-4 w-4" /> {tx('Scan min-stock')}</Button>
             <Button variant="outline" onClick={() => run(() => mrp.mutateAsync({ path: 'run' }), 'MRP run — purchase request drafted for shortfalls.')}><Wand2 className="mr-2 h-4 w-4" /> {tx('Run MRP')}</Button>
             <Button onClick={() => run(() => createPlan.mutateAsync({ fromOpenRequests: true, name: `Plan ${new Date().toLocaleDateString()}` }), tx('Plan created from open requests.'))}><Sparkles className="mr-2 h-4 w-4" /> {tx('Plan from requests')}</Button>
           </div>
-        )}
-      </div>
+        )} />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
