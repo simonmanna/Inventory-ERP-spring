@@ -149,7 +149,8 @@ import {
 import { useAuthStore } from '@/stores/auth.store';
 import { useSidebarStore } from '@/lib/sidebar.store';
 import { useOrgFeatures, useSidebarTagline } from '@/lib/use-org-features';
-import { featureAvailable, posModeAllows, sectionEnabled } from '@/lib/features';
+import { useModuleCatalog } from '@/lib/use-module-catalog';
+import { featureAvailable, posModeAllows, sectionEnabled, serverModuleAvailable } from '@/lib/features';
 import { usePosSettings, type PosNavVisibility } from '@/features/pos/api';
 import { LicenseBanner } from '@/components/license/LicenseBanner';
 import { OfflineDataBanner } from '@/components/offline/OfflineDataBanner';
@@ -647,13 +648,6 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/crushing', label: tx('Crushing Runs'), icon: Factory, permission: PERMISSIONS.crushing.read, group: 'Crushing' },
       { to: '/manufacturing/crushing/stockpiles', label: tx('Aggregate Stockpiles'), icon: Layers, permission: PERMISSIONS.crushing.read, group: 'Crushing' },
       { to: '/manufacturing/crushing/reports', label: tx('Crushing Reports'), icon: BarChart3, permission: PERMISSIONS.production.report, group: 'Crushing' },
-      // product lifecycle management (ADR-S063)
-      { to: '/manufacturing/plm', label: tx('PLM Overview'), icon: GitBranch, permission: PERMISSIONS.plm.read, group: 'PLM' },
-      { to: '/manufacturing/plm/products', label: tx('PLM Products'), icon: Package, permission: PERMISSIONS.plm.read, group: 'PLM' },
-      { to: '/manufacturing/plm/requests', label: tx('Change Requests'), icon: Inbox, permission: PERMISSIONS.plm.read, group: 'PLM' },
-      { to: '/manufacturing/plm/changes', label: tx('Change Orders'), icon: GitPullRequest, permission: PERMISSIONS.plm.read, group: 'PLM' },
-      { to: '/manufacturing/plm/documents', label: tx('Engineering Documents'), icon: FileStack, permission: PERMISSIONS.plm.read, group: 'PLM' },
-      { to: '/manufacturing/plm/settings', label: tx('PLM Settings'), icon: SettingsIcon, permission: PERMISSIONS.plm.manage, group: 'PLM' },
       { to: '/manufacturing/engineering', label: tx('Engineering & Costing'), icon: ScrollText, group: 'Costing' },
       { to: '/manufacturing/standard-costs', label: tx('Standard Costs'), icon: Calculator, permission: PERMISSIONS.standardCost.read, group: 'Costing' },
       { to: '/costing/advanced', label: tx('Advanced Costing'), icon: Calculator, permission: PERMISSIONS.advancedCosting.read, group: 'Costing' },
@@ -674,6 +668,22 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/manufacturing/floor-setup', label: tx('Shop-floor Setup'), icon: Wrench, permission: PERMISSIONS.workCenter.update, group: 'Configuration' },
       { to: '/manufacturing/precast/setup', label: tx('Precast Setup'), icon: SettingsIcon, permission: PERMISSIONS.bom.read, group: 'Configuration' },
       { to: '/manufacturing/crushing/plants', label: tx('Crushing Plants'), icon: Boxes, permission: PERMISSIONS.crushing.read, group: 'Configuration' },
+    ],
+  },
+  {
+    // Product lifecycle management (ADR-S063), its own application since ADR-S086: an add-on of manufacturing,
+    // gated by the `plm` feature (licensed with manufacturing) and the organization's PLM switch on the Modules screen.
+    zone: 'Manufacturing & Operations',
+    title: 'PLM',
+    icon: GitBranch,
+    items: [
+      { to: '/manufacturing/plm', label: tx('PLM Overview'), icon: LayoutDashboard, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/changes', label: tx('Change Orders'), icon: GitPullRequest, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/requests', label: tx('Change Requests'), icon: Inbox, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/products', label: tx('Products & Versions'), icon: Package, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/documents', label: tx('Engineering Documents'), icon: FileStack, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/reports', label: tx('PLM Reports'), icon: BarChart3, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/settings', label: tx('PLM Settings'), icon: SettingsIcon, permission: PERMISSIONS.plm.manage, group: 'Configuration' },
     ],
   },
   {
@@ -1045,8 +1055,10 @@ export function AppShell() {
   const { data: license } = useLicense();
   // Menus and Tables only apply to the cafe/restaurant POS mode.
   const { data: posSettings } = usePosSettings();
+  // Add-on applications (PLM) also follow the organization's switch on the Modules screen (ADR-S086).
+  const { data: moduleCatalog } = useModuleCatalog();
   const sections = VISIBLE_SECTIONS.filter((s) =>
-    sectionEnabled(orgFeatures, s.title, license?.features, posSettings?.posMode),
+    sectionEnabled(orgFeatures, s.title, license?.features, posSettings?.posMode, moduleCatalog),
   );
 
   // Accordion state: which titled sections are expanded (expanded sidebar only).
@@ -1179,7 +1191,9 @@ export function AppShell() {
           const items = section.items.filter(
                       (i) =>
                         flagEnabled(i.flag) &&
-                        (!i.feature || featureAvailable(orgFeatures, license?.features, i.feature)) &&
+                        (!i.feature ||
+                          (featureAvailable(orgFeatures, license?.features, i.feature) &&
+                            serverModuleAvailable(moduleCatalog, i.feature))) &&
                         posModeAllows(i.posModes, posSettings?.posMode) &&
                         (!i.posVisibility || posSettings?.[i.posVisibility] !== false) &&
                         (!i.permission || hasPermission(i.permission)) &&

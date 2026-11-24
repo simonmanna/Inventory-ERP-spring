@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
@@ -80,6 +81,7 @@ public class SalesQuotationService {
     private final AuditService audit;
     private final EventBus events;
     private final ProductVariantService variants;
+    private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
     private ProductSizingService sizing;
 
     /** Sell by size (ADR-S066). */
@@ -128,8 +130,9 @@ public class SalesQuotationService {
             OrdersService orders, ObjectProvider<SalesOrderService> salesOrders, SalesPricingEngine engine,
             CreditService creditChecks,
             ApprovalsService approvals, SequenceService sequence, AuditService audit, EventBus events,
-            ProductVariantService variants) {
+            ProductVariantService variants, ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
         this.variants = variants;
+        this.lifecycleGuard = lifecycleGuard;
         this.db = db;
         this.config = config;
         this.pricing = pricing;
@@ -407,8 +410,17 @@ public class SalesQuotationService {
 
     @SuppressWarnings("unchecked")
     private void writeLines(String id, String partnerId, LocalDate on, Object raw, Map<String, Object> header) {
-        db.update("DELETE FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ?", id, org());
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
+        // ADR-S086: the PLM lifecycle policy may refuse selling a product (obsolete) — checked before anything is
+        // written, and only for products added to the document: lines it already had stay editable.
+        lifecycleGuard.ifAvailable(g -> {
+            java.util.Set<Object> had = new java.util.HashSet<>();
+            db.rows("SELECT DISTINCT \"productId\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ?",
+                    id, org()).forEach(r -> had.add(r.get("productId")));
+            g.requireAllowed(ProductLifecycleGuard.SELL, lines.stream()
+                    .map(x -> x.get("productId") instanceof String p && !had.contains(p) ? p : null).toList());
+        });
+        db.update("DELETE FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ?", id, org());
         List<LineInput> inputs = new ArrayList<>();
         List<Map<String, Object>> meta = new ArrayList<>();
         // Display order: an Integer is the index of a priced line in `inputs`; a Map is a section or note row.

@@ -28,12 +28,14 @@ import {
   LifecycleStepper, Panel, PriorityPill, ProductLabel, RequestStatusPill, RevisionBadge, TabBar,
 } from './plm-ui';
 import { CancelChangeDialog, EditChangeDialog } from './change-dialogs';
+import { BlockedBanner, ChangeMeta, ConflictBanner, FinancialTab, FirstArticlePanel, ProductDataTab } from './change-app-panels';
+import { COST_POLICY } from '@/features/manufacturing/api-plm-app';
 import { DocumentDialog } from './document-dialogs';
 import {
   DOC_TYPES, REASONS, STOCK_DISPOSITION, WIP_DISPOSITION, ago, day, dayTime, human, qty, show,
 } from './vocab';
 
-type Tab = 'changes' | 'impact' | 'documents' | 'activity';
+type Tab = 'changes' | 'impact' | 'financial' | 'product-data' | 'documents' | 'activity';
 type ProductMap = Map<string, { code: string; name: string }>;
 
 /** One engineering change order: stages, approvals, what changes, impact, documents and activity. */
@@ -91,7 +93,9 @@ export function PlmChangeDetailPage() {
 
   const tabs = [
     { id: 'changes' as const, label: tx('Changes'), icon: GitCompare },
+    ...(eco.type === 'product' ? [{ id: 'product-data' as const, label: tx('Product data'), icon: FileText, count: (eco.productData ?? []).length }] : []),
     { id: 'impact' as const, label: tx('Impact'), icon: AlertTriangle },
+    ...(eco.type === 'bom' ? [{ id: 'financial' as const, label: tx('Financial'), icon: Coins }] : []),
     { id: 'documents' as const, label: tx('Documents'), icon: FileText, count: eco.documents.length },
     { id: 'activity' as const, label: tx('Activity'), icon: Activity, count: eco.activity.length },
   ];
@@ -110,6 +114,7 @@ export function PlmChangeDetailPage() {
               <ChangeTypeBadge type={eco.type} />
               <ChangeStatusPill status={eco.status} />
               <PriorityPill priority={eco.priority} />
+              <ChangeMeta eco={eco} />
             </div>
             <h1 className="text-2xl font-bold tracking-tight">{eco.title}</h1>
             <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
@@ -131,6 +136,8 @@ export function PlmChangeDetailPage() {
         </div>
       </div>
 
+      {open && <ConflictBanner eco={eco} />}
+      <BlockedBanner eco={eco} />
       {eco.status === 'applied' && (
         <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
           <CheckCircle2 className="h-4 w-4" />{tx('Applied on {{d}}', { d: dayTime(eco.appliedAt) })}{eco.newRevision && <> · {tx('revision')} <b>{eco.newRevision}</b></>}
@@ -184,11 +191,14 @@ export function PlmChangeDetailPage() {
           <TabBar tabs={tabs} value={tab} onChange={setTab} />
           {tab === 'changes' && <ChangesTab eco={eco} productMap={productMap} canEdit={canChange && draft} />}
           {tab === 'impact' && <ImpactTab eco={eco} />}
+          {tab === 'financial' && <FinancialTab eco={eco} />}
+          {tab === 'product-data' && <ProductDataTab eco={eco} />}
           {tab === 'documents' && <DocumentsTab eco={eco} canEdit={canChange && draft} />}
           {tab === 'activity' && <ActivityTab eco={eco} />}
         </div>
         <div className="space-y-4">
           <ApprovalsPanel eco={eco} />
+          <FirstArticlePanel eco={eco} />
           <Panel title={tx('Details')} icon={CalendarClock}>
             <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 text-sm">
               <dt className="text-muted-foreground">{tx('Effective')}</dt>
@@ -197,6 +207,7 @@ export function PlmChangeDetailPage() {
               <dd>{STOCK_DISPOSITION[eco.stockDisposition] ?? eco.stockDisposition}</dd>
               <dt className="text-muted-foreground">{tx('Work in progress')}</dt>
               <dd>{WIP_DISPOSITION[eco.wipDisposition] ?? eco.wipDisposition}</dd>
+              {eco.type === 'bom' && eco.costPolicy && <><dt className="text-muted-foreground">{tx('Cost on apply')}</dt><dd>{tx(COST_POLICY[eco.costPolicy].label)}</dd></>}
               <dt className="text-muted-foreground">{tx('New revision')}</dt>
               <dd>{eco.newRevision ? <RevisionBadge revision={eco.newRevision} /> : <span className="text-muted-foreground">{tx('Next (automatic)')}</span>}</dd>
               <dt className="text-muted-foreground">{tx('Created')}</dt>
@@ -269,7 +280,7 @@ function ApprovalsPanel({ eco }: { eco: ChangeDetail }) {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-medium">{p.userName ?? '?'}</span>
-                      {p.kind && <span className={cn('rounded px-1 text-[10px] uppercase', p.kind === 'required' ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300' : 'bg-muted text-muted-foreground')}>{p.kind === 'required' ? tx('required') : tx('optional')}</span>}
+                      {p.kind && <span className={cn('rounded px-1 text-[10px] uppercase', p.kind === 'required' ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300' : 'bg-muted text-muted-foreground')}>{p.kind === 'required' ? tx('required') : p.kind === 'comment' ? tx('comment only') : tx('optional')}</span>}
                     </div>
                     {p.comment && <p className="text-xs text-muted-foreground">“{p.comment}”</p>}
                   </div>

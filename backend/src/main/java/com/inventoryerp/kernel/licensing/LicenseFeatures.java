@@ -76,10 +76,20 @@ public final class LicenseFeatures {
     }
 
     /**
+     * Add-on modules (ADR-S086) sold as part of another feature: their licence ceiling is that feature's. PLM is part
+     * of manufacturing, so no installed licence lost PLM when it became its own module.
+     */
+    public static final java.util.Map<String, String> FEATURE_BY_ADD_ON = java.util.Map.of("plm", MANUFACTURING);
+
+    /**
      * The feature a {@code @RequiresModule} name is sold as, or {@code null} for a module the
      * licence does not price separately (orders, for example).
      */
     public static String featureForModule(String module) {
+        String parent = FEATURE_BY_ADD_ON.get(module);
+        if (parent != null) {
+            return parent;
+        }
         for (String feature : ALL) {
             if (moduleName(feature).equals(module)) {
                 return feature;

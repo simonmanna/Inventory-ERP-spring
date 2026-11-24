@@ -22,6 +22,7 @@ import {
   useWorkOrderAction,
 } from '@/features/manufacturing/api';
 import { ORDER_STATUS_VARIANT } from './ProductionOrdersPage';
+import { OrderBomBanner } from './plm/OrderBomBanner';
 import { tx } from '@/lib/i18n/tx';
 
 export function ProductionOrderDetailPage() {
@@ -100,6 +101,8 @@ export function ProductionOrderDetailPage() {
         </div>
         <Badge variant={ORDER_STATUS_VARIANT[order.status]}>{order.status.replace('_', ' ')}</Badge>
       </div>
+
+      <OrderBomBanner orderId={id} />
 
       <div className="flex flex-wrap gap-2">
         {canConfirm && <Button variant="outline" onClick={() => act(confirm, undefined, tx('Order confirmed.'))}><ClipboardCheck className="mr-2 h-4 w-4" /> {tx('Confirm')}</Button>}

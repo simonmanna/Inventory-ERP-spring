@@ -1,5 +1,7 @@
 package com.inventoryerp.procurement.application;
 
+import org.springframework.beans.factory.ObjectProvider;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.core.application.UomConversionService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
@@ -142,15 +144,18 @@ public class PurchaseOrdersService {
     private final ReceivingControls receiving;
     private final ProductVariantService variants;
     private final CurrencyService currencies;
+    private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
             CashSessionService cashSession, PlatformTransactionManager txm, UomConversionService units,
             ProcurementBudgetService budgets, ProcurementDelegationService delegations, SupplierService suppliers,
             ProcurementPolicyService policies, PurchaseCommitments commitments, ReceivingControls receiving,
-            ProductVariantService variants, CurrencyService currencies) {
+            ProductVariantService variants, CurrencyService currencies,
+            ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
         this.variants = variants;
         this.currencies = currencies;
+        this.lifecycleGuard = lifecycleGuard;
         this.jdbc = jdbc;
         this.budgets = budgets;
         this.delegations = delegations;
@@ -187,6 +192,9 @@ public class PurchaseOrdersService {
         if (dto.lines() == null || dto.lines().isEmpty()) {
             throw ApiException.badRequest("At least one line required");
         }
+        // ADR-S086: the PLM lifecycle policy may refuse buying a product (obsolete, being phased out).
+        lifecycleGuard.ifAvailable(g -> g.requireAllowed(ProductLifecycleGuard.PURCHASE,
+                dto.lines().stream().map(LineInput::productId).toList()));
         if (dto.warehouseId() == null || dto.warehouseId().isEmpty()) {
             throw ApiException.badRequest("Warehouse is required");
         }

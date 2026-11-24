@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ArrowLeft, ArrowRight, ClipboardList, Factory, FileText, GitPullRequest, History, Inbox, ListTree, Network, Pencil, Plus,
+  ArrowLeft, ArrowRight, ClipboardList, Factory, FileText, GitCompare, GitPullRequest, History, Inbox, ListTree, Network, Pencil, Plus,
   Route as RouteIcon, Star, Tag,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -22,8 +22,9 @@ import { ChangeDialog } from './change-dialogs';
 import { RequestDialog } from './request-dialogs';
 import { DocumentDialog } from './document-dialogs';
 import { BOM_STATUS_TONE, DOC_TYPES, LIFECYCLE, LIFECYCLE_ORDER, REASONS, day, dayTime, human, qty } from './vocab';
+import { VersionsTab } from './plm-versions';
 
-type Tab = 'boms' | 'routings' | 'changes' | 'requests' | 'documents' | 'where-used' | 'orders' | 'history';
+type Tab = 'boms' | 'versions' | 'routings' | 'changes' | 'requests' | 'documents' | 'where-used' | 'orders' | 'history';
 
 /** Product cockpit: lifecycle, revision and everything engineering knows about one product. */
 export function PlmProductDetailPage() {
@@ -59,6 +60,7 @@ export function PlmProductDetailPage() {
   const forward = (s: LifecycleState) => LIFECYCLE_ORDER.indexOf(s) > LIFECYCLE_ORDER.indexOf(item.lifecycleState);
   const tabs = [
     { id: 'boms' as const, label: tx('BOM versions'), icon: ListTree, count: item.boms.length },
+    { id: 'versions' as const, label: tx('Revisions'), icon: GitCompare },
     { id: 'routings' as const, label: tx('Routings'), icon: RouteIcon, count: item.routings.length },
     { id: 'changes' as const, label: tx('Changes'), icon: GitPullRequest, count: item.changes.filter((c) => c.status === 'draft' || c.status === 'approved').length },
     { id: 'requests' as const, label: tx('Requests'), icon: Inbox, count: item.requests.filter((r) => r.status === 'new' || r.status === 'accepted').length },
@@ -129,6 +131,7 @@ export function PlmProductDetailPage() {
       <TabBar tabs={tabs} value={tab} onChange={setTab} />
 
       {tab === 'boms' && <BomsTab item={item} />}
+      {tab === 'versions' && <VersionsTab item={item} />}
       {tab === 'routings' && <RoutingsTab item={item} />}
       {tab === 'changes' && (
         <ChangesTab item={item} action={canChange && <Button size="sm" onClick={() => setNewChange(true)}><Plus className="mr-1 h-4 w-4" />{tx('New change')}</Button>} />

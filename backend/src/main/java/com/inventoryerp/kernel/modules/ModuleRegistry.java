@@ -27,10 +27,23 @@ public class ModuleRegistry {
     /** An order kind a module owns. */
     public record OrderKind(String code, String label) {}
 
-    /** Manifest every pluggable module registers. */
-    public record ErpModule(String name, String version, List<String> dependencies, List<OrderKind> orderKinds) {
+    /**
+     * Manifest every pluggable module registers. An {@code addOn} (ADR-S086) extends its dependencies: the module guard
+     * treats it as on wherever all of them are on, unless an organization switched it off.
+     */
+    public record ErpModule(String name, String version, List<String> dependencies, List<OrderKind> orderKinds,
+            boolean addOn) {
+        public ErpModule(String name, String version, List<String> dependencies, List<OrderKind> orderKinds) {
+            this(name, version, dependencies, orderKinds, false);
+        }
+
         public ErpModule(String name, String version, List<String> dependencies) {
-            this(name, version, dependencies, List.of());
+            this(name, version, dependencies, List.of(), false);
+        }
+
+        /** An add-on of {@code dependencies} (on by default wherever they are on). */
+        public static ErpModule addOn(String name, String version, List<String> dependencies) {
+            return new ErpModule(name, version, dependencies, List.of(), true);
         }
     }
 
@@ -60,6 +73,11 @@ public class ModuleRegistry {
 
     public synchronized boolean has(String name) {
         return modules.containsKey(name);
+    }
+
+    /** The manifest registered under {@code name}, or null. */
+    public synchronized ErpModule find(String name) {
+        return modules.get(name);
     }
 
     public synchronized Set<String> knownOrderKinds() {

@@ -199,7 +199,35 @@ public class ProductService extends BaseCrudService<Product> {
     /** Update; a non-null {@code units} list replaces the product's extra units. */
     @Transactional
     public Map<String, Object> update(String id, Record dto, List<Packaging> packagings, List<Unit> units) {
-        Map<String, Object> data = EntityPatch.data(dto, "packagings", "units");
+        return updateData(id, EntityPatch.data(dto, "packagings", "units"), packagings, units);
+    }
+
+    /** Master-data fields a PLM engineering change order may set (ADR-S086). */
+    public static final List<String> ENGINEERING_FIELDS = List.of("name", "description", "barcode", "weight", "volume",
+            "image");
+
+    /**
+     * Apply the master-data part of a PLM engineering change order (ADR-S086): only {@link #ENGINEERING_FIELDS}, a
+     * {@code null} clears the field (never the name). It runs the edit path of {@link #update} — its rules, the
+     * {@code product.updated} event and the audit trail.
+     */
+    @Transactional
+    public Map<String, Object> applyEngineeringChange(String id, Map<String, Object> changes) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : changes.entrySet()) {
+            if (!ENGINEERING_FIELDS.contains(e.getKey())) {
+                throw ApiException.badRequest("Field " + e.getKey() + " cannot be changed by an engineering change.");
+            }
+            data.put(e.getKey(), e.getValue());
+        }
+        if (data.containsKey("name") && (data.get("name") == null || data.get("name").toString().isBlank())) {
+            throw ApiException.badRequest("name should not be empty");
+        }
+        return updateData(id, data, null, null);
+    }
+
+    private Map<String, Object> updateData(String id, Map<String, Object> data, List<Packaging> packagings,
+            List<Unit> units) {
         boolean beverageTouched = BEVERAGE_FIELDS.stream().anyMatch(data::containsKey);
         boolean inventoryTouched = INVENTORY_CONFIG_FIELDS.stream().anyMatch(data::containsKey);
         boolean costTouched = data.containsKey("costPrice");

@@ -616,6 +616,10 @@ Tests: `ReplenishmentMrpIT`.
 
 ## ADR-S063 — Product lifecycle management (extension: no Nest counterpart)
 
+> Since [ADR-S086](../adr/ADR-S086-plm-application.md) PLM is its own module (`com.inventoryerp.plm`) and an add-on
+> application of manufacturing. The current spec, with all 61 routes, is [plm.md](plm.md); this section is kept as the
+> ADR-S063 record. Manufacturing reaches PLM only through `manufacturing.spi`.
+
 [ADR-S063](../adr/ADR-S063-product-lifecycle-management.md). Migrations `V440__plm_product_lifecycle.sql`, `V441__plm_dispositions.sql`. Services
 `PlmLifecycleService`, `PlmStageService`, `PlmChangeService`, `PlmRequestService`, `PlmDocumentService`,
 `PlmDispositionService`, `PlmGate`,

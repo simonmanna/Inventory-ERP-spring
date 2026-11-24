@@ -1742,7 +1742,7 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 
 ## Product lifecycle management (ADR-S063, extension: no Nest counterpart)
 
-[Spec](spec/manufacturing.md). 38 routes in `PlmController`; ECO routes of ADR-S006 now run through `PlmChangeService`. Migrations V440, V441 (apply queue, stock / WIP dispositions on apply, org-time-zone effectivity, hourly `PlmEffectivityJob`). Tests: `PlmIT`, `CostingEngineeringIT`. Web: `/manufacturing/plm/*` (overview, products and cockpit, change requests, change board and detail, documents, settings).
+Module `plm` since ADR-S086 (was inside `manufacturing`). [Spec](spec/plm.md). 38 routes in `PlmController`; ECO routes of ADR-S006 now run through `PlmChangeService`. Migrations V440, V441 (apply queue, stock / WIP dispositions on apply, org-time-zone effectivity, hourly `PlmEffectivityJob`). Tests: `PlmIT`, `CostingEngineeringIT`. Web: `/manufacturing/plm/*` (overview, products and cockpit, change requests, change board and detail, documents, settings).
 
 - [x] GET /api/v1/manufacturing/plm/overview — PlmController.overview
 - [x] GET /api/v1/manufacturing/plm/items — PlmController.items
@@ -1782,6 +1782,43 @@ deposits, score hold + override, reports) and `RentalMathTest`. Parity harness n
 - [x] POST /api/v1/manufacturing/plm/documents/:id/revise — PlmController.reviseDocument
 - [x] POST /api/v1/manufacturing/plm/documents/:id/obsolete — PlmController.obsoleteDocument
 - [x] DELETE /api/v1/manufacturing/plm/documents/:id — PlmController.deleteDocument
+
+## PLM application (ADR-S086, extension: no Nest counterpart)
+
+[Spec](spec/plm.md), [ADR-S086](adr/ADR-S086-plm-application.md). `plm` is its own module and an add-on application of
+manufacturing (Modules screen switch, feature `plm`, `ENABLE_PLM`). ECO types with their own pipelines, tags, kanban
+state, comment-only reviewers; revisions with snapshots, compare and as-built; BOM conflict detection and rebase;
+superseded-BOM banner and update on production orders; product master-data ECOs; cost policy (propose / activate a
+standard with stock revaluation) and financial view; lifecycle policy gating purchase, sale and replenishment;
+first-article inspection through quality lots; reports; settings; opt-in demo seed `SEED_PLM_DEMO`. Migrations
+V640–V643. Tests: `PlmModuleIT`, `PlmModuleAccessTest`, `PlmTypesIT`, `PlmVersionsIT`, `BomRebaseTest`,
+`PlmErpIntegrationIT`, `PlmPolicyIT`, `PlmReportsIT`, `PlmDemoSeedIT`, plus `PlmIT`. Web: PLM sidebar section,
+`/manufacturing/plm/reports`, settings sections, change detail panels, product Revisions tab, production order
+banner. 23 routes in `PlmAppController`:
+
+- [x] GET /api/v1/manufacturing/plm/change-types — PlmAppController.changeTypes
+- [x] POST /api/v1/manufacturing/plm/change-types — PlmAppController.createChangeType
+- [x] PATCH /api/v1/manufacturing/plm/change-types/:id — PlmAppController.updateChangeType
+- [x] DELETE /api/v1/manufacturing/plm/change-types/:id — PlmAppController.deleteChangeType
+- [x] GET /api/v1/manufacturing/plm/tags — PlmAppController.tags
+- [x] POST /api/v1/manufacturing/plm/tags — PlmAppController.createTag
+- [x] PATCH /api/v1/manufacturing/plm/tags/:id — PlmAppController.updateTag
+- [x] DELETE /api/v1/manufacturing/plm/tags/:id — PlmAppController.deleteTag
+- [x] POST /api/v1/manufacturing/plm/changes/:id/kanban-state — PlmAppController.kanbanState
+- [x] POST /api/v1/manufacturing/plm/changes/:id/first-article — PlmAppController.firstArticle
+- [x] GET /api/v1/manufacturing/plm/changes/:id/financial — PlmAppController.financial
+- [x] POST /api/v1/manufacturing/plm/changes/:id/rebase — PlmAppController.rebase
+- [x] GET /api/v1/manufacturing/plm/items/:id/revisions — PlmAppController.revisions
+- [x] GET /api/v1/manufacturing/plm/revisions/compare — PlmAppController.compareRevisions
+- [x] GET /api/v1/manufacturing/plm/revisions/:id — PlmAppController.revision
+- [x] GET /api/v1/manufacturing/plm/items/:id/as-built — PlmAppController.asBuilt
+- [x] GET /api/v1/manufacturing/plm/reports/changes — PlmAppController.changeReport
+- [x] GET /api/v1/manufacturing/plm/reports/obsolete-stock — PlmAppController.obsoleteStock
+- [x] GET /api/v1/manufacturing/plm/reports/stock-by-revision — PlmAppController.stockByRevision
+- [x] GET /api/v1/manufacturing/plm/settings — PlmAppController.settings
+- [x] PUT /api/v1/manufacturing/plm/settings — PlmAppController.saveSettings
+- [x] GET /api/v1/manufacturing/plm/orders/:orderId/bom-status — PlmAppController.orderBomStatus
+- [x] POST /api/v1/manufacturing/plm/orders/:orderId/update-bom — PlmAppController.updateOrderBom
 
 ## Notification routing (ADR-S065, extension: no Nest counterpart)
 

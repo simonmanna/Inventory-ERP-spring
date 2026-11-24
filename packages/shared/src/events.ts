@@ -324,6 +324,10 @@ export const EVENTS = {
   PlmChangeApplied: 'plm.change.applied',
   PlmChangeRequestCreated: 'plm.request.created',
   PlmLifecycleChanged: 'plm.lifecycle.changed',
+  // PLM application (ADR-S086): versions, rebase, first-article inspection.
+  PlmRevisionCreated: 'plm.revision.created',
+  PlmChangeRebased: 'plm.change.rebased',
+  PlmFaiOpened: 'plm.fai.opened',
   // Notification routing (ADR-S065): state changes that tell the responsible person.
   HrLeaveRequested: 'hr.leave.requested',
   HrLeaveDecided: 'hr.leave.decided',
@@ -474,6 +478,9 @@ export interface DomainEventMap {
   'plm.change.applied': PlmEventPayload;
   'plm.request.created': PlmEventPayload;
   'plm.lifecycle.changed': PlmEventPayload;
+  'plm.revision.created': PlmEventPayload;
+  'plm.change.rebased': PlmEventPayload;
+  'plm.fai.opened': PlmEventPayload;
   'hr.leave.requested': { organizationId: string; leaveRequestId: string; requestCode: string; employeeId: string; days: number };
   'hr.leave.decided': { organizationId: string; leaveRequestId: string; requestCode: string; employeeId: string; status: 'APPROVED' | 'REJECTED'; reason: string | null };
   'manufacturing.order.completed': { organizationId: string; orderId: string; orderCode: string; status: 'completed' | 'qc_hold'; producedQty: string | null; reason: null };
@@ -970,12 +977,13 @@ export interface ProjectEventPayload {
   [key: string]: unknown;
 }
 
-/** Payload of `plm.*` events (ADR-S063): the ECO, ECR or PLM item they are about. */
+/** Payload of `plm.*` events (ADR-S063, ADR-S086): the ECO, ECR, PLM item or revision they are about. */
 export interface PlmEventPayload {
   organizationId: string;
   changeId?: string;
   requestId?: string;
   itemId?: string;
+  revisionId?: string;
   productId?: string | null;
   [key: string]: unknown;
 }

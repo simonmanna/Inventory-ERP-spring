@@ -48,6 +48,7 @@ import com.inventoryerp.manufacturing.domain.ProductionMaterial;
 import com.inventoryerp.manufacturing.domain.ProductionOrder;
 import com.inventoryerp.manufacturing.domain.ProductionOutput;
 import com.inventoryerp.manufacturing.domain.ProductionQcCheck;
+import com.inventoryerp.manufacturing.spi.ProductionLifecycleGate;
 import com.inventoryerp.pos.domain.MenuItem;
 import com.inventoryerp.pos.domain.MenuProduct;
 import com.inventoryerp.shared.web.ApiException;
@@ -66,6 +67,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * Production order engine (port of {@code production.service.ts}):
@@ -85,7 +87,7 @@ public class ProductionService {
     private static final java.time.format.DateTimeFormatter ISO_MS = java.time.format.DateTimeFormatter
             .ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC);
 
-    private final PlmGate plmGate;
+    private final ObjectProvider<ProductionLifecycleGate> lifecycleGate;
     private final MfgDb db;
     private final SequenceService seq;
     private final AuditService audit;
@@ -135,10 +137,11 @@ public class ProductionService {
             StockReservationService reservations,
             UomConversionService uom, PosStockLocation posStockLocation, BomService boms,
             QualityService quality, CostingService costing, StandardCostService standards,
-            PlatformTransactionManager txm, PlmGate plmGate, EventBus events, ProductVariantService variants) {
+            PlatformTransactionManager txm, ObjectProvider<ProductionLifecycleGate> lifecycleGate, EventBus events,
+            ProductVariantService variants) {
         this.events = events;
         this.variants = variants;
-        this.plmGate = plmGate;
+        this.lifecycleGate = lifecycleGate;
         this.standards = standards;
         this.quality = quality;
         this.costing = costing;
@@ -245,7 +248,7 @@ public class ProductionService {
 
         // ADR-S006 A7: unknown references answer 404 instead of a foreign-key 500.
         getProduct(outputProductId);
-        plmGate.requireProducible(outputProductId);
+        lifecycleGate.ifAvailable(g -> g.requireProducible(outputProductId)); // PLM lifecycle gate (ADR-S086)
         for (MaterialPlan m : materials) {
             getProduct(m.productId());
         }
