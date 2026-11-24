@@ -94,12 +94,15 @@ class GenericReversalAllowlistIT extends AccountingFixtures {
     }
 
     @Test
-    @DisplayName("A2: a VAT settlement entry is refused (corrected after the settled period)")
+    @DisplayName("A2: a VAT settlement entry is refused; the refusal names the settlement undo of A3")
     void vatSettlementRefused() {
         Books b = freshBooks();
         String to = LocalDate.now().toString();
-        refused(b, systemEntry(b, "tax_settlement", to), "VAT settlement " + to,
-                "correct VAT with an adjusting manual journal entry dated after the settled VAT period");
+        String entry = systemEntry(b, "tax_settlement", to);
+        refused(b, entry, "VAT settlement " + to, "undo the latest VAT settlement",
+                "(POST /tax-settlements/{settlementId}/reverse)");
+        assertThat(okAs(b, 200, "GET", "/journal-entries/" + entry, null).get("sourceDocument").get("path").asString())
+                .isEqualTo("/period-end");
     }
 
     @Test

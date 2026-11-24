@@ -180,8 +180,10 @@ public class SubledgerSources {
 
     static final Kind PERIOD_CLOSE = process("period_close", "period close", "FiscalPeriod", "name",
             "reopen the fiscal period", "POST /fiscal-periods/{id}/reopen", "/fiscal-periods");
+    // The entry's source id is the settled period's end date, not the settlement's id: the route names its parameter.
     static final Kind VAT_SETTLEMENT = process("tax_settlement", "VAT settlement", null, null,
-            "correct VAT with an adjusting manual journal entry dated after the settled VAT period", null, null);
+            "undo the latest VAT settlement (finance audit A3)", "POST /tax-settlements/{settlementId}/reverse",
+            "/period-end");
     static final Kind FX_REVALUATION = process("fx_revaluation", "FX revaluation", null, null,
             "run the FX revaluation again for the date; a re-run posts only the difference", "POST /fx-revaluations",
             null);

@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.format.TextStyle;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -28,7 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Fiscal years and the year-end close (roadmap 1.7, ADR-S023, extension). A year groups its periods. Profit and loss
  * reaches Retained Earnings through each period's closing journal ({@link PeriodCloseService}), so closing the year
- * posts nothing itself: it closes the periods that had no P&amp;L activity, checks that every other period is closed,
+ * posts nothing itself: it closes the periods with no P&amp;L to close (empty ones directly, ones with postings through
+ * the period close; finance audit A3), checks that every other period is closed,
  * that P&amp;L nets to zero over the year and the trial balance balances, requires the manual sign-offs, snapshots the
  * balance-sheet balances as next year's opening position, optionally locks the periods, and opens the next year.
  */
@@ -54,11 +56,19 @@ public class FiscalYearService {
     private final JdbcClient jdbc;
     private final AuditService audit;
     private final AccountResolverService accounts;
+    private final PeriodCloseService periodClose;
 
-    public FiscalYearService(JdbcClient jdbc, AuditService audit, AccountResolverService accounts) {
+    public FiscalYearService(JdbcClient jdbc, AuditService audit, AccountResolverService accounts,
+            PeriodCloseService periodClose) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.accounts = accounts;
+        this.periodClose = periodClose;
+    }
+
+    /** Whether {@code meta} is a profit and loss account (an account with no report section is not). */
+    private static boolean profitAndLoss(AccountMeta meta) {
+        return meta.reportSection() != null && PROFIT_AND_LOSS.contains(meta.reportSection());
     }
 
     private static String org() {
@@ -254,17 +264,39 @@ public class FiscalYearService {
                 .params(org(), from(y.start()), through(y.end()))
                 .query((rs, n) -> net.put(rs.getString(1), rs.getBigDecimal(2)))
                 .list();
-        Map<String, AccountMeta> meta = accounts.meta(net.keySet());
-        net.keySet().removeIf(id -> meta.get(id) == null || !PROFIT_AND_LOSS.contains(meta.get(id).reportSection()));
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(net.keySet());
+        net.keySet().removeIf(id -> !profitAndLoss(meta.get(id)));
         return net;
     }
 
-    /** Open periods of the year that carry posted P&amp;L activity (they need a period close of their own). */
-    private long periodsWithActivity(Year y) {
-        return count("SELECT count(*) FROM \"FiscalPeriod\" p WHERE p.\"organizationId\" = ? AND p.\"fiscalYearId\" = ?"
-                + " AND p.\"deletedAt\" IS NULL AND p.status::text = 'open' AND EXISTS (SELECT 1 FROM \"JournalEntry\" e"
-                + " WHERE e.\"organizationId\" = p.\"organizationId\" AND e.status::text IN ('posted', 'reversed')"
-                + inPeriod(), org(), y.id());
+    /**
+     * The year's open periods that have postings, each with whether its profit and loss is still open (some P&amp;L
+     * account does not net to zero over the period). Those need a period close of their own; the others need no
+     * closing entry, and the year close closes them (finance audit A3, P2-1: any posting used to hold the year).
+     */
+    private Map<String, Boolean> openPeriodsWithPostings(Year y) {
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        Map<String, Map<String, BigDecimal>> nets = new LinkedHashMap<>();
+        jdbc.sql("SELECT p.id, l.\"accountId\", COALESCE(SUM(l.\"baseDebit\"), 0) - COALESCE(SUM(l.\"baseCredit\"), 0)"
+                        + " FROM \"FiscalPeriod\" p JOIN \"JournalEntry\" e ON e.\"organizationId\" = p.\"organizationId\""
+                        + " AND e.status::text IN ('posted', 'reversed')"
+                        + " AND e.\"postingDate\" >= " + AccountingDay.sqlFromWallClock("p.\"startDate\"", zone)
+                        + " AND e.\"postingDate\" <= " + AccountingDay.sqlFromWallClock("p.\"endDate\"", zone)
+                        + " JOIN \"JournalLine\" l ON l.\"journalEntryId\" = e.id"
+                        + " WHERE p.\"organizationId\" = ? AND p.\"fiscalYearId\" = ? AND p.\"deletedAt\" IS NULL"
+                        + " AND p.status::text = 'open' GROUP BY p.id, p.\"startDate\", l.\"accountId\""
+                        + " ORDER BY p.\"startDate\"")
+                .params(org(), y.id())
+                .query((rs, n) -> nets.computeIfAbsent(rs.getString(1), k -> new HashMap<>())
+                        .put(rs.getString(2), rs.getBigDecimal(3)))
+                .list();
+        Set<String> ids = new HashSet<>();
+        nets.values().forEach(byAccount -> ids.addAll(byAccount.keySet()));
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(ids);
+        Map<String, Boolean> out = new LinkedHashMap<>();
+        nets.forEach((period, byAccount) -> out.put(period, byAccount.entrySet().stream()
+                .anyMatch(e -> profitAndLoss(meta.get(e.getKey())) && e.getValue().signum() != 0)));
+        return out;
     }
 
     private static Map<String, Object> check(String key, String label, boolean blocking, long found) {
@@ -283,7 +315,8 @@ public class FiscalYearService {
         checks.add(check("earlier_years_closed", "Earlier fiscal years closed", true,
                 count("SELECT count(*) FROM \"FiscalYear\" WHERE \"organizationId\" = ? AND \"startDate\" < ? AND status"
                         + " = 'open'", org, Date.valueOf(y.start()))));
-        checks.add(check("periods_closed", "Every period with postings closed", true, periodsWithActivity(y)));
+        checks.add(check("periods_closed", "Every period with profit and loss closed", true,
+                openPeriodsWithPostings(y).values().stream().filter(Boolean::booleanValue).count()));
         checks.add(check("profit_and_loss_closed", "Profit and loss closed to retained earnings", true,
                 profitAndLossNet(y, true).values().stream().filter(v -> v.signum() != 0).count()));
         BigDecimal[] totals = jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\"), 0), COALESCE(SUM(l.\"baseCredit\"), 0) FROM \"JournalLine\""
@@ -366,6 +399,15 @@ public class FiscalYearService {
                         + " e.\"organizationId\" = p.\"organizationId\" AND e.status::text IN ('posted', 'reversed')"
                         + inPeriod())
                 .params(TenantContext.userId(), org(), y.id()).update();
+        // Finance audit A3 (P2-1): a period with postings but no profit and loss to close (balance-sheet movements only,
+        // or everything reversed) goes through the period close and its checks; it posts no closing entry.
+        int zeroClosed = 0;
+        for (Map.Entry<String, Boolean> p : openPeriodsWithPostings(y).entrySet()) {
+            if (!p.getValue()) {
+                periodClose.close(p.getKey());
+                zeroClosed++;
+            }
+        }
         Map<String, Object> list = checklist(y);
         List<String> failed = new ArrayList<>();
         for (Object c : (List<?>) list.get("checks")) {
@@ -404,9 +446,11 @@ public class FiscalYearService {
         }
         audit.recordInTx(AuditInput.of("FiscalYear", y.id(), "update", Map.of("status", "open"), Obj.of("status",
                 "closed", "netIncome", PostingService.plain(netIncome), "lockedPeriods", lockPeriods,
-                "emptyPeriodsClosed", emptyClosed, "nextFiscalYearId", next)));
+                "emptyPeriodsClosed", emptyClosed, "zeroProfitAndLossPeriodsClosed", zeroClosed, "nextFiscalYearId",
+                next)));
         Map<String, Object> out = view(year(y.id(), false));
         out.put("emptyPeriodsClosed", emptyClosed);
+        out.put("zeroProfitAndLossPeriodsClosed", zeroClosed);
         out.put("periodsLocked", locked);
         out.put("nextFiscalYearId", next);
         return out;
@@ -422,10 +466,10 @@ public class FiscalYearService {
                 .params(org(), through(y.end()))
                 .query((rs, n) -> sums.put(rs.getString(1), new BigDecimal[] {rs.getBigDecimal(2), rs.getBigDecimal(3)}))
                 .list();
-        Map<String, AccountMeta> meta = accounts.meta(sums.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(sums.keySet());
         for (Map.Entry<String, BigDecimal[]> e : sums.entrySet()) {
             AccountMeta m = meta.get(e.getKey());
-            if (m == null || PROFIT_AND_LOSS.contains(m.reportSection())) {
+            if (profitAndLoss(m)) {
                 continue;
             }
             BigDecimal debit = e.getValue()[0];

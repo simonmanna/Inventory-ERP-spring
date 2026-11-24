@@ -13,6 +13,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -55,6 +56,17 @@ public class TaxSettlementController {
     @RequirePermissions(Permissions.JOURNAL_ENTRY__CREATE)
     public Map<String, Object> settle(@Valid @RequestBody SettleRequest dto) {
         return settlements.settle(start(dto.from()), end(dto.to()));
+    }
+
+    /**
+     * Undo the latest settlement (finance audit A3): reverses its offset entry and lifts the VAT lock back to the
+     * settlement before it. Same permission as settling until finance audit A4 adds {@code tax:settle}.
+     */
+    @PostMapping("/{id}/reverse")
+    @Idempotent
+    @RequirePermissions(Permissions.JOURNAL_ENTRY__CREATE)
+    public Map<String, Object> reverse(@PathVariable String id) {
+        return settlements.reverse(id);
     }
 
     private static Instant start(String day) {

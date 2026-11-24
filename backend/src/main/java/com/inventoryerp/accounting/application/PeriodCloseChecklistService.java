@@ -86,16 +86,13 @@ public class PeriodCloseChecklistService {
         checks.add(check("register_shifts", "Register shifts reconciled", true,
                 count("SELECT count(*) FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"openedAt\" <= ?"
                         + " AND status::text <> 'reconciled'", org, endAt)));
+        // As the close gate (finance audit A3, P2-13): a job counts in the period of its sale, and when queued in it.
         checks.add(check("stock_posting", "Stock postings finished", true,
-                count("SELECT count(*) FROM \"StockPostingJob\" WHERE \"organizationId\" = ? AND status::text IN"
-                        + " ('pending', 'processing', 'failed') AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org,
-                        startAt, endAt)));
+                count(PeriodCloseService.UNPOSTED_STOCK_JOBS, org, startAt, endAt, startAt, endAt)));
         checks.add(check("inventory_mutations", "No pending stock documents", true, mutations));
         checks.add(check("inventory_exceptions", "No open inventory exceptions", true,
-                count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text = "
-                        + "'open' AND kind IS DISTINCT FROM ? AND NOT starts_with(COALESCE(kind, ''), ?)"
-                        + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, InventoryTieOutMonitor.KIND,
-                        InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX, startAt, endAt)));
+                count(PeriodCloseService.OPEN_SALE_LINE_EXCEPTIONS, org, InventoryTieOutMonitor.KIND,
+                        InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX, startAt, endAt, startAt, endAt)));
         // Hardening R0: the daily inventory integrity check parks a failing value check (valuation vs stock ledger or
         // GL) as an open exception of its own kind; like the close gate, it blocks while open (raised since the
         // period started). Quantity findings stay in the Posting Monitor and are not a close item.

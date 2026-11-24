@@ -388,20 +388,28 @@ public class LedgerIntegrityService {
     // ------------------------------------------------------------------ I11, I9: VAT and inventory
 
     /**
-     * The settlement's offset entry is posted, and output / input VAT of each settled period, measured as
+     * The offset entry of each settlement in force is posted, and output / input VAT of its period, measured as
      * {@code TaxSettlementService} measures it, still equal the settled figures. A difference means something reached
      * the settled period afterwards (a posting racing the settlement, a write that bypassed the VAT lock, a reversed
-     * settlement entry) or the tax accounts / organisation time zone changed since.
+     * settlement entry) or the tax accounts / organisation time zone changed since. A settlement undone through
+     * {@code POST /tax-settlements/{id}/reverse} (finance audit A3) locks nothing, so its figures are not compared; its
+     * offset entry must be reversed by a posted reversal entry instead.
      */
     private IntegrityCheck taxLock(ZoneId zone) {
         Found entries = find("""
-                SELECT 'settlement_entry_not_posted' AS kind, s.id AS "settlementId", s."periodFrom", s."periodTo",
-                       s."inputTax", s."journalEntryId", e.status::text AS "entryStatus", count(*) OVER () AS rows_total
+                SELECT CASE WHEN s."reversedAt" IS NULL THEN 'settlement_entry_not_posted'
+                            ELSE 'settlement_reversal_not_posted' END AS kind,
+                       s.id AS "settlementId", s."periodFrom", s."periodTo", s."inputTax",
+                       CASE WHEN s."reversedAt" IS NULL THEN s."journalEntryId" ELSE s."reversalJournalEntryId" END
+                           AS "journalEntryId",
+                       e.status::text AS "entryStatus", count(*) OVER () AS rows_total
                   FROM "TaxSettlement" s
-                  LEFT JOIN "JournalEntry" e ON e.id = s."journalEntryId" AND e."organizationId" = :org
+                  LEFT JOIN "JournalEntry" e ON e."organizationId" = :org
+                       AND e.id = CASE WHEN s."reversedAt" IS NULL THEN s."journalEntryId"
+                                       ELSE s."reversalJournalEntryId" END
                  WHERE s."organizationId" = :org
                    AND ((s."journalEntryId" IS NOT NULL AND (e.id IS NULL OR e.status::text <> 'posted'))
-                     OR (s."journalEntryId" IS NULL AND s."inputTax" > 0))
+                     OR (s."reversedAt" IS NULL AND s."journalEntryId" IS NULL AND s."inputTax" > 0))
                  ORDER BY s."periodTo\"""", params(null));
         // Mappings are read as AccountResolverService.byMapping reads them: one row per key, used even when soft-deleted.
         Found figures = find("""
@@ -425,11 +433,12 @@ public class LedgerIntegrityService {
                                     AND %s AND coalesce(e."sourceType", '') <> 'tax_settlement'
                                     AND coalesce(e.dimensions ->> 'treasuryOperation', '') <> 'tax_payment'
                                     AND NOT EXISTS (SELECT 1 FROM "JournalEntry" o WHERE o.id = e."reversalOfId"
-                                          AND coalesce(o.dimensions ->> 'treasuryOperation', '') = 'tax_payment'))
+                                          AND (coalesce(o.dimensions ->> 'treasuryOperation', '') = 'tax_payment'
+                                            OR coalesce(o."sourceType", '') = 'tax_settlement')))
                            ON l."organizationId" = :org
                           AND l."accountId" IN (SELECT "accountId" FROM outp UNION SELECT "accountId" FROM recv)
                           AND e."postingDate" >= %s AND e."postingDate" <= %s
-                   WHERE s."organizationId" = :org
+                   WHERE s."organizationId" = :org AND s."reversedAt" IS NULL
                    GROUP BY s.id)
                 SELECT 'settled_figures_changed' AS kind, s.id AS "settlementId", s."periodFrom", s."periodTo",
                        s."outputTax" AS "settledOutputTax", mv.output AS "outputTaxNow",
@@ -439,8 +448,9 @@ public class LedgerIntegrityService {
                  WHERE abs(mv.output - s."outputTax") > :tol OR abs(mv.input - s."inputTax") > :tol
                  ORDER BY s."periodTo\"""".formatted(POSTED, wallToUtc("s.\"periodFrom\"", zone),
                 wallToUtc("s.\"periodTo\"", zone)), params(TOLERANCE));
-        return check(TAX_LOCK, "every VAT settlement's offset entry is posted, and output / input VAT of each settled"
-                + " period still equal the settled figures", TOLERANCE, merge(entries, figures), null);
+        return check(TAX_LOCK, "every VAT settlement in force has its offset entry posted (an undone one, its reversal),"
+                + " and output / input VAT of each settled period still equal the settled figures", TOLERANCE,
+                merge(entries, figures), null);
     }
 
     private IntegrityCheck inventoryGl() {

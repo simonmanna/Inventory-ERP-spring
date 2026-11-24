@@ -172,8 +172,10 @@ Same as Nest, kept on purpose:
 - `PATCH /cash-sessions/:id/reconcile` writes `notes` as sent. The `guard_cash_session` trigger lets a
   closed shift's notes only be appended to, so a body whose `notes` does not start with the stored notes
   fails with 500, exactly as in Nest. Omitting `notes` keeps the stored value.
-- Re-closing a period after `reopen` answers "Nothing to close" until new revenue/expense is posted (the
-  reversal of the closing entry posts today and nets the period to zero).
+- Re-closing a period after `reopen`: Nest answered "Nothing to close" until new revenue/expense was posted (the
+  reversal of the closing entry posted today). Superseded: the reopen reverses the closing entry on its own date (G-5),
+  so the period closes again with its activity, and a period with no profit and loss to close is closed without a
+  closing entry (finance audit A3, below).
 - `GET /reports/export/trial-balance.csv` keeps Nest's SQL verbatim: the entry status/date filter sits in
   the `LEFT JOIN`, so lines of draft or later entries still count in the sums.
 - `RevaluationService` (FX revaluation) has no route in Nest either; it is module API only.
@@ -327,8 +329,10 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - `POST /tax-settlements {from,to}` (`journal_entry:create`, idempotent) posts Dr tax payable / Cr tax receivable for
     the input VAT and records the period (`TaxSettlement`).
   - `GET /tax-settlements` lists the settled periods.
+  - `POST /tax-settlements/:id/reverse` undoes the latest settlement in force (finance audit A3, below).
 - **Tax-period lock:** `PostingService` refuses any line on a tax account dated on or before the latest settled period
-  end. Tax accounts are the output, input and withholding mappings plus each tax's own account.
+  end (settlements in force: a reversed one locks nothing). Tax accounts are the output, input and withholding mappings
+  plus each tax's own account.
 - **Built since (ADR-S071, V482):**
   - tax groups;
   - several taxes per line (`taxIds`) through `TaxCalculationService`, compound and inclusive included;
@@ -484,7 +488,7 @@ and closed periods from before this change are corrected, if at all, by approved
   and the sources in `GENERIC_REVERSAL_SOURCE_TYPES` (`packages/shared/src/accounting/journal-reversal.ts`, served to the
   API as `contracts/journal-reversal.json` by `tools/contracts2java/accounting.mjs`): `recurring_entry`. Everything else
   is refused with a 400 that names the action reversing it — its own route where the process has one (period reopen,
-  payroll-run reversal, bank unmatch, allocation-run / costing-run / stock-document / production / landed-cost / fleet /
+  VAT settlement undo (finance audit A3), payroll-run reversal, bank unmatch, allocation-run / costing-run / stock-document / production / landed-cost / fleet /
   quarry / project reversals, acquisition removal, impairment reversal, FX revaluation re-run), otherwise an adjusting
   manual journal entry. Unknown and future sources are refused by default; a `reversal` entry is judged by its original.
   The journal-entry detail's additive `sourceDocument` block now covers every refused source (`id` may be null when the
@@ -540,6 +544,54 @@ items are in [costing](costing.md#review-2026-11-17--accounting-and-costing-fixe
 |---|---|---|---|
 | ACR-1 | `POST /fiscal-periods/:id/reopen` | took the latest `period_close` entry by date with no status filter, so a second reopen could pick the already-reversed one | the period's own posted closing entry (`sourceId`); the date window is a fallback for old entries |
 | ACR-17 | period close (gate and checklist) | every pending stock document of the organisation blocked the close | only those raised up to the period end. A failed POS stock-posting job can be abandoned (`POST /pos/posting-monitor/jobs/:id/abandon`, see pos), so it no longer blocks the close for ever |
+
+## Finance readiness audit A3: the close process (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (findings P2-1, P2-3, P2-4, P2-13 and the lock
+race). Tests: `CloseProcessIT`.
+
+- **A period with no profit and loss to close is closed (P2-1, owner-approved deviation).** Nest refused "Nothing to
+  close for '…': no posted revenue or expense in this period". When every P&L account nets to zero over the period (no
+  postings, balance-sheet movements only, or everything reversed), `POST /fiscal-periods/:id/close` now closes it
+  without a closing entry and answers `{ "journalEntryId": null, "netIncome": "0" }`. The audit row and the
+  `fiscal_period.closed` event carry `closingEntryId: null`. Reopen works as for any closed period.
+- **Break-even is closed account against account (P2-1).** When revenue equals expenses but the accounts carry
+  balances, the closing entry zeroes them against each other with no Retained Earnings line: a zero line is refused
+  by the engine, so the close used to fail. The `retained_earnings` mapping is only needed when net income is not zero.
+- **The year close only waits for periods with profit and loss (P2-1).** The year checklist item `periods_closed` is
+  now "Every period with profit and loss closed": it counts open periods where some P&L account does not net to zero.
+  `POST /fiscal-years/:id/close` closes the other open periods itself: empty ones as before (`emptyPeriodsClosed`),
+  and ones with postings but no profit and loss through the period close, with all its checks
+  (`zeroProfitAndLossPeriodsClosed`, new in the response and the audit row).
+- **Ledger totals never drop an account (P2-3).** The account metadata cache (`AccountResolverService`, 30 s per
+  instance) is reloaded when an id is missing: an account created on another API instance inside the cache window was
+  left out of a closing entry. The period close, the year close and its snapshot, the trial balance, P&L, balance
+  sheet, cash flow and the report snapshots read accounts through `ledgerMeta`, which also reads accounts deleted after
+  they were posted to (a cash account removed under Cash flow keeps its balance on the balance sheet) and fails the
+  request when a ledger line names no account of the organization, instead of skipping it.
+- **A VAT settlement can be undone (P2-4).** `POST /tax-settlements/:id/reverse` (idempotent; `journal_entry:create`
+  like the settlement itself until finance audit A4 adds `tax:settle`) undoes the latest settlement in force:
+  - it reverses the settlement's offset entry, dated as any reversal: the original date while its fiscal period is
+    open, else today (settling that VAT period again then needs the fiscal period reopened);
+  - it marks the row reversed (`reversedAt`, `reversedBy`, `reversalJournalEntryId`, migration V651) and answers the
+    row; the row stays in `GET /tax-settlements` as the record of what was filed;
+  - the VAT lock and `settledThrough` ignore reversed settlements, so the period can be corrected and settled again
+    (the one-settlement-per-period-end index now applies to settlements in force only);
+  - an older settlement answers 400 "Only the latest VAT settlement can be reversed: VAT is settled through
+    <date>; reverse that settlement first"; a reversed one 400 "This VAT settlement is already reversed";
+  - a settlement entry already reversed through the generic journal reversal (possible before finance audit A2) is
+    not reversed twice: the existing reversal is recorded.
+  - The VAT measure of a period leaves out reversals of settlement entries, as it leaves out the settlements: the
+    reversal used to count as output and input VAT and doubled the offset of the next settlement.
+  - Web: the period-end page's VAT card has "Undo latest settlement".
+- **Late POS cost of sales holds the close of the sale's period (P2-13).** The close and its checklist count an
+  unposted stock-posting job in the period of its sale (the invoice's issue date, else the order's time: the date the
+  job posts stock and COGS at), and an open sale-line inventory exception in the period of its invoice. An offline
+  sale of the 31st synced on the 2nd used to queue its job in the next month, so the month closed and the COGS posted
+  in the next period. A job or exception raised inside the period still counts as before.
+- **Locking waits for a concurrent reopen.** `POST /fiscal-periods/:id/lock` takes the period row lock before it reads
+  the status, as close and reopen do. It used to read without a lock, so a reopen committing in between was
+  overwritten and the reopened period ended up locked.
 
 ## Extensions beyond Nest (ADR-S005)
 
