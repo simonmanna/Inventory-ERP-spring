@@ -728,6 +728,22 @@ fresh seed).
 
   After applying it, run the integrity check.
 
+## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
+
+The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.
+
+- **A cash or bank account with history is kept.** `DELETE /accounts/cash-flow/:id` first refuses an account in
+  active use by a register, payment method or open shift, as Nest does. Since B5 it then makes the checks of
+  `DELETE /accounts/:id`, with the same messages. It refuses:
+  - a protected or system account;
+  - an account with child accounts;
+  - an account with journal lines ("Account has journal entries and cannot be deleted. Deprecate it instead so
+    history is preserved.");
+  - an account in an account mapping.
+
+  Nest soft-deletes such an account, which drops its balance from every report that skips deleted accounts.
+  Test: `CashAccountDeleteIT`.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
