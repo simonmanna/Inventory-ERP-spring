@@ -680,6 +680,30 @@ Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (finding 
   since) replayed the first entry: its provision rows were written but the ledger kept only the first run. The key now
   also names the employees of the run (`hr_gratuity:<date>:<hash>`), so each run posts its own entry.
 
+## Finance readiness audit gate G1: integrity checks I10 and I12 (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (release gate G1, invariants I10 and I12). Tests:
+`AssetAndDrawerIntegrityIT`.
+
+- **I10 `fixed_assets`.** The fixed-asset register against its accounts, with the measure of the fixed asset
+  reconciliation report (`fa.reconciliation`, through the `FixedAssetTieOut` port): the cost with revaluations of the
+  assets held against the fixed-asset cost accounts, and posted depreciation plus net impairment against the
+  accumulated depreciation and impairment accounts, as of today (organisation time), tolerance 0.01 per line. One row
+  per line that differs: register, GL, difference = register − GL, as the report shows it. The audit's tolerance is
+  per asset category; the register is compared with its accounts in total, as the report does, because categories
+  share accounts. An asset counts in the register from its acquisition date, which for an asset capitalised from a
+  project is its in-service date: a capitalisation posted before the in-service date shows as a difference until that
+  date, in the report as here. The granite quarry demo seed (`GraniteQuarryDemoSeed`) posts fixed-asset opening
+  balances and depreciation without register assets, so I10 fails for a seeded GQDEMO until its assets are registered.
+- **I12 `cash_drawers`.** Each closed cash session: its own journals moved its drawer account by its counted cash less
+  its opening float, tolerance 0.01. Its own journals are the ones the session reconciliation already ties to it: the
+  entries of its payments (not cancelled), of its drawer movements without a payment (the movement's entry, else its
+  `cash_movement` entry) and its over / short entry. An entry reversed later still counts; the mirror belongs to the
+  shift that recorded the void. The opening-float entry and banking after the close are outside the shift. One row per
+  session that differs, has no drawer account or has no count (every close stores one; only direct SQL leaves it
+  empty).
+- Both run in `GET /reports/accounting/integrity` and the nightly ledger monitor (finding and alert).
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
@@ -823,8 +847,9 @@ Spring-only: Nest has no counterpart. Audit record: `docs/audits/2026-11-23-fina
 `AccountingReportingController`.
 - It runs read-only checks I1–I7, I9 and I11 of the audit: entries balance in base and in their own currency, FX lines,
   trial balance, account classification, period coverage, closed periods, reversal links, VAT settlements and the
-  inventory tie-out. Since A5 it also runs I8, the AR / AP tie-out per partner (section A5 above), and since A6 I13,
-  posting keys replayed with other lines (section A6 above).
+  inventory tie-out. Since A5 it also runs I8, the AR / AP tie-out per partner, since A6 I13, posting keys replayed
+  with other lines, and since gate G1 I10, fixed assets, and I12, cash drawers (sections A5, A6 and G1 above): all
+  thirteen checks of the audit.
 - It returns `{checkedAt, ok, rowLimit, checks[]}`. Each check lists at most 5,000 rows.
 
 **Nightly job.** `LedgerIntegrityJob` (03:10 UTC, ShedLock `ledger-integrity-check`) runs `LedgerIntegrityMonitor` for

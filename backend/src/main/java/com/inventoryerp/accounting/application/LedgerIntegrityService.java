@@ -48,9 +48,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  * partner, in base currency ({@link SubledgerTieOut}, the measure of the AR / AP reconciliation reports);
  * <li>I13 {@value #POSTING_KEY_REUSE} (step A6): no posting key was replayed with other lines (unresolved
  * {@code PostingKeyConflict} rows, {@link PostingKeyReplayGuard});
+ * <li>I12 {@value #CASH_DRAWERS} (gate G1): each closed cash session's own journals moved its drawer account by the
+ * counted cash less the opening float;
+ * <li>I10 {@value #FIXED_ASSETS} (gate G1): the fixed-asset register ties to the fixed-asset accounts
+ * ({@link FixedAssetTieOut}, the measure of the fixed asset reconciliation report);
  * <li>I9 {@value #INVENTORY_GL}: inventory valuation ties to the GL (the inventory GL tie-out).
  * </ul>
- * I10 (fixed assets) and I12 (cash drawers) come with a later step of the plan.
  */
 @Service
 public class LedgerIntegrityService {
@@ -78,12 +81,14 @@ public class LedgerIntegrityService {
     public static final String TAX_LOCK = "tax_lock";
     public static final String AR_AP_TIEOUT = "ar_ap_tieout";
     public static final String POSTING_KEY_REUSE = "posting_key_reuse";
+    public static final String CASH_DRAWERS = "cash_drawers";
+    public static final String FIXED_ASSETS = "fixed_assets";
     public static final String INVENTORY_GL = "inventory_gl";
 
     /** Every check, in report order. */
     public static final List<String> CHECKS = List.of(ENTRY_BALANCED, ENTRY_CURRENCY_BALANCED, FX_LINES, TRIAL_BALANCE,
             ACCOUNT_CLASSIFICATION, PERIOD_COVERAGE, CLOSED_PERIODS, REVERSAL_LINKS, TAX_LOCK, POSTING_KEY_REUSE,
-            AR_AP_TIEOUT, INVENTORY_GL);
+            CASH_DRAWERS, AR_AP_TIEOUT, FIXED_ASSETS, INVENTORY_GL);
 
     /** Report sections of profit-and-loss accounts (the ones a period close carries to retained earnings). */
     static final String PNL_SECTIONS = "('revenue', 'contra_revenue', 'cogs', 'operating_expense', 'other_income',"
@@ -118,14 +123,17 @@ public class LedgerIntegrityService {
     private final InventoryValuationService valuation;
     private final SettingResolverService settings;
     private final ObjectProvider<SubledgerTieOut> tieOuts;
+    private final ObjectProvider<FixedAssetTieOut> assetTieOuts;
     private final TransactionTemplate readOnly;
 
     public LedgerIntegrityService(JdbcClient jdbc, InventoryValuationService valuation,
-            SettingResolverService settings, ObjectProvider<SubledgerTieOut> tieOuts, PlatformTransactionManager txm) {
+            SettingResolverService settings, ObjectProvider<SubledgerTieOut> tieOuts,
+            ObjectProvider<FixedAssetTieOut> assetTieOuts, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.valuation = valuation;
         this.settings = settings;
         this.tieOuts = tieOuts;
+        this.assetTieOuts = assetTieOuts;
         this.readOnly = new TransactionTemplate(txm);
         this.readOnly.setReadOnly(true);
     }
@@ -135,12 +143,13 @@ public class LedgerIntegrityService {
     }
 
     /**
-     * Run every check for the current organisation. The ledger checks share one read-only transaction; the AR / AP and
-     * inventory tie-outs run in their own, so a failure to compute one cannot spoil the others.
+     * Run every check for the current organisation. The ledger checks share one read-only transaction; the AR / AP,
+     * fixed-asset and inventory tie-outs run in their own, so a failure to compute one cannot spoil the others.
      */
     public IntegrityReport run() {
         List<IntegrityCheck> checks = new ArrayList<>(readOnly.execute(s -> ledgerChecks()));
         checks.add(arApTieOut());
+        checks.add(fixedAssets());
         checks.add(inventoryGl());
         return new IntegrityReport(Instant.now(), checks.stream().allMatch(IntegrityCheck::ok), ROW_LIMIT,
                 List.copyOf(checks));
@@ -152,7 +161,7 @@ public class LedgerIntegrityService {
         ZoneId zone = AccountingDay.zone(jdbc, org());
         return List.of(entryBalanced(), entryCurrencyBalanced(base), fxLines(base), trialBalance(),
                 accountClassification(), periodCoverage(zone), closedPeriods(zone), reversalLinks(), taxLock(zone),
-                postingKeyReuse());
+                postingKeyReuse(), cashDrawers());
     }
 
     // ------------------------------------------------------------------ I1–I4: entries and the trial balance
@@ -484,6 +493,65 @@ public class LedgerIntegrityService {
                 + " account and partner); unresolved PostingKeyConflict rows", null, f, null);
     }
 
+    // ------------------------------------------------------------------ I12: cash drawers
+
+    /**
+     * I12 (finance audit gate G1): a closed cash session's own journals moved its drawer account by exactly the counted
+     * cash less the opening float. Its own journals are those the session reconciliation already ties to it: the
+     * entries of its payments (not cancelled), of its drawer movements without a payment (the movement's entry, else the
+     * {@code cash_movement} entry of the movement) and its over / short entry; entries later reversed still count, their
+     * mirrors belong to the shift that recorded them. The opening float entry and banking after the close are outside
+     * the shift. One row per session that differs, or has no drawer account or count.
+     */
+    private IntegrityCheck cashDrawers() {
+        Found f = find("""
+                WITH s AS (
+                    SELECT s.id, s.status::text AS status, s."closedAt", s."openingFloat", s."closingCounted",
+                           r.name AS register, coalesce(s."drawerAccountId", r."defaultAccountId") AS drawer
+                      FROM "CashSession" s
+                      LEFT JOIN "CashRegister" r ON r.id = s."cashRegisterId" AND r."organizationId" = s."organizationId"
+                     WHERE s."organizationId" = :org AND s.status::text <> 'open'
+                ), own AS (
+                    SELECT p."cashSessionId" AS sid, p."journalEntryId" AS entry
+                      FROM "Payment" p
+                     WHERE p."organizationId" = :org AND p."cashSessionId" IS NOT NULL AND p."journalEntryId" IS NOT NULL
+                       AND p.status::text <> 'cancelled'
+                    UNION
+                    SELECT m."cashSessionId", m."journalEntryId"
+                      FROM "CashMovement" m
+                     WHERE m."organizationId" = :org AND m."paymentId" IS NULL AND m."journalEntryId" IS NOT NULL
+                    UNION
+                    SELECT m."cashSessionId", e.id
+                      FROM "CashMovement" m
+                      JOIN "JournalEntry" e ON e."organizationId" = :org AND e."sourceType" = 'cash_movement'
+                       AND e."sourceId" = m.id
+                     WHERE m."organizationId" = :org AND m."paymentId" IS NULL AND m."journalEntryId" IS NULL
+                    UNION
+                    SELECT e."sourceId", e.id
+                      FROM "JournalEntry" e
+                     WHERE e."organizationId" = :org AND e."sourceType" = 'cash_session_variance'
+                ), gl AS (
+                    SELECT o.sid, sum(l.debit - l.credit) AS amount
+                      FROM own o
+                      JOIN s ON s.id = o.sid
+                      JOIN "JournalEntry" e ON e.id = o.entry AND e.status::text IN ('posted', 'reversed')
+                      JOIN "JournalLine" l ON l."journalEntryId" = e.id AND l."accountId" = s.drawer
+                     GROUP BY o.sid
+                )
+                SELECT s.id AS "sessionId", s.register, s.status, s."closedAt", s.drawer AS "drawerAccountId",
+                       s."openingFloat", s."closingCounted", s."closingCounted" - s."openingFloat" AS cash,
+                       coalesce(gl.amount, 0) AS gl,
+                       coalesce(gl.amount, 0) - (s."closingCounted" - s."openingFloat") AS difference,
+                       count(*) OVER () AS rows_total
+                  FROM s
+                  LEFT JOIN gl ON gl.sid = s.id
+                 WHERE s.drawer IS NULL OR s."closingCounted" IS NULL
+                    OR abs(coalesce(gl.amount, 0) - (s."closingCounted" - s."openingFloat")) > :tol
+                 ORDER BY s."closedAt" DESC NULLS LAST, s.id""", params(TOLERANCE));
+        return check(CASH_DRAWERS, "a closed cash session's own journals (payments, drawer movements, over / short)"
+                + " moved its drawer account by its counted cash less its opening float", TOLERANCE, f, null);
+    }
+
     // ------------------------------------------------------------------ I8: AR / AP sub-ledgers
 
     /**
@@ -523,6 +591,38 @@ public class LedgerIntegrityService {
             log.warn("[ledger-integrity] AR/AP tie-out failed for {}: {}", org(), e.toString());
             String why = e instanceof ApiException ? e.getMessage() : "see the server log";
             return new IntegrityCheck(AR_AP_TIEOUT, false, false, invariant, SubledgerTieOut.TOLERANCE, 0, false,
+                    List.of(), "the tie-out could not be computed: " + why);
+        }
+    }
+
+    // ------------------------------------------------------------------ I10: fixed assets
+
+    /**
+     * I10 (finance audit gate G1): the fixed-asset register against the fixed-asset accounts as of today, org-local —
+     * one row per line (cost, accumulated depreciation and impairment) that differs.
+     */
+    private IntegrityCheck fixedAssets() {
+        String invariant = "fixed-asset register (cost with revaluations; posted depreciation and impairment) = the"
+                + " fixed-asset cost and accumulated depreciation / impairment accounts (the fixed asset reconciliation)";
+        FixedAssetTieOut tieOut = assetTieOuts.getIfAvailable();
+        if (tieOut == null) {
+            return skipped(FIXED_ASSETS, invariant, FixedAssetTieOut.TOLERANCE, "no fixed-asset tie-out is available");
+        }
+        try {
+            LocalDate today = LocalDate.now(AccountingDay.zone(jdbc, org()));
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (FixedAssetTieOut.Line l : tieOut.measure(today)) {
+                if (!l.ties()) {
+                    rows.add(render(row("line", l.line(), "label", l.label(), "register", l.register(), "gl", l.gl(),
+                            "difference", l.difference())));
+                }
+            }
+            return check(FIXED_ASSETS, invariant, FixedAssetTieOut.TOLERANCE, new Found(rows.size(), false, rows),
+                    "as of " + today);
+        } catch (RuntimeException e) {
+            log.warn("[ledger-integrity] fixed-asset tie-out failed for {}: {}", org(), e.toString());
+            String why = e instanceof ApiException ? e.getMessage() : "see the server log";
+            return new IntegrityCheck(FIXED_ASSETS, false, false, invariant, FixedAssetTieOut.TOLERANCE, 0, false,
                     List.of(), "the tie-out could not be computed: " + why);
         }
     }
