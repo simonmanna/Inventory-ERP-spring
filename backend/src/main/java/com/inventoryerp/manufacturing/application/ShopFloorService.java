@@ -23,8 +23,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -37,12 +35,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Shop floor (ADR-S006 package C): work-centre calendars, finite forward scheduling of an order's work orders,
- * operator time logs and rework orders. The business clock is UTC.
+ * operator time logs and rework orders. Calendars are read in the organization's zone (integrity fix 2026-11-24,
+ * MP-7).
  */
 @Service
 public class ShopFloorService {
-
-    private static final long SEARCH_LIMIT_MINUTES = 366L * 24 * 60;
 
     private final MfgDb db;
     private final ProductionService production;
@@ -105,12 +102,23 @@ public class ShopFloorService {
         if (order == null) {
             throw ApiException.notFound("Production order not found");
         }
+        Instant cursor = startAt != null && !startAt.isEmpty() ? EntityPatch.toInstant(startAt) : Instant.now();
+        // Integrity fix 2026-11-24 (MP-5): the order lock, then each centre's planning lock (sorted, as the backward
+        // scheduler takes them), before the load is read, so two schedulers never place on the same free minutes.
+        db.lockProductionOrder(orderId);
         List<Map<String, Object>> wos = db.list(WorkOrder.class, " AND \"productionOrderId\" = ?"
                 + " AND status NOT IN ('completed', 'cancelled') ORDER BY \"operationSequence\" ASC", orderId);
         if (wos.isEmpty()) {
             throw ApiException.badRequest("No open work orders to schedule. Generate them first.");
         }
-        Instant cursor = startAt != null && !startAt.isEmpty() ? EntityPatch.toInstant(startAt) : Instant.now();
+        java.util.TreeSet<String> centres = new java.util.TreeSet<>();
+        for (Map<String, Object> wo : wos) {
+            if (wo.get("workCenterId") != null) {
+                centres.add(str(wo, "workCenterId"));
+            }
+        }
+        centres.forEach(id -> ShopFloorSupport.lockWorkCenter(db, id));
+        java.time.ZoneId zone = ShopFloorSupport.zoneOf(db);
         cursor = cursor.truncatedTo(ChronoUnit.MINUTES);
         for (Map<String, Object> wo : wos) {
             String wcId = str(wo, "workCenterId");
@@ -123,7 +131,7 @@ public class ShopFloorService {
                 BigDecimal eff = wc == null ? BigDecimal.valueOf(100) : dec(wc, "efficiencyPct");
                 long minutes = BigDecimal.valueOf(planned).multiply(BigDecimal.valueOf(100))
                         .divide(eff.signum() > 0 ? eff : BigDecimal.valueOf(100), 0, RoundingMode.CEILING).longValue();
-                slot = place(wcId, wc, orderId, cursor, minutes);
+                slot = place(wcId, wc, orderId, cursor, minutes, zone);
             }
             db.update(WorkOrder.class, str(wo, "id"), Obj.of("plannedStartAt", slot[0], "plannedEndAt", slot[1],
                     "updatedBy", TenantContext.userId()));
@@ -132,7 +140,12 @@ public class ShopFloorService {
         return workOrders.list(orderId);
     }
 
-    private Instant[] place(String wcId, Map<String, Object> wc, String orderId, Instant from, long minutes) {
+    /**
+     * Integrity fix 2026-11-24 (MP-6, MP-7): placement goes through {@link PlanningCalendar} (windows in the
+     * organization's zone, jumps between change points instead of a minute walk). Same answer, same limit.
+     */
+    private Instant[] place(String wcId, Map<String, Object> wc, String orderId, Instant from, long minutes,
+            java.time.ZoneId zone) {
         Map<Integer, List<int[]>> shifts = new LinkedHashMap<>();
         for (Map<String, Object> s : db.list(WorkCenterShift.class, " AND \"workCenterId\" = ?", wcId)) {
             shifts.computeIfAbsent(((Number) s.get("weekday")).intValue(), k -> new ArrayList<>())
@@ -140,7 +153,7 @@ public class ShopFloorService {
         }
         Set<LocalDate> closed = new HashSet<>();
         for (Map<String, Object> c : db.list(WorkCenterClosure.class, " AND (\"workCenterId\" = ? OR \"workCenterId\""
-                + " IS NULL) AND date >= ?", wcId, java.sql.Date.valueOf(from.atZone(ZoneOffset.UTC).toLocalDate()))) {
+                + " IS NULL) AND date >= ?", wcId, java.sql.Date.valueOf(from.atZone(zone).toLocalDate()))) {
             closed.add((LocalDate) c.get("date"));
         }
         List<Instant[]> busy = new ArrayList<>();
@@ -154,51 +167,12 @@ public class ShopFloorService {
         if (minutes <= 0) {
             return new Instant[] {from, from};
         }
-        Instant t = from;
-        Instant start = null;
-        long remaining = minutes;
-        long steps = 0;
-        while (remaining > 0) {
-            if (++steps > SEARCH_LIMIT_MINUTES * 2) {
-                throw ApiException.badRequest("No capacity at work centre " + (wc == null ? wcId : wc.get("code"))
-                        + " within a year.");
-            }
-            if (working(t, shifts, closed) && concurrent(t, busy) < slots) {
-                if (start == null) {
-                    start = t;
-                }
-                remaining--;
-            }
-            t = t.plus(1, ChronoUnit.MINUTES);
+        PlanningCalendar.Slot slot = new PlanningCalendar(shifts, closed, busy, slots, zone).forward(from, minutes);
+        if (slot == null) {
+            throw ApiException.badRequest("No capacity at work centre " + (wc == null ? wcId : wc.get("code"))
+                    + " within a year.");
         }
-        return new Instant[] {start, t};
-    }
-
-    private static boolean working(Instant t, Map<Integer, List<int[]>> shifts, Set<LocalDate> closed) {
-        ZonedDateTime z = t.atZone(ZoneOffset.UTC);
-        if (closed.contains(z.toLocalDate())) {
-            return false;
-        }
-        if (shifts.isEmpty()) {
-            return true;
-        }
-        int minute = z.getHour() * 60 + z.getMinute();
-        for (int[] w : shifts.getOrDefault(z.getDayOfWeek().getValue() % 7, List.of())) {
-            if (minute >= w[0] && minute < w[1]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static int concurrent(Instant t, List<Instant[]> busy) {
-        int n = 0;
-        for (Instant[] b : busy) {
-            if (!t.isBefore(b[0]) && t.isBefore(b[1])) {
-                n++;
-            }
-        }
-        return n;
+        return new Instant[] {slot.start(), slot.end()};
     }
 
     /** Scheduled work orders in a window (Gantt data), optionally for one centre. */

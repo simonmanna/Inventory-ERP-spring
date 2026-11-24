@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Map;
@@ -17,12 +17,15 @@ import tools.jackson.databind.JsonNode;
 /** ADR-S006 package C: calendars + finite scheduling, time logs, scrap reasons, QC plans and rework. */
 class ShopFloorIT extends MfgTestSupport {
 
+    /** The DEMO organization's zone: work-centre calendars are local (integrity fix 2026-11-24, MP-7). */
+    static final ZoneId ZONE = ZoneId.of("Africa/Kampala");
+
     @Test
     @DisplayName("finite scheduling follows shifts, skips closures and queues behind existing load")
     void scheduling() {
         JsonNode wc = ok(201, "POST", "/manufacturing/work-centers", Map.of("code", "OVN-" + suffix(), "name", "Oven"));
         String wcId = wc.get("id").asString();
-        LocalDate monday = LocalDate.now(ZoneOffset.UTC).plusWeeks(1).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate monday = LocalDate.now(ZONE).plusWeeks(1).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         // Mon–Fri 08:00–17:00; the Tuesday is closed.
         List<Map<String, Object>> shifts = new java.util.ArrayList<>();
         for (int d = 1; d <= 5; d++) {
@@ -43,16 +46,16 @@ class ShopFloorIT extends MfgTestSupport {
         String orderId = started(bomId).get("id").asString();
         ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/work-orders/generate", null);
 
-        Instant start = monday.atTime(16, 0).toInstant(ZoneOffset.UTC);
+        Instant start = monday.atTime(16, 0).atZone(ZONE).toInstant();
         JsonNode wos = ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/schedule",
                 Map.of("startAt", start.toString()));
         // Bake (120 min): Mon 16:00–17:00, Tue closed, Wed 08:00–09:00.
         assertThat(Instant.parse(wos.get(0).get("plannedStartAt").asString())).isEqualTo(start);
         assertThat(Instant.parse(wos.get(0).get("plannedEndAt").asString()))
-                .isEqualTo(monday.plusDays(2).atTime(9, 0).toInstant(ZoneOffset.UTC));
+                .isEqualTo(monday.plusDays(2).atTime(9, 0).atZone(ZONE).toInstant());
         // Cool follows: Wed 09:00–10:00.
         assertThat(Instant.parse(wos.get(1).get("plannedEndAt").asString()))
-                .isEqualTo(monday.plusDays(2).atTime(10, 0).toInstant(ZoneOffset.UTC));
+                .isEqualTo(monday.plusDays(2).atTime(10, 0).atZone(ZONE).toInstant());
 
         // A second order on the same single-slot centre queues behind the first.
         String order2 = started(bomId).get("id").asString();
@@ -60,10 +63,10 @@ class ShopFloorIT extends MfgTestSupport {
         JsonNode wos2 = ok(201, "POST", "/manufacturing/production-orders/" + order2 + "/schedule",
                 Map.of("startAt", start.toString()));
         assertThat(Instant.parse(wos2.get(0).get("plannedStartAt").asString()))
-                .isEqualTo(monday.plusDays(2).atTime(10, 0).toInstant(ZoneOffset.UTC));
+                .isEqualTo(monday.plusDays(2).atTime(10, 0).atZone(ZONE).toInstant());
 
         JsonNode gantt = ok(200, "GET", "/manufacturing/schedule?workCenterId=" + wcId + "&from=" + start
-                + "&to=" + monday.plusDays(7).atStartOfDay().toInstant(ZoneOffset.UTC), null);
+                + "&to=" + monday.plusDays(7).atStartOfDay().atZone(ZONE).toInstant(), null);
         assertThat(gantt).hasSize(4);
         assertThat(as("POST", "/manufacturing/production-orders/" + order2 + "/schedule", Map.of("startAt", "nope"))
                 .status()).isEqualTo(400);

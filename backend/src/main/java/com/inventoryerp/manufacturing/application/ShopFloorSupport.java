@@ -44,8 +44,25 @@ class ShopFloorSupport {
         return db;
     }
 
+    /**
+     * Integrity fix 2026-11-24 (MP-5): the per-work-centre planning lock. Every scheduler that places work orders on a
+     * centre takes it (after the order lock) so two planners never double-book a slot.
+     */
+    static void lockWorkCenter(MfgDb db, String workCenterId) {
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param("wc:" + MfgDb.org() + ":"
+                + workCenterId).query().listOfRows();
+    }
+
     /** The organization's IANA time zone (UTC when unset / invalid): shift windows are local. */
     ZoneId zone() {
+        return zoneOf(db);
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (MP-7): the organization's zone for any manufacturing service, so work-centre
+     * calendars, capacity day buckets and shop-floor shifts all cut days the same way.
+     */
+    static ZoneId zoneOf(MfgDb db) {
         String tz = db.jdbc().sql("SELECT timezone FROM \"Organization\" WHERE id = ?").param(MfgDb.org())
                 .query(String.class).optional().orElse(null);
         if (tz == null || tz.isBlank()) {

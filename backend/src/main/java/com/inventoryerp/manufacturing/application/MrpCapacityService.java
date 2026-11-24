@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -54,15 +54,17 @@ public class MrpCapacityService {
             throw ApiException.notFound("MRP run not found");
         }
         List<DayLoad> loads = new ArrayList<>();
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        // Integrity fix 2026-11-24 (MP-7): planned orders fall on the organization's days, as the capacity buckets.
+        ZoneId zone = ShopFloorSupport.zoneOf(db);
+        LocalDate today = LocalDate.now(zone);
         LocalDate first = today;
         LocalDate last = today;
         for (Map<String, Object> po : db.children(MrpPlannedOrder.class, "runId", runId, "\"releaseDate\" ASC")) {
             if (!"planned".equals(po.get("status")) || "buy".equals(po.get("kind")) || po.get("bomId") == null) {
                 continue;
             }
-            LocalDate release = day((Instant) po.get("releaseDate"));
-            LocalDate due = day((Instant) po.get("dueDate"));
+            LocalDate release = day((Instant) po.get("releaseDate"), zone);
+            LocalDate due = day((Instant) po.get("dueDate"), zone);
             release = release.isBefore(today) ? today : release;
             LocalDate end = due.isAfter(release) ? due.minusDays(1) : release;
             for (Map.Entry<String, BigDecimal> op : operationMinutes(str(po, "bomId"), dec(po, "quantity"))
@@ -165,7 +167,7 @@ public class MrpCapacityService {
         return load.multiply(HUNDRED).divide(capacity, 2, RoundingMode.HALF_UP);
     }
 
-    private static LocalDate day(Instant i) {
-        return i.atOffset(ZoneOffset.UTC).toLocalDate();
+    private static LocalDate day(Instant i, ZoneId zone) {
+        return i.atZone(zone).toLocalDate();
     }
 }

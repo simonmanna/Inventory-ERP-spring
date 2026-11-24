@@ -128,7 +128,9 @@ public class MrpService {
                 if (need.signum() <= 0) {
                     continue;
                 }
-                required.merge(str(m, "productId"), need, BigDecimal::add);
+                // Integrity fix 2026-11-24 (MP-2): the material line is in its own unit; on hand is in base units.
+                required.merge(str(m, "productId"), toBase(str(m, "productId"), str(m, "uomId"), need),
+                        BigDecimal::add);
             }
         }
         if (required.isEmpty()) {
@@ -181,6 +183,16 @@ public class MrpService {
         return Obj.of("raised", true, "purchaseRequest", pr, "lineCount", shortLines.size());
     }
 
+    /** {@code qty} in {@code uomId}, in the product's base unit; a unit that does not convert keeps the quantity. */
+    private BigDecimal toBase(String productId, String uomId, BigDecimal qty) {
+        if (uomId == null || uomId.isBlank() || productId == null) {
+            return qty;
+        }
+        BigDecimal factor = uom.tryFactorToBase(productId, uomId);
+        return factor == null || factor.signum() <= 0 || factor.compareTo(BigDecimal.ONE) == 0 ? qty
+                : qty.multiply(factor);
+    }
+
     /** {@code stockItem.aggregate({_sum: {quantity}})} for a product across every location. */
     private BigDecimal onHand(String productId) {
         BigDecimal sum = db.jdbc().sql("SELECT coalesce(sum(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
@@ -197,18 +209,26 @@ public class MrpService {
                 + " \"ProductionOrder\" WHERE \"organizationId\" = ? AND \"outputProductId\" = ?"
                 + " AND status IN ('draft', 'confirmed', 'in_progress')").params(MfgDb.org(), productId)
                 .query(BigDecimal.class).single();
-        BigDecimal reqs = db.jdbc().sql("SELECT coalesce(sum(l.quantity), 0) FROM \"ProductionRequestLine\" l"
-                + " JOIN \"ProductionRequest\" r ON r.id = l.\"requestId\" WHERE l.\"organizationId\" = ?"
-                + " AND l.\"productId\" = ? AND r.\"deletedAt\" IS NULL AND r.status IN ('draft', 'submitted', 'approved')"
-                + " AND l.\"plannedLineId\" IS NULL").params(MfgDb.org(), productId).query(BigDecimal.class).single();
+        // Integrity fix 2026-11-24 (MP-12): request lines are in their own unit; the minimum is in base units.
+        BigDecimal reqs = BigDecimal.ZERO;
+        for (Map<String, Object> r : SqlRows.list(db.jdbc().sql("SELECT l.\"uomId\", coalesce(sum(l.quantity), 0) AS qty"
+                + " FROM \"ProductionRequestLine\" l JOIN \"ProductionRequest\" r ON r.id = l.\"requestId\""
+                + " WHERE l.\"organizationId\" = ? AND l.\"productId\" = ? AND r.\"deletedAt\" IS NULL"
+                + " AND r.status IN ('draft', 'submitted', 'approved') AND l.\"plannedLineId\" IS NULL"
+                + " GROUP BY l.\"uomId\"").params(MfgDb.org(), productId))) {
+            reqs = reqs.add(toBase(productId, str(r, "uomId"), dec(r, "qty")));
+        }
         return orders.add(reqs);
     }
 
-    /** Remaining (ordered − received) quantities of open purchase orders per product (ADR-S006 A1). */
+    /**
+     * Remaining (ordered − received) quantities of open purchase orders per product (ADR-S006 A1), in base units:
+     * integrity fix 2026-11-24 (MP-2), a PO line is in its purchase unit and its frozen factor converts it.
+     */
     private Map<String, BigDecimal> openPurchaseQuantities(List<String> productIds) {
         Map<String, BigDecimal> out = new HashMap<>();
         for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT l.\"productId\","
-                        + " l.quantity - l.\"receivedQuantity\" AS quantity FROM"
+                        + " (l.quantity - l.\"receivedQuantity\") * coalesce(nullif(l.\"uomFactor\", 0), 1) AS quantity FROM"
                         + " \"PurchaseOrderLine\" l JOIN \"PurchaseOrder\" o ON o.id = l.\"purchaseOrderId\""
                         + " WHERE l.\"organizationId\" = :org AND l.\"productId\" IN (:ids)"
                         + " AND o.status IN ('draft', 'approved', 'active', 'sent', 'partially_received')")

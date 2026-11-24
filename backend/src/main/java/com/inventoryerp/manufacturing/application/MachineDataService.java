@@ -31,7 +31,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Production data capture (ADR-S015, ADR-S011 §11): events from {@link MachineDataAdapter} beans (poll), a gateway /
@@ -46,11 +48,16 @@ public class MachineDataService {
     private final ShopFloorSupport sf;
     private final MfgDb db;
     private final List<MachineDataAdapter> adapters;
+    private final TransactionTemplate tx;
+    private final TransactionTemplate readTx;
 
-    public MachineDataService(ShopFloorSupport sf, List<MachineDataAdapter> adapters) {
+    public MachineDataService(ShopFloorSupport sf, List<MachineDataAdapter> adapters, PlatformTransactionManager txm) {
         this.sf = sf;
         this.db = sf.db();
         this.adapters = adapters;
+        this.tx = new TransactionTemplate(txm);
+        this.readTx = new TransactionTemplate(txm);
+        this.readTx.setReadOnly(true);
     }
 
     /** Pull adapters plus the push and CSV channels. */
@@ -89,8 +96,12 @@ public class MachineDataService {
                 .params(params)), p, size, total);
     }
 
-    /** Poll a pull adapter for the given work centres (default: all active with a profile or code). */
-    @Transactional
+    /**
+     * Poll a pull adapter for the given work centres (default: all active with a profile or code). Integrity fix
+     * 2026-11-24 (MP-10): no transaction is held while the adapter calls out over HTTP; the machines are read in a
+     * short read-only transaction, then each machine's events are stored and drafted in their own short transaction
+     * (a failure there leaves the machines already stored in place; a retry skips them as duplicates).
+     */
     public Map<String, Object> poll(PollInput in) {
         MachineDataAdapter adapter = adapters.stream().filter(a -> a.code().equals(in.adapter())).findFirst()
                 .orElseThrow(() -> ApiException.badRequest("Unknown machine-data adapter " + in.adapter() + "."));
@@ -106,7 +117,7 @@ public class MachineDataService {
             throw ApiException.badRequest("since must be before until.");
         }
         List<MachineRef> machines = new ArrayList<>();
-        for (Map<String, Object> m : machines(in.workCenterIds())) {
+        for (Map<String, Object> m : readTx.execute(st -> machines(in.workCenterIds()))) {
             machines.add(new MachineRef(str(m, "workCenterId"), str(m, "machineCode"),
                     m.get("idealRatePerHour") == null ? null : dec(m, "idealRatePerHour")));
         }
@@ -114,7 +125,31 @@ public class MachineDataService {
             throw ApiException.badRequest("No work centre to poll.");
         }
         List<MachineEvent> events = adapter.poll(new PollRequest(machines, since, until));
-        Map<String, Object> out = ingest(adapter.code(), events, new ArrayList<>());
+        // One short transaction per machine; row numbers stay those of the whole batch.
+        Map<String, List<Integer>> byMachine = new LinkedHashMap<>();
+        for (int i = 0; i < events.size(); i++) {
+            MachineEvent e = events.get(i);
+            byMachine.computeIfAbsent(e == null || e.machineCode() == null ? "" : e.machineCode(),
+                    k -> new ArrayList<>()).add(i);
+        }
+        List<RowError> errors = new ArrayList<>();
+        int[] counts = new int[5];
+        for (List<Integer> rows : byMachine.values()) {
+            List<MachineEvent> part = new ArrayList<>();
+            for (int i : rows) {
+                part.add(events.get(i));
+            }
+            List<RowError> partErrors = new ArrayList<>();
+            int[] c = tx.execute(st -> ingestRows(adapter.code(), part, partErrors));
+            for (int k = 0; k < counts.length; k++) {
+                counts[k] += c[k];
+            }
+            for (RowError r : partErrors) {
+                errors.add(new RowError(rows.get(r.row() - 1) + 1, r.message()));
+            }
+        }
+        errors.sort(java.util.Comparator.comparingInt(RowError::row));
+        Map<String, Object> out = result(adapter.code(), events.size(), counts, errors);
         out.put("machines", machines.size());
         return out;
     }
@@ -143,6 +178,20 @@ public class MachineDataService {
 
     /** Store each new event once and draft it; returns counts and row errors. */
     Map<String, Object> ingest(String adapter, List<MachineEvent> raw, List<RowError> errors) {
+        return result(adapter, raw.size(), ingestRows(adapter, raw, errors), errors);
+    }
+
+    private static Map<String, Object> result(String adapter, int received, int[] c, List<RowError> errors) {
+        List<Map<String, Object>> errs = new ArrayList<>();
+        for (RowError r : errors) {
+            errs.add(Obj.of("row", r.row(), "message", r.message()));
+        }
+        return new LinkedHashMap<>(Obj.of("adapter", adapter, "received", received, "created", c[0],
+                "duplicates", c[1], "drafted", c[2], "ignored", c[3], "failed", c[4], "errors", errs));
+    }
+
+    /** {@code {created, duplicates, drafted, ignored, failed}}; row errors are added to {@code errors}. */
+    private int[] ingestRows(String adapter, List<MachineEvent> raw, List<RowError> errors) {
         Map<String, String> machineToWc = new HashMap<>();
         for (Map<String, Object> m : machines(null)) {
             machineToWc.put(str(m, "machineCode"), str(m, "workCenterId"));
@@ -197,12 +246,7 @@ public class MachineDataService {
                     + " error = ? WHERE id = ? AND \"organizationId\" = ?").params(outcome[0], outcome[1], outcome[2],
                             outcome[3], eventId, MfgDb.org()).update();
         }
-        List<Map<String, Object>> errs = new ArrayList<>();
-        for (RowError r : errors) {
-            errs.add(Obj.of("row", r.row(), "message", r.message()));
-        }
-        return new LinkedHashMap<>(Obj.of("adapter", adapter, "received", raw.size(), "created", created,
-                "duplicates", duplicates, "drafted", drafted, "ignored", ignored, "failed", failed, "errors", errs));
+        return new int[] {created, duplicates, drafted, ignored, failed};
     }
 
     /** {@code {status, draftType, draftId, error}} of one stored event. */
