@@ -22,6 +22,10 @@ class FinanceDbHardeningIT extends ApiTestSupport {
     @Autowired
     javax.sql.DataSource dataSource;
 
+    @Autowired
+    org.springframework.beans.factory.ObjectProvider<org.springframework.boot.flyway.autoconfigure.FlywayConnectionDetails>
+            flywayConnections;
+
     @Test
     @DisplayName("B4: every trigger function in public runs with a pinned search_path (pg_temp last)")
     void triggerFunctionsPinTheirSearchPath() {
@@ -55,8 +59,20 @@ class FinanceDbHardeningIT extends ApiTestSupport {
         args.add("--spring.datasource.url=" + pool.getJdbcUrl());
         args.add("--spring.datasource.username=" + pool.getUsername());
         args.add("--spring.datasource.password=" + pool.getPassword());
+        // Under Testcontainers, Flyway connects as the container's superuser through a connection-details bean
+        var flywayConnection = flywayConnections.getIfAvailable();
+        if (flywayConnection != null && flywayConnection.getJdbcUrl() != null) {
+            args.add("--spring.flyway.url=" + flywayConnection.getJdbcUrl());
+            args.add("--spring.flyway.user=" + flywayConnection.getUsername());
+            args.add("--spring.flyway.password=" + flywayConnection.getPassword());
+        } else {
+            flywayConnection = null;
+        }
         for (String key : List.of("spring.flyway.user", "spring.flyway.password", "spring.flyway.placeholders.approle",
                 "spring.flyway.placeholders.apppassword")) {
+            if (flywayConnection != null && key.startsWith("spring.flyway.") && !key.contains("placeholders")) {
+                continue;
+            }
             String value = env.getProperty(key);
             if (value != null && !value.isEmpty()) {
                 args.add("--" + key + "=" + value);
