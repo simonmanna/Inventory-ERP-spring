@@ -19,6 +19,9 @@ class FinanceDbHardeningIT extends ApiTestSupport {
     @Autowired
     Environment env;
 
+    @Autowired
+    javax.sql.DataSource dataSource;
+
     @Test
     @DisplayName("B4: every trigger function in public runs with a pinned search_path (pg_temp last)")
     void triggerFunctionsPinTheirSearchPath() {
@@ -44,14 +47,18 @@ class FinanceDbHardeningIT extends ApiTestSupport {
 
     @Test
     @DisplayName("B4: --migrate-only runs the same migrations as the API and exits 0 when the schema is current")
-    void migrateOnlyRunsAndExitsCleanly() {
+    void migrateOnlyRunsAndExitsCleanly() throws java.sql.SQLException {
         long before = jdbc.sql("SELECT count(*) FROM flyway_schema_history").query(Long.class).single();
         List<String> args = new ArrayList<>(List.of("--migrate-only"));
-        for (String key : List.of("spring.datasource.url", "spring.datasource.username", "spring.datasource.password",
-                "spring.flyway.user", "spring.flyway.password", "spring.flyway.placeholders.approle",
+        // The pool's own settings: under Testcontainers the URL comes from a service connection, not a property.
+        com.zaxxer.hikari.HikariDataSource pool = dataSource.unwrap(com.zaxxer.hikari.HikariDataSource.class);
+        args.add("--spring.datasource.url=" + pool.getJdbcUrl());
+        args.add("--spring.datasource.username=" + pool.getUsername());
+        args.add("--spring.datasource.password=" + pool.getPassword());
+        for (String key : List.of("spring.flyway.user", "spring.flyway.password", "spring.flyway.placeholders.approle",
                 "spring.flyway.placeholders.apppassword")) {
             String value = env.getProperty(key);
-            if (value != null) {
+            if (value != null && !value.isEmpty()) {
                 args.add("--" + key + "=" + value);
             }
         }
