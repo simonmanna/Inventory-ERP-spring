@@ -164,8 +164,8 @@ export function ProductionOrderDetailPage() {
           <Fact label={tx('Produced')} value={<>{fmtQty(order.producedQty)} <span className="text-xs font-normal text-muted-foreground">/ {fmtQty(order.plannedQty)}</span></>} />
           <Fact label={tx('Scrap')} tone={n(order.scrapQty) > 0 ? 'warning' : undefined}
             value={<>{fmtQty(order.scrapQty)}{scrapPct != null && <span className="ml-1 text-xs font-normal text-muted-foreground">({scrapPct.toFixed(1)}%)</span>}</>} />
-          <Fact label={tx('Material cost')} value={Number(order.materialCost).toFixed(2)} />
-          <Fact label={tx('Unit cost')} value={order.status === 'completed' ? Number(order.outputUnitCost).toFixed(2) : '—'} />
+          <Fact label={tx('Material cost')} value={fmtMoney(order.materialCost)} />
+          <Fact label={tx('Unit cost')} value={order.status === 'completed' ? fmtMoney(order.outputUnitCost) : '—'} />
           <Fact label={tx('Yield variance')} value={Number(order.yieldVariance).toFixed(2)} tone={n(order.yieldVariance) < 0 ? 'danger' : undefined} />
           <Fact label={tx('Batch')} value={<span className="font-mono text-sm">{order.batchNumber ?? '—'}</span>} />
           <div className="min-w-0">
@@ -201,8 +201,8 @@ export function ProductionOrderDetailPage() {
                     <tr key={m.id}>
                       <td className="py-2.5 pr-3 font-medium">{m.productName}{m.batchNumber && <div className="font-mono text-[11px] font-normal text-muted-foreground">{m.batchNumber}</div>}</td>
                       <td className="px-3 py-2.5"><PlanActualBar planned={n(m.qtyPlanned)} actual={n(m.qtyConsumed)} /></td>
-                      <td className="px-3 py-2.5 text-right tabular-nums">{Number(m.unitCost).toFixed(2)}</td>
-                      <td className="py-2.5 pl-3 text-right font-medium tabular-nums">{Number(m.totalCost).toFixed(2)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">{fmtMoney(m.unitCost)}</td>
+                      <td className="py-2.5 pl-3 text-right font-medium tabular-nums">{fmtMoney(m.totalCost)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -222,11 +222,11 @@ export function ProductionOrderDetailPage() {
       <div className="grid gap-5 xl:grid-cols-3">
         <MfgCard className="xl:col-span-2" icon={PackageOpen} title={tx('Outputs')}>
           {order.outputs.length === 0 ? <EmptyState compact icon={PackageOpen} title={tx('No outputs.')} /> : (
-            <ul className="grid gap-3 sm:grid-cols-2">
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {order.outputs.map((o) => {
                 const p = progressPct(o.qtyProduced, o.qtyExpected);
                 return (
-                  <li key={o.id} className="rounded-xl border p-3">
+                  <li key={o.id} className="min-w-0 rounded-xl border p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate font-medium">{o.productName}</div>
@@ -236,9 +236,9 @@ export function ProductionOrderDetailPage() {
                     </div>
                     <div className="mt-2 flex items-center gap-3">
                       <ProgressRing value={p} size={48} stroke={10} tone={p != null && p >= 100 ? 'success' : 'progress'} />
-                      <dl className="grid flex-1 grid-cols-2 gap-2 text-sm">
-                        <Fact label={tx('Expected')} value={Number(o.qtyExpected)} />
-                        <Fact label={tx('Produced')} value={Number(o.qtyProduced)} />
+                      <dl className="grid min-w-0 flex-1 grid-cols-2 gap-2 text-sm">
+                        <Fact label={tx('Expected')} value={fmtQty(o.qtyExpected)} />
+                        <Fact label={tx('Produced')} value={fmtQty(o.qtyProduced)} />
                       </dl>
                     </div>
                   </li>

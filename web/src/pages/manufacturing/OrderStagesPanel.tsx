@@ -270,7 +270,7 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
                       .reduce((a, l) => a + Number(l.value), 0);
                     return (
                       <tr key={p.id} className={cn(p.reversedAt && 'text-muted-foreground line-through decoration-muted-foreground/50')}>
-                        <td className="py-2 pr-3 font-mono text-xs">{p.code}</td>
+                        <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs">{p.code}</td>
                         <td className="px-3 py-2"><TonePill tone={p.kind === 'output' ? 'info' : p.kind === 'qc_release' ? 'success' : p.kind === 'qc_scrap' ? 'danger' : 'neutral'}>{p.kind.replace('_', ' ')}{p.completesStage ? ` · ${tx('completes')}` : ''}</TonePill></td>
                         <td className="px-3 py-2 text-right tabular-nums">{qty(p.qtyGood)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{qty(p.qtyScrap)}</td>
