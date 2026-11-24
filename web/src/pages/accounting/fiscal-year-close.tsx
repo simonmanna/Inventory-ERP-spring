@@ -23,7 +23,7 @@ import { tx } from '@/lib/i18n/tx';
 
 const LABELS: Record<string, string> = {
   earlier_years_closed: tx('Earlier fiscal years closed'),
-  periods_closed: tx('Every period with postings closed'),
+  periods_closed: tx('Every period with profit and loss closed'),
   profit_and_loss_closed: tx('Profit and loss closed to retained earnings'),
   trial_balance: tx('Trial balance balances'),
   draft_journals: tx('No draft journal entries in the year'),

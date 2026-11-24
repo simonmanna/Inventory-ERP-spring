@@ -326,7 +326,9 @@ public class PostingService {
         if ("tax_settlement".equals(sourceType)) {
             return null;
         }
-        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?")
+        // a reversed settlement locks nothing (finance audit A3)
+        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?"
+                        + " AND \"reversedAt\" IS NULL")
                 .param(org).query((rs, n) -> rs.getTimestamp(1) == null ? null
                         : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .optional().orElse(null);

@@ -213,17 +213,24 @@ SELECT per.code AS org, per.name AS period, per.status
                             AND c."postingDate" BETWEEN per.su AND per.fu)))
  ORDER BY 1, per."startDate";
 
-\echo '== D7 (P2-4) VAT settlements whose offset entry is missing or no longer posted'
+\echo '== D7 (P2-4) VAT settlements in force whose offset entry is missing or no longer posted (undone ones: their reversal)'
+-- Settlements undone by POST /tax-settlements/{id}/reverse (finance audit A3) carry "reversedAt"; read through
+-- to_jsonb so the script also runs on a database without that column.
 SELECT o.code AS org, s.id AS "settlementId", s."periodFrom", s."periodTo", s."inputTax", s."journalEntryId",
-       e.status AS "entryStatus", s."settledAt", s."settledBy"
+       to_jsonb(s) ->> 'reversedAt' AS "reversedAt", to_jsonb(s) ->> 'reversalJournalEntryId' AS "reversalEntryId",
+       coalesce(r.status, e.status) AS "entryStatus", s."settledAt", s."settledBy"
   FROM "TaxSettlement" s
   JOIN "Organization" o ON o.id = s."organizationId"
   LEFT JOIN "JournalEntry" e ON e.id = s."journalEntryId"
- WHERE (s."journalEntryId" IS NOT NULL AND (e.id IS NULL OR e.status::text <> 'posted'))
-    OR (s."journalEntryId" IS NULL AND s."inputTax" > 0)
+  LEFT JOIN "JournalEntry" r ON r.id = to_jsonb(s) ->> 'reversalJournalEntryId'
+ WHERE (to_jsonb(s) ->> 'reversedAt' IS NULL
+        AND ((s."journalEntryId" IS NOT NULL AND (e.id IS NULL OR e.status::text <> 'posted'))
+          OR (s."journalEntryId" IS NULL AND s."inputTax" > 0)))
+    OR (to_jsonb(s) ->> 'reversedAt' IS NOT NULL AND s."journalEntryId" IS NOT NULL
+        AND (r.id IS NULL OR r.status::text <> 'posted'))
  ORDER BY 1, s."periodTo";
 
-\echo '== D7b VAT settlements whose period figures changed since settling (re-measured as TaxSettlementService does)'
+\echo '== D7b VAT settlements in force whose period figures changed since settling (re-measured as TaxSettlementService does)'
 WITH orgs AS (
   SELECT o.id, o.code,
          CASE WHEN o.timezone IN (SELECT name FROM pg_timezone_names) THEN o.timezone ELSE 'UTC' END AS tz
@@ -249,11 +256,13 @@ mv AS (
                     AND coalesce(e."sourceType", '') <> 'tax_settlement'
                     AND coalesce(e.dimensions ->> 'treasuryOperation', '') <> 'tax_payment'
                     AND NOT EXISTS (SELECT 1 FROM "JournalEntry" t WHERE t.id = e."reversalOfId"
-                                      AND coalesce(t.dimensions ->> 'treasuryOperation', '') = 'tax_payment')
+                                      AND (coalesce(t.dimensions ->> 'treasuryOperation', '') = 'tax_payment'
+                                        OR coalesce(t."sourceType", '') = 'tax_settlement'))
                JOIN acc ON acc."organizationId" = l."organizationId" AND acc."accountId" = l."accountId")
            ON l."organizationId" = s."organizationId"
           AND e."postingDate" >= s."periodFrom" AT TIME ZONE o.tz AT TIME ZONE 'UTC'
           AND e."postingDate" <= s."periodTo" AT TIME ZONE o.tz AT TIME ZONE 'UTC'
+   WHERE to_jsonb(s) ->> 'reversedAt' IS NULL
    GROUP BY s.id)
 SELECT o.code AS org, s.id AS "settlementId", s."periodFrom", s."periodTo", s."outputTax" AS "settledOutput",
        mv.output AS "outputNow", s."inputTax" AS "settledInput", mv.input AS "inputNow", s."settledAt"

@@ -23,7 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
  * VAT settlement (ACC-7). For a period, output VAT (credit balance movement on {@code tax_payable}) and input VAT
  * (debit balance movement on {@code tax_receivable}) are taken from the ledger; settling offsets the input against the
  * output (Dr tax payable / Cr tax receivable), leaving the net due (or refundable) on tax payable, records the period
- * and locks it: {@link PostingService} then refuses tax postings dated inside a settled period.
+ * and locks it: {@link PostingService} then refuses tax postings dated inside a settled period. The latest settlement
+ * can be undone ({@link #reverse}, finance audit A3): its entry is reversed, the row stays as the record of what was
+ * filed, marked reversed, and the lock falls back to the settlement before it.
  */
 @Service
 public class TaxSettlementService {
@@ -116,7 +118,59 @@ public class TaxSettlementService {
         return out;
     }
 
-    /** Settled periods, newest first. */
+    /**
+     * Undo the latest settlement in force (finance audit A3, P2-4): reverse its offset entry, mark the row reversed, and
+     * so lift the VAT lock back to the settlement before it. The period can then be corrected and settled again.
+     */
+    @Transactional
+    public Map<String, Object> reverse(String id) {
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|vat-settlement', 0))").param(org()).query()
+                .listOfRows();
+        record Row(Instant from, Instant to, String journalEntryId, boolean reversed) {}
+        Row row = jdbc.sql("SELECT \"periodFrom\", \"periodTo\", \"journalEntryId\", \"reversedAt\" IS NOT NULL AS reversed"
+                        + " FROM \"TaxSettlement\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(id, org())
+                .query((rs, n) -> new Row(utc(rs.getTimestamp(1)), utc(rs.getTimestamp(2)), rs.getString(3),
+                        rs.getBoolean(4)))
+                .optional().orElseThrow(() -> ApiException.notFound("VAT settlement not found"));
+        if (row.reversed()) {
+            throw ApiException.badRequest("This VAT settlement is already reversed");
+        }
+        Instant last = lastSettled();
+        if (last != null && row.to().isBefore(last)) {
+            throw ApiException.badRequest("Only the latest VAT settlement can be reversed: VAT is settled through "
+                    + FiscalPeriodControl.day(last) + "; reverse that settlement first");
+        }
+        String reversalId = null;
+        if (row.journalEntryId() != null) {
+            String status = jdbc.sql("SELECT status::text FROM \"JournalEntry\" WHERE id = ? AND \"organizationId\" = ?")
+                    .params(row.journalEntryId(), org()).query(String.class).optional().orElse(null);
+            if ("posted".equals(status)) {
+                reversalId = (String) posting.reverse(row.journalEntryId(), null, "Reversal of VAT settlement "
+                        + FiscalPeriodControl.day(row.from()) + " – " + FiscalPeriodControl.day(row.to())).get("id");
+            } else if ("reversed".equals(status)) {
+                // reversed earlier through the generic journal reversal (possible before finance audit A2): not twice
+                reversalId = jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"reversalOfId\" = ?"
+                                + " ORDER BY \"createdAt\" LIMIT 1")
+                        .params(org(), row.journalEntryId()).query(String.class).optional().orElse(null);
+            }
+        }
+        jdbc.sql("UPDATE \"TaxSettlement\" SET \"reversedAt\" = now(), \"reversedBy\" = ?, \"reversalJournalEntryId\" = ?"
+                        + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(TenantContext.userId(), reversalId, id, org()).update();
+        Map<String, Object> newValues = new LinkedHashMap<>();
+        newValues.put("status", "reversed");
+        newValues.put("reversalJournalEntryId", reversalId);
+        audit.recordInTx(AuditInput.of("TaxSettlement", id, "update", Map.of("status", "settled"), newValues));
+        return SqlRows.one(jdbc.sql("SELECT * FROM \"TaxSettlement\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(id, org()));
+    }
+
+    private static Instant utc(java.sql.Timestamp t) {
+        return t == null ? null : t.toLocalDateTime().toInstant(ZoneOffset.UTC);
+    }
+
+    /** Settled periods, newest first; reversed ones carry {@code reversedAt}. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list() {
         return SqlRows.list(jdbc.sql("SELECT * FROM \"TaxSettlement\" WHERE \"organizationId\" = ? ORDER BY"
@@ -146,17 +200,20 @@ public class TaxSettlementService {
                         + " AND e.\"postingDate\" >= :from AND e.\"postingDate\" <= :to"
                         + " AND coalesce(e.\"sourceType\", '') <> 'tax_settlement'"
                         + " AND coalesce(e.dimensions ->> 'treasuryOperation', '') <> 'tax_payment'"
-                        // and the reversal of such a payment
+                        // and the reversal of either: an undone settlement's reversal is no VAT of the period (A3)
                         + " AND NOT EXISTS (SELECT 1 FROM \"JournalEntry\" o WHERE o.id = e.\"reversalOfId\""
-                        + " AND coalesce(o.dimensions ->> 'treasuryOperation', '') = 'tax_payment')")
+                        + " AND (coalesce(o.dimensions ->> 'treasuryOperation', '') = 'tax_payment'"
+                        + " OR coalesce(o.\"sourceType\", '') = 'tax_settlement'))")
                 .param("org", org()).param("accounts", accountIds)
                 .param("from", FiscalPeriodControl.ts(AccountingDay.fromWallClock(from, zone)))
                 .param("to", FiscalPeriodControl.ts(AccountingDay.fromWallClock(to, zone)))
                 .query(BigDecimal.class).single();
     }
 
+    /** End of the latest settlement in force (reversed ones no longer lock anything). */
     private Instant lastSettled() {
-        return jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?").param(org())
+        return jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?"
+                        + " AND \"reversedAt\" IS NULL").param(org())
                 .query((rs, n) -> rs.getTimestamp(1) == null ? null
                         : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .optional().orElse(null);

@@ -21,6 +21,7 @@ import {
   useRunFxRevaluation,
   useSettleTax,
   useTaxSettlementPreview,
+  useUndoLatestTaxSettlement,
 } from '@/features/accounting/period-end-api';
 import { useAuthStore } from '@/stores/auth.store';
 import { PERMISSIONS } from '@erp/shared';
@@ -242,8 +243,10 @@ function VatSettlementCard() {
   const [to, setTo] = useState(today());
   const preview = useTaxSettlementPreview(from, to);
   const settle = useSettleTax();
+  const undo = useUndoLatestTaxSettlement();
   const canSettle = useHasPermission(PERMISSIONS.journalEntry.create);
   const p = preview.data;
+  const settledThrough = p?.settledThrough;
 
   return (
     <Card>
@@ -289,10 +292,26 @@ function VatSettlementCard() {
               value={money(Math.abs(Number(p.netPayable)))} />
           </div>
         )}
-        {p?.settledThrough && (
-          <p className="text-xs text-muted-foreground">
-            {tx('VAT is settled through {{v1}}.', { v1: date(p.settledThrough) })}
-          </p>
+        {settledThrough && (
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs text-muted-foreground">
+              {tx('VAT is settled through {{v1}}.', { v1: date(settledThrough) })}
+            </p>
+            {canSettle && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (window.confirm(tx('Undo the VAT settlement through {{v1}}? Its offset entry is reversed and the period is unlocked.', { v1: date(settledThrough) }))) {
+                    undo.mutate();
+                  }
+                }}
+                disabled={undo.isPending}
+              >
+                {tx('Undo latest settlement')}
+              </Button>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>

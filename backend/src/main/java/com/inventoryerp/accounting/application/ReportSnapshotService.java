@@ -87,7 +87,7 @@ public class ReportSnapshotService {
         jdbc.sql("DELETE FROM \"ReportTrialBalanceSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
         Map<String, BigDecimal[]> grouped = ledger.balances(org, null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
             if (a == null) {
@@ -109,7 +109,7 @@ public class ReportSnapshotService {
         jdbc.sql("DELETE FROM \"ReportPnLSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
         Map<String, BigDecimal[]> grouped = ledger.balances(org, null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal contra = BigDecimal.ZERO;
         BigDecimal cogs = BigDecimal.ZERO;
@@ -139,7 +139,7 @@ public class ReportSnapshotService {
         jdbc.sql("DELETE FROM \"ReportBalanceSheetSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
         Map<String, BigDecimal[]> grouped = ledger.balances(org, null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
             if (a == null || a.categoryId() == null || "off_balance".equals(a.classification())) {
