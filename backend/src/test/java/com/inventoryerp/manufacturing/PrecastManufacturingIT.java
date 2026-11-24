@@ -87,7 +87,7 @@ class PrecastManufacturingIT extends MfgTestSupport {
         String batchId = keyed(BASE + "/orders/" + orderId + "/pressing-runs", body).get("batch").get("id").asString();
         java.sql.Timestamp at = java.sql.Timestamp.valueOf(LocalDate.now(ZoneOffset.UTC).minusDays(days)
                 .atStartOfDay());
-        jdbc.sql("UPDATE \"PrecastCuringBatch\" SET \"startedAt\" = ?, \"curingUntil\" = ? + make_interval(days =>"
+        jdbc.sql("UPDATE \"PrecastCuringBatch\" SET \"startedAt\" = ?, \"curingUntil\" = CAST(? AS timestamp) + make_interval(days =>"
                 + " \"minCuringDays\") WHERE id = ?").params(at, at, batchId).update();
         jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"postedAt\" = ? WHERE id = (SELECT \"pressingPostingId\""
                 + " FROM \"PrecastCuringBatch\" WHERE id = ?)").params(at, batchId).update();

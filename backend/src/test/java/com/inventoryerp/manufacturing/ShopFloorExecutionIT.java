@@ -263,7 +263,7 @@ class ShopFloorExecutionIT extends MfgTestSupport {
         assertThat(shiftLine).isNotNull();
         assertThat(signed.get("performance").isNull()).isFalse();
         assertThat(num(shiftLine.get("performance"))).isEqualByComparingTo(num(signed.get("performance")));
-        assertThat(num(shiftLine.get("oee"))).isEqualByComparingTo(num(signed.get("oee")));
+        assertThat(num(shiftLine.get("oee"))).isEqualByComparingTo(num(signed.get("oee").get("oee")));
         ok(200, "PUT", SF + "/work-center-profiles/" + wc, Map.of("idealRatePerHour", 60));
         assertThat(as("GET", SF + "/oee?from=2026-02-01&to=2026-01-01", null).body().get("message").asString())
                 .isEqualTo("from must not be after to.");

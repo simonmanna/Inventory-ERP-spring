@@ -17,7 +17,6 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -65,9 +64,10 @@ public class PlanningDemandService {
         this.pegs = pegs;
     }
 
-    private record Horizon(LocalDate from, LocalDate to) {
+    // Integrity fix 2026-11-24 (MP-7): day boundaries in the org timezone, like the work-centre calendars.
+    private record Horizon(LocalDate from, LocalDate to, java.time.ZoneId zone) {
         Instant end() {
-            return to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            return to.plusDays(1).atStartOfDay(zone).toInstant();
         }
 
         long days() {
@@ -75,13 +75,13 @@ public class PlanningDemandService {
         }
     }
 
-    private static Horizon horizon(String from, String to) {
+    private Horizon horizon(String from, String to) {
         LocalDate f = parse(from) != null ? parse(from) : LocalDate.now(BusinessZone.get());
         LocalDate t = parse(to) != null ? parse(to) : f.plusDays(DEFAULT_DAYS);
         if (t.isBefore(f)) {
             throw ApiException.badRequest("to must not be before from");
         }
-        return new Horizon(f, t);
+        return new Horizon(f, t, ShopFloorSupport.zoneOf(db));
     }
 
     private static LocalDate parse(String d) {
@@ -117,7 +117,7 @@ public class PlanningDemandService {
     /** Every requirement due by the end of the horizon (overdue ones included). */
     List<Demand> collect(LocalDate from, LocalDate to, boolean forecast, String method, int weeks,
             boolean stockPolicy) {
-        Horizon h = new Horizon(from, to);
+        Horizon h = new Horizon(from, to, ShopFloorSupport.zoneOf(db));
         List<Demand> out = new ArrayList<>();
         Set<String> scheduledOrders = new HashSet<>();
         Instant now = Instant.now();
@@ -131,7 +131,7 @@ public class PlanningDemandService {
                 scheduledOrders.add(str(r, "sourceId"));
             }
             if (dec(r, "qty").signum() > 0) {
-                Instant due = ((LocalDate) r.get("requestedDate")).atStartOfDay(ZoneOffset.UTC).toInstant();
+                Instant due = ((LocalDate) r.get("requestedDate")).atStartOfDay(h.zone()).toInstant();
                 out.add(new Demand("delivery_order", str(r, "id"), str(r, "lineId"), str(r, "code"), str(r,
                         "productId"),
                         str(r, "partnerId"), str(r, "siteId"), due, DemandNetting.priority(str(r, "priority")),

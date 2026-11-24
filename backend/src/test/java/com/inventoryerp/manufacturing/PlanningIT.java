@@ -150,9 +150,9 @@ class PlanningIT extends MfgTestSupport {
         ok(200, "PUT", P + "/orders/" + urgent, Map.of("dueAt", at(friday, 17).toString(), "priority", 4,
                 "priorityReason", "Site pour"));
         ok(200, "POST", P + "/schedule-open-orders", Map.of("dueFrom", friday.toString(), "dueTo", friday.toString()));
-        String urgentEnd = jdbc.sql("SELECT \"plannedEndAt\"::text FROM \"WorkOrder\" WHERE \"productionOrderId\" = ?")
+        String urgentEnd = jdbc.sql("SELECT ((\"plannedEndAt\" AT TIME ZONE 'UTC') AT TIME ZONE 'Africa/Kampala')::text FROM \"WorkOrder\" WHERE \"productionOrderId\" = ?")
                 .param(urgent).query(String.class).single();
-        String normalEnd = jdbc.sql("SELECT \"plannedEndAt\"::text FROM \"WorkOrder\" WHERE \"productionOrderId\" = ?")
+        String normalEnd = jdbc.sql("SELECT ((\"plannedEndAt\" AT TIME ZONE 'UTC') AT TIME ZONE 'Africa/Kampala')::text FROM \"WorkOrder\" WHERE \"productionOrderId\" = ?")
                 .param(normal).query(String.class).single();
         assertThat(urgentEnd).startsWith(friday + " 17:00");
         assertThat(normalEnd).startsWith(friday + " 16:00");

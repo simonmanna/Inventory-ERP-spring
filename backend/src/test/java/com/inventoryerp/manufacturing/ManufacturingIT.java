@@ -155,9 +155,10 @@ class ManufacturingIT extends MfgTestSupport {
         assertThat(balance(wipAccount)).isEqualByComparingTo(wipBefore);
         assertThat(balance(scrapAccount)).isEqualByComparingTo(scrapBefore.add(BigDecimal.valueOf(20000)));
         assertThat(onHand(cake, warehouse)).isEqualByComparingTo("0");
+        // Integrity fix 2026-11-24 (MC-1): a zero-yield order is reversible; the write-off comes back.
         Res rev = as("POST", "/manufacturing/production-orders/" + id + "/reverse", Map.of());
-        assertThat(rev.body().get("message").asString())
-                .isEqualTo("A scrapped (zero-yield) order has no output to reverse.");
+        assertThat(rev.status()).as(rev.raw().body()).isIn(200, 201);
+        assertThat(balance(scrapAccount)).isEqualByComparingTo(scrapBefore);
     }
 
     @Test
