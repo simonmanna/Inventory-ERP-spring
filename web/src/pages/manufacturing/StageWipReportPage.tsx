@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RefreshCw, Save } from 'lucide-react';
+import { Coins, RefreshCw, Save } from 'lucide-react';
+import { MfgPageHeader } from './mfg-ui';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -56,13 +57,8 @@ export function StageWipReportPage() {
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">{tx('Stage WIP')}</h1>
-          <p className="text-sm text-muted-foreground">{tx('Work in progress per production stage, reconciled to the GL WIP account.')}</p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}><RefreshCw className="mr-1 h-3 w-3" /> {tx('Refresh')}</Button>
-      </div>
+      <MfgPageHeader icon={Coins} title={tx('Stage WIP')} subtitle={tx('Work in progress per production stage, reconciled to the GL WIP account.')}
+        actions={<Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}><RefreshCw className="mr-1 h-3 w-3" /> {tx('Refresh')}</Button>} />
 
       {isLoading && <p className="text-sm text-muted-foreground">{tx('Loading…')}</p>}
       {isError && <p className="text-sm text-destructive">{tx('Could not load the WIP report.')}</p>}
