@@ -1,6 +1,6 @@
 # ADR-S087 — Quality control (Odoo-style operator checks)
 
-- Status: approved (owner, 2026-11-24: "Approve all of it and build all the quality management module feature").
+- Status: approved (owner, 2026-11-24: "Approve all of it and build all the quality management module feature"); implemented (QC1–QC4) on stacked PRs #52, #53, #55 and the QC4 PR — not merged, not deployed.
   QC1 implemented; QC2–QC4 follow as stacked PRs. Merge and deploy need the owner.
 - Extension: no NestJS counterpart. A new module `com.inventoryerp.qualitycontrol` with new routes under
   `/api/v1/quality-control`; no existing route, response or table changed.
@@ -470,6 +470,33 @@ Maintenance links.
   responsible; resolved (stage_changed to a closed stage) → creator. Alert scan type `quality_alert_open` (daily,
   threshold 3 days, weekly repeat; priority ≥ 2 is critical). `AlertsIT`'s catalogue count goes from 10 to 11.
 - Audit: alerts use the existing `AuditAction` values (`create`, `update`) with `op` = `move` / `escalate`.
+
+## Implementation notes (QC4)
+
+- `SpcCalculator` (pure, `BigDecimal` / `DECIMAL64`): I-MR for individual values (σ̂ = MR̄/1.128, limits
+  x̄ ± 3·MR̄/1.128, MR UCL = 3.267·MR̄); X̄-R for a constant subgroup size 2..10 (x̿ ± A2·R̄, D3·R̄ / D4·R̄, σ̂ = R̄/d2);
+  varying sizes use σ̂ = mean(Rᵢ/d2(nᵢ)) and per-subgroup limits x̿ ± 3σ̂/√nᵢ. A2 / D3 / D4 are the values printed in
+  the NIST/SEMATECH e-Handbook 6.3.2.1; d2 the standard values (d2(2) = 1.128 as in 6.3.2.2).
+- **Reference validation (§12 acceptance)** in `SpcCalculatorTest`: the e-Handbook 6.3.2.2 flow-rate dataset
+  (x̄ 50.81, MR̄ 1.8778, UCL 55.8041, LCL 45.8159, tolerance 0.0001), the 6.1.6 capability example (Cp 1.0, Cpu 0.6667,
+  Cpl 1.3333, Cpk 0.6667) and the 6.3.2.1 constants table (A2 = 3/(d2·√n) agrees for n = 2..10). The e-Handbook
+  pages have no raw X̄-R dataset, and no Montgomery dataset could be sourced verbatim, so X̄-R is verified against the
+  printed formulas and constants on a constructed dataset — **an open item for the owner**: supply a reference X̄-R
+  dataset (e.g. Montgomery's piston rings) if it must be validated against published raw data before production use.
+- Data: the current execution of each SPC-included, non-cancelled measure check of the point; recorded sample values
+  when present (in sample order), else the execution's value. Missing values and cancelled checks are counted in
+  `excluded`. A change of the snapshot's toleranceMin / toleranceMax / norm starts a new segment; the latest segment
+  is analysed unless `segment` is given.
+- Subgroups: `individual`; `consecutive` (n values in time order, per work centre when split; the incomplete tail is
+  excluded and counted); `batch`, `work_order` and `time_window` group by key (no key → excluded and counted), split
+  into chunks of at most 10 values in time order. `spcSplitByWorkCenter` keeps work centres in separate subgroups.
+- Limits are trial limits from all subgroups unless `baseline` = k (the first k subgroups). Provisional below 20
+  subgroups (X̄-R) or 25 values (I-MR). Capability needs a spec limit, ≥ 30 values in the segment, no rule-1 signal in
+  the baseline and σ̂ > 0 (else `undefined (zero variation)`); Cp only with both limits; Cpk = min(Cpu, Cpl).
+- Western Electric rules 1–4 on the centre chart (zones from each point's own limits; rule 4 = 8 in a row), plus "R"
+  for a range beyond its limits. Default rules 1 and 4.
+- Summary / Pareto count checks by `doneAt` UTC day (inclusive range, default the last 90 days). Pass rate =
+  passed ÷ (passed + failed); waived checks are reported but are not quality decisions.
 
 ## Phases
 

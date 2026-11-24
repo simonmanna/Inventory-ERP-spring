@@ -493,3 +493,58 @@ export const useSaveTag = () =>
 export const useSaveRootCause = () =>
   useQcMutation(async ({ id, body }: { id?: string; body: Body }) =>
     (id ? await api.patch<QcRootCause>(`/quality-control/root-causes/${id}`, body) : await api.post<QcRootCause>('/quality-control/root-causes', body)).data);
+
+// ---- Statistics and SPC (QC4, ADR-S087 §12) ----
+
+export type StatsFilters = { from?: string; to?: string; controlPointId?: string; productId?: string; workCenterId?: string; teamId?: string };
+export interface RateRow { passed: number; failed: number; waived: number; passRate: string | null }
+export interface DimensionRow { id: string | null; label: string; failed: number; decided: number; failRate: string }
+export interface QcSummary {
+  from: string; to: string; interval: 'day' | 'week' | 'month';
+  totals: RateRow;
+  trend: Array<RateRow & { period: string }>;
+  byControlPoint: DimensionRow[]; byProduct: DimensionRow[]; byWorkCenter: DimensionRow[]; byTeam: DimensionRow[]; byFailureClass: DimensionRow[];
+}
+export type ParetoDimension = 'failure_class' | 'control_point' | 'product' | 'work_center' | 'team';
+export interface QcPareto { dimension: ParetoDimension; total: number; rows: Array<{ id: string | null; label: string; count: number; percent: string; cumulativePercent: string }> }
+export interface SpcPoint {
+  index: number; key: string; at: string; n: number; value: string; range: string | null; ucl: string; lcl: string;
+  rangeUcl: string | null; rangeLcl: string | null; baseline: boolean; violations: string[];
+}
+export interface SpcChart {
+  method: 'I-MR' | 'Xbar-R'; sigmaEstimator: string; values: number; subgroups: number; baselineSubgroups: number;
+  limitsType: 'trial' | 'baseline'; provisional: boolean; center: string; ucl: string | null; lcl: string | null;
+  rangeCenter: string | null; rangeUcl: string | null; rangeLcl: string | null; sigma: string; points: SpcPoint[]; violations: number;
+}
+export interface QcSpc {
+  controlPoint: { id: string; reference: string; title: string; unit: string | null; decimals: number | null; spcSubgroup: string; spcSubgroupSize: number | null };
+  segments: Array<{ index: number; values: number; from: string; to: string; lsl: string | null; usl: string | null; norm: string | null }>;
+  segment?: number;
+  excluded: { missing: number; nonNumeric: number; cancelled: number; incompleteSubgroup: number; noSubgroupKey: number };
+  rules?: number[];
+  spec?: { lsl: string | null; usl: string | null; norm: string | null };
+  chart: SpcChart | null;
+  message?: string;
+  capability?: { valid: boolean; reason: string | null; n: number; mean: string; sigma: string; cp: string | null; cpk: string | null; cpu: string | null; cpl: string | null };
+  dataset?: { checkIds: string[]; valueRefs: string[] };
+}
+
+export const useQcSummary = (p: StatsFilters & { interval?: string }) =>
+  useQuery({
+    queryKey: [...KEY, 'stats', 'summary', p],
+    placeholderData: (prev) => prev,
+    queryFn: async () => (await api.get<QcSummary>('/quality-control/statistics/summary', { params: p })).data,
+  });
+export const useQcPareto = (p: StatsFilters & { dimension: ParetoDimension }) =>
+  useQuery({
+    queryKey: [...KEY, 'stats', 'pareto', p],
+    placeholderData: (prev) => prev,
+    queryFn: async () => (await api.get<QcPareto>('/quality-control/statistics/pareto', { params: p })).data,
+  });
+export const useQcSpc = (p: { controlPointId?: string; from?: string; to?: string; baseline?: number; rules?: string; segment?: number }) =>
+  useQuery({
+    queryKey: [...KEY, 'stats', 'spc', p],
+    enabled: !!p.controlPointId,
+    retry: false,
+    queryFn: async () => (await api.get<QcSpc>('/quality-control/statistics/spc', { params: p })).data,
+  });

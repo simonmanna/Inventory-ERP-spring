@@ -2081,5 +2081,7 @@ Not verified yet: the tours driven by hand in a browser.
 - [x] QC3 alerts: V661 (7 tables), kanban stages with history, tags, root causes, assignment history, auto alert per
   failed generated check (once), idempotent NCR escalation into ADR-S013, notification routes, `quality_alert_open`
   alert type, `qc_alert` DMS provider (44 routes). Tests: `QualityControlAlertsIT`.
-- [ ] QC4 SPC and statistics
+- [x] QC4 statistics and SPC: `SpcCalculator` (I-MR, X̄-R, varying subgroups, baseline / trial limits, Western
+  Electric 1–4, capability rules), summary / Pareto / SPC routes (47 routes), Statistics page. Tests:
+  `SpcCalculatorTest` (NIST e-Handbook reference data), `QualityControlStatsIT`.
 

@@ -273,7 +273,7 @@ class QualityControlAlertsIT extends ApiTestSupport {
         assertThat(call("GET", "/quality-control/alerts/" + id, null, otherToken).status()).isEqualTo(404);
         assertThat(call("GET", "/quality-control/alerts?pageSize=200", null, otherToken).body().get("data")
                 .findValuesAsString("id")).doesNotContain(id);
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.qualitycontrol")).isEqualTo(44);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.qualitycontrol")).isEqualTo(47);
         assertThat(sweepGetRoutes("com.inventoryerp.qualitycontrol")).isEmpty();
     }
 

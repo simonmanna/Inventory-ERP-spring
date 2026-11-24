@@ -8,7 +8,7 @@ There is no NestJS counterpart: this is a post-parity owner request (2026-11-24)
 separate module beside `quality` (ADR-S013), which keeps specifications, inspection lots, NCR, CAPA and certificates
 of analysis. The full design, including lifecycle, blocking and quarantine rules, is ADR-S087.
 
-Status: QC1 (foundation), QC2 (triggers, blocking, quarantine) and QC3 (alerts) implemented. QC4 (SPC) follows.
+Status: implemented (QC1–QC4): foundation, triggers / blocking / quarantine, alerts, statistics and SPC.
 
 ## Permissions
 
@@ -71,7 +71,11 @@ Administrator gets all five (V660). The Manager role defaults to `read`, `check`
 | POST | `/quality-control/root-causes` | configure | 201 |
 | PATCH | `/quality-control/root-causes/{id}` | configure | |
 
-44 routes. The overview gains `openAlerts`.
+| GET | `/quality-control/statistics/summary` | read | QC4; `from`, `to` (ISO dates, default last 90 days), `controlPointId`, `productId`, `workCenterId`, `teamId`, `interval` (day / week / month); totals, trend, top-10 failures by point / product / work centre / team / failure class |
+| GET | `/quality-control/statistics/pareto` | read | same filters + `dimension` (failure_class, control_point, product, work_center, team); rows with `percent`, `cumulativePercent` |
+| GET | `/quality-control/statistics/spc` | read | `controlPointId` (measure), `from`, `to`, `productId`, `workCenterId`, `baseline` (≥ 2), `rules` (`1,4` default), `segment`; chart, capability, segments, excluded counts, dataset ids |
+
+47 routes. The overview gains `openAlerts`.
 
 ## Generated checks and blocking (QC2)
 
@@ -132,6 +136,8 @@ takes `failureClassId` (required when the point sets `failureClassRequired`) and
 | Duplicate stage / tag / root cause name | 409 | `An alert stage named X already exists.` (tag / root cause alike) |
 | Link a correction check of another check | 400 | `Link a correction check of this alert's check.` |
 | `sourceType` without `sourceId` | 400 | `sourceType and sourceId go together.` |
+| SPC on a non-measure point | 400 | `SPC needs a measure control point.` |
+| SPC segment out of range | 400 | `Segment 5 does not exist; this point has 2 specification segment(s).` |
 
 ## DMS record types
 
@@ -150,7 +156,10 @@ receipt and delivery detail views, and the check list on the shop-floor terminal
 while a check blocks). QC3 adds Quality Alerts (`/quality-control/alerts`: kanban with drag-and-drop between stages,
 or a list; detail at `/quality-control/alerts/:id` with investigation fields, NCR escalation, evidence and history),
 Alert Settings (stages, tags, root causes) under Configuration, a "Quality alert" button on the check detail and on
-the document quality-checks panel, and an "Open alerts" tile on the overview.
+the document quality-checks panel, and an "Open alerts" tile on the overview. QC4 adds Quality Statistics (`/quality-control/statistics`, Reporting):
+pass-rate trend, Pareto by dimension, failure breakdowns, and a control chart per measure point (CL / UCL / LCL from
+the data, USL / LSL drawn separately, flagged points, provisional badge, range chart, capability tiles or the reason
+they are withheld).
 
 ## Deviations
 

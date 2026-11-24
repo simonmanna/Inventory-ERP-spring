@@ -14,6 +14,7 @@ const QuarantineExceptionsPage = lazy(() => import('./QuarantineExceptionsPage')
 const AlertsPage = lazy(() => import('./AlertsPage').then((m) => ({ default: m.AlertsPage })));
 const AlertDetailPage = lazy(() => import('./AlertDetailPage').then((m) => ({ default: m.AlertDetailPage })));
 const AlertSettingsPage = lazy(() => import('./AlertSettingsPage').then((m) => ({ default: m.AlertSettingsPage })));
+const StatisticsPage = lazy(() => import('./StatisticsPage').then((m) => ({ default: m.StatisticsPage })));
 const FailureClassesPage = lazy(() => import('./FailureClassesPage').then((m) => ({ default: m.FailureClassesPage })));
 
 /** Odoo-style quality control (ADR-S087); core-available, gated by quality_control:* permissions. */
@@ -24,6 +25,7 @@ export const qualityControlRoutes = (
     <Route path="/quality-control" element={guard(<QcOverviewPage />)} />
     <Route path="/quality-control/checks" element={guard(<ChecksPage />)} />
     <Route path="/quality-control/checks/:id" element={guard(<CheckDetailPage />)} />
+    <Route path="/quality-control/statistics" element={guard(<StatisticsPage />)} />
     <Route path="/quality-control/alerts" element={guard(<AlertsPage />)} />
     <Route path="/quality-control/alerts/:id" element={guard(<AlertDetailPage />)} />
     <Route path="/quality-control/alert-settings" element={guard(<AlertSettingsPage />)} />
