@@ -134,6 +134,8 @@ public class InvoicingWorkflowsInitializer {
                     return !"posted".equals(String.valueOf(status)) && !"paid".equals(String.valueOf(status))
                             && !"cancelled".equals(String.valueOf(status));
                 }, this::postInvoice, null),
+                // Sales readiness R1: a draft is discarded without any ledger or stock effect.
+                new Transition("draft", "cancelled", "cancel", "invoice:cancel", null, ctx -> { }, null),
                 new Transition("posted", "cancelled", "cancel", "invoice:cancel",
                         ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), this::cancelInvoice, null)));
     }

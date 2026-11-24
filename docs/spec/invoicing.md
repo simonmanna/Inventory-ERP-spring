@@ -58,6 +58,18 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Generated invoices are not editable; drafts can be discarded** (sales readiness R1, 2026-11-24, owner to approve).
+  - `PATCH /invoices/:id` locks the document first and answers 400 "This invoice was generated from sales order X;
+    cancel the draft and invoice it again" for a draft whose `sourceType` is `sales_order` or `cash_sale`. The UPDATE
+    only applies to a draft (`status = 'draft'`).
+  - `POST /invoices/:id/cancel` on a **draft** discards it (`draft → cancelled`, permission `invoice:cancel`): no
+    approval gate, no reversal record, no ledger or stock effect. Nest had no draft cancel, so a generated draft could
+    never be removed and kept its order lines "linked".
+  - Every draft with a commercial source runs the post guards, goods or not (previously only drafts whose stock a
+    delivery issues). The sales guard compares each line with the order line it is linked to (product, variant, unit,
+    quantity, price, discount, tax, amount ±0.01), refuses unlinked lines, checks down-payment invoices against their
+    recorded amount, and checks a cash-sale invoice line by line against the sale.
+
 - **Foreign-currency payments through a foreign account** (R-8, ADR-S076, owner-approved 2026-11-16). A payment in
   currency C may use a designated bank, cash or mobile-money account held in C, outside a register shift:
   - the cash line carries C;

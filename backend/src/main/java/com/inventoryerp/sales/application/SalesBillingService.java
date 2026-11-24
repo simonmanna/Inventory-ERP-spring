@@ -321,7 +321,105 @@ public class SalesBillingService {
                         + base.stripTrailingZeros().toPlainString() + " can be invoiced");
             }
         }
+        out.addAll(lineProblems(documentId));
+        out.addAll(downPaymentProblems(documentId));
         return out;
+    }
+
+    private static final BigDecimal CENT = new BigDecimal("0.01");
+
+    /**
+     * Sales readiness R1 (B1): every line of a sales-order invoice must be exactly the commercial line it was generated
+     * from — same order line, product, variant, unit and factor, the linked quantity, the order line's price, discount
+     * and tax, and the linked amount — and the invoice may carry no line its links do not account for. The links are the
+     * allocation the caps were checked on; a document line that drifted from them would bill what nobody authorised.
+     */
+    List<String> lineProblems(String documentId) {
+        List<String> out = new ArrayList<>();
+        List<Map<String, Object>> rows = db.rows("""
+                SELECT k."documentLineId", k.quantity AS "linkQty", k.amount AS "linkAmount",
+                       o.number AS "orderNumber", l.description, l."productId" AS "oProduct", l."variantId" AS "oVariant",
+                       l."uomId" AS "oUom", l."uomFactor" AS "oFactor", l."unitPrice" AS "oPrice",
+                       l."discountPercent" AS "oDiscount", l."taxId" AS "oTax", l."taxInclusive" AS "oInclusive",
+                       dl.id AS "dlId", dl."productId" AS "dProduct", dl."variantId" AS "dVariant", dl."uomId" AS "dUom",
+                       dl."uomFactor" AS "dFactor", dl.quantity AS "dQty", dl."unitPrice" AS "dPrice",
+                       dl."discountPercent" AS "dDiscount", dl."taxId" AS "dTax", dl."taxInclusive" AS "dInclusive",
+                       dl.total AS "dTotal"
+                  FROM "SalesInvoiceLink" k
+                  JOIN "SalesOrderLine" l ON l.id = k."orderLineId"
+                  JOIN "SalesOrder" o ON o.id = k."orderId"
+                  LEFT JOIN "DocumentLine" dl ON dl.id = k."documentLineId" AND dl."documentId" = k."documentId"
+                 WHERE k."documentId" = ? AND k."organizationId" = ? AND k.kind = 'regular' AND k.origin = 'sales'
+                """, documentId, org());
+        if (rows.isEmpty()) {
+            return out;
+        }
+        java.util.Set<Object> linkedLines = new java.util.HashSet<>();
+        for (Map<String, Object> r : rows) {
+            String where = "Sales order " + r.get("orderNumber") + " line \"" + r.get("description") + "\"";
+            if (r.get("dlId") == null) {
+                out.add(where + " has no matching invoice line");
+                continue;
+            }
+            linkedLines.add(r.get("dlId"));
+            List<String> diff = new ArrayList<>();
+            if (!java.util.Objects.equals(r.get("oProduct"), r.get("dProduct"))) {
+                diff.add("product");
+            }
+            if (!java.util.Objects.equals(r.get("oVariant"), r.get("dVariant"))) {
+                diff.add("variant");
+            }
+            if (!java.util.Objects.equals(r.get("oUom"), r.get("dUom")) || !sameOrNull(r.get("oFactor"), r.get("dFactor"))) {
+                diff.add("unit");
+            }
+            if (dec(r.get("linkQty")).compareTo(dec(r.get("dQty"))) != 0) {
+                diff.add("quantity");
+            }
+            if (dec(r.get("oPrice")).compareTo(dec(r.get("dPrice"))) != 0) {
+                diff.add("unit price");
+            }
+            if (dec(r.get("oDiscount")).compareTo(dec(r.get("dDiscount"))) != 0) {
+                diff.add("discount");
+            }
+            if (!java.util.Objects.equals(r.get("oTax"), r.get("dTax"))
+                    || !java.util.Objects.equals(r.get("oInclusive"), r.get("dInclusive"))) {
+                diff.add("tax");
+            }
+            if (diff.isEmpty() && dec(r.get("linkAmount")).subtract(dec(r.get("dTotal"))).abs().compareTo(CENT) > 0) {
+                diff.add("amount");
+            }
+            if (!diff.isEmpty()) {
+                out.add(where + " differs from the invoice line (" + String.join(", ", diff) + ")");
+            }
+        }
+        long lines = db.count("SELECT count(*) FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"organizationId\" = ?",
+                List.of(documentId, org()));
+        if (lines > linkedLines.size()) {
+            out.add("The invoice carries " + (lines - linkedLines.size()) + " line(s) that no sales order line accounts for");
+        }
+        return out;
+    }
+
+    /** A down-payment invoice is one deposit line for exactly the amount the order's down-payment link records. */
+    List<String> downPaymentProblems(String documentId) {
+        Map<String, Object> k = db.row("SELECT sum(amount) AS amount, count(*) AS n FROM \"SalesInvoiceLink\" WHERE"
+                + " \"documentId\" = ? AND \"organizationId\" = ? AND kind = 'down_payment'", documentId, org());
+        if (k == null || ((Number) k.get("n")).longValue() == 0) {
+            return List.of();
+        }
+        Map<String, Object> d = db.row("SELECT \"totalAmount\", (SELECT count(*) FROM \"DocumentLine\" x WHERE"
+                + " x.\"documentId\" = d.id) AS lines, (SELECT count(*) FROM \"DocumentLine\" x WHERE x.\"documentId\" = d.id"
+                + " AND (x.\"productId\" IS NOT NULL OR x.\"accountId\" IS DISTINCT FROM ?)) AS others FROM \"Document\" d"
+                + " WHERE d.id = ? AND d.\"organizationId\" = ?", deposits.depositAccount(), documentId, org());
+        if (d == null || ((Number) d.get("lines")).longValue() != 1 || ((Number) d.get("others")).longValue() != 0
+                || dec(d.get("totalAmount")).subtract(dec(k.get("amount"))).abs().compareTo(CENT) > 0) {
+            return List.of("The down-payment invoice no longer matches the down payment recorded on its sales order");
+        }
+        return List.of();
+    }
+
+    private static boolean sameOrNull(Object a, Object b) {
+        return a == null || b == null || dec(a).compareTo(dec(b)) == 0;
     }
 
     /**
