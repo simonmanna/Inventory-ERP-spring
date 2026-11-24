@@ -76,7 +76,7 @@ export const RULES: readonly Rule[] = [
     'org-modules-catalog', 'organization-me', 'company-settings', 'settings', 'settings-company', 'settings-effective',
     'custom-fields', 'custom-objects', 'cash-registers', 'cash-registers-crud', 'account-categories', 'accounts',
     'account-mappings', 'account-dimension-rules', 'cost-centers', 'cost-centres-flat', 'cost-center-defaults',
-    'analytic-dimensions', 'fiscal-positions', 'fiscal-periods', 'fiscal-years', 'work-centers', 'wc-calendar',
+    'analytic-dimensions', 'fiscal-positions', 'fiscal-periods', 'period-controls', 'fiscal-years', 'work-centers', 'wc-calendar',
     'routings', 'routing-stage-setup', 'boms', 'bom', 'bom-stage-setup', 'bom-standards', 'bom-substitutes',
     'asset-categories', 'cash-flow-operation-types', 'inventory-defaults', 'mrp-settings', 'planning-params',
     'cost-components', 'cost-policies', 'cost-processes', 'standard-costs', 'cost-alloc-rules',
