@@ -83,8 +83,9 @@ public class PlmController {
     @GetMapping("/items")
     @RequirePermissions(Permissions.PLM__READ)
     public List<Map<String, Object>> items(@RequestParam(required = false) String state,
-            @RequestParam(required = false) String productId, @RequestParam(required = false) String q) {
-        return lifecycle.list(state, productId, q);
+            @RequestParam(required = false) String productId, @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset) {
+        return lifecycle.list(state, productId, q, limit, offset);
     }
 
     @PostMapping("/items")
@@ -103,8 +104,8 @@ public class PlmController {
 
     @GetMapping("/items/{id}")
     @RequirePermissions(Permissions.PLM__READ)
-    public Map<String, Object> item(@PathVariable String id) {
-        return lifecycle.detail(id);
+    public Map<String, Object> item(@PathVariable String id, @RequestParam(required = false) Integer limit) {
+        return lifecycle.detail(id, limit);
     }
 
     @PatchMapping("/items/{id}")

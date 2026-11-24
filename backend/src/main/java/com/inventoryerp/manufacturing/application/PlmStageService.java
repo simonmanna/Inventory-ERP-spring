@@ -90,6 +90,16 @@ public class PlmStageService {
             data.put("sequence", dto.sequence());
         }
         if (dto.requiresApproval() != null) {
+            // Integrity fix 2026-11-24 (ML-5): approval cannot be switched off under changes waiting for it.
+            Map<String, Object> stage = require(id);
+            if (!dto.requiresApproval() && Boolean.TRUE.equals(stage.get("requiresApproval"))) {
+                Long waiting = db.jdbc().sql("SELECT count(*) FROM \"EngineeringChange\" WHERE \"organizationId\" = ?"
+                        + " AND \"stageId\" = ? AND status = 'draft'").params(MfgDb.org(), id).query(Long.class).single();
+                if (waiting > 0) {
+                    throw ApiException.badRequest("Stage " + stage.get("name") + " has " + waiting
+                            + " change(s) awaiting its approval; move them first.");
+                }
+            }
             data.put("requiresApproval", dto.requiresApproval());
         }
         if (dto.description() != null) {

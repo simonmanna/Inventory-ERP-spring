@@ -51,16 +51,22 @@ public class EngineeringService {
     @Transactional
     public Map<String, Object> revise(String bomId, ReviseBom dto) {
         Map<String, Object> src = boms.getOrThrow(bomId);
+        // Integrity fix 2026-11-24 (ML-3): only the active version is revised (a change on a draft / archived base
+        // would later archive the wrong version), and the open-change check runs under the lock.
+        if (!"active".equals(src.get("status"))) {
+            throw ApiException.badRequest("BOM " + src.get("code") + " v" + src.get("version") + " is "
+                    + src.get("status") + "; only the active version can be revised.");
+        }
+        String product = str(src, "outputProductId");
+        String variantKey = str(src, "outputVariantKey");
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text")
+                .param("bom:" + MfgDb.org() + ":" + product + ":" + variantKey).query().listOfRows();
         List<Map<String, Object>> open = db.list(EngineeringChange.class, " AND \"bomId\" = ? AND status IN"
                 + " ('draft', 'approved') ORDER BY \"createdAt\"", bomId);
         if (!open.isEmpty()) {
             throw ApiException.badRequest("BOM " + src.get("code") + " already has an open change "
                     + open.getFirst().get("number") + ".");
         }
-        String product = str(src, "outputProductId");
-        String variantKey = str(src, "outputVariantKey");
-        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text")
-                .param("bom:" + MfgDb.org() + ":" + product + ":" + variantKey).query().listOfRows();
         int version = db.jdbc().sql("SELECT coalesce(max(version), 0) FROM \"Bom\" WHERE \"organizationId\" = ?"
                 + " AND \"outputProductId\" = ? AND \"outputVariantKey\" = ?").params(MfgDb.org(), product, variantKey)
                 .query(Integer.class).single() + 1;
@@ -120,8 +126,15 @@ public class EngineeringService {
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String status) {
-        return status != null ? db.list(EngineeringChange.class, " AND status = ? ORDER BY \"createdAt\" DESC", status)
-                : db.list(EngineeringChange.class, " ORDER BY \"createdAt\" DESC");
+        return list(status, null, null);
+    }
+
+    /** Integrity fix 2026-11-24 (ML-11): optional {@code limit} (1–1000) / {@code offset}; absent = everything. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> list(String status, Integer limit, Integer offset) {
+        String page = MfgDb.page(limit, offset);
+        return status != null ? db.list(EngineeringChange.class, " AND status = ? ORDER BY \"createdAt\" DESC, id"
+                + page, status) : db.list(EngineeringChange.class, " ORDER BY \"createdAt\" DESC, id" + page);
     }
 
     @Transactional(readOnly = true)

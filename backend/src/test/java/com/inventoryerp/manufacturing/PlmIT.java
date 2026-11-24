@@ -22,6 +22,37 @@ class PlmIT extends MfgTestSupport {
 
     static final String PLM = "/manufacturing/plm";
 
+    private String approverToken;
+
+    /**
+     * A second DEMO administrator: since 2026-11-24 (ML-4, {@code plm.allowSelfApproval} off by default) the person
+     * who raised a change cannot approve it.
+     */
+    String approver() {
+        if (approverToken == null) {
+            String role = jdbc.sql("SELECT r.id FROM \"Role\" r JOIN \"_UserRoles\" ur ON ur.\"A\" = r.id"
+                    + " JOIN \"User\" u ON u.id = ur.\"B\" WHERE u.email = 'admin@demo.test' LIMIT 1")
+                    .query(String.class).single();
+            String email = "plm-approver-" + suffix() + "@demo.test";
+            createUser(demoOrg, email, "Approver@12345", role);
+            approverToken = login("DEMO", email, "Approver@12345");
+        }
+        return approverToken;
+    }
+
+    /** Call as the second administrator; must answer {@code status}. */
+    JsonNode okAs(String token, int status, String method, String path, Object body) {
+        Res r = call(method, path, body, token);
+        assertThat(r.status()).as(method + " " + path + " → " + r.raw().body()).isEqualTo(status);
+        return r.body();
+    }
+
+    /** Default pipeline: into review, then approved by the second administrator (non-BOM changes, ML-4). */
+    JsonNode approveViaStages(String ecoId) {
+        ok(201, "POST", PLM + "/changes/" + ecoId + "/stage", Map.of("stageId", stageId("Engineering review")));
+        return okAs(approver(), 201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "approved"));
+    }
+
     String msg(Res r) {
         return r.body().get("message").asString();
     }
@@ -145,11 +176,12 @@ class PlmIT extends MfgTestSupport {
         assertThat(msg(as("POST", PLM + "/changes/" + ecoId + "/apply", null)))
                 .isEqualTo("Only an approved change can be applied (status draft).");
 
-        JsonNode rejected = ok(201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "rejected",
-                "comment", "Check sweetness"));
+        JsonNode rejected = okAs(approver(), 201, "POST", PLM + "/changes/" + ecoId + "/decisions",
+                Map.of("decision", "rejected", "comment", "Check sweetness"));
         assertThat(rejected.get("approval").get("blocker").asString()).startsWith("Stage Engineering review was"
                 + " rejected by ");
-        JsonNode approved = ok(201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "approved"));
+        JsonNode approved = okAs(approver(), 201, "POST", PLM + "/changes/" + ecoId + "/decisions",
+                Map.of("decision", "approved"));
         assertThat(approved.get("status").asString()).isEqualTo("approved");
         assertThat(approved.get("stage").get("name").asString()).isEqualTo("Approved");
 
@@ -159,7 +191,7 @@ class PlmIT extends MfgTestSupport {
         assertThat(back.get("status").asString()).isEqualTo("draft");
         assertThat(back.get("approval").get("satisfied").asBoolean()).isFalse();
         ok(201, "POST", PLM + "/changes/" + ecoId + "/comments", Map.of("message", "Re-check done"));
-        ok(201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "approved"));
+        okAs(approver(), 201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "approved"));
 
         JsonNode applied = ok(201, "POST", PLM + "/changes/" + ecoId + "/apply", null);
         assertThat(applied.get("status").asString()).isEqualTo("applied");
@@ -193,7 +225,8 @@ class PlmIT extends MfgTestSupport {
                     Map.of("userId", someoneElse, "kind", "required"))));
             ecoId = ok(201, "POST", PLM + "/changes", Map.of("type", "bom", "bomId", bomId)).get("id").asString();
             ok(201, "POST", PLM + "/changes/" + ecoId + "/stage", Map.of("stageId", stageId("Engineering review")));
-            JsonNode atQa = ok(201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "approved"));
+            JsonNode atQa = okAs(approver(), 201, "POST", PLM + "/changes/" + ecoId + "/decisions",
+                    Map.of("decision", "approved"));
             assertThat(atQa.get("stage").get("id").asString()).isEqualTo(qaId);
             assertThat(atQa.get("approval").get("canDecide").asBoolean()).isFalse();
             assertThat(atQa.get("approval").get("blocker").asString()).contains("needs approval from: ");
@@ -235,8 +268,7 @@ class PlmIT extends MfgTestSupport {
                         "durationMins", 25), Map.of("sequence", 2, "name", "Cool", "durationMins", 10))));
         assertThat(edited.get("routingComparison").get("added")).hasSize(1);
         assertThat(edited.get("routingComparison").get("changed").get(0).get("changes").has("durationMins")).isTrue();
-        ok(201, "POST", PLM + "/changes/" + rId + "/stage", Map.of("stageId", stageId("Engineering review")));
-        ok(201, "POST", PLM + "/changes/" + rId + "/decisions", Map.of("decision", "approved"));
+        approveViaStages(rId);
         ok(201, "POST", PLM + "/changes/" + rId + "/apply", null);
         assertThat(ok(200, "GET", "/manufacturing/boms/" + bomId, null).get("routingId").asString())
                 .isEqualTo(newRouting);
@@ -249,8 +281,9 @@ class PlmIT extends MfgTestSupport {
         JsonNode p = ok(201, "POST", PLM + "/changes", Map.of("type", "product", "productId", loaf,
                 "targetLifecycleState", "phase_out", "effectivity", "date", "effectiveDate", future));
         String pId = p.get("id").asString();
-        assertThat(ok(201, "POST", "/manufacturing/engineering-changes/" + pId + "/approve", null).get("status")
-                .asString()).isEqualTo("approved");
+        assertThat(msg(as("POST", "/manufacturing/engineering-changes/" + pId + "/approve", null)))
+                .isEqualTo("Only a BOM change can be fast-tracked; use the PLM approval stages.");
+        assertThat(approveViaStages(pId).get("status").asString()).isEqualTo("approved");
         JsonNode queued = ok(201, "POST", PLM + "/changes/" + pId + "/apply", Map.of());
         assertThat(queued.get("status").asString()).isEqualTo("approved");
         assertThat(queued.get("applyQueued").asBoolean()).isTrue();
@@ -258,7 +291,7 @@ class PlmIT extends MfgTestSupport {
         ok(201, "POST", PLM + "/changes/" + pId + "/cancel", Map.of());
         JsonNode p2 = ok(201, "POST", PLM + "/changes", Map.of("type", "product", "productId", loaf,
                 "targetLifecycleState", "phase_out"));
-        ok(201, "POST", "/manufacturing/engineering-changes/" + p2.get("id").asString() + "/approve", null);
+        approveViaStages(p2.get("id").asString());
         ok(201, "POST", PLM + "/changes/" + p2.get("id").asString() + "/apply", null);
         JsonNode item = ok(200, "GET", PLM + "/items/" + itemId, null);
         assertThat(item.get("lifecycleState").asString()).isEqualTo("phase_out");
@@ -272,7 +305,7 @@ class PlmIT extends MfgTestSupport {
                 List.of(docId)));
         assertThat(msg(as("POST", PLM + "/documents/" + docId + "/release", null)))
                 .endsWith(" when that change is applied.");
-        ok(201, "POST", "/manufacturing/engineering-changes/" + d.get("id").asString() + "/approve", null);
+        approveViaStages(d.get("id").asString());
         ok(201, "POST", PLM + "/changes/" + d.get("id").asString() + "/apply", null);
         assertThat(ok(200, "GET", PLM + "/documents/" + docId, null).get("status").asString()).isEqualTo("released");
         JsonNode v2 = ok(201, "POST", PLM + "/documents/" + docId + "/revise", null);
@@ -292,9 +325,11 @@ class PlmIT extends MfgTestSupport {
         assertThat(ok(200, "GET", PLM + "/requests/" + ecrId, null).get("overdue").asBoolean()).isTrue();
         ok(200, "PATCH", PLM + "/requests/" + ecrId, Map.of("dueDate", ""));
         assertThat(ok(200, "GET", PLM + "/requests/" + ecrId, null).get("dueDate").isNull()).isTrue();
-        assertThat(msg(as("POST", PLM + "/requests/" + ecrId + "/review", Map.of("decision", "reject"))))
+        assertThat(msg(call("POST", PLM + "/requests/" + ecrId + "/review", Map.of("decision", "reject"), approver())))
                 .isEqualTo("Give a reason to reject the change request.");
-        ok(201, "POST", PLM + "/requests/" + ecrId + "/review", Map.of("decision", "accept"));
+        assertThat(msg(as("POST", PLM + "/requests/" + ecrId + "/review", Map.of("decision", "accept"))))
+                .isEqualTo("You cannot review a request you raised.");
+        okAs(approver(), 201, "POST", PLM + "/requests/" + ecrId + "/review", Map.of("decision", "accept"));
         JsonNode converted = ok(201, "POST", PLM + "/requests/" + ecrId + "/convert", Map.of("type", "bom"));
         assertThat(converted.get("type").asString()).isEqualTo("bom");
         assertThat(converted.get("bomId").asString()).isEqualTo(bomId);
@@ -320,7 +355,8 @@ class PlmIT extends MfgTestSupport {
         JsonNode eco = ok(201, "POST", PLM + "/changes", body);
         ok(200, "PATCH", "/manufacturing/boms/" + eco.get("newBomId").asString(), Map.of("lines", List.of(
                 Map.of("componentProductId", kept, "quantity", 1), Map.of("componentProductId", added, "quantity", 1))));
-        ok(201, "POST", "/manufacturing/engineering-changes/" + eco.get("id").asString() + "/approve", null);
+        okAs(approver(), 201, "POST", "/manufacturing/engineering-changes/" + eco.get("id").asString() + "/approve",
+                null);
         return eco;
     }
 
