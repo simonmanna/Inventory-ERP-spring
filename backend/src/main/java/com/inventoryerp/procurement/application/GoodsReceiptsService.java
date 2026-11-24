@@ -109,12 +109,43 @@ public class GoodsReceiptsService {
      * Capture + post in one call for ad-hoc stock-ins: {@link #createDraft} then {@link #post}. Without
      * {@code goods_receipt:post}, or while approval is required, only the draft is created.
      */
+    private com.inventoryerp.qualitycontrol.application.QcGate qcGate;
+
+    /** Quality-control gate (ADR-S087); optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setQcGate(com.inventoryerp.qualitycontrol.application.QcGate qcGate) {
+        this.qcGate = qcGate;
+    }
+
+    /** A receipt as the quality gate sees it: lines in base units at the receipt's warehouse, from its supplier. */
+    static com.inventoryerp.qualitycontrol.application.QcSourceDoc qcDoc(Map<String, Object> grn, List<Map<String, Object>> lines) {
+        List<com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line> out = new ArrayList<>();
+        for (Map<String, Object> l : lines) {
+            if (l.get("productId") == null) {
+                continue;
+            }
+            BigDecimal factor = l.get("uomFactor") == null ? BigDecimal.ONE : Money.dec(l.get("uomFactor"));
+            out.add(new com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line((String) l.get("id"), (String) l.get("productId"),
+                    (String) l.get("variantId"), Money.dec(l.get("quantity")).multiply(factor),
+                    (String) l.get("batchNumber")));
+        }
+        return new com.inventoryerp.qualitycontrol.application.QcSourceDoc("goods_receipt", (String) grn.get("id"),
+                (String) grn.get("receiptNumber"), "receipt", null, null, null, (String) grn.get("partnerId"),
+                (String) grn.get("warehouseId"), out);
+    }
+
     public Map<String, Object> createAdhoc(Map<String, Object> input) {
         if (lines(input).isEmpty()) {
             throw ApiException.badRequest("At least one line required");
         }
         Map<String, Object> draft = createDraft(input);
         if (!TenantContext.has("goods_receipt:post")) {
+            return draft;
+        }
+        // ADR-S087: checks required before posting (pre_receipt control points) keep the receipt a draft.
+        if (qcGate != null && Boolean.TRUE.equals(tx.execute(s -> qcGate.isBlocked("goods_receipt",
+                (String) draft.get("id"))))) {
+            draft.put("qualityChecksPending", true);
             return draft;
         }
         Map<String, Object> gate = approvals.checkOrRequestApproval("goods_receipt", (String) draft.get("id"),
@@ -234,6 +265,9 @@ public class GoodsReceiptsService {
                                 variant == null ? null : variant.id())));
             }
             row.put("lines", created);
+            if (qcGate != null) {
+                qcGate.sync(qcDoc(row, created));
+            }
             return row;
         });
         audit.record(AuditInput.of("GoodsReceiptNote", (String) grn.get("id"), "create", null,
@@ -417,6 +451,10 @@ public class GoodsReceiptsService {
                         (String) l.get("description"))).toList());
 
         Map<String, Object> result = tx.execute(st -> {
+            // ADR-S087: blocking quality checks of the receipt hold the post (before any write).
+            if (qcGate != null) {
+                qcGate.assertComplete("goods_receipt", id, List.of());
+            }
             // Atomic draft→posted claim: only one concurrent post can match.
             int claim = jdbc.sql("UPDATE \"GoodsReceiptNote\" SET status = 'posted', \"postedAt\" = " + NOW + ","
                             + " \"postedById\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
@@ -506,6 +544,10 @@ public class GoodsReceiptsService {
                     BigDecimal taxRate = taxLine != null ? Money.dec(taxLine.get("taxRate")) : Money.ZERO;
                     receiptTax = receiptTax.add(Money.div(lineNet.multiply(taxRate), BigDecimal.valueOf(100)));
                 }
+            }
+            // ADR-S087 §7: quarantine and post-receipt checks commit or roll back with the receipt.
+            if (qcGate != null) {
+                qcGate.onCompleted(qcDoc(updated, updatedLines));
             }
             // Voucher only on the simple PO flow; ad-hoc receipts leave GRNI open for a later vendor bill.
             if (po != null) {
@@ -819,6 +861,10 @@ public class GoodsReceiptsService {
                     + " is " + grn.get("status") + ")");
         }
         String why = reason == null || reason.isBlank() ? null : reason.trim();
+        if (qcGate != null && org.springframework.transaction.support.TransactionSynchronizationManager
+                .isActualTransactionActive()) {
+            qcGate.cancelFor("goods_receipt", id, List.of(), why);
+        }
         Map<String, Object> after = SqlRows.one(GoodsReceiptNote.class, jdbc.sql("UPDATE \"GoodsReceiptNote\" SET"
                 + " status = 'cancelled', notes = CASE WHEN ?::text IS NULL THEN notes ELSE concat_ws(E'\\n', notes,"
                 + " 'Cancelled: ' || ?::text) END, \"updatedBy\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND"

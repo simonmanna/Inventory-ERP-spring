@@ -436,7 +436,7 @@ class QualityControlIT extends ApiTestSupport {
     @Test
     @DisplayName("every route answers 401 without a token and 403 without its permission")
     void authorizationMatrix() {
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.qualitycontrol")).isEqualTo(27);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.qualitycontrol")).isEqualTo(28);
         assertThat(sweepGetRoutes("com.inventoryerp.qualitycontrol")).isEmpty();
         assertThat(ok(200, "GET", "/quality-control/overview", null).get("byStatus").has("pending")).isTrue();
     }

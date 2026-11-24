@@ -2074,7 +2074,10 @@ Not verified yet: the tours driven by hand in a browser.
   (5 types, samples, execution revisions, waive / reset / correction / cancel, event log), DMS providers. 27 routes.
   Tests: `QualityControlIT`, `WorksheetEvaluatorTest`, `MeasureEvaluationTest`, `TestQuantityCalculatorTest`,
   `QcBlockingPolicyTest`.
-- [ ] QC2 triggers, blocking (`QcGate`) and quarantine
+- [x] QC2 triggers, blocking (`QcGate`) and quarantine: hooks in production / work orders / goods receipts / PO
+  receive / sales deliveries, quantity reconciliation, random + periodic sampling, quarantine on receipt, quarantine
+  exceptions + retry route (28 routes). Cash sale + plain invoice post excluded (ADR-S087, owner sign-off pending).
+  Tests: `QualityControlFlowIT`, `QcCheckGeneratorTest`.
 - [ ] QC3 alerts and teams
 - [ ] QC4 SPC and statistics
 

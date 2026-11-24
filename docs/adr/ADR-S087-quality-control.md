@@ -413,6 +413,41 @@ Maintenance links.
 - Manual checks may name a source document (`production_order`, `work_order`, `goods_receipt`, `sales_delivery`); the
   id must exist in the tenant. They never block.
 
+## Implementation notes (QC2)
+
+- `QcGate` (`MANDATORY` propagation) is called from the business methods; the four modules hold it through an
+  optional setter (`@Autowired(required = false)`), so their existing constructions and unit tests are unchanged.
+  Hook calls, all before the method's stock or GL writes unless stated:
+  - `ProductionService`: `confirmOrder` and `startOrder` → `sync` (planned output, base units); `completeOrder` →
+    `assertComplete` (the order and its work orders) and, after the main output is received, `onCompleted` (failed
+    quantities move from the receive location); `cancelOrder` → `cancelFor` (the order and its work orders).
+  - `WorkOrderService`: `generateForOrder` and `start` → `sync` (source `work_order`); `complete` → `assertComplete`
+    and `onCompleted` (no stock). `ShopFloorExecutionService.complete` goes through it.
+  - `GoodsReceiptsService`: `createDraft` → `sync`; `post` → `assertComplete` inside the posting transaction, then
+    `onCompleted` after the stock receive and before the voucher; `cancelDraft` → `cancelFor`. `createAdhoc` returns
+    the draft (with `qualityChecksPending: true`) when its checks block.
+  - `PurchaseOrdersService.receive`: the approval branch's draft → `sync`; the one-shot receive is refused when a
+    `pre_receipt` point matches (any frequency), and otherwise calls `onCompleted` in the same transaction (atomic unit 1).
+  - `SalesDeliveryService`: `create` and a re-plan in `update` → `sync`; `issue` → `assertComplete` before dispatch,
+    `onCompleted` after (closes the checks, no stock); `cancel` → `cancelFor`.
+- **Exclusion (needs owner sign-off):** the cash-sale direct-invoice path (`CashSaleService.confirm`, PR #25) and a
+  plain sales-invoice post issue stock without a delivery, so delivery control points do not run on them. Hooking
+  them would need a check workflow inside the till/invoice flow, which is out of QC2's scope. A delivery control point
+  therefore covers deliveries made through Sales → Deliveries only.
+- Execution after source closure stays a 400 (§2): a non-blocking pre-completion check still pending at completion
+  remains pending and can only be followed up by a correction check.
+- Quarantine-on-receipt points must check per product or per quantity (a receipt-level check has no single product
+  to hold): `Quarantine on receipt needs a check per product or per quantity.`
+- A decided post-receipt check (stock moved) cannot be reset: `Quality check X has moved stock, so it cannot be reset.
+  Open a correction check instead.` A post-receipt check never blocks its receipt (it is created by the post).
+- Failed pre-completion quantities move from the document's stock location (MO: where the output was received; a
+  production order with its own ADR-S013 QC hold already receives into `QC-QUARANTINE`, so nothing moves). Deliveries
+  never move stock for QC; a draft-GRN pre-receipt failure has nothing received yet, so its quantity is only recorded.
+- Ledger references: `qc_check / <checkId>:receipt`, `<checkId>:<revision>:release`, `<checkId>:<revision>:failed`.
+  Each leg is looked up before it moves, so a retry never moves twice.
+- Random sampling persists every roll (`QcSamplingDecision`), selected or not; periodic sampling also records its
+  due / not-due decision per base key, so re-syncing a document never changes whether it has a check.
+
 ## Phases
 
 ### QC1: Foundation

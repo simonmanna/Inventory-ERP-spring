@@ -131,7 +131,8 @@ public final class QcCommands {
             @Size(max = 2000) String notes) {}
 
     public record CheckQuery(String search, String status, String origin, String checkType, String sourceType,
-            String sourceId, String controlPointId, String productId, String teamId, Integer page, Integer pageSize) {}
+            String sourceId, String controlPointId, String productId, String teamId, String quarantineStatus,
+            Integer page, Integer pageSize) {}
 
     public record SampleInput(
             @Size(max = 80) String sampleRef,

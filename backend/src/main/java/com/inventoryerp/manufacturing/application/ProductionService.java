@@ -109,6 +109,14 @@ public class ProductionService {
 
     private VirtualLocationService virtualLocations;
 
+    private com.inventoryerp.qualitycontrol.application.QcGate qcGate;
+
+    /** Quality-control gate (ADR-S087): checks of the order and its work orders; optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setQcGate(com.inventoryerp.qualitycontrol.application.QcGate qcGate) {
+        this.qcGate = qcGate;
+    }
+
     /** Setter-injected like {@link #setSettings}: system locations are created through the inventory API (R2). */
     @org.springframework.beans.factory.annotation.Autowired
     void setVirtualLocations(VirtualLocationService virtualLocations) {
@@ -363,6 +371,9 @@ public class ProductionService {
         if (!"draft".equals(order.get("status"))) {
             throw ApiException.badRequest("Cannot confirm a " + order.get("status") + " order.");
         }
+        if (qcGate != null) {
+            qcGate.sync(qcDoc(order, null, null));
+        }
         for (Map<String, Object> m : materials(order)) {
             try {
                 // Review M-3: reservations count base units (the stock they hold back); the material line is in its
@@ -418,6 +429,9 @@ public class ProductionService {
         }
         if (!"confirmed".equals(order.get("status")) || order.get("consumedAt") != null) {
             throw ApiException.badRequest("Order already started.");
+        }
+        if (qcGate != null) {
+            qcGate.sync(qcDoc(order, null, null));
         }
         String code = str(order, "orderCode");
         BigDecimal materialCost = BigDecimal.ZERO;
@@ -517,6 +531,10 @@ public class ProductionService {
         if (!"in_progress".equals(order.get("status")) || order.get("postedAt") != null) {
             throw ApiException.badRequest("Order already completed.");
         }
+        // ADR-S087: blocking quality checks of the order and its work orders hold the completion (before any write).
+        if (qcGate != null) {
+            qcGate.assertComplete(SOURCE, id, workOrderIds(id));
+        }
         String code = str(order, "orderCode");
         BigDecimal materialCost = dec(order, "materialCost");
         BigDecimal overhead = dec(order, "overheadCost");
@@ -540,6 +558,9 @@ public class ProductionService {
             data.put("notes", dto.notes() != null ? dto.notes() : order.get("notes"));
             data.put("updatedBy", TenantContext.userId());
             Map<String, Object> scrapped = withLines(db.update(ProductionOrder.class, id, data), true, true);
+            if (qcGate != null) {
+                qcGate.onCompleted(qcDoc(order, null, List.of()).at(null));
+            }
             reservations.release(SOURCE, id);
             audit.recordInTx(AuditInput.of("ProductionOrder", id, "post", null,
                     Obj.of("orderCode", code, "scrapped", JsNumbers.dec(loss))));
@@ -623,6 +644,12 @@ public class ProductionService {
                 dto.expiryDate() != null ? dto.expiryDate() : iso(order.get("expiryDate")),
                 dto.mfgDate() != null ? dto.mfgDate() : iso(order.get("mfgDate")), code, date,
                 mainLine == null ? null : str(mainLine, "id"), outputValue);
+        if (qcGate != null) {
+            // Failed checks' quantities move to quarantine from where the output was received (ADR-S087 §7).
+            qcGate.onCompleted(qcDoc(order, receiveLocationId, List.of(new com.inventoryerp.qualitycontrol.application
+                    .QcSourceDoc.Line("main", str(order, "outputProductId"), str(order, "outputVariantId"),
+                    qtyProducedBase, mainBatch))));
+        }
 
         BigDecimal expectedQty = mainLine != null ? dec(mainLine, "qtyExpected") : dec(order, "plannedQty");
         // Review N3: expected and produced compared in base units (outputUnitCost is per base unit).
@@ -780,6 +807,9 @@ public class ProductionService {
         }
         if ("cancelled".equals(pre.get("status"))) {
             return pre;
+        }
+        if (qcGate != null) {
+            qcGate.cancelFor(SOURCE, id, workOrderIds(id), reason);
         }
         // Integrity fix 2026-11-24 (MC-8; deviation: the release ran in its own committed transaction before the
         // cancel was known to succeed — a later failure, e.g. inside a PLM ECO apply, left the order confirmed with its
@@ -1257,6 +1287,34 @@ public class ProductionService {
                 + " AND \"ledgerCode\" = ? AND \"quantityChange\" " + (incoming ? "> 0" : "< 0")).params(MfgDb.org(), ledgerCode)
                 .query(BigDecimal.class).optional().orElse(null);
         return q == null || q.signum() == 0 ? null : q;
+    }
+
+    /** The order as the quality gate sees it: planned output (base units) unless actual lines are given. */
+    private com.inventoryerp.qualitycontrol.application.QcSourceDoc qcDoc(Map<String, Object> order, String location,
+            List<com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line> actual) {
+        List<com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line> lines = actual;
+        if (lines == null) {
+            String productId = str(order, "outputProductId");
+            BigDecimal planned = dec(order, "plannedQty");
+            BigDecimal base;
+            try {
+                base = newTx.execute(s -> uom.toBase(planned, str(order, "uomId"), productId, productUnit(productId),
+                        true));
+            } catch (RuntimeException e) {
+                base = planned;
+            }
+            lines = List.of(new com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line("main", productId,
+                    str(order, "outputVariantId"), base, str(order, "batchNumber")));
+        }
+        return new com.inventoryerp.qualitycontrol.application.QcSourceDoc(SOURCE, str(order, "id"),
+                str(order, "orderCode"), "manufacturing", null, null, null, null,
+                location != null ? location : order.get("outputLocationId") != null ? str(order, "outputLocationId")
+                        : str(order, "locationId"), lines);
+    }
+
+    private List<String> workOrderIds(String orderId) {
+        return db.jdbc().sql("SELECT id FROM \"WorkOrder\" WHERE \"organizationId\" = ? AND \"productionOrderId\" = ?")
+                .params(MfgDb.org(), orderId).query(String.class).list();
     }
 
     private String productUnit(String productId) {

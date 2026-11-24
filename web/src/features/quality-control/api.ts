@@ -153,6 +153,8 @@ export interface QcEvaluation {
   fields?: Array<{ key: string; label: string; visible: boolean; passed: boolean | null; reason: string | null; value?: unknown }>;
 }
 
+export type QcQuarantineStatus = 'not_required' | 'pending' | 'completed' | 'failed';
+
 export interface QcEvent {
   id: string;
   action: string;
@@ -207,7 +209,12 @@ export interface QcCheck {
   failureClassCode?: string | null;
   failureClassName?: string | null;
   failedQty: Num;
-  quarantineStatus: string | null;
+  quarantineStatus: QcQuarantineStatus | null;
+  quarantinedQty?: Num;
+  quarantineError?: string | null;
+  quarantineLocationId?: string | null;
+  workOrderId?: string | null;
+  generationKey?: string | null;
   sourceClosed: boolean;
   correctsCheckId: string | null;
   correctsCheckNumber?: string | null;
@@ -322,7 +329,7 @@ export const useControlPoint = (id?: string) =>
     queryFn: async () => (await api.get<ControlPoint>(`/quality-control/control-points/${id}`)).data,
   });
 
-export const useQcChecks = (p: PageParams & { status?: string; origin?: string; checkType?: string; sourceType?: string; sourceId?: string; controlPointId?: string; teamId?: string }) =>
+export const useQcChecks = (p: PageParams & { status?: string; origin?: string; checkType?: string; sourceType?: string; sourceId?: string; controlPointId?: string; teamId?: string; quarantineStatus?: string }) =>
   useQuery({
     queryKey: [...KEY, 'checks', p],
     placeholderData: (prev) => prev,
@@ -368,3 +375,20 @@ export type CheckAction = 'execute' | 'waive' | 'reset' | 'corrections' | 'cance
 export const useCheckAction = () =>
   useQcMutation(async ({ id, action, body }: { id: string; action: CheckAction; body: Body }) =>
     (await api.post<QcCheck>(`/quality-control/checks/${id}/${action}`, body)).data);
+/** Retries a quarantine move that failed when its source completed (manage). */
+export const useRetryQuarantine = () =>
+  useQcMutation(async (id: string) => (await api.post<QcCheck>(`/quality-control/checks/${id}/quarantine/retry`)).data);
+
+export const QUARANTINE_STATUS_LABEL: Record<QcQuarantineStatus, string> = {
+  not_required: 'Not required', pending: 'Held in quarantine', completed: 'Done', failed: 'Move failed',
+};
+
+/** The (non-cancelled) checks of one source document, e.g. a work order on the shop-floor terminal. */
+export const useSourceChecks = (sourceType: QcSourceType, sourceId?: string, enabled = true) =>
+  useQuery({
+    queryKey: [...KEY, 'checks', 'source', sourceType, sourceId],
+    enabled: enabled && !!sourceId,
+    queryFn: async () => ((await api.get<PaginatedResult<QcCheck>>('/quality-control/checks', {
+      params: { sourceType, sourceId, page: 1, pageSize: 100 },
+    })).data.data ?? []).filter((c) => c.status !== 'cancelled'),
+  });

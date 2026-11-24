@@ -9,6 +9,7 @@ import com.inventoryerp.qualitycontrol.application.QcCommands.ExecuteInput;
 import com.inventoryerp.qualitycontrol.application.QcCommands.ManualCheckInput;
 import com.inventoryerp.qualitycontrol.application.QcCommands.ReasonInput;
 import com.inventoryerp.qualitycontrol.application.QcCommands.WaiveInput;
+import com.inventoryerp.qualitycontrol.application.QcQuarantineService;
 import com.inventoryerp.shared.validation.OneOf;
 import com.inventoryerp.shared.web.PageResult;
 import jakarta.validation.Valid;
@@ -33,9 +34,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class QcCheckController {
 
     private final QcCheckService checks;
+    private final QcQuarantineService quarantine;
 
-    public QcCheckController(QcCheckService checks) {
+    public QcCheckController(QcCheckService checks, QcQuarantineService quarantine) {
         this.checks = checks;
+        this.quarantine = quarantine;
     }
 
     @GetMapping("/overview")
@@ -57,10 +60,12 @@ public class QcCheckController {
             @RequestParam(required = false) String controlPointId,
             @RequestParam(required = false) String productId,
             @RequestParam(required = false) String teamId,
+            @RequestParam(required = false) @OneOf({"not_required", "pending", "completed", "failed"})
+            String quarantineStatus,
             @RequestParam(required = false) @Min(1) Integer page,
             @RequestParam(required = false) @Min(1) @Max(200) Integer pageSize) {
         return checks.list(new CheckQuery(search, status, origin, checkType, sourceType, sourceId, controlPointId,
-                productId, teamId, page, pageSize));
+                productId, teamId, quarantineStatus, page, pageSize));
     }
 
     @GetMapping("/checks/{id}")
@@ -112,5 +117,13 @@ public class QcCheckController {
     @RequirePermissions(Permissions.QUALITY_CONTROL__MANAGE)
     public Map<String, Object> cancel(@PathVariable String id, @Valid @RequestBody ReasonInput dto) {
         return checks.cancel(id, dto);
+    }
+
+    /** Retries a quarantine move that could not be made when the source completed (ADR-S087 §7). */
+    @PostMapping("/checks/{id}/quarantine/retry")
+    @RequirePermissions(Permissions.QUALITY_CONTROL__MANAGE)
+    public Map<String, Object> retryQuarantine(@PathVariable String id) {
+        quarantine.retry(id);
+        return checks.get(id);
     }
 }

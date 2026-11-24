@@ -8,7 +8,7 @@ There is no NestJS counterpart: this is a post-parity owner request (2026-11-24)
 separate module beside `quality` (ADR-S013), which keeps specifications, inspection lots, NCR, CAPA and certificates
 of analysis. The full design, including lifecycle, blocking and quarantine rules, is ADR-S087.
 
-Status: QC1 (foundation) implemented. QC2 (triggers, blocking, quarantine), QC3 (alerts) and QC4 (SPC) follow.
+Status: QC1 (foundation) and QC2 (triggers, blocking, quarantine) implemented. QC3 (alerts) and QC4 (SPC) follow.
 
 ## Permissions
 
@@ -44,7 +44,7 @@ Administrator gets all five (V660). The Manager role defaults to `read`, `check`
 | PUT | `/quality-control/control-points/{id}` | configure | full body; writes version n+1; optional `reason` |
 | POST | `/quality-control/control-points/{id}/activate` | configure | optional `{reason}`; writes a version |
 | POST | `/quality-control/control-points/{id}/deactivate` | configure | optional `{reason}`; writes a version |
-| GET | `/quality-control/checks` | read | list envelope; `search`, `status`, `origin`, `checkType`, `sourceType`, `sourceId`, `controlPointId`, `productId`, `teamId` |
+| GET | `/quality-control/checks` | read | list envelope; `search`, `status`, `origin`, `checkType`, `sourceType`, `sourceId`, `controlPointId`, `productId`, `teamId`, `quarantineStatus` (QC2) |
 | GET | `/quality-control/checks/{id}` | read | with `executions` (newest first, each with `samples`, `superseded`), `events`, `corrections` |
 | POST | `/quality-control/checks` | check | 201; a manual check, number `QCC-000001` |
 | POST | `/quality-control/checks/{id}/evaluate` | check | dry run: `{result, evaluation, failureMessage}`, nothing saved |
@@ -53,6 +53,23 @@ Administrator gets all five (V660). The Manager role defaults to `read`, `check`
 | POST | `/quality-control/checks/{id}/reset` | manage | `{reason}`; opens revision n+1 |
 | POST | `/quality-control/checks/{id}/corrections` | manage | 201; `{reason, notes?}`; a new check with `origin = correction` |
 | POST | `/quality-control/checks/{id}/cancel` | manage | `{reason}`; manual or correction checks only |
+| POST | `/quality-control/checks/{id}/quarantine/retry` | manage | QC2; retries a failed quarantine move; returns the check |
+
+28 routes.
+
+## Generated checks and blocking (QC2)
+
+| Document | Checks created / reconciled | Completion refused while blocked | Checks cancelled |
+|---|---|---|---|
+| Production order | confirm, start | complete (also by its work orders' checks) | cancel (with its work orders') |
+| Work order | generate, start | complete (also the shop-floor complete) | its production order's cancel |
+| Goods receipt | draft created (also the PO approval draft) | post; a one-shot PO receive is refused if a pre-receipt point matches | draft cancel |
+| Sales delivery | create, re-plan | issue | cancel |
+
+Only generated pre-completion checks block (`QcBlockingPolicy`). Quarantine-on-receipt points create post-receipt
+checks when the receipt posts and hold their quantity in quarantine; the decision releases stock in the same
+transaction (pass: all; fail: all but `failedQty`; waive: all but `excludedQty`). Cash sales and plain invoice posts
+issue stock without a delivery and are not covered (ADR-S087, implementation notes QC2).
 
 Every check response carries `blocksSource` and `canBlock`, both computed by `QcBlockingPolicy`.
 
@@ -85,6 +102,15 @@ takes `failureClassId` (required when the point sets `failureClassRequired`) and
 | Quantity point without percentage | 400 | `A quantity control point needs a test percentage.` |
 | Receipt mode on a non-receipt point | 400 | `A receipt mode applies to receipt control points only.` |
 | Edit an old template version | 400 | `Only the latest version of a worksheet template can be edited.` |
+| Complete with pending blocking checks | 400 | `Quality checks are pending: QCC-000012, QCC-000013.` |
+| Complete with failed blocking checks | 400 | `Quality checks failed: QCC-000012. A quality manager can waive them.` |
+| One-shot receive under a pre-receipt point | 400 | `Quality checks are required before this receipt is posted. Save it as a draft goods receipt, complete the checks, then post.` |
+| Pass a generated quantity check without enough samples | 400 | `Record samples covering the test quantity (2) before passing this check; sampled so far: 1.` |
+| Reset a check that moved stock | 400 | `Quality check QCC-000012 has moved stock, so it cannot be reset. Open a correction check instead.` |
+| Release cannot move | 400 | `Quality check QCC-000012: only 3 is left in quarantine; 10 should be released. The decision is not saved.` |
+| Receipt quarantine cannot move | 400 | `Quality check QCC-000012: only 3 of 10 can be moved into quarantine, so the receipt is not posted.` |
+| Retry without a failed move | 400 | `Quality check QCC-000012 has no failed quarantine move.` |
+| Quarantine on receipt per operation | 400 | `Quarantine on receipt needs a check per product or per quantity.` |
 
 ## DMS record types
 
@@ -97,7 +123,10 @@ takes `failureClassId` (required when the point sets `failureClassRequired`) and
 ## Web
 
 Nav group "Quality Control" (Manufacturing & Operations): Overview (`/quality-control`), Quality Checks, and under
-Configuration: Control Points, Worksheet Templates, Quality Teams, Failure Classes.
+Configuration: Control Points, Worksheet Templates, Quality Teams, Failure Classes. QC2 adds Quarantine Exceptions
+(`/quality-control/quarantine-exceptions`, retry for managers), a "Quality checks" panel on the production order, goods
+receipt and delivery detail views, and the check list on the shop-floor terminal's Finish dialog (Finish stays disabled
+while a check blocks).
 
 ## Deviations
 

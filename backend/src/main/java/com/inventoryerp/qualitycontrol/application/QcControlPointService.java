@@ -241,6 +241,10 @@ public class QcControlPointService {
             throw ApiException.badRequest("A receipt mode applies to receipt control points only.");
         }
         d.put("receiptMode", "receipt".equals(op) ? QcUtil.or(in.receiptMode(), "pre_receipt") : null);
+        if ("quarantine_on_receipt".equals(d.get("receiptMode")) && "operation".equals(per)) {
+            // ADR-S087 §7: the quarantined quantity is a product's (or line's); a whole receipt has no single product.
+            throw ApiException.badRequest("Quarantine on receipt needs a check per product or per quantity.");
+        }
         ref("InventoryLocation", in.failureLocationId(), "Failure location");
         d.put("failureLocationId", in.failureLocationId());
         String spc = QcUtil.or(in.spcSubgroup(), "individual");

@@ -65,9 +65,12 @@ public class QcCheckService {
     private final QcWorksheetService worksheets;
     private final QcFailureClassService failureClasses;
     private final DmsAttachments attachments;
+    private final QcQuarantineService quarantine;
 
     public QcCheckService(QcDb db, SequenceService sequence, AuditService audit, EventBus events,
-            QcWorksheetService worksheets, QcFailureClassService failureClasses, DmsAttachments attachments) {
+            QcWorksheetService worksheets, QcFailureClassService failureClasses, DmsAttachments attachments,
+            QcQuarantineService quarantine) {
+        this.quarantine = quarantine;
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -115,6 +118,7 @@ public class QcCheckService {
         QcUtil.eq(where, params, "c.\"controlPointId\"", q.controlPointId());
         QcUtil.eq(where, params, "c.\"productId\"", q.productId());
         QcUtil.eq(where, params, "c.\"teamId\"", q.teamId());
+        QcUtil.eq(where, params, "c.\"quarantineStatus\"", q.quarantineStatus());
         long total = db.jdbc().sql("SELECT count(*) FROM \"QcCheck\" c LEFT JOIN \"Product\" p ON p.id = c.\"productId\""
                 + " AND p.\"organizationId\" = c.\"organizationId\"" + where).params(params).query(Long.class).single();
         params.add(size);
@@ -363,6 +367,7 @@ public class QcCheckService {
         }
         requireOpen(c);
         Computed r = compute(c, in, true);
+        requireSamples(c, r, in);
         String failureClassId = null;
         if ("failed".equals(r.result())) {
             if (in.failureClassId() != null) {
@@ -402,6 +407,8 @@ public class QcCheckService {
         db.update(QcCheck.class, id, upd);
         event(id, "executed", "pending", r.result(), revision, null, Obj.of("executionId", exec.get("id"), "result",
                 r.result(), "measureValue", r.measureValue(), "samples", r.samples().size()));
+        // Stock follows the decision in this transaction (ADR-S087 §7): a release that cannot move rolls it back.
+        quarantine.releaseOnDecision(c, r.result(), "failed".equals(r.result()) ? in.failedQty() : null, revision);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", "pending"), Obj.of("op", "execute",
                 "status", r.result(), "revision", revision)));
         publish(c, r.result(), revision);
@@ -539,6 +546,9 @@ public class QcCheckService {
         int revision = QcUtil.integer(c, "currentRevision");
         event(id, "waived", status, "waived", revision, in.reason().trim(), Obj.of("disposition", in.disposition(),
                 "excludedQty", in.excludedQty()));
+        if ("pending".equals(status)) {
+            quarantine.releaseOnDecision(c, "waived", in.excludedQty(), revision);
+        }
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "approve", Obj.of("status", status), Obj.of("op", "waive", "status", "waived",
                 "reason", in.reason().trim(), "disposition", in.disposition(), "excludedQty", in.excludedQty())));
         publish(c, "waived", revision);
@@ -556,6 +566,10 @@ public class QcCheckService {
             throw ApiException.badRequest("A cancelled check cannot be reset.");
         }
         requireOpen(c);
+        if (!"not_required".equals(QcUtil.str(c, "quarantineStatus"))) {
+            throw ApiException.badRequest("Quality check " + c.get("checkNumber") + " has moved stock, so it cannot be"
+                    + " reset. Open a correction check instead.");
+        }
         int revision = QcUtil.integer(c, "currentRevision") + 1;
         Map<String, Object> prior = Obj.of("status", status, "revision", revision - 1, "failureClassId",
                 c.get("failureClassId"), "failedQty", c.get("failedQty"), "waiveReason", c.get("waiveReason"),
@@ -633,6 +647,26 @@ public class QcCheckService {
 
     // ================================================================== helpers
 
+    /**
+     * A generated quantity check (it has a test quantity) passes only when its samples cover the test quantity
+     * (ADR-S087 §4); pass / fail and measure checks record samples.
+     */
+    private static void requireSamples(Map<String, Object> c, Computed r, ExecuteInput in) {
+        BigDecimal test = c.get("testQty") == null ? null : QcUtil.dec(c, "testQty");
+        if (!"generated".equals(QcUtil.str(c, "origin")) || test == null || test.signum() <= 0
+                || !"passed".equals(r.result())
+                || !List.of("pass_fail", "measure").contains(QcUtil.str(c, "checkType"))) {
+            return;
+        }
+        BigDecimal sampled = (in.samples() == null ? List.<SampleInput>of() : in.samples()).stream()
+                .map(s -> s.sampleQty() == null ? BigDecimal.ZERO : s.sampleQty()).reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (sampled.compareTo(test) < 0) {
+            throw ApiException.badRequest("Record samples covering the test quantity (" + test.stripTrailingZeros()
+                    .toPlainString() + ") before passing this check; sampled so far: " + sampled.stripTrailingZeros()
+                    .toPlainString() + ".");
+        }
+    }
+
     private static void requireOpen(Map<String, Object> c) {
         if (QcUtil.bool(c, "sourceClosed") && "pre_completion".equals(QcUtil.str(c, "phase"))) {
             throw ApiException.badRequest("Quality check " + c.get("checkNumber") + " is closed: its source document is"
@@ -641,6 +675,12 @@ public class QcCheckService {
     }
 
     void event(String checkId, String action, String from, String to, Integer revision, String reason,
+            Map<String, Object> payload) {
+        event(db, checkId, action, from, to, revision, reason, payload);
+    }
+
+    /** Appends to the check's event log (append-only table). */
+    static void event(QcDb db, String checkId, String action, String from, String to, Integer revision, String reason,
             Map<String, Object> payload) {
         db.insert(QcCheckEvent.class, Obj.of("checkId", checkId, "action", action, "fromStatus", from, "toStatus", to,
                 "revision", revision, "reason", reason, "payload", EntityJson.toJson(payload), "userId",

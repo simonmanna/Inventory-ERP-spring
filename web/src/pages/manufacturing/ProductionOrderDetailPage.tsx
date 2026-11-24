@@ -23,6 +23,7 @@ import {
 } from '@/features/manufacturing/api';
 import { ORDER_STATUS_VARIANT } from './ProductionOrdersPage';
 import { tx } from '@/lib/i18n/tx';
+import { QualityChecksPanel } from '@/pages/quality-control/QualityChecksPanel';
 
 export function ProductionOrderDetailPage() {
   const { id = '' } = useParams();
@@ -119,6 +120,11 @@ export function ProductionOrderDetailPage() {
 
       <div><Button asChild variant="outline" size="sm"><Link to={`/manufacturing/costing/orders/${id}`}>{tx('Actual cost and variances')}</Link></Button></div>
       <OrderStagesPanel orderId={id} />
+
+      <QualityChecksPanel sources={[
+        { sourceType: 'production_order', sourceId: id },
+        ...(workOrders ?? []).map((w: { id: string; name?: string }) => ({ sourceType: 'work_order' as const, sourceId: w.id, label: w.name })),
+      ]} />
 
       <OrderAdvancedPanel order={order as any} />
 

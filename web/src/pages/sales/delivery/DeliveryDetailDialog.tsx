@@ -25,6 +25,7 @@ import { DeliveryWeighbridgeTab, WeighSummary } from './DeliveryWeighbridge';
 import { CustomerWeightDialog, CustomerWeightPanel, customerWeightNoteLine } from './CustomerWeight';
 import { QuantityBucketsPanel } from './DeliveryQuantities';
 import { GatePassPanel } from '@/features/gate-pass/GatePassPanel';
+import { QualityChecksPanel } from '@/pages/quality-control/QualityChecksPanel';
 
 type LineCol = 'product' | 'scheduled' | 'deadline' | 'planned' | 'picked' | 'dispatched' | 'delivered' | 'returned' | 'rejected'
   | 'damaged' | 'shortage' | 'batch';
@@ -128,6 +129,7 @@ export function DeliveryDetailDialog({ id, orderOpen, currency, onAction, onClos
               </p>
             )}
             <GatePassPanel sourceType="delivery" sourceId={d.id} />
+            <QualityChecksPanel sources={[{ sourceType: 'sales_delivery', sourceId: d.id }]} />
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList>
                 <TabsTrigger value="details">{tx('Details')}</TabsTrigger>
