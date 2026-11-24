@@ -656,6 +656,30 @@ Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (finding 
   measured in its own read-only transaction: a failure to compute it shows on the item and leaves the rest of the
   checklist alone.
 
+## Finance readiness audit A6: posting-key reuse (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (finding P2-12). Tests: `PostingKeyReuseIT`.
+
+- **A replay is compared with what it replays.** `PostingService` returns the posted entry of a posting key it has
+  already seen (ACC-3), whatever lines the second request carries. A caller reusing a key for a different posting got
+  the first entry back and the ledger missed the second. On every replay `PostingKeyReplayGuard` now compares the
+  request with the stored entry: net base amount per account and partner, the request valued at the stored entry's own
+  rate (its rate snapshot, else base ÷ amount of its lines), tolerance 0.01 per pair; another currency is a difference
+  too. A true retry is unchanged.
+- **Warn first, refuse later (setting).** Organisation setting `accounting.postingKeyReuse`: `warn` (default) returns
+  the stored entry as before, logs a WARN and records a `PostingKeyConflict` row (V653, tenant RLS: key, entry, source,
+  up to 50 differing pairs); `refuse` answers 409 `Posting key <key> was already used by journal entry <number> with
+  different lines`. The plan switches the default to `refuse` after one release without conflicts.
+- **Integrity check I13, `posting_key_reuse`.** `GET /reports/accounting/integrity` lists the unresolved conflicts; the
+  nightly ledger monitor opens a finding and alerts on them. A conflict is closed by whoever reviewed it, in SQL (there
+  is no route yet): `UPDATE "PostingKeyConflict" SET "resolvedAt" = now(), "resolvedBy" = '<user id>', resolution =
+  '<what was done>' WHERE id = '<conflict id>';`. Nothing is reposted automatically: the missing posting is entered
+  again through its own route.
+- **Gratuity accrual: one key per run.** `POST /hr/separations/gratuity/accrue` posted under `hr_gratuity:<as-of date>`.
+  A second run on the same date (it accrues only employees with no provision row for that date, such as a hire added
+  since) replayed the first entry: its provision rows were written but the ledger kept only the first run. The key now
+  also names the employees of the run (`hr_gratuity:<date>:<hash>`), so each run posts its own entry.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.
@@ -799,7 +823,8 @@ Spring-only: Nest has no counterpart. Audit record: `docs/audits/2026-11-23-fina
 `AccountingReportingController`.
 - It runs read-only checks I1–I7, I9 and I11 of the audit: entries balance in base and in their own currency, FX lines,
   trial balance, account classification, period coverage, closed periods, reversal links, VAT settlements and the
-  inventory tie-out. Since A5 it also runs I8, the AR / AP tie-out per partner (section A5 above).
+  inventory tie-out. Since A5 it also runs I8, the AR / AP tie-out per partner (section A5 above), and since A6 I13,
+  posting keys replayed with other lines (section A6 above).
 - It returns `{checkedAt, ok, rowLimit, checks[]}`. Each check lists at most 5,000 rows.
 
 **Nightly job.** `LedgerIntegrityJob` (03:10 UTC, ShedLock `ledger-integrity-check`) runs `LedgerIntegrityMonitor` for

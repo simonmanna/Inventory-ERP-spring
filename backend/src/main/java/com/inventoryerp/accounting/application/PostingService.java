@@ -40,8 +40,9 @@ import org.springframework.transaction.annotation.Transactional;
  * The one writer of JournalEntry/JournalLine (port of {@code posting.service.ts}, ADR-009): validates
  * double-entry rules, enforces period control, numbers atomically per journal/year and joins the caller's
  * transaction so a document's state change and its posting commit together. {@code postingKey} makes a
- * posting idempotent (only a {@code posted} entry is replayed); reversal suffixes the original key so the
- * canonical slot can be re-posted. Manual entries go through draft → post (maker-checker).
+ * posting idempotent (only a {@code posted} entry is replayed; a replay with other lines is reported, finance audit A6,
+ * {@link PostingKeyReplayGuard}); reversal suffixes the original key so the canonical slot can be re-posted. Manual
+ * entries go through draft → post (maker-checker).
  *
  * <p>Control-account policy (owner decision, V518): a user's entry (staged draft, approved draft) and what recurring
  * templates / deferral schedules check for themselves ({@link #assertManualPostingAllowed}) never reach a designated
@@ -76,6 +77,7 @@ public class PostingService {
     private final AnalyticDimensionService analyticDimensions;
     private final AuditService audit;
     private CostingDimensionGuard costingDimensions;
+    private PostingKeyReplayGuard replayGuard;
 
     public PostingService(EntityManager em, JdbcClient jdbc, EventBus events, SequenceService sequence,
             FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts,
@@ -96,6 +98,12 @@ public class PostingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCostingDimensions(CostingDimensionGuard costingDimensions) {
         this.costingDimensions = costingDimensions;
+    }
+
+    /** Finance audit A6: compares a replayed posting key's request with its entry; optional like the costing guard. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setReplayGuard(PostingKeyReplayGuard replayGuard) {
+        this.replayGuard = replayGuard;
     }
 
     /** Post a balanced entry; returns the entry with {@code lines}. */
@@ -126,7 +134,12 @@ public class PostingService {
                     .setParameter("status", JournalEntryStatus.POSTED)
                     .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
             if (existing != null) {
-                return render(existing);
+                // Finance audit A6 (P2-12): the same key with other lines is a second posting the replay would drop.
+                List<JournalLine> stored = lines(existing.getId());
+                if (replayGuard != null) {
+                    replayGuard.check(existing, request, stored);
+                }
+                return render(existing, stored);
             }
         }
         Journal journal = journal(request.journalCode());

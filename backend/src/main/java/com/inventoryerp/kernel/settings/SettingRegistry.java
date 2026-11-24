@@ -191,6 +191,11 @@ public final class SettingRegistry {
                 "DEPRECATED — the posting engine never read this key. Account determination uses the product category expenseAccountId, then the AccountMapping key `default_expense`.");
         def("accounting.allCurrencyCodes", "accounting", "json", "Enabled Currencies",
                 "List of currency codes enabled for this organization.", List.of(), null, false, ORG_ONLY);
+        // Finance readiness audit A6 (P2-12): a posting key replayed with other lines.
+        def("accounting.postingKeyReuse", "accounting", "enum", "Posting Key Reused With Other Lines",
+                "warn = the posted entry of the key is returned as before, the difference is logged and listed by the"
+                        + " ledger integrity check (default); refuse = the posting is refused with 409.",
+                "warn", List.of("warn", "refuse"), false, ORG_ONLY);
         def("pos.stockLocationId", "inventory", "string", "POS Stock Location",
                 "Location the POS sells stock from. Blank = first active warehouse.", "", null, false, ORG_ONLY);
         def("pos.storeCreditIssueLimit", "accounting", "number", "Store Credit Issue Limit",
