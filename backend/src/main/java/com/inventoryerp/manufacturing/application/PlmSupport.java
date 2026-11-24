@@ -26,12 +26,74 @@ public class PlmSupport {
     /** Open ECO statuses: anything that has not been applied or rejected. */
     static final Set<String> OPEN_CHANGE = Set.of("draft", "approved");
 
+    /** Integrity fix 2026-11-24 (ML-8): the actor of what the hourly effectivity job writes. */
+    static final String SYSTEM_ACTOR = "system";
+
     private final MfgDb db;
     private final EventBus events;
+    private final com.inventoryerp.kernel.settings.SettingResolverService settings;
 
-    public PlmSupport(MfgDb db, EventBus events) {
+    public PlmSupport(MfgDb db, EventBus events, com.inventoryerp.kernel.settings.SettingResolverService settings) {
         this.db = db;
         this.events = events;
+        this.settings = settings;
+    }
+
+    /** The current user, or {@link #SYSTEM_ACTOR} when a job acts (no user in the tenant context). */
+    static String actor() {
+        String u = TenantContext.userId();
+        return u == null ? SYSTEM_ACTOR : u;
+    }
+
+    /** Integrity fix 2026-11-24 (ML-4): {@code plm.allowSelfApproval} (default false = separation of duties). */
+    boolean selfApprovalAllowed() {
+        return settings.resolveBool("plm.allowSelfApproval",
+                com.inventoryerp.kernel.settings.SettingResolverService.SettingContext.EMPTY);
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (ML-4): refuse (403) when the current user raised or owns the ECO, unless the
+     * organization allows self-approval.
+     */
+    void requireNotOwnChange(Map<String, Object> eco) {
+        String me = TenantContext.userId();
+        if (me != null && (me.equals(eco.get("createdBy")) || me.equals(eco.get("ownerId")))
+                && !selfApprovalAllowed()) {
+            throw ApiException.forbidden("You cannot approve a change you raised.");
+        }
+    }
+
+    /** The ECO row locked {@code FOR UPDATE} (tenancy-scoped), or null. */
+    Map<String, Object> lockChange(String id) {
+        return SqlRows.one(com.inventoryerp.manufacturing.domain.EngineeringChange.class, db.jdbc().sql("SELECT * FROM"
+                + " \"EngineeringChange\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, MfgDb.org()));
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (ML-2): the content of a draft ECO changed after it was approved at some stage. Its
+     * approvals are voided (rejections stay) and, when it already passed a stage that needs approval, it goes back to
+     * the first such stage, so what is applied is what was approved. The caller holds the ECO row lock.
+     */
+    void reopenAfterEdit(Map<String, Object> eco, String what) {
+        String id = (String) eco.get("id");
+        int voided = db.jdbc().sql("UPDATE \"PlmChangeApproval\" SET voided = true WHERE \"organizationId\" = ? AND"
+                + " \"changeId\" = ? AND decision = 'approved' AND NOT voided").params(MfgDb.org(), id).update();
+        if (voided == 0) {
+            return;
+        }
+        activity(id, "approval", "Approvals voided: " + what + " changed after approval.");
+        Map<String, Object> back = SqlRows.one(db.jdbc().sql("SELECT s.id, s.name FROM \"PlmChangeStage\" s WHERE"
+                + " s.\"organizationId\" = ? AND s.\"deletedAt\" IS NULL AND s.\"requiresApproval\" AND s.sequence <"
+                + " (SELECT c.sequence FROM \"PlmChangeStage\" c WHERE c.id = ?) ORDER BY s.sequence LIMIT 1")
+                .params(MfgDb.org(), eco.get("stageId")));
+        if (back == null) {
+            return;
+        }
+        db.update(com.inventoryerp.manufacturing.domain.EngineeringChange.class, id, Obj.of("stageId", back.get("id")));
+        activity(id, "stage", "Sent back to " + back.get("name") + " for re-approval.");
+        event(com.inventoryerp.shared.events.DomainEvents.PLM_CHANGE_STAGE_CHANGED, Obj.of("changeId", id, "number",
+                eco.get("number"), "fromStageId", eco.get("stageId"), "toStageId", back.get("id")));
+        eco.put("stageId", back.get("id"));
     }
 
     MfgDb db() {
@@ -81,6 +143,9 @@ public class PlmSupport {
                 + " AND id = ANY(?::text[])").params(MfgDb.org(), wanted.toArray(String[]::new)))) {
             out.put((String) r.get("id"), (String) r.get("name"));
         }
+        if (wanted.contains(SYSTEM_ACTOR)) {
+            out.putIfAbsent(SYSTEM_ACTOR, "System");
+        }
         return out;
     }
 
@@ -103,7 +168,7 @@ public class PlmSupport {
     /** Append to the ECO activity log. */
     void activity(String changeId, String kind, String message) {
         db.insert(PlmChangeActivity.class, Obj.of("changeId", changeId, "kind", kind, "message", message, "userId",
-                TenantContext.userId()));
+                actor()));
     }
 
     /** Outbox event with the organization id first. */

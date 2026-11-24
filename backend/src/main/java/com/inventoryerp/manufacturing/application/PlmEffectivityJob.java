@@ -30,6 +30,12 @@ public class PlmEffectivityJob {
         this.metrics = metrics;
     }
 
+    /** A business refusal is shown verbatim; anything else is not leaked into the ECO log. */
+    static String reason(RuntimeException e) {
+        return e instanceof com.inventoryerp.shared.web.ApiException && e.getMessage() != null ? e.getMessage()
+                : "unexpected error (see the server log).";
+    }
+
     @Scheduled(cron = "0 5 * * * *", zone = "UTC")
     @SchedulerLock(name = "manufacturing-plm-effectivity", lockAtMostFor = "PT30M")
     public void tick() {
@@ -45,6 +51,12 @@ public class PlmEffectivityJob {
                     } catch (RuntimeException e) {
                         log.warn("PLM switch-over of {} failed for {}: {}", id, orgId, e.toString());
                         metrics.jobFailed("manufacturing-plm-effectivity");
+                        // Integrity fix 2026-11-24 (ML-8): the reason is recorded on the ECO, not only in the log.
+                        try {
+                            changes.recordAutoApplyFailure(id, reason(e));
+                        } catch (RuntimeException again) {
+                            log.warn("Could not record the PLM switch-over failure of {}: {}", id, again.toString());
+                        }
                     }
                 }
                 if (!applied.isEmpty()) {

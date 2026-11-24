@@ -177,6 +177,8 @@ public class BomService {
             throw ApiException.badRequest("BOM " + bom.get("code") + " is " + bom.get("status")
                     + " and cannot be edited. Create a new version instead.");
         }
+        // Integrity fix 2026-11-24 (ML-2): the draft version of an approved ECO is frozen.
+        plmGate.requireBomEditable(bom);
         requireReferences(null, dto.lines(), dto.defaultLocationId(), dto.defaultOutputLocationId(), dto.routingId());
         if (dto.lines() != null) {
             assertNoCycle(str(bom, "outputProductId"),

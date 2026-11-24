@@ -54,6 +54,13 @@ public class PlmLifecycleService {
     /** Items with product, owner, active BOM and open change / document counts. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String state, String productId, String q) {
+        return list(state, productId, q, null, null);
+    }
+
+    /** Integrity fix 2026-11-24 (ML-11): optional {@code limit} (1–1000) / {@code offset}; absent = everything. */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> list(String state, String productId, String q, Integer limit, Integer offset) {
+        String page = MfgDb.page(limit, offset);
         StringBuilder sql = new StringBuilder("SELECT i.*, p.code AS \"productCode\", p.name AS \"productName\","
                 + " p.\"manufacturingRole\" AS \"manufacturingRole\","
                 + " (SELECT b.code || ' v' || b.version FROM \"Bom\" b WHERE b.\"organizationId\" = i.\"organizationId\""
@@ -79,7 +86,7 @@ public class PlmLifecycleService {
             params.add("%" + q.trim() + "%");
             params.add("%" + q.trim() + "%");
         }
-        sql.append(" ORDER BY p.code");
+        sql.append(" ORDER BY p.code, i.id").append(page);
         List<Map<String, Object>> rows = SqlRows.list(db.jdbc().sql(sql.toString()).params(params));
         Set<String> owners = new HashSet<>();
         rows.forEach(r -> owners.add(str(r, "ownerId")));
@@ -156,8 +163,13 @@ public class PlmLifecycleService {
         return transition(require(id), dto.toState(), dto.note(), dto.replacementProductId(), null);
     }
 
-    Map<String, Object> transition(Map<String, Object> item, String to, String note, String replacementProductId,
+    Map<String, Object> transition(Map<String, Object> current, String to, String note, String replacementProductId,
             String changeId) {
+        // Integrity fix 2026-11-24 (ML-7): read-modify-write on the locked item row (two transitions serialise).
+        Map<String, Object> item = db.byIdForUpdate(PlmItem.class, str(current, "id"));
+        if (item == null) {
+            throw ApiException.notFound("PLM item not found");
+        }
         String from = str(item, "lifecycleState");
         String productId = str(item, "productId");
         Map<String, Object> product = plm.product(productId);
@@ -224,10 +236,11 @@ public class PlmLifecycleService {
 
     /** Bump (or set) the revision of the product's item when it is under PLM; returns the new revision or null. */
     String bumpRevision(String productId, String explicit, String changeId, String note) {
-        Map<String, Object> item = byProduct(productId);
-        if (item == null) {
+        Map<String, Object> found = byProduct(productId);
+        if (found == null) {
             return null;
         }
+        Map<String, Object> item = db.byIdForUpdate(PlmItem.class, str(found, "id")); // Integrity fix 2026-11-24 (ML-7)
         String from = str(item, "revision");
         String to = PlmSupport.blank(explicit) != null ? explicit.trim() : PlmSupport.nextRevision(from);
         if (to.equals(from)) {
@@ -243,6 +256,13 @@ public class PlmLifecycleService {
     /** The product cockpit. */
     @Transactional(readOnly = true)
     public Map<String, Object> detail(String id) {
+        return detail(id, null);
+    }
+
+    /** Integrity fix 2026-11-24 (ML-11): {@code limit} (1–1000) caps each sub-list; absent = everything. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> detail(String id, Integer limit) {
+        String page = MfgDb.page(limit, null);
         Map<String, Object> item = require(id);
         String productId = str(item, "productId");
         Map<String, Object> out = new LinkedHashMap<>(item);
@@ -252,7 +272,7 @@ public class PlmLifecycleService {
                 .sorted(java.util.Comparator.comparingInt(PlmSupport.STATES::indexOf)).toList());
 
         List<Map<String, Object>> history = db.list(PlmLifecycleEvent.class, " AND \"itemId\" = ?"
-                + " ORDER BY \"createdAt\" DESC", id);
+                + " ORDER BY \"createdAt\" DESC" + page, id);
         Set<String> users = new HashSet<>();
         users.add(str(item, "ownerId"));
         history.forEach(h -> users.add(str(h, "userId")));
@@ -260,25 +280,25 @@ public class PlmLifecycleService {
         List<Map<String, Object>> boms = SqlRows.list(db.jdbc().sql("SELECT id, code, name, version, status::text AS"
                 + " status, \"isDefault\", \"routingId\", \"effectiveFrom\", \"effectiveTo\", \"updatedAt\" FROM \"Bom\""
                 + " WHERE \"organizationId\" = ? AND \"outputProductId\" = ? AND \"deletedAt\" IS NULL"
-                + " ORDER BY version DESC").params(MfgDb.org(), productId));
+                + " ORDER BY version DESC" + page).params(MfgDb.org(), productId));
         List<Map<String, Object>> routings = SqlRows.list(db.jdbc().sql("SELECT r.id, r.name, r.\"isActive\","
                 + " (SELECT count(*) FROM \"RoutingOperation\" o WHERE o.\"routingId\" = r.id) AS operations"
                 + " FROM \"Routing\" r WHERE r.\"organizationId\" = ? AND r.\"deletedAt\" IS NULL AND (r.\"productId\" = ?"
                 + " OR r.id IN (SELECT \"routingId\" FROM \"Bom\" WHERE \"organizationId\" = ? AND \"outputProductId\" = ?"
-                + " AND \"deletedAt\" IS NULL)) ORDER BY r.\"isActive\" DESC, r.name")
+                + " AND \"deletedAt\" IS NULL)) ORDER BY r.\"isActive\" DESC, r.name" + page)
                 .params(MfgDb.org(), productId, MfgDb.org(), productId));
         List<Map<String, Object>> changes = SqlRows.list(db.jdbc().sql("SELECT e.id, e.number, e.title, e.type,"
                 + " e.status, e.priority, e.\"stageId\", s.name AS \"stageName\", e.\"newRevision\", e.\"appliedAt\","
                 + " e.\"createdAt\" FROM \"EngineeringChange\" e LEFT JOIN \"PlmChangeStage\" s ON s.id = e.\"stageId\""
-                + " WHERE e.\"organizationId\" = ? AND e.\"productId\" = ? ORDER BY e.\"createdAt\" DESC")
+                + " WHERE e.\"organizationId\" = ? AND e.\"productId\" = ? ORDER BY e.\"createdAt\" DESC" + page)
                 .params(MfgDb.org(), productId));
         List<Map<String, Object>> requests = SqlRows.list(db.jdbc().sql("SELECT id, number, title, status, priority,"
                 + " \"reasonCode\", \"changeId\", \"createdAt\" FROM \"PlmChangeRequest\" WHERE \"organizationId\" = ?"
-                + " AND \"productId\" = ? ORDER BY \"createdAt\" DESC").params(MfgDb.org(), productId));
+                + " AND \"productId\" = ? ORDER BY \"createdAt\" DESC" + page).params(MfgDb.org(), productId));
         List<Map<String, Object>> documents = SqlRows.list(db.jdbc().sql("SELECT id, number, version, revision, title,"
                 + " \"docType\", status, \"fileId\", url, \"fileName\", \"releasedAt\" FROM \"PlmDocument\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ? AND \"deletedAt\" IS NULL AND status IN ('draft',"
-                + " 'released') ORDER BY number, version DESC").params(MfgDb.org(), productId));
+                + " 'released') ORDER BY number, version DESC" + page).params(MfgDb.org(), productId));
         List<Map<String, Object>> openOrders = SqlRows.list(db.jdbc().sql("SELECT id, \"orderCode\", status::text AS"
                 + " status, \"plannedQty\", \"bomVersion\" FROM \"ProductionOrder\" WHERE \"organizationId\" = ? AND"
                 + " \"outputProductId\" = ? AND status::text IN ('draft', 'confirmed', 'in_progress', 'qc_hold')"
@@ -323,8 +343,10 @@ public class PlmLifecycleService {
         }
         db.jdbc().sql("SELECT status, count(*) FROM \"PlmChangeRequest\" WHERE \"organizationId\" = ? GROUP BY status")
                 .param(MfgDb.org()).query((rs, i) -> requestStatus.put(rs.getString(1), rs.getLong(2))).list();
-        long overdue = count("SELECT count(*) FROM \"PlmChangeRequest\" WHERE \"organizationId\" = ? AND status IN"
-                + " ('new', 'accepted') AND \"dueDate\" < CURRENT_DATE", null);
+        // Integrity fix 2026-11-24 (ML-9): overdue against today on the organization's calendar, not the DB's.
+        long overdue = db.jdbc().sql("SELECT count(*) FROM \"PlmChangeRequest\" WHERE \"organizationId\" = ? AND"
+                + " status IN ('new', 'accepted') AND \"dueDate\" < ?").params(MfgDb.org(), plm.orgToday())
+                .query(Long.class).single();
         long appliedLast30 = count("SELECT count(*) FROM \"EngineeringChange\" WHERE \"organizationId\" = ? AND status ="
                 + " 'applied' AND \"appliedAt\" >= now() - interval '30 days'", null);
         Object avgCycle = db.jdbc().sql("SELECT round(avg(extract(epoch FROM (\"appliedAt\" - \"createdAt\")) / 86400)"
@@ -381,7 +403,7 @@ public class PlmLifecycleService {
             String changeId, String note) {
         db.insert(PlmLifecycleEvent.class, Obj.of("itemId", itemId, "kind", kind, "fromState", from, "toState", to,
                 "fromRevision", fromRev, "toRevision", toRev, "changeId", changeId, "note", note, "userId",
-                TenantContext.userId()));
+                PlmSupport.actor()));
     }
 
     private long count(String sql, String productId) {

@@ -96,12 +96,16 @@ public class PlmDocumentService {
         data.put("docType", dto.docType() == null ? "other" : dto.docType());
         data.put("status", "draft");
         data.put("createdBy", TenantContext.userId());
-        return db.insert(PlmDocument.class, data);
+        Map<String, Object> created = db.insert(PlmDocument.class, data);
+        reopen(changeOf(data), created);
+        return created;
     }
 
     @Transactional
     public Map<String, Object> update(String id, SaveDocument dto) {
         Map<String, Object> doc = requireDraft(id, "edited");
+        // Integrity fix 2026-11-24 (ML-2): a draft attached to an approved change is frozen with it.
+        Map<String, Object> owner = frozenGuard(doc);
         Map<String, Object> data = refs(dto, new LinkedHashMap<>());
         if (dto.title() != null) {
             String title = PlmSupport.blank(dto.title());
@@ -116,7 +120,16 @@ public class PlmDocumentService {
         if (dto.revision() != null && PlmSupport.blank(dto.revision()) != null) {
             data.put("revision", dto.revision().trim());
         }
-        return data.isEmpty() ? doc : db.update(PlmDocument.class, id, data);
+        if (data.isEmpty()) {
+            return doc;
+        }
+        Map<String, Object> updated = db.update(PlmDocument.class, id, data);
+        reopen(owner, doc);
+        Map<String, Object> target = changeOf(data);
+        if (target != null && (owner == null || !target.get("id").equals(owner.get("id")))) {
+            reopen(target, doc);
+        }
+        return updated;
     }
 
     /** Release a draft (not one owned by an open ECO); the previously released version is superseded. */
@@ -170,8 +183,10 @@ public class PlmDocumentService {
 
     @Transactional
     public void remove(String id) {
-        requireDraft(id, "deleted");
+        Map<String, Object> doc = requireDraft(id, "deleted");
+        Map<String, Object> owner = frozenGuard(doc); // Integrity fix 2026-11-24 (ML-2)
         db.update(PlmDocument.class, id, Obj.of("deletedAt", Instant.now()));
+        reopen(owner, doc);
     }
 
     // ---- used by the change service --------------------------------------------------------------------------------
@@ -218,7 +233,7 @@ public class PlmDocumentService {
                 + " AND status = 'released' AND id <> ? AND \"deletedAt\" IS NULL", MfgDb.org(), doc.get("number"),
                 doc.get("id"));
         return db.update(PlmDocument.class, str(doc, "id"), Obj.of("status", "released", "releasedAt", Instant.now(),
-                "releasedById", TenantContext.userId()));
+                "releasedById", PlmSupport.actor()));
     }
 
     private Map<String, Object> refs(SaveDocument dto, Map<String, Object> data) {
@@ -245,6 +260,12 @@ public class PlmDocumentService {
                 }
                 if (!PlmSupport.OPEN_CHANGE.contains(str(eco, "status"))) {
                     throw ApiException.badRequest("Change " + eco.get("number") + " is " + eco.get("status") + ".");
+                }
+                // Integrity fix 2026-11-24 (ML-2): no document joins an approved change (as linkDocuments refuses).
+                Map<String, Object> locked = plm.lockChange(c);
+                if (!"draft".equals(locked.get("status"))) {
+                    throw ApiException.badRequest("Only a draft change can be edited (status " + locked.get("status")
+                            + ").");
                 }
             }
             data.put("changeId", c);
@@ -304,6 +325,38 @@ public class PlmDocumentService {
             throw ApiException.notFound("Document not found");
         }
         return doc;
+    }
+
+    /**
+     * Integrity fix 2026-11-24 (ML-2): the change a draft document belongs to, locked: refused when it is approved (its
+     * content is frozen), returned when it is a draft (an edit then voids its approvals), else null.
+     */
+    private Map<String, Object> frozenGuard(Map<String, Object> doc) {
+        String changeId = str(doc, "changeId");
+        if (changeId == null) {
+            return null;
+        }
+        Map<String, Object> eco = plm.lockChange(changeId);
+        if (eco == null) {
+            return null;
+        }
+        if ("approved".equals(eco.get("status"))) {
+            throw ApiException.badRequest("Document " + doc.get("number") + " is part of approved change "
+                    + eco.get("number") + "; it can no longer be edited.");
+        }
+        return "draft".equals(eco.get("status")) ? eco : null;
+    }
+
+    /** The (draft, locked) change a document is being attached to by {@code data}, or null. */
+    private Map<String, Object> changeOf(Map<String, Object> data) {
+        Object c = data.get("changeId");
+        return c == null ? null : plm.lockChange((String) c);
+    }
+
+    private void reopen(Map<String, Object> eco, Map<String, Object> doc) {
+        if (eco != null && "draft".equals(eco.get("status"))) {
+            plm.reopenAfterEdit(eco, "document " + doc.get("number"));
+        }
     }
 
     private Map<String, Object> requireDraft(String id, String verb) {
