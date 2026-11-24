@@ -127,7 +127,7 @@ public class WorkOrderService {
 
     @Transactional
     public Map<String, Object> start(String id) {
-        Map<String, Object> wo = getOrThrow(id);
+        Map<String, Object> wo = lockedOrThrow(id);
         if (!"pending".equals(wo.get("status")) && !"paused".equals(wo.get("status"))) {
             throw ApiException.badRequest("Cannot start a " + wo.get("status") + " work order.");
         }
@@ -146,7 +146,7 @@ public class WorkOrderService {
 
     @Transactional
     public Map<String, Object> pause(String id) {
-        Map<String, Object> wo = getOrThrow(id);
+        Map<String, Object> wo = lockedOrThrow(id);
         if (!"in_progress".equals(wo.get("status"))) {
             throw ApiException.badRequest("Only an in-progress work order can pause.");
         }
@@ -161,11 +161,11 @@ public class WorkOrderService {
      */
     @Transactional
     public Map<String, Object> complete(String id, CompleteWorkOrder dto) {
-        Map<String, Object> wo = getOrThrow(id);
+        Map<String, Object> wo = lockedOrThrow(id);
         if ("completed".equals(wo.get("status")) || "cancelled".equals(wo.get("status"))) {
             throw ApiException.badRequest("Work order already " + wo.get("status") + ".");
         }
-        Map<String, Object> order = db.byId(ProductionOrder.class, str(wo, "productionOrderId"));
+        Map<String, Object> order = db.byIdForUpdate(ProductionOrder.class, str(wo, "productionOrderId"));
         if (order != null && (order.get("postedAt") != null || "cancelled".equals(order.get("status")))) {
             throw ApiException.badRequest("Production order " + order.get("orderCode") + " is " + order.get("status")
                     + "; work-order time can no longer be costed to it.");
@@ -267,6 +267,23 @@ public class WorkOrderService {
 
     private Map<String, Object> one(Class<?> entity, Object id) {
         return id == null ? null : db.children(entity, "id", id, null).stream().findFirst().orElse(null);
+    }
+
+    /**
+     * Integrity fix 2026-11-24: the work order re-read under its production order's lock (the one complete / reverse /
+     * absorb take) and its own row lock, so a double-tap cannot cost the time twice and a complete of the production
+     * order cannot post between the A3 check and the overhead increment.
+     */
+    private Map<String, Object> lockedOrThrow(String id) {
+        Map<String, Object> wo = getOrThrow(id);
+        if (wo.get("productionOrderId") != null) {
+            db.lockProductionOrder(str(wo, "productionOrderId"));
+        }
+        Map<String, Object> locked = db.byIdForUpdate(WorkOrder.class, id);
+        if (locked == null) {
+            throw ApiException.notFound("Work order not found");
+        }
+        return locked;
     }
 
     private Map<String, Object> getOrThrow(String id) {

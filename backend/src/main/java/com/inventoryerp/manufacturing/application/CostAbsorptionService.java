@@ -255,6 +255,9 @@ public class CostAbsorptionService {
     /** Post what is due. Amounts with no open stage left are reported as skipped and stay unabsorbed. */
     @Transactional
     public Map<String, Object> absorb(String orderId) {
+        // Integrity fix 2026-11-24: the order lock first (as complete / reverse take it), then the row. With only the
+        // row lock a concurrent complete read the old overheadCost and posted output without what this absorbed.
+        db.lockProductionOrder(orderId);
         Map<String, Object> order = SqlRows.one(ProductionOrder.class, db.jdbc().sql("SELECT * FROM \"ProductionOrder\""
                 + " WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(orderId, MfgDb.org()));
         if (order == null) {

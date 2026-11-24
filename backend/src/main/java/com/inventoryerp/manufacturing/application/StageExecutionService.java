@@ -49,6 +49,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -286,6 +287,11 @@ public class StageExecutionService implements StageCheckpointResults {
             s.put("intermediateAvailable", i + 1 < stages.size() ? intermediateBalance(stages.get(i), stages.get(i + 1),
                     lines) : BigDecimal.ZERO);
             s.put("blockedBy", gateBlock(stages, stages.get(i)));
+            if (Boolean.TRUE.equals(s.get("qcGate"))) {
+                s.put("qcLots", qcLots(str(s, "id")).stream().map(l -> Obj.of("postingId", l.postingId(), "code",
+                        l.code(), "qcStatus", l.status(), "qtyHeld", l.held(), "batchNumber", l.batchNumber(),
+                        "qcPassDueAt", l.passDueAt())).toList());
+            }
             List<Map<String, Object>> ps = new ArrayList<>();
             for (Map<String, Object> p : postings) {
                 if (s.get("id").equals(p.get("stageId"))) {
@@ -543,6 +549,8 @@ public class StageExecutionService implements StageCheckpointResults {
             }
         }
         if (gated && good.signum() > 0 && mainProduct != null) {
+            // Integrity fix 2026-11-24: this posting is one QC lot, decided and released on its own.
+            db.update(ProductionStagePosting.class, pid, Obj.of("qcStatus", "pending"));
             db.update(ProductionOrderStage.class, str(c.stage, "id"), Obj.of("qcStatus", "pending"));
             StageCheckpoint cp = new StageCheckpoint(MfgDb.org(), c.orderId, str(c.order, "orderCode"),
                     str(c.stage, "id"), num(c.stage), str(c.stage, "name"), str(c.stage, "qcCheckpointCode"),
@@ -587,7 +595,11 @@ public class StageExecutionService implements StageCheckpointResults {
 
     // ================================================================== QC gate
 
-    /** Manual (or 2.6 quality module) checkpoint decision: pass releases quarantined output, fail keeps it held. */
+    /**
+     * Manual (or 2.6 quality module, or curing job) checkpoint decision. Integrity fix 2026-11-24: per lot — a pass
+     * releases only the decided lots' quarantined output (with their batch), a fail keeps them held; other lots of the
+     * stage are untouched. Before, one pass released the whole stage's quarantine, failed and uninspected lots too.
+     */
     @Override
     @Transactional
     public Map<String, Object> recordResult(String stageId, CheckpointDecision decision) {
@@ -602,51 +614,181 @@ public class StageExecutionService implements StageCheckpointResults {
             throw ApiException.badRequest("Order " + order.get("orderCode") + " is " + order.get("status")
                     + "; its QC checkpoints are closed.");
         }
-        BigDecimal held = dec(s, "qtyQuarantined");
-        if (decision.passed() && "passed".equals(s.get("qcStatus")) && held.signum() <= 0) {
-            return view(str(s, "orderId"));
-        }
+        List<QcLot> lots = qcLots(stageId);
+        List<QcLot> targets = decisionTargets(s, lots, decision.postingId());
+        Instant now = Instant.now();
+        String me = TenantContext.userId();
+        List<String> decided = new ArrayList<>();
+        BigDecimal released = BigDecimal.ZERO;
+        Instant curingUntil = null;
         if (decision.passed()) {
-            // ADR-S014 (2.4): a pass before the minimum curing time is over waits (qcStatus curing) until it is due.
+            // ADR-S014 (2.4): a pass before the minimum curing time is over waits (lot status curing) until it is due.
             Instant due = CuringHold.passDueAt(s, curingStart(s));
-            if (due != null && Instant.now().isBefore(due)) {
-                db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "curing", "qcPassDueAt", due,
-                        "qcReference", decision.reference(), "qcNotes", decision.notes(), "qcDecidedAt", Instant.now(),
-                        "qcDecidedBy", TenantContext.userId()));
-                audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "update", null, Obj.of("orderCode",
-                        order.get("orderCode"), "curingUntil", due.toString(), "reference", decision.reference())));
-                return view(str(s, "orderId"));
+            boolean waits = due != null && now.isBefore(due);
+            Ctx c = null;
+            for (QcLot lot : targets) {
+                if (waits && lot.held().signum() > 0) {
+                    db.update(ProductionStagePosting.class, lot.postingId(), Obj.of("qcStatus", "curing", "qcPassDueAt",
+                            due, "qcReference", decision.reference(), "qcDecidedAt", now, "qcDecidedBy", me));
+                    curingUntil = due;
+                    continue;
+                }
+                if (lot.held().signum() > 0) {
+                    if (c == null) {
+                        c = ctx(s, order);
+                    }
+                    released = released.add(release(c, s, order, lot, decision));
+                }
+                db.update(ProductionStagePosting.class, lot.postingId(), Obj.of("qcStatus", "passed", "qcPassDueAt",
+                        null, "qcReference", decision.reference(), "qcDecidedAt", now, "qcDecidedBy", me));
+                decided.add(lot.postingId());
+            }
+        } else {
+            for (QcLot lot : targets) {
+                db.update(ProductionStagePosting.class, lot.postingId(), Obj.of("qcStatus", "failed", "qcPassDueAt",
+                        null, "qcReference", decision.reference(), "qcDecidedAt", now, "qcDecidedBy", me));
+                decided.add(lot.postingId());
             }
         }
-        if (!decision.passed()) {
-            db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "failed", "qcPassDueAt", null, "qcReference",
-                    decision.reference(), "qcNotes", decision.notes(), "qcDecidedAt", Instant.now(), "qcDecidedBy",
-                    TenantContext.userId()));
-            audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "reject", null, Obj.of("orderCode",
-                    order.get("orderCode"), "reference", decision.reference())));
-            gateListeners.orderedStream().forEach(l -> l.gateDecided(stageId, "failed"));
-            return view(str(s, "orderId"));
-        }
-        Ctx c = ctx(s, order);
-        if (held.signum() > 0) {
-            Map<String, Object> post = newPosting(c, "qc_release", Instant.now(), decision.notes());
-            String pid = str(post, "id");
-            String dest = Boolean.TRUE.equals(s.get("isLast")) ? outputLocation(order) : str(s, "stageLocationId");
-            String quarantine = production.quarantineLocation();
-            stock.transfer(StockMove.transfer(str(s, "outputProductId"), quarantine, dest, held)
-                    .variant(Boolean.TRUE.equals(s.get("isLast")) ? str(order, "outputVariantId") : null)
-                    .source(SOURCE, pid).notes("Stage QC pass · " + post.get("code")));
-            line(pid, s, "qc_release", str(s, "outputProductId"), held, BigDecimal.ZERO, dest, null, null, null, null,
-                    decision.reference());
-        }
-        db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "passed", "qcPassDueAt", null, "qcReference",
-                decision.reference(), "qcNotes", decision.notes(), "qcDecidedAt", Instant.now(), "qcDecidedBy",
-                TenantContext.userId()));
+        // The stage shows the gate as a whole: held while any lot is held, passed once none is. A stage without lots
+        // (pass-through, or nothing posted yet) takes the decision itself, as before.
+        String fallback = curingUntil != null ? "curing" : decision.passed() ? "passed" : "failed";
+        String status = lots.isEmpty() ? fallback : gateStatus(qcLots(stageId), str(s, "qcStatus"));
+        Map<String, Object> upd = new LinkedHashMap<>();
+        upd.put("qcStatus", status);
+        upd.put("qcPassDueAt", "curing".equals(status) ? earliestDue(stageId, curingUntil) : null);
+        upd.put("qcReference", decision.reference());
+        upd.put("qcNotes", decision.notes());
+        upd.put("qcDecidedAt", now);
+        upd.put("qcDecidedBy", me);
+        db.update(ProductionOrderStage.class, stageId, upd);
         refresh(str(s, "orderId"));
-        audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "approve", null, Obj.of("orderCode",
-                order.get("orderCode"), "released", JsNumbers.dec(held), "reference", decision.reference())));
-        gateListeners.orderedStream().forEach(l -> l.gateDecided(stageId, "passed"));
+        if (curingUntil != null && decided.isEmpty()) {
+            audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, "update", null, Obj.of("orderCode",
+                    order.get("orderCode"), "curingUntil", curingUntil.toString(), "reference", decision.reference())));
+        } else if (!decided.isEmpty() || lots.isEmpty()) {
+            audit.recordInTx(AuditInput.of("ProductionOrderStage", stageId, decision.passed() ? "approve" : "reject",
+                    null, Obj.of("orderCode", order.get("orderCode"), "released", JsNumbers.dec(released), "lots",
+                            decided, "reference", decision.reference())));
+        }
+        if (!decided.isEmpty() || lots.isEmpty()) {
+            String qc = decision.passed() ? "passed" : "failed";
+            gateListeners.orderedStream().forEach(l -> l.gateDecided(stageId, qc, decided));
+        }
         return view(str(s, "orderId"));
+    }
+
+    /** One QC lot: a gated output posting, its status and what of it is still in quarantine. */
+    record QcLot(String postingId, String code, String status, BigDecimal held, String batchNumber,
+            Instant passDueAt) {}
+
+    /**
+     * The QC lots of a gated stage in posting order. {@code held} = the lot's main output received into quarantine
+     * less the releases linked to it; releases recorded before lots existed (no link) are spread oldest lot first.
+     */
+    List<QcLot> qcLots(String stageId) {
+        List<Map<String, Object>> ps = SqlRows.list(ProductionStagePosting.class, db.jdbc().sql("SELECT * FROM"
+                + " \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND \"stageId\" = ? AND kind = 'output'"
+                + " AND \"reversedAt\" IS NULL AND \"qcStatus\" IS NOT NULL ORDER BY \"createdAt\", code")
+                .params(MfgDb.org(), stageId));
+        if (ps.isEmpty()) {
+            return List.of();
+        }
+        String quarantine = production.quarantineLocation();
+        Map<String, BigDecimal> received = new HashMap<>();
+        Map<String, String> batches = new HashMap<>();
+        for (Map<String, Object> r : db.jdbc().sql("SELECT l.\"postingId\", sum(l.quantity) AS qty,"
+                + " max(b.\"batchNumber\") AS batch FROM \"ProductionStagePostingLine\" l"
+                + " LEFT JOIN \"InventoryLedger\" il ON il.\"organizationId\" = l.\"organizationId\""
+                + " AND il.\"ledgerCode\" = l.\"ledgerCode\" LEFT JOIN \"InventoryBatch\" b ON b.id = il.\"batchId\""
+                + " WHERE l.\"organizationId\" = ? AND l.\"stageId\" = ? AND l.role = 'main_output' AND l.\"locationId\" = ?"
+                + " GROUP BY l.\"postingId\"").params(MfgDb.org(), stageId, quarantine).query().listOfRows()) {
+            received.put((String) r.get("postingId"), (BigDecimal) r.get("qty"));
+            batches.put((String) r.get("postingId"), (String) r.get("batch"));
+        }
+        Map<String, BigDecimal> linked = new HashMap<>();
+        BigDecimal unlinked = BigDecimal.ZERO;
+        for (Map<String, Object> r : db.jdbc().sql("SELECT rp.\"releasesPostingId\" AS lot, sum(l.quantity) AS qty"
+                + " FROM \"ProductionStagePostingLine\" l JOIN \"ProductionStagePosting\" rp ON rp.id = l.\"postingId\""
+                + " WHERE l.\"organizationId\" = ? AND l.\"stageId\" = ? AND l.role = 'qc_release'"
+                + " AND rp.\"reversedAt\" IS NULL GROUP BY rp.\"releasesPostingId\"").params(MfgDb.org(), stageId)
+                .query().listOfRows()) {
+            if (r.get("lot") == null) {
+                unlinked = unlinked.add((BigDecimal) r.get("qty"));
+            } else {
+                linked.put((String) r.get("lot"), (BigDecimal) r.get("qty"));
+            }
+        }
+        List<QcLot> out = new ArrayList<>();
+        for (Map<String, Object> p : ps) {
+            String id = str(p, "id");
+            BigDecimal held = received.getOrDefault(id, BigDecimal.ZERO)
+                    .subtract(linked.getOrDefault(id, BigDecimal.ZERO)).max(BigDecimal.ZERO);
+            BigDecimal legacy = held.min(unlinked);
+            held = held.subtract(legacy);
+            unlinked = unlinked.subtract(legacy);
+            out.add(new QcLot(id, str(p, "code"), str(p, "qcStatus"), held, batches.get(id),
+                    p.get("qcPassDueAt") == null ? null : (Instant) p.get("qcPassDueAt")));
+        }
+        return out;
+    }
+
+    /** The lots one decision covers: the named lot, else every held undecided lot (or, if none, the failed ones). */
+    private List<QcLot> decisionTargets(Map<String, Object> s, List<QcLot> lots, String postingId) {
+        if (postingId != null && !postingId.isBlank()) {
+            return List.of(lots.stream().filter(l -> l.postingId().equals(postingId)).findFirst().orElseThrow(() ->
+                    ApiException.badRequest("Posting " + postingId + " is not a QC lot of stage " + s.get("sequence")
+                            + " · " + s.get("name") + ".")));
+        }
+        List<QcLot> held = lots.stream().filter(l -> l.held().signum() > 0).toList();
+        List<QcLot> failed = held.stream().filter(l -> "failed".equals(l.status())).toList();
+        List<QcLot> open = held.stream().filter(l -> !"failed".equals(l.status())).toList();
+        if (!open.isEmpty() && !failed.isEmpty()) {
+            throw ApiException.badRequest("Stage " + s.get("sequence") + " · " + s.get("name") + " holds lots awaiting"
+                    + " QC (" + String.join(", ", open.stream().map(QcLot::code).toList()) + ") and failed lots ("
+                    + String.join(", ", failed.stream().map(QcLot::code).toList())
+                    + "); decide each lot by its postingId.");
+        }
+        return open.isEmpty() ? failed : open;
+    }
+
+    /** Move one lot's held quantity (its batch) from quarantine to the stage's destination; returns the quantity. */
+    private BigDecimal release(Ctx c, Map<String, Object> s, Map<String, Object> order, QcLot lot,
+            CheckpointDecision decision) {
+        Map<String, Object> post = newPosting(c, "qc_release", Instant.now(), decision.notes());
+        String pid = str(post, "id");
+        db.update(ProductionStagePosting.class, pid, Obj.of("releasesPostingId", lot.postingId()));
+        String dest = Boolean.TRUE.equals(s.get("isLast")) ? outputLocation(order) : str(s, "stageLocationId");
+        stock.transfer(StockMove.transfer(str(s, "outputProductId"), production.quarantineLocation(), dest, lot.held())
+                .variant(Boolean.TRUE.equals(s.get("isLast")) ? str(order, "outputVariantId") : null)
+                .batch(lot.batchNumber()).source(SOURCE, pid)
+                .notes("Stage QC pass · " + post.get("code") + " (lot " + lot.code() + ")"));
+        line(pid, s, "qc_release", str(s, "outputProductId"), lot.held(), BigDecimal.ZERO, dest, null, null, null, null,
+                decision.reference());
+        return lot.held();
+    }
+
+    /**
+     * The gate of a stage with lots: held while any lot is held (pending before curing before failed), passed once
+     * none is; a lot whose release was reversed counts as pending. No lot: {@code current}.
+     */
+    static String gateStatus(List<QcLot> lots, String current) {
+        if (lots.isEmpty()) {
+            return current;
+        }
+        List<String> held = lots.stream().filter(l -> l.held().signum() > 0)
+                .map(l -> "passed".equals(l.status()) ? "pending" : l.status()).toList();
+        for (String st : List.of("pending", "curing", "failed")) {
+            if (held.contains(st)) {
+                return st;
+            }
+        }
+        return "passed";
+    }
+
+    private Instant earliestDue(String stageId, Instant fallback) {
+        return qcLots(stageId).stream().filter(l -> "curing".equals(l.status()) && l.passDueAt() != null)
+                .map(QcLot::passDueAt).min(Comparator.naturalOrder()).orElse(fallback);
     }
 
     /**
@@ -671,6 +813,70 @@ public class StageExecutionService implements StageCheckpointResults {
         java.time.LocalDateTime at = db.jdbc().sql(sql).params(MfgDb.org(), stageId)
                 .query(java.time.LocalDateTime.class).optional().orElse(null);
         return at == null ? null : at.toInstant(java.time.ZoneOffset.UTC);
+    }
+
+    // ================================================================== HTTP route entry points
+
+    /*
+     * Integrity fix 2026-11-24: the generic stage routes refuse an order that a processing job (ADR-S060) or a crushing
+     * run (ADR-S016) owns. Posting or reversing it here skipped the job's over-yield check, loss approval and
+     * reconciliation (and left a crushing run "posted" after its stock was reversed), so the owner record and the stock
+     * disagreed. The owning services call the plain methods.
+     */
+
+    /** {@code POST /production-stages/:id/issue}. */
+    @Transactional
+    public Map<String, Object> issueViaRoute(String stageId, StageIssue dto) {
+        refuseOwned(str(stage(stageId), "orderId"));
+        return issue(stageId, dto);
+    }
+
+    /** {@code POST /production-stages/:id/output}. */
+    @Transactional
+    public Map<String, Object> outputViaRoute(String stageId, StageOutput dto) {
+        refuseOwned(str(stage(stageId), "orderId"));
+        return output(stageId, dto, null);
+    }
+
+    /** {@code POST /production-stages/:id/conversion-costs}. */
+    @Transactional
+    public Map<String, Object> conversionViaRoute(String stageId, StageConversion dto) {
+        refuseOwned(str(stage(stageId), "orderId"));
+        return conversion(stageId, dto);
+    }
+
+    /** {@code POST /stage-postings/:id/reverse}. */
+    @Transactional
+    public Map<String, Object> reversePostingViaRoute(String postingId, String reason) {
+        Map<String, Object> p = db.byId(ProductionStagePosting.class, postingId);
+        if (p == null) {
+            throw ApiException.notFound("Stage posting not found");
+        }
+        refuseOwned(str(p, "orderId"));
+        return reversePosting(postingId, reason);
+    }
+
+    /** {@code POST /production-orders/:id/stages/reverse}. */
+    @Transactional
+    public Map<String, Object> reverseOrderViaRoute(String orderId, String reason) {
+        refuseOwned(orderId);
+        return reverseOrder(orderId, reason);
+    }
+
+    private void refuseOwned(String orderId) {
+        String job = db.jdbc().sql("SELECT code FROM \"ProcessingJob\" WHERE \"organizationId\" = ? AND \"orderId\" = ?"
+                + " LIMIT 1").params(MfgDb.org(), orderId).query(String.class).optional().orElse(null);
+        if (job != null) {
+            throw ApiException.badRequest("This order belongs to processing job " + job
+                    + "; use the processing job's routes.");
+        }
+        String run = db.jdbc().sql("SELECT code FROM \"CrushingRun\" WHERE \"organizationId\" = ?"
+                + " AND \"productionOrderId\" = ? LIMIT 1").params(MfgDb.org(), orderId).query(String.class).optional()
+                .orElse(null);
+        if (run != null) {
+            throw ApiException.badRequest("This order belongs to crushing run " + run
+                    + "; use the crushing run's routes.");
+        }
     }
 
     // ================================================================== reversal
@@ -760,6 +966,9 @@ public class StageExecutionService implements StageCheckpointResults {
                     + " AND \"sourceId\" = ?").params(MfgDb.org(), SOURCE, postingId).update();
         }
         if ("qc_release".equals(p.get("kind"))) {
+            // Integrity fix 2026-11-24: the released lot is held again and waits for a new decision.
+            db.jdbc().sql("UPDATE \"ProductionStagePosting\" SET \"qcStatus\" = 'pending' WHERE \"organizationId\" = ?"
+                    + " AND id = ? AND \"qcStatus\" = 'passed'").params(MfgDb.org(), p.get("releasesPostingId")).update();
             db.update(ProductionOrderStage.class, str(p, "stageId"), Obj.of("qcStatus", "pending"));
         }
         audit.recordInTx(AuditInput.of("ProductionStagePosting", postingId, "cancel", null, Obj.of("code",
@@ -1057,9 +1266,13 @@ public class StageExecutionService implements StageCheckpointResults {
             }
             upd.put("startedAt", started);
             upd.put("completedAt", completed ? done : null);
-            if (Boolean.TRUE.equals(s.get("qcGate")) && "passed".equals(s.get("qcStatus"))
-                    && quarantined.signum() > 0) {
-                upd.put("qcStatus", "pending");
+            if (Boolean.TRUE.equals(s.get("qcGate"))) {
+                List<QcLot> lots = qcLots(sid);
+                if (!lots.isEmpty()) {
+                    upd.put("qcStatus", gateStatus(lots, str(s, "qcStatus")));
+                } else if ("passed".equals(s.get("qcStatus")) && quarantined.signum() > 0) {
+                    upd.put("qcStatus", "pending");
+                }
             }
             db.update(ProductionOrderStage.class, sid, upd);
             scrapQty = scrapQty.add(qtyScrap);
@@ -1297,8 +1510,7 @@ public class StageExecutionService implements StageCheckpointResults {
 
     /** Serialise every posting of one order with the legacy production legs (same advisory lock key). */
     private void lockOrder(String orderId) {
-        String key = "production:" + MfgDb.org() + ":" + orderId;
-        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param(key).query().listOfRows();
+        db.lockProductionOrder(orderId);
     }
 
     private static int num(Map<String, Object> stage) {

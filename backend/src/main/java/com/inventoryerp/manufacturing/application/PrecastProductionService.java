@@ -264,7 +264,9 @@ public class PrecastProductionService implements StageGateListener {
             + " WHEN b.\"cubingPostingId\" IS NOT NULL AND cp.\"reversedAt\" IS NOT NULL THEN 'curing'"
             + " ELSE b.status END AS \"effectiveStatus\", o.\"orderCode\", o.status AS \"orderStatus\","
             + " p.name AS \"productName\", p.sku AS \"productSku\", a.code AS \"curingAreaCode\","
-            + " a.name AS \"curingAreaName\", st.\"qcStatus\", st.\"qcReference\", st.\"qcPassDueAt\","
+            + " a.name AS \"curingAreaName\", COALESCE(cp.\"qcStatus\", st.\"qcStatus\") AS \"qcStatus\","
+            + " COALESCE(cp.\"qcReference\", st.\"qcReference\") AS \"qcReference\","
+            + " CASE WHEN cp.\"qcStatus\" IS NOT NULL THEN cp.\"qcPassDueAt\" ELSE st.\"qcPassDueAt\" END AS \"qcPassDueAt\","
             + " st.\"qcCheckpointCode\", m.\"targetMaturity\", m.\"datumTemperatureC\""
             + " FROM \"PrecastCuringBatch\" b JOIN \"ProductionOrder\" o ON o.id = b.\"orderId\""
             + " JOIN \"ProductionStagePosting\" pp ON pp.id = b.\"pressingPostingId\""
@@ -514,22 +516,29 @@ public class PrecastProductionService implements StageGateListener {
             throw ApiException.badRequest("Batch " + b.get("code") + " is " + b.get("status")
                     + "; only a cubed batch waits for its strength gate.");
         }
+        // Integrity fix 2026-11-24: the decision covers this batch's lot (its cubing posting) only.
         stages.recordResult(str(b, "stageId"), new CheckpointDecision("passed".equals(in.result()),
-                has(in.reference()) ? in.reference().trim() : str(b, "code"), in.notes()));
+                has(in.reference()) ? in.reference().trim() : str(b, "code"), in.notes(), str(b, "cubingPostingId")));
         return batch(id);
     }
 
     /** Batches of a gated stage follow its decision ({@link StageGateListener}). */
     @Override
-    public void gateDecided(String stageId, String qcStatus) {
+    public void gateDecided(String stageId, String qcStatus, List<String> postingIds) {
+        // Integrity fix 2026-11-24: only the batches whose lot (cubing posting) was decided follow the decision.
+        if (postingIds == null || postingIds.isEmpty()) {
+            return;
+        }
+        String[] lots = postingIds.toArray(String[]::new);
         if ("passed".equals(qcStatus)) {
             db.jdbc().sql("UPDATE \"PrecastCuringBatch\" SET status = 'released', \"releasedAt\" = " + MfgDb.NOW
                     + ", \"updatedAt\" = " + MfgDb.NOW + " WHERE \"organizationId\" = ? AND \"stageId\" = ?"
-                    + " AND status IN ('cubed', 'failed')").params(MfgDb.org(), stageId).update();
+                    + " AND \"cubingPostingId\" = ANY(?::text[]) AND status IN ('cubed', 'failed')")
+                    .params(MfgDb.org(), stageId, lots).update();
         } else if ("failed".equals(qcStatus)) {
             db.jdbc().sql("UPDATE \"PrecastCuringBatch\" SET status = 'failed', \"updatedAt\" = " + MfgDb.NOW
-                    + " WHERE \"organizationId\" = ? AND \"stageId\" = ? AND status = 'cubed'")
-                    .params(MfgDb.org(), stageId).update();
+                    + " WHERE \"organizationId\" = ? AND \"stageId\" = ? AND \"cubingPostingId\" = ANY(?::text[])"
+                    + " AND status = 'cubed'").params(MfgDb.org(), stageId, lots).update();
         }
     }
 
@@ -606,16 +615,20 @@ public class PrecastProductionService implements StageGateListener {
     public Map<String, Object> tick() {
         int passed = 0;
         int finalLots = 0;
-        List<String> due = db.jdbc().sql("SELECT id FROM \"ProductionOrderStage\" WHERE \"organizationId\" = ?"
-                + " AND \"qcStatus\" = 'curing' AND \"qcPassDueAt\" <= ?").params(MfgDb.org(),
-                MfgDb.param(Instant.now())).query(String.class).list();
-        for (String stageId : due) {
+        // Integrity fix 2026-11-24: per lot — each gated output posting whose pass waited for the curing hold.
+        List<Map<String, Object>> due = db.jdbc().sql("SELECT id, \"stageId\", \"qcReference\" FROM"
+                + " \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND \"qcStatus\" = 'curing'"
+                + " AND \"reversedAt\" IS NULL AND \"qcPassDueAt\" <= ?").params(MfgDb.org(),
+                MfgDb.param(Instant.now())).query().listOfRows();
+        for (Map<String, Object> lot : due) {
+            String stageId = (String) lot.get("stageId");
             try {
-                Map<String, Object> s = db.byId(ProductionOrderStage.class, stageId);
-                stages.recordResult(stageId, new CheckpointDecision(true, str(s, "qcReference"),
-                        "Minimum curing time reached"));
+                stages.recordResult(stageId, new CheckpointDecision(true, (String) lot.get("qcReference"),
+                        "Minimum curing time reached", (String) lot.get("id")));
                 passed++;
             } catch (ApiException e) {
+                db.jdbc().sql("UPDATE \"ProductionStagePosting\" SET \"qcStatus\" = 'pending', \"qcPassDueAt\" = NULL"
+                        + " WHERE \"organizationId\" = ? AND id = ?").params(MfgDb.org(), lot.get("id")).update();
                 db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "pending", "qcPassDueAt", null));
             }
         }

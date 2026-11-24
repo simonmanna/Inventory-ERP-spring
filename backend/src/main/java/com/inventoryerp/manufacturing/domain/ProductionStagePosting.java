@@ -78,6 +78,30 @@ public class ProductionStagePosting {
     @Column(name = "createdAt", nullable = false)
     private Instant createdAt;
 
+    /** Integrity fix 2026-11-24 (V625): QC status of a gated output posting (one lot); null when not gated. */
+    @Column(name = "qcStatus")
+    private String qcStatus;
+
+    @Column(name = "qcPassDueAt")
+    private Instant qcPassDueAt;
+
+    @Column(name = "qcReference")
+    private String qcReference;
+
+    @Column(name = "qcDecidedAt")
+    private Instant qcDecidedAt;
+
+    @Column(name = "qcDecidedBy")
+    private String qcDecidedBy;
+
+    /** The quality inspection lot opened for this posting (ADR-S013 bridge). */
+    @Column(name = "qcLotId")
+    private String qcLotId;
+
+    /** On a {@code qc_release} posting: the lot (output posting) it released. */
+    @Column(name = "releasesPostingId")
+    private String releasesPostingId;
+
     public String getId() {
         return id;
     }

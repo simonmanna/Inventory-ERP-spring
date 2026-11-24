@@ -402,6 +402,14 @@ class CrushingIT extends MfgTestSupport {
         JsonNode piles = ok(200, "GET", "/manufacturing/crushing/stockpiles?kind=product", null);
         assertThat(piles.toString()).contains(s.pile20());
 
+        // Integrity fix 2026-11-24: the generic stage routes refuse the run's order (the run would stay "posted").
+        String runOrder = run.get("productionOrderId").asString();
+        Res generic = keyed("/manufacturing/production-orders/" + runOrder + "/stages/reverse",
+                Map.of("reason", "Bypass"), adminToken);
+        assertThat(generic.status()).isEqualTo(400);
+        assertThat(generic.body().get("message").asString()).isEqualTo("This order belongs to crushing run "
+                + run.get("code").asString() + "; use the crushing run's routes.");
+
         // Reversal: stock back, run reversed, GL still balanced.
         Res noKey = as("POST", "/manufacturing/crushing/runs/" + id + "/reverse", Map.of("reason", "Wrong belt scale"));
         assertThat(noKey.status()).isEqualTo(400);

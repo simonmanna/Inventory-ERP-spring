@@ -496,6 +496,35 @@ class ProcessingIT extends MfgTestSupport {
     }
 
     @Test
+    @DisplayName("integrity 2026-11-24: the generic stage routes refuse a processing job's order")
+    void genericStageRoutesRefuseJobs() {
+        String raw = item("Raw", true, "raw", 0);
+        String done = item("Done", true, "finished", 10);
+        String lot = "GS-" + suffix();
+        grn(raw, 11, 10, lot);
+        JsonNode j = run(simple(100, raw, done), lot, 10, 10, 0, null);
+        String orderId = j.get("orderId").asString();
+        String expected = "This order belongs to processing job " + j.get("code").asString()
+                + "; use the processing job's routes.";
+        Res wholeOrder = keyedRes("/manufacturing/production-orders/" + orderId + "/stages/reverse",
+                Map.of("reason", "Bypass"));
+        assertThat(wholeOrder.status()).isEqualTo(400);
+        assertThat(wholeOrder.body().get("message").asString()).isEqualTo(expected);
+        String posting = jdbc.sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"orderId\" = ?"
+                + " AND \"reversedAt\" IS NULL ORDER BY \"createdAt\" DESC, code DESC LIMIT 1").param(orderId)
+                .query(String.class).single();
+        Res onePosting = keyedRes("/manufacturing/stage-postings/" + posting + "/reverse", Map.of("reason", "Bypass"));
+        assertThat(onePosting.body().get("message").asString()).isEqualTo(expected);
+        String stage = jdbc.sql("SELECT id FROM \"ProductionOrderStage\" WHERE \"orderId\" = ? LIMIT 1").param(orderId)
+                .query(String.class).single();
+        Res output = keyedRes("/manufacturing/production-stages/" + stage + "/output", Map.of("qtyGood", 1));
+        assertThat(output.body().get("message").asString()).isEqualTo(expected);
+        // The job's own route still reverses it.
+        assertThat(keyed(BASE + "/jobs/" + j.get("id").asString() + "/reverse", Map.of("reason", "Wrong")).get("status")
+                .asString()).isEqualTo("reversed");
+    }
+
+    @Test
     @DisplayName("reversal is refused while a lot has moved, even with other stock on hand, and names the document")
     void reversalChecksTheLot() {
         String raw = item("Raw", true, "raw", 0);

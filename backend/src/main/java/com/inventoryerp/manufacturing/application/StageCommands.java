@@ -142,7 +142,8 @@ public final class StageCommands {
             @NotNull(message = "result must be one of the following values: passed, failed")
             @OneOf({"passed", "failed"}) String result,
             String reference,
-            String notes) {}
+            String notes,
+            String postingId) {}
 
     /** Reversal body. */
     public record StageReversal(String reason) {}

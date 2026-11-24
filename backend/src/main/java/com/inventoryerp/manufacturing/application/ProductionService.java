@@ -251,6 +251,16 @@ public class ProductionService {
         }
         if (dto.outputs() != null) {
             dto.outputs().forEach(o -> getProduct(o.productId()));
+            // Integrity fix 2026-11-24 (deviation: Nest took any %): by-products take their share of the cost pool
+            // before the main output; more than 100 % in total left the main output at a negative cost.
+            BigDecimal byproductPct = dto.outputs().stream()
+                    .filter(o -> o.kind() == null || "byproduct".equals(o.kind()))
+                    .map(o -> o.costAllocationPct() != null ? o.costAllocationPct() : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (byproductPct.compareTo(HUNDRED) > 0) {
+                throw ApiException.badRequest("By-product cost allocation totals " + JsNumbers.dec(byproductPct)
+                        + "%; it cannot exceed 100%.");
+            }
         }
         requireLocation(outputLocationId);
 
@@ -563,6 +573,12 @@ public class ProductionService {
             pool = pool.subtract(value);
             byproductCredit = byproductCredit.add(value);
         }
+        if (pool.signum() < 0) {
+            // Integrity fix 2026-11-24: orders created before the 100 % cap.
+            throw ApiException.badRequest("By-products of " + code + " take more than the order's cost ("
+                    + JsNumbers.dec(byproductCredit) + " of " + JsNumbers.dec(materialCost.add(overhead))
+                    + "); correct their cost allocation %.");
+        }
 
         // 1b) Review 2026-11-17 (rework costing): an abnormal rework — a defect that is not part of the normal process —
         // brings the units back at the cost they already carried; the extra material and conversion it took is a loss
@@ -737,6 +753,9 @@ public class ProductionService {
     @Transactional
     public Map<String, Object> cancelOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
+        // Integrity fix 2026-11-24 (deviation: Nest flipped without a lock): lock and read once, so a start that
+        // consumed the materials in between cannot be flipped to cancelled with its materials stranded in WIP.
+        lock(id);
         Map<String, Object> pre = getOrThrow(id, true, false);
         refuseIfMultiStage(pre, true);
         if ("completed".equals(pre.get("status"))) {
@@ -762,11 +781,7 @@ public class ProductionService {
         }
 
         Instant date = Instant.now();
-        lock(id);
-        Map<String, Object> order = getOrNull(id, true, false);
-        if (order == null || "cancelled".equals(order.get("status"))) {
-            return order;
-        }
+        Map<String, Object> order = pre;
         if (order.get("postedAt") != null) {
             throw ApiException.badRequest("Order already completed.");
         }
@@ -801,6 +816,8 @@ public class ProductionService {
     @Transactional
     public Map<String, Object> reverseOrder(String id, CancelOrder dto) {
         String reason = dto != null ? dto.reason() : null;
+        // Integrity fix 2026-11-24: lock before the checks, so they read what the reversal will act on.
+        lock(id);
         Map<String, Object> pre = getOrThrow(id, true, false);
         refuseIfMultiStage(pre, false);
         // ADR-S006 A5: a QC-held order can be reversed too (its finished goods sit in quarantine).
@@ -819,11 +836,8 @@ public class ProductionService {
         // Review N3: producedQty is in the order's unit; the finished goods were received in base units.
         Map<String, Object> mainOut = mainOutput(pre);
         BigDecimal fgBase = producedBase(pre, mainOut);
-        BigDecimal fgQty = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
-                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
-                .params(MfgDb.org(), pre.get("outputProductId"),
-                        pre.get("outputVariantId") != null ? pre.get("outputVariantId") : "", fgLocationId)
-                .query(BigDecimal.class).optional().orElse(null);
+        BigDecimal fgQty = producedOnHand(str(pre, "orderCode"), str(pre, "outputProductId"),
+                str(pre, "outputVariantId"), fgLocationId);
         if (fgQty == null || fgQty.compareTo(fgBase) < 0) {
             throw ApiException.badRequest(
                     "Cannot reverse: finished goods are no longer fully in stock (sold or moved).");
@@ -838,11 +852,8 @@ public class ProductionService {
             if (bpBase == null) {
                 continue;
             }
-            BigDecimal onHand = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
-                            + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
-                    .params(MfgDb.org(), bp.get("productId"), bp.get("variantId") != null ? bp.get("variantId") : "",
-                            fgLocationId)
-                    .query(BigDecimal.class).optional().orElse(null);
+            BigDecimal onHand = producedOnHand(str(pre, "orderCode"), str(bp, "productId"), str(bp, "variantId"),
+                    fgLocationId);
             if (onHand == null || onHand.compareTo(bpBase) < 0) {
                 throw ApiException.badRequest(
                         "Cannot reverse: by-products are no longer fully in stock (sold or moved).");
@@ -855,11 +866,7 @@ public class ProductionService {
         BigDecimal fgValue = mainOut != null && mainOut.get("totalCost") != null && dec(mainOut, "totalCost").signum() > 0
                 ? dec(mainOut, "totalCost") : BomService.mul(dec(pre, "outputUnitCost"), fgBase);
 
-        lock(id);
-        Map<String, Object> order = getOrNull(id, true, false);
-        if (order == null || order.get("reversedAt") != null) {
-            throw ApiException.badRequest("Order already reversed.");
-        }
+        Map<String, Object> order = pre;
         String code = str(order, "orderCode");
         // 1) Finished goods out, value back into WIP (Dr WIP / Cr Stock Valuation).
         // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
@@ -923,6 +930,40 @@ public class ProductionService {
      * quarantine) the lots there with the produced batch numbers. Empty for products without lots (the output receipt
      * names no serial units, so none are pinned).
      */
+    /**
+     * Integrity fix 2026-11-24 (deviation: Nest compared the product's whole stock at the location): how much of what
+     * this order produced is still at {@code locationId} — the least of the stock there, the order's own net movements
+     * there (its output receipts and its QC transfers / write-offs; not its consumption, which a rework order draws from
+     * the same product) and, for lot-tracked products, what is left in its lots.
+     * Other stock of the same product (another order's output in the same quarantine, say) no longer lets a reversal
+     * pass after part of this output was released, wasted at QC, sold or moved.
+     */
+    private BigDecimal producedOnHand(String orderCode, String productId, String variantId, String locationId) {
+        BigDecimal here = db.jdbc().sql("SELECT quantity FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                        + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? LIMIT 1")
+                .params(MfgDb.org(), productId, variantId != null ? variantId : "", locationId)
+                .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+        BigDecimal own = db.jdbc().sql("SELECT coalesce(sum(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
+                        + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND \"locationId\" = ? AND \"referenceId\" = ? AND ((\"referenceType\" = ?"
+                        + " AND type = 'production_output') OR \"referenceType\" = 'production_qc')")
+                .params(MfgDb.org(), productId, variantId, locationId, orderCode, SOURCE).query(BigDecimal.class)
+                .single();
+        BigDecimal left = here.min(own);
+        boolean lotted = db.jdbc().sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                        + " AND \"referenceType\" = ? AND \"referenceId\" = ? AND type = 'production_output'"
+                        + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"batchId\" IS NOT NULL")
+                .params(MfgDb.org(), SOURCE, orderCode, productId, variantId).query(Long.class).single() > 0;
+        if (!lotted) {
+            return left;
+        }
+        List<String> lots = producedLots(orderCode, productId, variantId, locationId);
+        BigDecimal inLots = lots.isEmpty() ? BigDecimal.ZERO : db.jdbc().sql("SELECT coalesce(sum(quantity), 0) FROM"
+                        + " \"InventoryBatch\" WHERE \"organizationId\" = ? AND id = ANY(?::text[]) AND \"locationId\" = ?")
+                .params(MfgDb.org(), lots.toArray(String[]::new), locationId).query(BigDecimal.class).single();
+        return left.min(inLots);
+    }
+
     private List<String> producedLots(String orderCode, String productId, String variantId, String locationId) {
         List<Map<String, Object>> produced = db.jdbc().sql("SELECT b.id, b.\"locationId\", b.\"batchNumber\" FROM"
                         + " \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ?"
@@ -1126,8 +1167,7 @@ public class ProductionService {
 
     /** Serialise concurrent start/complete/cancel of one order (double-tap guard). */
     private void lock(String orderId) {
-        String key = "production:" + MfgDb.org() + ":" + orderId;
-        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param(key).query().listOfRows();
+        db.lockProductionOrder(orderId);
     }
 
     private BigDecimal estimateMaterialValue(Map<String, Object> order) {

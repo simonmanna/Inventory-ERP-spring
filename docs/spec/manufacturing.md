@@ -158,6 +158,20 @@ Approved by the owner 2026-11-17 (accounting and costing review,
 | Rework | `POST /production-orders/:id/rework` (extension, ADR-S006 C) | the rework's cost always stayed in the units | `treatment`: `normal` (default, unchanged) or `abnormal`. Abnormal: at completion the units come back at the cost they carried and the extra cost is expensed (Dr Stock Adjustment Expense / Cr WIP). Orders carry `reworkTreatment` and `reworkLoss`; a reversal takes the loss back (V534) |
 
 
+Approved by the owner 2026-11-24 (manufacturing production-readiness review, step 1; `V625`; code markers
+`Integrity fix 2026-11-24`; tests `ManufacturingIntegrityIT`, `MultiStageProductionIT.stageGatePerLot`,
+`PrecastManufacturingIT.gatePerBatch`, `ProcessingIT.genericStageRoutesRefuseJobs`, `CrushingIT` run reversal):
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MI-1 | `POST /production-stages/:id/qc-decision`, `/precast/curing-batches/:id/gate-decision`, quality-lot bridge, curing job (extensions, ADR-S011/S014) | one pass released the stage's whole quarantine, failed and uninspected lots included; a pass flipped every `failed` precast batch to `released` | per lot: each gated output posting is a lot with its own `qcStatus` (`pending`/`curing`/`passed`/`failed`). A pass releases only that lot's held quantity (its batch); the stage gate passes once no lot is held. `qc-decision` takes an optional `postingId`; without it the decision covers the undecided lots, and is refused (`Stage <n> · <name> holds lots awaiting QC (…) and failed lots (…); decide each lot by its postingId.`) when undecided and failed lots are both held. A failed lot can still pass on a retest. Precast decides the batch's cubing posting; the quality bridge decides the posting its inspection lot was opened for. Stage view adds `qcLots` |
+| MI-2 | `POST /production-orders/:id/cancel` | a draft/confirmed order was flipped to `cancelled` without the order lock (Nest), so a concurrent start could consume its materials into WIP and leave them there | the order lock is taken and the order read once before either branch |
+| MI-3 | `POST /production-orders/:id/reverse` | finished goods "fully in stock" = the product's whole stock at the location (Nest), so another order's stock (e.g. in the shared quarantine) let a partly released / sold output reverse | the least of the stock there, the order's own net ledger movements there and, for lot-tracked products, its own lots; checks run under the order lock |
+| MI-4 | `POST /manufacturing/costing/orders/:id/absorb`, `POST /work-orders/:id/start\|pause\|complete` | absorb row-locked the order but complete used an advisory lock, so absorbed overhead could miss the completion's posting; work-order complete had no lock (double-tap costed the time twice) | every leg takes the same per-order lock first (`MfgDb.lockProductionOrder`); work orders are re-read under it with a row lock |
+| MI-5 | `POST /production-orders` (`outputs[].costAllocationPct`) | any % (Nest), so by-products could take more than the cost pool and leave the main output at a negative cost | each ≤ 100 (`must not be greater than 100`), by-products together ≤ 100 (`By-product cost allocation totals <n>%; it cannot exceed 100%.`); completion refuses a negative remaining pool for older orders |
+| MI-6 | `POST /production-stages/:id/issue\|output\|conversion-costs`, `/stage-postings/:id/reverse`, `/production-orders/:id/stages/reverse` (extensions) | worked on any order, so a processing job's or crushing run's order could be posted / reversed behind its back | refused: `This order belongs to processing job <code>; use the processing job's routes.` / `… crushing run <code>; use the crushing run's routes.` |
+
+
 ## Status
 
 Done. Parity: 61/61 Nest routes (42 in the generated table + 19 phase-4 routes). ADR-S006: packages A–D complete

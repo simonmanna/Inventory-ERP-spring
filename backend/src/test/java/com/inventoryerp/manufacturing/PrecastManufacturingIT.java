@@ -361,6 +361,9 @@ class PrecastManufacturingIT extends MfgTestSupport {
         // Time passes: the job passes the gate once the hold is over.
         jdbc.sql("UPDATE \"ProductionOrderStage\" SET \"qcPassDueAt\" = now() - interval '1 minute' WHERE \"orderId\" = ?"
                 + " AND \"qcStatus\" = 'curing'").param(orderId).update();
+        // Integrity fix 2026-11-24: the due time is per lot (the batch's cubing posting).
+        jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"qcPassDueAt\" = now() - interval '1 minute'"
+                + " WHERE \"orderId\" = ? AND \"qcStatus\" = 'curing'").param(orderId).update();
         jdbc.sql("UPDATE \"ProductionStagePosting\" SET \"postedAt\" = \"postedAt\" - interval '8 days'"
                 + " WHERE \"orderId\" = ?").param(orderId).update();
         // Jobs are off in tests (app.jobs.enabled=false): drive the tick directly, as FleetMaintenanceIT does.
@@ -371,6 +374,46 @@ class PrecastManufacturingIT extends MfgTestSupport {
         assertThat(released.get("qcStatus").asString()).isEqualTo("passed");
         assertThat(released.get("qcReference").asString()).isEqualTo("Cube test 7.4");
         assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("100");
+        assertThat(unbalancedEntries()).isZero();
+    }
+
+    @Test
+    @DisplayName("integrity 2026-11-24: the strength gate is per batch — a pass releases its own blocks, never a failed batch's")
+    void gatePerBatch() {
+        Plant p = plant(7);
+        String orderId = order(p, 200).get("id").asString();
+        String b1 = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 100, "date", daysAgo(10)))
+                .get("batch").get("id").asString();
+        String b2 = keyed(BASE + "/orders/" + orderId + "/pressing-runs", Map.of("qtyGood", 100, "lastRun", true,
+                "date", daysAgo(9))).get("batch").get("id").asString();
+        keyed(BASE + "/curing-batches/" + b1 + "/cube", Map.of("qtyGood", 100));
+        keyed(BASE + "/curing-batches/" + b2 + "/cube", Map.of("qtyGood", 100));
+        String quarantine = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ?"
+                + " AND code = 'QC-QUARANTINE' AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).single();
+        BigDecimal held0 = onHand(p.block(), quarantine);
+
+        JsonNode failed = keyed(BASE + "/curing-batches/" + b1 + "/gate-decision", Map.of("result", "failed",
+                "reference", "Cube test 2.1"));
+        assertThat(failed.get("status").asString()).isEqualTo("failed");
+        JsonNode passed = keyed(BASE + "/curing-batches/" + b2 + "/gate-decision", Map.of("result", "passed",
+                "reference", "Cube test 7.9"));
+        assertThat(passed.get("status").asString()).isEqualTo("released");
+        assertThat(passed.get("qcStatus").asString()).isEqualTo("passed");
+        // Only batch 2's blocks are sellable; batch 1's stay in quarantine and the batch stays failed.
+        assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("100");
+        assertThat(onHand(p.block(), quarantine)).isEqualByComparingTo(held0.subtract(BigDecimal.valueOf(100)));
+        JsonNode first = ok(200, "GET", BASE + "/curing-batches/" + b1, null);
+        assertThat(first.get("status").asString()).isEqualTo("failed");
+        assertThat(first.get("qcStatus").asString()).isEqualTo("failed");
+        JsonNode stage = ok(200, "GET", "/manufacturing/production-orders/" + orderId + "/stages", null).get("stages")
+                .get(1);
+        assertThat(stage.get("qcStatus").asString()).isEqualTo("failed");
+        assertThat(stage.get("qcLots")).hasSize(2);
+
+        // A 28-day retest of batch 1 passes it on its own.
+        keyed(BASE + "/curing-batches/" + b1 + "/gate-decision", Map.of("result", "passed", "reference", "Cube 28d"));
+        assertThat(onHand(p.block(), warehouse)).isEqualByComparingTo("200");
+        assertThat(ok(200, "GET", BASE + "/curing-batches/" + b1, null).get("status").asString()).isEqualTo("released");
         assertThat(unbalancedEntries()).isZero();
     }
 

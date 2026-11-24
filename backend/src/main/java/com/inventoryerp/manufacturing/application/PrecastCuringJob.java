@@ -33,8 +33,8 @@ public class PrecastCuringJob {
     @Scheduled(cron = "${app.manufacturing.precast-curing-cron:0 */15 * * * *}")
     @SchedulerLock(name = "precast-curing-tick", lockAtMostFor = "PT10M")
     public void run() {
-        List<String> orgs = db.jdbc().sql("SELECT DISTINCT \"organizationId\" FROM \"ProductionOrderStage\""
-                + " WHERE \"qcStatus\" = 'curing' UNION SELECT DISTINCT \"organizationId\" FROM \"PrecastCuringBatch\""
+        List<String> orgs = db.jdbc().sql("SELECT DISTINCT \"organizationId\" FROM \"ProductionStagePosting\""
+                + " WHERE \"qcStatus\" = 'curing' AND \"reversedAt\" IS NULL UNION SELECT DISTINCT \"organizationId\" FROM \"PrecastCuringBatch\""
                 + " WHERE status = 'released' AND \"finalLotId\" IS NULL").query(String.class).list();
         for (String orgId : orgs) {
             try {

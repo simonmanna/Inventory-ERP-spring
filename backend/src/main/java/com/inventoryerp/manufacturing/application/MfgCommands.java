@@ -109,7 +109,9 @@ public final class MfgCommands {
             @OneOf({"output", "byproduct"}) String kind,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = MIN0) BigDecimal qtyExpected,
             String uomId,
-            @DecimalMin(value = "0", message = MIN0) BigDecimal costAllocationPct) {}
+            @DecimalMin(value = "0", message = MIN0)
+            @jakarta.validation.constraints.DecimalMax(value = "100", message = "must not be greater than 100")
+            BigDecimal costAllocationPct) {}
 
     /** {@code CreateProductionOrderDto}. */
     public record CreateOrder(

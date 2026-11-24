@@ -418,6 +418,70 @@ class MultiStageProductionIT extends MfgTestSupport {
     }
 
     @Test
+    @DisplayName("integrity 2026-11-24: a stage gate is decided per lot — a pass never releases a failed or another lot")
+    void stageGatePerLot() {
+        String sand = product("SAND");
+        String green = product("GREEN");
+        String cured = product("CURED");
+        String curing = location("production");
+        stockIn(bakery, sand, 20, 3);
+        String routingId = routing("Lot line", "Mould", "Cure");
+        List<String> ops = opIds(routingId);
+        ok(200, "PUT", "/manufacturing/routings/" + routingId + "/stage-setup", Map.of("stages", List.of(
+                stage(ops.get(0), "outputProductId", green, "stageLocationId", curing, "qcGate", true,
+                        "qcCheckpointCode", "LOT-STRENGTH"))));
+        String bomId = activeBom(cured, 20, List.of(line(sand, 20)), routingId);
+        String orderId = ok(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "plannedQty", 20,
+                "locationId", bakery, "outputLocationId", warehouse)).get("id").asString();
+        JsonNode view = ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/stages/initialize", Map.of());
+        ok(201, "POST", "/manufacturing/production-orders/" + orderId + "/confirm", null);
+        String s1 = stageId(view, 0);
+        String lotA = keyed("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 10))
+                .get("posting").get("id").asString();
+        String lotB = keyed("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 10, "complete",
+                true)).get("posting").get("id").asString();
+        String quarantine = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ?"
+                + " AND code = 'QC-QUARANTINE' AND \"deletedAt\" IS NULL").param(demoOrg).query(String.class).single();
+        BigDecimal held0 = onHand(green, quarantine);
+
+        keyed("/manufacturing/production-stages/" + s1 + "/qc-decision", Map.of("result", "failed", "postingId", lotA));
+        // A stage-wide decision would cover both an undecided and a failed lot: refused.
+        Res mixed = keyedRes("/manufacturing/production-stages/" + s1 + "/qc-decision", Map.of("result", "passed"));
+        assertThat(mixed.status()).isEqualTo(400);
+        assertThat(mixed.body().get("message").asString()).contains("holds lots awaiting QC")
+                .endsWith("decide each lot by its postingId.");
+        Res foreign = keyedRes("/manufacturing/production-stages/" + s1 + "/qc-decision", Map.of("result", "passed",
+                "postingId", UUID.randomUUID().toString()));
+        assertThat(foreign.body().get("message").asString()).endsWith("is not a QC lot of stage 1 · Mould.");
+
+        JsonNode passed = keyed("/manufacturing/production-stages/" + s1 + "/qc-decision", Map.of("result", "passed",
+                "postingId", lotB));
+        assertThat(onHand(green, curing)).isEqualByComparingTo("10");
+        assertThat(onHand(green, quarantine)).isEqualByComparingTo(held0.subtract(BigDecimal.TEN));
+        JsonNode st = passed.get("stages").get(0);
+        assertThat(st.get("qcStatus").asString()).isEqualTo("failed");
+        assertThat(st.get("qcLots")).hasSize(2);
+        assertThat(st.get("qcLots").get(0).get("qcStatus").asString()).isEqualTo("failed");
+        assertThat(num(st.get("qcLots").get(0).get("qtyHeld"))).isEqualByComparingTo("10");
+        assertThat(st.get("qcLots").get(1).get("qcStatus").asString()).isEqualTo("passed");
+        assertThat(num(st.get("qcLots").get(1).get("qtyHeld"))).isEqualByComparingTo("0");
+
+        // Reversing lot B's release holds it again; the failed lot A is retested and passes on its own.
+        String release = jdbc.sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"releasesPostingId\" = ?")
+                .param(lotB).query(String.class).single();
+        keyed("/manufacturing/stage-postings/" + release + "/reverse", Map.of("reason", "Wrong lot"));
+        assertThat(onHand(green, curing)).isEqualByComparingTo("0");
+        assertThat(jdbc.sql("SELECT \"qcStatus\" FROM \"ProductionStagePosting\" WHERE id = ?").param(lotB)
+                .query(String.class).single()).isEqualTo("pending");
+        keyed("/manufacturing/production-stages/" + s1 + "/qc-decision", Map.of("result", "passed", "postingId", lotA));
+        assertThat(onHand(green, curing)).isEqualByComparingTo("10");
+        JsonNode both = keyed("/manufacturing/production-stages/" + s1 + "/qc-decision", Map.of("result", "passed"));
+        assertThat(both.get("stages").get(0).get("qcStatus").asString()).isEqualTo("passed");
+        assertThat(onHand(green, curing)).isEqualByComparingTo("20");
+        assertThat(unbalancedEntries()).isZero();
+    }
+
+    @Test
     @DisplayName("stage gate + quality (2.6): gated output opens an in-process lot; reject fails, release passes the gate")
     void stageGateWithQualityLot() {
         String sand = product("SAND");
