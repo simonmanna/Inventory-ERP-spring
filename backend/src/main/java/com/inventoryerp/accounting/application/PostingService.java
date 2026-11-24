@@ -51,12 +51,14 @@ import org.springframework.transaction.annotation.Transactional;
  * control-account line, the {@code journal_entry:control_adjust} permission for maker and checker, a second user to
  * post it, and an audit row on stage, post and reversal.
  *
- * <p>Document reversals (owner decision 2026-11-17): {@link #reverse} itself has no source-type restriction — it is the
- * GL step of every document-level reversal workflow (invoice cancel, bill void, credit / debit note reversal, payment
- * void, …), which call it in their own transaction. The user-facing generic reversal routes check
- * {@link SubledgerSources#assertGenericReversible} first, so an entry a customer / supplier sub-ledger owns is only ever
- * reversed by its document's workflow. {@code reverse} refuses an entry that is no longer {@code posted} (400), so a
- * workflow replay can never mirror an entry twice; the document's status check makes the replay a no-op first.
+ * <p>Document reversals (owner decision 2026-11-17, widened by finance readiness audit A2): {@link #reverse} itself has
+ * no source-type restriction — it is the GL step of every document- and process-level reversal workflow (invoice cancel,
+ * bill void, credit / debit note reversal, payment void, period reopen, payroll-run reversal, …), which call it in
+ * their own transaction. The user-facing generic reversal routes check {@link SubledgerSources#assertGenericReversible}
+ * first, so only manual entries and allow-listed sources ({@code recurring_entry}) are reversed there; every other entry
+ * only by the workflow of the document or process that posted it. {@code reverse} refuses an entry that is no longer
+ * {@code posted} (400), so a workflow replay can never mirror an entry twice; the document's status check makes the
+ * replay a no-op first.
  */
 @Service
 public class PostingService {
