@@ -691,10 +691,7 @@ Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (release 
   accumulated depreciation and impairment accounts, as of today (organisation time), tolerance 0.01 per line. One row
   per line that differs: register, GL, difference = register − GL, as the report shows it. The audit's tolerance is
   per asset category; the register is compared with its accounts in total, as the report does, because categories
-  share accounts. An asset counts in the register from its acquisition date, which for an asset capitalised from a
-  project is its in-service date: a capitalisation posted before the in-service date shows as a difference until that
-  date, in the report as here. The granite quarry demo seed (`GraniteQuarryDemoSeed`) posts fixed-asset opening
-  balances and depreciation without register assets, so I10 fails for a seeded GQDEMO until its assets are registered.
+  share accounts. Which assets count on a date, and the granite quarry demo seed's plant: fix step B0 below.
 - **I12 `cash_drawers`.** Each closed cash session: its own journals moved its drawer account by its counted cash less
   its opening float, tolerance 0.01. Its own journals are the ones the session reconciliation already ties to it: the
   entries of its payments (not cancelled), of its drawer movements without a payment (the movement's entry, else its
@@ -703,6 +700,33 @@ Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (release 
   session that differs, has no drawer account or has no count (every close stores one; only direct SQL leaves it
   empty).
 - Both run in `GET /reports/accounting/integrity` and the nightly ledger monitor (finding and alert).
+
+## Finance readiness audit B0: the asset register (owner-approved 2026-11-24)
+
+The owner asked on 2026-11-24 to fix the issues the audit found and to register the granite quarry demo company's
+plant. Tests: `FixedAssetReconciliationIT` (`capitalisedBeforeInService`), `GraniteQuarryDemoSeedIT` (I10 ties on a
+fresh seed).
+
+- **An asset counts from the day it is on the books.** In `fa.register` and `fa.reconciliation`, and so in I10, an
+  asset capitalised from a project counts from its first project capitalisation date, the day the capitalisation posts
+  it to the cost account. Any other asset counts from its purchase date. Before B0 a capitalised asset counted from its
+  in-service date, which the capitalisation also stores as its purchase date. A capitalisation dated before the
+  in-service date therefore showed its whole cost as a difference until that date.
+- **The granite quarry demo seed registers its plant.** `GraniteQuarryDemoSeed` posts the plant as an opening balance
+  and its first month of depreciation as a journal. It now also adds the category "Plant and machinery", the crusher
+  plant (`AST-GQ-CRUSHER`) and the block machine (`AST-GQ-BLOCK`). These are straight line over 240 months, with the
+  month's depreciation recorded as posted by the seed's month-end depreciation journal. They are register rows only:
+  an acquisition or a depreciation run would post the plant to the GL a second time.
+- **A company seeded before B0** gets the same rows from `docs/audits/2026-11-24-register-gqdemo-plant.sql`. It runs
+  as a dry run by default and needs `-v apply=1` to commit. It writes an `AuditLog` row per row and posts no journal
+  entry. It stops and changes nothing unless all of these hold:
+  - both seed journals are posted in the same month;
+  - the opening journal debits the fixed-asset account by the plant's cost;
+  - the depreciation journal credits accumulated depreciation by the month's charge;
+  - no `AST-GQ-*` asset exists yet;
+  - afterwards, the register ties to those accounts.
+
+  After applying it, run the integrity check.
 
 ## Extensions beyond Nest (ADR-S005)
 
