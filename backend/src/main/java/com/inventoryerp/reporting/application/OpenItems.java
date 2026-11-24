@@ -17,6 +17,13 @@ import org.springframework.stereotype.Component;
  * the AP aging, P1-7). At today or later the stored residual is used; before today the residual is rebuilt as total
  * less payment allocations and deposit applications made up to the date (a voided payment counts until it was voided).
  * Receipt-voucher payables are always current.
+ *
+ * <p>Finance audit A5 (P2-5): the base residual of a foreign-currency document uses its carrying rate, the rate its own
+ * journal entry was posted at, when the document stores no stated rate (the default 1 of documents created through the
+ * API, FX-1), as payments settle it ({@code invoicing.DocumentFxRates}); an item's currency is its code (it was always
+ * null: {@code currencyId} holds the code, not a {@code Currency} id), null for the base currency; and a payment counts
+ * as unapplied on a side only when its entry posted the partner's leg to that side's control accounts (a customer's
+ * credit-note refund is no unapplied supplier payment).
  */
 @Component("reportingOpenItems")
 public class OpenItems {
@@ -41,6 +48,32 @@ public class OpenItems {
             + " AND p.\"paymentDate\" < ? AND p.status::text <> 'cancelled' AND (p.\"voidedAt\" IS NULL OR p.\"voidedAt\""
             + " >= ?)), 0) - coalesce((SELECT sum(da.amount) FROM \"DepositApplication\" da WHERE da.\"documentId\" ="
             + " d.id AND da.\"createdAt\" < ? AND (da.\"reversedAt\" IS NULL OR da.\"reversedAt\" >= ?)), 0))";
+    /**
+     * Finance audit A5: a document's currency code, null for the organisation's base currency. {@code currencyId} holds
+     * the code ({@code USD}); a {@code Currency} id is read through the join for older rows.
+     */
+    static String currencyOf(String alias) {
+        return "nullif(upper(coalesce(c.code, nullif(trim(" + alias + ".\"currencyId\"), ''))), upper(org.\"currencyCode\"))";
+    }
+
+    /**
+     * Finance audit A5: the rate a document's base residual is measured at, its carrying rate as
+     * {@code invoicing.DocumentFxRates} reads it. A base-currency document: 1. A foreign-currency document with a stated
+     * rate (anything but 1): that rate, the one it posted at. A foreign-currency document storing the default 1
+     * ("not stated", FX-1) posted at the rate table's rate, so the rate of its own journal entry: the entry's rate
+     * snapshot (its own pair first), else Σ base ÷ Σ transaction amount of its lines.
+     */
+    static String carryingRate(String alias) {
+        String entry = alias + ".\"journalEntryId\"";
+        return "(CASE WHEN " + currencyOf(alias) + " IS NULL THEN 1 WHEN coalesce(" + alias + ".\"exchangeRate\", 1) <> 1"
+                + " OR " + entry + " IS NULL THEN coalesce(" + alias + ".\"exchangeRate\", 1) ELSE coalesce((SELECT r.rate"
+                + " FROM \"JournalEntryFxRate\" r JOIN \"JournalEntry\" je ON je.id = r.\"journalEntryId\" WHERE"
+                + " r.\"journalEntryId\" = " + entry + " ORDER BY (upper(r.\"fromCode\") = upper(coalesce(je.\"currencyId\","
+                + " ''))) DESC, r.\"createdAt\" LIMIT 1), (SELECT sum(jl.\"baseDebit\" + jl.\"baseCredit\")"
+                + " / nullif(sum(jl.debit + jl.credit), 0) FROM \"JournalLine\" jl WHERE jl.\"journalEntryId\" = " + entry
+                + "), 1) END)";
+    }
+
     static final String INV_RESIDUAL_AT = "(i.\"totalAmount\" - coalesce((SELECT sum(pa.amount) FROM"
             + " \"PaymentAllocation\" pa JOIN \"Payment\" p ON p.id = pa.\"paymentId\" WHERE pa.\"invoiceId\" = i.id"
             + " AND p.\"paymentDate\" < ? AND p.status::text <> 'cancelled' AND (p.\"voidedAt\" IS NULL OR p.\"voidedAt\""
@@ -64,9 +97,10 @@ public class OpenItems {
         addFilters(ctx, p);
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT d.id, d.\"documentType\"::text AS kind,"
                 + " d.\"documentNumber\" AS number, d.\"partnerId\", pt.name AS \"partnerName\", d.\"issueDate\","
-                + " d.\"dueDate\", d.\"totalAmount\" AS total, " + residual + " AS residual, c.code AS currency,"
-                + " coalesce(d.\"exchangeRate\", 1) AS rate,"
-                + " d.\"branchId\" FROM \"Document\" d LEFT JOIN \"Partner\" pt ON pt.id = d.\"partnerId\" LEFT JOIN"
+                + " d.\"dueDate\", d.\"totalAmount\" AS total, " + residual + " AS residual,"
+                + " " + currencyOf("d") + " AS currency, " + carryingRate("d") + " AS rate,"
+                + " d.\"branchId\" FROM \"Document\" d JOIN \"Organization\" org ON org.id = d.\"organizationId\""
+                + " LEFT JOIN \"Partner\" pt ON pt.id = d.\"partnerId\" LEFT JOIN"
                 + " \"Currency\" c ON c.id = d.\"currencyId\" WHERE d.\"organizationId\" = ? AND d.\"documentType\"::text"
                 + " IN " + types + " AND d.status::text IN ('posted', 'paid') AND d.\"issueDate\" < ?" + partners
                 + branches).params(p))) {
@@ -91,7 +125,9 @@ public class OpenItems {
             for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT i.id, 'pos_invoice' AS kind, i.\"invoiceNumber\""
                     + " AS number, i.\"partnerId\", pt.name AS \"partnerName\", i.\"issueDate\", i.\"dueDate\","
                     + " i.\"totalAmount\" AS total, " + (current ? "i.\"amountResidual\"" : INV_RESIDUAL_AT)
-                    + " AS residual, c.code AS currency, coalesce(i.\"exchangeRate\", 1) AS rate, i.\"branchId\" FROM \"Invoice\" i LEFT JOIN \"Partner\" pt ON"
+                    + " AS residual, " + currencyOf("i") + " AS currency, " + carryingRate("i") + " AS rate,"
+                    + " i.\"branchId\""
+                    + " FROM \"Invoice\" i JOIN \"Organization\" org ON org.id = i.\"organizationId\" LEFT JOIN \"Partner\" pt ON"
                     + " pt.id = i.\"partnerId\" LEFT JOIN \"Currency\" c ON c.id = i.\"currencyId\" WHERE"
                     + " i.\"organizationId\" = ? AND i.status::text IN ('posted', 'paid') AND i.\"issueDate\" < ?" + ip
                     + ib).params(q))) {
@@ -176,11 +212,18 @@ public class OpenItems {
             + " NULL) ap ON true WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - v.billed -"
             + " (GREATEST(COALESCE(pp.paid, 0), COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) > 0.005";
 
-    /** partnerId → payments not yet allocated at the date ({@code inbound} for customers), in base currency. */
+    /**
+     * partnerId → payments not yet allocated at the date ({@code inbound} for customers), in base currency. Finance
+     * audit A5: only payments whose journal entry posted the partner's leg to the side's control accounts (receivable
+     * for inbound, payable for outbound) count, or that have no entry: a customer's credit-note refund (outbound,
+     * against the receivable) or a supplier refund (inbound, against the payable) is no unapplied payment of the other
+     * side, and neither is a payment posted to an advance or deposit account.
+     */
     public Map<String, BigDecimal> unapplied(ReportContext ctx, String direction, LocalDate asOf) {
         Timestamp end = SqlRows.ts(ctx.endExclusive(asOf));
         Map<String, BigDecimal> out = new java.util.LinkedHashMap<>();
-        List<Object> p = new ArrayList<>(List.of(end, ctx.organizationId(), direction, end, end));
+        String control = "inbound".equals(direction) ? "receivable" : "payable";
+        List<Object> p = new ArrayList<>(List.of(end, ctx.organizationId(), direction, end, end, control));
         String partners = "";
         if (!ctx.request().partnerIds().isEmpty()) {
             partners = " AND p.\"partnerId\" = ANY(?::text[])";
@@ -194,7 +237,11 @@ public class OpenItems {
                 + " sum(pa.amount) FROM \"PaymentAllocation\" pa WHERE pa.\"paymentId\" = p.id AND pa.\"createdAt\" < ?),"
                 + " 0)) * coalesce(p.\"exchangeRate\", 1)) AS open FROM \"Payment\" p WHERE p.\"organizationId\" = ? AND p.direction::text = ? AND"
                 + " p.\"paymentDate\" < ? AND p.status::text <> 'cancelled' AND (p.\"voidedAt\" IS NULL OR p.\"voidedAt\""
-                + " >= ?) AND p.\"refundOfId\" IS NULL" + partners + " GROUP BY p.\"partnerId\"").params(p))) {
+                + " >= ?) AND p.\"refundOfId\" IS NULL AND (p.\"journalEntryId\" IS NULL OR EXISTS (SELECT 1 FROM"
+                + " \"JournalLine\" jl JOIN \"Account\" ja ON ja.id = jl.\"accountId\" JOIN \"AccountCategory\" jc ON"
+                + " jc.id = ja.\"categoryId\" WHERE jl.\"journalEntryId\" = p.\"journalEntryId\" AND jc.key = ? AND"
+                + " jl.\"partnerId\" IS NOT DISTINCT FROM p.\"partnerId\"))" + partners
+                + " GROUP BY p.\"partnerId\"").params(p))) {
             BigDecimal v = SqlRows.dec(r, "open");
             if (v.signum() > 0) {
                 out.put(r.get("partnerId") == null ? "" : (String) r.get("partnerId"), v);

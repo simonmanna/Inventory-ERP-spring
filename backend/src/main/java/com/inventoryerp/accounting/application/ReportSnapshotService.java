@@ -1,12 +1,14 @@
 package com.inventoryerp.accounting.application;
 
 import com.inventoryerp.accounting.application.AccountResolverService.AccountMeta;
+import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.EntityJson;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,6 +16,7 @@ import java.util.UUID;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -30,18 +33,21 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ReportSnapshotService {
 
     private static final Logger log = LoggerFactory.getLogger(ReportSnapshotService.class);
-    private static final BigDecimal TOLERANCE = new BigDecimal("0.01");
+    /** Differing partners kept on a tie-out snapshot's details, largest first. */
+    static final int DETAIL_PARTNERS = 50;
 
     private final JdbcClient jdbc;
     private final LedgerQueries ledger;
     private final AccountResolverService accounts;
+    private final ObjectProvider<SubledgerTieOut> tieOuts;
     private final TransactionTemplate tx;
 
     public ReportSnapshotService(JdbcClient jdbc, LedgerQueries ledger, AccountResolverService accounts,
-            PlatformTransactionManager txm) {
+            ObjectProvider<SubledgerTieOut> tieOuts, PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.ledger = ledger;
         this.accounts = accounts;
+        this.tieOuts = tieOuts;
         this.tx = new TransactionTemplate(txm);
     }
 
@@ -87,7 +93,7 @@ public class ReportSnapshotService {
         jdbc.sql("DELETE FROM \"ReportTrialBalanceSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
         Map<String, BigDecimal[]> grouped = ledger.balances(org, null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
             if (a == null) {
@@ -109,7 +115,7 @@ public class ReportSnapshotService {
         jdbc.sql("DELETE FROM \"ReportPnLSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
         Map<String, BigDecimal[]> grouped = ledger.balances(org, null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal contra = BigDecimal.ZERO;
         BigDecimal cogs = BigDecimal.ZERO;
@@ -139,7 +145,7 @@ public class ReportSnapshotService {
         jdbc.sql("DELETE FROM \"ReportBalanceSheetSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                 .params(org, FiscalPeriodControl.ts(asOf)).update();
         Map<String, BigDecimal[]> grouped = ledger.balances(org, null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
             if (a == null || a.categoryId() == null || "off_balance".equals(a.classification())) {
@@ -219,53 +225,65 @@ public class ReportSnapshotService {
         }
     }
 
-    /** Tie-out for one organization: GL AR/AP control balance vs open sub-ledger residuals. */
+    /**
+     * Tie-out for one organization (the current tenant): the AR and AP sub-ledgers against their control accounts at
+     * the end of {@code asOf}'s org-local day.
+     *
+     * <p>Finance audit A5 (P2-5, deviation; Nest {@code tieout.service.ts} sums the residuals of sales invoices, POS
+     * invoices and vendor bills in their own currencies against the one mapped {@code accounts_receivable} /
+     * {@code accounts_payable} account): the {@link SubledgerTieOut} measure — base currency at each document's posting
+     * rate, credit and debit notes and receipt-voucher payables included, less unapplied payments, against every
+     * receivable / payable account, per partner — the measure of the {@code ar/ap.reconciliation} reports and of
+     * integrity check I8. A side is balanced when its totals agree and no partner differs. The details keep
+     * {@code glBalance} and {@code subLedgerBalance} and add the date, the basis and the differing partners.
+     */
     public Map<String, Object> runTieOut(String org, Instant asOf) {
+        if (!org.equals(TenantContext.organizationId())) {
+            throw new IllegalStateException("The tie-out runs in the organisation's own tenant scope");
+        }
+        SubledgerTieOut tieOut = tieOuts.getIfAvailable();
+        if (tieOut == null) {
+            log.warn("No sub-ledger tie-out available; skipping the tie-out of org {}", org);
+            return Obj.of("arBalanced", true, "arVariance", "0", "apBalanced", true, "apVariance", "0");
+        }
+        LocalDate day = asOf.atZone(AccountingDay.zone(jdbc, org)).toLocalDate();
+        SubledgerTieOut.Measure ar = tieOut.measure("AR", day);
+        SubledgerTieOut.Measure ap = tieOut.measure("AP", day);
         return tx.execute(s -> {
             jdbc.sql("DELETE FROM \"ReportTieoutSnapshot\" WHERE \"organizationId\" = ? AND \"asOf\" = ?")
                     .params(org, FiscalPeriodControl.ts(asOf)).update();
-            String ar = mapping(org, "accounts_receivable");
-            String ap = mapping(org, "accounts_payable");
-            Map<String, Object> out = new LinkedHashMap<>();
-            if (ar == null || ap == null) {
-                log.warn("Org {} missing AR/AP account mapping; skipping tie-out", org);
-                out.put("arBalanced", true);
-                out.put("arVariance", "0");
-                out.put("apBalanced", true);
-                out.put("apVariance", "0");
-                return out;
-            }
-            BigDecimal[] arSums = ledger.balances(org, null, asOf, null).getOrDefault(ar, new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
-            BigDecimal[] apSums = ledger.balances(org, null, asOf, null).getOrDefault(ap, new BigDecimal[] {BigDecimal.ZERO, BigDecimal.ZERO});
-            BigDecimal arGl = arSums[0].subtract(arSums[1]);
-            BigDecimal apGl = apSums[1].subtract(apSums[0]);
-            BigDecimal arSub = residuals("SELECT coalesce(sum(\"amountResidual\"), 0) FROM \"Document\" WHERE \"organizationId\" = ?"
-                    + " AND \"documentType\"::text = 'sales_invoice' AND status::text IN ('posted', 'paid')", org)
-                    .add(residuals("SELECT coalesce(sum(\"amountResidual\"), 0) FROM \"Invoice\" WHERE \"organizationId\" = ?"
-                            + " AND status::text IN ('posted', 'paid')", org));
-            BigDecimal apSub = residuals("SELECT coalesce(sum(\"amountResidual\"), 0) FROM \"Document\" WHERE \"organizationId\" = ?"
-                    + " AND \"documentType\"::text = 'vendor_bill' AND status::text IN ('posted', 'paid')", org);
-            BigDecimal arVariance = arGl.subtract(arSub);
-            BigDecimal apVariance = apGl.subtract(apSub);
-            boolean arBalanced = arVariance.abs().compareTo(TOLERANCE) <= 0;
-            boolean apBalanced = apVariance.abs().compareTo(TOLERANCE) <= 0;
             jdbc.sql("INSERT INTO \"ReportTieoutSnapshot\" (id, \"organizationId\", \"asOf\", \"arBalanced\", \"arVariance\","
                             + " \"apBalanced\", \"apVariance\", \"arDetails\", \"apDetails\") VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb)")
-                    .params(UUID.randomUUID().toString(), org, FiscalPeriodControl.ts(asOf), arBalanced, arVariance, apBalanced,
-                            apVariance, EntityJson.toJson(Map.of("glBalance", PostingService.plain(arGl),
-                                    "subLedgerBalance", PostingService.plain(arSub))),
-                            EntityJson.toJson(Map.of("glBalance", PostingService.plain(apGl),
-                                    "subLedgerBalance", PostingService.plain(apSub))))
+                    .params(UUID.randomUUID().toString(), org, FiscalPeriodControl.ts(asOf), ar.balanced(), ar.variance(),
+                            ap.balanced(), ap.variance(), EntityJson.toJson(details(ar)), EntityJson.toJson(details(ap)))
                     .update();
-            if (!arBalanced || !apBalanced) {
-                log.warn("Org {} tie-out imbalanced: AR variance {}, AP variance {}", org, arVariance, apVariance);
+            if (!ar.balanced() || !ap.balanced()) {
+                log.warn("Org {} tie-out imbalanced: AR variance {} ({} partners differ), AP variance {} ({} partners"
+                        + " differ)", org, ar.variance(), ar.differences().size(), ap.variance(),
+                        ap.differences().size());
             }
-            out.put("arBalanced", arBalanced);
-            out.put("arVariance", PostingService.plain(arVariance));
-            out.put("apBalanced", apBalanced);
-            out.put("apVariance", PostingService.plain(apVariance));
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("arBalanced", ar.balanced());
+            out.put("arVariance", PostingService.plain(ar.variance()));
+            out.put("apBalanced", ap.balanced());
+            out.put("apVariance", PostingService.plain(ap.variance()));
             return out;
         });
+    }
+
+    /** Snapshot details of one side: the totals, then the date, the basis and the partners that differ. */
+    private static Map<String, Object> details(SubledgerTieOut.Measure m) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("glBalance", PostingService.plain(m.gl()));
+        d.put("subLedgerBalance", PostingService.plain(m.subledger()));
+        d.put("asOf", m.asOf().toString());
+        d.put("basis", "base currency: open items at their posting rate less unapplied payments, against every "
+                + ("AR".equals(m.side()) ? "receivable" : "payable") + " account, per partner");
+        d.put("partnersDiffering", m.differences().size());
+        d.put("partners", m.differences().stream().limit(DETAIL_PARTNERS).map(p -> Obj.of("partnerId", p.partnerId(),
+                "partner", p.partner(), "subLedger", PostingService.plain(p.subledger()), "gl",
+                PostingService.plain(p.gl()), "difference", PostingService.plain(p.difference()))).toList());
+        return d;
     }
 
     /** Latest tie-out snapshot of the current tenant (optionally exactly at {@code asOf}); {@code null} when none. */
@@ -290,14 +308,5 @@ public class ReportSnapshotService {
             out.put("apDetails", row.get("apDetails"));
             return out;
         });
-    }
-
-    private String mapping(String org, String key) {
-        return jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key = ? LIMIT 1")
-                .params(org, key).query(String.class).optional().orElse(null);
-    }
-
-    private BigDecimal residuals(String sql, String org) {
-        return jdbc.sql(sql).param(org).query(BigDecimal.class).single();
     }
 }

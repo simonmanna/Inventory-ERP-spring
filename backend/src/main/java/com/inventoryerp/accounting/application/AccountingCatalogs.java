@@ -7,13 +7,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Accounting contract catalogs generated from packages/shared + the Nest COA template by
  * {@code tools/contracts2java/accounting.mjs}: account categories, the account-mapping registry, report
- * sections and the default chart of accounts.
+ * sections, the default chart of accounts and the generic journal-reversal allowlist.
  */
 public final class AccountingCatalogs {
 
@@ -51,6 +52,14 @@ public final class AccountingCatalogs {
     public static final List<CoaAccount> COA_ACCOUNTS = coaAccounts();
     public static final Map<String, String> COA_MAPPINGS = coaMappings();
     public static final List<CoaJournal> COA_JOURNALS = coaJournals();
+    private static final JsonNode REVERSAL_JSON = read("journal-reversal.json");
+    /**
+     * Journal sources {@code POST /journal-entries/{id}/reverse} accepts besides manual entries (no source type);
+     * {@code GENERIC_REVERSAL_SOURCE_TYPES} of {@code journal-reversal.ts} (finance readiness audit A2).
+     */
+    public static final Set<String> GENERIC_REVERSAL_SOURCE_TYPES = strings(REVERSAL_JSON.get("genericReversalSourceTypes"));
+    /** Source type of the entry a reversal posts ({@code REVERSAL_SOURCE_TYPE}); judged by the original entry. */
+    public static final String REVERSAL_SOURCE_TYPE = REVERSAL_JSON.get("reversalSourceType").asString();
 
     private static JsonNode read(String name) {
         try (InputStream in = AccountingCatalogs.class.getResourceAsStream("/contracts/" + name)) {
@@ -66,6 +75,12 @@ public final class AccountingCatalogs {
     private static String str(JsonNode n, String f) {
         JsonNode v = n.get(f);
         return v == null || v.isNull() ? null : v.asString();
+    }
+
+    private static Set<String> strings(JsonNode array) {
+        List<String> out = new ArrayList<>();
+        array.forEach(v -> out.add(v.asString()));
+        return Set.copyOf(out);
     }
 
     private static List<CategoryDef> categories() {

@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCreateFiscalYear, useFiscalYears, type FiscalYear } from '@/features/accounting/api';
-import { date } from '@/lib/format';
+import { wallDate } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 
@@ -81,7 +81,7 @@ export default function FiscalYearsPage() {
                 {data.map((y) => (
                   <TableRow key={y.id} className="cursor-pointer" onClick={() => navigate(`/fiscal-years/${y.id}`)}>
                     <TableCell className="font-medium">{y.name}</TableCell>
-                    <TableCell>{date(y.startDate)} – {date(y.endDate)}</TableCell>
+                    <TableCell>{wallDate(y.startDate)} – {wallDate(y.endDate)}</TableCell>
                     <TableCell>
                       {y.periods.length} · {PERIODICITY[y.periodicity]}
                       {y.openPeriods > 0 && <span className="text-muted-foreground"> · {y.openPeriods} {tx('open')}</span>}

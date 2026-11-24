@@ -135,6 +135,8 @@ export function DashboardPage() {
 
   const canPosReports = hasPermission(PERMISSIONS.pos.reports);
   const canInventory = hasPermission(PERMISSIONS.inventory.read);
+  // Finance audit A4: the cash position, revenue, net income, AR ageing and recent activity need report:accounting.
+  const canAccounting = hasPermission(PERMISSIONS.report.accounting);
 
   const [range, setRange] = useState<RangeId>('today');
   const { from, to, days } = resolveRange(range);
@@ -150,15 +152,17 @@ export function DashboardPage() {
   const topItems = useTopItems(from, to, 6, {}, canPosReports);
   const byGroup = useItemsByGroup(from, to, {}, canPosReports);
 
-  /* ── Accounting KPIs + activity (always) ── */
+  /* ── Accounting KPIs + activity — gated on report:accounting (finance audit A4) ── */
   const kpi = useQuery<KPIData>({
     queryKey: ['dashboard-kpi'],
     queryFn: async () => (await api.get<KPIData>('/reports/dashboard-kpi')).data,
+    enabled: canAccounting,
     refetchInterval: 60_000,
   });
   const activity = useQuery<ActivityItem[]>({
     queryKey: ['dashboard-activity'],
     queryFn: async () => (await api.get<{ data: ActivityItem[] }>('/reports/dashboard-activity?limit=10')).data.data,
+    enabled: canAccounting,
     refetchInterval: 30_000,
   });
   const reorder = useQuery<ReorderRow[]>({
@@ -252,16 +256,22 @@ export function DashboardPage() {
           spark: spark.map((s) => s.v),
           href: '/pos/reports',
         },
-        {
-          title: tx('Cash Position'),
-          value: kpi.data?.cashPosition != null ? compactMoney(kpi.data.cashPosition, currency) : undefined,
-          change: null,
-          icon: CreditCard,
-          tone: 'from-rose-500 to-pink-600',
-          spark: spark.map((s) => s.v),
-          href: '/trial-balance',
-        },
+        ...(canAccounting
+          ? [
+              {
+                title: tx('Cash Position'),
+                value: kpi.data?.cashPosition != null ? compactMoney(kpi.data.cashPosition, currency) : undefined,
+                change: null,
+                icon: CreditCard,
+                tone: 'from-rose-500 to-pink-600',
+                spark: spark.map((s) => s.v),
+                href: '/trial-balance',
+              },
+            ]
+          : []),
       ]
+    : !canAccounting
+    ? []
     : [
         {
           title: tx('Open Invoices'),
@@ -358,16 +368,18 @@ export function DashboardPage() {
         </div>
 
         {/* ── KPI strip ── */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {kpiCards.map((card, i) => (
-            <KpiCard
-              key={card.title}
-              {...card}
-              loading={canPosReports ? salesLoading : kpi.isLoading}
-              index={i}
-            />
-          ))}
-        </div>
+        {kpiCards.length > 0 && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {kpiCards.map((card, i) => (
+              <KpiCard
+                key={card.title}
+                {...card}
+                loading={canPosReports ? salesLoading : kpi.isLoading}
+                index={i}
+              />
+            ))}
+          </div>
+        )}
 
         {/* ── Trend + category mix ── */}
         <div className="grid gap-3 lg:grid-cols-3">
@@ -568,6 +580,7 @@ export function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
+              {!canAccounting && <NoAccess label={tx('Requires the report:accounting permission.')} />}
               {activity.isLoading && <Skeleton className="h-48 w-full shimmer" />}
               {activity.data && activity.data.length === 0 && (
                 <EmptyState icon={ActivityIcon} label={tx('No activity yet.')} />
@@ -648,7 +661,9 @@ export function DashboardPage() {
               <CardDescription>{tx('Open receivables by age')}</CardDescription>
             </CardHeader>
             <CardContent>
-              {kpi.data ? (
+              {!canAccounting ? (
+                <NoAccess label={tx('Requires the report:accounting permission.')} />
+              ) : kpi.data ? (
                 <div className="space-y-2 text-sm">
                   {[
                     ['Current', kpi.data.arAging.current, 'bg-sky-500'],
@@ -706,8 +721,12 @@ export function DashboardPage() {
           */}
           <SmallStat label={tx('Partners')} value={partners.data?.meta?.total} href="/partners" icon={Users} tone="from-sky-500 to-cyan-500" />
           <SmallStat label={tx('Products')} value={products.data?.meta?.total} href="/products" icon={Package} tone="from-cyan-500 to-teal-500" />
-          <SmallStat label={tx('Open Invoices')} value={kpi.data?.openInvoices} href="/invoices" icon={Receipt} tone="from-blue-500 to-sky-500" />
-          <SmallStat label={tx('Overdue')} value={kpi.data?.overdueInvoices} href="/ar-aging" icon={AlertCircle} tone="from-rose-500 to-red-500" />
+          {canAccounting && (
+            <>
+              <SmallStat label={tx('Open Invoices')} value={kpi.data?.openInvoices} href="/invoices" icon={Receipt} tone="from-blue-500 to-sky-500" />
+              <SmallStat label={tx('Overdue')} value={kpi.data?.overdueInvoices} href="/ar-aging" icon={AlertCircle} tone="from-rose-500 to-red-500" />
+            </>
+          )}
         </div>
 
         {/* ── Status bar ── */}
