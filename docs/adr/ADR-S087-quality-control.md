@@ -1,6 +1,6 @@
 # ADR-S087 — Quality control (Odoo-style operator checks)
 
-- Status: approved (owner, 2026-11-24: "Approve all of it and build all the quality management module feature"); implemented (QC1–QC4) on stacked PRs #52, #53, #55 and the QC4 PR — not merged, not deployed.
+- Status: approved (owner, 2026-11-24: "Approve all of it and build all the quality management module feature"); implemented (QC1–QC4) on stacked PRs #52, #53, #55, #56 — not merged, not deployed.
   QC1 implemented; QC2–QC4 follow as stacked PRs. Merge and deploy need the owner.
 - Extension: no NestJS counterpart. A new module `com.inventoryerp.qualitycontrol` with new routes under
   `/api/v1/quality-control`; no existing route, response or table changed.
