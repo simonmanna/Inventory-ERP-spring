@@ -46,9 +46,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <li>I11 {@value #TAX_LOCK}: every VAT settlement's offset entry is posted, and the settled figures are unchanged;
  * <li>I8 {@value #AR_AP_TIEOUT} (step A5): the customer and supplier sub-ledgers tie to their control accounts, per
  * partner, in base currency ({@link SubledgerTieOut}, the measure of the AR / AP reconciliation reports);
+ * <li>I13 {@value #POSTING_KEY_REUSE} (step A6): no posting key was replayed with other lines (unresolved
+ * {@code PostingKeyConflict} rows, {@link PostingKeyReplayGuard});
  * <li>I9 {@value #INVENTORY_GL}: inventory valuation ties to the GL (the inventory GL tie-out).
  * </ul>
- * I10 (fixed assets), I12 (cash drawers) and I13 (posting-key reuse) come with later steps of the plan.
+ * I10 (fixed assets) and I12 (cash drawers) come with a later step of the plan.
  */
 @Service
 public class LedgerIntegrityService {
@@ -75,11 +77,13 @@ public class LedgerIntegrityService {
     public static final String REVERSAL_LINKS = "reversal_links";
     public static final String TAX_LOCK = "tax_lock";
     public static final String AR_AP_TIEOUT = "ar_ap_tieout";
+    public static final String POSTING_KEY_REUSE = "posting_key_reuse";
     public static final String INVENTORY_GL = "inventory_gl";
 
     /** Every check, in report order. */
     public static final List<String> CHECKS = List.of(ENTRY_BALANCED, ENTRY_CURRENCY_BALANCED, FX_LINES, TRIAL_BALANCE,
-            ACCOUNT_CLASSIFICATION, PERIOD_COVERAGE, CLOSED_PERIODS, REVERSAL_LINKS, TAX_LOCK, AR_AP_TIEOUT, INVENTORY_GL);
+            ACCOUNT_CLASSIFICATION, PERIOD_COVERAGE, CLOSED_PERIODS, REVERSAL_LINKS, TAX_LOCK, POSTING_KEY_REUSE,
+            AR_AP_TIEOUT, INVENTORY_GL);
 
     /** Report sections of profit-and-loss accounts (the ones a period close carries to retained earnings). */
     static final String PNL_SECTIONS = "('revenue', 'contra_revenue', 'cogs', 'operating_expense', 'other_income',"
@@ -147,7 +151,8 @@ public class LedgerIntegrityService {
                 .query(String.class).optional().orElse(null);
         ZoneId zone = AccountingDay.zone(jdbc, org());
         return List.of(entryBalanced(), entryCurrencyBalanced(base), fxLines(base), trialBalance(),
-                accountClassification(), periodCoverage(zone), closedPeriods(zone), reversalLinks(), taxLock(zone));
+                accountClassification(), periodCoverage(zone), closedPeriods(zone), reversalLinks(), taxLock(zone),
+                postingKeyReuse());
     }
 
     // ------------------------------------------------------------------ I1–I4: entries and the trial balance
@@ -459,6 +464,24 @@ public class LedgerIntegrityService {
         return check(TAX_LOCK, "every VAT settlement in force has its offset entry posted (an undone one, its reversal),"
                 + " and output / input VAT of each settled period still equal the settled figures", TOLERANCE,
                 merge(entries, figures), null);
+    }
+
+    // ------------------------------------------------------------------ I13: posting-key reuse
+
+    /**
+     * I13 (finance audit A6): every posting-key replay whose request differed from the posted entry, until someone who
+     * reviewed it sets {@code resolvedAt} on its {@code PostingKeyConflict} row.
+     */
+    private IntegrityCheck postingKeyReuse() {
+        Found f = find("""
+                SELECT c.id AS "conflictId", c."postingKey", c."journalEntryId", e."entryNumber", c."sourceType",
+                       c."sourceId", c."pairCount", c."createdAt", count(*) OVER () AS rows_total
+                  FROM "PostingKeyConflict" c
+                  LEFT JOIN "JournalEntry" e ON e.id = c."journalEntryId" AND e."organizationId" = c."organizationId"
+                 WHERE c."organizationId" = :org AND c."resolvedAt" IS NULL
+                 ORDER BY c."createdAt\"""", params(null));
+        return check(POSTING_KEY_REUSE, "a posting key is replayed only with the lines it posted (net base amount per"
+                + " account and partner); unresolved PostingKeyConflict rows", null, f, null);
     }
 
     // ------------------------------------------------------------------ I8: AR / AP sub-ledgers
