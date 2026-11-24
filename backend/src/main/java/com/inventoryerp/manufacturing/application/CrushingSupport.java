@@ -82,6 +82,43 @@ class CrushingSupport {
                 .query(BigDecimal.class).single();
     }
 
+    /**
+     * Integrity fix 2026-11-24 (MV-7): crushing feed, fractions and surveys are counted in tonnes and posted to stock
+     * as base units, so a product stocked in kilograms (or litres, metres ...) would be off by the unit factor. The
+     * stock unit must be the tonne (a weight unit of 1000 kg, or coded TON / T / TONNE / MT). A product without a unit,
+     * or in the generic count unit (UNIT), is accepted as before (read as tonnes).
+     */
+    void requireTonnes(String productId) {
+        Map<String, Object> u = SqlRows.one(db.jdbc().sql("SELECT p.name AS \"productName\", u.code, u.name,"
+                + " u.symbol, u.category, u.factor, (SELECT k.factor FROM \"UnitOfMeasure\" k WHERE"
+                + " k.\"organizationId\" = u.\"organizationId\" AND k.category = u.category AND upper(k.code) = 'KG'"
+                + " AND k.\"deletedAt\" IS NULL LIMIT 1) AS \"kgFactor\" FROM \"Product\" p JOIN \"UnitOfMeasure\" u"
+                + " ON u.id = p.\"uomId\" AND u.\"organizationId\" = p.\"organizationId\" WHERE p.id = ?"
+                + " AND p.\"organizationId\" = ?").params(productId, MfgDb.org()));
+        if (u == null || isTonne(u)) {
+            return;
+        }
+        throw ApiException.badRequest("Product " + u.get("productName") + " is stocked in " + u.get("name") + " ("
+                + u.get("code") + "); crushing quantities are tonnes, so its stock unit must be the tonne");
+    }
+
+    static boolean isTonne(Map<String, Object> u) {
+        String code = String.valueOf(u.get("code")).trim().toUpperCase(java.util.Locale.ROOT);
+        if ("UNIT".equals(code)) {
+            return true;
+        }
+        if (!"weight".equalsIgnoreCase(String.valueOf(u.get("category")))) {
+            return false;
+        }
+        if (java.util.Set.of("TON", "T", "TONNE", "MT").contains(code)) {
+            return true;
+        }
+        BigDecimal factor = u.get("factor") == null ? null : SqlRows.dec(u, "factor");
+        BigDecimal kg = u.get("kgFactor") == null ? null : SqlRows.dec(u, "kgFactor");
+        return factor != null && kg != null && kg.signum() > 0
+                && factor.compareTo(kg.multiply(BigDecimal.valueOf(1000))) == 0;
+    }
+
     /** Journal entries (with lines) of a GL source, plus their reversals. */
     List<Map<String, Object>> journals(String sourceType, List<String> sourceIds) {
         if (sourceIds.isEmpty()) {

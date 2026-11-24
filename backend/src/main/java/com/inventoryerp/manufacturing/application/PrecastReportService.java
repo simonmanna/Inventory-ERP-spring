@@ -119,8 +119,10 @@ public class PrecastReportService {
         BigDecimal unitsPerBatch = dec(mix, "unitsPerBatch");
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> m : SqlRows.list(db.jdbc().sql("SELECT m.*, p.name AS \"productName\" FROM"
-                + " \"ProductionMaterial\" m LEFT JOIN \"Product\" p ON p.id = m.\"productId\" WHERE m.\"orderId\" = ?"
-                + " ORDER BY m.sequence").params(orderId))) {
+                + " \"ProductionMaterial\" m LEFT JOIN \"Product\" p ON p.id = m.\"productId\""
+                + " AND p.\"organizationId\" = m.\"organizationId\" WHERE m.\"orderId\" = ? AND m.\"organizationId\" = ?"
+                // Integrity fix 2026-11-24 (MV-8): tenancy filter on the order materials.
+                + " ORDER BY m.sequence").params(orderId, MfgDb.org()))) {
             Map<String, Object> line = perBatch.get(str(m, "productId"));
             BigDecimal standard = BigDecimal.ZERO;
             if (line != null && unitsPerBatch.signum() > 0) {

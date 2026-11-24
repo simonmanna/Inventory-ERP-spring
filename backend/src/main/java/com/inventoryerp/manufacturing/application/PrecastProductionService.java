@@ -52,6 +52,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class PrecastProductionService implements StageGateListener {
 
     static final String FINAL_SOURCE = "precast_batch";
+    /** MV-3: final inspection lots the curing tick opens per organization and run at most. */
+    static final int FINAL_LOTS_PER_TICK = 200;
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
     private final MfgDb db;
@@ -177,9 +179,44 @@ public class PrecastProductionService implements StageGateListener {
         return o;
     }
 
+    /** Integrity fix 2026-11-24 (MV-1): how far back a pressing run may be dated on the route, in days. */
+    static final int PRESS_BACKDATE_DAYS = 1;
+
+    /**
+     * {@code POST /orders/:id/pressing-runs}: {@link #press} with the pressing date inside the allowed window.
+     * Integrity fix 2026-11-24 (MV-1): the curing clock starts at the pressing date, so a run dated in the future or
+     * days back skipped (or stretched) the minimum curing hold. The route now accepts today and yesterday only
+     * (business time zone); trusted in-process callers (the demo seed back-filling history) call {@link #press}.
+     */
+    @Transactional
+    public Map<String, Object> pressViaRoute(String orderId, PressingRun in) {
+        checkPressDate(in.date(), Instant.now());
+        return press(orderId, in);
+    }
+
+    /** MV-1: the pressing date must lie in [today − {@value #PRESS_BACKDATE_DAYS} day, now] (business time zone). */
+    static void checkPressDate(String date, Instant now) {
+        if (!has(date)) {
+            return;
+        }
+        java.time.ZoneId zone = com.inventoryerp.kernel.common.BusinessZone.get();
+        java.time.LocalDate today = now.atZone(zone).toLocalDate();
+        java.time.LocalDate earliest = today.minusDays(PRESS_BACKDATE_DAYS);
+        String d = date.trim();
+        Instant at = EntityPatch.toInstant(d);
+        java.time.LocalDate day = d.length() <= 10 ? java.time.LocalDate.parse(d) : at.atZone(zone).toLocalDate();
+        if (day.isBefore(earliest) || day.isAfter(today) || at.isAfter(now.plus(Duration.ofMinutes(5)))) {
+            throw ApiException.badRequest("Pressing date " + d + " is outside the allowed window (" + earliest
+                    + " … " + today + ").");
+        }
+    }
+
     /** A pressing run: the pressing stage output (backflush, breakage) and a new curing batch. */
     @Transactional
     public Map<String, Object> press(String orderId, PressingRun in) {
+        // Integrity fix 2026-11-24 (MV-4): the order lock before the batch count, so two concurrent runs of one order
+        // never compute the same batch code (it used to be taken only inside the stage output, after the count).
+        db.lockProductionOrder(orderId);
         Map<String, Object> o = order(orderId);
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> st = (List<Map<String, Object>>) o.get("stages");
@@ -610,7 +647,8 @@ public class PrecastProductionService implements StageGateListener {
 
     /**
      * One organization's curing tick: passes the gates whose curing hold has ended (a pass recorded while curing)
-     * and opens final inspection lots for batches released in the last two days. Each step in its own transaction.
+     * and opens final inspection lots for released batches without one (at most {@value #FINAL_LOTS_PER_TICK} per run).
+     * Each step in its own transaction.
      */
     public Map<String, Object> tick() {
         int passed = 0;
@@ -632,11 +670,22 @@ public class PrecastProductionService implements StageGateListener {
                 db.update(ProductionOrderStage.class, stageId, Obj.of("qcStatus", "pending", "qcPassDueAt", null));
             }
         }
-        List<String> released = db.jdbc().sql("SELECT id FROM \"PrecastCuringBatch\" WHERE \"organizationId\" = ?"
-                + " AND status = 'released' AND \"finalLotId\" IS NULL AND \"qtyGood\" > 0 AND \"releasedAt\" >= ?")
-                .params(MfgDb.org(), MfgDb.param(Instant.now().minus(Duration.ofDays(2)))).query(String.class).list();
+        // Integrity fix 2026-11-24 (MV-3): released by effective status (a reversed pressing / cubing no longer
+        // counts), no two-day window (a batch missed by an outage still gets its lot), capped per run, newest first;
+        // the batch is row-locked and re-checked before the lot opens, so the final-inspection route cannot race it.
+        List<String> released = db.jdbc().sql("SELECT x.id FROM (" + BATCH_SELECT + ") x WHERE"
+                + " x.\"effectiveStatus\" = 'released' AND x.\"finalLotId\" IS NULL AND x.\"qtyGood\" > 0"
+                + " ORDER BY x.\"releasedAt\" DESC NULLS LAST, x.id LIMIT " + FINAL_LOTS_PER_TICK)
+                .params(MfgDb.org()).query(String.class).list();
         for (String id : released) {
-            Boolean opened = tx.execute(s -> openFinalLot(batch(id)) != null);
+            Boolean opened = tx.execute(s -> {
+                Map<String, Object> b = lockBatch(id);
+                if (!"released".equals(b.get("status")) || b.get("finalLotId") != null
+                        || dec(b, "qtyGood").signum() <= 0) {
+                    return false;
+                }
+                return openFinalLot(b) != null;
+            });
             if (Boolean.TRUE.equals(opened)) {
                 finalLots++;
             }
