@@ -2064,3 +2064,17 @@ Not verified yet: the tours driven by hand in a browser.
 ## Inventory hardening R4 (workflow integrity, gate G1; owner-approved 2026-11-23)
 
 - [x] Order-level timings deprecated (stored values keep working, with a warning); one POS job per sale (`sale:<orderId>`); order cancel abandons / waits / returns at original cost and lot; voided fired line issued once; pick orders net source reversals and block reversing a live source (`OrderCancelStockIT`, `WarehouseIT.pickOrderAndDocumentReversal`, `SyncInventoryReplayIT` 7)
+
+## Quality control (ADR-S087, extension: no Nest counterpart)
+
+[Spec](spec/quality-control.md). Odoo-style operator checks beside ADR-S013 (which is not modified). Migration V660
+(13 `Qc*` tables, standard RLS, five `quality_control:*` permissions). Web: `/quality-control/*`.
+
+- [x] QC1 foundation: teams, failure classes, versioned worksheet templates, versioned control points, check engine
+  (5 types, samples, execution revisions, waive / reset / correction / cancel, event log), DMS providers. 27 routes.
+  Tests: `QualityControlIT`, `WorksheetEvaluatorTest`, `MeasureEvaluationTest`, `TestQuantityCalculatorTest`,
+  `QcBlockingPolicyTest`.
+- [ ] QC2 triggers, blocking (`QcGate`) and quarantine
+- [ ] QC3 alerts and teams
+- [ ] QC4 SPC and statistics
+

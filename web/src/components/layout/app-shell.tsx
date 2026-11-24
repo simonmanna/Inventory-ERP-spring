@@ -694,6 +694,20 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // Quality control (ADR-S087): Odoo-style operator checks; core-available, items gated by quality_control:read.
+    zone: 'Manufacturing & Operations',
+    title: 'Quality Control',
+    icon: ClipboardCheck,
+    items: [
+      { to: '/quality-control', label: tx('Quality Control Overview'), icon: LayoutDashboard, permission: PERMISSIONS.qualityControl.read },
+      { to: '/quality-control/checks', label: tx('Quality Checks'), icon: ListChecks, permission: PERMISSIONS.qualityControl.read },
+      { to: '/quality-control/control-points', label: tx('Control Points'), icon: Target, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
+      { to: '/quality-control/worksheet-templates', label: tx('Worksheet Templates'), icon: FileStack, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
+      { to: '/quality-control/teams', label: tx('Quality Teams'), icon: Users, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
+      { to: '/quality-control/failure-classes', label: tx('Failure Classes'), icon: Tags, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
+    ],
+  },
+  {
     // Quarry & extraction (ADR-S012, Track C 2.2): sites, extraction into ROM stock, blasting, controlled explosives.
     zone: 'Manufacturing & Operations',
     title: 'Quarry',
