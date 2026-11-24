@@ -244,7 +244,8 @@ function VatSettlementCard() {
   const preview = useTaxSettlementPreview(from, to);
   const settle = useSettleTax();
   const undo = useUndoLatestTaxSettlement();
-  const canSettle = useHasPermission(PERMISSIONS.journalEntry.create);
+  // Finance audit A4: settling and undoing need tax:settle (they used to need only journal_entry:create).
+  const canSettle = useHasPermission(PERMISSIONS.tax.settle);
   const p = preview.data;
   const settledThrough = p?.settledThrough;
 

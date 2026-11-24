@@ -121,9 +121,14 @@ public class AccountingReportingController {
         return integrity.run();
     }
 
-    /** Operator-triggered: rebuild the snapshots of the current org now, then the AR/AP tie-out. */
+    /**
+     * Operator-triggered: rebuild the snapshots of the current org now, then the AR/AP tie-out. Finance audit A4
+     * (deviation; Nest: {@code report:accounting} only): a heavy write over the whole ledger, so it also needs
+     * {@code fiscal_period:update}, the period-end permission, not only the read permission of the reports.
+     */
     @PostMapping("/rebuild-snapshots")
     @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions({Permissions.REPORT__ACCOUNTING, Permissions.FISCAL_PERIOD__UPDATE})
     public Map<String, Object> rebuildSnapshots() {
         Instant asOf = Instant.now();
         String organizationId = TenantContext.organizationId();

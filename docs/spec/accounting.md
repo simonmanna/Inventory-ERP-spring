@@ -326,7 +326,7 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - New routes (extension): `GET/PUT /fiscal-positions/:id/taxes` and `POST /fiscal-positions/:id/partners`.
 - **VAT settlement:**
   - `GET /tax-settlements/preview?from&to` (`report:accounting`) shows output VAT, input VAT and the net.
-  - `POST /tax-settlements {from,to}` (`journal_entry:create`, idempotent) posts Dr tax payable / Cr tax receivable for
+  - `POST /tax-settlements {from,to}` (`tax:settle` since finance audit A4, was `journal_entry:create`; idempotent) posts Dr tax payable / Cr tax receivable for
     the input VAT and records the period (`TaxSettlement`).
   - `GET /tax-settlements` lists the settled periods.
   - `POST /tax-settlements/:id/reverse` undoes the latest settlement in force (finance audit A3, below).
@@ -569,8 +569,8 @@ race). Tests: `CloseProcessIT`.
   sheet, cash flow and the report snapshots read accounts through `ledgerMeta`, which also reads accounts deleted after
   they were posted to (a cash account removed under Cash flow keeps its balance on the balance sheet) and fails the
   request when a ledger line names no account of the organization, instead of skipping it.
-- **A VAT settlement can be undone (P2-4).** `POST /tax-settlements/:id/reverse` (idempotent; `journal_entry:create`
-  like the settlement itself until finance audit A4 adds `tax:settle`) undoes the latest settlement in force:
+- **A VAT settlement can be undone (P2-4).** `POST /tax-settlements/:id/reverse` (idempotent; `tax:settle` like the
+  settlement itself, finance audit A4 below) undoes the latest settlement in force:
   - it reverses the settlement's offset entry, dated as any reversal: the original date while its fiscal period is
     open, else today (settling that VAT period again then needs the fiscal period reopened);
   - it marks the row reversed (`reversedAt`, `reversedBy`, `reversalJournalEntryId`, migration V651) and answers the
@@ -592,6 +592,37 @@ race). Tests: `CloseProcessIT`.
 - **Locking waits for a concurrent reopen.** `POST /fiscal-periods/:id/lock` takes the period row lock before it reads
   the status, as close and reopen do. It used to read without a lock, so a reopen committing in between was
   overwritten and the reopened period ended up locked.
+
+## Finance readiness audit A4: permissions and the database role (owner-approved 2026-11-23 and 2026-11-24)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (findings P2-9, P2-10, part of P2-11; release
+gate G3). Tests: `GlControlPermissionsIT`, `DatabaseRoleValidatorIT`, `AuthorizationMatrixIT`.
+
+- **The dashboard figures need `report:accounting` (P2-9, owner-approved deviation).** Nest answered
+  `GET /reports/dashboard-kpi` and `GET /reports/dashboard-activity` to any signed-in user: the cash position, revenue
+  and net income of the month, the receivables ageing, and the latest invoices, payments and journal entries with
+  partner names reached cashiers and waiters. Both now answer 403 "Missing required permission(s): report:accounting"
+  without it. The web home page does not call them without the permission and shows the POS and inventory cards only.
+- **VAT settlement has its own permission, `tax:settle` (P2-10, owner decision 4).** `POST /tax-settlements` posts the
+  offset entry and locks the period's tax postings in one step, and `POST /tax-settlements/:id/reverse` undoes the
+  latest settlement. Both needed only `journal_entry:create`, the permission of the maker of a draft entry. Migration
+  V652 grants `tax:settle` to `Administrator` and to every role holding `journal_entry:post`; a role that drafts entries
+  without posting them can no longer settle VAT (owner-confirmed 2026-11-24). The web shows "Settle and lock" and "Undo
+  latest settlement" only with `tax:settle`.
+- **Rebuilding the report snapshots also needs `fiscal_period:update` (owner-approved deviation 2026-11-24).** Nest
+  asked only `report:accounting`, the read permission of the reports, for `POST /reports/accounting/rebuild-snapshots`,
+  a write over the whole ledger. It now needs both; the balance sheet's "Rebuild Snapshots" button shows only with both.
+- **The production API refuses a database role that row-level security does not apply to (P2-11).** Under the `prod`
+  profile, start-up stops with "Refusing to start: DB_USER '…' …" when the API's role (`DB_USER`) is a superuser, has
+  `BYPASSRLS`, or owns (or is a member of the role that owns) a table with row-level security: Postgres does not apply
+  the tenant policies to such a role, so the database backstop behind the `organizationId` filters is off. That is the
+  case when only `DB_USER` is set and Flyway and the API share the owner role. Run the migrations as the owner
+  (`FLYWAY_USER`) and the API as a role that owns nothing (`docs/DATABASE.md` section 6). `APP_DB_ROLE_CHECK=warn`
+  logs the findings and starts anyway, for an emergency only.
+- **Permission tests.** `AuthorizationMatrixIT` adds the wrong-permission matrix: every write route that declares
+  permissions answers 403 to a user holding every permission of the catalogue except the route's own.
+  `GlControlPermissionsIT` fixes the permissions of 23 general-ledger controls (journals, period and year end, VAT,
+  snapshots, dashboard, treasury, FX, allocations, opening balances) in a table, so weakening one shows in review.
 
 ## Extensions beyond Nest (ADR-S005)
 
