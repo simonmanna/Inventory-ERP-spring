@@ -637,3 +637,26 @@ Both are ShedLock-guarded and gated by `app.jobs.enabled`.
 
 **Tests:** `GlAutomationIT`, `GlSchedulesTest`.
 
+
+## Ledger integrity check (finance readiness audit A0, 2026-11-23)
+
+Spring-only: Nest has no counterpart. Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md`.
+
+**Route.** `GET /reports/accounting/integrity`, under the class-level `report:accounting` of
+`AccountingReportingController`.
+- It runs read-only checks I1–I7, I9 and I11 of the audit: entries balance in base and in their own currency, FX lines,
+  trial balance, account classification, period coverage, closed periods, reversal links, VAT settlements and the
+  inventory tie-out.
+- It returns `{checkedAt, ok, rowLimit, checks[]}`. Each check lists at most 5,000 rows.
+
+**Nightly job.** `LedgerIntegrityJob` (03:10 UTC, ShedLock `ledger-integrity-check`) runs `LedgerIntegrityMonitor` for
+each organisation with journal entries.
+- One open `LedgerIntegrityFinding` row (V650, tenant RLS) per failing check: refreshed while the check fails, resolved
+  when it passes.
+- An in-app notification (category `accounting`, kind `ledger_integrity`) goes out when a finding opens.
+- `inventory_gl` stays with `InventoryTieOutMonitor`.
+
+**No automatic repair.** Nothing is corrected automatically. The read-only data checks are in
+`docs/audits/2026-11-23-accounting-data-checks.sql`.
+
+**Tests:** `LedgerIntegrityIT`.
