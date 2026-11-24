@@ -2078,6 +2078,8 @@ Not verified yet: the tours driven by hand in a browser.
   receive / sales deliveries, quantity reconciliation, random + periodic sampling, quarantine on receipt, quarantine
   exceptions + retry route (28 routes). Cash sale + plain invoice post excluded (ADR-S087, owner sign-off pending).
   Tests: `QualityControlFlowIT`, `QcCheckGeneratorTest`.
-- [ ] QC3 alerts and teams
+- [x] QC3 alerts: V661 (7 tables), kanban stages with history, tags, root causes, assignment history, auto alert per
+  failed generated check (once), idempotent NCR escalation into ADR-S013, notification routes, `quality_alert_open`
+  alert type, `qc_alert` DMS provider (44 routes). Tests: `QualityControlAlertsIT`.
 - [ ] QC4 SPC and statistics
 

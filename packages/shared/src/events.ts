@@ -335,7 +335,24 @@ export const EVENTS = {
   // Quality control (ADR-S087).
   QualityControlCheckDone: 'quality_control.check.done',
   QualityControlCheckFailed: 'quality_control.check.failed',
+  QualityControlAlertCreated: 'quality_control.alert.created',
+  QualityControlAlertAssigned: 'quality_control.alert.assigned',
+  QualityControlAlertStageChanged: 'quality_control.alert.stage_changed',
 } as const;
+
+/** Payload of `quality_control.alert.*` events (ADR-S087 §8). */
+export interface QualityControlAlertPayload {
+  organizationId: string;
+  alertId: string;
+  alertNumber: string;
+  origin: 'manual' | 'auto';
+  checkId: string | null;
+  stageId: string;
+  fromStageId?: string | null;
+  closed?: boolean;
+  teamId: string | null;
+  responsibleUserId: string | null;
+}
 
 /** Payload of `quality_control.check.*` events (ADR-S087). */
 export interface QualityControlCheckPayload {
@@ -500,6 +517,9 @@ export interface DomainEventMap {
   'quality.capa.created': { organizationId: string; capaId: string; capaNumber: string; ownerUserId: string | null };
   'quality_control.check.done': QualityControlCheckPayload;
   'quality_control.check.failed': QualityControlCheckPayload;
+  'quality_control.alert.created': QualityControlAlertPayload;
+  'quality_control.alert.assigned': QualityControlAlertPayload;
+  'quality_control.alert.stage_changed': QualityControlAlertPayload;
   'partner.created': EntityEventPayload;
   'partner.updated': EntityEventPayload;
   'partner.deleted': EntityEventPayload;

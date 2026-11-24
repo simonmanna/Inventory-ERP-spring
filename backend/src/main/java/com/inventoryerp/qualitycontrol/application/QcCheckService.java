@@ -55,7 +55,7 @@ public class QcCheckService {
 
     static final String AUDIT_ENTITY = "QcCheck";
     static final String RES_TYPE = "qc_check";
-    private static final Map<String, String> SOURCE_TABLES = Map.of("production_order", "ProductionOrder", "work_order",
+    static final Map<String, String> SOURCE_TABLES = Map.of("production_order", "ProductionOrder", "work_order",
             "WorkOrder", "goods_receipt", "GoodsReceiptNote", "sales_delivery", "FleetLoad");
 
     private final QcDb db;
@@ -66,11 +66,13 @@ public class QcCheckService {
     private final QcFailureClassService failureClasses;
     private final DmsAttachments attachments;
     private final QcQuarantineService quarantine;
+    private final QcAlertService alerts;
 
     public QcCheckService(QcDb db, SequenceService sequence, AuditService audit, EventBus events,
             QcWorksheetService worksheets, QcFailureClassService failureClasses, DmsAttachments attachments,
-            QcQuarantineService quarantine) {
+            QcQuarantineService quarantine, QcAlertService alerts) {
         this.quarantine = quarantine;
+        this.alerts = alerts;
         this.db = db;
         this.sequence = sequence;
         this.audit = audit;
@@ -158,6 +160,10 @@ public class QcCheckService {
         c.put("corrections", SqlRows.list(db.jdbc().sql("SELECT id, \"checkNumber\", status, \"createdAt\" FROM"
                 + " \"QcCheck\" WHERE \"correctsCheckId\" = ? AND \"organizationId\" = ? ORDER BY \"createdAt\"")
                 .params(id, QcDb.org())));
+        c.put("alerts", SqlRows.list(db.jdbc().sql("SELECT a.id, a.\"alertNumber\", a.title, a.origin, a.\"ncrId\","
+                + " s.name AS \"stageName\", s.\"isClosed\" AS \"stageClosed\" FROM \"QcAlert\" a JOIN \"QcAlertStage\" s"
+                + " ON s.id = a.\"stageId\" WHERE a.\"checkId\" = ? AND a.\"organizationId\" = ? ORDER BY a.\"createdAt\"")
+                .params(id, QcDb.org())));
         return c;
     }
 
@@ -182,6 +188,9 @@ public class QcCheckService {
                 + " status = 'failed' AND \"doneAt\" >= now() - interval '30 days'").param(org).query(Long.class).single());
         out.put("activeControlPoints", db.jdbc().sql("SELECT count(*) FROM \"QcControlPoint\" WHERE \"organizationId\" = ?"
                 + " AND \"isActive\"").param(org).query(Long.class).single());
+        out.put("openAlerts", db.jdbc().sql("SELECT count(*) FROM \"QcAlert\" a JOIN \"QcAlertStage\" s ON s.id ="
+                + " a.\"stageId\" WHERE a.\"organizationId\" = ? AND NOT s.\"isClosed\"").param(org).query(Long.class)
+                .single());
         out.put("quarantineExceptions", db.jdbc().sql("SELECT count(*) FROM \"QcCheck\" WHERE \"organizationId\" = ? AND"
                 + " \"quarantineStatus\" = 'failed'").param(org).query(Long.class).single());
         List<Map<String, Object>> recent = SqlRows.list(db.jdbc().sql(SELECT + " WHERE c.\"organizationId\" = ? AND"
@@ -409,6 +418,10 @@ public class QcCheckService {
                 r.result(), "measureValue", r.measureValue(), "samples", r.samples().size()));
         // Stock follows the decision in this transaction (ADR-S087 §7): a release that cannot move rolls it back.
         quarantine.releaseOnDecision(c, r.result(), "failed".equals(r.result()) ? in.failedQty() : null, revision);
+        if ("failed".equals(r.result())) {
+            // ADR-S087 §8: at most one automatic alert per failed generated check (point.autoAlert).
+            alerts.autoForFailedCheck(db.require(QcCheck.class, id, false, "Quality check not found"));
+        }
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", "pending"), Obj.of("op", "execute",
                 "status", r.result(), "revision", revision)));
         publish(c, r.result(), revision);

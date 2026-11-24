@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
-import { ClipboardCheck } from 'lucide-react';
+import { BellRing, ClipboardCheck } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { PERMISSIONS } from '@erp/shared';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +13,7 @@ import { tx } from '@/lib/i18n/tx';
 import type { PaginatedResult } from '@erp/shared';
 import { CHECK_TYPE_LABEL, QUARANTINE_STATUS_LABEL, type QcCheck, type QcSourceType } from '@/features/quality-control/api';
 import { BlocksPill, CheckStatusPill } from './qc-ui';
+import { AlertDialog } from './alert-ui';
 import { num } from './qc-format';
 
 export interface QcSource { sourceType: Exclude<QcSourceType, 'manual'>; sourceId: string; label?: string }
@@ -21,6 +24,8 @@ export interface QcSource { sourceType: Exclude<QcSourceType, 'manual'>; sourceI
  */
 export function QualityChecksPanel({ sources, title }: { sources: QcSource[]; title?: string }) {
   const can = useAuthStore((s) => s.hasPermission(PERMISSIONS.qualityControl.read));
+  const canAlert = useAuthStore((s) => s.hasPermission(PERMISSIONS.qualityControl.alert));
+  const [raising, setRaising] = useState(false);
   const results = useQueries({
     queries: sources.map((s) => ({
       queryKey: ['quality-control', 'checks', 'source', s.sourceType, s.sourceId],
@@ -44,6 +49,9 @@ export function QualityChecksPanel({ sources, title }: { sources: QcSource[]; ti
         <div className="flex items-center gap-1.5">
           {blocking > 0 && <Badge variant="destructive">{tx('{{n}} blocking', { n: blocking })}</Badge>}
           {pending > 0 && <Badge variant="secondary">{tx('{{n}} pending', { n: pending })}</Badge>}
+          {canAlert && sources.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => setRaising(true)}><BellRing className="mr-1.5 h-3.5 w-3.5" /> {tx('Quality alert')}</Button>
+          )}
         </div>
       </CardHeader>
       <CardContent className="p-0">
@@ -86,6 +94,7 @@ export function QualityChecksPanel({ sources, title }: { sources: QcSource[]; ti
           </TableBody>
         </Table>
       </CardContent>
+      {raising && <AlertDialog source={{ sourceType: sources[0].sourceType, sourceId: sources[0].sourceId }} onClose={() => setRaising(false)} />}
     </Card>
   );
 }

@@ -30,6 +30,13 @@ public class QcResourceProviders {
                 "/quality-control/checks/");
     }
 
+    @Bean
+    DmsResourceProvider qcAlertResource(JdbcClient jdbc) {
+        return new Provider(jdbc, "qc_alert", "Quality alert", Permissions.QUALITY_CONTROL__ALERT,
+                "SELECT \"alertNumber\" || ' ' || title FROM \"QcAlert\" WHERE id = ? AND \"organizationId\" = ?",
+                "/quality-control/alerts/");
+    }
+
     /** One record type; display name from one org-scoped SQL expression. */
     record Provider(JdbcClient jdbc, String resType, String label, String writePermission, String nameSql,
             String pathPrefix) implements DmsResourceProvider {

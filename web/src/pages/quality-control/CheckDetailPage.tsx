@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Ban, CheckCircle2, GitBranchPlus, Plus, RefreshCw, RotateCcw, ShieldOff, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, Ban, BellRing, CheckCircle2, GitBranchPlus, Plus, RefreshCw, RotateCcw, ShieldOff, Trash2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ import {
   CHECK_STATUS_LABEL, CHECK_TYPE_LABEL, DISPOSITION_LABEL, SOURCE_LABEL, useCheckAction, useEvaluateCheck, useQcCheck,
   type CheckAction, type QcCheck, type QcDisposition, type QcEvaluation, type QcExecution, type WorksheetField,
 } from '@/features/quality-control/api';
+import { AlertDialog } from './alert-ui';
 import { BlocksPill, CheckStatusPill, FailureClassPicker, Field, Item, OptionalSelect, OriginPill } from './qc-ui';
 import { num, optNum, toOptions, tolerance } from './qc-format';
 
@@ -32,6 +33,7 @@ export function CheckDetailPage() {
   const { data: c, isLoading, isError, refetch } = useQcCheck(id);
   const has = useAuthStore((s) => s.hasPermission);
   const [dialog, setDialog] = useState<null | 'waive' | 'reset' | 'correction' | 'cancel'>(null);
+  const [raising, setRaising] = useState(false);
 
   if (isLoading) return <div className="space-y-3"><Skeleton className="h-12 w-1/2" /><Skeleton className="h-64 w-full" /></div>;
   if (isError || !c) {
@@ -58,12 +60,13 @@ export function CheckDetailPage() {
             <p className="text-sm text-muted-foreground">{c.title} · {CHECK_TYPE_LABEL[c.checkType]}</p>
           </div>
         </div>
-        {canManage && (
+        {(canManage || has(PERMISSIONS.qualityControl.alert)) && (
           <div className="flex flex-wrap gap-2">
-            {(c.status === 'pending' || c.status === 'failed') && !closed && <Button variant="outline" onClick={() => setDialog('waive')}><ShieldOff className="mr-1.5 h-4 w-4" /> {tx('Waive')}</Button>}
-            {done && !closed && <Button variant="outline" onClick={() => setDialog('reset')}><RotateCcw className="mr-1.5 h-4 w-4" /> {tx('Reset')}</Button>}
-            {done && <Button variant="outline" onClick={() => setDialog('correction')}><GitBranchPlus className="mr-1.5 h-4 w-4" /> {tx('Correction check')}</Button>}
-            {c.status === 'pending' && c.origin !== 'generated' && <Button variant="outline" onClick={() => setDialog('cancel')}><Ban className="mr-1.5 h-4 w-4" /> {tx('Cancel check')}</Button>}
+            {has(PERMISSIONS.qualityControl.alert) && c.status !== 'cancelled' && <Button variant="outline" onClick={() => setRaising(true)}><BellRing className="mr-1.5 h-4 w-4" /> {tx('Quality alert')}</Button>}
+            {canManage && (c.status === 'pending' || c.status === 'failed') && !closed && <Button variant="outline" onClick={() => setDialog('waive')}><ShieldOff className="mr-1.5 h-4 w-4" /> {tx('Waive')}</Button>}
+            {canManage && done && !closed && <Button variant="outline" onClick={() => setDialog('reset')}><RotateCcw className="mr-1.5 h-4 w-4" /> {tx('Reset')}</Button>}
+            {canManage && done && <Button variant="outline" onClick={() => setDialog('correction')}><GitBranchPlus className="mr-1.5 h-4 w-4" /> {tx('Correction check')}</Button>}
+            {canManage && c.status === 'pending' && c.origin !== 'generated' && <Button variant="outline" onClick={() => setDialog('cancel')}><Ban className="mr-1.5 h-4 w-4" /> {tx('Cancel check')}</Button>}
           </div>
         )}
       </div>
@@ -148,10 +151,24 @@ export function CheckDetailPage() {
               </CardContent>
             </Card>
           )}
+          {!!c.alerts?.length && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-base">{tx('Quality alerts')}</CardTitle></CardHeader>
+              <CardContent className="space-y-1 text-sm">
+                {c.alerts.map((x) => (
+                  <Link key={x.id} to={`/quality-control/alerts/${x.id}`} className="flex items-center justify-between gap-2 rounded px-2 py-1 hover:bg-muted/50">
+                    <span><span className="font-medium text-primary">{x.alertNumber}</span> <span className="text-muted-foreground">{x.title}</span></span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{x.stageName}</span>
+                  </Link>
+                ))}
+              </CardContent>
+            </Card>
+          )}
           <AttachmentPanel resType="qc_check" resId={c.id} title={tx('Photos & evidence')} writePermission={PERMISSIONS.qualityControl.check} />
         </div>
       </div>
 
+      {raising && <AlertDialog checkId={c.id} defaultTitle={c.status === 'failed' ? `${tx('Failed')}: ${c.title}` : c.title} onClose={() => setRaising(false)} />}
       {dialog && <ManageDialog check={c} kind={dialog} onClose={() => setDialog(null)} onDone={(out) => out.id !== c.id && navigate(`/quality-control/checks/${out.id}`)} />}
     </div>
   );

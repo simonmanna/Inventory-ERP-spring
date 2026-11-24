@@ -8,7 +8,7 @@ There is no NestJS counterpart: this is a post-parity owner request (2026-11-24)
 separate module beside `quality` (ADR-S013), which keeps specifications, inspection lots, NCR, CAPA and certificates
 of analysis. The full design, including lifecycle, blocking and quarantine rules, is ADR-S087.
 
-Status: QC1 (foundation) and QC2 (triggers, blocking, quarantine) implemented. QC3 (alerts) and QC4 (SPC) follow.
+Status: QC1 (foundation), QC2 (triggers, blocking, quarantine) and QC3 (alerts) implemented. QC4 (SPC) follows.
 
 ## Permissions
 
@@ -45,7 +45,7 @@ Administrator gets all five (V660). The Manager role defaults to `read`, `check`
 | POST | `/quality-control/control-points/{id}/activate` | configure | optional `{reason}`; writes a version |
 | POST | `/quality-control/control-points/{id}/deactivate` | configure | optional `{reason}`; writes a version |
 | GET | `/quality-control/checks` | read | list envelope; `search`, `status`, `origin`, `checkType`, `sourceType`, `sourceId`, `controlPointId`, `productId`, `teamId`, `quarantineStatus` (QC2) |
-| GET | `/quality-control/checks/{id}` | read | with `executions` (newest first, each with `samples`, `superseded`), `events`, `corrections` |
+| GET | `/quality-control/checks/{id}` | read | with `executions` (newest first, each with `samples`, `superseded`), `events`, `corrections`, `alerts` (QC3) |
 | POST | `/quality-control/checks` | check | 201; a manual check, number `QCC-000001` |
 | POST | `/quality-control/checks/{id}/evaluate` | check | dry run: `{result, evaluation, failureMessage}`, nothing saved |
 | POST | `/quality-control/checks/{id}/execute` | check | writes the next execution revision |
@@ -54,8 +54,24 @@ Administrator gets all five (V660). The Manager role defaults to `read`, `check`
 | POST | `/quality-control/checks/{id}/corrections` | manage | 201; `{reason, notes?}`; a new check with `origin = correction` |
 | POST | `/quality-control/checks/{id}/cancel` | manage | `{reason}`; manual or correction checks only |
 | POST | `/quality-control/checks/{id}/quarantine/retry` | manage | QC2; retries a failed quarantine move; returns the check |
+| GET | `/quality-control/alerts` | read | QC3; list envelope; `search`, `stageId`, `teamId`, `responsibleUserId`, `priority`, `productId`, `checkId`, `ncrId`, `tagId`, `open`, `origin` |
+| GET | `/quality-control/alerts/kanban` | read | `{columns: [{stage, count, alerts}]}`, active stages in order, highest priority first |
+| GET | `/quality-control/alerts/{id}` | read | with `tags`, `stageHistory`, `assignmentHistory` |
+| POST | `/quality-control/alerts` | alert | 201; number `QCA-00001`; from a check (`checkId` copies product, batch, source, team), a document (`sourceType` + `sourceId`) or free |
+| PATCH | `/quality-control/alerts/{id}` | alert | fields, `tagIds` (replaces), `correctionCheckId`; a team / responsible change writes assignment history |
+| POST | `/quality-control/alerts/{id}/move` | alert | `{stageId, comment?}`; writes stage history |
+| POST | `/quality-control/alerts/{id}/escalate` | alert | `{severity?, ownerUserId?}`; `{created, ncrId, ncrNumber?, alert}`; idempotent |
+| GET | `/quality-control/alert-stages` | read | `active`; with `alertCount` |
+| POST | `/quality-control/alert-stages` | configure | 201 |
+| PATCH | `/quality-control/alert-stages/{id}` | configure | |
+| GET | `/quality-control/tags` | read | |
+| POST | `/quality-control/tags` | configure | 201 |
+| PATCH | `/quality-control/tags/{id}` | configure | |
+| GET | `/quality-control/root-causes` | read | `active` |
+| POST | `/quality-control/root-causes` | configure | 201 |
+| PATCH | `/quality-control/root-causes/{id}` | configure | |
 
-28 routes.
+44 routes. The overview gains `openAlerts`.
 
 ## Generated checks and blocking (QC2)
 
@@ -111,6 +127,11 @@ takes `failureClassId` (required when the point sets `failureClassRequired`) and
 | Receipt quarantine cannot move | 400 | `Quality check QCC-000012: only 3 of 10 can be moved into quarantine, so the receipt is not posted.` |
 | Retry without a failed move | 400 | `Quality check QCC-000012 has no failed quarantine move.` |
 | Quarantine on receipt per operation | 400 | `Quarantine on receipt needs a check per product or per quantity.` |
+| Deactivate a stage with alerts | 400 | `Move the 1 alert(s) out of stage On hold before deactivating it.` |
+| Move to an inactive stage | 400 | `Alert stage On hold is inactive.` |
+| Duplicate stage / tag / root cause name | 409 | `An alert stage named X already exists.` (tag / root cause alike) |
+| Link a correction check of another check | 400 | `Link a correction check of this alert's check.` |
+| `sourceType` without `sourceId` | 400 | `sourceType and sourceId go together.` |
 
 ## DMS record types
 
@@ -126,7 +147,10 @@ Nav group "Quality Control" (Manufacturing & Operations): Overview (`/quality-co
 Configuration: Control Points, Worksheet Templates, Quality Teams, Failure Classes. QC2 adds Quarantine Exceptions
 (`/quality-control/quarantine-exceptions`, retry for managers), a "Quality checks" panel on the production order, goods
 receipt and delivery detail views, and the check list on the shop-floor terminal's Finish dialog (Finish stays disabled
-while a check blocks).
+while a check blocks). QC3 adds Quality Alerts (`/quality-control/alerts`: kanban with drag-and-drop between stages,
+or a list; detail at `/quality-control/alerts/:id` with investigation fields, NCR escalation, evidence and history),
+Alert Settings (stages, tags, root causes) under Configuration, a "Quality alert" button on the check detail and on
+the document quality-checks panel, and an "Open alerts" tile on the overview.
 
 ## Deviations
 

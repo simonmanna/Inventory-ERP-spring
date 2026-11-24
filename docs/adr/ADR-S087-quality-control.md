@@ -448,6 +448,29 @@ Maintenance links.
 - Random sampling persists every roll (`QcSamplingDecision`), selected or not; periodic sampling also records its
   due / not-due decision per base key, so re-syncing a document never changes whether it has a check.
 
+## Implementation notes (QC3)
+
+- Migration V661: `QcAlertStage`, `QcTag`, `QcRootCause`, `QcAlert`, `QcAlertTag`, `QcAlertStageHistory`,
+  `QcAlertAssignmentHistory` (the two history tables are append-only by trigger), standard RLS on all seven.
+- Default stages (New 10, Confirmed 20, Action Proposed 30, Solved 40 closed) are created on first use. A stage that
+  still holds alerts cannot be deactivated. Moving to a closed stage sets `closedAt`; moving out clears it.
+- Auto alert: `QcCheckService.execute` calls `QcAlertService.autoForFailedCheck` in the same transaction when a
+  generated check fails and its point has `autoAlert`. The insert is `ON CONFLICT ("organizationId", "checkId") WHERE
+  origin = 'auto' DO NOTHING`; the alert number is taken only after a row was inserted, so a reset + second failure
+  neither duplicates the alert nor burns a number. Priority 2 when the check blocks, else 1. Manual and correction
+  checks never auto-alert.
+- Escalation locks the alert row; an alert with `ncrId` returns that NCR (`created: false`). The NCR gets title
+  `QCA-…: <title>`, source from the check operation (receipt → incoming, manufacturing / work order → in_process,
+  delivery → final, otherwise internal), `quantityAffected` = the check's `failedQty`, root cause and proposed
+  corrective / preventive actions in the description, owner = the alert's responsible. `QualityNcr` has no
+  `externalRef` column, so the reverse link is shown through `GET /quality-control/alerts?ncrId=` (no change to the
+  `quality` schema).
+- A correction check can be linked to an alert only if it corrects the alert's check.
+- Notifications (`RoutedEventSource`, area "quality"): alert created → responsible + team members; assigned →
+  responsible; resolved (stage_changed to a closed stage) → creator. Alert scan type `quality_alert_open` (daily,
+  threshold 3 days, weekly repeat; priority ≥ 2 is critical). `AlertsIT`'s catalogue count goes from 10 to 11.
+- Audit: alerts use the existing `AuditAction` values (`create`, `update`) with `op` = `move` / `escalate`.
+
 ## Phases
 
 ### QC1: Foundation

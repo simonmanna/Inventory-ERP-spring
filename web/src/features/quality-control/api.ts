@@ -229,6 +229,7 @@ export interface QcCheck {
   executions?: QcExecution[];
   events?: QcEvent[];
   corrections?: Array<{ id: string; checkNumber: string; status: QcCheckStatus; createdAt: string }>;
+  alerts?: Array<{ id: string; alertNumber: string; title: string; origin: 'manual' | 'auto'; ncrId: string | null; stageName: string; stageClosed: boolean }>;
 }
 
 export interface QcOverview {
@@ -237,6 +238,7 @@ export interface QcOverview {
   failedLast30Days: number;
   activeControlPoints: number;
   quarantineExceptions: number;
+  openAlerts?: number;
   recentFailures: QcCheck[];
   pending: QcCheck[];
 }
@@ -392,3 +394,102 @@ export const useSourceChecks = (sourceType: QcSourceType, sourceId?: string, ena
       params: { sourceType, sourceId, page: 1, pageSize: 100 },
     })).data.data ?? []).filter((c) => c.status !== 'cancelled'),
   });
+
+// ---- Alerts (QC3, ADR-S087 §8) ----
+
+export interface QcAlertStage { id: string; name: string; sequence: number; isClosed: boolean; folded: boolean; isActive: boolean; alertCount?: number }
+export interface QcTag { id: string; name: string; color: string | null }
+export interface QcRootCause { id: string; name: string; description: string | null; isActive: boolean }
+export interface QcAlert {
+  id: string;
+  alertNumber: string;
+  title: string;
+  description: string | null;
+  origin: 'manual' | 'auto';
+  stageId: string;
+  stageName: string;
+  stageClosed: boolean;
+  priority: number;
+  teamId: string | null;
+  teamName?: string | null;
+  responsibleUserId: string | null;
+  responsibleName?: string | null;
+  checkId: string | null;
+  checkNumber?: string | null;
+  correctionCheckId: string | null;
+  correctionCheckNumber?: string | null;
+  controlPointId: string | null;
+  controlPointReference?: string | null;
+  productId: string | null;
+  productName?: string | null;
+  batchNumber: string | null;
+  workCenterId: string | null;
+  sourceType: Exclude<QcSourceType, 'manual'> | null;
+  sourceId: string | null;
+  sourceRef: string | null;
+  supplierPartnerId: string | null;
+  supplierName?: string | null;
+  failureClassId: string | null;
+  failureClassName?: string | null;
+  rootCauseId: string | null;
+  rootCauseName?: string | null;
+  correctiveAction: string | null;
+  preventiveAction: string | null;
+  ncrId: string | null;
+  ncrNumber?: string | null;
+  ncrStatus?: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  tags: QcTag[];
+  stageHistory?: Array<{ id: string; fromStageName: string | null; toStageName: string; comment: string | null; userName: string | null; createdAt: string }>;
+  assignmentHistory?: Array<{ id: string; fromTeamName: string | null; toTeamName: string | null; fromResponsibleName: string | null; toResponsibleName: string | null; userName: string | null; createdAt: string }>;
+}
+export interface QcKanban { columns: Array<{ stage: QcAlertStage; count: number; alerts: QcAlert[] }> }
+
+export const PRIORITY_LABEL = ['Normal', 'Low', 'High', 'Urgent'] as const;
+
+export type AlertFilters = { search?: string; teamId?: string; responsibleUserId?: string; priority?: number; productId?: string; tagId?: string };
+export const useAlertKanban = (p: AlertFilters) =>
+  useQuery({
+    queryKey: [...KEY, 'alerts', 'kanban', p],
+    placeholderData: (prev) => prev,
+    queryFn: async () => (await api.get<QcKanban>('/quality-control/alerts/kanban', { params: p })).data,
+  });
+export const useAlerts = (p: PageParams & AlertFilters & { stageId?: string; open?: boolean; origin?: string; checkId?: string; ncrId?: string }) =>
+  useQuery({
+    queryKey: [...KEY, 'alerts', 'list', p],
+    placeholderData: (prev) => prev,
+    queryFn: async () => (await api.get<PaginatedResult<QcAlert>>('/quality-control/alerts', { params: p })).data,
+  });
+export const useAlert = (id?: string) =>
+  useQuery({
+    queryKey: [...KEY, 'alert', id],
+    enabled: !!id,
+    queryFn: async () => (await api.get<QcAlert>(`/quality-control/alerts/${id}`)).data,
+  });
+export const useAlertStages = (active?: boolean) =>
+  useQuery({ queryKey: [...KEY, 'alert-stages', active], queryFn: async () => (await api.get<QcAlertStage[]>('/quality-control/alert-stages', { params: { active } })).data });
+export const useTags = () =>
+  useQuery({ queryKey: [...KEY, 'tags'], queryFn: async () => (await api.get<QcTag[]>('/quality-control/tags')).data });
+export const useRootCauses = (active?: boolean) =>
+  useQuery({ queryKey: [...KEY, 'root-causes', active], queryFn: async () => (await api.get<QcRootCause[]>('/quality-control/root-causes', { params: { active } })).data });
+
+export const useCreateAlert = () =>
+  useQcMutation(async (body: Body) => (await api.post<QcAlert>('/quality-control/alerts', body)).data);
+export const useUpdateAlert = () =>
+  useQcMutation(async ({ id, body }: { id: string; body: Body }) => (await api.patch<QcAlert>(`/quality-control/alerts/${id}`, body)).data);
+export const useMoveAlert = () =>
+  useQcMutation(async ({ id, stageId, comment }: { id: string; stageId: string; comment?: string }) =>
+    (await api.post<QcAlert>(`/quality-control/alerts/${id}/move`, { stageId, comment: comment || undefined })).data);
+export const useEscalateAlert = () =>
+  useQcMutation(async ({ id, body }: { id: string; body: Body }) =>
+    (await api.post<{ created: boolean; ncrId: string; ncrNumber?: string; alert: QcAlert }>(`/quality-control/alerts/${id}/escalate`, body)).data);
+export const useSaveAlertStage = () =>
+  useQcMutation(async ({ id, body }: { id?: string; body: Body }) =>
+    (id ? await api.patch<QcAlertStage>(`/quality-control/alert-stages/${id}`, body) : await api.post<QcAlertStage>('/quality-control/alert-stages', body)).data);
+export const useSaveTag = () =>
+  useQcMutation(async ({ id, body }: { id?: string; body: Body }) =>
+    (id ? await api.patch<QcTag>(`/quality-control/tags/${id}`, body) : await api.post<QcTag>('/quality-control/tags', body)).data);
+export const useSaveRootCause = () =>
+  useQcMutation(async ({ id, body }: { id?: string; body: Body }) =>
+    (id ? await api.patch<QcRootCause>(`/quality-control/root-causes/${id}`, body) : await api.post<QcRootCause>('/quality-control/root-causes', body)).data);

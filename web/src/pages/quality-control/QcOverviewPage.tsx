@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, ClipboardCheck, LayoutDashboard, ListChecks, ShieldAlert, Target } from 'lucide-react';
+import { AlertTriangle, BellRing, ClipboardCheck, LayoutDashboard, ListChecks, ShieldAlert } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListPageHeader } from '@/components/list';
@@ -15,7 +15,7 @@ export function QcOverviewPage() {
     { label: tx('Checks to do'), value: data?.byStatus.pending, icon: ListChecks, to: '/quality-control/checks?status=pending' },
     { label: tx('Blocking an operation'), value: data?.blocking, icon: ShieldAlert, to: '/quality-control/checks?status=pending' },
     { label: tx('Failed (30 days)'), value: data?.failedLast30Days, icon: AlertTriangle, to: '/quality-control/checks?status=failed' },
-    { label: tx('Active control points'), value: data?.activeControlPoints, icon: Target, to: '/quality-control/control-points' },
+    { label: tx('Open alerts'), value: data?.openAlerts, icon: BellRing, to: '/quality-control/alerts' },
   ];
   return (
     <div className="space-y-4">

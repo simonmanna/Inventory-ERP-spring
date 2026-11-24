@@ -701,11 +701,13 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/quality-control', label: tx('Quality Control Overview'), icon: LayoutDashboard, permission: PERMISSIONS.qualityControl.read },
       { to: '/quality-control/checks', label: tx('Quality Checks'), icon: ListChecks, permission: PERMISSIONS.qualityControl.read },
+      { to: '/quality-control/alerts', label: tx('Quality Alerts'), icon: BellRing, permission: PERMISSIONS.qualityControl.read },
       { to: '/quality-control/quarantine-exceptions', label: tx('Quarantine Exceptions'), icon: ShieldAlert, permission: PERMISSIONS.qualityControl.read },
       { to: '/quality-control/control-points', label: tx('Control Points'), icon: Target, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
       { to: '/quality-control/worksheet-templates', label: tx('Worksheet Templates'), icon: FileStack, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
       { to: '/quality-control/teams', label: tx('Quality Teams'), icon: Users, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
       { to: '/quality-control/failure-classes', label: tx('Failure Classes'), icon: Tags, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
+      { to: '/quality-control/alert-settings', label: tx('Alert Settings'), icon: Settings2, permission: PERMISSIONS.qualityControl.read, group: 'Configuration' },
     ],
   },
   {
