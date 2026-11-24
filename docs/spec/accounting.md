@@ -475,6 +475,20 @@ and closed periods from before this change are corrected, if at all, by approved
   and writes one `DocumentReversal` row (V520, unique per document: original and reversal entries, released
   allocations, who / when / why) plus an audit row; a replay returns the first result. Invoices and bills with
   payments, write-offs, posted notes or settled claims are refused with the list of what to undo first.
+- **Generic reversal allowlist (finance readiness audit A2, owner decision 2026-11-23).** The 2026-11-17 decision left
+  every non-sub-ledger source reversible through `POST /journal-entries/:id/reverse`, so a period close, a VAT
+  settlement, cash-session, treasury, fixed-asset, payroll, stock or costing entry could be reversed behind the back of
+  the records it belongs to (audit P1-2). Now the generic route — and the `journal_entry` workflow's `reverse`
+  transition, which applies the same guard (`SubledgerSources.assertGenericReversible`: FX-1, allowlist,
+  `journal_entry:control_adjust`) — accepts only manual entries (no source type; control-account adjustments included)
+  and the sources in `GENERIC_REVERSAL_SOURCE_TYPES` (`packages/shared/src/accounting/journal-reversal.ts`, served to the
+  API as `contracts/journal-reversal.json` by `tools/contracts2java/accounting.mjs`): `recurring_entry`. Everything else
+  is refused with a 400 that names the action reversing it — its own route where the process has one (period reopen,
+  payroll-run reversal, bank unmatch, allocation-run / costing-run / stock-document / production / landed-cost / fleet /
+  quarry / project reversals, acquisition removal, impairment reversal, FX revaluation re-run), otherwise an adjusting
+  manual journal entry. Unknown and future sources are refused by default; a `reversal` entry is judged by its original.
+  The journal-entry detail's additive `sourceDocument` block now covers every refused source (`id` may be null when the
+  entry names its document by number only), and the web shows Reverse only for manual and recurring entries.
 - **R8.** Posting a draft re-runs the full line validation on its stored lines.
 
 **Sub-ledgers**

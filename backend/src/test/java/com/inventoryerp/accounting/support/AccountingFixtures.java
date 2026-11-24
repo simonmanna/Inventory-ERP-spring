@@ -138,6 +138,24 @@ public abstract class AccountingFixtures extends ApiTestSupport {
      */
     protected String postJe(Books b, String journal, String date, String currency, Object rate, String sourceType,
             String postingKey, List<JeLine> lines) {
+        return postEntry(b, journal, date, currency, rate, sourceType == null ? "acc0" : sourceType, postingKey, lines);
+    }
+
+    protected String postJe(Books b, String date, List<JeLine> lines) {
+        return postJe(b, "GEN", date, null, null, null, null, lines);
+    }
+
+    /**
+     * A manual journal entry: no source type or source id, as {@code POST /journal-entries} stages one (posted here
+     * through the engine, without the maker-checker round trip). Unlike a {@link #postJe} system entry, the generic
+     * {@code POST /journal-entries/{id}/reverse} accepts it (finance readiness audit A2).
+     */
+    protected String postManualJe(Books b, String date, List<JeLine> lines) {
+        return postEntry(b, "GEN", date, null, null, null, null, lines);
+    }
+
+    private String postEntry(Books b, String journal, String date, String currency, Object rate, String sourceType,
+            String postingKey, List<JeLine> lines) {
         List<PostingRequest.Line> out = new ArrayList<>();
         for (JeLine l : lines) {
             out.add(new PostingRequest.Line(account(b.org(), l.accountCode()),
@@ -145,15 +163,10 @@ public abstract class AccountingFixtures extends ApiTestSupport {
                     l.partnerId(), l.accountCode(), l.branchId(), null, l.dimensions()));
         }
         Instant at = Instant.parse(date + "T10:00:00Z");
-        String sourceId = UUID.randomUUID().toString();
+        String sourceId = sourceType == null ? null : UUID.randomUUID().toString();
         Map<String, Object> entry = inTenant(b.org(), b.ownerId(), () -> posting.post(new PostingRequest(journal, at,
-                "ACC-0 " + date, currency, rate, sourceType == null ? "acc0" : sourceType, sourceId, null, postingKey,
-                null, null, null, out)));
+                "ACC-0 " + date, currency, rate, sourceType, sourceId, null, postingKey, null, null, null, out)));
         return (String) entry.get("id");
-    }
-
-    protected String postJe(Books b, String date, List<JeLine> lines) {
-        return postJe(b, "GEN", date, null, null, null, null, lines);
     }
 
     // ------------------------------------------------------------------ periods and reports
