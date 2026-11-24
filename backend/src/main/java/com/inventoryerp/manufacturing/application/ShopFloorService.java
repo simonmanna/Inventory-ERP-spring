@@ -205,7 +205,12 @@ public class ShopFloorService {
     /** A manual (or setup) time entry; the work order's labour minutes become the sum of its closed logs. */
     @Transactional
     public Map<String, Object> addTimeLog(String workOrderId, TimeLogInput dto) {
-        Map<String, Object> wo = requireWorkOrder(workOrderId);
+        // Integrity fix 2026-11-24 (MR-4): the work-order row lock (as start / pause / complete take it), so time
+        // cannot be logged on a work order a concurrent complete has just costed.
+        Map<String, Object> wo = db.byIdForUpdate(WorkOrder.class, workOrderId);
+        if (wo == null) {
+            throw ApiException.notFound("Work order not found");
+        }
         if ("completed".equals(wo.get("status")) || "cancelled".equals(wo.get("status"))) {
             throw ApiException.badRequest("Work order already " + wo.get("status") + ".");
         }
@@ -238,6 +243,10 @@ public class ShopFloorService {
      */
     @Transactional
     public Map<String, Object> rework(String orderId, ReworkInput dto) {
+        // Integrity fix 2026-11-24 (MR-4; deviation: Nest read the order unlocked): under the order lock (as QC and
+        // reverse take it), so a double tap cannot open two rework orders on the same quarantined units, nor a rework
+        // close an order a concurrent reversal is undoing.
+        db.lockProductionOrder(orderId);
         Map<String, Object> parent = db.byId(ProductionOrder.class, orderId);
         if (parent == null) {
             throw ApiException.notFound("Production order not found");

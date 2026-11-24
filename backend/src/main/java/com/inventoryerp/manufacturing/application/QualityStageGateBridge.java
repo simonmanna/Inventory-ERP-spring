@@ -78,7 +78,16 @@ public class QualityStageGateBridge implements StageQcCheckpointHook {
         }
         TenantContext.run(TenantStore.organization(orgId), () -> {
             try {
-                String posting = postingOfLot(stageId, p.path("lotId").asString(""));
+                String lotId = p.path("lotId").asString("");
+                String posting = postingOfLot(stageId, lotId);
+                // Integrity fix 2026-11-24 (MR-7): the inspection lot belonged to a posting that was reversed since —
+                // its decision decides nothing (it used to fall back to every undecided lot of the stage, releasing
+                // later output that was never inspected).
+                if (posting == null && carriedByReversed(stageId, lotId)) {
+                    log.info("Quality lot {} decided after its stage output was reversed; gate unchanged",
+                            p.path("lotNumber").asString(""));
+                    return;
+                }
                 results.recordResult(stageId, new CheckpointDecision(passed, p.path("lotNumber").asString(null),
                         "Quality lot " + p.path("lotNumber").asString("") + " · " + decision, posting));
             } catch (ApiException e) {
@@ -87,6 +96,16 @@ public class QualityStageGateBridge implements StageQcCheckpointHook {
                         e.getMessage());
             }
         });
+    }
+
+    /** Whether a reversed posting of the stage carried the inspection lot (MR-7). */
+    private boolean carriedByReversed(String stageId, String lotId) {
+        if (lotId.isEmpty()) {
+            return false;
+        }
+        return db.jdbc().sql("SELECT count(*) FROM \"ProductionStagePosting\" WHERE \"organizationId\" = ? AND"
+                + " \"stageId\" = ? AND \"qcLotId\" = ? AND \"reversedAt\" IS NOT NULL").params(MfgDb.org(), stageId,
+                lotId).query(Long.class).single() > 0;
     }
 
     /** The QC lot (gated output posting) an inspection lot was opened for; null for lots opened before V625. */
