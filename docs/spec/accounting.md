@@ -743,6 +743,14 @@ The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below 
 
   Nest soft-deletes such an account, which drops its balance from every report that skips deleted accounts.
   Test: `CashAccountDeleteIT`.
+- **A foreign payable is relieved at the bill's posting rate.** Two routes relieve a foreign bill at its carrying
+  rate, the rate it posted at (`DocumentFxRates.documentRate`):
+  - a bill write-off, `POST /vendor-bills/:id/write-off`;
+  - a supplier claim settled against a bill, `POST /procurement/claims/:id/settle`.
+
+  A bill that stores the default rate 1 ("not stated", FX-1) posted at the rate table's rate. Passing that stored 1 on
+  made the relief post at the table rate of the day. Once the rate had moved, the payable's base did not clear, and the
+  AP tie-out (I8) showed the difference. Nest has the same flaw. Tests: the B5 tests in `ArApTieOutIT`.
 
 ## Extensions beyond Nest (ADR-S005)
 
