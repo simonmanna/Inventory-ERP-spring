@@ -3,6 +3,8 @@ package com.inventoryerp.accounting.web;
 import com.inventoryerp.accounting.application.ReportsDashboardService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.crud.QueryParams;
+import com.inventoryerp.kernel.security.Permissions;
+import com.inventoryerp.kernel.security.RequirePermissions;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -11,10 +13,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * {@code /reports/dashboard-*} (port of {@code reports-dashboard.controller.ts}): home dashboard KPIs and activity.
- * Like Nest, authentication only — no specific permission.
+ * Finance audit A4 (owner-approved deviation; Nest: any signed-in user): both need {@code report:accounting}. They
+ * answer the cash position, revenue, net income, receivables ageing, and the latest invoices, payments and journal
+ * entries with partner names, which used to reach every signed-in user, cashiers included.
  */
 @RestController
 @RequestMapping("/reports")
+@RequirePermissions(Permissions.REPORT__ACCOUNTING)
 public class ReportsDashboardController {
 
     private final ReportsDashboardService dashboard;
