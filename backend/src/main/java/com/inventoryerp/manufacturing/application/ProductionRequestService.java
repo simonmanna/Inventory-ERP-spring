@@ -48,6 +48,12 @@ public class ProductionRequestService {
     /** A manual DRAFT request. */
     @Transactional
     public Map<String, Object> create(CreateRequest dto) {
+        // Integrity fix 2026-11-24 (MC-9; as ADR-S006 A7 does for orders): unknown products answer 404.
+        for (RequestLineInput l : dto.lines()) {
+            if (!db.exists("Product", l.productId())) {
+                throw ApiException.notFound("Product " + l.productId() + " not found");
+            }
+        }
         String requestNumber = seq.next("production_request", "PRQ-", 5);
         List<RaisedLine> lines = new ArrayList<>();
         for (RequestLineInput l : dto.lines()) {

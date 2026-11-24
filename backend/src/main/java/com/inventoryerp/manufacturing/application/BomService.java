@@ -230,6 +230,30 @@ public class BomService {
             throw ApiException.badRequest("Approval required before activating BOM " + bom.get("code")
                     + ". Pending request " + gate.get("requestId") + ".");
         }
+        // Integrity fix 2026-11-24 (MC-11; deviation: Nest checked cycles only on create/update against the BOMs active
+        // then, and activated without a lock): activations of the organization are serialised (a cycle can span
+        // outputs), the output's version lock create/update take is held, the BOM is re-read, and the cycle check runs
+        // again against the BOMs active now — two drafts referencing each other can no longer both activate.
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text").param("bom-activate:" + MfgDb.org())
+                .query().listOfRows();
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)::text")
+                .param("bom:" + MfgDb.org() + ":" + bom.get("outputProductId") + ":" + bom.get("outputVariantKey"))
+                .query().listOfRows();
+        String current = db.jdbc().sql("SELECT status::text FROM \"Bom\" WHERE id = ? AND \"organizationId\" = ?"
+                + " FOR UPDATE").params(id, MfgDb.org()).query(String.class).optional().orElse(null);
+        if ("active".equals(current)) {
+            return getOrThrow(id);
+        }
+        if (!"draft".equals(current)) {
+            throw ApiException.badRequest("Cannot re-activate an archived BOM version.");
+        }
+        db.jdbc().sql("SELECT id FROM \"Bom\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND"
+                + " \"outputProductId\" = ? AND \"outputVariantKey\" = ? AND status = 'active' FOR UPDATE")
+                .params(MfgDb.org(), bom.get("outputProductId"), bom.get("outputVariantKey")).query(String.class).list();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> bomLines = (List<Map<String, Object>>) bom.get("lines");
+        assertNoCycle(str(bom, "outputProductId"), bomLines.stream().map(l -> str(l, "componentProductId")).toList(),
+                0);
         db.updateWhere(Bom.class, Obj.of("status", "archived"), "\"organizationId\" = ? AND \"deletedAt\" IS NULL"
                         + " AND \"outputProductId\" = ? AND \"outputVariantKey\" = ? AND status = 'active' AND id <> ?",
                 MfgDb.org(), bom.get("outputProductId"), bom.get("outputVariantKey"), id);

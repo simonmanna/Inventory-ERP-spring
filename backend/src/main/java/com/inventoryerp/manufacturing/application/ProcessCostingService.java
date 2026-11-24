@@ -399,8 +399,14 @@ public class ProcessCostingService {
         String nextId = (String) proc.get("nextProcessId");
         if (nextId != null && unitsCompleted.signum() > 0) {
             // Same WIP account: the transfer is a sub-ledger movement, no journal.
-            String nextPeriod = jdbc.sql("SELECT id FROM \"ProcessCostPeriod\" WHERE \"processId\" = ? AND status = 'open'")
-                    .param(nextId).query(String.class).optional().orElse(null);
+            // Integrity fix 2026-11-24 (MC-4): the next process's open period is locked (and still open once the lock
+            // is held) before the transfer lands on it; a concurrent close of that period could otherwise compute
+            // without these units and cost. A period closed while we waited is replaced by the one its close opened
+            // (a fresh statement sees it); only a process without any open period gets a new one.
+            String nextPeriod = lockOpenPeriodOf(nextId);
+            if (nextPeriod == null) {
+                nextPeriod = lockOpenPeriodOf(nextId);
+            }
             if (nextPeriod == null) {
                 nextPeriod = insertPeriod(nextId, (LocalDate) p.get("periodFrom"), (LocalDate) p.get("periodTo"), null);
             }
@@ -510,6 +516,13 @@ public class ProcessCostingService {
                 .params(UUID.randomUUID().toString(), org(), periodId, element, amount, qty, productId, locationId,
                         sourceType, sourceId, description, je, TenantContext.userId())
                 .update();
+    }
+
+    /** MC-4: the open period of a process, locked FOR UPDATE; null when none is open (re-checked after the lock). */
+    private String lockOpenPeriodOf(String processId) {
+        return jdbc.sql("SELECT id FROM \"ProcessCostPeriod\" WHERE \"processId\" = ? AND \"organizationId\" = ?"
+                + " AND status = 'open' FOR UPDATE").params(processId, org()).query(String.class).optional()
+                .orElse(null);
     }
 
     private Map<String, Object> lockOpen(String periodId) {

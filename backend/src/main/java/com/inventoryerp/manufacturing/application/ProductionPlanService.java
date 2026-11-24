@@ -89,10 +89,16 @@ public class ProductionPlanService {
         // Mark the source request lines as consolidated into this plan (Nest stores the plan id).
         for (Group c : consolidated) {
             if (!c.requestLineIds().isEmpty()) {
-                db.jdbc().sql("UPDATE \"ProductionRequestLine\" SET \"plannedLineId\" = :plan WHERE id IN (:ids)"
-                                + " AND \"organizationId\" = :org")
+                // Integrity fix 2026-11-24 (MC-10): claim only lines no other plan claimed meanwhile; a concurrent
+                // plan that got there first rolls this one back instead of double-planning the demand.
+                int claimed = db.jdbc().sql("UPDATE \"ProductionRequestLine\" SET \"plannedLineId\" = :plan WHERE id IN"
+                                + " (:ids) AND \"organizationId\" = :org AND \"plannedLineId\" IS NULL")
                         .param("plan", plan.get("id")).param("ids", c.requestLineIds()).param("org", MfgDb.org())
                         .update();
+                if (claimed != c.requestLineIds().size()) {
+                    throw ApiException.conflict("Some open request lines were consolidated into another plan"
+                            + " meanwhile. Try again.");
+                }
             }
         }
         return plan;
@@ -140,6 +146,18 @@ public class ProductionPlanService {
                 continue;
             }
             tx.executeWithoutResult(s -> {
+                // Integrity fix 2026-11-24 (MC-10; deviation: Nest had no lock, two confirms created an order per line
+                // each): the plan row is locked and the line re-read; a line generated or a plan confirmed /
+                // cancelled by a concurrent call meanwhile is skipped.
+                String status = lockPlan(id);
+                if (!"draft".equals(status)) {
+                    return;
+                }
+                if (db.jdbc().sql("SELECT \"generatedOrderId\" FROM \"ProductionPlanLine\" WHERE id = ? AND"
+                        + " \"organizationId\" = ?").params(str(line, "id"), MfgDb.org()).query(String.class).optional()
+                        .orElse(null) != null) {
+                    return;
+                }
                 Object scheduled = line.get("scheduledDate");
                 Map<String, Object> order = production.createOrder(CreateOrder.fromPlan(str(line, "bomId"),
                         str(line, "productId"), str(line, "variantId"), dec(line, "targetQty"),
@@ -151,6 +169,11 @@ public class ProductionPlanService {
             });
         }
         return tx.execute(s -> {
+            String status = lockPlan(id);
+            if (!"draft".equals(status)) {
+                // MC-10: a concurrent confirm (or cancel) finished first.
+                return getOrThrow(id);
+            }
             // Mark the consolidated requests as planned.
             db.jdbc().sql("UPDATE \"ProductionRequest\" r SET status = 'planned', \"updatedAt\" = " + MfgDb.NOW
                             + " WHERE r.\"organizationId\" = ? AND r.\"deletedAt\" IS NULL"
@@ -196,6 +219,13 @@ public class ProductionPlanService {
     }
 
     // ---- internals
+
+    /** MC-10: lock the plan row FOR UPDATE; its status (404 when gone). */
+    private String lockPlan(String id) {
+        return db.jdbc().sql("SELECT status::text FROM \"ProductionPlan\" WHERE id = ? AND \"organizationId\" = ?"
+                + " FOR UPDATE").params(id, MfgDb.org()).query(String.class).optional()
+                .orElseThrow(() -> ApiException.notFound("Plan not found"));
+    }
 
     private Map<String, Object> getOrThrow(String id) {
         Map<String, Object> plan = db.byId(ProductionPlan.class, id);

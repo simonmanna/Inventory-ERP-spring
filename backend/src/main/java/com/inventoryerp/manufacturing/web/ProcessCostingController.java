@@ -162,14 +162,16 @@ public class ProcessCostingController {
     }
 
     @PostMapping("/periods/{id}/materials")
-    @Idempotent
+    // Integrity fix 2026-11-24 (MC-5): money route, key required.
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.PROCESS_COSTING__MANAGE)
     public Map<String, Object> material(@PathVariable String id, @Valid @RequestBody MaterialRequest dto) {
         return svc.issueMaterial(id, dto.productId(), dto.locationId(), dto.quantity(), dto.description());
     }
 
     @PostMapping("/periods/{id}/costs")
-    @Idempotent
+    // Integrity fix 2026-11-24 (MC-5): money route, key required.
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.PROCESS_COSTING__MANAGE)
     public Map<String, Object> cost(@PathVariable String id, @Valid @RequestBody CostRequest dto) {
         return svc.addCost(id, dto.element(), dto.amount(), dto.creditAccountId(), dto.description(),

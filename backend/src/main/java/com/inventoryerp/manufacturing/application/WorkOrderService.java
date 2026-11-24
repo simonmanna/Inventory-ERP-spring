@@ -111,6 +111,14 @@ public class WorkOrderService {
     @Transactional
     public Map<String, Object> assign(String id, AssignWorkOrder dto) {
         getOrThrow(id);
+        // Integrity fix 2026-11-24 (MC-9; deviation: Nest stored any id, a foreign-key 500 or another org's row):
+        // the resource and work centre must exist in this organization.
+        if (dto.resourceId() != null && !db.exists("Resource", dto.resourceId())) {
+            throw ApiException.notFound("Resource not found");
+        }
+        if (dto.workCenterId() != null && !db.exists("WorkCenter", dto.workCenterId())) {
+            throw ApiException.notFound("Work centre not found");
+        }
         Map<String, Object> data = new LinkedHashMap<>();
         if (dto.resourceId() != null) {
             data.put("resourceId", dto.resourceId());
