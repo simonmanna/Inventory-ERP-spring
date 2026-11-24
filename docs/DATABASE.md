@@ -93,6 +93,10 @@ security (RLS) backs it up.
   API as a non-owner role too, so the whole suite is an RLS acceptance run.
 - Backups run `pg_dump` as the owner (`BackupService` uses the Flyway credentials unless `PGUSER` is set): `pg_dump`
   refuses tables whose RLS would apply to it.
+- **Production start-up check** (finance audit A4, `DatabaseRoleValidator`): under the `prod` profile the API refuses
+  to start when `DB_USER` is a superuser, has `BYPASSRLS`, or owns (or is a member of the role that owns) a table with
+  RLS, since the policies do not apply to it. Set `APP_DB_ROLE_CHECK=warn` to log the findings and start anyway
+  (emergency only).
 
 Existing database (one-time, as the owner), if you prefer to create the role yourself:
 

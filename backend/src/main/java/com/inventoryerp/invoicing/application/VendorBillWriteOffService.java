@@ -58,15 +58,18 @@ public class VendorBillWriteOffService {
     private final AccountDeterminationService determination;
     private final AuditService audit;
     private final DocumentReversalService reversals;
+    private final DocumentFxRates fx;
 
     public VendorBillWriteOffService(JdbcClient jdbc, DocumentBuilderService builder, PostingService posting,
-            AccountDeterminationService determination, AuditService audit, DocumentReversalService reversals) {
+            AccountDeterminationService determination, AuditService audit, DocumentReversalService reversals,
+            DocumentFxRates fx) {
         this.jdbc = jdbc;
         this.builder = builder;
         this.posting = posting;
         this.determination = determination;
         this.audit = audit;
         this.reversals = reversals;
+        this.fx = fx;
     }
 
     /** Write off {@code in.amount} (default: all) of a posted bill's open balance. */
@@ -111,7 +114,11 @@ public class VendorBillWriteOffService {
         String number = (String) bill.get("documentNumber");
         String branchId = (String) bill.get("branchId");
         String value = JsNumbers.dec(amount);
-        Object rate = bill.get("exchangeRate") == null ? null : Money.dec(bill.get("exchangeRate"));
+        // Finance readiness audit B5: a foreign bill is relieved at its carrying rate, the rate it posted at. A bill
+        // storing the default 1 ("not stated", FX-1) posted at the rate table's rate, and that stored 1, passed on,
+        // made the write-off post at today's table rate: the payable's base did not clear once the rate had moved.
+        Object rate = fx.isForeign(bill) ? fx.documentRate(bill)
+                : bill.get("exchangeRate") == null ? null : Money.dec(bill.get("exchangeRate"));
         Map<String, Object> entry = posting.post(new PostingRequest("PURCH", Instant.now(),
                 "Write-off of bill " + number + ": " + reason, (String) bill.get("currencyId"), rate, SOURCE, billId,
                 POSTING_TYPE, SOURCE + ":" + billId + ":" + (seq + 1), branchId, null, null, List.of(

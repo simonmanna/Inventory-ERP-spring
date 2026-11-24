@@ -104,7 +104,7 @@ export const RULES: readonly Rule[] = [
     'cost-alloc-runs', 'beverage-counts', 'pos-reservations',
     // industry and operations modules
     'intercompany', 'warehouse', 'orders', 'driver-app', 'helpdesk', 'crushing', 'quarry', 'precast', 'processing',
-    'construction', 'quality', 'shop-floor', 'planning', 'plm',
+    'construction', 'quality', 'quality-control', 'shop-floor', 'planning', 'plm',
   ]],
 ];
 

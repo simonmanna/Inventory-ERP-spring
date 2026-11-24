@@ -110,7 +110,7 @@ public class FinancialReportsService {
         }
         Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.dateEnd(to, zone()), null,
                 preClosing);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         BigDecimal td = BigDecimal.ZERO;
         BigDecimal tc = BigDecimal.ZERO;
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -235,7 +235,7 @@ public class FinancialReportsService {
         // other income / expense; closing entries are left out so a closed period still reports its result.
         Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.dateEnd(to, zone()), null,
                 true);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal contra = BigDecimal.ZERO;
         BigDecimal cogs = BigDecimal.ZERO;
@@ -353,7 +353,7 @@ public class FinancialReportsService {
 
     private Totals aggregate(Instant asOf, Map<String, List<Map<String, Object>>> rowsBySection) {
         Map<String, BigDecimal[]> grouped = ledger.balances(org(), null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         Totals totals = new Totals();
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
@@ -430,7 +430,7 @@ public class FinancialReportsService {
             ids.add((String) l.get("accountId"));
             byEntry.computeIfAbsent((String) l.get("journalEntryId"), k -> new ArrayList<>()).add(l);
         }
-        Map<String, AccountMeta> meta = accounts.meta(ids);
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(ids);
         Map<String, BigDecimal> sections = new LinkedHashMap<>();
         BigDecimal fxEffect = BigDecimal.ZERO;
         for (List<Map<String, Object>> entry : byEntry.values()) {
