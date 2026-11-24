@@ -178,6 +178,30 @@ Same as Nest, kept on purpose:
   the `LEFT JOIN`, so lines of draft or later entries still count in the sums.
 - `RevaluationService` (FX revaluation) has no route in Nest either; it is module API only.
 
+## Finance readiness audit deviations (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md`.
+
+**A1: period end dates (P1-1).**
+
+- Fiscal period bounds are org-local wall clock (ADR-S070), so a period ends at 23:59:59.999 of its last day.
+- **Requests.** A date-only `endDate` on `POST /fiscal-periods` and `PATCH /fiscal-periods/:id` is stored as
+  23:59:59.999 of that day. Nest stores 00:00, which drops the last day from period control and from the close. A
+  full ISO timestamp is stored as given.
+- **Onboarding and seed.** The onboarding period (`FY<year>`) and the demo seed's periods end at 23:59:59.999 on
+  31 December. `FiscalYearService` already did this; every writer now uses `kernel.common.WallClockDays`.
+- **Existing periods are not migrated.**
+  - Open ones are extended by the reviewed script `docs/audits/2026-11-24-repair-midnight-period-ends.sql` (dry run
+    by default, one `AuditLog` row per change).
+  - Closed or locked ones are fixed one at a time (reopen, fix, close again), each approved by the owner.
+- **Web.** The fiscal period, fiscal year and year-close screens show stored bounds as calendar days (`wallDay` /
+  `wallDate` in `web/src/lib/format.ts`). `new Date(...)` showed an end at `…T23:59:59.999Z` as the next day east of
+  UTC.
+- **Tests.**
+  - `PeriodBoundsIT`.
+  - `AccountingFixtures.periodFor` now looks a period up at 23:59:59 of the day and skips deleted periods.
+  - `monthlyPeriods` asserts the stored end of day.
+
 ## Accounting remediation deviations (ACC-1 … ACC-4, owner-approved 2026-11-03)
 
 Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`. The phase plan is in

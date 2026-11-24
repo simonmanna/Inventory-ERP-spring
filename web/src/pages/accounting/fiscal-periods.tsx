@@ -34,6 +34,7 @@ import {
   useLockPeriod,
   type FiscalPeriod,
 } from '@/features/accounting/api';
+import { wallDay } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 
@@ -187,10 +188,10 @@ function FiscalPeriodsPage() {
                     <TableRow key={p.id} className="hover:bg-muted/20">
                       <TableCell className="text-xs font-medium">{p.name}</TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                        {format(new Date(p.startDate), 'MMM d, yyyy')}
+                        {format(wallDay(p.startDate), 'MMM d, yyyy')}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                        {format(new Date(p.endDate), 'MMM d, yyyy')}
+                        {format(wallDay(p.endDate), 'MMM d, yyyy')}
                       </TableCell>
                       <TableCell>
                         <Badge className={cn('text-[10px] font-semibold px-2 py-0.5', badge.className)}>

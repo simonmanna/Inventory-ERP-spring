@@ -58,10 +58,9 @@ class LedgerIntegrityIT extends AccountingFixtures {
     @DisplayName("clean books pass every check; injected defects fail their own check only, and only for their org")
     void cleanBooksPassAndDefectsAreReported() {
         Books clean = freshBooks();
-        // P1-1 at onboarding: the bootstrap period ends at 00:00 of 31 December.
+        // P1-1 at onboarding, fixed by A1: the bootstrap period ends at 23:59:59.999 of 31 December, not 00:00.
         JsonNode onboarding = check(report(clean), LedgerIntegrityService.PERIOD_COVERAGE);
-        assertThat(onboarding.get("ok").asBoolean()).isFalse();
-        assertThat(kinds(onboarding)).containsExactly("bounds");
+        assertThat(onboarding.get("ok").asBoolean()).as(onboarding.toString()).isTrue();
 
         LocalDate day = LocalDate.now().minusDays(3);
         fiscalYears(clean, day);

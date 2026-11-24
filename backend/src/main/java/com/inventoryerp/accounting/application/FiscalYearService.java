@@ -4,6 +4,7 @@ import com.inventoryerp.accounting.application.AccountResolverService.AccountMet
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.WallClockDays;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -74,7 +75,7 @@ public class FiscalYearService {
 
     /** The last instant of {@code d}: a period or year ends at the end of its last day. */
     private static Timestamp endTs(LocalDate d) {
-        return Timestamp.valueOf(d.atTime(23, 59, 59, 999_000_000));
+        return WallClockDays.endTs(d);
     }
 
     /** First instant of the org-local day {@code d}, for {@code postingDate} bounds (ADR-S070; {@link #ts} in UTC). */

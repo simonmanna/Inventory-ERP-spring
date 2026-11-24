@@ -1,11 +1,11 @@
 package com.inventoryerp.kernel.seed;
 
 import com.inventoryerp.kernel.auth.PasswordService;
+import com.inventoryerp.kernel.common.WallClockDays;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
-import java.sql.Timestamp;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.time.Year;
 import java.util.HashMap;
 import java.util.List;
@@ -219,8 +219,8 @@ public class SeedRunner implements ApplicationRunner {
             jdbc.sql("""
                             INSERT INTO "FiscalPeriod" (id, "organizationId", name, "startDate", "endDate", status, "updatedAt")
                             VALUES (?, ?, ?, ?, ?, 'open', now())""")
-                    .params(uuid(), orgId, "FY" + y, Timestamp.valueOf(LocalDateTime.of(y, 1, 1, 0, 0)),
-                            Timestamp.valueOf(LocalDateTime.of(y, 12, 31, 0, 0)))
+                    .params(uuid(), orgId, "FY" + y, WallClockDays.startTs(LocalDate.of(y, 1, 1)),
+                            WallClockDays.endTs(LocalDate.of(y, 12, 31)))
                     .update();
         }
         Map<String, String> branches = new HashMap<>();
@@ -333,8 +333,8 @@ public class SeedRunner implements ApplicationRunner {
         jdbc.sql("""
                         INSERT INTO "FiscalPeriod" (id, "organizationId", name, "startDate", "endDate", status, "updatedAt")
                         VALUES (?, ?, ?, ?, ?, 'open', now())""")
-                .params(uuid(), orgId, "FY" + year, Timestamp.valueOf(LocalDateTime.of(year, 1, 1, 0, 0)),
-                        Timestamp.valueOf(LocalDateTime.of(year, 12, 31, 0, 0)))
+                .params(uuid(), orgId, "FY" + year, WallClockDays.startTs(LocalDate.of(year, 1, 1)),
+                        WallClockDays.endTs(LocalDate.of(year, 12, 31)))
                 .update();
 
         // --- Branch ---
