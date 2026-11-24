@@ -857,6 +857,6 @@ class MultiStageProductionIT extends MfgTestSupport {
     @Test
     @DisplayName("authorization matrix of the multi-stage routes: 401 without token, 403 without permission")
     void authorization() {
-        assertThat(assertAuthorizationMatrix(MultiStageController.class)).isEqualTo(18);
+        assertThat(assertAuthorizationMatrix(MultiStageController.class)).isEqualTo(19);
     }
 }

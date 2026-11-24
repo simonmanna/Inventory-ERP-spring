@@ -15,6 +15,7 @@ import com.inventoryerp.manufacturing.application.StageCommands.StageConversion;
 import com.inventoryerp.manufacturing.application.StageCommands.StageIssue;
 import com.inventoryerp.manufacturing.application.StageCommands.StageOutput;
 import com.inventoryerp.manufacturing.application.StageCommands.StageQcDecision;
+import com.inventoryerp.manufacturing.application.StageCommands.StageQcScrap;
 import com.inventoryerp.manufacturing.application.StageCommands.StageReversal;
 import com.inventoryerp.manufacturing.application.StageExecutionService;
 import com.inventoryerp.manufacturing.application.StageSetupService;
@@ -169,6 +170,14 @@ public class MultiStageController {
     public Map<String, Object> qcDecision(@PathVariable String id, @Valid @RequestBody StageQcDecision dto) {
         return stages.recordResult(id, new CheckpointDecision("passed".equals(dto.result()), dto.reference(),
                 dto.notes(), dto.postingId()));
+    }
+
+    /** Integrity fix 2026-11-24 (MS-8): scrap a failed QC lot (its held quantity leaves quarantine as waste). */
+    @PostMapping("/stage-postings/{id}/qc-scrap")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.PRODUCTION_ORDER__QC)
+    public Map<String, Object> qcScrap(@PathVariable String id, @Valid @RequestBody StageQcScrap dto) {
+        return stages.qcScrap(id, dto);
     }
 
     @PostMapping("/stage-postings/{id}/reverse")

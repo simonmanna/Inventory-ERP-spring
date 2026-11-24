@@ -254,6 +254,7 @@ public class CostAbsorptionService {
 
     /** Post what is due. Amounts with no open stage left are reported as skipped and stay unabsorbed. */
     @Transactional
+    @SuppressWarnings("unchecked")
     public Map<String, Object> absorb(String orderId) {
         // Integrity fix 2026-11-24: the order lock first (as complete / reverse take it), then the row. With only the
         // row lock a concurrent complete read the old overheadCost and posted output without what this absorbed.
@@ -282,11 +283,10 @@ public class CostAbsorptionService {
                             "All stages are closed"));
                     continue;
                 }
-                stages.conversion(stageId, new StageConversion(amount, kind, str(p.rate(), "creditAccountId"), null,
-                        "Absorbed · " + p.workOrder().get("name")));
-                postingId = db.jdbc().sql("SELECT id FROM \"ProductionStagePosting\" WHERE \"organizationId\" = ?"
-                        + " AND \"orderId\" = ? ORDER BY \"createdAt\" DESC, code DESC LIMIT 1")
-                        .params(MfgDb.org(), orderId).query(String.class).single();
+                // Integrity fix 2026-11-24 (MS-6): the posting conversion created, not the "latest" by time and code.
+                Map<String, Object> res = stages.conversion(stageId, new StageConversion(amount, kind,
+                        str(p.rate(), "creditAccountId"), null, "Absorbed · " + p.workOrder().get("name")));
+                postingId = str((Map<String, Object>) res.get("posting"), "id");
             } else {
                 if (order.get("postedAt") != null) {
                     skipped.add(Obj.of("workOrderId", p.workOrder().get("id"), "kind", kind, "amount", amount, "reason",
