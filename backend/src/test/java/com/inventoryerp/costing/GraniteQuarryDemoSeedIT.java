@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
 import com.inventoryerp.ApiTestSupport;
+import com.inventoryerp.accounting.application.FixedAssetTieOut;
+import com.inventoryerp.kernel.tenancy.TenantContext;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import com.inventoryerp.costing.application.GraniteQuarryDemoSeed;
 import com.inventoryerp.kernel.seed.SeedRunnerAccess;
 import java.math.BigDecimal;
@@ -24,6 +28,9 @@ class GraniteQuarryDemoSeedIT extends ApiTestSupport {
 
     @Autowired
     GraniteQuarryDemoSeed demo;
+
+    @Autowired
+    FixedAssetTieOut tieOut;
 
     private String org;
 
@@ -103,6 +110,15 @@ class GraniteQuarryDemoSeedIT extends ApiTestSupport {
                 + " JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" JOIN \"Account\" a ON a.id = l.\"accountId\""
                 + " WHERE e.\"organizationId\" = ? AND e.status = 'posted' AND a.code ~ '^[4-9][0-9]{3}$'", org);
         money(profit, "16195000");
+
+        // The plant of the opening balance is in the register with the month's depreciation: I10 ties.
+        List<FixedAssetTieOut.Line> plant = TenantContext.run(TenantContext.TenantStore.organization(org),
+                () -> tieOut.measure(LocalDate.now(ZoneOffset.UTC)));
+        assertThat(plant).allSatisfy(l -> assertThat(l.ties()).as(l.toString()).isTrue());
+        assertThat(plant).filteredOn(l -> l.line().equals("COST")).singleElement()
+                .satisfies(l -> assertThat(l.register()).isEqualByComparingTo("300000000"));
+        assertThat(plant).filteredOn(l -> l.line().equals("ACC")).singleElement()
+                .satisfies(l -> assertThat(l.register()).isEqualByComparingTo("1080000"));
 
         // Every entry balances.
         List<Map<String, Object>> unbalanced = jdbc.sql("SELECT e.id FROM \"JournalEntry\" e JOIN \"JournalLine\" l ON"
