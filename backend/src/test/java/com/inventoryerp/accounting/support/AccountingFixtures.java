@@ -175,11 +175,14 @@ public abstract class AccountingFixtures extends ApiTestSupport {
         return call(method, path, body, h);
     }
 
-    /** The fiscal period that contains {@code date}. */
+    /**
+     * The live fiscal period that contains the whole of {@code date}: looked up at 23:59:59, so a period whose stored end
+     * drops its last day (finance audit P1-1) is not found for that day.
+     */
     protected String periodFor(String org, String date) {
-        return jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND \"startDate\" <= ?::timestamp"
-                + " AND \"endDate\" >= ?::timestamp ORDER BY \"startDate\" DESC LIMIT 1")
-                .params(org, date + " 12:00:00", date + " 12:00:00").query(String.class).single();
+        return jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
+                + " AND \"startDate\" <= ?::timestamp AND \"endDate\" >= ?::timestamp ORDER BY \"startDate\" DESC LIMIT 1")
+                .params(org, date + " 23:59:59", date + " 23:59:59").query(String.class).single();
     }
 
     /**
@@ -211,6 +214,9 @@ public abstract class AccountingFixtures extends ApiTestSupport {
             LocalDate end = start.plusMonths(1).minusDays(1);
             ids.add(okAs(b, 201, "POST", "/fiscal-periods", Map.of("name", "P " + start, "startDate", start.toString(),
                     "endDate", end.toString())).get("id").asString());
+            // A date-only end is stored as the end of that day (finance audit P1-1).
+            assertThat(jdbc.sql("SELECT to_char(\"endDate\", 'YYYY-MM-DD HH24:MI:SS.MS') FROM \"FiscalPeriod\" WHERE id = ?")
+                    .param(ids.getLast()).query(String.class).single()).isEqualTo(end + " 23:59:59.999");
         }
         return ids;
     }

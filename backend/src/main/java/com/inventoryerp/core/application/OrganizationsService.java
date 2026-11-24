@@ -3,6 +3,7 @@ package com.inventoryerp.core.application;
 import com.inventoryerp.kernel.auth.OneTimeTokenService;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.common.InventoryPostingRuleDefaults;
+import com.inventoryerp.kernel.common.WallClockDays;
 import com.inventoryerp.kernel.notifications.NotificationsService;
 import com.inventoryerp.kernel.notifications.NotificationsService.SendInput;
 import com.inventoryerp.kernel.security.Permissions;
@@ -122,8 +123,8 @@ public class OrganizationsService {
             jdbc.sql("INSERT INTO \"FiscalPeriod\" (id, \"organizationId\", name, \"startDate\", \"endDate\", status,"
                             + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, 'open', now())")
                     .params(UUID.randomUUID().toString(), orgId, "FY" + year,
-                            Timestamp.valueOf(LocalDate.of(year, 1, 1).atStartOfDay()),
-                            Timestamp.valueOf(LocalDate.of(year, 12, 31).atStartOfDay()))
+                            WallClockDays.startTs(LocalDate.of(year, 1, 1)),
+                            WallClockDays.endTs(LocalDate.of(year, 12, 31)))
                     .update();
             return new Created(orgId, p.organizationCode(), p.organizationName(), userId, email);
         });
