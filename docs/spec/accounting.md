@@ -947,3 +947,25 @@ each organisation with journal entries.
 `docs/audits/2026-11-23-accounting-data-checks.sql`.
 
 **Tests:** `LedgerIntegrityIT`.
+
+## Finance readiness audit B6: missing tests (owner-approved 2026-11-24)
+
+- **Automatic ledger check.** `LedgerInvariantsCheck` is registered on `ApiTestSupport`. After every integration test class under `com.inventoryerp.accounting`, it checks each journal entry the class created, in every organization:
+  - entries are balanced in the base currency;
+  - single-currency entries are also balanced in that currency;
+  - every entry has at least two lines;
+  - lines and accounts belong to the entry's organization;
+  - each reversal points at an original that is reversed by it, and mirrors it account by account.
+
+  It also runs the I10 (fixed assets) and I12 (cash drawers) tie-outs from `LedgerIntegrityService`, but only in the organizations the class created; the shared DEMO history is excluded. A class that corrupts the ledger on purpose opts out with `@LedgerInvariantsCheck.Skip("reason")`. Two classes do: `LedgerIntegrityIT` and `Acc0ControlsIT`.
+- **`FinanceGapsB6IT`** covers:
+  - Cross-tenant refusals: journal read and reverse, period close and reopen, treasury transfer, withdraw, tax-settlement reverse and session force-close. Nothing is written to the other organization's books.
+  - Replay with the same key: a journal reversal and a period close.
+  - Concurrency:
+    - parallel transfers never overdraw the source account;
+    - two parallel posts of one draft post it once;
+    - parallel opens of one register open one session.
+- **Still not covered:**
+  - a period close racing a posting into the same period;
+  - concurrent tax settlements, revaluations and allocation runs;
+  - replay of the recurring run, deferral release and bank import routes.

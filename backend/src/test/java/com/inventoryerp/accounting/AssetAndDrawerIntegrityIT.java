@@ -24,6 +24,7 @@ import tools.jackson.databind.JsonNode;
  * Finance readiness audit, gate G1: integrity checks I10 (fixed-asset register against its accounts) and I12 (each
  * closed cash session's own journals against its count), each on fresh books: clean first, then broken.
  */
+@com.inventoryerp.accounting.support.LedgerInvariantsCheck.Skip("creates register / GL differences on purpose to prove I10 and I12 find them")
 class AssetAndDrawerIntegrityIT extends AccountingFixtures {
 
     @Autowired
