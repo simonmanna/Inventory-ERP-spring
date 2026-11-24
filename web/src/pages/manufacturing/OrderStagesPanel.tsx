@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Coins, GitFork, Layers, PackageMinus, PackagePlus, ShieldAlert, ShieldCheck, Trash2, Undo2, XCircle } from 'lucide-react';
+import { CheckCircle2, Coins, GitFork, Layers, PackageMinus, PackagePlus, ReceiptText, ShieldAlert, ShieldCheck, Trash2, Undo2, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import { EmptyState, MfgCard, MfgStatus, ProgressBar, statusMeta, TONE_BORDER, TONE_FILL, TonePill } from './mfg-ui';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
@@ -38,12 +39,6 @@ const errMsg = (e: any) => {
   return Array.isArray(m) ? m.join(', ') : m;
 };
 
-const STAGE_VARIANT: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  pending: 'secondary',
-  in_progress: 'default',
-  completed: 'outline',
-  cancelled: 'destructive',
-};
 
 type Dlg = { kind: 'issue' | 'output' | 'conversion'; stage: OrderStage } | null;
 
@@ -70,7 +65,7 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
     return (id?: string | null) => (id ? m.get(id) ?? id.slice(0, 8) : '—');
   }, [products]);
 
-  if (isLoading) return <Card><CardContent className="p-4 text-sm text-muted-foreground">{tx('Loading stages…')}</CardContent></Card>;
+  if (isLoading) return <Card><CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground"><Layers className="h-4 w-4 animate-pulse" aria-hidden />{tx('Loading stages…')}</CardContent></Card>;
   if (isError || !staged) return <Card><CardContent className="p-4 text-sm text-destructive">{tx('Could not load the stages of this order.')}</CardContent></Card>;
 
   const canCreate = hasPermission(PERMISSIONS.productionOrder.create);
@@ -96,10 +91,10 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
-          <CardTitle className="flex items-center gap-2"><Layers className="h-4 w-4" /> {tx('Stages')}</CardTitle>
-          <div className="flex flex-wrap gap-2">
+      <MfgCard icon={Layers} title={tx('Stages')}
+        description={staged.multiStage ? <>{tx('Work in progress')}: <span className="font-semibold text-foreground">{money(staged.wipValue)}</span> · {tx('{{done}} of {{total}} stages complete', { done: staged.stages.filter((s) => s.status === 'completed').length, total: staged.stages.length })}</> : undefined}
+        actions={
+          <>
             {!staged.multiStage && notStarted && canCreate && (
               <Button size="sm" variant="outline" disabled={initialize.isPending}
                 onClick={() => run(initialize.mutateAsync(orderId), tx('Order now runs in stages.'))}>
@@ -118,186 +113,193 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
                 <Undo2 className="mr-1 h-3 w-3" /> {tx('Reverse all stages')}
               </Button>
             )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {!staged.multiStage ? (
-            <p className="text-sm text-muted-foreground">
-              {tx('This order runs as one step. Configure stages on the routing (Recipes → stage set-up) and use "Run in stages" before it starts.')}
-            </p>
-          ) : (
-            <>
-              <p className="mb-3 text-sm text-muted-foreground">{tx('Work in progress')}: <span className="font-medium text-foreground">{money(staged.wipValue)}</span></p>
-              <ol className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {staged.stages.map((s) => (
-                  <li key={s.id} className="rounded-lg border p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-xs text-muted-foreground">{tx('Stage')} {s.sequence}{s.isLast ? ` · ${tx('final')}` : ''}</p>
-                        <p className="font-medium">{s.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {s.outputProductId ? productName(s.outputProductId) : tx('pass-through')} · {s.issueMode === 'manual' ? tx('manual issue') : tx('backflush')}
-                        </p>
+          </>
+        }>
+        {!staged.multiStage ? (
+          <EmptyState compact icon={Layers} title={tx('Single-step order')}
+            description={tx('This order runs as one step. Configure stages on the routing (Recipes → stage set-up) and use "Run in stages" before it starts.')} />
+        ) : (
+          <ol className="relative flex flex-col gap-4 lg:flex-row lg:gap-0 lg:overflow-x-auto lg:pb-2">
+            {staged.stages.map((s, i) => {
+              const meta = statusMeta(s.status, 'stage');
+              const done = s.status === 'completed';
+              const processed = Number(s.qtyGood) + Number(s.qtyScrap);
+              const yieldPct = processed > 0 ? (Number(s.qtyGood) / processed) * 100 : null;
+              const progress = Number(s.plannedOutputQty) > 0 ? (Number(s.qtyGood) / Number(s.plannedOutputQty)) * 100 : null;
+              const last = i === staged.stages.length - 1;
+              return (
+                <li key={s.id} className="relative flex min-w-0 lg:w-80 lg:shrink-0">
+                  {!last && (
+                    <>
+                      <span className={cn('absolute left-5 top-12 -bottom-4 w-0.5 lg:hidden', done ? TONE_FILL.success : 'bg-border')} aria-hidden />
+                      <span className={cn('absolute right-0 top-5 hidden h-0.5 w-6 lg:block', done ? TONE_FILL.success : 'bg-border')} aria-hidden />
+                    </>
+                  )}
+                  <div className={cn('relative z-[1] flex w-full min-w-0 gap-3 lg:mr-6 lg:flex-col')}>
+                    <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-full text-sm font-bold ring-4 ring-card', done ? 'bg-emerald-500 text-white' : s.status === 'in_progress' ? 'bg-violet-500 text-white' : s.status === 'cancelled' ? 'bg-rose-500 text-white' : 'bg-muted text-muted-foreground')}>
+                      {done ? <CheckCircle2 className="h-5 w-5" aria-label={meta.label()} /> : s.sequence}
+                    </span>
+                    <div className={cn('min-w-0 flex-1 rounded-xl border bg-card p-3 shadow-sm', s.status === 'in_progress' && 'border-violet-400/60 ring-1 ring-violet-400/30', s.blockedBy && 'border-rose-400/60')}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{tx('Stage')} {s.sequence}{s.isLast ? ` · ${tx('final')}` : ''}</p>
+                          <p className="truncate font-semibold">{s.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {s.outputProductId ? productName(s.outputProductId) : tx('pass-through')} · {s.issueMode === 'manual' ? tx('manual issue') : tx('backflush')}
+                          </p>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <MfgStatus status={s.status} kind="stage" size="xs" />
+                          {s.qcGate && <MfgStatus status={s.qcStatus} kind="qc" size="xs" label={`${tx('QC')} · ${statusMeta(s.qcStatus, 'qc').label()}`} />}
+                        </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1">
-                        <Badge variant={STAGE_VARIANT[s.status]}>{s.status.replace('_', ' ')}</Badge>
-                        {s.qcGate && (
-                          <Badge variant={s.qcStatus === 'passed' ? 'outline' : s.qcStatus === 'failed' ? 'destructive' : 'secondary'}>
-                            {tx('QC')} {s.qcStatus.replace('_', ' ')}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    <dl className="mt-2 grid grid-cols-3 gap-1 text-xs">
-                      <div><dt className="text-muted-foreground">{tx('Planned')}</dt><dd>{qty(s.plannedOutputQty)}</dd></div>
-                      <div><dt className="text-muted-foreground">{tx('Good')}</dt><dd>{qty(s.qtyGood)}</dd></div>
-                      <div><dt className="text-muted-foreground">{tx('Scrap')}</dt><dd>{qty(s.qtyScrap)}</dd></div>
-                      <div><dt className="text-muted-foreground">{tx('Input cost')}</dt><dd>{money(Number(s.materialCost) + Number(s.transferredInCost) + Number(s.conversionCost))}</dd></div>
-                      <div><dt className="text-muted-foreground">{tx('Output cost')}</dt><dd>{money(s.outputCost)}</dd></div>
-                      <div><dt className="text-muted-foreground">{tx('WIP')}</dt><dd className="font-medium">{money(s.wipValue)}</dd></div>
-                    </dl>
-                    {Number(s.qtyQuarantined) > 0 && (
-                      <p className="mt-2 text-xs text-amber-600">{tx('In QC quarantine')}: {qty(s.qtyQuarantined)}</p>
-                    )}
-                    {!s.isLast && s.outputProductId && Number(s.intermediateAvailable) > 0 && (
-                      <p className="mt-1 text-xs text-muted-foreground">{tx('Available to next stage')}: {qty(s.intermediateAvailable)}</p>
-                    )}
-                    {s.blockedBy && (
-                      <p className="mt-2 flex items-start gap-1 text-xs text-destructive"><ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" /> {s.blockedBy}</p>
-                    )}
-                    {open && s.status !== 'completed' && !s.blockedBy && (
-                      <div className="mt-3 flex flex-wrap gap-1">
-                        {canIssue && <Button size="sm" variant="outline" onClick={() => setDlg({ kind: 'issue', stage: s })}><PackageMinus className="mr-1 h-3 w-3" /> {tx('Issue')}</Button>}
-                        {canOutput && <Button size="sm" onClick={() => setDlg({ kind: 'output', stage: s })}><PackagePlus className="mr-1 h-3 w-3" /> {tx('Output')}</Button>}
-                        {canOutput && <Button size="sm" variant="ghost" onClick={() => setDlg({ kind: 'conversion', stage: s })}><Coins className="mr-1 h-3 w-3" /> {tx('Cost')}</Button>}
-                      </div>
-                    )}
-                    {s.qcGate && (s.qcLots?.length ?? 0) > 0 && (
-                      <ul className="mt-2 space-y-1 border-t pt-2">
-                        {(s.qcLots ?? []).map((lot) => {
-                          const held = Number(lot.qtyHeld) > 0;
-                          const decidable = canQc && held && ['in_progress', 'qc_hold', 'confirmed'].includes(staged.status);
-                          return (
-                            <li key={lot.postingId} className="flex flex-wrap items-center justify-between gap-1 text-xs">
-                              <span className="flex flex-wrap items-center gap-1">
-                                <span className="font-mono">{lot.code}</span>
-                                {lot.batchNumber && <span className="text-muted-foreground">· {lot.batchNumber}</span>}
-                                <Badge variant={lot.qcStatus === 'passed' ? 'outline' : lot.qcStatus === 'failed' ? 'destructive' : 'secondary'}>
-                                  {lot.qcStatus}
-                                </Badge>
-                                <span className="text-muted-foreground">{tx('Held')}: {qty(lot.qtyHeld)}</span>
-                                {lot.qcStatus === 'curing' && lot.qcPassDueAt && (
-                                  <span className="text-muted-foreground">· {tx('due')} {new Date(lot.qcPassDueAt).toLocaleString()}</span>
+                      <ProgressBar className="mt-2" value={progress} showLabel tone={done ? 'success' : 'progress'} ariaLabel={tx('Progress')} />
+                      <dl className="mt-2 grid grid-cols-3 gap-x-2 gap-y-1.5 text-xs">
+                        <div><dt className="text-muted-foreground">{tx('Planned')}</dt><dd className="font-medium tabular-nums">{qty(s.plannedOutputQty)}</dd></div>
+                        <div><dt className="text-muted-foreground">{tx('Good')}</dt><dd className="font-medium tabular-nums text-emerald-700 dark:text-emerald-400">{qty(s.qtyGood)}</dd></div>
+                        <div><dt className="text-muted-foreground">{tx('Scrap')}</dt><dd className={cn('font-medium tabular-nums', Number(s.qtyScrap) > 0 && 'text-amber-700 dark:text-amber-400')}>{qty(s.qtyScrap)}</dd></div>
+                        <div><dt className="text-muted-foreground">{tx('Input cost')}</dt><dd className="tabular-nums">{money(Number(s.materialCost) + Number(s.transferredInCost) + Number(s.conversionCost))}</dd></div>
+                        <div><dt className="text-muted-foreground">{tx('Output cost')}</dt><dd className="tabular-nums">{money(s.outputCost)}</dd></div>
+                        <div><dt className="text-muted-foreground">{tx('WIP')}</dt><dd className="font-semibold tabular-nums">{money(s.wipValue)}</dd></div>
+                        <div><dt className="text-muted-foreground">{tx('Yield')}</dt><dd className="tabular-nums">{yieldPct == null ? '—' : `${yieldPct.toFixed(1)}%`}</dd></div>
+                      </dl>
+                      {Number(s.qtyQuarantined) > 0 && (
+                        <p className="mt-2 flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"><ShieldAlert className="h-3 w-3" aria-hidden />{tx('In QC quarantine')}: {qty(s.qtyQuarantined)}</p>
+                      )}
+                      {!s.isLast && s.outputProductId && Number(s.intermediateAvailable) > 0 && (
+                        <p className="mt-1 text-xs text-muted-foreground">{tx('Available to next stage')}: {qty(s.intermediateAvailable)}</p>
+                      )}
+                      {s.blockedBy && (
+                        <p className="mt-2 flex items-start gap-1 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700 dark:bg-rose-500/15 dark:text-rose-300"><ShieldAlert className="mt-0.5 h-3 w-3 shrink-0" aria-hidden /> {s.blockedBy}</p>
+                      )}
+                      {open && s.status !== 'completed' && !s.blockedBy && (
+                        <div className="mt-3 flex flex-wrap gap-1">
+                          {canIssue && <Button size="sm" variant="outline" onClick={() => setDlg({ kind: 'issue', stage: s })}><PackageMinus className="mr-1 h-3 w-3" /> {tx('Issue')}</Button>}
+                          {canOutput && <Button size="sm" onClick={() => setDlg({ kind: 'output', stage: s })}><PackagePlus className="mr-1 h-3 w-3" /> {tx('Output')}</Button>}
+                          {canOutput && <Button size="sm" variant="ghost" onClick={() => setDlg({ kind: 'conversion', stage: s })}><Coins className="mr-1 h-3 w-3" /> {tx('Cost')}</Button>}
+                        </div>
+                      )}
+                      {s.qcGate && (s.qcLots?.length ?? 0) > 0 && (
+                        <ul className="mt-3 space-y-1.5 border-t pt-2">
+                          {(s.qcLots ?? []).map((lot) => {
+                            const held = Number(lot.qtyHeld) > 0;
+                            const decidable = canQc && held && ['in_progress', 'qc_hold', 'confirmed'].includes(staged.status);
+                            const lotTone = statusMeta(lot.qcStatus, 'qc').tone;
+                            return (
+                              <li key={lot.postingId} className={cn('rounded-lg border-l-4 bg-muted/40 p-2 text-xs', TONE_BORDER[lotTone])}>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className="font-mono font-semibold">{lot.code}</span>
+                                  {lot.batchNumber && <span className="text-muted-foreground">· {lot.batchNumber}</span>}
+                                  <MfgStatus status={lot.qcStatus} kind="qc" size="xs" />
+                                  <span className="text-muted-foreground">{tx('Held')}: <b className="tabular-nums text-foreground">{qty(lot.qtyHeld)}</b></span>
+                                  {lot.qcStatus === 'curing' && lot.qcPassDueAt && (
+                                    <span className="text-muted-foreground">· {tx('due')} {new Date(lot.qcPassDueAt).toLocaleString()}</span>
+                                  )}
+                                </div>
+                                {decidable && (
+                                  <div className="mt-1.5 flex flex-wrap gap-1">
+                                    <Button size="sm" variant="outline" className="h-7 border-emerald-500/50 px-2 text-emerald-700 hover:bg-emerald-50 dark:text-emerald-300 dark:hover:bg-emerald-500/10" disabled={qc.isPending}
+                                      onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'passed', postingId: lot.postingId } }), tx('QC passed — lot released.'))}>
+                                      <ShieldCheck className="mr-1 h-3 w-3" /> {tx('Pass')}
+                                    </Button>
+                                    {lot.qcStatus !== 'failed' && (
+                                      <Button size="sm" variant="outline" className="h-7 border-rose-500/50 px-2 text-rose-700 hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/10" disabled={qc.isPending}
+                                        onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'failed', postingId: lot.postingId } }), tx('QC failed — lot stays in quarantine.'))}>
+                                        <XCircle className="mr-1 h-3 w-3" /> {tx('Fail')}
+                                      </Button>
+                                    )}
+                                    {lot.qcStatus === 'failed' && (
+                                      <Button size="sm" variant="destructive" className="h-7 px-2" disabled={scrapLot.isPending}
+                                        onClick={() => {
+                                          const reason = window.prompt(tx('Why is this lot scrapped?'));
+                                          if (!reason || !reason.trim()) return;
+                                          run(scrapLot.mutateAsync({ postingId: lot.postingId, body: { reason: reason.trim() } }), tx('Lot scrapped from quarantine.'));
+                                        }}>
+                                        <Trash2 className="mr-1 h-3 w-3" /> {tx('Scrap')}
+                                      </Button>
+                                    )}
+                                  </div>
                                 )}
-                              </span>
-                              {decidable && (
-                                <span className="flex gap-1">
-                                  <Button size="sm" variant="outline" className="h-6 px-2" disabled={qc.isPending}
-                                    onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'passed', postingId: lot.postingId } }), tx('QC passed — lot released.'))}>
-                                    <ShieldCheck className="mr-1 h-3 w-3" /> {tx('Pass')}
-                                  </Button>
-                                  {lot.qcStatus !== 'failed' && (
-                                    <Button size="sm" variant="ghost" className="h-6 px-2" disabled={qc.isPending}
-                                      onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'failed', postingId: lot.postingId } }), tx('QC failed — lot stays in quarantine.'))}>
-                                      <XCircle className="mr-1 h-3 w-3" /> {tx('Fail')}
-                                    </Button>
-                                  )}
-                                  {lot.qcStatus === 'failed' && (
-                                    <Button size="sm" variant="destructive" className="h-6 px-2" disabled={scrapLot.isPending}
-                                      onClick={() => {
-                                        const reason = window.prompt(tx('Why is this lot scrapped?'));
-                                        if (!reason || !reason.trim()) return;
-                                        run(scrapLot.mutateAsync({ postingId: lot.postingId, body: { reason: reason.trim() } }), tx('Lot scrapped from quarantine.'));
-                                      }}>
-                                      <Trash2 className="mr-1 h-3 w-3" /> {tx('Scrap')}
-                                    </Button>
-                                  )}
-                                </span>
-                              )}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                    {s.qcGate && canQc && ['pending', 'failed'].includes(s.qcStatus) && Number(s.qtyQuarantined) > 0 && ['in_progress', 'qc_hold', 'confirmed'].includes(staged.status) && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        <Button size="sm" variant="outline" disabled={qc.isPending}
-                          onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'passed' } }), tx('QC passed — output released.'))}>
-                          <ShieldCheck className="mr-1 h-3 w-3" /> {tx('Pass QC')}
-                        </Button>
-                        <Button size="sm" variant="ghost" disabled={qc.isPending}
-                          onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'failed' } }), tx('QC failed — output stays in quarantine.'))}>
-                          <XCircle className="mr-1 h-3 w-3" /> {tx('Fail QC')}
-                        </Button>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            </>
-          )}
-        </CardContent>
-      </Card>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                      {s.qcGate && canQc && ['pending', 'failed'].includes(s.qcStatus) && Number(s.qtyQuarantined) > 0 && ['in_progress', 'qc_hold', 'confirmed'].includes(staged.status) && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          <Button size="sm" variant="outline" disabled={qc.isPending}
+                            onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'passed' } }), tx('QC passed — output released.'))}>
+                            <ShieldCheck className="mr-1 h-3 w-3" /> {tx('Pass QC')}
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={qc.isPending}
+                            onClick={() => run(qc.mutateAsync({ stageId: s.id, body: { result: 'failed' } }), tx('QC failed — output stays in quarantine.'))}>
+                            <XCircle className="mr-1 h-3 w-3" /> {tx('Fail QC')}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </MfgCard>
 
       {staged.multiStage && (
-        <Card>
-          <CardHeader><CardTitle>{tx('Stage postings')}</CardTitle></CardHeader>
-          <CardContent className="overflow-x-auto">
-            {!staged.stages.some((s) => s.postings.length) ? (
-              <p className="text-sm text-muted-foreground">{tx('Nothing posted yet.')}</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{tx('Code')}</TableHead>
-                    <TableHead>{tx('Kind')}</TableHead>
-                    <TableHead className="text-right">{tx('Good')}</TableHead>
-                    <TableHead className="text-right">{tx('Scrap')}</TableHead>
-                    <TableHead className="text-right">{tx('Value')}</TableHead>
-                    <TableHead>{tx('Status')}</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+        <MfgCard icon={ReceiptText} title={tx('Stage postings')}>
+          {!staged.stages.some((s) => s.postings.length) ? (
+            <EmptyState compact icon={ReceiptText} title={tx('Nothing posted yet.')} />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th className="pb-2 pr-3 font-semibold">{tx('Code')}</th>
+                    <th className="px-3 pb-2 font-semibold">{tx('Kind')}</th>
+                    <th className="px-3 pb-2 text-right font-semibold">{tx('Good')}</th>
+                    <th className="px-3 pb-2 text-right font-semibold">{tx('Scrap')}</th>
+                    <th className="px-3 pb-2 text-right font-semibold">{tx('Value')}</th>
+                    <th className="px-3 pb-2 font-semibold">{tx('Status')}</th>
+                    <th className="pb-2" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
                   {staged.stages.flatMap((s) => s.postings).map((p) => {
                     const value = p.lines.filter((l) => ['material', 'intermediate_in', 'conversion', 'transfer_in'].includes(l.role))
                       .reduce((a, l) => a + Number(l.value), 0);
                     return (
-                      <TableRow key={p.id}>
-                        <TableCell className="font-mono text-xs">{p.code}</TableCell>
-                        <TableCell><Badge variant="outline">{p.kind.replace('_', ' ')}{p.completesStage ? ` · ${tx('completes')}` : ''}</Badge></TableCell>
-                        <TableCell className="text-right">{qty(p.qtyGood)}</TableCell>
-                        <TableCell className="text-right">{qty(p.qtyScrap)}</TableCell>
-                        <TableCell className="text-right">{money(value)}</TableCell>
-                        <TableCell>{p.reversedAt ? <Badge variant="destructive">{tx('reversed')}</Badge> : <CheckCircle2 className="h-4 w-4 text-green-600" />}</TableCell>
-                        <TableCell className="text-right">
+                      <tr key={p.id} className={cn(p.reversedAt && 'text-muted-foreground line-through decoration-muted-foreground/50')}>
+                        <td className="py-2 pr-3 font-mono text-xs">{p.code}</td>
+                        <td className="px-3 py-2"><TonePill tone={p.kind === 'output' ? 'info' : p.kind === 'qc_release' ? 'success' : p.kind === 'qc_scrap' ? 'danger' : 'neutral'}>{p.kind.replace('_', ' ')}{p.completesStage ? ` · ${tx('completes')}` : ''}</TonePill></td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qty(p.qtyGood)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{qty(p.qtyScrap)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{money(value)}</td>
+                        <td className="px-3 py-2">{p.reversedAt ? <MfgStatus status="cancelled" label={tx('reversed')} size="xs" /> : <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"><CheckCircle2 className="h-4 w-4" aria-hidden />{tx('Posted')}</span>}</td>
+                        <td className="py-2 text-right">
                           {canReverse && latest?.id === p.id && (
                             <Button size="sm" variant="ghost" disabled={reversePosting.isPending}
                               onClick={() => run(reversePosting.mutateAsync({ postingId: p.id, reason: 'reversed from UI' }), tx('Posting reversed.'))}>
                               <Undo2 className="mr-1 h-3 w-3" /> {tx('Reverse')}
                             </Button>
                           )}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     );
                   })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </MfgCard>
       )}
 
       {tree && tree.children.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><GitFork className="h-4 w-4" /> {tx('Child orders')}</CardTitle></CardHeader>
-          <CardContent>
-            <p className="mb-2 text-sm text-muted-foreground">
-              {tx('Rolled-up status')}: <Badge variant="outline">{tree.rolledStatus.replace('_', ' ')}</Badge> · {Number(tree.progressPct).toFixed(0)}%
-            </p>
-            <TreeList nodes={tree.children} />
-          </CardContent>
-        </Card>
+        <MfgCard icon={GitFork} title={tx('Child orders')}
+          description={<>{tx('Rolled-up status')}: {tree.rolledStatus.replace('_', ' ')} · {Number(tree.progressPct).toFixed(0)}%</>}>
+          <ProgressBar className="mb-3" value={Number(tree.progressPct)} showLabel ariaLabel={tx('Progress')} />
+          <TreeList nodes={tree.children} />
+        </MfgCard>
       )}
 
       {dlg && <StageDialog dlg={dlg} order={staged} onClose={() => setDlg(null)} productName={productName} />}
@@ -307,17 +309,17 @@ export function OrderStagesPanel({ orderId }: { orderId: string }) {
 
 function TreeList({ nodes }: { nodes: OrderTreeNode[] }) {
   return (
-    <ul className="space-y-1 border-l pl-3">
+    <ul className="space-y-1.5 border-l-2 border-dashed pl-4">
       {nodes.map((n) => (
-        <li key={n.id}>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Link className="font-mono text-xs underline" to={`/manufacturing/orders/${n.id}`}>{n.orderCode}</Link>
-            <span>{n.productName}</span>
+        <li key={n.id} className="relative before:absolute before:-left-4 before:top-4 before:h-0.5 before:w-3 before:bg-border">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm">
+            <Link className="font-mono text-xs font-semibold text-primary hover:underline" to={`/manufacturing/orders/${n.id}`}>{n.orderCode}</Link>
+            <span className="min-w-0 truncate">{n.productName}</span>
             <span className="text-muted-foreground">× {qty(n.peg?.quantity ?? n.plannedQty)}</span>
-            <Badge variant="outline">{n.rolledStatus.replace('_', ' ')}</Badge>
-            <span className="text-xs text-muted-foreground">{Number(n.progressPct).toFixed(0)}%</span>
+            <MfgStatus status={n.rolledStatus} kind="order" size="xs" />
+            <ProgressBar className="w-28" value={Number(n.progressPct)} showLabel size="xs" ariaLabel={tx('Progress')} />
           </div>
-          {n.children.length > 0 && <TreeList nodes={n.children} />}
+          {n.children.length > 0 && <div className="mt-1.5"><TreeList nodes={n.children} /></div>}
         </li>
       ))}
     </ul>
