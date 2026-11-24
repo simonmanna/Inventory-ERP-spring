@@ -11,6 +11,8 @@ import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.InvoiceService.InvoiceInput;
 import com.inventoryerp.invoicing.application.VendorBillService.BillInput;
+import com.inventoryerp.kernel.audit.AuditService;
+import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -75,10 +77,12 @@ public class OpeningBalanceService {
     private final VendorBillService bills;
     private final InventoryValuationService valuation;
     private final CurrencyService currency;
+    private final AuditService audit;
 
     public OpeningBalanceService(JdbcClient jdbc, PostingService posting, AccountDeterminationService determination,
             AccountResolverService accounts, InvoiceService invoices, VendorBillService bills,
-            InventoryValuationService valuation, CurrencyService currency) {
+            InventoryValuationService valuation, CurrencyService currency, AuditService audit) {
+        this.audit = audit;
         this.valuation = valuation;
         this.currency = currency;
         this.jdbc = jdbc;
@@ -229,6 +233,70 @@ public class OpeningBalanceService {
                 "journalEntry", entry == null ? null : Obj.of("id", entry.get("id"), "entryNumber",
                         entry.get("entryNumber")),
                 "invoices", invoiceOut, "bills", billOut);
+    }
+
+    /**
+     * Reverses a whole opening-balance batch (finance readiness audit B2), all or nothing: each customer invoice is
+     * cancelled and each supplier bill voided through its own workflow (approval gate, separation of duties, refused
+     * while anything is settled against it), then the batch's GL entry is reversed by the posting engine, on
+     * {@code date} when given, else on the original date (refused when that period is closed or the books are locked).
+     * Documents already cancelled one by one are skipped; a batch with nothing left to reverse is refused.
+     */
+    @Transactional
+    public Map<String, Object> reverse(String batchId, String reasonIn, String dateIn) {
+        String reason = reasonIn == null ? "" : reasonIn.trim();
+        if (reason.isEmpty()) {
+            throw ApiException.badRequest("A reason is required to reverse an opening-balance batch");
+        }
+        Instant date = null;
+        if (dateIn != null && !dateIn.isBlank()) {
+            try {
+                date = EntityPatch.toInstant(dateIn);
+            } catch (RuntimeException e) {
+                throw ApiException.badRequest("date must be a valid ISO 8601 date string");
+            }
+        }
+        String org = org();
+        // row locks: a second reversal of the same batch waits here, then finds nothing left to reverse
+        List<Map<String, Object>> entries = SqlRows.list(jdbc.sql("SELECT id, \"entryNumber\", status::text AS status"
+                + " FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ?"
+                + " ORDER BY \"createdAt\", id FOR UPDATE").params(org, SOURCE, batchId));
+        List<Map<String, Object>> docs = SqlRows.list(jdbc.sql("SELECT id, \"documentNumber\", \"documentType\"::text"
+                + " AS \"documentType\", status::text AS status FROM \"Document\" WHERE \"organizationId\" = ? AND"
+                + " \"sourceType\" = ? AND \"sourceId\" = ? ORDER BY \"createdAt\", id FOR UPDATE")
+                .params(org, SOURCE, batchId));
+        if (entries.isEmpty() && docs.isEmpty()) {
+            throw ApiException.notFound("Opening-balance batch not found");
+        }
+        List<Map<String, Object>> openEntries = entries.stream().filter(e -> "posted".equals(e.get("status"))).toList();
+        List<Map<String, Object>> openDocs = docs.stream().filter(d -> !"cancelled".equals(d.get("status"))).toList();
+        if (openEntries.isEmpty() && openDocs.isEmpty()) {
+            throw ApiException.badRequest("Opening-balance batch " + batchId + " is already reversed");
+        }
+        List<Map<String, Object>> cancelled = new ArrayList<>();
+        for (Map<String, Object> d : openDocs) {
+            String id = (String) d.get("id");
+            String type = (String) d.get("documentType");
+            if ("sales_invoice".equals(type)) {
+                invoices.cancel(id, reason);
+            } else if ("vendor_bill".equals(type)) {
+                bills.cancel(id, reason);
+            } else {
+                throw ApiException.badRequest("Opening-balance document " + d.get("documentNumber") + " is a " + type
+                        + " and cannot be reversed with its batch");
+            }
+            cancelled.add(Obj.of("id", id, "documentNumber", d.get("documentNumber"), "documentType", type));
+        }
+        List<Map<String, Object>> reversed = new ArrayList<>();
+        for (Map<String, Object> e : openEntries) {
+            Map<String, Object> r = posting.reverse((String) e.get("id"), date, "Reversal of opening balance — " + reason);
+            reversed.add(Obj.of("id", e.get("id"), "entryNumber", e.get("entryNumber"), "reversalId", r.get("id"),
+                    "reversalNumber", r.get("entryNumber")));
+        }
+        Map<String, Object> out = Obj.of("batchId", batchId, "reason", reason, "reversedEntries", reversed,
+                "cancelledDocuments", cancelled);
+        audit.recordInTx(AuditInput.of("OpeningBalanceBatch", batchId, "cancel", null, out));
+        return out;
     }
 
     private void assertPartner(PartnerLine l, String kind) {
