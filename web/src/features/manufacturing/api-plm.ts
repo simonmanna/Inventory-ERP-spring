@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import type { EffectivePolicy, LifecycleException } from './api-plm-app';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
@@ -126,6 +127,9 @@ export interface PlmItemDetail extends PlmItem {
   }>;
   openOrders: Array<{ id: string; orderCode: string; status: string; plannedQty: Num; bomVersion: number | null }>;
   whereUsed: WhereUsedRow[];
+  /** What the lifecycle policy allows for the product today (null when PLM does not manage it). */
+  policy: EffectivePolicy | null;
+  exceptions: LifecycleException[];
 }
 
 export interface StageApprover {
@@ -404,6 +408,8 @@ export interface ChangeDetail extends ChangeRow {
   productChanges?: Record<string, unknown> | null;
   productChangesApplied?: Record<string, { from: unknown; to: unknown }> | null;
   costResult?: CostResult | null;
+  /** False without inventory_valuation:read: the cost result keeps only policy, status, version and note. */
+  costVisible?: boolean;
   productData?: ProductDataRow[];
   faiLot?: { id: string; lotNumber: string; status: string; result: string | null } | null;
 }
@@ -427,6 +433,8 @@ export interface ChangeImpact {
     productId: string; product: ProductRef | null; changes: Record<string, { from: unknown; to: unknown }>; onHand: Num;
   }>;
   cost: { currentUnitCost: Num | null; newUnitCost: Num | null; delta: Num | null; deltaPct: Num | null } | { error: string } | null;
+  /** False without inventory_valuation:read: `cost` is null and the stock's unit costs are left out. */
+  costVisible?: boolean;
   routing: { bomsRepointed: Array<{ id: string; code: string; version: number; status: string }> } | null;
   onHand?: Num;
   whereUsed?: WhereUsedRow[];

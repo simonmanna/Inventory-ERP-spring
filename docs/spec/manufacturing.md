@@ -669,8 +669,10 @@ Tests: `ReplenishmentMrpIT`.
 Rules (verbatim messages are in the services):
 
 - **Gates**, only for products registered in PLM:
-  - A production order for a concept, design or obsolete product is refused: "Product X is design in its lifecycle
-    and cannot be produced."
+  - A production order for a product whose lifecycle state blocks `produce` is refused: "Product X is design in its
+    lifecycle and cannot be produced." Since ADR-S086 the states come from the organization's PLM lifecycle policy
+    (default: concept, design, phase-out and obsolete; owner decision 2026-11-24 added phase-out), and an authorized
+    PLM exception (`plm:exception`) lifts the block for one product until its last valid day.
   - A BOM cannot be activated for an obsolete output, or with obsolete components ("BOM X uses obsolete
     component(s): …").
 - **Transitions.** Only the listed ones are allowed.

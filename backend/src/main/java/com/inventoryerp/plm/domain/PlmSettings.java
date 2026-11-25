@@ -39,6 +39,9 @@ public class PlmSettings {
     @Column(name = "firstArticleDefault", nullable = false)
     private Boolean firstArticleDefault;
 
+    @Column(name = "firstArticleRequired", nullable = false)
+    private Boolean firstArticleRequired;
+
     @Column(name = "updatedBy")
     private String updatedBy;
 

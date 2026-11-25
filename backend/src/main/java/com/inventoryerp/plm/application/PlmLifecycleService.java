@@ -44,12 +44,17 @@ public class PlmLifecycleService {
     private final PlmSupport plm;
     private final CostingService costing;
     private final PlmRevisionService revisions;
+    private final PlmLifecyclePolicy policy;
+    private final PlmExceptionService exceptions;
 
-    public PlmLifecycleService(PlmDb db, PlmSupport plm, CostingService costing, PlmRevisionService revisions) {
+    public PlmLifecycleService(PlmDb db, PlmSupport plm, CostingService costing, PlmRevisionService revisions,
+            PlmLifecyclePolicy policy, PlmExceptionService exceptions) {
         this.db = db;
         this.plm = plm;
         this.costing = costing;
         this.revisions = revisions;
+        this.policy = policy;
+        this.exceptions = exceptions;
     }
 
     // ---- items -----------------------------------------------------------------------------------------------------
@@ -329,6 +334,9 @@ public class PlmLifecycleService {
         out.put("requests", requests);
         out.put("documents", documents);
         out.put("openOrders", openOrders);
+        // ADR-S086 §6: what the lifecycle policy allows for this product today, and its exceptions.
+        out.put("policy", policy.effective(productId, str(item, "lifecycleState")));
+        out.put("exceptions", exceptions.list(productId, null));
         out.put("whereUsed", costing.whereUsed(productId));
         return out;
     }

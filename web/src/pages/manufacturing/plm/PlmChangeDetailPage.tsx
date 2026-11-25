@@ -632,7 +632,11 @@ function ImpactTab({ eco }: { eco: ChangeDetail }) {
       )}
 
       <div className="grid gap-3 sm:grid-cols-3">
-        {cost && 'error' in cost ? (
+        {impact.costVisible === false ? (
+          <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm sm:col-span-3">
+            <Coins className="mb-1 h-4 w-4" />{tx('Cost figures are hidden: they need inventory valuation access.')}
+          </div>
+        ) : cost && 'error' in cost ? (
           <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground shadow-sm sm:col-span-3">
             <Coins className="mb-1 h-4 w-4" />{tx('Cost roll-up unavailable')}: {cost.error}
           </div>

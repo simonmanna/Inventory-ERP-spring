@@ -44,6 +44,9 @@ public class PlmChangeType {
     @Column(name = "isDefault", nullable = false)
     private Boolean isDefault;
 
+    @Column(name = "firstArticleRequired", nullable = false)
+    private Boolean firstArticleRequired;
+
     @Column(name = "createdAt", nullable = false)
     private Instant createdAt;
 

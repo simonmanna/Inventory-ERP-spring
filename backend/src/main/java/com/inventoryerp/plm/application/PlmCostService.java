@@ -112,7 +112,10 @@ public class PlmCostService {
         return result;
     }
 
-    /** One line for the ECO's activity log. */
+    /**
+     * One line for the ECO's activity log. No figures: every {@code plm:read} holder reads the log, and costs are for
+     * users who may read inventory valuation (ADR-S086 §5) — they find the figures in the change's cost result.
+     */
     static String summary(Map<String, Object> r) {
         if (r == null) {
             return "";
@@ -120,13 +123,11 @@ public class PlmCostService {
         if (r.get("standardCostId") == null) {
             return String.valueOf(r.get("note"));
         }
-        String head = "Standard cost v" + r.get("version") + " ("
-                + com.inventoryerp.kernel.common.JsNumbers.dec(SqlRows.dec(r, "unitCost")) + " per unit) ";
+        String head = "Standard cost v" + r.get("version") + " ";
         if ("active".equals(r.get("status"))) {
             Object amount = r.get("revaluationAmount");
             return head + "activated" + (amount == null || SqlRows.dec(r, "revaluationAmount").signum() == 0
-                    ? "." : "; stock revalued by " + com.inventoryerp.kernel.common.JsNumbers.dec(
-                            SqlRows.dec(r, "revaluationAmount")) + ".");
+                    ? "." : "; the stock on hand was revalued.");
         }
         return head + "proposed" + (r.get("note") == null ? "." : ": " + r.get("note"));
     }
@@ -201,12 +202,22 @@ public class PlmCostService {
             @SuppressWarnings("unchecked")
             Map<String, Object> rev = (Map<String, Object>) out.get("revaluation");
             rev.put("amount", null);
-            if (out.get("result") instanceof Map<?, ?> r) {
-                out.put("result", Obj.of("policy", r.get("policy"), "status", r.get("status"), "version",
-                        r.get("version"), "note", r.get("note")));
-            }
+            out.put("result", visibleResult(out.get("result")));
         }
         return out;
+    }
+
+    /**
+     * A change's cost outcome as the caller may see it: everything with {@code inventory_valuation:read}, else only
+     * the policy, status, standard version and note (ADR-S086 §5).
+     */
+    static Object visibleResult(Object result) {
+        Object r = PlmSupport.plain(result);
+        if (PlmReportService.seesCost() || !(r instanceof Map<?, ?> m)) {
+            return r;
+        }
+        return Obj.of("policy", m.get("policy"), "status", m.get("status"), "version", m.get("version"), "note",
+                m.get("note"));
     }
 
     private String activationBlocker(Map<String, Object> p, Object version) {

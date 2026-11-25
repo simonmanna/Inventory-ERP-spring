@@ -1,11 +1,12 @@
 # ADR-S086 — PLM as a standalone application (Odoo-style), versions and ERP integration
 
-- Status: accepted (built 2026-11-24, branch `feat/plm-app`)
+- Status: accepted (built 2026-11-24, branch `feat/plm-app`; owner decisions of 2026-11-24 in §12, integrated with
+  the manufacturing integrity fixes of PR #39 in §13)
 - Builds on: [ADR-S063](ADR-S063-product-lifecycle-management.md) (lifecycle, ECR/ECO, stages, dispositions,
   documents), [ADR-S006](ADR-S006-manufacturing-production.md) package D (BOM versions), ADR-S008 (standard cost),
   ADR-S013 (quality lots), ADR-S065 (notification routing).
 - Migrations: `V640__plm_types_tags.sql`, `V641__plm_revisions.sql`, `V642__plm_product_data_cost_policy.sql`,
-  `V643__plm_settings_fai.sql`
+  `V643__plm_settings_fai.sql`, `V644__plm_lifecycle_exceptions_fai_policy.sql` (owner decisions)
 - Extension: no NestJS counterpart. Spec: [docs/spec/plm.md](../spec/plm.md).
 
 ## Context
@@ -44,8 +45,9 @@ Manufacturing no longer references PLM. Two SPIs in `manufacturing.spi` invert t
 | `EngineeringChangeWorkflow` | `EngineeringService.revise` and the ADR-S006 routes `/engineering-changes/:id/approve`, `/reject`, `/apply` | `PlmChangeService` (stages, approvals, effectivity) | the original ADR-S006 behaviour (approve / reject / activate-and-apply) |
 
 Cross-module lifecycle checks use the established core SPI pattern (`ProductStockGuard`): a new
-`core.application.ProductLifecycleGuard`, implemented by PLM and consumed through `ObjectProvider` by procurement
-and sales. No implementation means legacy behaviour.
+`core.application.ProductLifecycleGuard`, implemented by PLM and consumed through `ObjectProvider` by procurement,
+sales, back-office orders, invoicing and the POS (production asks it through `PlmGate`). No implementation means
+legacy behaviour.
 
 **Application switch (add-on semantics).** Manifests are registered with the `ModuleRegistry`: `manufacturing`
 (new) and `plm`, an **add-on** of `manufacturing` (`ErpModule.addOn`). The module guard treats an add-on as on
@@ -105,7 +107,8 @@ notification links and API clients keep working).
   is still the current version; `POST /orders/:orderId/update-bom` replaces a draft / confirmed order onto the current
   version with the ADR-S063 order replacement (same quantity, locations, schedule, pegs).
 - **Conflicts and rebase.** A BOM ECO whose base version is no longer the current version cannot be applied:
-  `BOM X vN is no longer the current version (vM is active); rebase ECO-… first.` `POST /changes/:id/rebase` does a
+  `Change ECO-… was raised against BOM-X v1, which is no longer the active version (BOM-X v2 is active); rebase ECO-…
+  first.` `POST /changes/:id/rebase` does a
   three-way merge (base → current carried into the ECO's draft version, line by component and header field by
   field); a component changed on both sides keeps the ECO's value and is reported as a conflict. The merge is a pure
   function (`BomRebase`) with unit tests; the draft BOM is written through `BomService`.
@@ -140,47 +143,74 @@ refused (`costPolicy only applies to a BOM change.`).
 The ECO stores `standardCostId`, `revaluationJournalId` and `costResult`. The impact view gains `financial`: whether
 the product is standard-governed, current and proposed unit standard, on-hand quantity, the revaluation amount
 (on hand × difference), and the value of stock the dispositions will scrap, quarantine or return. Products at AVCO /
-FIFO are not revalued; the view says their future production cost changes by the roll-up delta. Money in the
-financial view and the reports is `null` (with `costVisible: false`) for users without `inventory_valuation:read`,
-the rule the stock valuation screens already follow.
+FIFO are not revalued; the view says their future production cost changes by the roll-up delta.
 
-### 6. Lifecycle policy across the ERP (V643)
+**Who sees money (owner decision 4, §12).** Valuation figures are for users who may read inventory valuation
+(`inventory_valuation:read`), the rule the stock valuation screens already follow, and the backend enforces it:
+without the permission the figures are `null` and the response says `costVisible: false` — the financial view and
+the reports; the ECO's `costResult` (policy, status, standard version and note remain); the impact view's unit-cost
+delta and the unit cost of the stock its dispositions touch; and the unit cost recorded on revisions (list, read,
+compare). The ECO activity log carries no figures (`Standard cost v3 activated; the stock on hand was revalued.`).
+BOM inputs (overhead, subcontract cost per unit) are engineering data and stay visible wherever the BOM is, as on
+the BOM screens.
+
+### 6. Lifecycle policy across the ERP (V643, V644)
 
 `PlmSettings` (one row per organization) holds a policy matrix — for each lifecycle state and activity (`purchase`,
-`sell`, `replenish`), `allow` or `block` — plus defaults for new ECOs (cost policy, first-article inspection).
-`GET /settings` returns the stored matrix merged over the defaults; `PUT /settings` changes only the cells and defaults
-it is given, then stores the whole effective matrix (so a later change of the shipped defaults never alters an
-organization that already saved its rules).
-Defaults:
+`produce`, `sell`, `pos`, `replenish`), `allow` or `block` — plus defaults for new ECOs (cost policy, first-article
+inspection). `GET /settings` returns the stored matrix merged over the defaults; `PUT /settings` changes only the cells
+and defaults it is given, then stores the whole effective matrix (so a later change of the shipped defaults never
+alters an organization that already saved its rules). The released row cannot be blocked
+(`A released product is always allowed to be purchased, produced, sold and replenished.`).
 
-| State | purchase | sell | replenish |
-|---|---|---|---|
-| concept, design, prototype | allow | allow | allow |
-| released | allow | allow | allow (cannot be blocked) |
-| phase_out | block | allow | block |
-| obsolete | block | block | block |
+Defaults (owner decisions 5 and 6, §12):
 
-The defaults block only what is retiring, so turning PLM on never stops an organization buying or selling products
-that are still being designed; an organization that wants stricter gates (e.g. no sale before release) sets them.
+| State | purchase | produce | sell | pos | replenish |
+|---|---|---|---|---|---|
+| concept, design | allow | block | block | block | allow |
+| prototype | allow | allow | block | block | allow |
+| released | allow | allow | allow | allow | allow |
+| phase_out | block | block | allow | allow | block |
+| obsolete | block | block | block | block | block |
 
-Enforced through `ProductLifecycleGuard` (`PlmLifecyclePolicy`) — only for products registered in PLM, only while
-PLM is on:
+A product that has not completed its release is not sold, at the till or elsewhere; it may still be bought and
+replenished (parts and samples for its development), and a prototype may be produced. A product being phased out
+sells its existing stock but is no longer procured: not bought, not produced, not replenished. An obsolete product is
+neither bought, produced, sold nor replenished. Each cell can be changed per organization.
 
-- purchase: purchase request create, RFQ create (free lines; request lines were checked when raised), purchase order
-  create — which also covers the requisition-to-order and RFQ-award conversions. Purchase order edits change header
-  fields only. Receipts of orders already placed are not gated (the goods are coming);
-- sell: sales quotation and sales order line writes (create and update), for products **newly added** to the
-  document — lines already on a document stay editable;
-- replenish: purchase replenishment suggestions report blocked products with `needed: false` and
-  `lifecycleBlocked: true`; raising purchase requests from replenishment alerts skips them and leaves their alerts
-  open.
+**Authorized exceptions (V644).** A holder of `plm:exception` grants a `PlmLifecycleException`: one product under
+PLM, one activity, a reason (required) and a last valid day (from today up to 366 days ahead on the organization's
+calendar). While it is in force the policy treats that cell as allowed for that product. One exception per product
+and activity can be in force at a time (`An exception for selling P-100 is already in force until 2026-12-31; revoke
+it first.`; concurrent grants serialise on an advisory lock). Revoking ends it at once. Rows are never deleted: they
+record who granted it, why and until when, and who revoked it and why. Both steps emit events. The product page shows
+the effective rule per activity with the exception that lifts it (`GET /items/:id` gains `policy` and `exceptions`).
+Routes: `GET /lifecycle-exceptions?productId&active`, `POST /lifecycle-exceptions`,
+`POST /lifecycle-exceptions/:id/revoke`.
+
+Enforced through `ProductLifecycleGuard` (`PlmLifecyclePolicy`): only for products registered in PLM, only while PLM
+is on, and only for products **new to a document**. Lines already on a document stay editable, so nothing already
+agreed is interrupted (owner decision 3).
+
+| Activity | Checked at | Never checked |
+|---|---|---|
+| purchase | purchase request create; RFQ create (free lines); purchase order create, which also covers the requisition-to-order and RFQ-award conversions | receipts against placed orders; purchase order edits (header fields only); bills, supplier returns |
+| produce | production order create (`ProductionLifecycleGate` → `PlmGate`), which also covers firming MRP suggestions; BOM activation of an obsolete product stays refused (ADR-S063) | orders already created and everything that happens to them (release, consumption, completion, rework, scrap) |
+| sell | sales quotation and sales order lines (a quotation converted to an order is checked again); back-office orders (`/orders`); customer invoices entered by hand (`InvoiceService.create` / `update`) | invoices copied from deliveries or orders, proformas from quotations, credit notes, deliveries, returns; contract, dunning and opening-balance invoices (account lines, no product) |
+| pos | new lines on online till orders (`/pos/orders`, checkout, tabs) | lines already on a ticket; sales replayed from an offline till (`/sync/push`, `OfflineReplay`) |
+| replenish | purchase replenishment suggestions report blocked products with `needed: false` and `lifecycleBlocked: true`; raising purchase requests from alerts skips them and leaves their alerts open | — |
+
+Stock moves, receipts, transfers, counts and adjustments are never gated. The inventory and manufacturing integrity
+controls (valuation, row locks, negative-stock rules, the PR #39 fixes in §13) are unchanged.
 
 The refusal names the state and the replacement product: `Product P-100 is obsolete and cannot be purchased.
-Replacement: P-200.` POS and invoicing are not gated (offline clients, Nest parity).
+Replacement: P-200.`, `Product P-100 is in design and cannot be sold at the point of sale.`. Production keeps the
+ADR-S063 wording (`Product P-100 is design in its lifecycle and cannot be produced.`).
 
 ### 7. Quality: first-article inspection (V643)
 
-`EngineeringChange.firstArticle` (BOM / routing ECOs; default from settings). Applying such an ECO sets
+`EngineeringChange.firstArticle` (BOM / routing ECOs; default from settings, off unless the organization turns it on).
+Applying such an ECO sets
 `faiStatus = pending`. The first production order on the new version that completes (`completed` or `qc_hold`; for a
 BOM ECO an order on the new BOM, for a routing ECO an order of the product created after the apply) opens a
 final-stage quality lot through `QualityLotService.openLotIfPlanned` (source `plm_fai`, idempotent per ECO) →
@@ -189,6 +219,12 @@ final-stage quality lot through `QualityLotService.openLotIfPlanned` (source `pl
 (`quality.lot.decided`) closes the inspection: `passed`, `failed` or `cancelled`. The ECO shows the lot, the order
 and the outcome; every step is written to the ECO chatter (activity kind `fai`). Outcomes are recorded even while PLM
 is switched off, so a lot opened earlier never stays dangling.
+
+**Mandatory inspection (V644, owner decision 2).** Inspection stays optional by default. `PlmSettings.firstArticleRequired`
+makes it mandatory for every BOM / routing change of the organization, `PlmChangeType.firstArticleRequired` for the
+changes of one ECO type. A mandatory inspection cannot be opted out of: an explicit `firstArticle: false` is refused
+(`A first-article inspection is mandatory for changes of type New product introduction.`), anything else sets it. A
+change raised before the policy became mandatory is inspected anyway when it is applied.
 
 ### 8. Reports
 
@@ -204,10 +240,12 @@ is switched off, so a lot opened earlier never stays dangling.
 
 ### 9. Permissions and events
 
-No new permission keys: configuration (ECO types, tag edits, settings) uses `plm:manage`, versions, reports and
-settings read `plm:read`, rebase, kanban state and new tags `plm:change`, the manual first-article result
-`plm:approve`, order BOM update and apply `plm:apply`. New events (outbox, `PlmEventPayload`): `plm.revision.created`,
-`plm.change.rebased`, `plm.fai.opened`.
+One new permission, `plm:exception`: grant and revoke lifecycle exceptions (V644 gives it to the Administrator roles,
+as V440 did for the other PLM keys). Otherwise configuration (ECO types, tag edits, settings) uses `plm:manage`;
+versions, reports, settings and exceptions read `plm:read`; rebase, kanban state and new tags `plm:change`; the manual
+first-article result `plm:approve`; order BOM update and apply `plm:apply`. New events (outbox, `PlmEventPayload`):
+`plm.revision.created`, `plm.change.rebased`, `plm.fai.opened`, `plm.lifecycle.exception_granted`,
+`plm.lifecycle.exception_revoked`.
 
 ### 10. Demo data
 
@@ -220,26 +258,66 @@ change with its draft version, a product data change). Off by default, like the 
 
 - Rebase cannot clear a BOM header field that was emptied upstream (`BomService.update` ignores nulls), and the ECO's
   draft keeps its version number, so after a rebase version numbers may not follow apply order.
-- The ADR-S063 `/changes/:id/impact` route is unchanged (its unit-cost delta stays visible to `plm:read`); the new
-  financial view and the reports mask money.
+- MRP still suggests blocked products; firming the suggestion is refused with the policy's reason (no planning-time
+  flag).
+- The till checks online orders only: an offline till sells what it has synced, and the sale is replayed without a
+  check.
 - Stock by revision is exact only for batch-tracked output.
 
-### 12. Defaults chosen without the owner (to confirm)
+### 12. Owner decisions (2026-11-24)
 
-1. Lifecycle defaults block only phase-out / obsolete (table in §6), not sale before release.
-2. Sales documents: only newly added products are checked; existing lines stay editable.
-3. Purchase order receipts are never gated; the POS is never gated.
-4. Default cost policy `propose`; `activate` falls back to `propose` for products not on standard cost.
-5. First article off by default; results recorded by hand only when no quality plan applies.
-6. Report money masked by `inventory_valuation:read`.
-7. PLM demo seed opt-in (`SEED_PLM_DEMO`).
+The owner reviewed the defaults this ADR first proposed (lifecycle gates on phase-out / obsolete only, POS and
+receipts never gated, cost policy propose, first article off, money masked, demo opt-in) and decided:
+
+| # | Decision | Implemented as |
+|---|---|---|
+| 1 | Cost changes default to **propose**, not activate. | `defaultCostPolicy` defaults to `propose` (V644 column default; no settings row means propose); `activate` stays an explicit choice and falls back to propose for a product not on standard cost (§5) |
+| 2 | First-article inspection is **optional** by default, with support for mandatory policies. | §7: off by default; `firstArticleRequired` on the settings and on ECO types (V644) |
+| 3 | Existing POS sales and receiving against already-approved purchase orders are not unexpectedly interrupted. | §6: only products new to a document are checked; lines already on a ticket, offline replays and receipts are never checked |
+| 4 | Financial and inventory valuation costs stay protected by backend authorization. | §5: `inventory_valuation:read`, now also on the ECO cost result, the impact view, dispositions and revisions; no figures in the activity log |
+| 5 | Products that have not completed their release are blocked from **new sales** by default; released products sell normally. | §6: concept, design and prototype block `sell` and `pos` |
+| 6 | Phase-out products sell existing stock but are not procured by default; obsolete products block new sales and purchasing, subject to **authorized exceptions**. | §6: phase-out blocks purchase, produce and replenish; obsolete blocks every activity; exceptions with `plm:exception` (V644) |
+
+Readings submitted for review with the implementation:
+
+- "Procurement" of a phase-out product includes making it: `produce` is blocked for phase-out by default (it was
+  allowed before), as purchasing is.
+- "Consistent across POS": the till follows the sales rules for new lines (decisions 5 and 6), while decision 3 keeps
+  sales already rung up and offline sales untouched. The `pos` column can be relaxed on its own (e.g. prototypes
+  sold as samples at the till).
+- Concept and design products may still be bought (development parts) and replenished, and a prototype run may be
+  produced: the decisions restrict sales and the procurement of retiring products, not development.
+- Sales: a quotation converted to a sales order is checked again (the order is the sale); invoices copied from a
+  delivery or an order are not (the sale was already made).
+- Unchanged: the PLM demo seed is opt-in (`SEED_PLM_DEMO`).
+
+### 13. Integration with the manufacturing integrity fixes (PR #39)
+
+PR #39 (`fix/mfg-integrity`, ML-1 … ML-11) was merged to `main` first; this ADR's move of the PLM code was rebased
+onto it and keeps every fix, in the PLM module or, where manufacturing must hold the rule with PLM switched off, in
+manufacturing:
+
+- apply, automatic apply, cancel and the direct approval lock the ECO row and re-check its status;
+- approval freezes content: the draft BOM of an approved ECO refuses edits (`BomService`, which asks PLM through
+  `EngineeringChangeWorkflow.draftEdited` for drafts), and so do its attached draft documents
+  (`PlmDocumentService`); editing a draft ECO after an approval voids the approvals and
+  sends it back to its first approval stage; a rebase rewrites the approved BOM, so it withdraws the approval too;
+- applying a change whose base version is no longer active is refused (the §3 conflict wording names both versions);
+- `plm.allowSelfApproval` (default false): nobody approves their own ECO, on the PLM routes and on the ADR-S006
+  fallback routes alike;
+- the last stage requiring approval is enforced; approval cannot be switched off on a stage with waiting ECOs
+  (`plm.application.PlmStageService`);
+- the effectivity job acts as the system actor and records a failure reason on the ECO;
+- optional `limit` / `offset` on PLM items, item sub-lists and the legacy ECO list;
+- V630 gives the PLM tables of V440 the standard RLS policy.
 
 ## Consequences
 
 - Manufacturing works with PLM absent: the ADR-S006 routes fall back to their original behaviour.
 - `@RequiresModule("plm")` replaces `@RequiresModule("manufacturing")` on PLM routes; with add-on semantics the
   outcome is identical until an organization switches PLM off.
-- Purchasing and sales of PLM-registered products can now be refused by policy; organizations not using PLM are
-  unaffected (parity harness scenarios never register PLM items). Replenishment suggestions gain `lifecycleBlocked`.
+- Purchasing, production, sales, back-office orders, manual invoices and new till lines of PLM-registered products can
+  now be refused by policy; organizations not using PLM are unaffected (parity harness scenarios never register PLM
+  items). Replenishment suggestions gain `lifecycleBlocked`.
 - `costPolicy = activate` posts a revaluation journal at apply time, inside the apply transaction.
 - ECO responses gain fields; no existing field or message changes, except the new conflict refusal on apply.

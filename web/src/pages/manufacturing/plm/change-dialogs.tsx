@@ -15,7 +15,7 @@ import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 import { CheckList, Field, LifecyclePill, ProductPicker, UserSelect } from './plm-ui';
-import { COST_POLICY, PRODUCT_FIELDS, usePlmSettings } from '@/features/manufacturing/api-plm-app';
+import { COST_POLICY, PRODUCT_FIELDS, useChangeTypes, usePlmSettings } from '@/features/manufacturing/api-plm-app';
 import type { CostPolicy } from '@/features/manufacturing/api-plm';
 import { ChangeTypeSelect, TagPicker } from './plm-app-ui';
 import {
@@ -467,9 +467,16 @@ function AppFields({ type, value, onChange, explicit }: {
   type: ChangeType; value: AppValues; onChange: (v: AppValues) => void; explicit?: boolean;
 }) {
   const { data: settings } = usePlmSettings();
+  const { data: types = [] } = useChangeTypes();
   const set = <K extends keyof AppValues>(k: K, v: AppValues[K]) => onChange({ ...value, [k]: v });
   const defaultCost = settings?.defaultCostPolicy ?? 'none';
   const makes = type === 'bom' || type === 'routing';
+  // ADR-S086 §7: a mandatory first-article inspection (organization or ECO type) cannot be opted out of.
+  const ecoType = types.find((t) => t.id === value.changeTypeId) ?? (value.changeTypeId ? undefined : types.find((t) => t.isDefault));
+  const faiMandatory = makes && (!!settings?.firstArticleRequired || !!ecoType?.firstArticleRequired);
+  useEffect(() => {
+    if (faiMandatory && value.firstArticle === 'no') onChange({ ...value, firstArticle: 'yes' });
+  }, [faiMandatory, value, onChange]);
   return (
     <div className="grid gap-4 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
       <Field label={tx('ECO type')} hint={tx('Sets the approval pipeline.')}>
@@ -487,11 +494,14 @@ function AppFields({ type, value, onChange, explicit }: {
         </Field>
       )}
       {makes && (
-        <Field label={tx('First-article inspection')} hint={tx('The first order made on the new version is inspected (a final inspection lot when the product has a plan).')}>
-          <select className={selectClass} value={value.firstArticle} onChange={(e) => set('firstArticle', e.target.value as AppValues['firstArticle'])}>
-            {!explicit && <option value="">{tx('Organization default')} ({settings?.firstArticleDefault ? tx('Yes') : tx('No')})</option>}
-            <option value="yes">{tx('Inspect the first article')}</option>
-            <option value="no">{tx('No inspection')}</option>
+        <Field label={tx('First-article inspection')} hint={faiMandatory
+          ? tx('Mandatory for this organization or ECO type: the first order made on the new version is inspected.')
+          : tx('The first order made on the new version is inspected (a final inspection lot when the product has a plan).')}>
+          <select className={selectClass} value={faiMandatory ? 'yes' : value.firstArticle} disabled={faiMandatory}
+            onChange={(e) => set('firstArticle', e.target.value as AppValues['firstArticle'])}>
+            {!explicit && !faiMandatory && <option value="">{tx('Organization default')} ({settings?.firstArticleDefault ? tx('Yes') : tx('No')})</option>}
+            <option value="yes">{faiMandatory ? tx('Inspect the first article (mandatory)') : tx('Inspect the first article')}</option>
+            {!faiMandatory && <option value="no">{tx('No inspection')}</option>}
           </select>
         </Field>
       )}

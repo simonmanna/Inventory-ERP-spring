@@ -4,18 +4,29 @@ import java.util.Collection;
 import java.util.Set;
 
 /**
- * What a product's lifecycle allows (ADR-S086 §6). The PLM application implements it from its lifecycle policy — an
- * obsolete product cannot be bought or sold, a product being phased out is no longer bought or replenished, and each
- * organization can tighten the matrix. Purchasing, sales and replenishment ask it before they use a product; without
- * an implementation (or with PLM switched off) everything is allowed.
+ * What a product's lifecycle allows (ADR-S086 §6). The PLM application implements it from its lifecycle policy (owner
+ * decisions 2026-11-24): a product that has not completed its release is not sold, a product being phased out sells
+ * its stock but is no longer bought, made or replenished, an obsolete product is neither bought, made nor sold, and
+ * each organization can adjust the matrix; an authorized, time-boxed exception allows one activity for one product.
+ * Purchasing, production, sales, the till and replenishment ask it before they use a product; without an
+ * implementation (or with PLM switched off) everything is allowed.
  */
 public interface ProductLifecycleGuard {
 
     /** Purchase requests, RFQs and purchase orders. */
     String PURCHASE = "purchase";
 
-    /** Sales quotations and sales orders. */
+    /** Production orders. */
+    String PRODUCE = "produce";
+
+    /** Sales quotations, sales orders and customer invoices raised by hand. */
     String SELL = "sell";
+
+    /**
+     * Products newly put on an online point-of-sale order. Lines already on a ticket are never re-checked and sales
+     * replayed from an offline till are never refused, so a sale already rung up is never interrupted.
+     */
+    String POS = "pos";
 
     /** Reorder-rule and alert-driven replenishment. */
     String REPLENISH = "replenish";

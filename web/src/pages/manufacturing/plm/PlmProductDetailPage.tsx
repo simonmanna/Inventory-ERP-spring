@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowRight, ClipboardList, Factory, FileText, GitCompare, GitPullRequest, History, Inbox, ListTree, Network, Pencil, Plus,
-  Route as RouteIcon, Star, Tag,
+  Route as RouteIcon, ShieldBan, Star, Tag,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { StatusPill } from '@/components/list/list-page';
@@ -23,8 +23,10 @@ import { RequestDialog } from './request-dialogs';
 import { DocumentDialog } from './document-dialogs';
 import { BOM_STATUS_TONE, DOC_TYPES, LIFECYCLE, LIFECYCLE_ORDER, REASONS, day, dayTime, human, qty } from './vocab';
 import { VersionsTab } from './plm-versions';
+import { RulesTab } from './lifecycle-rules';
 
-type Tab = 'boms' | 'versions' | 'routings' | 'changes' | 'requests' | 'documents' | 'where-used' | 'orders' | 'history';
+type Tab = 'boms' | 'versions' | 'routings' | 'changes' | 'requests' | 'documents' | 'where-used' | 'orders' | 'rules'
+  | 'history';
 
 /** Product cockpit: lifecycle, revision and everything engineering knows about one product. */
 export function PlmProductDetailPage() {
@@ -67,6 +69,7 @@ export function PlmProductDetailPage() {
     { id: 'documents' as const, label: tx('Documents'), icon: FileText, count: item.documents.length },
     { id: 'where-used' as const, label: tx('Where used'), icon: Network, count: item.whereUsed.length },
     { id: 'orders' as const, label: tx('Open orders'), icon: Factory, count: item.openOrders.length },
+    { id: 'rules' as const, label: tx('Rules & exceptions'), icon: ShieldBan, count: (item.exceptions ?? []).filter((x) => x.status === 'active').length },
     { id: 'history' as const, label: tx('History'), icon: History },
   ];
 
@@ -144,6 +147,7 @@ export function PlmProductDetailPage() {
       )}
       {tab === 'where-used' && <WhereUsedTab item={item} />}
       {tab === 'orders' && <OrdersTab item={item} />}
+      {tab === 'rules' && <RulesTab item={item} />}
       {tab === 'history' && <HistoryTab item={item} />}
 
       <EditItemDialog item={item} open={editing} onClose={() => setEditing(false)} />

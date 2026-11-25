@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 import { Field, Panel } from './plm-ui';
 import { ColorDot } from './plm-app-ui';
-import { LIFECYCLE, selectClass } from './vocab';
+import { ACTIVITY_LABEL, LIFECYCLE, selectClass } from './vocab';
 
 /** PLM settings sections of the PLM application (ADR-S086): ECO types, tags, lifecycle policy and defaults. */
 
@@ -82,6 +82,7 @@ function TypeRow({ type, active, onSelect }: { type: PlmChangeType; active: bool
         <ColorDot color={type.color} />
         <span className="min-w-0 flex-1 truncate font-medium">{type.name}</span>
         {type.isDefault && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" aria-label={tx('Default')} />}
+        {type.firstArticleRequired && <span className="rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground" title={tx('First-article inspection is mandatory for this type')}>{tx('FAI')}</span>}
         <span className="text-[11px] text-muted-foreground">{tx('{{n}} stages', { n: num(type.stageCount) })} · {tx('{{n}} open', { n: open })}</span>
       </div>
       {active && (
@@ -99,6 +100,12 @@ function TypeRow({ type, active, onSelect }: { type: PlmChangeType; active: bool
         ) : (
           <div className="mt-2 flex flex-wrap gap-1">
             <Button size="sm" variant="outline" onClick={() => setEditing(true)}>{tx('Rename')}</Button>
+            <Button size="sm" variant="outline" disabled={update.isPending}
+              title={tx('Every BOM and routing change of this type gets a first-article inspection')}
+              onClick={() => update.mutate({ id: type.id, body: { firstArticleRequired: !type.firstArticleRequired } }, {
+                onSuccess: () => notify.success(type.firstArticleRequired ? tx('First-article inspection is optional again for {{n}}', { n: type.name })
+                  : tx('First-article inspection is now mandatory for {{n}}', { n: type.name })),
+              })}>{type.firstArticleRequired ? tx('Make inspection optional') : tx('Make inspection mandatory')}</Button>
             {!type.isDefault && (
               <Button size="sm" variant="outline" disabled={update.isPending} onClick={() => update.mutate({ id: type.id, body: { isDefault: true } }, {
                 onSuccess: () => notify.success(tx('{{n}} is now the default type', { n: type.name })),
@@ -179,39 +186,40 @@ function TagRow({ tag }: { tag: PlmTag }) {
 
 // ---- lifecycle policy & defaults ----------------------------------------------------------------------------------------
 
-const ACTIVITY_LABEL: Record<PolicyActivity, { label: string; hint: string }> = {
-  purchase: { label: 'Purchase', hint: 'Purchase requests, RFQs and purchase orders' },
-  sell: { label: 'Sell', hint: 'Sales quotations and sales orders (the POS till is not affected)' },
-  replenish: { label: 'Replenish', hint: 'Reorder-rule suggestions and alert-driven requests' },
-};
-
-/** What purchasing, sales and replenishment may do with a product in each lifecycle state, plus ECO defaults. */
+/** What purchasing, production, sales, the till and replenishment may do in each lifecycle state, plus ECO defaults. */
 export function PolicyPanel() {
   const { data, isLoading } = usePlmSettings();
   const save = useSavePlmSettings();
   const [policy, setPolicy] = useState<LifecyclePolicy | null>(null);
   const [cost, setCost] = useState<CostPolicy>('none');
   const [fai, setFai] = useState(false);
+  const [faiRequired, setFaiRequired] = useState(false);
   useEffect(() => {
-    if (data) { setPolicy(data.lifecyclePolicy); setCost(data.defaultCostPolicy); setFai(data.firstArticleDefault); }
+    if (data) {
+      setPolicy(data.lifecyclePolicy); setCost(data.defaultCostPolicy); setFai(data.firstArticleDefault);
+      setFaiRequired(data.firstArticleRequired);
+    }
   }, [data]);
   const dirty = useMemo(() => !!data && !!policy && (JSON.stringify(policy) !== JSON.stringify(data.lifecyclePolicy)
-    || cost !== data.defaultCostPolicy || fai !== data.firstArticleDefault), [data, policy, cost, fai]);
+    || cost !== data.defaultCostPolicy || fai !== data.firstArticleDefault || faiRequired !== data.firstArticleRequired),
+  [data, policy, cost, fai, faiRequired]);
   if (isLoading || !data || !policy) return <Skeleton className="h-72 w-full rounded-xl" />;
   const toggle = (s: LifecycleState, a: PolicyActivity) => setPolicy({
     ...policy, [s]: { ...policy[s], [a]: policy[s][a] === 'allow' ? 'block' : 'allow' as PolicyValue },
   });
-  const submit = () => save.mutate({ lifecyclePolicy: policy, defaultCostPolicy: cost, firstArticleDefault: fai }, {
+  const submit = () => save.mutate({
+    lifecyclePolicy: policy, defaultCostPolicy: cost, firstArticleDefault: fai, firstArticleRequired: faiRequired,
+  }, {
     onSuccess: () => notify.success(tx('PLM settings saved')),
   });
   return (
     <div className="space-y-4">
       <Panel title={tx('Lifecycle rules')} icon={ShieldBan}>
         <p className="mb-3 text-sm text-muted-foreground">
-          {tx('A blocked activity is refused with the product’s state and replacement; replenishment leaves the product out instead. A released product is always allowed.')}
+          {tx('A blocked activity is refused with the product’s state and replacement; replenishment leaves the product out instead. A released product is always allowed. Only products new to a document are checked, and a holder of the exception right can lift a block for one product for a limited time (product page, Rules & exceptions).')}
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] text-sm">
+          <table className="w-full min-w-[680px] text-sm">
             <thead>
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="py-2 pr-3 font-medium">{tx('Lifecycle state')}</th>
@@ -254,8 +262,12 @@ export function PolicyPanel() {
           </Field>
           <Field label={tx('First-article inspection (BOM and routing changes)')}>
             <label className="flex h-10 items-center gap-2 text-sm">
-              <input type="checkbox" className="h-4 w-4 accent-primary" checked={fai} onChange={(e) => setFai(e.target.checked)} />
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={fai || faiRequired} disabled={faiRequired} onChange={(e) => setFai(e.target.checked)} />
               {tx('Inspect the first article made on a new version')}
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="h-4 w-4 accent-primary" checked={faiRequired} onChange={(e) => setFaiRequired(e.target.checked)} />
+              {tx('Mandatory: a change cannot opt out (an ECO type can also make it mandatory)')}
             </label>
           </Field>
         </div>

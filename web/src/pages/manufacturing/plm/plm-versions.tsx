@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Factory, GitCompare, History, Minus, Plus } from 'lucide-react';
+import { PERMISSIONS } from '@erp/shared';
 import { StatusPill } from '@/components/list/list-page';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -9,6 +10,7 @@ import {
   useAsBuilt, useItemRevisions, useRevisionCompare, type FieldDiff, type RevisionCompare,
 } from '@/features/manufacturing/api-plm-app';
 import { money, useOrgCurrency } from '@/lib/format';
+import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 import { EmptyState, Panel, RevisionBadge } from './plm-ui';
@@ -20,6 +22,8 @@ export function VersionsTab({ item }: { item: PlmItemDetail }) {
   const { data: revisions = [], isLoading } = useItemRevisions(item.id);
   const { data: built = [], isLoading: builtLoading } = useAsBuilt(item.id);
   const currency = useOrgCurrency();
+  // Unit costs are inventory valuation: the API leaves them out without inventory_valuation:read (ADR-S086 §5).
+  const seesCost = useAuthStore((s) => s.hasPermission)(PERMISSIONS.inventoryValuation.read);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   useEffect(() => {
@@ -65,7 +69,7 @@ export function VersionsTab({ item }: { item: PlmItemDetail }) {
                 </TableCell>
                 <TableCell className="text-sm">{r.routing ? <>{r.routing.name} <span className="text-xs text-muted-foreground">· {tx('{{n}} ops', { n: r.routing.operations })}</span></> : '—'}</TableCell>
                 <TableCell className="text-right text-sm tabular-nums">
-                  {r.unitCost != null ? money(num(r.unitCost), currency, 4) : '—'}
+                  {r.unitCost != null ? money(num(r.unitCost), currency, 4) : seesCost ? '—' : <span className="text-xs text-muted-foreground">{tx('hidden')}</span>}
                   {r.costSource && <p className="text-[10px] text-muted-foreground">{r.costSource === 'standard' ? tx('standard') : tx('cost price')}</p>}
                 </TableCell>
                 <TableCell className="text-right text-sm tabular-nums">{num(r.ordersBuilt)}</TableCell>
@@ -176,6 +180,9 @@ function CompareView({ diff, currency }: { diff: RevisionCompare; currency: stri
             {diff.documents.revised.map((d) => <li key={`v${d.number}`}>{d.number} {d.title}: v{String(d.from.version)} → <b>v{String(d.to.version)}</b></li>)}
           </ul>
         </Section>
+      )}
+      {diff.costVisible === false && (
+        <p className="text-xs text-muted-foreground">{tx('Unit costs are hidden: they need inventory valuation access.')}</p>
       )}
       {diff.cost.delta != null && num(diff.cost.delta) !== 0 && (
         <Section title={tx('Unit cost')}>

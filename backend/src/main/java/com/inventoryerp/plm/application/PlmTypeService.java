@@ -66,7 +66,7 @@ public class PlmTypeService {
                 : types.isEmpty() ? 10 : ((Integer) types.getLast().get("sequence")) + 10;
         Map<String, Object> type = db.insert(PlmChangeType.class, Obj.of("name", name, "description",
                 PlmSupport.blank(dto.description()), "color", PlmSupport.blank(dto.color()), "sequence", seq,
-                "isDefault", makeDefault));
+                "isDefault", makeDefault, "firstArticleRequired", Boolean.TRUE.equals(dto.firstArticleRequired())));
         stages.ensureStages(str(type, "id"));
         return type;
     }
@@ -91,6 +91,9 @@ public class PlmTypeService {
         }
         if (dto.sequence() != null) {
             data.put("sequence", dto.sequence());
+        }
+        if (dto.firstArticleRequired() != null) {
+            data.put("firstArticleRequired", dto.firstArticleRequired());
         }
         if (dto.isDefault() != null && dto.isDefault() != Boolean.TRUE.equals(type.get("isDefault"))) {
             if (!dto.isDefault()) {

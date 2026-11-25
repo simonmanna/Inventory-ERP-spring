@@ -328,7 +328,8 @@
     "request": "plm:request",
     "change": "plm:change",
     "approve": "plm:approve",
-    "apply": "plm:apply"
+    "apply": "plm:apply",
+    "exception": "plm:exception"
   },
   "productionOrder": {
     "read": "production_order:read",

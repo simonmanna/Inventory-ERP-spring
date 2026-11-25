@@ -8,7 +8,6 @@ import com.inventoryerp.shared.web.ApiException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,22 +15,23 @@ import org.springframework.stereotype.Component;
  * (ADR-S086). Only products registered in PLM are gated, and only while the PLM application is on for the
  * organization, so organizations that do not use PLM keep the exact ADR-S006 behaviour:
  * <ul>
- *   <li>a production order cannot be created for a product in {@code concept}, {@code design} or
- *       {@code obsolete} (prototype runs are allowed);</li>
+ *   <li>a production order follows the {@code produce} column of the lifecycle policy (ADR-S086 §6; by default
+ *       refused in {@code concept}, {@code design}, {@code phase_out} and {@code obsolete}: prototype runs are
+ *       allowed), with the authorized exceptions in force;</li>
  *   <li>a BOM cannot be activated for an obsolete product, or with an obsolete component.</li>
  * </ul>
  */
 @Component
 public class PlmGate implements ProductionLifecycleGate {
 
-    private static final Set<String> NOT_PRODUCIBLE = Set.of("concept", "design", "obsolete");
-
     private final PlmDb db;
     private final PlmApp app;
+    private final PlmLifecyclePolicy policy;
 
-    public PlmGate(PlmDb db, PlmApp app) {
+    public PlmGate(PlmDb db, PlmApp app, PlmLifecyclePolicy policy) {
         this.db = db;
         this.app = app;
+        this.policy = policy;
     }
 
     /** Whether the PLM application is on for the current organization (its gates apply only then). */
@@ -48,17 +48,13 @@ public class PlmGate implements ProductionLifecycleGate {
                 + " AND \"productId\" = ?").params(PlmDb.org(), productId).query(String.class).optional().orElse(null);
     }
 
-    /** Production orders: refused for concept / design / obsolete products. */
+    /** Production orders: the {@code produce} column of the lifecycle policy, with its exceptions. */
     @Override
     public void requireProducible(String productId) {
-        if (!active()) {
+        if (!active() || productId == null) {
             return;
         }
-        String state = state(productId);
-        if (state != null && NOT_PRODUCIBLE.contains(state)) {
-            throw ApiException.badRequest("Product " + code(productId) + " is " + state.replace('_', ' ')
-                    + " in its lifecycle and cannot be produced.");
-        }
+        policy.requireAllowed(com.inventoryerp.core.application.ProductLifecycleGuard.PRODUCE, List.of(productId));
     }
 
     /** BOM activation: refused for an obsolete output or with obsolete components. */

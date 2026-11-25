@@ -1789,12 +1789,15 @@ Module `plm` since ADR-S086 (was inside `manufacturing`). [Spec](spec/plm.md). 3
 manufacturing (Modules screen switch, feature `plm`, `ENABLE_PLM`). ECO types with their own pipelines, tags, kanban
 state, comment-only reviewers; revisions with snapshots, compare and as-built; BOM conflict detection and rebase;
 superseded-BOM banner and update on production orders; product master-data ECOs; cost policy (propose / activate a
-standard with stock revaluation) and financial view; lifecycle policy gating purchase, sale and replenishment;
-first-article inspection through quality lots; reports; settings; opt-in demo seed `SEED_PLM_DEMO`. Migrations
-V640–V643. Tests: `PlmModuleIT`, `PlmModuleAccessTest`, `PlmTypesIT`, `PlmVersionsIT`, `BomRebaseTest`,
-`PlmErpIntegrationIT`, `PlmPolicyIT`, `PlmReportsIT`, `PlmDemoSeedIT`, plus `PlmIT`. Web: PLM sidebar section,
-`/manufacturing/plm/reports`, settings sections, change detail panels, product Revisions tab, production order
-banner. 23 routes in `PlmAppController`:
+standard with stock revaluation) and financial view; lifecycle policy gating purchase, production, sale, the till
+and replenishment, with authorized time-boxed exceptions (`plm:exception`); valuation figures masked without
+`inventory_valuation:read`; first-article inspection through quality lots, optional or mandatory (organization or ECO
+type); reports; settings; opt-in demo seed `SEED_PLM_DEMO`. Owner decisions of 2026-11-24 in ADR-S086 §12; the PR #39
+integrity fixes are kept (§13). Migrations V640–V644. Tests: `PlmModuleIT`, `PlmModuleAccessTest`, `PlmTypesIT`,
+`PlmVersionsIT`, `BomRebaseTest`, `PlmErpIntegrationIT`, `PlmPolicyIT`, `PlmExceptionsIT`, `PlmReportsIT`,
+`PlmIntegrityIT`, `PlmDemoSeedIT`, plus `PlmIT`. Web: PLM sidebar section, `/manufacturing/plm/reports`, settings
+sections, change detail panels, product Revisions and Rules & exceptions tabs, production order banner. 26 routes in
+`PlmAppController`:
 
 - [x] GET /api/v1/manufacturing/plm/change-types — PlmAppController.changeTypes
 - [x] POST /api/v1/manufacturing/plm/change-types — PlmAppController.createChangeType
@@ -1817,6 +1820,9 @@ banner. 23 routes in `PlmAppController`:
 - [x] GET /api/v1/manufacturing/plm/reports/stock-by-revision — PlmAppController.stockByRevision
 - [x] GET /api/v1/manufacturing/plm/settings — PlmAppController.settings
 - [x] PUT /api/v1/manufacturing/plm/settings — PlmAppController.saveSettings
+- [x] GET /api/v1/manufacturing/plm/lifecycle-exceptions — PlmAppController.lifecycleExceptions
+- [x] POST /api/v1/manufacturing/plm/lifecycle-exceptions — PlmAppController.grantLifecycleException
+- [x] POST /api/v1/manufacturing/plm/lifecycle-exceptions/:id/revoke — PlmAppController.revokeLifecycleException
 - [x] GET /api/v1/manufacturing/plm/orders/:orderId/bom-status — PlmAppController.orderBomStatus
 - [x] POST /api/v1/manufacturing/plm/orders/:orderId/update-bom — PlmAppController.updateOrderBom
 

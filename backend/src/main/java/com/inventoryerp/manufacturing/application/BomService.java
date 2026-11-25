@@ -175,8 +175,6 @@ public class BomService {
         return withLines(bom);
     }
 
-    /** Edit a DRAFT BOM; an active/archived version is immutable. {@code lines} replaces the whole line set. */
-    @Transactional
     /**
      * Integrity fix 2026-11-24 (ML-2): approval freezes an ECO's content. Editing the draft BOM of an approved ECO is
      * refused; editing the draft BOM of a draft ECO voids the approvals it already has (through the change workflow,
@@ -200,6 +198,8 @@ public class BomService {
         }
     }
 
+    /** Edit a DRAFT BOM; an active/archived version is immutable. {@code lines} replaces the whole line set. */
+    @Transactional
     public Map<String, Object> update(String id, UpdateBom dto) {
         Map<String, Object> bom = getOrThrow(id);
         if (!"draft".equals(bom.get("status"))) {

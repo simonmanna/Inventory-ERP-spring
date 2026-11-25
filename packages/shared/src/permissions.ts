@@ -376,6 +376,8 @@ export const PERMISSIONS = {
     change: 'plm:change',
     approve: 'plm:approve',
     apply: 'plm:apply',
+    // ADR-S086 §6: grant / revoke a time-boxed exception to the lifecycle policy.
+    exception: 'plm:exception',
   },
   // ---- Manufacturing — production orders ----
   productionOrder: {

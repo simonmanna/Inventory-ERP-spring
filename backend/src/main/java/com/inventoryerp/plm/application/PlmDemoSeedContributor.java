@@ -147,7 +147,7 @@ public class PlmDemoSeedContributor implements SeedContributor {
         // ECO types (the default one with its pipeline, plus product data) and tags.
         types.list();
         String productData = str(types.create(new SaveType("Product data",
-                "Name, description, barcode, weight and image changes.", "#7c3aed", null, false)), "id");
+                "Name, description, barcode, weight and image changes.", "#7c3aed", null, false, null)), "id");
         String customer = str(tags.create(new SaveTag("Customer request", "#2563eb")), "id");
         tags.create(new SaveTag("Cost reduction", "#16a34a"));
         tags.create(new SaveTag("Quality", "#dc2626"));

@@ -231,7 +231,8 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         out.put("conflict", PlmSupport.OPEN_CHANGE.contains(str(eco, "status")) ? conflict(eco) : null);
         out.put("productChanges", PlmSupport.plain(eco.get("productChanges")));
         out.put("productChangesApplied", PlmSupport.plain(eco.get("productChangesApplied")));
-        out.put("costResult", PlmSupport.plain(eco.get("costResult")));
+        out.put("costResult", PlmCostService.visibleResult(eco.get("costResult")));
+        out.put("costVisible", PlmReportService.seesCost());
         out.put("productData", productData.view(str(eco, "productId"), PlmSupport.object(eco.get("productChanges")),
                 PlmSupport.object(eco.get("productChangesApplied"))));
         out.put("faiLot", eco.get("faiLotId") == null ? null : SqlRows.one(db.jdbc().sql("SELECT id, \"lotNumber\","
@@ -431,6 +432,14 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         if (Boolean.TRUE.equals(firstArticle) && !makes) {
             throw ApiException.badRequest("firstArticle only applies to a BOM or routing change.");
         }
+        // ADR-S086 §7 (owner decision 2026-11-24): optional by default; a mandatory policy cannot be left out.
+        String mandatory = makes ? firstArticleMandatory(typeId) : null;
+        if (mandatory != null) {
+            if (Boolean.FALSE.equals(firstArticle)) {
+                throw ApiException.badRequest("A first-article inspection is mandatory for " + mandatory + ".");
+            }
+            firstArticle = true;
+        }
         if (firstArticle == null && makes && settings.firstArticleDefault()) {
             firstArticle = true;
         }
@@ -547,6 +556,20 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
                     + " \"changeId\" = ? AND NOT voided").params(PlmDb.org(), id).update();
             typeNote = "Type changed from " + from.get("name") + " to " + to.get("name") + "; back to stage "
                     + firstStage.get("name") + ".";
+        }
+        if (Set.of("bom", "routing").contains(str(eco, "type"))) {
+            // ADR-S086 §7: a mandatory first-article inspection cannot be switched off (and is switched on when the
+            // change moves into a type that requires it, or the organization made it mandatory since).
+            String mandatory = firstArticleMandatory(data.containsKey("changeTypeId") ? (String) data.get("changeTypeId")
+                    : stages.typeIdOf(eco));
+            boolean inspected = data.containsKey("firstArticle") ? Boolean.TRUE.equals(data.get("firstArticle"))
+                    : Boolean.TRUE.equals(eco.get("firstArticle"));
+            if (mandatory != null && !inspected) {
+                if (Boolean.FALSE.equals(dto.firstArticle())) {
+                    throw ApiException.badRequest("A first-article inspection is mandatory for " + mandatory + ".");
+                }
+                data.put("firstArticle", true);
+            }
         }
         List<String> tagNames = dto.tagIds() == null ? null : tags.set(id, dto.tagIds());
         String effectivity = data.containsKey("effectivity") ? (String) data.get("effectivity")
@@ -986,6 +1009,21 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         return cost.financial(engineering.require(id));
     }
 
+    /**
+     * What makes a first-article inspection mandatory for a BOM / routing change of ECO type {@code typeId}
+     * (ADR-S086 §7): the organization's policy, else the type's; null when it is optional.
+     */
+    private String firstArticleMandatory(String typeId) {
+        if (settings.firstArticleRequired()) {
+            return "every BOM and routing change of the organization";
+        }
+        if (typeId == null) {
+            return null;
+        }
+        Map<String, Object> type = stages.requireType(typeId);
+        return Boolean.TRUE.equals(type.get("firstArticleRequired")) ? "changes of type " + type.get("name") : null;
+    }
+
     /** An explicit new revision must not be one the product already used (ADR-S086). */
     private void checkNewRevision(String productId, String newRevision) {
         String rev = PlmSupport.blank(newRevision);
@@ -1058,7 +1096,10 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         out.put("removedComponents", removed);
         out.put("addedComponents", added);
         out.put("changedComponents", changed);
-        out.put("cost", cost);
+        // Valuation figures are for users who may read inventory valuation (ADR-S086 §5).
+        boolean seesCost = PlmReportService.seesCost();
+        out.put("cost", seesCost ? cost : null);
+        out.put("costVisible", seesCost);
         out.put("routing", eco.get("routingId") == null ? null : Obj.of("bomsRepointed", SqlRows.list(db.jdbc().sql(
                 "SELECT id, code, version, status::text AS status FROM \"Bom\" WHERE \"organizationId\" = ? AND"
                         + " \"routingId\" = ? AND \"deletedAt\" IS NULL AND status::text <> 'archived' ORDER BY code")
@@ -1082,7 +1123,7 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
                         + PlmSupport.label((Map<String, Object>) a.get("product")) + " is "
                         + PlmLifecycleService.human((String) a.get("lifecycleState")) + "."));
         Map<String, Object> plan = dispositions.plan(eco);
-        out.put("dispositionPlan", plan);
+        out.put("dispositionPlan", seesCost ? plan : withoutUnitCosts(plan));
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> waiting = (List<Map<String, Object>>) plan.get("useUpPending");
         if (!waiting.isEmpty()) {
@@ -1170,6 +1211,12 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         }
         if (productApplied != null) {
             data.put("productChangesApplied", new PlmDb.Json(productApplied));
+        }
+        if (!Boolean.TRUE.equals(eco.get("firstArticle")) && Set.of("bom", "routing").contains(str(eco, "type"))
+                && firstArticleMandatory(stages.typeIdOf(eco)) != null) {
+            // ADR-S086 §7: made mandatory after the change was raised — the first article is inspected anyway.
+            eco.put("firstArticle", true);
+            data.put("firstArticle", true);
         }
         Map<String, Object> inspection = fai.onApplied(eco);
         if (!inspection.isEmpty()) {
@@ -1566,6 +1613,20 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
     private String lifecycleState(String productId) {
         Map<String, Object> item = lifecycle.byProduct(productId);
         return item == null ? null : str(item, "lifecycleState");
+    }
+
+    /** The disposition plan without the unit cost of the stock it touches (inventory valuation, ADR-S086 §5). */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withoutUnitCosts(Map<String, Object> plan) {
+        Map<String, Object> out = new LinkedHashMap<>(plan);
+        if (plan.get("stock") instanceof List<?> rows) {
+            out.put("stock", rows.stream().map(r -> {
+                Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) r);
+                row.put("unitCost", null);
+                return row;
+            }).toList());
+        }
+        return out;
     }
 
     private Map<String, Object> costDelta(String oldBom, String newBom) {

@@ -5,11 +5,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
-/** PLM settings, the lifecycle policy across purchasing / sales / replenishment, first-article inspection (ADR-S086). */
+/**
+ * PLM settings, the lifecycle policy across purchasing / sales / replenishment, first-article inspection (ADR-S086).
+ * The owner's defaults, exceptions, the till, invoices and cost masking: {@link PlmExceptionsIT}.
+ */
 class PlmPolicyIT extends PlmTestSupport {
 
     static final String PLM = "/manufacturing/plm";
@@ -58,9 +62,14 @@ class PlmPolicyIT extends PlmTestSupport {
         return okAs(approver(), 201, "POST", PLM + "/changes/" + ecoId + "/decisions", Map.of("decision", "approved"));
     }
 
+    /** Back to the shipped defaults: no stored settings row for DEMO. */
     void resetSettings() {
-        ok(200, "PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("prototype", Map.of("sell", "allow")),
-                "defaultCostPolicy", "none", "firstArticleDefault", false));
+        jdbc.sql("DELETE FROM \"PlmSettings\" WHERE \"organizationId\" = ?").param(demoOrg).update();
+    }
+
+    @BeforeEach
+    void shippedDefaults() {
+        resetSettings();
     }
 
     /** An applied BOM change asking for a first article; returns {eco id, new BOM id}. */
@@ -93,7 +102,8 @@ class PlmPolicyIT extends PlmTestSupport {
         assertThat(defaults.get("lifecyclePolicy").get("obsolete").get("purchase").asString()).isEqualTo("block");
         assertThat(defaults.get("lifecyclePolicy").get("phase_out").get("sell").asString()).isEqualTo("allow");
         assertThat(msg(as("PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("released", Map.of("sell",
-                "block")))))).isEqualTo("A released product is always allowed to be purchased, sold and replenished.");
+                "block")))))).isEqualTo("A released product is always allowed to be purchased, produced, sold and"
+                        + " replenished.");
         assertThat(msg(as("PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("retired", Map.of())))))
                 .startsWith("lifecyclePolicy.retired is not a lifecycle state");
         assertThat(msg(as("PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("obsolete", Map.of("sell",
@@ -150,19 +160,22 @@ class PlmPolicyIT extends PlmTestSupport {
             jdbc.sql("DELETE FROM \"ReorderRule\" WHERE id = ?").param(rule).update();
         }
 
-        // The organization tightens the matrix: prototypes are not sold.
+        // Not released: not sold (owner decision 2026-11-24); the matrix is the organization's.
         String proto = product("PPROTO");
         register(proto, "prototype");
-        String protoOrder = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "lines", List.of(Map.of(
-                "productId", proto, "quantity", 1)))).get("id").asString();
+        String protoRefused = "Product " + code(proto) + " is a prototype and cannot be sold.";
+        assertThat(msg(as("POST", "/sales/orders", Map.of("partnerId", customer, "lines", List.of(Map.of(
+                "productId", proto, "quantity", 1)))))).isEqualTo(protoRefused);
         try {
-            JsonNode saved = ok(200, "PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("prototype",
-                    Map.of("sell", "block"))));
-            assertThat(saved.get("lifecyclePolicy").get("prototype").get("sell").asString()).isEqualTo("block");
-            assertThat(saved.get("lifecyclePolicy").get("obsolete").get("purchase").asString()).isEqualTo("block");
+            JsonNode relaxed = ok(200, "PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("prototype",
+                    Map.of("sell", "allow"))));
+            assertThat(relaxed.get("lifecyclePolicy").get("prototype").get("sell").asString()).isEqualTo("allow");
+            assertThat(relaxed.get("lifecyclePolicy").get("obsolete").get("purchase").asString()).isEqualTo("block");
+            String protoOrder = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "lines",
+                    List.of(Map.of("productId", proto, "quantity", 1)))).get("id").asString();
+            ok(200, "PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("prototype", Map.of("sell", "block"))));
             assertThat(msg(as("POST", "/sales/orders", Map.of("partnerId", customer, "lines", List.of(Map.of(
-                    "productId", proto, "quantity", 1)))))).isEqualTo("Product " + code(proto) + " is a prototype and"
-                            + " cannot be sold.");
+                    "productId", proto, "quantity", 1)))))).isEqualTo(protoRefused);
             // A line the order already had stays editable.
             ok(200, "PUT", "/sales/orders/" + protoOrder, Map.of("lines", List.of(Map.of("productId", proto,
                     "quantity", 3))));

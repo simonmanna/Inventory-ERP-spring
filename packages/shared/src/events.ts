@@ -328,6 +328,8 @@ export const EVENTS = {
   PlmRevisionCreated: 'plm.revision.created',
   PlmChangeRebased: 'plm.change.rebased',
   PlmFaiOpened: 'plm.fai.opened',
+  PlmLifecycleExceptionGranted: 'plm.lifecycle.exception_granted',
+  PlmLifecycleExceptionRevoked: 'plm.lifecycle.exception_revoked',
   // Notification routing (ADR-S065): state changes that tell the responsible person.
   HrLeaveRequested: 'hr.leave.requested',
   HrLeaveDecided: 'hr.leave.decided',
@@ -481,6 +483,8 @@ export interface DomainEventMap {
   'plm.revision.created': PlmEventPayload;
   'plm.change.rebased': PlmEventPayload;
   'plm.fai.opened': PlmEventPayload;
+  'plm.lifecycle.exception_granted': PlmEventPayload;
+  'plm.lifecycle.exception_revoked': PlmEventPayload;
   'hr.leave.requested': { organizationId: string; leaveRequestId: string; requestCode: string; employeeId: string; days: number };
   'hr.leave.decided': { organizationId: string; leaveRequestId: string; requestCode: string; employeeId: string; status: 'APPROVED' | 'REJECTED'; reason: string | null };
   'manufacturing.order.completed': { organizationId: string; orderId: string; orderCode: string; status: 'completed' | 'qc_hold'; producedQty: string | null; reason: null };

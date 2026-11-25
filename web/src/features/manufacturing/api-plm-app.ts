@@ -19,6 +19,8 @@ export interface PlmChangeType {
   color: string | null;
   sequence: number;
   isDefault: boolean;
+  /** Every BOM / routing change of this type gets a first-article inspection (ADR-S086 §7). */
+  firstArticleRequired?: boolean;
   stageCount?: Num;
   openChanges?: Num;
 }
@@ -112,6 +114,8 @@ export interface RevisionCompare {
     }>;
   };
   cost: { from: Num | null; to: Num | null; delta: Num | null };
+  /** False without inventory_valuation:read: the unit costs are left out. */
+  costVisible?: boolean;
 }
 
 export interface AsBuiltRow {
@@ -141,7 +145,7 @@ export interface OrderBomStatus {
   openChanges: Array<{ id: string; number: string; title: string; status: string }>;
 }
 
-export type PolicyActivity = 'purchase' | 'sell' | 'replenish';
+export type PolicyActivity = 'purchase' | 'produce' | 'sell' | 'pos' | 'replenish';
 export type PolicyValue = 'allow' | 'block';
 export type LifecyclePolicy = Record<LifecycleState, Record<PolicyActivity, PolicyValue>>;
 
@@ -150,6 +154,8 @@ export interface PlmSettings {
   defaults: LifecyclePolicy;
   defaultCostPolicy: CostPolicy;
   firstArticleDefault: boolean;
+  /** Mandatory first-article inspection on every BOM / routing change (ADR-S086 §7). */
+  firstArticleRequired: boolean;
   states: LifecycleState[];
   activities: PolicyActivity[];
   updatedAt: string | null;
@@ -159,7 +165,34 @@ export interface SaveSettingsBody {
   lifecyclePolicy?: Partial<Record<LifecycleState, Partial<Record<PolicyActivity, PolicyValue>>>>;
   defaultCostPolicy?: CostPolicy;
   firstArticleDefault?: boolean;
+  firstArticleRequired?: boolean;
 }
+
+/** An authorized, time-boxed exception to the lifecycle policy for one product and activity (ADR-S086 §6). */
+export interface LifecycleException {
+  id: string;
+  productId: string;
+  productCode: string;
+  productName: string;
+  activity: PolicyActivity;
+  reason: string;
+  validUntil: string;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+  revokedBy: string | null;
+  revokedByName: string | null;
+  revokeReason: string | null;
+  status: 'active' | 'expired' | 'revoked';
+}
+
+/** What the lifecycle policy allows for one product today, activity by activity. */
+export type EffectivePolicy = Record<PolicyActivity, {
+  allowed: boolean;
+  policy: PolicyValue;
+  exception: { id: string; validUntil: string } | null;
+}>;
 
 export type ReportGroup = 'month' | 'type' | 'stage' | 'owner' | 'priority';
 
@@ -311,7 +344,9 @@ export function useStockByRevision(productId?: string) {
 
 // ---- mutations -------------------------------------------------------------------------------------------------------
 
-export interface SaveTypeBody { name?: string; description?: string; color?: string; sequence?: number; isDefault?: boolean }
+export interface SaveTypeBody {
+  name?: string; description?: string; color?: string; sequence?: number; isDefault?: boolean; firstArticleRequired?: boolean;
+}
 export interface SaveTagBody { name?: string; color?: string }
 
 export const useCreateChangeType = () =>
@@ -346,6 +381,15 @@ export const useRecordFirstArticle = () =>
 
 export const useSavePlmSettings = () =>
   usePlmMutation<SaveSettingsBody, PlmSettings>((body) => ({ method: 'put', url: '/settings', body }));
+
+export const useGrantLifecycleException = () =>
+  usePlmMutation<{ productId: string; activity: PolicyActivity; validUntil: string; reason: string }, LifecycleException>(
+    (body) => ({ method: 'post', url: '/lifecycle-exceptions', body }),
+  );
+export const useRevokeLifecycleException = () =>
+  usePlmMutation<{ id: string; reason?: string }, LifecycleException>(({ id, ...body }) => ({
+    method: 'post', url: `/lifecycle-exceptions/${id}/revoke`, body,
+  }));
 
 export const useUpdateOrderBom = () =>
   usePlmMutation<string, { orderId: string; fromCode: string; toCode: string; bom: { code: string; version: number } }>(

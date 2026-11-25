@@ -4,9 +4,12 @@ import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.plm.application.PlmChangeService;
+import com.inventoryerp.plm.application.PlmExceptionService;
 import com.inventoryerp.plm.application.PlmFaiService;
+import com.inventoryerp.plm.application.PlmCommands.GrantException;
 import com.inventoryerp.plm.application.PlmCommands.KanbanState;
 import com.inventoryerp.plm.application.PlmCommands.RecordFirstArticle;
+import com.inventoryerp.plm.application.PlmCommands.RevokeException;
 import com.inventoryerp.plm.application.PlmCommands.SaveSettings;
 import com.inventoryerp.plm.application.PlmCommands.SaveTag;
 import com.inventoryerp.plm.application.PlmCommands.SaveType;
@@ -52,10 +55,12 @@ public class PlmAppController {
     private final PlmSettingsService settings;
     private final PlmFaiService fai;
     private final PlmReportService reports;
+    private final PlmExceptionService exceptions;
 
     public PlmAppController(PlmTypeService types, PlmTagService tags, PlmChangeService changes,
             PlmRevisionService revisions, PlmOrderService orders, PlmSettingsService settings, PlmFaiService fai,
-            PlmReportService reports) {
+            PlmReportService reports, PlmExceptionService exceptions) {
+        this.exceptions = exceptions;
         this.settings = settings;
         this.fai = fai;
         this.reports = reports;
@@ -222,6 +227,30 @@ public class PlmAppController {
     @RequirePermissions(Permissions.PLM__MANAGE)
     public Map<String, Object> saveSettings(@Valid @RequestBody SaveSettings dto) {
         return settings.update(dto);
+    }
+
+    // ---- lifecycle exceptions (ADR-S086 §6) ------------------------------------------------------------------------
+
+    @GetMapping("/lifecycle-exceptions")
+    @RequirePermissions(Permissions.PLM__READ)
+    public List<Map<String, Object>> lifecycleExceptions(@RequestParam(required = false) String productId,
+            @RequestParam(required = false) Boolean active) {
+        return exceptions.list(productId, active);
+    }
+
+    @PostMapping("/lifecycle-exceptions")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.PLM__EXCEPTION)
+    public Map<String, Object> grantLifecycleException(@Valid @RequestBody GrantException dto) {
+        return exceptions.grant(dto);
+    }
+
+    @PostMapping("/lifecycle-exceptions/{id}/revoke")
+    @ResponseStatus(HttpStatus.CREATED)
+    @RequirePermissions(Permissions.PLM__EXCEPTION)
+    public Map<String, Object> revokeLifecycleException(@PathVariable String id,
+            @Valid @RequestBody(required = false) RevokeException dto) {
+        return exceptions.revoke(id, dto);
     }
 
     // ---- production orders -----------------------------------------------------------------------------------------

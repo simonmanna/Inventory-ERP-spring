@@ -75,6 +75,9 @@ public class PlmRevisionService {
             row.put("createdByName", names.get(str(r, "createdBy")));
             row.put("changeNumber", numbers.get(str(r, "changeId")));
             row.put("ordersBuilt", built.getOrDefault(str(r, "id"), 0L));
+            if (!PlmReportService.seesCost()) {
+                row.put("unitCost", null);
+            }
             out.add(row);
         }
         return out;
@@ -89,6 +92,16 @@ public class PlmRevisionService {
                 .get(str(r, "changeId")));
         out.put("product", plm.productOrNull(str(r, "productId")));
         out.put("recorded", snapshotted(r));
+        out.put("costVisible", PlmReportService.seesCost());
+        if (!PlmReportService.seesCost()) {
+            // The unit cost the revision was built at is inventory valuation (ADR-S086 §5).
+            out.put("unitCost", null);
+            Map<String, Object> snapshot = new LinkedHashMap<>(snap(r));
+            if (snapshot.get("cost") instanceof Map<?, ?> c) {
+                snapshot.put("cost", Obj.of("unitCost", null, "source", c.get("source")));
+            }
+            out.put("snapshot", snapshot);
+        }
         return out;
     }
 
@@ -124,9 +137,11 @@ public class PlmRevisionService {
         out.put("routing", compareRoutings((Map<String, Object>) a.get("routing"), (Map<String, Object>) b.get("routing")));
         out.put("documents", compareDocuments((List<Map<String, Object>>) a.getOrDefault("documents", List.of()),
                 (List<Map<String, Object>>) b.getOrDefault("documents", List.of())));
-        BigDecimal ca = (BigDecimal) from.get("unitCost");
-        BigDecimal cb = (BigDecimal) to.get("unitCost");
+        boolean seesCost = PlmReportService.seesCost();
+        BigDecimal ca = seesCost ? (BigDecimal) from.get("unitCost") : null;
+        BigDecimal cb = seesCost ? (BigDecimal) to.get("unitCost") : null;
         out.put("cost", Obj.of("from", ca, "to", cb, "delta", ca == null || cb == null ? null : cb.subtract(ca)));
+        out.put("costVisible", seesCost);
         return out;
     }
 

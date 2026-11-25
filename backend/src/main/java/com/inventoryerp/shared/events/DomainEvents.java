@@ -253,6 +253,8 @@ public final class DomainEvents {
     public static final String PLM_REVISION_CREATED = "plm.revision.created";
     public static final String PLM_CHANGE_REBASED = "plm.change.rebased";
     public static final String PLM_FAI_OPENED = "plm.fai.opened";
+    public static final String PLM_LIFECYCLE_EXCEPTION_GRANTED = "plm.lifecycle.exception_granted";
+    public static final String PLM_LIFECYCLE_EXCEPTION_REVOKED = "plm.lifecycle.exception_revoked";
     public static final String HR_LEAVE_REQUESTED = "hr.leave.requested";
     public static final String HR_LEAVE_DECIDED = "hr.leave.decided";
     public static final String MANUFACTURING_ORDER_COMPLETED = "manufacturing.order.completed";

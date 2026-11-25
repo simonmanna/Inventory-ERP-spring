@@ -64,7 +64,9 @@ public final class PlmCommands {
             @Size(max = 500) String description,
             @Pattern(regexp = COLOR, message = COLOR_MSG) String color,
             @Min(0) Integer sequence,
-            Boolean isDefault) {}
+            Boolean isDefault,
+            /** The BOM / routing changes of this type must have a first-article inspection (ADR-S086 §7). */
+            Boolean firstArticleRequired) {}
 
     public record SaveTag(
             @Size(min = 1, max = 40) String name,
@@ -190,7 +192,18 @@ public final class PlmCommands {
     public record SaveSettings(
             Map<String, Map<String, String>> lifecyclePolicy,
             @OneOf({"none", "propose", "activate"}) String defaultCostPolicy,
-            Boolean firstArticleDefault) {}
+            Boolean firstArticleDefault,
+            /** Mandatory first-article inspection on every BOM / routing change (ADR-S086 §7). */
+            Boolean firstArticleRequired) {}
+
+    /** Grant a time-boxed exception to the lifecycle policy (ADR-S086 §6). */
+    public record GrantException(
+            @NotBlank String productId,
+            @NotNull @OneOf({"purchase", "produce", "sell", "pos", "replenish"}) String activity,
+            @NotNull @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "must be a date (YYYY-MM-DD)") String validUntil,
+            @NotBlank @Size(max = 2000) String reason) {}
+
+    public record RevokeException(@Size(max = 2000) String reason) {}
 
     /** Record a first-article result by hand (no inspection lot). */
     public record RecordFirstArticle(
