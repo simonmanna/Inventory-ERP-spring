@@ -35,7 +35,7 @@ class ArchitectureTests {
             "FeatureFlagsController", "FilesController", "GuideController", "HealthController", "HrController",
             "LicenseController", "NotificationsController", "OrganizationsController", "PermissionsController",
             "PosMenuController", "PosSplitController", "PosTablesController", "RecurringController",
-            "ReportAccessController", "ReportsDashboardController", "SearchController", "TaskController");
+            "ReportAccessController", "SearchController", "TaskController");
 
     private static final DescribedPredicate<JavaMethod> ROUTES = DescribedPredicate.describe("a route",
             (JavaMethod m) -> m.isMetaAnnotatedWith(RequestMapping.class) || m.isAnnotatedWith(RequestMapping.class));

@@ -23,8 +23,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Period close / reopen / lock (port of {@code period-close.service.ts}). Close runs in one transaction:
  * refuse while shifts are unreconciled or inventory postings are pending, zero every P&amp;L account into
- * Retained Earnings through the CLOSING journal ({@code postingKey period_close:<id>}), then flip the
- * period to {@code closed}. Reopen reverses the closing entry; a locked period is never reopened.
+ * Retained Earnings through the CLOSING journal ({@code postingKey period_close:<id>}; none when the P&amp;L is zero on
+ * every account, finance audit A3), then flip the period to {@code closed}. Reopen reverses the closing entry; a locked
+ * period is never reopened.
  */
 @Service
 public class PeriodCloseService {
@@ -91,7 +92,36 @@ public class PeriodCloseService {
     public static final List<String> SYNC_STOCK_OP_TYPES = List.of("stock.in", "stock.out", "stock.count",
             "kitchen.void", "transfer.dispatch", "transfer.receive", "stock.adjust", "grn.receive");
 
-    /** Close the period: post the closing journal, flip status to closed. */
+    /**
+     * Unposted stock-posting jobs of a period (finance audit A3, P2-13). A job belongs to the period of its sale: the
+     * invoice's issue date, else the order's time, which is the date its stock and COGS post at
+     * ({@code PosInvoiceService.datedForStock}). An offline sale of the 31st synced on the 2nd queues its job in the next
+     * month and used to slip past the close. A job queued inside the period still counts, as before. Params:
+     * organization, then the period start and end twice.
+     */
+    static final String UNPOSTED_STOCK_JOBS = "SELECT count(*) FROM \"StockPostingJob\" j"
+            + " LEFT JOIN \"Invoice\" i ON i.id = j.\"invoiceId\" AND i.\"organizationId\" = j.\"organizationId\""
+            + " LEFT JOIN \"Order\" o ON o.id = j.\"orderId\" AND o.\"organizationId\" = j.\"organizationId\""
+            + " WHERE j.\"organizationId\" = ? AND j.status::text IN ('pending', 'processing', 'failed')"
+            + " AND (COALESCE(i.\"issueDate\", o.\"createdAt\", j.\"createdAt\") BETWEEN ? AND ?"
+            + " OR j.\"createdAt\" BETWEEN ? AND ?)";
+
+    /**
+     * Open sale-line inventory exceptions of a period: in the period of their sale when they name an invoice (as
+     * {@link #UNPOSTED_STOCK_JOBS}), else in the period they were raised in. GL tie-out variances and inventory
+     * integrity findings are not sale lines. Params: organization, tie-out kind, integrity kind prefix, then the period
+     * start and end twice.
+     */
+    static final String OPEN_SALE_LINE_EXCEPTIONS = "SELECT count(*) FROM \"InventoryException\" x"
+            + " LEFT JOIN \"Invoice\" i ON i.id = x.\"invoiceId\" AND i.\"organizationId\" = x.\"organizationId\""
+            + " WHERE x.\"organizationId\" = ? AND x.status::text = 'open' AND x.kind IS DISTINCT FROM ?"
+            + " AND NOT starts_with(COALESCE(x.kind, ''), ?)"
+            + " AND (COALESCE(i.\"issueDate\", x.\"createdAt\") BETWEEN ? AND ? OR x.\"createdAt\" BETWEEN ? AND ?)";
+
+    /**
+     * Close the period: post the closing journal, flip status to closed. A period whose profit and loss is zero on every
+     * account closes without a closing entry (finance audit A3).
+     */
     @Transactional
     public Map<String, Object> close(String periodId) {
         String organizationId = TenantContext.organizationId();
@@ -106,9 +136,8 @@ public class PeriodCloseService {
             throw ApiException.badRequest(
                     "Reconcile all register shifts through the period end before locking the accounting period");
         }
-        long unpostedCogs = count("SELECT count(*) FROM \"StockPostingJob\" WHERE \"organizationId\" = ?"
-                        + " AND status::text IN ('pending', 'processing', 'failed') AND \"createdAt\" >= ? AND \"createdAt\" <= ?",
-                organizationId, period.startDate(), period.endDate());
+        long unpostedCogs = count(UNPOSTED_STOCK_JOBS, organizationId, period.startDate(), period.endDate(),
+                period.startDate(), period.endDate());
         if (unpostedCogs > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + unpostedCogs
                     + " stock-posting job(s) in this period have not posted COGS yet. Drain the stock-posting queue,"
@@ -149,12 +178,9 @@ public class PeriodCloseService {
         // A GL tie-out variance (daily tie-out job) is not a sale line: it shows on the close checklist as its own
         // advisory item and does not block the close. Inventory integrity findings (R0) are not sale lines either:
         // the value ones are checked below, the quantity ones never hold the close.
-        long openExceptions = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
-                        + " AND status::text = 'open' AND kind IS DISTINCT FROM ?"
-                        + " AND NOT starts_with(COALESCE(kind, ''), ?) AND \"createdAt\" >= ?"
-                        + " AND \"createdAt\" <= ?",
-                organizationId, InventoryTieOutMonitor.KIND, InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX,
-                period.startDate(), period.endDate());
+        long openExceptions = count(OPEN_SALE_LINE_EXCEPTIONS, organizationId, InventoryTieOutMonitor.KIND,
+                InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX, period.startDate(), period.endDate(), period.startDate(),
+                period.endDate());
         if (openExceptions > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + openExceptions
                     + " open inventory exception(s) in this period — sale lines whose stock/COGS was not posted."
@@ -183,7 +209,8 @@ public class PeriodCloseService {
                     rs.getBigDecimal(2) == null ? BigDecimal.ZERO : rs.getBigDecimal(2),
                     rs.getBigDecimal(3) == null ? BigDecimal.ZERO : rs.getBigDecimal(3)}))
                 .list();
-        Map<String, AccountMeta> acctById = accounts.meta(grouped.keySet());
+        // A3 (P2-3): every account with postings, also one this instance has not cached yet
+        Map<String, AccountMeta> acctById = accounts.ledgerMeta(grouped.keySet());
 
         BigDecimal totalRevenue = BigDecimal.ZERO;
         BigDecimal totalContraRevenue = BigDecimal.ZERO;
@@ -192,9 +219,6 @@ public class PeriodCloseService {
         List<Line> closingLines = new ArrayList<>();
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta acct = acctById.get(g.getKey());
-            if (acct == null) {
-                continue;
-            }
             BigDecimal debit = g.getValue()[0];
             BigDecimal credit = g.getValue()[1];
             boolean creditNormal = "credit".equals(acct.normalBalance());
@@ -214,25 +238,55 @@ public class PeriodCloseService {
                 closingLines.add(closing);
             }
         }
-        if (closingLines.isEmpty()) {
-            throw ApiException.badRequest("Nothing to close for '" + period.name()
-                    + "': no posted revenue or expense in this period");
-        }
         BigDecimal netIncome = totalRevenue.subtract(totalContraRevenue).subtract(totalExpense).subtract(totalCogs);
-        String retainedEarningsId;
-        try {
-            retainedEarningsId = determination.mapped("retained_earnings");
-        } catch (ApiException e) {
-            throw ApiException.badRequest("Cannot close '" + period.name() + "': no Retained Earnings account configured"
-                    + " (set AccountMapping key 'retained_earnings' under Accounting > Account Mapping)");
+        // Finance audit A3 (P2-1, owner-approved deviation; Nest refused "Nothing to close for '…': no posted revenue or
+        // expense in this period"): profit and loss that is zero on every account (no postings, balance-sheet movements
+        // only, or everything reversed) leaves nothing to post, and the period closes without a closing entry.
+        String entryId = closingLines.isEmpty() ? null : postClosingEntry(period, organizationId, closingLines, netIncome);
+
+        jdbc.sql("UPDATE \"FiscalPeriod\" SET status = 'closed', \"closedAt\" = now(), \"closedBy\" = ?, \"updatedAt\" = now()"
+                        + " WHERE id = ? AND \"organizationId\" = ?")
+                .params(TenantContext.userId(), period.id(), organizationId).update();
+        String net = PostingService.plain(netIncome);
+        Map<String, Object> newValues = new LinkedHashMap<>();
+        newValues.put("status", "closed");
+        newValues.put("netIncome", net);
+        newValues.put("closingEntryId", entryId);
+        audit.recordInTx(AuditInput.of("FiscalPeriod", period.id(), "update", Map.of("status", "open"), newValues));
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("organizationId", organizationId);
+        event.put("periodId", period.id());
+        event.put("periodName", period.name());
+        event.put("closingEntryId", entryId);
+        event.put("netIncome", net);
+        AfterCommit.run(() -> events.publish("fiscal_period.closed", event));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("journalEntryId", entryId);
+        out.put("netIncome", net);
+        return out;
+    }
+
+    /**
+     * Post the CLOSING journal: zero each profit and loss account, the net income to Retained Earnings. Break-even
+     * closes the accounts against each other: a zero Retained Earnings line would be refused, so there is none and the
+     * mapping is not needed (finance audit A3, P2-1). Returns the entry id.
+     */
+    private String postClosingEntry(Period period, String organizationId, List<Line> closingLines, BigDecimal netIncome) {
+        List<Line> all = new ArrayList<>(closingLines);
+        boolean toRetainedEarnings = netIncome.signum() != 0;
+        if (toRetainedEarnings) {
+            String retainedEarningsId;
+            try {
+                retainedEarningsId = determination.mapped("retained_earnings");
+            } catch (ApiException e) {
+                throw ApiException.badRequest("Cannot close '" + period.name() + "': no Retained Earnings account"
+                        + " configured (set AccountMapping key 'retained_earnings' under Accounting > Account Mapping)");
+            }
+            all.add(netIncome.signum() > 0 ? new Line(retainedEarningsId, BigDecimal.ZERO, netIncome)
+                    : new Line(retainedEarningsId, netIncome.abs(), BigDecimal.ZERO));
         }
-        if (netIncome.signum() >= 0) {
-            closingLines.add(new Line(retainedEarningsId, BigDecimal.ZERO, netIncome));
-        } else {
-            closingLines.add(new Line(retainedEarningsId, netIncome.abs(), BigDecimal.ZERO));
-        }
-        BigDecimal totalDebit = closingLines.stream().map(Line::debit).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalCredit = closingLines.stream().map(Line::credit).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalDebit = all.stream().map(Line::debit).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalCredit = all.stream().map(Line::credit).reduce(BigDecimal.ZERO, BigDecimal::add);
         if (totalDebit.subtract(totalCredit).abs().compareTo(new BigDecimal("0.01")) > 0) {
             throw ApiException.badRequest("Closing entry unbalanced: debit " + PostingService.plain(totalDebit)
                     + " vs credit " + PostingService.plain(totalCredit));
@@ -246,30 +300,15 @@ public class PeriodCloseService {
                     .param(organizationId).update();
         }
         List<PostingRequest.Line> lines = new ArrayList<>();
-        for (int i = 0; i < closingLines.size(); i++) {
-            Line l = closingLines.get(i);
+        for (int i = 0; i < all.size(); i++) {
+            Line l = all.get(i);
+            boolean net = toRetainedEarnings && i == all.size() - 1;
             lines.add(new PostingRequest.Line(l.accountId(), PostingService.plain(l.debit()), PostingService.plain(l.credit()),
-                    null, i == closingLines.size() - 1 ? "Net income / (loss)" : "Closing", null, null, null));
+                    null, net ? "Net income / (loss)" : "Closing", null, null, null));
         }
         Map<String, Object> entry = posting.post(PostingRequest.of("CLOSING", instant(period.endDate()),
                 "Closing of " + period.name(), "period_close", period.id(), "period_close:" + period.id(), lines));
-        String entryId = (String) entry.get("id");
-
-        jdbc.sql("UPDATE \"FiscalPeriod\" SET status = 'closed', \"closedAt\" = now(), \"closedBy\" = ?, \"updatedAt\" = now()"
-                        + " WHERE id = ? AND \"organizationId\" = ?")
-                .params(TenantContext.userId(), period.id(), organizationId).update();
-        String net = PostingService.plain(netIncome);
-        Map<String, Object> newValues = new LinkedHashMap<>();
-        newValues.put("status", "closed");
-        newValues.put("netIncome", net);
-        newValues.put("closingEntryId", entryId);
-        audit.recordInTx(AuditInput.of("FiscalPeriod", period.id(), "update", Map.of("status", "open"), newValues));
-        AfterCommit.run(() -> events.publish("fiscal_period.closed", Map.of("organizationId", organizationId,
-                "periodId", period.id(), "periodName", period.name(), "closingEntryId", entryId, "netIncome", net)));
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("journalEntryId", entryId);
-        out.put("netIncome", net);
-        return out;
+        return (String) entry.get("id");
     }
 
     /** Reopen a closed period, reversing its closing entry. Locked periods are refused. */
@@ -334,11 +373,15 @@ public class PeriodCloseService {
         return Map.of("reopened", true);
     }
 
-    /** Lock a closed period: no more postings to its date range ever. */
+    /**
+     * Lock a closed period: no more postings to its date range ever. Under the period row lock, as close and reopen: a
+     * reopen committing while the lock read the status was overwritten and the reopened period ended up locked
+     * (finance audit A3).
+     */
     @Transactional
     public void lock(String periodId) {
         String organizationId = TenantContext.organizationId();
-        Period period = period(periodId, organizationId);
+        Period period = lockPeriod(periodId, organizationId);
         if ("open".equals(period.status())) {
             throw ApiException.badRequest("Fiscal period '" + period.name() + "' is open; close it before locking");
         }

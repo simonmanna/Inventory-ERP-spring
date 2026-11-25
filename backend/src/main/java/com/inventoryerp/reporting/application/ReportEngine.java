@@ -98,15 +98,9 @@ public class ReportEngine {
         ReportRequest req = request == null ? ReportRequest.empty() : request;
         validateFilters(def, req);
         ReportRequest scoped = req.withBranches(scopedBranches(req.branchIds())).withOptions(options(def, req));
-        ZoneId zone = OrgDates.orgTimezone(jdbc, org());
-        LocalDate today = LocalDate.now(zone);
-        LocalDate fiscalStart = fiscalStart(today);
-        ReportPeriod current = ReportPeriods.current(def, scoped, today, fiscalStart);
-        List<ReportPeriod> comparatives = def.accepts(FilterKey.COMPARE) ? ReportPeriods.comparatives(current,
-                scoped.compare()) : List.of();
-        ReportContext ctx = new ReportContext(org(), def, scoped, zone, current, comparatives, scoped.compare()
-                .contains("VARIANCE"), scoped.compare().contains("VARIANCE_PCT"), scoped.compare().contains("BUDGET"),
-                today, fiscalStart);
+        ReportContext ctx = context(def, scoped);
+        ReportPeriod current = ctx.current();
+        List<ReportPeriod> comparatives = ctx.comparatives();
         long started = System.nanoTime();
         ReportBody body = registry.provider(id).run(ctx);
         int ms = (int) ((System.nanoTime() - started) / 1_000_000);
@@ -124,6 +118,33 @@ public class ReportEngine {
         Header header = header(def, scoped, current, runId, hash);
         return new ReportResult(header, body.columns(), body.rows(), body.totals(), body.checks(), body.meta(),
                 periods);
+    }
+
+    /** The run context of a request: period and comparatives resolved in the organisation's time zone. */
+    private ReportContext context(ReportDefinition def, ReportRequest scoped) {
+        ZoneId zone = OrgDates.orgTimezone(jdbc, org());
+        LocalDate today = LocalDate.now(zone);
+        LocalDate fiscalStart = fiscalStart(today);
+        ReportPeriod current = ReportPeriods.current(def, scoped, today, fiscalStart);
+        List<ReportPeriod> comparatives = def.accepts(FilterKey.COMPARE) ? ReportPeriods.comparatives(current,
+                scoped.compare()) : List.of();
+        return new ReportContext(org(), def, scoped, zone, current, comparatives, scoped.compare()
+                .contains("VARIANCE"), scoped.compare().contains("VARIANCE_PCT"), scoped.compare().contains("BUDGET"),
+                today, fiscalStart);
+    }
+
+    /**
+     * The body of an engine report for a system check (finance audit A5: the AR / AP tie-out, the ledger integrity
+     * check): the context of {@link #run} for the whole organisation — no branch data scope, no permission check, no
+     * run recorded — so it also runs inside a read-only transaction. Never for a user's request: {@link #run} is.
+     */
+    @Transactional(readOnly = true)
+    public ReportBody evaluate(String id, ReportRequest request) {
+        ReportDefinition def = registry.find(id).orElseThrow(() -> ApiException.notFound("Report " + id
+                + " not found"));
+        ReportRequest req = request == null ? ReportRequest.empty() : request;
+        validateFilters(def, req);
+        return registry.provider(id).run(context(def, req.withOptions(options(def, req))));
     }
 
     /** Recent runs: the caller's own, or everyone's with {@code report_library:manage}. */

@@ -11,7 +11,9 @@ import {
   useBaseCurrencyDecimals,
   useRebuildSnapshots,
 } from '@/features/accounting/api';
+import { PERMISSIONS } from '@erp/shared';
 import { cn } from '@/lib/utils';
+import { useAuthStore } from '@/stores/auth.store';
 import { toast } from 'sonner';
 import { localDay } from '@/lib/dates';
 import { tx } from '@/lib/i18n/tx';
@@ -141,6 +143,10 @@ export function BalanceSheetPage() {
   const { data, isLoading, isError, refetch } = useBalanceSheetDetailed(asOf);
   const rebuildMutation = useRebuildSnapshots();
   const decimals = useBaseCurrencyDecimals();
+  // Finance audit A4: the rebuild also needs fiscal_period:update, not only the read permission of the reports.
+  const permissions = useAuthStore((s) => s.permissions);
+  const canRebuild =
+    permissions.includes(PERMISSIONS.report.accounting) && permissions.includes(PERMISSIONS.fiscalPeriod.update);
 
   async function handleRebuild() {
     try {
@@ -213,21 +219,23 @@ export function BalanceSheetPage() {
           <RefreshCw className="h-3.5 w-3.5" />
           {tx('Refresh')}
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-9 gap-1.5"
-          onClick={handleRebuild}
-          disabled={rebuildMutation.isPending}
-        >
-          <RotateCcw
-            className={cn(
-              'h-3.5 w-3.5',
-              rebuildMutation.isPending && 'animate-spin',
-            )}
-          />
-          {rebuildMutation.isPending ? tx('Rebuilding…') : tx('Rebuild Snapshots')}
-        </Button>
+        {canRebuild && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5"
+            onClick={handleRebuild}
+            disabled={rebuildMutation.isPending}
+          >
+            <RotateCcw
+              className={cn(
+                'h-3.5 w-3.5',
+                rebuildMutation.isPending && 'animate-spin',
+              )}
+            />
+            {rebuildMutation.isPending ? tx('Rebuilding…') : tx('Rebuild Snapshots')}
+          </Button>
+        )}
       </div>
 
       {isError && (

@@ -65,6 +65,11 @@ depreciation plus impairment still on the books with the accumulated depreciatio
 progress and other non-current assets such as intangibles are left out unless fixed-asset postings use them. Rows
 and tie codes are unchanged.
 
+`fa.register` and `fa.reconciliation` list an asset from the day it is on the books. An asset capitalised from a
+project is listed from its first project capitalisation date. Any other asset is listed from its purchase date. This
+is finance readiness audit fix step B0 (2026-11-24); see the accounting spec. Before B0 a capitalised asset was listed
+from its in-service date, so a capitalisation dated earlier showed as a difference until then.
+
 ## Default layouts
 
 P&L (credit − debit, costs negative): Revenue, Sales returns and discounts, **Net revenue**, Cost of sales, **Gross

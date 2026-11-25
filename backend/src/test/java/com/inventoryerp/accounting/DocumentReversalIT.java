@@ -191,7 +191,8 @@ class DocumentReversalIT extends AccountingFixtures {
         // A manual entry is still reversed generically.
         String arCode = mappedCode(b.org(), "accounts_receivable");
         String revenueCode = accountCodeOfSection(b.org(), "revenue");
-        String manual = postJe(b, LocalDate.now().toString(), List.of(dr(arCode, 7).partner(customer), cr(revenueCode, 7)));
+        String manual = postManualJe(b, LocalDate.now().toString(), List.of(dr(arCode, 7).partner(customer),
+                cr(revenueCode, 7)));
         Res reversed = as(b, "POST", "/journal-entries/" + manual + "/reverse", null);
         assertThat(reversed.status()).as(reversed.raw().body()).isEqualTo(200);
         assertThat(okAs(b, 200, "GET", "/journal-entries/" + manual, null).has("sourceDocument")).isFalse();
