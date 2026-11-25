@@ -33,7 +33,7 @@ A module must be on in three places: the server flag, the licence, and the organ
 ### Alerts
 
 Alerts need both flags. `ENABLE_ALERTS=true` starts the scans and opens the routes, and `VITE_ENABLE_ALERTS=true` shows
-**Alerts & Exceptions** in the menu. Rebuild the web app after changing the second one. `ALERTS_HOURLY_CRON` and
+the alert tabs on **AI Operations Intelligence** in the menu. Rebuild the web app after changing the second one. `ALERTS_HOURLY_CRON` and
 `ALERTS_DAILY_CRON` set the scan times.
 
 ## 2. Company, accounts and branches

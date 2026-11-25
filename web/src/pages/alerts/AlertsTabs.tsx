@@ -1,19 +1,16 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { BellRing, Download, RefreshCw } from 'lucide-react';
-import { PERMISSIONS } from '@erp/shared';
+import { Download } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { DataTable, type Column } from '@/components/data-table';
-import { DataTablePagination, DateRangeFilter, FilterSelect, ListCard, ListPageHeader, ListToolbar } from '@/components/list';
-import { useAuthStore } from '@/stores/auth.store';
+import { DataTablePagination, DateRangeFilter, FilterSelect, ListCard, ListToolbar } from '@/components/list';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { apiMessage, notify } from '@/lib/notify';
@@ -35,39 +32,25 @@ const channelLabel = (c: string) => (c === 'in_app' ? tx('In-app') : c === 'emai
 const unitLabel = (u: AlertRule['thresholdUnit']) =>
   u === 'percent' ? '%' : u === 'days' ? tx('days') : u === 'hours' ? tx('hours') : '';
 
-/** Alerts raised by the scheduled scans, the exception report and the settings per alert type (ADR-S021). */
-export function AlertsPage() {
-  const can = useAuthStore((s) => s.hasPermission);
-  const canManage = can(PERMISSIONS.alerts.manage);
+/** "Scan now": runs the alert scans (ADR-S021). Shared by the AI Operations Intelligence page header. */
+export function useRunAlertScan() {
   const run = useRunAlerts();
   const onRun = () => run.mutate(undefined, {
     onSuccess: () => notify.success(tx('Scan finished')),
     onError: (e) => notify.error(apiMessage(e, tx('The scan failed'))),
   });
-  return (
-    <div className="space-y-4">
-      <ListPageHeader icon={BellRing} title={tx('Alerts & Exceptions')}
-        description={tx('Scans run on a schedule. Each subject alerts once per period, however often they run.')}
-        actions={canManage ? (
-          <Button variant="outline" disabled={run.isPending} onClick={onRun}>
-            <RefreshCw className="mr-1.5 h-4 w-4" />{tx('Scan now')}
-          </Button>
-        ) : undefined} />
-      <Tabs defaultValue="events">
-        <TabsList>
-          <TabsTrigger value="events">{tx('Alerts')}</TabsTrigger>
-          <TabsTrigger value="report">{tx('Exception report')}</TabsTrigger>
-          <TabsTrigger value="rules">{tx('Settings')}</TabsTrigger>
-        </TabsList>
-        <TabsContent value="events" className="mt-4 space-y-4"><EventsTab /></TabsContent>
-        <TabsContent value="report" className="mt-4 space-y-4"><ReportTab /></TabsContent>
-        <TabsContent value="rules" className="mt-4 space-y-4"><RulesTab canManage={canManage} /></TabsContent>
-      </Tabs>
-    </div>
-  );
+  return { onRun, pending: run.isPending };
 }
 
-function EventsTab() {
+/** Open and critical-open alert counts for the AI Operations Intelligence overview. */
+export function useOpenAlertCounts() {
+  const open = useAlertEvents({ status: 'open', page: 1, pageSize: 1 });
+  const critical = useAlertEvents({ status: 'open', severity: 'critical', page: 1, pageSize: 1 });
+  return { open: open.data?.meta?.total, critical: critical.data?.meta?.total };
+}
+
+/** Alerts raised by the scheduled scans. Each subject alerts once per period, however often the scans run. */
+export function AlertEventsTab() {
   const [params] = useSearchParams();
   const [alertType, setAlertType] = useState(params.get('type') ?? '');
   const [severity, setSeverity] = useState('');
@@ -127,7 +110,8 @@ function EventsTab() {
   );
 }
 
-function ReportTab() {
+/** Exception report: alerts per type over a period. */
+export function AlertExceptionReport() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const { data, isLoading, isError } = useExceptionReport({ from: from || undefined, to: to || undefined });
@@ -156,7 +140,8 @@ function ReportTab() {
   );
 }
 
-function RulesTab({ canManage }: { canManage: boolean }) {
+/** Settings per alert type. */
+export function AlertSettingsTab({ canManage }: { canManage: boolean }) {
   const { data, isLoading, isError } = useAlertRules();
   const [editing, setEditing] = useState<AlertRule | null>(null);
   if (isLoading) return <p className="text-muted-foreground">{tx('Loading…')}</p>;

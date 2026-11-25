@@ -26,6 +26,8 @@ import { crushingRoutes } from '@/pages/crushing/routes';
 import { processingRoutes } from '@/pages/processing/routes';
 import { driverRoutes } from '@/pages/driver/routes';
 import { portalRoutes } from '@/pages/portal/routes';
+import { AI_OPS_PATH, AI_OPS_ROUTE_PERMISSIONS } from '@/pages/ai-operations/access';
+import { AiOperationsRedirect } from '@/pages/ai-operations/AiOperationsRedirect';
 
 const LoginPage = lazy(() => import('@/pages/login').then((m) => ({ default: m.LoginPage })));
 const DashboardPage = lazy(() => import('@/pages/dashboard').then((m) => ({ default: m.DashboardPage })));
@@ -287,8 +289,7 @@ const TableReportsPage = lazy(() => import('@/pages/tables/TableReportsPage'));
 const ZonesPage = lazy(() => import('@/pages/tables/ZonesPage'));
 const ReportCenterPage = lazy(() => import('@/pages/reports/ReportCenterPage'));
 const BiExportsPage = lazy(() => import('@/pages/reports/BiExportsPage').then((m) => ({ default: m.BiExportsPage })));
-const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage').then((m) => ({ default: m.AlertsPage })));
-const LossPreventionPage = lazy(() => import('@/pages/loss-prevention/LossPreventionPage').then((m) => ({ default: m.LossPreventionPage })));
+const AiOperationsPage = lazy(() => import('@/pages/ai-operations/AiOperationsPage').then((m) => ({ default: m.AiOperationsPage })));
 const BranchPerformancePage = lazy(() => import('@/pages/reports/BranchPerformancePage').then((m) => ({ default: m.BranchPerformancePage })));
 const ReportLibraryPage = lazy(() => import('@/pages/reports/ReportLibraryPage').then((m) => ({ default: m.ReportLibraryPage })));
 const ReportCategoryPage = lazy(() => import('@/pages/reports/ReportCategoryPage').then((m) => ({ default: m.ReportCategoryPage })));
@@ -461,8 +462,10 @@ export function App() {
             <Route path="/reports/library/category/:slug" element={<RequirePermission permission={PERMISSIONS.reportLibrary.read}><ReportCategoryPage /></RequirePermission>} />
             <Route path="/reports/library/:id" element={<RequirePermission permission={PERMISSIONS.reportLibrary.read}><ReportViewerPage /></RequirePermission>} />
             <Route path="/reports/bi-exports" element={<RequirePermission permission={PERMISSIONS.bi.export}><BiExportsPage /></RequirePermission>} />
-            <Route path="/alerts" element={<RequirePermission permission={PERMISSIONS.alerts.read}><AlertsPage /></RequirePermission>} />
-            <Route path="/loss-prevention" element={<RequirePermission permission={PERMISSIONS.lossPrevention.view}><LossPreventionPage /></RequirePermission>} />
+            <Route path={AI_OPS_PATH} element={<RequirePermission permission={AI_OPS_ROUTE_PERMISSIONS}><AiOperationsPage /></RequirePermission>} />
+            {/* The old addresses stay valid: alert digests link to /alerts?type=…, agent-health alerts to /loss-prevention. */}
+            <Route path="/alerts" element={<AiOperationsRedirect tab="alerts" />} />
+            <Route path="/loss-prevention" element={<AiOperationsRedirect tab="overview" />} />
             <Route path="/consolidated-report" element={<RequirePermission permission={PERMISSIONS.report.accounting}><ConsolidatedReportPage /></RequirePermission>} />
             <Route path="/statements" element={<RequirePermission permission={PERMISSIONS.report.ar}><StatementsPage /></RequirePermission>} />
             <Route path="/general-ledger" element={<RequireReport reportId="accounting.general-ledger"><GeneralLedgerPage /></RequireReport>} />

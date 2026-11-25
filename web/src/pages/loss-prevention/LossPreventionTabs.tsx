@@ -1,18 +1,15 @@
 import { useState } from 'react';
-import { Eye, RefreshCw, ShieldAlert } from 'lucide-react';
-import { PERMISSIONS } from '@erp/shared';
+import { Eye, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { DataTable, type Column } from '@/components/data-table';
-import { DataTablePagination, DateRangeFilter, FilterSelect, ListCard, ListPageHeader, ListToolbar } from '@/components/list';
-import { useAuthStore } from '@/stores/auth.store';
+import { DataTablePagination, DateRangeFilter, FilterSelect, ListCard, ListToolbar } from '@/components/list';
 import { useLicense } from '@/features/license/api';
 import { featureAvailable } from '@/lib/features';
 import { dateTime } from '@/lib/format';
@@ -24,13 +21,8 @@ import {
   useLpPerformance, useLpReplay, useLpRules, useLpRunComparison, useLpRuns, useLpSync, useSaveLpRule,
   type BarRow, type CashierRow, type Finding, type LpCase, type Rule, type Run, type Severity, type Summary,
 } from '@/features/loss-prevention/api';
-import { CamerasTab } from './CamerasTab';
-import { CaseEvidence, EvidenceTab } from './EvidenceTab';
+import { CaseEvidence } from './EvidenceTab';
 import { ViewFootageButton } from './FootageDialog';
-import { InsightsTab } from './InsightsTab';
-import { IntelligenceOverview } from './IntelligenceOverview';
-import { MetersTab } from './MetersTab';
-import { ResearchTab } from './ResearchTab';
 
 const SEVERITY: Record<Severity, 'destructive' | 'default' | 'secondary'> = {
   critical: 'destructive',
@@ -48,7 +40,7 @@ const OUTCOME_LABELS: Record<string, string> = {
   explained: tx('Explained'), confirmed_variance: tx('Confirmed variance'), false_alarm: tx('False alarm'),
   inconclusive: tx('Inconclusive'),
 };
-const ENGINE_LABELS: Record<string, string> = {
+export const ENGINE_LABELS: Record<string, string> = {
   cashier: tx('Cashier & kitchen'), bar: tx('Bar'), cashier_vision: tx('Cashier, cameras'),
   bar_pour: tx('Bar, meters and cameras'), kitchen_flow: tx('Kitchen flow'), service_vision: tx('Service, cameras'),
   retail_vision: tx('Retail checkout and store room, cameras'),
@@ -70,84 +62,26 @@ const words = (code: string) => code.replace(/_/g, ' ');
 const num = (v: number | string | null | undefined, digits = 2) =>
   v === null || v === undefined || v === '' ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: digits });
 
-/** Loss prevention (ADR-S077): variances found by reconciliation, reviewed as cases. A case states facts, not blame. */
-export function LossPreventionPage() {
-  const can = useAuthStore((s) => s.hasPermission);
-  const canConfigure = can(PERMISSIONS.lossPrevention.configure);
-  const canInvestigate = can(PERMISSIONS.lossPrevention.investigate);
-  const canEvidence = can(PERMISSIONS.lossPrevention.evidence);
-  // Cameras (LP1, LP2) are a licence feature of their own. A route the licence refuses answers 402 and opens the
-  // licence dialog, so the camera screens are offered only once the licence is known to include them.
-  const { data: license } = useLicense();
-  const { data: orgFeatures } = useOrgFeatures();
-  const vision = !!license && featureAvailable(orgFeatures, license.features, 'lpVision');
-  // Operations insights (LP6a) are a licence feature of their own too.
-  const insights = !!license && featureAvailable(orgFeatures, license.features, 'lpInsights');
-  const [tab, setTab] = useState('overview');
-  const [overviewCase, setOverviewCase] = useState<string | null>(null);
+/** "Read records now": reads the latest records and reconciles them (ADR-S077). */
+export function useLpSyncAction() {
   const sync = useLpSync();
   const onSync = () => sync.mutate(undefined, {
     onSuccess: (r) => notify.success(`${tx('Records read')}. ${r.windowsReconciled} ${tx('day(s) reconciled')}`),
     onError: (e) => notify.error(apiMessage(e, tx('Could not read the records'))),
   });
-  return (
-    <div className="space-y-4">
-      <ListPageHeader icon={ShieldAlert} title={tx('Loss Prevention')}
-        description={tx('Recorded sales, voids, cash and stock counts are reconciled on a schedule. A case is a variance to review, not an accusation.')}
-        actions={canConfigure ? (
-          <Button variant="outline" disabled={sync.isPending} onClick={onSync}>
-            <RefreshCw className="mr-1.5 h-4 w-4" />{tx('Read records now')}
-          </Button>
-        ) : undefined} />
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="overview">{tx('Overview')}</TabsTrigger>
-          <TabsTrigger value="cases">{tx('Cases')}</TabsTrigger>
-          <TabsTrigger value="reports">{tx('Reports')}</TabsTrigger>
-          {insights && <TabsTrigger value="insights">{tx('Insights')}</TabsTrigger>}
-          <TabsTrigger value="runs">{tx('Reconciliation runs')}</TabsTrigger>
-          <TabsTrigger value="rules">{tx('Rules')}</TabsTrigger>
-          {vision && canConfigure && <TabsTrigger value="cameras">{tx('Cameras')}</TabsTrigger>}
-          {canConfigure && <TabsTrigger value="meters">{tx('Pour meters')}</TabsTrigger>}
-          {vision && canEvidence && <TabsTrigger value="evidence">{tx('Evidence')}</TabsTrigger>}
-          {vision && canInvestigate && <TabsTrigger value="research">{tx('Research')}</TabsTrigger>}
-        </TabsList>
-        <TabsContent value="overview" className="mt-4 space-y-4">
-          <IntelligenceOverview vision={vision} canEvidence={canEvidence} insights={insights} engineLabels={ENGINE_LABELS}
-            onOpenCase={setOverviewCase} onViewAll={() => setTab('cases')} />
-          {overviewCase && (
-            <CaseDialog id={overviewCase} canInvestigate={canInvestigate} canConfigure={canConfigure}
-              showEvidence={vision && canEvidence} onClose={() => setOverviewCase(null)} />
-          )}
-        </TabsContent>
-        <TabsContent value="cases" className="mt-4 space-y-4">
-          <CasesTab canInvestigate={canInvestigate} canConfigure={canConfigure} vision={vision} canEvidence={canEvidence} />
-        </TabsContent>
-        <TabsContent value="reports" className="mt-4 space-y-4"><ReportsTab /></TabsContent>
-        {insights && (
-          <TabsContent value="insights" className="mt-4 space-y-4">
-            <InsightsTab canConfigure={canConfigure} canInvestigate={canInvestigate} vision={vision} />
-          </TabsContent>
-        )}
-        <TabsContent value="runs" className="mt-4 space-y-4"><RunsTab canConfigure={canConfigure} vision={vision} /></TabsContent>
-        <TabsContent value="rules" className="mt-4 space-y-4"><RulesTab canConfigure={canConfigure} /></TabsContent>
-        {vision && canConfigure && (
-          <TabsContent value="cameras" className="mt-4 space-y-4"><CamerasTab canEvidence={canEvidence} /></TabsContent>
-        )}
-        {canConfigure && (
-          <TabsContent value="meters" className="mt-4 space-y-4"><MetersTab vision={vision} /></TabsContent>
-        )}
-        {vision && canEvidence && (
-          <TabsContent value="evidence" className="mt-4 space-y-4"><EvidenceTab canConfigure={canConfigure} /></TabsContent>
-        )}
-        {vision && canInvestigate && (
-          <TabsContent value="research" className="mt-4 space-y-4">
-            <ResearchTab canEvidence={canEvidence} canConfigure={canConfigure} />
-          </TabsContent>
-        )}
-      </Tabs>
-    </div>
-  );
+  return { onSync, pending: sync.isPending };
+}
+
+/** Licence-gated parts of loss prevention: cameras (LP1, LP2) and operations insights (LP6a). */
+export function useLpLicence() {
+  // A route the licence refuses answers 402 and opens the licence dialog, so these screens are offered only once the
+  // licence is known to include them.
+  const { data: license } = useLicense();
+  const { data: orgFeatures } = useOrgFeatures();
+  return {
+    vision: !!license && featureAvailable(orgFeatures, license.features, 'lpVision'),
+    insights: !!license && featureAvailable(orgFeatures, license.features, 'lpInsights'),
+  };
 }
 
 function Stat({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
@@ -162,7 +96,7 @@ function Stat({ label, value, hint }: { label: string; value: string | number; h
   );
 }
 
-function CasesTab({ canInvestigate, canConfigure, vision, canEvidence }: {
+export function CasesTab({ canInvestigate, canConfigure, vision, canEvidence }: {
   canInvestigate: boolean; canConfigure: boolean; vision: boolean; canEvidence: boolean;
 }) {
   const [state, setState] = useState('');
@@ -246,7 +180,7 @@ function FindingFigures({ f }: { f: Finding }) {
   );
 }
 
-function CaseDialog({ id, canInvestigate, canConfigure, showEvidence, onClose }: {
+export function CaseDialog({ id, canInvestigate, canConfigure, showEvidence, onClose }: {
   id: string; canInvestigate: boolean; canConfigure: boolean; showEvidence: boolean; onClose: () => void;
 }) {
   const { data: c, isLoading, isError } = useLpCase(id);
@@ -391,7 +325,7 @@ function change(now: number, before: number) {
   return `${now > before ? '+' : ''}${now - before} ${tx('against the period before')}`;
 }
 
-function ReportsTab() {
+export function ReportsTab() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const filters = { from: from || undefined, to: to || undefined };
@@ -470,7 +404,7 @@ function ReportsTab() {
   );
 }
 
-function RunsTab({ canConfigure, vision }: { canConfigure: boolean; vision: boolean }) {
+export function RunsTab({ canConfigure, vision }: { canConfigure: boolean; vision: boolean }) {
   const [engine, setEngine] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -583,7 +517,7 @@ const CAMERA_HINTS: Record<string, string> = {
   retail_vision: tx('Runs only at branches with a scanner or storage zone on a camera.'),
 };
 
-function RulesTab({ canConfigure }: { canConfigure: boolean }) {
+export function RulesTab({ canConfigure }: { canConfigure: boolean }) {
   const { data, isLoading, isError } = useLpRules();
   const [editing, setEditing] = useState<Rule | null>(null);
   if (isLoading) return <p className="text-muted-foreground">{tx('Loading…')}</p>;
