@@ -98,11 +98,12 @@ public class OrdersService {
 
     /**
      * ADR-S086 §6 (owner decisions 2026-11-24): a back-office order is a sale, so the lifecycle policy's {@code sell}
-     * column applies to the products it adds; lines already on the order are never re-checked.
+     * column applies to the products it adds; lines already on the order are never re-checked. Owner decision
+     * 2026-11-25: an offline replay is checked like any other request.
      */
     private void requireSellable(List<Line> lines, String orderId) {
         ProductLifecycleGuard guard = lifecycleGuard == null ? null : lifecycleGuard.getIfAvailable();
-        if (guard == null || lines.isEmpty() || com.inventoryerp.kernel.common.OfflineReplay.active()) {
+        if (guard == null || lines.isEmpty()) {
             return;
         }
         java.util.Set<String> had = new java.util.HashSet<>();

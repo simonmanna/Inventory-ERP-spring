@@ -958,12 +958,13 @@ public class PosOrdersService {
     /** Fold variants / accompaniments / modifiers into unitPrice and expand combos. */
     /**
      * ADR-S086 §6 (owner decisions 2026-11-24): the {@code pos} column of the PLM lifecycle policy — by default a
-     * product not yet released, or obsolete, is not put on a new ticket line. Only products new to the order are
-     * checked (lines already on a ticket are never refused), and sales replayed from an offline till never are: a
-     * sale already rung up is never interrupted.
+     * product not yet released, or obsolete, is not put on a new ticket line nor rung up in a counter checkout. Only
+     * products new to the order are checked (lines already on a ticket are never refused). Owner decision 2026-11-25:
+     * a sale replayed from an offline till is checked too: the refusal rolls the replay back and the sync push
+     * dead-letters it ({@code LIFECYCLE_BLOCKED}) for a supervisor, who retries it once the product may be sold.
      */
-    private void requireSellableAtTill(List<Resolved> resolved, String orderId) {
-        if (resolved.isEmpty() || com.inventoryerp.kernel.common.OfflineReplay.active()) {
+    void requireSellableAtTill(List<Resolved> resolved, String orderId) {
+        if (resolved.isEmpty()) {
             return;
         }
         ProductLifecycleGuard guard = lifecycleGuard.getIfAvailable();

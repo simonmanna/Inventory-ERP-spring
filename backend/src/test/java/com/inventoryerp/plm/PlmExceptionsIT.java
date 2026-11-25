@@ -253,8 +253,8 @@ class PlmExceptionsIT extends PlmTestSupport {
     }
 
     @Test
-    @DisplayName("the till and hand-entered invoices: new lines follow the policy; lines already on a ticket or invoice"
-            + " and sales replayed from an offline till are never refused")
+    @DisplayName("the till and hand-entered invoices: new lines follow the policy, offline replays included; lines"
+            + " already on a ticket or invoice are never refused")
     void tillAndInvoices() {
         String design = product("XDESIGN");
         register(design, "design");
@@ -277,16 +277,18 @@ class PlmExceptionsIT extends PlmTestSupport {
         assertThat(msg(call("POST", "/pos/orders/" + ticketId + "/items", Map.of("lines", List.of(tillLine(design,
                 1))), Map.of("Authorization", "Bearer " + adminToken, "Idempotency-Key", UUID.randomUUID().toString()))))
                 .isEqualTo("Product " + code(design) + " is in design and cannot be sold at the point of sale.");
-        // An offline till already sold it: the replay is kept.
+        // Owner decision 2026-11-25: an offline replay is checked like an online sale (the sync push then holds it as a
+        // LIFECYCLE_BLOCKED dead letter for a supervisor; PlmOfflineTillIT covers that path end to end).
         String[] perms = jdbc.sql("SELECT r.permissions FROM \"Role\" r JOIN \"_UserRoles\" ur ON ur.\"A\" = r.id"
                 + " WHERE ur.\"B\" = ? LIMIT 1").param(adminId).query((rs, i) -> (String[]) rs.getArray(1).getArray())
                 .single();
-        Map<String, Object> replay = TenantContext.run(TenantContext.TenantStore.user(demoOrg, adminId), () -> {
-            TenantContext.setPermissions(Arrays.asList(perms));
-            return OfflineReplay.run(() -> posOrders.createOrder(new HashMap<>(Map.of("orderType", "takeaway",
-                    "guestCount", 1, "lines", List.of(tillLine(design, 1))))));
-        });
-        assertThat(replay.get("id")).isNotNull();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> TenantContext.run(
+                TenantContext.TenantStore.user(demoOrg, adminId), () -> {
+                    TenantContext.setPermissions(Arrays.asList(perms));
+                    return OfflineReplay.run(() -> posOrders.createOrder(new HashMap<>(Map.of("orderType",
+                            "takeaway", "guestCount", 1, "lines", List.of(tillLine(design, 1))))));
+                })).isInstanceOf(com.inventoryerp.shared.web.ApiException.class).hasMessage("Product " + code(design)
+                        + " is in design and cannot be sold at the point of sale.");
         // The organization can relax the till on its own (e.g. samples of a design at the counter).
         ok(200, "PUT", PLM + "/settings", Map.of("lifecyclePolicy", Map.of("design", Map.of("pos", "allow"))));
         ok(201, "POST", "/pos/orders", Map.of("orderType", "takeaway", "guestCount", 1, "lines",

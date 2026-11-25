@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
  * effective date has come on the organization's own calendar and no stock is left to use up. Organizations that
  * switched PLM off are skipped (ADR-S086). Each ECO is applied in
  * its own transaction, so one failure (e.g. a BOM activation awaiting approval) does not hold back the others.
+ * It also runs again the cost step of an applied change left {@code pending} (ADR-S086 §5: the process stopped
+ * between the apply and its cost step).
  */
 @Component
 @ConditionalOnProperty(name = "app.jobs.enabled", havingValue = "true", matchIfMissing = true)
@@ -26,11 +28,13 @@ public class PlmEffectivityJob {
     private final PlmChangeService changes;
     private final JobMetrics metrics;
     private final PlmApp app;
+    private final PlmCostService costs;
 
-    public PlmEffectivityJob(PlmChangeService changes, JobMetrics metrics, PlmApp app) {
+    public PlmEffectivityJob(PlmChangeService changes, JobMetrics metrics, PlmApp app, PlmCostService costs) {
         this.changes = changes;
         this.metrics = metrics;
         this.app = app;
+        this.costs = costs;
     }
 
     /** A business refusal is shown verbatim; anything else is not leaked into the ECO log. */
@@ -45,6 +49,10 @@ public class PlmEffectivityJob {
         for (String orgId : changes.dueOrganizations()) {
             TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
                 List<String> applied = new ArrayList<>();
+                // An applied change's cost step is accounting: it completes even if PLM was switched off meanwhile.
+                for (String id : costs.stalePending()) {
+                    costs.complete(id); // records its own failure; never throws
+                }
                 if (!app.on(orgId)) {
                     return applied; // PLM switched off for this organization (ADR-S086): nothing switches over
                 }

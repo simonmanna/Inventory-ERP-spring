@@ -180,7 +180,9 @@ class PlmIT extends PlmTestSupport {
         assertThat(item.get("revision").asString()).isEqualTo("B");
         assertThat(item.get("history").get(0).get("kind").asString()).isEqualTo("revision");
         JsonNode done = ok(200, "GET", PLM + "/changes/" + ecoId, null);
-        assertThat(done.get("activity").get(0).get("kind").asString()).isEqualTo("applied");
+        // The newest entries: "applied", then the cost step's own entry (ADR-S086 §5, run after the apply commits).
+        assertThat(appliedEntry(done)).isNotNull();
+        assertThat(done.get("activity").get(0).get("kind").asString()).isEqualTo("cost");
         assertThat(done.get("approvals")).hasSizeGreaterThanOrEqualTo(3);
         assertThat(ok(200, "GET", PLM + "/overview", null).get("changes").get("byStatus").get("applied").asLong())
                 .isPositive();
@@ -389,7 +391,7 @@ class PlmIT extends PlmTestSupport {
         }
         JsonNode flagged = ok(200, "GET", "/manufacturing/production-orders/" + running.get("id").asString(), null);
         assertThat(flagged.get("qcRequired").asBoolean()).isTrue();
-        assertThat(ok(200, "GET", PLM + "/changes/" + ecoId, null).get("activity").get(0).get("message").asString())
+        assertThat(appliedEntry(ok(200, "GET", PLM + "/changes/" + ecoId, null)).get("message").asString())
                 .contains("Raised ADJ-").contains("Replaced MO-").contains("Flagged for rework MO-");
     }
 

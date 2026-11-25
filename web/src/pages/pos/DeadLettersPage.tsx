@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox } from 'lucide-react';
+import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox, RotateCcw } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,6 +20,7 @@ interface DeadLetter {
   occurredAt: string | null;
   error: string;
   httpStatus: number | null;
+  failureCode?: string | null;
   status: string;
   payload: Record<string, unknown>;
   resolutionNote: string | null;
@@ -36,6 +37,9 @@ function opAmount(dl: DeadLetter): number | null {
   return null;
 }
 
+/** An offline sale the PLM lifecycle refused: held, nothing posted, safe to run again once the product may be sold. */
+const LIFECYCLE_BLOCKED = 'LIFECYCLE_BLOCKED';
+
 /**
  * Rejected offline operations (sync P5).
  *
@@ -43,11 +47,17 @@ function opAmount(dl: DeadLetter): number | null {
  * customer, then refused by the server on sync. There is no "retry" — they
  * failed a business rule, and blind replay is how you double-post. A manager
  * says what happened and it gets audited.
+ *
+ * One exception (owner decision 2026-11-25, ADR-S086 §6): a sale refused
+ * because a product was not released for sale (LIFECYCLE_BLOCKED) committed
+ * nothing. Once the product is released, or a PLM pos exception is granted,
+ * a manager can retry it: the server runs it under its original operation id
+ * (idempotent) and checks the lifecycle rule again.
  */
 export function DeadLettersPage() {
   const qc = useQueryClient();
   const [status, setStatus] = useState<'open' | 'all'>('open');
-  const [resolving, setResolving] = useState<{ dl: DeadLetter; action: 'resolved' | 'discarded' } | null>(null);
+  const [resolving, setResolving] = useState<{ dl: DeadLetter; action: 'resolved' | 'discarded' | 'retry' } | null>(null);
   const [note, setNote] = useState('');
 
   const q = useQuery({
@@ -59,6 +69,9 @@ export function DeadLettersPage() {
   const resolve = useMutation({
     mutationFn: async () => {
       if (!resolving) return null;
+      if (resolving.action === 'retry') {
+        return (await api.post(`/sync/dead-letters/${resolving.dl.id}/retry`, { note: note.trim() })).data;
+      }
       return (await api.post(`/sync/dead-letters/${resolving.dl.id}/resolve`, {
         status: resolving.action,
         note: note.trim(),
@@ -142,6 +155,11 @@ export function DeadLettersPage() {
                   </details>
                   {dl.status === 'open' ? (
                     <div className="flex justify-end gap-2">
+                      {dl.failureCode === LIFECYCLE_BLOCKED && (
+                        <Button size="sm" onClick={() => { setResolving({ dl, action: 'retry' }); setNote(''); }}>
+                          <RotateCcw className="h-3.5 w-3.5" /> {tx('Retry sale')}
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => { setResolving({ dl, action: 'resolved' }); setNote(''); }}>
                         <CheckCircle2 className="h-3.5 w-3.5" /> {tx('Mark handled')}
                       </Button>
@@ -167,11 +185,15 @@ export function DeadLettersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {resolving?.action === 'resolved' ? tx('Mark as handled') : tx('Discard this operation')}
+              {resolving?.action === 'retry'
+                ? tx('Retry this sale')
+                : resolving?.action === 'resolved' ? tx('Mark as handled') : tx('Discard this operation')}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            {resolving?.action === 'resolved'
+            {resolving?.action === 'retry'
+              ? tx('Use this once the product has been released for sale or a point-of-sale exception was granted. The sale runs once under its original operation; if the product still cannot be sold it is refused again.')
+              : resolving?.action === 'resolved'
               ? tx('Use this once the sale has been re-entered manually, or you confirmed it was already recorded.')
               : tx('Use this only if the operation must never post — a duplicate, a test, or a cancelled sale.')}
           </p>
@@ -181,7 +203,9 @@ export function DeadLettersPage() {
               id="dl-note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder={resolving?.action === 'resolved' ? tx('Re-rang as INV-2026-000123') : tx('Duplicate of INV-2026-000123')}
+              placeholder={resolving?.action === 'retry'
+                ? tx('Released in ECO-00012')
+                : resolving?.action === 'resolved' ? tx('Re-rang as INV-2026-000123') : tx('Duplicate of INV-2026-000123')}
             />
           </div>
           <div className="flex justify-end gap-2">

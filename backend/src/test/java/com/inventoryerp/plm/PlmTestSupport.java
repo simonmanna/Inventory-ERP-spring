@@ -94,6 +94,16 @@ abstract class PlmTestSupport extends ApiTestSupport {
                 "type", type)).get("id").asString();
     }
 
+    /** The ECO's "applied" activity entry (newest first; the cost step logs its own entry after it), or null. */
+    static JsonNode appliedEntry(JsonNode eco) {
+        for (JsonNode a : eco.get("activity")) {
+            if ("applied".equals(a.get("kind").asString())) {
+                return a;
+            }
+        }
+        return null;
+    }
+
     String product(String code) {
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"costingMethod\","

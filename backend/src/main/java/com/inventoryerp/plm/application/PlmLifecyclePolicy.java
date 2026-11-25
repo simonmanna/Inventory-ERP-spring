@@ -39,8 +39,18 @@ public class PlmLifecyclePolicy implements ProductLifecycleGuard {
     public void requireAllowed(String activity, Collection<String> productIds) {
         List<Map<String, Object>> hits = blockedRows(activity, productIds);
         if (!hits.isEmpty()) {
-            throw ApiException.badRequest(message(hits.getFirst(), activity));
+            throw refusal(message(hits.getFirst(), activity));
         }
+    }
+
+    /** A Nest-shaped 400 body carrying {@link ProductLifecycleGuard#BLOCKED_CODE}. */
+    static ApiException refusal(String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", message);
+        body.put("error", "Bad Request");
+        body.put("statusCode", 400);
+        body.put("code", BLOCKED_CODE);
+        return ApiException.withBody(org.springframework.http.HttpStatus.BAD_REQUEST, body);
     }
 
     @Override

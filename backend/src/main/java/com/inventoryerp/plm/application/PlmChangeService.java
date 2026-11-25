@@ -870,8 +870,10 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
     }
 
     List<String> dueOrganizations() {
-        return db.jdbc().sql("SELECT DISTINCT \"organizationId\" FROM \"EngineeringChange\" WHERE status = 'approved'"
-                + " AND (\"applyQueued\" OR effectivity = 'date')").query(String.class).list();
+        // ADR-S086 §5: also organizations with an applied change whose cost step was left pending (run again below).
+        return db.jdbc().sql("SELECT DISTINCT \"organizationId\" FROM \"EngineeringChange\" WHERE (status = 'approved'"
+                + " AND (\"applyQueued\" OR effectivity = 'date')) OR (status = 'applied' AND \"costResult\" ->> 'status'"
+                + " = 'pending')").query(String.class).list();
     }
 
     // ================================================================== versions: conflicts and rebase (ADR-S086)
@@ -1158,11 +1160,9 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
                 if (!done.isEmpty()) {
                     summary.add(done);
                 }
-                // ADR-S086 §5: carry the new version's cost into the books per the ECO's cost policy.
-                costResult = cost.apply(eco);
-                if (costResult != null) {
-                    summary.add(PlmCostService.summary(costResult));
-                }
+                // ADR-S086 §5: the new version's cost goes into the books per the ECO's cost policy once this apply has
+                // committed (PlmCostService#afterApply): a costing failure never undoes the engineering change.
+                costResult = cost.pending(eco);
             }
             case "routing" -> summary.add(swapRouting(str(eco, "routingId"), str(eco, "newRoutingId")));
             case "product" -> {
@@ -1230,6 +1230,10 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         plm.activity(id, "applied", "Applied. " + String.join(" ", summary));
         plm.event(DomainEvents.PLM_CHANGE_APPLIED, Obj.of("changeId", id, "number", number, "type", eco.get("type"),
                 "productId", productId, "revision", revision));
+        if (costResult != null) {
+            row.put("costResult", PlmCostService.visibleResult(costResult));
+            cost.afterApply(id, row);
+        }
         return row;
     }
 

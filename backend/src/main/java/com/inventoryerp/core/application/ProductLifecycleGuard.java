@@ -23,8 +23,10 @@ public interface ProductLifecycleGuard {
     String SELL = "sell";
 
     /**
-     * Products newly put on an online point-of-sale order. Lines already on a ticket are never re-checked and sales
-     * replayed from an offline till are never refused, so a sale already rung up is never interrupted.
+     * Products newly put on a point-of-sale order or rung up in a counter checkout. Lines already on a ticket are
+     * never re-checked. Owner decision 2026-11-25: a sale replayed from an offline till is checked again on the
+     * server like an online one; a refused replay rolls back and is held as a dead letter for a supervisor (see
+     * {@link #BLOCKED_CODE}).
      */
     String POS = "pos";
 
@@ -32,8 +34,15 @@ public interface ProductLifecycleGuard {
     String REPLENISH = "replenish";
 
     /**
-     * Refuse (400) when the lifecycle policy blocks {@code activity} for one of {@code productIds} (nulls ignored),
-     * naming the product, its lifecycle state and its replacement.
+     * The {@code code} of every lifecycle refusal (400, same message). An offline sale refused for it is dead-lettered
+     * under this failure code, and a supervisor may retry it under its original operation id once the product is
+     * released or an exception is granted.
+     */
+    String BLOCKED_CODE = "LIFECYCLE_BLOCKED";
+
+    /**
+     * Refuse (400, {@code code} {@link #BLOCKED_CODE}) when the lifecycle policy blocks {@code activity} for one of
+     * {@code productIds} (nulls ignored), naming the product, its lifecycle state and its replacement.
      */
     void requireAllowed(String activity, Collection<String> productIds);
 

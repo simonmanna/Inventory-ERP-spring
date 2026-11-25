@@ -128,6 +128,9 @@ public class PosService {
             assertCreditCustomer((String) input.get("partnerId"));
         }
         PosOrdersService.Quote quote = orders.quoteRaw(input);
+        // ADR-S086 §6, owner decision 2026-11-25: the PLM pos rule applies to counter checkouts, online and replayed
+        // from an offline till alike (an offline till is no way around product release).
+        orders.requireSellableAtTill(quote.baseLines(), null);
         double effectiveDiscount = pricing.assertAuthority(PosOrdersService.pricingLines(quote.baseLines()), input);
         // Phase I6 (owner decision 1): an offline sale already happened; a total the device saw differently is kept
         // and flagged, never refused. Online checkout still refuses below.

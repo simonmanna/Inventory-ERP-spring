@@ -234,4 +234,72 @@ class PlmErpIntegrationIT extends PlmTestSupport {
             jdbc.sql("DELETE FROM \"SodRule\" WHERE id = ?").param(rule).update();
         }
     }
+
+    @Test
+    @DisplayName("cost fallback (ADR-S086 §5): a costing failure never undoes the applied change, never substitutes zero,"
+            + " is recorded on the ECO with its reason, and no revaluation posts")
+    void costFallback() {
+        // 1. Incomplete roll-up: a component without any cost. The change applies; no standard is proposed.
+        String water = product("FWATER"); // cost price 0, no stock: no cost at all
+        String paste = standardProduct("FPASTE", 8);
+        JsonNode p1 = activeBom(paste, List.of(line(water, 1)));
+        register(paste, "released");
+        JsonNode eco = ok(201, "POST", PLM + "/changes", Map.of("type", "bom", "bomId", p1.get("id").asString(),
+                "costPolicy", "propose", "stockDisposition", "none"));
+        String ecoId = eco.get("id").asString();
+        approve(ecoId);
+        int standardsBefore = jdbc.sql("SELECT count(*) FROM \"ProductStandardCost\" WHERE \"productId\" = ?")
+                .param(paste).query(Integer.class).single();
+        JsonNode applied = ok(201, "POST", PLM + "/changes/" + ecoId + "/apply", null);
+        assertThat(applied.get("status").asString()).isEqualTo("applied");
+        assertThat(applied.get("costResult").get("status").asString()).isEqualTo("incomplete");
+        assertThat(applied.get("costResult").get("note").asString()).contains("is incomplete: no cost for")
+                .contains("No standard was proposed");
+        assertThat(applied.get("standardCostId").isNull()).isTrue();
+        assertThat(jdbc.sql("SELECT count(*) FROM \"ProductStandardCost\" WHERE \"productId\" = ?").param(paste)
+                .query(Integer.class).single()).isEqualTo(standardsBefore);
+        assertThat(jdbc.sql("SELECT status FROM \"Bom\" WHERE id = ?").param(eco.get("newBomId").asString())
+                .query(String.class).single()).isEqualTo("active");
+        JsonNode detail = ok(200, "GET", PLM + "/changes/" + ecoId, null);
+        assertThat(detail.get("costResult").get("status").asString()).isEqualTo("incomplete");
+        assertThat(detail.get("activity").get(0).get("message").asString()).contains("is incomplete");
+
+        // 2. Activation refused at run time (books locked): the change still applies, the revaluation rolls back and
+        // the proposal stays a draft with why; the failure is audited.
+        String flour = product("FFLOUR");
+        String cake = standardProduct("FCAKE", 10);
+        stockIn(bakery, flour, 50, 2);
+        stockIn(warehouse, cake, 10, 10);
+        JsonNode c1 = activeBom(cake, List.of(line(flour, 2)));
+        register(cake, "released");
+        JsonNode eco2 = ok(201, "POST", PLM + "/changes", Map.of("type", "bom", "bomId", c1.get("id").asString(),
+                "costPolicy", "activate", "stockDisposition", "none"));
+        String eco2Id = eco2.get("id").asString();
+        ok(200, "PATCH", "/manufacturing/boms/" + eco2.get("newBomId").asString(), Map.of("lines",
+                List.of(line(flour, 3))));
+        approve(eco2Id);
+        java.sql.Timestamp lockBefore = jdbc.sql("SELECT \"booksLockDate\" FROM \"Organization\" WHERE id = ?")
+                .param(demoOrg).query(java.sql.Timestamp.class).optional().orElse(null);
+        BigDecimal costBefore = (BigDecimal) productRow(cake).get("costPrice");
+        JsonNode applied2;
+        jdbc.sql("UPDATE \"Organization\" SET \"booksLockDate\" = now() + interval '2 days' WHERE id = ?")
+                .param(demoOrg).update();
+        try {
+            applied2 = ok(201, "POST", PLM + "/changes/" + eco2Id + "/apply", null);
+        } finally {
+            jdbc.sql("UPDATE \"Organization\" SET \"booksLockDate\" = ? WHERE id = ?").params(lockBefore, demoOrg)
+                    .update();
+        }
+        assertThat(applied2.get("status").asString()).isEqualTo("applied");
+        assertThat(applied2.get("revaluationJournalId").isNull()).isTrue();
+        String standardId = applied2.get("standardCostId").asString();
+        assertThat(jdbc.sql("SELECT status FROM \"ProductStandardCost\" WHERE id = ?").param(standardId)
+                .query(String.class).single()).isEqualTo("draft");
+        assertThat(applied2.get("costResult").get("note").asString()).startsWith("Activation refused: Books are"
+                + " locked through");
+        assertThat((BigDecimal) productRow(cake).get("costPrice")).isEqualByComparingTo(costBefore);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"AuditLog\" WHERE entity = 'EngineeringChange' AND"
+                + " \"entityId\" = ? AND \"newValues\"::text LIKE '%plm_cost_step_failed%'").param(eco2Id)
+                .query(Integer.class).single()).isEqualTo(1);
+    }
 }
