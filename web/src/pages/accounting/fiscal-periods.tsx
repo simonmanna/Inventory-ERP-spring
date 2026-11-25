@@ -34,8 +34,10 @@ import {
   useLockPeriod,
   type FiscalPeriod,
 } from '@/features/accounting/api';
+import { wallDay } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
+import { PeriodControlsCard } from './period-controls-card';
 
 const STATUS_BADGE: Record<FiscalPeriod['status'], { label: string; className: string }> = {
   open: { label: tx('Open'), className: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100' },
@@ -121,6 +123,9 @@ function FiscalPeriodsPage() {
         )}
       </div>
 
+      {/* Books lock date, required periods, next year's periods, furthest date ahead (finance audit B1) */}
+      <PeriodControlsCard />
+
       {/* Table */}
       <Card>
         <CardHeader className="pb-2 pt-4 px-5 bg-muted/30 border-b rounded-t-lg flex-row items-center justify-between">
@@ -187,10 +192,10 @@ function FiscalPeriodsPage() {
                     <TableRow key={p.id} className="hover:bg-muted/20">
                       <TableCell className="text-xs font-medium">{p.name}</TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                        {format(new Date(p.startDate), 'MMM d, yyyy')}
+                        {format(wallDay(p.startDate), 'MMM d, yyyy')}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                        {format(new Date(p.endDate), 'MMM d, yyyy')}
+                        {format(wallDay(p.endDate), 'MMM d, yyyy')}
                       </TableCell>
                       <TableCell>
                         <Badge className={cn('text-[10px] font-semibold px-2 py-0.5', badge.className)}>

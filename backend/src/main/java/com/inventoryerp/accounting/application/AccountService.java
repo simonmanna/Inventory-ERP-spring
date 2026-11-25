@@ -471,6 +471,31 @@ public class AccountService extends BaseCrudService<Account> {
         if (acct == null) {
             throw ApiException.notFound("Account " + id + " not found");
         }
+        assertDeletable(acct);
+        acct.setDeletedAt(Instant.now());
+        em.flush();
+        resolver.invalidate(TenantContext.organizationId());
+    }
+
+    /**
+     * Runs the checks every account delete makes, for {@code DELETE /accounts/:id} and, since finance readiness audit
+     * B5, for a cash or bank account ({@code DELETE /accounts/cash-flow/:id}, which Nest soft-deletes without them):
+     * the account is not a protected or system account, has no child accounts, has no journal lines and is not in an
+     * account mapping. Messages are verbatim from Nest's {@code AccountService.remove}. Runs in the caller's
+     * transaction.
+     *
+     * @param id the account, which must exist in the current organisation
+     */
+    public void assertDeletable(String id) {
+        Account acct = find(id);
+        if (acct == null) {
+            throw ApiException.notFound("Account " + id + " not found");
+        }
+        assertDeletable(acct);
+    }
+
+    private void assertDeletable(Account acct) {
+        String id = acct.getId();
         if (Boolean.TRUE.equals(acct.getIsSystem()) || Boolean.TRUE.equals(acct.getIsProtected())) {
             throw ApiException.badRequest("This is a protected system account and cannot be deleted. Deactivate or"
                     + " deprecate it instead.");
@@ -492,9 +517,6 @@ public class AccountService extends BaseCrudService<Account> {
             throw ApiException.badRequest("Account is used by account mapping '" + mappingKey
                     + "'. Reassign the mapping first.");
         }
-        acct.setDeletedAt(Instant.now());
-        em.flush();
-        resolver.invalidate(TenantContext.organizationId());
     }
 
     private String mappingKeyOf(String accountId) {

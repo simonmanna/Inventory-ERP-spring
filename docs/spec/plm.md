@@ -184,8 +184,8 @@ Where the guard applies (PLM items only, PLM on, products **new to the document*
 |---|---|---|
 | purchase | purchase request create, RFQ create (free lines), purchase order create — including requisition-to-order and RFQ award conversions | receipts of orders already placed; header-only PO edits; bills, supplier returns |
 | produce | production order create (also firming MRP suggestions); BOM activation of an obsolete product stays refused | orders already created and their execution |
-| sell | sales quotation and sales order line writes (create, update; a quotation converted to a sales order is checked again); back-office orders `/orders` (create, save / add items); customer invoices `POST /invoices`, `PATCH /invoices/:id` | lines already on the document; invoices copied from deliveries / orders; proformas from quotations; credit notes; account-line invoices (contracts, dunning, opening balances) |
-| pos | new lines on online till orders: `/pos/orders` create, save / add items, checkout, tabs | lines already on the ticket; sales replayed from an offline till (`/sync/push`) |
+| sell | sales quotation and sales order line writes (create, update; a quotation converted to a sales order is checked again); sales-order change requests (added or swapped-in products, at request and approval); cash-sale drafts (`/sales/cash-sales` create, update); back-office orders `/orders` (create, save / add items); customer invoices `POST /invoices`, `PATCH /invoices/:id` | lines already on the document; invoices copied from deliveries / orders; proformas from quotations; credit notes; account-line invoices (contracts, dunning, opening balances) |
+| pos | new lines on till orders: `/pos/orders` create, save / add items, checkout, tabs, `/pos/checkout`; sales replayed from an offline till (`/sync/push`: refused replays are held as `LIFECYCLE_BLOCKED` dead letters, retried by a supervisor) | lines already on the ticket |
 | replenish | purchase replenishment suggestions (`needed: false`, `lifecycleBlocked: true`); raising requests from replenishment alerts skips blocked products (their alerts stay open) | — |
 
 Refusal: `Product P is obsolete and cannot be purchased. Replacement: R.` (states read "a concept", "in design",
@@ -278,5 +278,5 @@ shared fixtures `PlmTestSupport`.
 - Stock by revision is exact only for batch-tracked output; the rest is an estimate and labelled so.
 - `/changes/:id/impact` masks its unit-cost figures without `inventory_valuation:read` (ADR-S063 showed them to
   `plm:read`), and the cost line in the ECO activity log no longer carries figures.
-- Offline till sales and receipts of placed purchase orders are never gated; online till lines follow the `pos` column.
+- Receipts of placed purchase orders are never gated; till lines, online or replayed from an offline till, follow the `pos` column.
 - MRP suggests blocked products; firming refuses them with the policy's reason.

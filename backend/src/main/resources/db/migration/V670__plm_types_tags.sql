@@ -1,4 +1,4 @@
--- V640: PLM as an application (ADR-S086 §2). Additive on top of V440 / V441:
+-- V670: PLM as an application (ADR-S086 §2). Additive on top of V440 / V441:
 --   * PlmChangeType             — ECO types, each with its own stage pipeline (Odoo "ECO types")
 --   * PlmChangeStage            — typeId (the pipeline it belongs to), folded (collapsed on the kanban board)
 --   * EngineeringChange         — changeTypeId (the ECO type; `type` stays the kind: bom / routing / product /

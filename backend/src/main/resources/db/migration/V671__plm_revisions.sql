@@ -1,10 +1,10 @@
--- V641: PLM versions (ADR-S086 §3).
+-- V671: PLM versions (ADR-S086 §3).
 --   * PlmRevision — one row per product revision: current / superseded, effective from / to, the ECO that made it and
 --                   a snapshot of what the revision was (default active BOM with its lines, routing operations,
 --                   released documents, product data, unit cost). Revision codes are unique per product.
 --   * PlmAsBuilt  — the revision a completed production order produced (matched by the BOM it used, else by date),
 --                   with its batch: stock by revision is reported through batches.
--- The current revision of an item registered before V641 is captured from the live data the first time it is read;
+-- The current revision of an item registered before V671 is captured from the live data the first time it is read;
 -- revisions it went through before are recorded here without a snapshot.
 
 CREATE TABLE "PlmRevision" (

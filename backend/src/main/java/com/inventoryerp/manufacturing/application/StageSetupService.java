@@ -41,11 +41,14 @@ public class StageSetupService {
     private final MfgDb db;
     private final AuditService audit;
     private final ProductionService production;
+    private final EngineeringChangeFreeze changeFreeze;
 
-    public StageSetupService(MfgDb db, AuditService audit, ProductionService production) {
+    public StageSetupService(MfgDb db, AuditService audit, ProductionService production,
+            EngineeringChangeFreeze changeFreeze) {
         this.db = db;
         this.audit = audit;
         this.production = production;
+        this.changeFreeze = changeFreeze;
     }
 
     // ================================================================== routing stages
@@ -70,7 +73,8 @@ public class StageSetupService {
     /** Upsert the stage set-up of the listed operations (others keep theirs). */
     @Transactional
     public Map<String, Object> saveRoutingSetup(String routingId, RoutingStageSetup dto) {
-        routing(routingId);
+        // Integrity fix 2026-11-24 (MR-2): the new routing of an approved routing ECO is frozen.
+        changeFreeze.requireRoutingEditable(routing(routingId));
         Set<String> opIds = new HashSet<>();
         operations(routingId).forEach(o -> opIds.add(str(o, "id")));
         for (StageSetupInput s : dto.stages()) {
@@ -160,6 +164,8 @@ public class StageSetupService {
         if ("archived".equals(bom.get("status"))) {
             throw ApiException.badRequest("An archived BOM cannot be changed.");
         }
+        // Integrity fix 2026-11-24 (MR-2): the draft version of an approved ECO is frozen (as PATCH /boms/:id).
+        changeFreeze.requireBomEditable(bom);
         Set<String> opIds = new HashSet<>();
         if (bom.get("routingId") != null) {
             operations(str(bom, "routingId")).forEach(o -> opIds.add(str(o, "id")));

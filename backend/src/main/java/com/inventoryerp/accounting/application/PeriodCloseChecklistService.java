@@ -8,15 +8,22 @@ import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Period-close checklist (FIN-3): the blocking gates of {@link PeriodCloseService#close}, advisory checks on unfinished
@@ -28,6 +35,8 @@ public class PeriodCloseChecklistService {
     /** Manual steps, in the order a controller works through them. */
     private static final Map<String, String> SIGN_OFFS = new LinkedHashMap<>();
 
+    private static final Logger log = LoggerFactory.getLogger(PeriodCloseChecklistService.class);
+
     static {
         SIGN_OFFS.put("bank_reconciled", "Bank accounts reconciled");
         SIGN_OFFS.put("accruals_booked", "Accruals and prepayments booked");
@@ -37,10 +46,16 @@ public class PeriodCloseChecklistService {
 
     private final JdbcClient jdbc;
     private final AuditService audit;
+    private final ObjectProvider<SubledgerTieOut> tieOuts;
+    private final TransactionTemplate readOnly;
 
-    public PeriodCloseChecklistService(JdbcClient jdbc, AuditService audit) {
+    public PeriodCloseChecklistService(JdbcClient jdbc, AuditService audit, ObjectProvider<SubledgerTieOut> tieOuts,
+            PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.audit = audit;
+        this.tieOuts = tieOuts;
+        this.readOnly = new TransactionTemplate(txm);
+        this.readOnly.setReadOnly(true);
     }
 
     private Map<String, Object> period(String periodId, String org) {
@@ -62,10 +77,46 @@ public class PeriodCloseChecklistService {
         return Obj.of("key", key, "label", label, "blocking", blocking, "count", found, "ok", found == 0);
     }
 
-    /** The checklist of one period, computed now. */
-    @Transactional(readOnly = true)
+    /**
+     * The checklist of one period, computed now. The AR / AP tie-out (finance audit A5) is measured first, in its own
+     * read-only transaction, so a failure to compute it cannot spoil the checklist; the rest shares one.
+     */
     public Map<String, Object> checklist(String periodId) {
         String org = TenantContext.organizationId();
+        Map<String, Object> period = readOnly.execute(s -> period(periodId, org));
+        Map<String, Object> tieOut = arApTieOut(((Instant) period.get("endDate")).atOffset(ZoneOffset.UTC)
+                .toLocalDate());
+        return readOnly.execute(s -> checklist(periodId, org, tieOut));
+    }
+
+    /**
+     * Finance audit A5 (P2-5), advisory: the customer and supplier sub-ledgers tie to their control accounts at the
+     * period's last day ({@link SubledgerTieOut}, the measure of the AR / AP reconciliation reports). Found = partners
+     * that differ, plus a side whose totals differ though no single partner does.
+     */
+    private Map<String, Object> arApTieOut(LocalDate lastDay) {
+        String label = "Customer and supplier balances tie to the control accounts (AR / AP tie-out)";
+        SubledgerTieOut tieOut = tieOuts.getIfAvailable();
+        if (tieOut == null) {
+            return check("ar_ap_tieout", label, false, 0);
+        }
+        try {
+            long found = 0;
+            for (String side : List.of("AR", "AP")) {
+                SubledgerTieOut.Measure m = tieOut.measure(side, lastDay);
+                found += m.differences().isEmpty() ? (m.balanced() ? 0 : 1) : m.differences().size();
+            }
+            return check("ar_ap_tieout", label, false, found);
+        } catch (RuntimeException e) {
+            log.warn("[close-checklist] AR/AP tie-out failed: {}", e.toString());
+            Map<String, Object> c = new LinkedHashMap<>(check("ar_ap_tieout", label, false, 0));
+            c.put("ok", false);
+            c.put("note", "The tie-out could not be computed");
+            return c;
+        }
+    }
+
+    private Map<String, Object> checklist(String periodId, String org, Map<String, Object> arApTieOut) {
         Map<String, Object> p = period(periodId, org);
         // Period bounds are org-local wall clock (ADR-S070): real timestamps are compared with the converted bounds
         // (startAt / endAt); date-like columns stored as UTC-midnight dates keep the wall-clock ones.
@@ -86,16 +137,13 @@ public class PeriodCloseChecklistService {
         checks.add(check("register_shifts", "Register shifts reconciled", true,
                 count("SELECT count(*) FROM \"CashSession\" WHERE \"organizationId\" = ? AND \"openedAt\" <= ?"
                         + " AND status::text <> 'reconciled'", org, endAt)));
+        // As the close gate (finance audit A3, P2-13): a job counts in the period of its sale, and when queued in it.
         checks.add(check("stock_posting", "Stock postings finished", true,
-                count("SELECT count(*) FROM \"StockPostingJob\" WHERE \"organizationId\" = ? AND status::text IN"
-                        + " ('pending', 'processing', 'failed') AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org,
-                        startAt, endAt)));
+                count(PeriodCloseService.UNPOSTED_STOCK_JOBS, org, startAt, endAt, startAt, endAt)));
         checks.add(check("inventory_mutations", "No pending stock documents", true, mutations));
         checks.add(check("inventory_exceptions", "No open inventory exceptions", true,
-                count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text = "
-                        + "'open' AND kind IS DISTINCT FROM ? AND NOT starts_with(COALESCE(kind, ''), ?)"
-                        + " AND \"createdAt\" >= ? AND \"createdAt\" <= ?", org, InventoryTieOutMonitor.KIND,
-                        InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX, startAt, endAt)));
+                count(PeriodCloseService.OPEN_SALE_LINE_EXCEPTIONS, org, InventoryTieOutMonitor.KIND,
+                        InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX, startAt, endAt, startAt, endAt)));
         // Hardening R0: the daily inventory integrity check parks a failing value check (valuation vs stock ledger or
         // GL) as an open exception of its own kind; like the close gate, it blocks while open (raised since the
         // period started). Quantity findings stay in the Posting Monitor and are not a close item.
@@ -109,6 +157,7 @@ public class PeriodCloseChecklistService {
         checks.add(check("inventory_gl_tieout", "Inventory ties to the GL (no open tie-out variance)", false,
                 count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND kind = ? AND"
                         + " status::text = 'open' AND \"createdAt\" >= ?", org, InventoryTieOutMonitor.KIND, startAt)));
+        checks.add(arApTieOut);
         // FX-7 (ADR-S082): foreign-currency monetary balances open at period end should be revalued for the period
         // (advisory: the run is a period-end step, not a lock). Found = open (account, currency) balances when no
         // revaluation was recorded for this period.
@@ -146,6 +195,30 @@ public class PeriodCloseChecklistService {
                 + " l.\"periodTo\" >= e.\"postingDate\"::date)", org, startAt, endAt,
                 CostingDimensionGuard.COSTING_SOURCES.toArray(String[]::new));
         checks.add(check("costing_close", "Costing period closed (cost close cockpit)", false, costingUnlocked));
+        // Finance readiness audit B5 (P3): advisory reminders for the other sub-ledgers that feed the GL.
+        long taxActivity = count("SELECT count(*) FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id ="
+                + " l.\"journalEntryId\" WHERE e.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed')"
+                + " AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ? AND l.\"accountId\" IN (SELECT \"accountId\""
+                + " FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable')"
+                + " AND \"deletedAt\" IS NULL UNION SELECT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ? AND"
+                + " \"accountId\" IS NOT NULL)", org, startAt, endAt, org, org);
+        long vatSettled = taxActivity == 0 ? 1 : count("SELECT count(*) FROM \"TaxSettlement\" WHERE"
+                + " \"organizationId\" = ? AND \"reversedAt\" IS NULL AND \"periodTo\"::date >= ?::date", org, end);
+        checks.add(check("vat_settled", "VAT settled through the period end", false, vatSettled == 0 ? 1 : 0));
+        checks.add(check("depreciation_posted", "Depreciation for the period posted", false,
+                count("SELECT count(*) FROM \"AssetDepreciation\" WHERE \"organizationId\" = ? AND NOT \"isPosted\""
+                        + " AND period >= to_char(?::timestamp, 'YYYY-MM') AND period <= to_char(?::timestamp, 'YYYY-MM')",
+                        org, start, end)));
+        checks.add(check("payroll_posted", "Payroll runs of the period posted to the GL", false,
+                count("SELECT count(*) FROM \"HrPayrollRun\" r JOIN \"HrPayrollPeriod\" p ON p.id = r.\"periodId\""
+                        + " WHERE r.\"organizationId\" = ? AND r.status::text <> 'REVERSED' AND NOT r.\"glPosted\""
+                        + " AND p.\"deletedAt\" IS NULL AND p.\"endDate\" >= ? AND p.\"endDate\" <= ?", org, start, end)));
+        checks.add(check("recurring_failed", "No failed recurring journal runs", false,
+                count("SELECT count(*) FROM \"RecurringJournalRun\" WHERE \"organizationId\" = ? AND status = 'failed'"
+                        + " AND \"runDate\" >= ?::date AND \"runDate\" <= ?::date", org, start, end)));
+        checks.add(check("deferrals_released", "Deferral releases due in the period posted", false,
+                count("SELECT count(*) FROM \"DeferralRelease\" WHERE \"organizationId\" = ? AND status = 'planned'"
+                        + " AND \"periodEnd\" <= ?::date", org, end)));
         // LC-3 (ADR-S053): landed-cost shares parked because their goods could not be followed must be resolved.
         // The full landed-cost reconciliation (six balances, classification, location) is on its own page.
         checks.add(check("landed_cost_lineage", "Landed cost lineage exceptions resolved", false,

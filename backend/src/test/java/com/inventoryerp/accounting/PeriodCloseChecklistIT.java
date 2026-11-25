@@ -125,11 +125,14 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
         assertThat(check(checklist, "inventory_exceptions").get("count").asInt()).isZero();
         assertThat(checklist.get("readyToClose").asBoolean()).isTrue();
 
-        // The close passes the inventory-exception gate (it stops later: nothing to close in an empty period).
+        // The close passes the inventory-exception gate: the empty period closes without a closing entry (finance
+        // audit A3; it used to stop with "Nothing to close"). Reopened for the next step.
         Res close = call("POST", "/fiscal-periods/" + period + "/close", null, Map.of("Authorization", "Bearer " + otherToken,
                 "Idempotency-Key", UUID.randomUUID().toString()));
-        assertThat(close.status()).isEqualTo(400);
-        assertThat(close.body().get("message").asString()).startsWith("Nothing to close for 'Tie-out 2008-06'");
+        assertThat(close.status()).as(close.raw().body()).isEqualTo(200);
+        assertThat(close.body().get("journalEntryId").isNull()).isTrue();
+        assertThat(call("POST", "/fiscal-periods/" + period + "/reopen", null, Map.of("Authorization", "Bearer "
+                + otherToken, "Idempotency-Key", UUID.randomUUID().toString())).status()).isEqualTo(200);
 
         // A sale-line exception still blocks, with the sale-line message; the tie-out item is unchanged.
         exception(otherOrg, "missing_recipe", "2008-06-04 10:00:00");
@@ -164,8 +167,11 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
             assertThat(check(checklist, "inventory_exceptions").get("count").asInt()).isZero();
             assertThat(check(checklist, "inventory_integrity_value").get("ok").asBoolean()).isTrue();
             assertThat(check(checklist, "inventory_integrity_value").get("blocking").asBoolean()).isTrue();
+            // Passes the gate: the empty period closes (finance audit A3), and is reopened for the next step.
             Res passes = call("POST", "/fiscal-periods/" + period + "/close", null, withKey(auth));
-            assertThat(passes.body().get("message").asString()).startsWith("Nothing to close for 'Integrity 2008-07'");
+            assertThat(passes.status()).as(passes.raw().body()).isEqualTo(200);
+            assertThat(call("POST", "/fiscal-periods/" + period + "/reopen", null, withKey(auth)).status())
+                    .isEqualTo(200);
 
             String value = exception(otherOrg, "integrity_valuation_vs_gl", "2008-07-03 03:10:00");
             JsonNode blocked = call("GET", path, null, otherToken).body();
@@ -191,6 +197,28 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
         Map<String, String> h = new LinkedHashMap<>(headers);
         h.put("Idempotency-Key", UUID.randomUUID().toString());
         return h;
+    }
+
+    @Test
+    @DisplayName("B5: VAT, depreciation, payroll, recurring-run and deferral reminders are advisory items")
+    void subledgerReminders() {
+        JsonNode list = ok(200, "GET", "/fiscal-periods/" + periodId + "/close-checklist", null);
+        for (String key : List.of("vat_settled", "depreciation_posted", "payroll_posted", "recurring_failed",
+                "deferrals_released")) {
+            JsonNode c = check(list, key);
+            assertThat(c.get("blocking").asBoolean()).as(key).isFalse();
+            assertThat(c.get("ok").asBoolean()).as(key + " on a quiet month").isTrue();
+        }
+        String template = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"RecurringJournalTemplate\" (id, \"organizationId\", name, frequency, \"startDate\","
+                + " lines) VALUES (?, ?, 'B5 rent', 'monthly', '2008-04-01', '[]'::jsonb)").params(template, demoOrg)
+                .update();
+        jdbc.sql("INSERT INTO \"RecurringJournalRun\" (id, \"organizationId\", \"templateId\", \"runDate\", status,"
+                + " error) VALUES (?, ?, ?, '2008-04-10', 'failed', 'Account inactive')")
+                .params(UUID.randomUUID().toString(), demoOrg, template).update();
+        JsonNode after = check(ok(200, "GET", "/fiscal-periods/" + periodId + "/close-checklist", null), "recurring_failed");
+        assertThat(after.get("ok").asBoolean()).isFalse();
+        assertThat(after.get("count").asInt()).isEqualTo(1);
     }
 
     @Test

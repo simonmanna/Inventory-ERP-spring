@@ -156,6 +156,16 @@ public class AccountResolverService {
                 .setParameter("code", code).setParameter("org", organizationId)
                 .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
         if (account == null) {
+            // B5: two first uses at once both found nothing and both inserted; the second failed on the unique code
+            // (a 500). Serialise creation per organization and code, then look again under the lock.
+            em.createNativeQuery("SELECT pg_advisory_xact_lock(hashtextextended(?1 || '|ensure-account|' || ?2, 0))")
+                    .setParameter(1, organizationId).setParameter(2, code).getResultList();
+            account = em.createQuery("select a from Account a where a.code = :code and a.organizationId = :org"
+                            + " and a.deletedAt is null", Account.class)
+                    .setParameter("code", code).setParameter("org", organizationId)
+                    .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        }
+        if (account == null) {
             AccountCategory category = em.createQuery("select c from AccountCategory c where c.key = :key",
                             AccountCategory.class)
                     .setParameter("key", categoryKey).setMaxResults(1).getResultList().stream().findFirst().orElse(null);
@@ -202,14 +212,52 @@ public class AccountResolverService {
         return meta;
     }
 
+    /**
+     * Metadata of the live accounts among {@code ids}. A cache miss reloads the chart once: the cache lives 30 s per
+     * instance, so an account another API instance created inside that window was missing (finance audit A3, P2-3).
+     * Ids that are still unknown are left out; ledger totals use {@link #ledgerMeta}, which never leaves one out.
+     */
     public Map<String, AccountMeta> meta(java.util.Collection<String> ids) {
         Map<String, AccountMeta> all = allMeta();
+        if (!all.keySet().containsAll(ids)) {
+            String organizationId = TenantContext.organizationId();
+            if (organizationId != null) {
+                cache.remove(organizationId);
+                all = allMeta();
+            }
+        }
         Map<String, AccountMeta> out = new LinkedHashMap<>();
         for (String id : ids) {
             AccountMeta m = all.get(id);
             if (m != null) {
                 out.put(id, m);
             }
+        }
+        return out;
+    }
+
+    /**
+     * Metadata of every account in {@code ids}, for ledger totals: period and year close, financial statements, report
+     * snapshots. As {@link #meta}, plus accounts deleted after they were posted to (their balances stay in the books).
+     * An id that is no account of the organization fails the request instead of dropping out of the totals (finance
+     * audit A3, P2-3: the close and the statements used to skip it).
+     */
+    @Transactional(readOnly = true)
+    public Map<String, AccountMeta> ledgerMeta(java.util.Collection<String> ids) {
+        Map<String, AccountMeta> out = meta(ids);
+        List<String> missing = ids.stream().filter(id -> !out.containsKey(id)).distinct().toList();
+        if (missing.isEmpty()) {
+            return out;
+        }
+        for (Account a : em.createQuery("select a from Account a left join fetch a.category"
+                        + " where a.organizationId = :org and a.id in :ids", Account.class)
+                .setParameter("org", TenantContext.organizationId()).setParameter("ids", missing).getResultList()) {
+            out.put(a.getId(), toMeta(a, a.getCategory()));
+        }
+        List<String> unknown = missing.stream().filter(id -> !out.containsKey(id)).toList();
+        if (!unknown.isEmpty()) {
+            throw new IllegalStateException("Ledger lines name " + unknown.size()
+                    + " account(s) that are not accounts of this organization: " + unknown);
         }
         return out;
     }

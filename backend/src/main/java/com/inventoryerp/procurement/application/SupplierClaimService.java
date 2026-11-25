@@ -10,6 +10,7 @@ import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.core.application.UomConversionService.LineUnit;
 import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.invoicing.application.DocumentFxRates;
 import com.inventoryerp.inventory.application.StockMove.Issued;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockService;
@@ -106,13 +107,15 @@ public class SupplierClaimService {
     private final StockPostingService stockPosting;
     private final TransactionTemplate tx;
     private final com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod;
+    private final DocumentFxRates fx;
 
     public SupplierClaimService(JdbcClient jdbc, SequenceService seq, AuditService audit, EventBus events,
             PostingService posting, AccountDeterminationService determination, StockService stock,
             StockPostingService stockPosting, PlatformTransactionManager txm,
-            com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod) {
+            com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod, DocumentFxRates fx) {
         this.jdbc = jdbc;
         this.sod = sod;
+        this.fx = fx;
         this.seq = seq;
         this.audit = audit;
         this.events = events;
@@ -597,7 +600,7 @@ public class SupplierClaimService {
             return null;
         }
         Map<String, Object> bill = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", status::text AS status,"
-                + " \"currencyId\", \"exchangeRate\", \"amountResidual\" FROM \"Document\" WHERE id = ? AND"
+                + " \"currencyId\", \"exchangeRate\", \"journalEntryId\", \"amountResidual\" FROM \"Document\" WHERE id = ? AND"
                 + " \"organizationId\" = ? AND \"documentType\"::text = 'vendor_bill' FOR UPDATE")
                 .params(c.get("vendorBillId"), org()));
         if (bill == null) {
@@ -615,6 +618,12 @@ public class SupplierClaimService {
         if (bill != null) {
             String currencyId = (String) bill.get("currencyId");
             BigDecimal rate = Money.dec(bill.get("exchangeRate"));
+            if (currencyId != null && fx.isForeign(bill)) {
+                // Finance readiness audit B5: the claim relieves the payable at the bill's carrying rate, the rate it
+                // posted at. A bill storing the default 1 ("not stated", FX-1) posted at the rate table's rate, and
+                // that stored 1, passed on, made the claim post at today's table rate.
+                rate = fx.documentRate(bill);
+            }
             return new Doc(bill, billBasis((String) bill.get("id")), currencyId,
                     currencyId == null || rate.signum() <= 0 ? null : rate, BigDecimal.ONE, null);
         }

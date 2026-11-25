@@ -40,8 +40,9 @@ import org.springframework.transaction.annotation.Transactional;
  * The one writer of JournalEntry/JournalLine (port of {@code posting.service.ts}, ADR-009): validates
  * double-entry rules, enforces period control, numbers atomically per journal/year and joins the caller's
  * transaction so a document's state change and its posting commit together. {@code postingKey} makes a
- * posting idempotent (only a {@code posted} entry is replayed); reversal suffixes the original key so the
- * canonical slot can be re-posted. Manual entries go through draft → post (maker-checker).
+ * posting idempotent (only a {@code posted} entry is replayed; a replay with other lines is reported, finance audit A6,
+ * {@link PostingKeyReplayGuard}); reversal suffixes the original key so the canonical slot can be re-posted. Manual
+ * entries go through draft → post (maker-checker).
  *
  * <p>Control-account policy (owner decision, V518): a user's entry (staged draft, approved draft) and what recurring
  * templates / deferral schedules check for themselves ({@link #assertManualPostingAllowed}) never reach a designated
@@ -51,12 +52,14 @@ import org.springframework.transaction.annotation.Transactional;
  * control-account line, the {@code journal_entry:control_adjust} permission for maker and checker, a second user to
  * post it, and an audit row on stage, post and reversal.
  *
- * <p>Document reversals (owner decision 2026-11-17): {@link #reverse} itself has no source-type restriction — it is the
- * GL step of every document-level reversal workflow (invoice cancel, bill void, credit / debit note reversal, payment
- * void, …), which call it in their own transaction. The user-facing generic reversal routes check
- * {@link SubledgerSources#assertGenericReversible} first, so an entry a customer / supplier sub-ledger owns is only ever
- * reversed by its document's workflow. {@code reverse} refuses an entry that is no longer {@code posted} (400), so a
- * workflow replay can never mirror an entry twice; the document's status check makes the replay a no-op first.
+ * <p>Document reversals (owner decision 2026-11-17, widened by finance readiness audit A2): {@link #reverse} itself has
+ * no source-type restriction — it is the GL step of every document- and process-level reversal workflow (invoice cancel,
+ * bill void, credit / debit note reversal, payment void, period reopen, payroll-run reversal, …), which call it in
+ * their own transaction. The user-facing generic reversal routes check {@link SubledgerSources#assertGenericReversible}
+ * first, so only manual entries and allow-listed sources ({@code recurring_entry}) are reversed there; every other entry
+ * only by the workflow of the document or process that posted it. {@code reverse} refuses an entry that is no longer
+ * {@code posted} (400), so a workflow replay can never mirror an entry twice; the document's status check makes the
+ * replay a no-op first.
  */
 @Service
 public class PostingService {
@@ -74,6 +77,7 @@ public class PostingService {
     private final AnalyticDimensionService analyticDimensions;
     private final AuditService audit;
     private CostingDimensionGuard costingDimensions;
+    private PostingKeyReplayGuard replayGuard;
 
     public PostingService(EntityManager em, JdbcClient jdbc, EventBus events, SequenceService sequence,
             FiscalPeriodControl fiscalPeriod, CurrencyService currency, AccountResolverService accounts,
@@ -94,6 +98,12 @@ public class PostingService {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setCostingDimensions(CostingDimensionGuard costingDimensions) {
         this.costingDimensions = costingDimensions;
+    }
+
+    /** Finance audit A6: compares a replayed posting key's request with its entry; optional like the costing guard. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setReplayGuard(PostingKeyReplayGuard replayGuard) {
+        this.replayGuard = replayGuard;
     }
 
     /** Post a balanced entry; returns the entry with {@code lines}. */
@@ -124,7 +134,12 @@ public class PostingService {
                     .setParameter("status", JournalEntryStatus.POSTED)
                     .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
             if (existing != null) {
-                return render(existing);
+                // Finance audit A6 (P2-12): the same key with other lines is a second posting the replay would drop.
+                List<JournalLine> stored = lines(existing.getId());
+                if (replayGuard != null) {
+                    replayGuard.check(existing, request, stored);
+                }
+                return render(existing, stored);
             }
         }
         Journal journal = journal(request.journalCode());
@@ -207,8 +222,15 @@ public class PostingService {
         // a settlement entry's reversal is exempt, as the settlement itself is
         String lockSource = "tax_settlement".equals(original.getSourceType()) ? "tax_settlement" : "reversal";
         Instant when = date != null ? AccountingDay.normalize(date, zone) : reversalDate(original.getPostingDate());
-        if (date == null && taxLockedThrough(organizationId, when, originalAccounts, lockSource) != null) {
-            // the original's date is inside a settled VAT period: reverse today, never into filed VAT (G-2)
+        if (date != null && AccountingDay.of(when, zone).isBefore(AccountingDay.of(original.getPostingDate(), zone))) {
+            // B5: a reversal dated before its original would undo it in a period where it did not yet exist
+            throw ApiException.badRequest("A reversal cannot be dated before the entry it reverses ("
+                    + original.getEntryNumber() + " is dated " + AccountingDay.of(original.getPostingDate(), zone) + ")");
+        }
+        if (date == null && (taxLockedThrough(organizationId, when, originalAccounts, lockSource) != null
+                || bankReconciledThrough(organizationId, when, originalAccounts) != null)) {
+            // the original's date is inside a settled VAT period or a reconciled bank statement: reverse today, never
+            // into filed VAT (G-2) or a locked reconciliation (B5)
             when = Instant.now();
         }
         fiscalPeriod.assertOpen(when);
@@ -316,6 +338,31 @@ public class PostingService {
             throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(settled)
                     + "; tax cannot be posted on " + FiscalPeriodControl.day(date, zone));
         }
+        // an FX revaluation moves only the base value of a foreign bank account, not what the bank statement shows
+        String[] bank = "fx_revaluation".equals(sourceType) ? null : bankReconciledThrough(org, date, accountIds);
+        if (bank != null) {
+            throw ApiException.badRequest("Bank account " + bank[0] + " is reconciled through " + bank[1]
+                    + "; nothing can be posted to it on " + AccountingDay.of(date, AccountingDay.zone(jdbc, org))
+                    + ". Date it after " + bank[1] + ".");
+        }
+    }
+
+    /**
+     * Finance readiness audit B5: a locked bank reconciliation ({@code BankReconciliationStatement}) freezes its bank
+     * account's ledger through the statement day, as it freezes the statement lines. Returns the account code and that
+     * day when posting {@code accountIds} on {@code date} would land on or before it, else {@code null}.
+     */
+    private String[] bankReconciledThrough(String org, Instant date, java.util.Collection<String> accountIds) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return null;
+        }
+        java.time.LocalDate day = AccountingDay.of(date, AccountingDay.zone(jdbc, org));
+        return jdbc.sql("SELECT a.code, to_char(max(s.\"statementDate\"), 'YYYY-MM-DD') AS through"
+                        + " FROM \"BankReconciliationStatement\" s JOIN \"Account\" a ON a.id = s.\"bankAccountId\""
+                        + " WHERE s.\"organizationId\" = ? AND s.\"bankAccountId\" = ANY(?::text[]) GROUP BY a.code"
+                        + " HAVING max(s.\"statementDate\")::date >= ?::date ORDER BY a.code LIMIT 1")
+                .params(org, new java.util.LinkedHashSet<>(accountIds).toArray(String[]::new), java.sql.Date.valueOf(day))
+                .query((rs, n) -> new String[] {rs.getString(1), rs.getString(2)}).optional().orElse(null);
     }
 
     /** The settled VAT period end when posting {@code accountIds} on {@code date} would hit a tax account in it. */
@@ -324,7 +371,9 @@ public class PostingService {
         if ("tax_settlement".equals(sourceType)) {
             return null;
         }
-        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?")
+        // a reversed settlement locks nothing (finance audit A3)
+        Instant settled = jdbc.sql("SELECT max(\"periodTo\") FROM \"TaxSettlement\" WHERE \"organizationId\" = ?"
+                        + " AND \"reversedAt\" IS NULL")
                 .param(org).query((rs, n) -> rs.getTimestamp(1) == null ? null
                         : rs.getTimestamp(1).toLocalDateTime().toInstant(ZoneOffset.UTC))
                 .optional().orElse(null);
@@ -359,6 +408,28 @@ public class PostingService {
      */
     @Transactional
     public Map<String, Object> stageDraft(PostingRequest request, String controlAdjustmentReason) {
+        return stageDraft(request, controlAdjustmentReason, null);
+    }
+
+    /**
+     * As {@link #stageDraft(PostingRequest, String)}, with the draft's maker: {@code makerId} (else the current user)
+     * is the creator who may not approve it. A {@code postingKey} is kept on the draft, and a second stage of the same
+     * key returns the draft (or entry) already there: finance audit B5 moved this out of the recurring service's raw
+     * SQL.
+     */
+    @Transactional
+    public Map<String, Object> stageDraft(PostingRequest request, String controlAdjustmentReason, String makerId) {
+        if (request.postingKey() != null) {
+            jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|' || ?, 0))")
+                    .params(TenantContext.organizationId(), request.postingKey()).query().listOfRows();
+            JournalEntry existing = em.createQuery("select e from JournalEntry e where e.organizationId = :org"
+                            + " and e.postingKey = :key", JournalEntry.class)
+                    .setParameter("org", TenantContext.organizationId()).setParameter("key", request.postingKey())
+                    .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+            if (existing != null) {
+                return render(existing, lines(existing.getId()));
+            }
+        }
         if (request.lines() == null || request.lines().size() < 2) {
             throw ApiException.badRequest("A journal entry requires at least two lines");
         }
@@ -396,7 +467,8 @@ public class PostingService {
         entry.setBranchId(request.branchId());
         entry.setCostCenterId(request.costCenterId());
         entry.setDimensions(entryDims == null ? null : EntityJson.toJson(entryDims));
-        entry.setCreatedBy(TenantContext.userId());
+        entry.setCreatedBy(makerId != null ? makerId : TenantContext.userId());
+        entry.setPostingKey(request.postingKey());
         if (adjustment) {
             entry.setControlAdjustment(true);
             entry.setControlAdjustmentReason(controlAdjustmentReason.strip());

@@ -138,6 +138,24 @@ public abstract class AccountingFixtures extends ApiTestSupport {
      */
     protected String postJe(Books b, String journal, String date, String currency, Object rate, String sourceType,
             String postingKey, List<JeLine> lines) {
+        return postEntry(b, journal, date, currency, rate, sourceType == null ? "acc0" : sourceType, postingKey, lines);
+    }
+
+    protected String postJe(Books b, String date, List<JeLine> lines) {
+        return postJe(b, "GEN", date, null, null, null, null, lines);
+    }
+
+    /**
+     * A manual journal entry: no source type or source id, as {@code POST /journal-entries} stages one (posted here
+     * through the engine, without the maker-checker round trip). Unlike a {@link #postJe} system entry, the generic
+     * {@code POST /journal-entries/{id}/reverse} accepts it (finance readiness audit A2).
+     */
+    protected String postManualJe(Books b, String date, List<JeLine> lines) {
+        return postEntry(b, "GEN", date, null, null, null, null, lines);
+    }
+
+    private String postEntry(Books b, String journal, String date, String currency, Object rate, String sourceType,
+            String postingKey, List<JeLine> lines) {
         List<PostingRequest.Line> out = new ArrayList<>();
         for (JeLine l : lines) {
             out.add(new PostingRequest.Line(account(b.org(), l.accountCode()),
@@ -145,15 +163,10 @@ public abstract class AccountingFixtures extends ApiTestSupport {
                     l.partnerId(), l.accountCode(), l.branchId(), null, l.dimensions()));
         }
         Instant at = Instant.parse(date + "T10:00:00Z");
-        String sourceId = UUID.randomUUID().toString();
+        String sourceId = sourceType == null ? null : UUID.randomUUID().toString();
         Map<String, Object> entry = inTenant(b.org(), b.ownerId(), () -> posting.post(new PostingRequest(journal, at,
-                "ACC-0 " + date, currency, rate, sourceType == null ? "acc0" : sourceType, sourceId, null, postingKey,
-                null, null, null, out)));
+                "ACC-0 " + date, currency, rate, sourceType, sourceId, null, postingKey, null, null, null, out)));
         return (String) entry.get("id");
-    }
-
-    protected String postJe(Books b, String date, List<JeLine> lines) {
-        return postJe(b, "GEN", date, null, null, null, null, lines);
     }
 
     // ------------------------------------------------------------------ periods and reports
@@ -175,11 +188,14 @@ public abstract class AccountingFixtures extends ApiTestSupport {
         return call(method, path, body, h);
     }
 
-    /** The fiscal period that contains {@code date}. */
+    /**
+     * The live fiscal period that contains the whole of {@code date}: looked up at 23:59:59, so a period whose stored end
+     * drops its last day (finance audit P1-1) is not found for that day.
+     */
     protected String periodFor(String org, String date) {
-        return jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND \"startDate\" <= ?::timestamp"
-                + " AND \"endDate\" >= ?::timestamp ORDER BY \"startDate\" DESC LIMIT 1")
-                .params(org, date + " 12:00:00", date + " 12:00:00").query(String.class).single();
+        return jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL"
+                + " AND \"startDate\" <= ?::timestamp AND \"endDate\" >= ?::timestamp ORDER BY \"startDate\" DESC LIMIT 1")
+                .params(org, date + " 23:59:59", date + " 23:59:59").query(String.class).single();
     }
 
     /**
@@ -211,6 +227,9 @@ public abstract class AccountingFixtures extends ApiTestSupport {
             LocalDate end = start.plusMonths(1).minusDays(1);
             ids.add(okAs(b, 201, "POST", "/fiscal-periods", Map.of("name", "P " + start, "startDate", start.toString(),
                     "endDate", end.toString())).get("id").asString());
+            // A date-only end is stored as the end of that day (finance audit P1-1).
+            assertThat(jdbc.sql("SELECT to_char(\"endDate\", 'YYYY-MM-DD HH24:MI:SS.MS') FROM \"FiscalPeriod\" WHERE id = ?")
+                    .param(ids.getLast()).query(String.class).single()).isEqualTo(end + " 23:59:59.999");
         }
         return ids;
     }

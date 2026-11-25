@@ -208,7 +208,14 @@ public class BankMatchingService {
     void afterImport(String org, String bankAccountId) {
         try {
             Map<String, Object> result = apply(org, bankAccountId);
-            log.debug("[bank-rules] after import {}: {}", bankAccountId, result);
+            Object failures = result.get("failures");
+            if (failures instanceof List<?> list && !list.isEmpty()) {
+                // B5: a rule that could not post its line was only visible at DEBUG; the line stays unmatched
+                log.warn("[bank-rules] after import {}: {} line(s) could not be auto-posted: {}", bankAccountId,
+                        list.size(), list);
+            } else {
+                log.debug("[bank-rules] after import {}: {}", bankAccountId, result);
+            }
         } catch (RuntimeException e) {
             log.warn("[bank-rules] after import {} failed: {}", bankAccountId, e.toString());
         }

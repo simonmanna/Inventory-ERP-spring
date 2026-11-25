@@ -204,7 +204,7 @@ public class ProductionService {
                 throw ApiException.badRequest("Provide a bomId or an outputProductId.");
             }
             Map<String, Object> bom = boms.resolveForOrder(dto.outputProductId() != null ? dto.outputProductId() : "",
-                    dto.outputVariantId(), dto.bomId());
+                    dto.outputVariantId(), dto.bomId(), date(dto.scheduledFor()));
             bomId = str(bom, "id");
             bomVersion = (Integer) bom.get("version");
             outputProductId = str(bom, "outputProductId");
@@ -359,6 +359,10 @@ public class ProductionService {
     /** Soft ATP reservation of every material; a reservation failure never blocks the confirm. */
     @Transactional
     public Map<String, Object> confirmOrder(String id) {
+        // Integrity fix 2026-11-24 (MR-4; deviation: Nest confirmed without a lock): the order lock first, so a confirm
+        // racing a cancel cannot flip the cancelled order back to confirmed (and re-reserve its materials), nor a
+        // double tap reserve twice.
+        lock(id);
         Map<String, Object> order = getOrThrow(id, true, false);
         if ("confirmed".equals(order.get("status"))) {
             return order;
@@ -789,7 +793,9 @@ public class ProductionService {
         // reservations gone): released in this transaction, under a savepoint so a failure is still ignored (Nest:
         // .catch(() => undefined)).
         try {
-            Savepoints.run(db.jdbc(), () -> reservations.release(SOURCE, id));
+            // Integrity fix 2026-11-24 (MR-9): releaseSoft — a failure through release() marked this transaction
+            // rollback-only, so the cancel failed at commit (500) although the error was caught here.
+            Savepoints.run(db.jdbc(), () -> reservations.releaseSoft(SOURCE, id));
         } catch (RuntimeException e) {
             log.warn("reservation release failed for {}: {}", pre.get("orderCode"), e.getMessage());
         }
@@ -1058,8 +1064,9 @@ public class ProductionService {
                 .query(String.class).optional().orElse(null);
         BigDecimal rated = BigDecimal.ZERO;
         if (je != null) {
-            rated = db.jdbc().sql("SELECT coalesce(sum(debit), 0) FROM \"JournalLine\" WHERE \"journalEntryId\" = ?")
-                    .param(je).query(BigDecimal.class).single();
+            // Integrity fix 2026-11-24 (MR-10): tenancy predicate.
+            rated = db.jdbc().sql("SELECT coalesce(sum(debit), 0) FROM \"JournalLine\" WHERE \"journalEntryId\" = ?"
+                    + " AND \"organizationId\" = ?").params(je, MfgDb.org()).query(BigDecimal.class).single();
             posting.reverse(je, date, "Overhead absorption reversed · " + code);
         }
         stockPosting.postOverheadAbsorptionReversal(overhead.subtract(rated).max(BigDecimal.ZERO), date,

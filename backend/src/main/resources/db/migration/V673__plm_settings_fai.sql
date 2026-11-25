@@ -1,4 +1,4 @@
--- V643: PLM settings with the lifecycle policy (ADR-S086 §6) and first-article inspection (§7).
+-- V673: PLM settings with the lifecycle policy (ADR-S086 §6) and first-article inspection (§7).
 --   * PlmSettings     — one row per organization: the lifecycle policy matrix (what purchasing, sales and
 --                       replenishment may do with a product in each lifecycle state; overrides on the defaults), the
 --                       default cost policy of BOM changes and whether BOM / routing changes ask for a first article.

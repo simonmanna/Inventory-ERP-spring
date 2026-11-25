@@ -59,6 +59,7 @@ import com.inventoryerp.sales.application.SalesOrderService;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -254,6 +255,7 @@ public class GraniteQuarryDemoSeed implements DemoOrganization {
         importBasalt(c);
         sales(c);
         monthEnd(c);
+        plant(c);
         settle(c);
         Map<String, Object> runRow = runs.get(run);
         profitability.build(c.date(1), c.day(1).withDayOfMonth(c.day(1).lengthOfMonth()).toString());
@@ -597,6 +599,52 @@ public class GraniteQuarryDemoSeed implements DemoOrganization {
         payments.createSupplierPayment(new PaymentInput(c.partner.get(supplier), c.date(day), dec(amount), "bank",
                 null, ref, null, List.of(new AllocationInput(doc, null, dec(amount))), null, null, null, null,
                 usd ? "USD" : null, usd ? USD_RATE : null), true);
+    }
+
+    // ------------------------------------------------------------------ the plant in the asset register
+
+    /** The plant behind the opening balance: name, code, cost, salvage value and the month's depreciation. */
+    static final List<String[]> PLANT = List.of(
+            new String[] {"Crusher plant", "AST-GQ-CRUSHER", "280000000", "40000000", "1000000"},
+            new String[] {"Block machine", "AST-GQ-BLOCK", "20000000", "800000", "80000"});
+
+    /**
+     * The crusher plant and block machine of the opening balance (fixed assets 300,000,000) in the asset register, so
+     * the fixed asset reconciliation and integrity check I10 tie: straight line over 240 months, the month's
+     * depreciation recorded as posted by the month-end depreciation journal. Register rows only: an acquisition or a
+     * depreciation run would post them to the GL a second time. Live GQDEMO, seeded before this, got the same rows from
+     * {@code docs/audits/2026-11-24-register-gqdemo-plant.sql}.
+     */
+    private void plant(Ctx c) {
+        String journal = jdbc.sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"postingKey\" = ?")
+                .params(c.org, "gqdemo:depreciation:" + c.org).query(String.class).single();
+        String category = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"AssetCategory\" (id, \"organizationId\", name, description, \"depreciationMethod\","
+                + " \"defaultUsefulLife\", \"isActive\", \"updatedAt\") VALUES (?, ?, 'Plant and machinery',"
+                + " 'Quarry and block plant', 'straight_line', 240, true, now())").params(category, c.org).update();
+        String period = c.start.toString().substring(0, 7);
+        for (String[] a : PLANT) {
+            String asset = UUID.randomUUID().toString();
+            BigDecimal cost = new BigDecimal(a[2]);
+            BigDecimal month = new BigDecimal(a[4]);
+            jdbc.sql("INSERT INTO \"Asset\" (id, \"organizationId\", \"assetCode\", name, \"categoryId\", \"branchId\","
+                    + " location, \"purchaseDate\", \"inServiceDate\", \"purchaseCost\", \"currentValue\","
+                    + " \"salvageValue\", \"usefulLife\", \"usefulLifeUnit\", \"acquisitionMethod\", status, notes,"
+                    + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, ?, 'Quarry', ?, ?::date, ?, ?, ?, 240, 'months', 'purchased',"
+                    + " 'active', 'Opening balance (journal gqdemo:opening)', now())")
+                    .params(asset, c.org, a[1], a[0], category, c.qry,
+                            SqlRows.ts(c.day(1).atStartOfDay(ZoneOffset.UTC).toInstant()), c.date(1), cost,
+                            cost.subtract(month), new BigDecimal(a[3]))
+                    .update();
+            jdbc.sql("INSERT INTO \"AssetDepreciation\" (id, \"organizationId\", \"assetId\", period, method,"
+                    + " \"assetCost\", \"salvageValue\", \"usefulLife\", \"depreciationAmount\", \"accumulatedDepr\","
+                    + " \"bookValue\", \"isPosted\", \"journalEntryId\", \"postedAt\", notes, \"updatedAt\") VALUES"
+                    + " (?, ?, ?, ?, 'straight_line', ?, ?, 240, ?, ?, ?, true, ?, ?, 'Posted by the month-end"
+                    + " depreciation journal (gqdemo:depreciation)', now())")
+                    .params(UUID.randomUUID().toString(), c.org, asset, period, cost, new BigDecimal(a[3]), month,
+                            month, cost.subtract(month), journal, SqlRows.ts(c.at(28, 17)))
+                    .update();
+        }
     }
 
     // ------------------------------------------------------------------ helpers

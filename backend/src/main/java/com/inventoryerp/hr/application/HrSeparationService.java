@@ -424,6 +424,22 @@ public class HrSeparationService {
         return dec(r.get("b"));
     }
 
+    /**
+     * Posting key of one gratuity run (finance audit A6, P2-12): the date and a digest of the employees it accrues. The
+     * key was {@code hr_gratuity:<date>}, so a second run on the same date replayed the first entry and its provision
+     * rows never reached the ledger.
+     */
+    static String gratuityKey(LocalDate asOf, List<Map<String, Object>> detail) {
+        List<String> employees = detail.stream().map(d -> String.valueOf(d.get("employeeId"))).sorted().toList();
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(String.join(",", employees).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return "hr_gratuity:" + asOf + ":" + java.util.HexFormat.of().formatHex(digest).substring(0, 16);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** Month-end provision: liability per active employee on the statutory / contractual formula; posts the movement. */
     public Map<String, Object> accrueProvision(LocalDate asOf) {
         Map<String, Object> st = setup.effectiveSettings();
@@ -467,9 +483,11 @@ public class HrSeparationService {
                                 PostingRequest.Line.credit(provisionAcc, mt, "Gratuity provision"))
                         : List.of(PostingRequest.Line.debit(provisionAcc, mt.negate(), "Gratuity provision release"),
                                 PostingRequest.Line.credit(expenseAcc, mt.negate(), "Gratuity expense"));
+                // Finance audit A6 (P2-12): a second run on the same date (employees added since) is another posting;
+                // the key names the run's employees, so a true retry still replays and a new run posts.
                 journalId = posting.post(new PostingRequest("GEN", HrPayrollEngineV2.utc(asOf), "Gratuity provision "
-                        + asOf, null, null, "hr_gratuity", asOf.toString(), "primary", "hr_gratuity:" + asOf, null, null,
-                        null, jl)).get("id");
+                        + asOf, null, null, "hr_gratuity", asOf.toString(), "primary", gratuityKey(asOf, detail), null,
+                        null, null, jl)).get("id");
             }
             for (Map<String, Object> d : detail) {
                 Map<String, Object> row = new LinkedHashMap<>();

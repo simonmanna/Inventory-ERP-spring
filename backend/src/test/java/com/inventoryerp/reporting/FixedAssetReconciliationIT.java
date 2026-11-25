@@ -146,4 +146,65 @@ class FixedAssetReconciliationIT extends ApiTestSupport {
         assertThat(check(result, "COST_RECONCILES").get("ok").asBoolean()).isTrue();
         assertThat(check(result, "DEPRECIATION_RECONCILES").get("ok").asBoolean()).isTrue();
     }
+
+    @Test
+    @DisplayName("[R15] an asset capitalised before its in-service date is held from the capitalisation date")
+    void capitalisedBeforeInService() {
+        String code = "fac-" + UUID.randomUUID().toString().substring(0, 8);
+        Res boot = call("POST", "/organizations/bootstrap", Map.of("organizationCode", code, "organizationName",
+                "FA Capitalisation Co", "adminEmail", "owner@" + code + ".test", "adminFirstName", "Owner",
+                "adminPassword", "Owner@12345"), (String) null);
+        assertThat(boot.status()).as(boot.raw().body()).isEqualTo(201);
+        String org = boot.body().get("organization").get("id").asString();
+        String token = login(code, "owner@" + code + ".test", "Owner@12345");
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate inService = today.withDayOfMonth(1).plusMonths(1);
+        Instant now = today.atTime(12, 0).toInstant(ZoneOffset.UTC);
+        Map<String, String> acc = TenantContext.run(TenantContext.TenantStore.organization(org), () -> Map.of(
+                "fa", accounts.ensureByCode("1595", "Test plant", "non_current_asset", "fixed_asset_valuation"),
+                "cip", accounts.ensureByCode("1597", "Test construction in progress", "non_current_asset", null),
+                "eq", accounts.ensureByCode("3955", "Test capital", "equity", null)));
+
+        // A capital project capitalised today into a depot that goes into service next month: the asset's purchase
+        // date is its in-service date, the cost moves from CIP to the fixed-asset account today.
+        String project = UUID.randomUUID().toString();
+        String capitalisation = UUID.randomUUID().toString();
+        String depot = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Project\" (id, \"organizationId\", code, name) VALUES (?, ?, 'CAP-1', 'Depot')")
+                .params(project, org).update();
+        jdbc.sql("INSERT INTO \"Asset\" (id, \"organizationId\", \"assetCode\", name, \"purchaseDate\","
+                + " \"inServiceDate\", \"purchaseCost\", \"capitalizedCost\", \"currentValue\", \"acquisitionMethod\","
+                + " \"updatedAt\") VALUES (?, ?, 'FAC-1', 'Depot', ?, ?::date, 800, 800, 800, 'constructed', now())")
+                .params(depot, org, Timestamp.valueOf(inService.atStartOfDay()), inService.toString()).update();
+        jdbc.sql("INSERT INTO \"ProjectCapitalisation\" (id, \"organizationId\", \"projectId\", number,"
+                + " \"capitalisationDate\", amount, status) VALUES (?, ?, ?, 'CAP/00001', ?::date, 800, 'posted')")
+                .params(capitalisation, org, project, today.toString()).update();
+        jdbc.sql("INSERT INTO \"ProjectCapitalisationAsset\" (id, \"organizationId\", \"capitalisationId\","
+                + " \"assetId\", amount, \"inServiceDate\") VALUES (?, ?, ?, ?, 800, ?::date)")
+                .params(UUID.randomUUID().toString(), org, capitalisation, depot, inService.toString()).update();
+        TenantContext.run(TenantContext.TenantStore.organization(org), () -> {
+            for (Object[] e : new Object[][] {{"cip", "eq", "test"}, {"fa", "cip", "project_capitalisation"}}) {
+                posting.post(new PostingRequest("GEN", now, "fac", null, null, (String) e[2],
+                        UUID.randomUUID().toString(), null, null, null, null, null, List.of(
+                                new Line(acc.get((String) e[0]), 800, null, null, "dr", null, null, null),
+                                new Line(acc.get((String) e[1]), null, 800, null, "cr", null, null, null))));
+            }
+            return null;
+        });
+
+        Res r = call("POST", "/reports/run/fa.reconciliation", Map.of("asOf", today.toString()), token);
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        JsonNode cost = row(r.body(), "COST").get("values");
+        assertThat(dec(cost.get("register"))).as("held from the capitalisation date").isEqualByComparingTo("800");
+        assertThat(dec(cost.get("gl"))).isEqualByComparingTo("800");
+        assertThat(check(r.body(), "COST_RECONCILES").get("ok").asBoolean()).isTrue();
+        Res register = call("POST", "/reports/run/fa.register", Map.of("asOf", today.toString()), token);
+        assertThat(register.status()).as(register.raw().body()).isEqualTo(200);
+        assertThat(register.raw().body()).contains("FAC-1");
+        Res before = call("POST", "/reports/run/fa.reconciliation", Map.of("asOf", today.minusDays(1).toString()),
+                token);
+        assertThat(before.status()).as(before.raw().body()).isEqualTo(200);
+        assertThat(dec(row(before.body(), "COST").get("values").get("register"))).isEqualByComparingTo("0");
+        assertThat(dec(row(before.body(), "COST").get("values").get("gl"))).isEqualByComparingTo("0");
+    }
 }

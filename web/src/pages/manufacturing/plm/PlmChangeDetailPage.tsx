@@ -160,31 +160,40 @@ export function PlmChangeDetailPage() {
         </div>
       )}
 
-      {/* stage bar */}
-      <div className="flex overflow-x-auto rounded-xl border bg-card p-1 shadow-sm">
+      {/* stage stepper */}
+      <ol className="flex overflow-x-auto rounded-2xl border bg-card px-2 py-4 shadow-sm" aria-label={tx('Stages')}>
         {eco.stages.map((s, i) => {
           const current = i === at;
           const done = i < at || eco.status === 'applied';
           const clickable = canChange && open && !current;
+          const last = i === eco.stages.length - 1;
           return (
-            <button
-              key={s.id}
-              type="button"
-              disabled={!clickable || move.isPending}
-              onClick={() => moveTo(s.id, s.name)}
-              title={s.description ?? undefined}
-              className={cn('relative flex min-w-[130px] flex-1 items-center justify-center gap-1.5 px-4 py-2 text-sm transition',
-                i === 0 ? 'rounded-l-lg' : '', i === eco.stages.length - 1 ? 'rounded-r-lg' : '',
-                current && open ? 'bg-primary font-semibold text-primary-foreground' : done ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : 'text-muted-foreground',
-                clickable && 'hover:bg-muted hover:text-foreground')}
-            >
-              {done && !current ? <Check className="h-3.5 w-3.5" /> : s.requiresApproval ? <ShieldCheck className="h-3.5 w-3.5" /> : null}
-              {s.name}
-              {i < eco.stages.length - 1 && <ArrowRight className="absolute -right-2 z-10 h-4 w-4 text-muted-foreground/50" />}
-            </button>
+            <li key={s.id} className="relative flex min-w-[120px] flex-1 flex-col items-center">
+              {!last && <span className={cn('absolute left-1/2 top-[18px] h-0.5 w-full', done ? 'bg-emerald-500' : 'bg-border')} aria-hidden />}
+              <button
+                type="button"
+                disabled={!clickable || move.isPending}
+                onClick={() => moveTo(s.id, s.name)}
+                title={s.description ?? undefined}
+                aria-current={current ? 'step' : undefined}
+                className={cn('group relative z-[1] flex flex-col items-center gap-1.5 rounded-lg px-2 text-center text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  clickable && 'cursor-pointer')}
+              >
+                <span className={cn('grid h-9 w-9 place-items-center rounded-full border-2 text-sm font-bold ring-4 ring-card transition',
+                  current && open ? 'border-primary bg-primary text-primary-foreground shadow-md shadow-primary/30'
+                    : done ? 'border-emerald-500 bg-emerald-500 text-white' : 'border-border bg-card text-muted-foreground',
+                  clickable && 'group-hover:border-primary group-hover:text-primary')}>
+                  {done && !current ? <Check className="h-4 w-4" aria-hidden /> : i + 1}
+                </span>
+                <span className={cn('flex items-center gap-1 leading-tight', current && open ? 'font-semibold text-foreground' : done ? 'text-emerald-700 dark:text-emerald-300' : 'text-muted-foreground')}>
+                  {s.requiresApproval && <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-label={tx('Needs approval')} />}
+                  {s.name}
+                </span>
+              </button>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <div className="min-w-0 space-y-4">

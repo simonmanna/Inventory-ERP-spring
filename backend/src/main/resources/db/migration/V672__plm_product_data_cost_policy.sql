@@ -1,4 +1,4 @@
--- V642: PLM ↔ product master data and accounting (ADR-S086 §4, §5).
+-- V672: PLM ↔ product master data and accounting (ADR-S086 §4, §5).
 --   * productChanges        — a product ECO may change the product's master data (name, description, barcode, weight,
 --                              volume, image): the proposed values, applied through the product service.
 --   * productChangesApplied — what apply changed, field by field ({field: {from, to}}).

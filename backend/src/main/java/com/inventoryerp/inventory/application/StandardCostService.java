@@ -215,12 +215,25 @@ public class StandardCostService {
      */
     public String postProductionVariances(String orderId, String orderCode, String productId, BigDecimal residual,
             BigDecimal producedQty, BigDecimal standardTotal, String wipAccountId, Instant date) {
+        return postProductionVariances(orderId, orderCode, productId, residual, producedQty, standardTotal,
+                wipAccountId, date, "production_order");
+    }
+
+    /**
+     * As {@link #postProductionVariances(String, String, String, BigDecimal, BigDecimal, BigDecimal, String, Instant)}
+     * for any production source. Integrity fix 2026-11-24 (MR-3): the variance register rows carry {@code sourceType}
+     * (a process-costing period records {@code process_costing}, as its journal entries and stock moves do, not
+     * {@code production_order}); the element split by recorded order variances applies to production orders only.
+     */
+    public String postProductionVariances(String orderId, String orderCode, String productId, BigDecimal residual,
+            BigDecimal producedQty, BigDecimal standardTotal, String wipAccountId, Instant date, String sourceType) {
         residual = residual.setScale(6, RoundingMode.HALF_UP);
         if (residual.signum() == 0) {
             return null;
         }
         Map<String, BigDecimal> byKind = new LinkedHashMap<>();
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT kind::text AS kind, SUM(amount) AS amount FROM"
+        for (Map<String, Object> r : !"production_order".equals(sourceType) ? List.<Map<String, Object>>of()
+                : SqlRows.list(jdbc.sql("SELECT kind::text AS kind, SUM(amount) AS amount FROM"
                 + " \"ProductionVariance\" WHERE \"organizationId\" = ? AND \"orderId\" = ? AND kind::text IN"
                 + " ('material_price', 'material_usage', 'labour', 'overhead', 'subcontract') GROUP BY 1")
                 .params(org(), orderId))) {
@@ -251,7 +264,7 @@ public class StandardCostService {
                 "inventory:production_variance:" + org() + ":" + orderId, lines));
         String jeId = je == null ? null : (String) je.get("id");
         for (Map.Entry<String, BigDecimal> e : byKind.entrySet()) {
-            recordVariance(productId, e.getKey(), "production_order", orderId, producedQty, standardTotal,
+            recordVariance(productId, e.getKey(), sourceType, orderId, producedQty, standardTotal,
                     standardTotal.add(residual), e.getValue(), jeId);
         }
         return jeId;

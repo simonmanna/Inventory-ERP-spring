@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCheck, Play, Save, XCircle } from 'lucide-react';
+import { AlarmClock, CheckCheck, ClipboardList, Factory, Network, Play, Save, ShoppingCart, XCircle } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { EmptyState, MfgPageHeader, MfgStatus, StatTile, TonePill } from './mfg-ui';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,18 +65,15 @@ export function MrpPage() {
   };
 
   const open = (run?.plannedOrders ?? []).filter((p) => p.status === 'planned');
+  const lateCount = open.filter((p) => new Date(p.releaseDate) < new Date()).length;
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={Network} title={tx('Material Requirements Planning')}
+        subtitle={tx('Multi-level netting with lead times, safety stock and lot sizing. Planned orders are only proposals until firmed.')} />
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">{tx('Material Requirements Planning')}</h1>
-          <p className="text-sm text-muted-foreground">
-            {tx('Multi-level netting with lead times, safety stock and lot sizing. Planned orders are only proposals until firmed.')}
-          </p>
-        </div>
         {canRun && (
-          <div className="flex items-end gap-2">
+          <div className="flex flex-wrap items-end gap-2 rounded-2xl border bg-card p-3 shadow-sm">
             <div className="space-y-1">
               <Label>{tx('Horizon (days)')}</Label>
               <Input className="w-24" type="number" min="1" value={horizon} onChange={(e) => setHorizon(e.target.value)} />
@@ -102,8 +101,15 @@ export function MrpPage() {
         )}
       </div>
 
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatTile icon={ClipboardList} tone="info" label={tx('Planned orders')} value={run?.plannedOrders?.length ?? 0} sub={tx('{{n}} still open', { n: open.length })} />
+        <StatTile icon={Factory} tone="progress" label={tx('Make')} value={(run?.plannedOrders ?? []).filter((p) => p.kind !== 'buy').length} />
+        <StatTile icon={ShoppingCart} tone="warning" label={tx('Buy')} value={(run?.plannedOrders ?? []).filter((p) => p.kind === 'buy').length} />
+        <StatTile icon={AlarmClock} tone={lateCount > 0 ? 'danger' : 'neutral'} label={tx('Release overdue')} value={lateCount} />
+      </div>
+
       <Tabs defaultValue="planned">
-        <TabsList>
+        <TabsList className="h-auto max-w-full flex-wrap justify-start">
           <TabsTrigger value="planned">{tx('Planned orders')}</TabsTrigger>
           <TabsTrigger value="worksheet">{tx('Netting worksheet')}</TabsTrigger>
           <TabsTrigger value="capacity">{tx('Capacity')}</TabsTrigger>
@@ -117,7 +123,7 @@ export function MrpPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>
                 {run ? `${run.runNumber} · ${fmtDate(run.startedAt)}` : tx('No MRP run yet')}
-                {run && <Badge variant="outline" className="ml-2">{run.status}</Badge>}
+                {run && <MfgStatus status={run.status} className="ml-2" />}
               </CardTitle>
               {canRun && run && open.length > 0 && (
                 <Button size="sm" onClick={() => call(() => firmRun.mutateAsync({ runId: run.id }), tx('Planned orders firmed.'))}>
@@ -127,7 +133,7 @@ export function MrpPage() {
             </CardHeader>
             <CardContent>
               {!run?.plannedOrders?.length ? (
-                <p className="text-sm text-muted-foreground">{tx('Nothing to plan — supply covers every requirement.')}</p>
+                <EmptyState compact icon={CheckCheck} title={tx('Nothing to plan — supply covers every requirement.')} />
               ) : (
                 <Table>
                   <TableHeader>
@@ -148,19 +154,19 @@ export function MrpPage() {
                       return (
                         <TableRow key={p.id}>
                           <TableCell className="text-sm">{productName(p.productId)}</TableCell>
-                          <TableCell><Badge variant={p.kind === 'buy' ? 'secondary' : 'default'}>{p.kind}</Badge></TableCell>
+                          <TableCell><TonePill tone={p.kind === 'buy' ? 'warning' : 'progress'} icon={p.kind === 'buy' ? ShoppingCart : Factory}>{p.kind}</TonePill></TableCell>
                           <TableCell className="text-right">{n(p.quantity)}</TableCell>
-                          <TableCell className={late ? 'text-destructive' : ''}>{fmtDate(p.releaseDate)}</TableCell>
+                          <TableCell className={cn('whitespace-nowrap', late && 'font-medium text-destructive')}>{late && <AlarmClock className="mr-1 inline h-3.5 w-3.5" aria-label={tx('Late')} />}{fmtDate(p.releaseDate)}</TableCell>
                           <TableCell>{fmtDate(p.dueDate)}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">
                             {(p.pegging ?? []).slice(0, 3).map((g) => `${g.type} ×${n(g.qty)}`).join(', ')}
                           </TableCell>
-                          <TableCell><Badge variant="outline">{p.status}</Badge></TableCell>
+                          <TableCell><MfgStatus status={p.status === 'planned' ? 'draft' : p.status === 'firmed' ? 'confirmed' : p.status} label={p.status} /></TableCell>
                           <TableCell className="space-x-1 text-right">
                             {canRun && p.status === 'planned' && (
                               <>
                                 <Button size="sm" variant="outline" onClick={() => call(() => action.mutateAsync({ id: p.id, action: 'firm' }), tx('Firmed.'))}>{tx('Firm')}</Button>
-                                <Button size="sm" variant="ghost" onClick={() => call(() => action.mutateAsync({ id: p.id, action: 'cancel' }), tx('Cancelled.'))}><XCircle className="h-4 w-4" /></Button>
+                                <Button size="sm" variant="ghost" aria-label={tx('Cancel')} title={tx('Cancel')} onClick={() => call(() => action.mutateAsync({ id: p.id, action: 'cancel' }), tx('Cancelled.'))}><XCircle className="h-4 w-4" /></Button>
                               </>
                             )}
                             {p.status === 'firmed' && p.firmedDocType === 'production_order' && (
@@ -459,9 +465,14 @@ function CapacityTab({ runId }: { runId?: string }) {
                             <TableCell className="text-right tabular-nums">{n(c.plannedLoadHours)}</TableCell>
                             <TableCell className="text-right tabular-nums">{n(c.capacityHours)}</TableCell>
                             {c.buckets.map((b) => (
-                              <TableCell key={b.from} className={`text-right tabular-nums ${b.overloaded ? 'font-medium text-destructive' : ''}`}
-                                title={`${n(b.totalLoadHours)} / ${n(b.capacityHours)} h`}>
-                                {b.totalUtilisationPct === null ? '—' : `${n(b.totalUtilisationPct)} %`}
+                              <TableCell key={b.from} className="p-1" title={`${n(b.totalLoadHours)} / ${n(b.capacityHours)} h`}>
+                                <div className={cn('rounded-md px-2 py-1.5 text-right text-xs font-semibold tabular-nums',
+                                  b.totalUtilisationPct === null ? 'bg-muted text-muted-foreground'
+                                    : b.overloaded || Number(b.totalUtilisationPct) > 100 ? 'bg-rose-500 text-white'
+                                      : Number(b.totalUtilisationPct) >= 85 ? 'bg-amber-400 text-amber-950'
+                                        : Number(b.totalUtilisationPct) > 0 ? 'bg-emerald-500/80 text-white' : 'bg-muted/60 text-muted-foreground')}>
+                                  {b.totalUtilisationPct === null ? '—' : `${n(b.totalUtilisationPct)} %`}{b.overloaded && ' !'}
+                                </div>
                               </TableCell>
                             ))}
                           </TableRow>

@@ -156,7 +156,9 @@ Pending owner approval:
    (the path segment is ignored) and a missing `id` renders the organization's first document.
 3. **Unhandled errors** (an invalid date in a report query, `to` before `from` on POS → GL
    reconciliation, a non-numeric `limit` on dashboard activity) answer 500 like Nest, but the
-   development-only `error` detail text comes from Java rather than Prisma.
+   development-only `error` detail text comes from Java rather than Prisma. Exception (finance readiness audit B5,
+   2026-11-24): the balance sheet (`/reports/accounting/balance-sheet` and `/detailed`) answers 400 "asOf is
+   required (YYYY-MM-DD)" or "asOf must be a valid date (YYYY-MM-DD)" instead of 500.
 
 Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md#deviations) 20):
 
@@ -172,11 +174,37 @@ Same as Nest, kept on purpose:
 - `PATCH /cash-sessions/:id/reconcile` writes `notes` as sent. The `guard_cash_session` trigger lets a
   closed shift's notes only be appended to, so a body whose `notes` does not start with the stored notes
   fails with 500, exactly as in Nest. Omitting `notes` keeps the stored value.
-- Re-closing a period after `reopen` answers "Nothing to close" until new revenue/expense is posted (the
-  reversal of the closing entry posts today and nets the period to zero).
+- Re-closing a period after `reopen`: Nest answered "Nothing to close" until new revenue/expense was posted (the
+  reversal of the closing entry posted today). Superseded: the reopen reverses the closing entry on its own date (G-5),
+  so the period closes again with its activity, and a period with no profit and loss to close is closed without a
+  closing entry (finance audit A3, below).
 - `GET /reports/export/trial-balance.csv` keeps Nest's SQL verbatim: the entry status/date filter sits in
   the `LEFT JOIN`, so lines of draft or later entries still count in the sums.
 - `RevaluationService` (FX revaluation) has no route in Nest either; it is module API only.
+
+## Finance readiness audit deviations (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md`.
+
+**A1: period end dates (P1-1).**
+
+- Fiscal period bounds are org-local wall clock (ADR-S070), so a period ends at 23:59:59.999 of its last day.
+- **Requests.** A date-only `endDate` on `POST /fiscal-periods` and `PATCH /fiscal-periods/:id` is stored as
+  23:59:59.999 of that day. Nest stores 00:00, which drops the last day from period control and from the close. A
+  full ISO timestamp is stored as given.
+- **Onboarding and seed.** The onboarding period (`FY<year>`) and the demo seed's periods end at 23:59:59.999 on
+  31 December. `FiscalYearService` already did this; every writer now uses `kernel.common.WallClockDays`.
+- **Existing periods are not migrated.**
+  - Open ones are extended by the reviewed script `docs/audits/2026-11-24-repair-midnight-period-ends.sql` (dry run
+    by default, one `AuditLog` row per change).
+  - Closed or locked ones are fixed one at a time (reopen, fix, close again), each approved by the owner.
+- **Web.** The fiscal period, fiscal year and year-close screens show stored bounds as calendar days (`wallDay` /
+  `wallDate` in `web/src/lib/format.ts`). `new Date(...)` showed an end at `…T23:59:59.999Z` as the next day east of
+  UTC.
+- **Tests.**
+  - `PeriodBoundsIT`.
+  - `AccountingFixtures.periodFor` now looks a period up at 23:59:59 of the day and skips deleted periods.
+  - `monthlyPeriods` asserts the stored end of day.
 
 ## Accounting remediation deviations (ACC-1 … ACC-4, owner-approved 2026-11-03)
 
@@ -300,11 +328,13 @@ Evidence and the original defects are in `docs/accounting/ACC-0-verification.md`
   - New routes (extension): `GET/PUT /fiscal-positions/:id/taxes` and `POST /fiscal-positions/:id/partners`.
 - **VAT settlement:**
   - `GET /tax-settlements/preview?from&to` (`report:accounting`) shows output VAT, input VAT and the net.
-  - `POST /tax-settlements {from,to}` (`journal_entry:create`, idempotent) posts Dr tax payable / Cr tax receivable for
+  - `POST /tax-settlements {from,to}` (`tax:settle` since finance audit A4, was `journal_entry:create`; idempotent) posts Dr tax payable / Cr tax receivable for
     the input VAT and records the period (`TaxSettlement`).
   - `GET /tax-settlements` lists the settled periods.
+  - `POST /tax-settlements/:id/reverse` undoes the latest settlement in force (finance audit A3, below).
 - **Tax-period lock:** `PostingService` refuses any line on a tax account dated on or before the latest settled period
-  end. Tax accounts are the output, input and withholding mappings plus each tax's own account.
+  end (settlements in force: a reversed one locks nothing). Tax accounts are the output, input and withholding mappings
+  plus each tax's own account.
 - **Built since (ADR-S071, V482):**
   - tax groups;
   - several taxes per line (`taxIds`) through `TaxCalculationService`, compound and inclusive included;
@@ -451,6 +481,20 @@ and closed periods from before this change are corrected, if at all, by approved
   and writes one `DocumentReversal` row (V520, unique per document: original and reversal entries, released
   allocations, who / when / why) plus an audit row; a replay returns the first result. Invoices and bills with
   payments, write-offs, posted notes or settled claims are refused with the list of what to undo first.
+- **Generic reversal allowlist (finance readiness audit A2, owner decision 2026-11-23).** The 2026-11-17 decision left
+  every non-sub-ledger source reversible through `POST /journal-entries/:id/reverse`, so a period close, a VAT
+  settlement, cash-session, treasury, fixed-asset, payroll, stock or costing entry could be reversed behind the back of
+  the records it belongs to (audit P1-2). Now the generic route — and the `journal_entry` workflow's `reverse`
+  transition, which applies the same guard (`SubledgerSources.assertGenericReversible`: FX-1, allowlist,
+  `journal_entry:control_adjust`) — accepts only manual entries (no source type; control-account adjustments included)
+  and the sources in `GENERIC_REVERSAL_SOURCE_TYPES` (`packages/shared/src/accounting/journal-reversal.ts`, served to the
+  API as `contracts/journal-reversal.json` by `tools/contracts2java/accounting.mjs`): `recurring_entry`. Everything else
+  is refused with a 400 that names the action reversing it — its own route where the process has one (period reopen,
+  VAT settlement undo (finance audit A3), payroll-run reversal, bank unmatch, allocation-run / costing-run / stock-document / production / landed-cost / fleet /
+  quarry / project reversals, acquisition removal, impairment reversal, FX revaluation re-run), otherwise an adjusting
+  manual journal entry. Unknown and future sources are refused by default; a `reversal` entry is judged by its original.
+  The journal-entry detail's additive `sourceDocument` block now covers every refused source (`id` may be null when the
+  entry names its document by number only), and the web shows Reverse only for manual and recurring entries.
 - **R8.** Posting a draft re-runs the full line validation on its stored lines.
 
 **Sub-ledgers**
@@ -502,6 +546,361 @@ items are in [costing](costing.md#review-2026-11-17--accounting-and-costing-fixe
 |---|---|---|---|
 | ACR-1 | `POST /fiscal-periods/:id/reopen` | took the latest `period_close` entry by date with no status filter, so a second reopen could pick the already-reversed one | the period's own posted closing entry (`sourceId`); the date window is a fallback for old entries |
 | ACR-17 | period close (gate and checklist) | every pending stock document of the organisation blocked the close | only those raised up to the period end. A failed POS stock-posting job can be abandoned (`POST /pos/posting-monitor/jobs/:id/abandon`, see pos), so it no longer blocks the close for ever |
+
+## Finance readiness audit A3: the close process (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (findings P2-1, P2-3, P2-4, P2-13 and the lock
+race). Tests: `CloseProcessIT`.
+
+- **A period with no profit and loss to close is closed (P2-1, owner-approved deviation).** Nest refused "Nothing to
+  close for '…': no posted revenue or expense in this period". When every P&L account nets to zero over the period (no
+  postings, balance-sheet movements only, or everything reversed), `POST /fiscal-periods/:id/close` now closes it
+  without a closing entry and answers `{ "journalEntryId": null, "netIncome": "0" }`. The audit row and the
+  `fiscal_period.closed` event carry `closingEntryId: null`. Reopen works as for any closed period.
+- **Break-even is closed account against account (P2-1).** When revenue equals expenses but the accounts carry
+  balances, the closing entry zeroes them against each other with no Retained Earnings line: a zero line is refused
+  by the engine, so the close used to fail. The `retained_earnings` mapping is only needed when net income is not zero.
+- **The year close only waits for periods with profit and loss (P2-1).** The year checklist item `periods_closed` is
+  now "Every period with profit and loss closed": it counts open periods where some P&L account does not net to zero.
+  `POST /fiscal-years/:id/close` closes the other open periods itself: empty ones as before (`emptyPeriodsClosed`),
+  and ones with postings but no profit and loss through the period close, with all its checks
+  (`zeroProfitAndLossPeriodsClosed`, new in the response and the audit row).
+- **Ledger totals never drop an account (P2-3).** The account metadata cache (`AccountResolverService`, 30 s per
+  instance) is reloaded when an id is missing: an account created on another API instance inside the cache window was
+  left out of a closing entry. The period close, the year close and its snapshot, the trial balance, P&L, balance
+  sheet, cash flow and the report snapshots read accounts through `ledgerMeta`, which also reads accounts deleted after
+  they were posted to (a cash account removed under Cash flow keeps its balance on the balance sheet) and fails the
+  request when a ledger line names no account of the organization, instead of skipping it.
+- **A VAT settlement can be undone (P2-4).** `POST /tax-settlements/:id/reverse` (idempotent; `tax:settle` like the
+  settlement itself, finance audit A4 below) undoes the latest settlement in force:
+  - it reverses the settlement's offset entry, dated as any reversal: the original date while its fiscal period is
+    open, else today (settling that VAT period again then needs the fiscal period reopened);
+  - it marks the row reversed (`reversedAt`, `reversedBy`, `reversalJournalEntryId`, migration V651) and answers the
+    row; the row stays in `GET /tax-settlements` as the record of what was filed;
+  - the VAT lock and `settledThrough` ignore reversed settlements, so the period can be corrected and settled again
+    (the one-settlement-per-period-end index now applies to settlements in force only);
+  - an older settlement answers 400 "Only the latest VAT settlement can be reversed: VAT is settled through
+    <date>; reverse that settlement first"; a reversed one 400 "This VAT settlement is already reversed";
+  - a settlement entry already reversed through the generic journal reversal (possible before finance audit A2) is
+    not reversed twice: the existing reversal is recorded.
+  - The VAT measure of a period leaves out reversals of settlement entries, as it leaves out the settlements: the
+    reversal used to count as output and input VAT and doubled the offset of the next settlement.
+  - Web: the period-end page's VAT card has "Undo latest settlement".
+- **Late POS cost of sales holds the close of the sale's period (P2-13).** The close and its checklist count an
+  unposted stock-posting job in the period of its sale (the invoice's issue date, else the order's time: the date the
+  job posts stock and COGS at), and an open sale-line inventory exception in the period of its invoice. An offline
+  sale of the 31st synced on the 2nd used to queue its job in the next month, so the month closed and the COGS posted
+  in the next period. A job or exception raised inside the period still counts as before.
+- **Locking waits for a concurrent reopen.** `POST /fiscal-periods/:id/lock` takes the period row lock before it reads
+  the status, as close and reopen do. It used to read without a lock, so a reopen committing in between was
+  overwritten and the reopened period ended up locked.
+
+## Finance readiness audit A4: permissions and the database role (owner-approved 2026-11-23 and 2026-11-24)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (findings P2-9, P2-10, part of P2-11; release
+gate G3). Tests: `GlControlPermissionsIT`, `DatabaseRoleValidatorIT`, `AuthorizationMatrixIT`.
+
+- **The dashboard figures need `report:accounting` (P2-9, owner-approved deviation).** Nest answered
+  `GET /reports/dashboard-kpi` and `GET /reports/dashboard-activity` to any signed-in user: the cash position, revenue
+  and net income of the month, the receivables ageing, and the latest invoices, payments and journal entries with
+  partner names reached cashiers and waiters. Both now answer 403 "Missing required permission(s): report:accounting"
+  without it. The web home page does not call them without the permission and shows the POS and inventory cards only.
+- **VAT settlement has its own permission, `tax:settle` (P2-10, owner decision 4).** `POST /tax-settlements` posts the
+  offset entry and locks the period's tax postings in one step, and `POST /tax-settlements/:id/reverse` undoes the
+  latest settlement. Both needed only `journal_entry:create`, the permission of the maker of a draft entry. Migration
+  V652 grants `tax:settle` to `Administrator` and to every role holding `journal_entry:post`; a role that drafts entries
+  without posting them can no longer settle VAT (owner-confirmed 2026-11-24). The web shows "Settle and lock" and "Undo
+  latest settlement" only with `tax:settle`.
+- **Rebuilding the report snapshots also needs `fiscal_period:update` (owner-approved deviation 2026-11-24).** Nest
+  asked only `report:accounting`, the read permission of the reports, for `POST /reports/accounting/rebuild-snapshots`,
+  a write over the whole ledger. It now needs both; the balance sheet's "Rebuild Snapshots" button shows only with both.
+- **The production API refuses a database role that row-level security does not apply to (P2-11).** Under the `prod`
+  profile, start-up stops with "Refusing to start: DB_USER '…' …" when the API's role (`DB_USER`) is a superuser, has
+  `BYPASSRLS`, or owns (or is a member of the role that owns) a table with row-level security: Postgres does not apply
+  the tenant policies to such a role, so the database backstop behind the `organizationId` filters is off. That is the
+  case when only `DB_USER` is set and Flyway and the API share the owner role. Run the migrations as the owner
+  (`FLYWAY_USER`) and the API as a role that owns nothing (`docs/DATABASE.md` section 6). `APP_DB_ROLE_CHECK=warn`
+  logs the findings and starts anyway, for an emergency only.
+- **Permission tests.** `AuthorizationMatrixIT` adds the wrong-permission matrix: every write route that declares
+  permissions answers 403 to a user holding every permission of the catalogue except the route's own.
+  `GlControlPermissionsIT` fixes the permissions of 23 general-ledger controls (journals, period and year end, VAT,
+  snapshots, dashboard, treasury, FX, allocations, opening balances) in a table, so weakening one shows in review.
+
+## Finance readiness audit A5: receivables and payables tie-out (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (finding P2-5). Tests: `ArApTieOutIT`.
+
+- **One measure for the tie-out (P2-5, deviation).** Nest's tie-out (`tieout.service.ts`: the nightly snapshot behind
+  `GET /reports/accounting/tieout`) compares the one mapped `accounts_receivable` / `accounts_payable` account with the
+  residuals of sales invoices, POS invoices and vendor bills, each summed in its own currency. A foreign-currency
+  document counted at face value against a base-currency ledger, credit and debit notes and unapplied payments were left
+  out, and differences between partners that cancel out did not show. The snapshot now uses the measure of the
+  `ar.reconciliation` / `ap.reconciliation` reports (`SubledgerTieOut`): open items in base currency at their posting
+  rate, less payments not yet applied, against every receivable / payable account, per partner. A side is balanced when
+  its totals agree and no partner differs (tolerance 0.01). The variance keeps its sign (GL − sub-ledger) and the
+  response its fields; `arDetails` / `apDetails` keep `glBalance` and `subLedgerBalance` and add `asOf`, `basis`,
+  `partnersDiffering` and up to 50 `partners`, largest difference first. A snapshot no longer needs the AR / AP account
+  mappings.
+- **Open items at their posting rate.** A foreign-currency document created through the API stores rate 1, meaning
+  "not stated" (FX-1), and posts at the rate table's rate. The reports measured its residual at the stored 1. They now
+  use the rate its journal entry posted at (the entry's rate snapshot, else base ÷ amount of its lines), as payments
+  already do (`DocumentFxRates`); a base-currency document is measured at 1. An open item's `currency` is now its code,
+  empty for the base currency: the reports looked the currency up by id, but documents store the code, so it was always
+  empty.
+- **Unapplied payments on their own side.** A payment counts as unapplied for customers only when its entry posted the
+  partner's leg to a receivable account, and for suppliers only to a payable account, the rule payment allocation
+  already applies (FX-2). A customer's credit-note refund (outbound, against the receivable) counted as an unapplied
+  supplier payment in the AP reconciliation, ageing and tie-out.
+- **Integrity check I8, `ar_ap_tieout`.** `GET /reports/accounting/integrity` lists each partner that differs today
+  (side, partner, sub-ledger, GL, difference = sub-ledger − GL, as the reconciliation reports show it), plus a total row
+  when the totals differ though no single partner does. The nightly ledger monitor opens a finding and alerts on it.
+- **Close checklist.** An advisory item `ar_ap_tieout` counts the partners that differ at the period's last day. It is
+  measured in its own read-only transaction: a failure to compute it shows on the item and leaves the rest of the
+  checklist alone.
+
+## Finance readiness audit A6: posting-key reuse (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (finding P2-12). Tests: `PostingKeyReuseIT`.
+
+- **A replay is compared with what it replays.** `PostingService` returns the posted entry of a posting key it has
+  already seen (ACC-3), whatever lines the second request carries. A caller reusing a key for a different posting got
+  the first entry back and the ledger missed the second. On every replay `PostingKeyReplayGuard` now compares the
+  request with the stored entry: net base amount per account and partner, the request valued at the stored entry's own
+  rate (its rate snapshot, else base ÷ amount of its lines), tolerance 0.01 per pair; another currency is a difference
+  too. A true retry is unchanged.
+- **Warn first, refuse later (setting).** Organisation setting `accounting.postingKeyReuse`: `warn` (default) returns
+  the stored entry as before, logs a WARN and records a `PostingKeyConflict` row (V653, tenant RLS: key, entry, source,
+  up to 50 differing pairs); `refuse` answers 409 `Posting key <key> was already used by journal entry <number> with
+  different lines`. The plan switches the default to `refuse` after one release without conflicts.
+- **Integrity check I13, `posting_key_reuse`.** `GET /reports/accounting/integrity` lists the unresolved conflicts; the
+  nightly ledger monitor opens a finding and alerts on them. A conflict is closed by whoever reviewed it, in SQL (there
+  is no route yet): `UPDATE "PostingKeyConflict" SET "resolvedAt" = now(), "resolvedBy" = '<user id>', resolution =
+  '<what was done>' WHERE id = '<conflict id>';`. Nothing is reposted automatically: the missing posting is entered
+  again through its own route.
+- **Gratuity accrual: one key per run.** `POST /hr/separations/gratuity/accrue` posted under `hr_gratuity:<as-of date>`.
+  A second run on the same date (it accrues only employees with no provision row for that date, such as a hire added
+  since) replayed the first entry: its provision rows were written but the ledger kept only the first run. The key now
+  also names the employees of the run (`hr_gratuity:<date>:<hash>`), so each run posts its own entry.
+
+## Finance readiness audit gate G1: integrity checks I10 and I12 (owner-approved 2026-11-23 with the audit plan)
+
+Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md` (release gate G1, invariants I10 and I12). Tests:
+`AssetAndDrawerIntegrityIT`.
+
+- **I10 `fixed_assets`.** The fixed-asset register against its accounts, with the measure of the fixed asset
+  reconciliation report (`fa.reconciliation`, through the `FixedAssetTieOut` port): the cost with revaluations of the
+  assets held against the fixed-asset cost accounts, and posted depreciation plus net impairment against the
+  accumulated depreciation and impairment accounts, as of today (organisation time), tolerance 0.01 per line. One row
+  per line that differs: register, GL, difference = register − GL, as the report shows it. The audit's tolerance is
+  per asset category; the register is compared with its accounts in total, as the report does, because categories
+  share accounts. Which assets count on a date, and the granite quarry demo seed's plant: fix step B0 below.
+- **I12 `cash_drawers`.** Each closed cash session: its own journals moved its drawer account by its counted cash less
+  its opening float, tolerance 0.01. Its own journals are the ones the session reconciliation already ties to it: the
+  entries of its payments (not cancelled), of its drawer movements without a payment (the movement's entry, else its
+  `cash_movement` entry) and its over / short entry. An entry reversed later still counts; the mirror belongs to the
+  shift that recorded the void. The opening-float entry and banking after the close are outside the shift. One row per
+  session that differs, has no drawer account or has no count (every close stores one; only direct SQL leaves it
+  empty).
+- Both run in `GET /reports/accounting/integrity` and the nightly ledger monitor (finding and alert).
+
+## Finance readiness audit B0: the asset register (owner-approved 2026-11-24)
+
+The owner asked on 2026-11-24 to fix the issues the audit found and to register the granite quarry demo company's
+plant. Tests: `FixedAssetReconciliationIT` (`capitalisedBeforeInService`), `GraniteQuarryDemoSeedIT` (I10 ties on a
+fresh seed).
+
+- **An asset counts from the day it is on the books.** In `fa.register` and `fa.reconciliation`, and so in I10, an
+  asset capitalised from a project counts from its first project capitalisation date, the day the capitalisation posts
+  it to the cost account. Any other asset counts from its purchase date. Before B0 a capitalised asset counted from its
+  in-service date, which the capitalisation also stores as its purchase date. A capitalisation dated before the
+  in-service date therefore showed its whole cost as a difference until that date.
+- **The granite quarry demo seed registers its plant.** `GraniteQuarryDemoSeed` posts the plant as an opening balance
+  and its first month of depreciation as a journal. It now also adds the category "Plant and machinery", the crusher
+  plant (`AST-GQ-CRUSHER`) and the block machine (`AST-GQ-BLOCK`). These are straight line over 240 months, with the
+  month's depreciation recorded as posted by the seed's month-end depreciation journal. They are register rows only:
+  an acquisition or a depreciation run would post the plant to the GL a second time.
+- **A company seeded before B0** gets the same rows from `docs/audits/2026-11-24-register-gqdemo-plant.sql`. It runs
+  as a dry run by default and needs `-v apply=1` to commit. It writes an `AuditLog` row per row and posts no journal
+  entry. It stops and changes nothing unless all of these hold:
+  - both seed journals are posted in the same month;
+  - the opening journal debits the fixed-asset account by the plant's cost;
+  - the depreciation journal credits accumulated depreciation by the month's charge;
+  - no `AST-GQ-*` asset exists yet;
+  - afterwards, the register ties to those accounts.
+
+  After applying it, run the integrity check.
+
+## Finance readiness audit B1: period coverage (owner-approved 2026-11-24)
+
+Audit finding P2-2: periods were optional, nothing could set the books lock date, postings in gaps or years ahead
+went through silently, and nothing warned when next year had no periods. The owner approved Wave B on 2026-11-24.
+Everything below is new; Nest has none of it. Tests: `PeriodControlsIT`, `FiscalPeriodCoveragePlanTest`.
+
+- **Period controls, `GET` and `PUT /fiscal-periods/controls`.** GET needs `fiscal_period:read` and PUT needs
+  `fiscal_period:update`. PUT replaces the whole set:
+  - `booksLockDate`: nothing dated on or before it posts, whatever the period's status. It is a date: it locks its
+    whole day, stored as `23:59:59.999` org-local wall clock, like a period end (A1). It must be before today, and no
+    draft journal entry may be dated on or before it. Moving it earlier or removing it reopens posted history, so it
+    also needs `fiscal_period:reopen` (403 "Missing required permission(s): fiscal_period:reopen").
+  - `requireFiscalPeriod` (off by default): a posting on a day no open period covers is refused. Turning it on needs an
+    open period covering today.
+  - `autoCreatePeriods` (setting `accounting.autoCreatePeriods`, on by default): see the next point.
+  - `futurePostingLimitDays` (setting `accounting.futurePostingLimitDays`, 0–36500, default 3650): see the last point.
+
+  The response adds `today`, `periodsThrough` (end of the last period), `openPeriodCoversToday` and
+  `autoCreateLeadDays`. Each change is audited: the lock date and the switch on `Organization`, the settings by the
+  settings service. The fiscal periods page shows them as a "Period controls" card.
+- **Next year's periods are created ahead.** A nightly job (03:25 UTC, `FiscalPeriodCoverageJob`) checks every
+  organization that has fiscal periods. When the last period ends within 60 days, it creates the next fiscal year with
+  its periods through `FiscalYearService.create`:
+  - after a period of a fiscal year: a year from the next day, with that year's periodicity;
+  - after a period of no fiscal year (onboarding and the seed create one yearly period): the fiscal year that holds
+    the next day (`accounting.fiscalYearStartMonth`), with the periodicity of that period's length.
+
+  It sends an in-app notice when it creates a year. With the setting off, or when the year cannot be created (for
+  example a year already exists there without periods), it raises an alert instead, at most once a week. An
+  organization without periods is left alone.
+- **A posting far in the future is refused.** "Posting date D is more than N days after today (T); check the date".
+  The check sits in `FiscalPeriodControl`, so it covers every posting, reversal and draft. The default of ten years
+  catches a mistyped year (2062 for 2026) without refusing legitimate postings dated ahead. The test suite deliberately
+  posts payroll several years ahead. 366 suits a business that never posts into next year early.
+- **Postings outside every period** are already reported nightly: integrity check I5 (`uncovered_day`, A0).
+
+## Finance readiness audit B2: reversing an opening-balance batch (owner-approved 2026-11-24)
+
+Audit finding P2-6: an opening-balance batch could not be undone. The generic journal reversal refuses it (A2), because a
+bare GL reversal would leave the customer and supplier open items behind, and it had no route of its own.
+
+- `POST /opening-balances/{batchId}/reverse`, body `{ reason, date? }`. It needs both `opening_balance:post` and
+  `journal_entry:reverse`, because it undoes posted history. An `Idempotency-Key` is required.
+- All or nothing, in one transaction:
+  1. Each customer invoice of the batch is cancelled, and each supplier bill voided, through its own workflow: the
+     approval gate, separation of duties and the refusal while anything is settled against it all apply, with the
+     batch's reason.
+  2. The batch's GL entry is reversed by the posting engine on `date`, else on the original date. A closed period or
+     the books lock date refuses it; pass a later `date` then.
+  3. One audit row (`OpeningBalanceBatch`, `cancel`) lists what was reversed.
+- Documents already cancelled one by one are skipped. A batch with nothing left is refused: "Opening-balance batch X is
+  already reversed". An unknown batch is a 404.
+- The generic route still refuses the batch's entry, and its message now names this route.
+- Web: the opening balances page lists the batches with a "Reverse batch" action (asks for the reason).
+
+No Nest counterpart.
+## Finance readiness audit B4: database and deployment hardening (owner-approved 2026-11-24)
+
+Audit finding P2-11 and the database items of the P3 list.
+
+- **Guard functions (V655 and `afterMigrate`):** every trigger function in `public`, plus `evidence_purge_enabled` and
+  `evidence_row_changed`, runs with `search_path = public, pg_temp`. They name tables unqualified, so before this a
+  temporary table could shadow `"JournalEntry"` and blind a guard. `afterMigrate` repeats the pin, so trigger functions
+  added later are covered too.
+  - Deviation from the plan: they are not made `SECURITY DEFINER`. Pinning the path closes the hole, and the guards keep
+    running as the caller, under its row-level security.
+- **Constraints (V655):**
+  - The V499/V320 CHECKs (`JournalLine_amounts_non_negative`, `JournalLine_one_side`, `CurrencyRate_rate_positive`) are
+    validated.
+  - New: `JournalLine_exchangeRate_positive`, a unique `reversalOfId` (an entry is reversed at most once), and foreign
+    keys on `reversalOfId` and `reversedEntryId`.
+  - Each is validated only when existing rows pass. Otherwise it stays `NOT VALID` (still enforced on new rows) with a
+    WARNING, so an old database cannot block startup. The live database passed every check read-only on 2026-11-24.
+- **Bank statement duplicates (V656):**
+  - Every statement line carries `dedupeKey`, unique per bank account, and the import inserts with
+    `ON CONFLICT DO NOTHING` (counted as `skipped`).
+  - The key is the bank reference, else the UTC day, amount, description hash and the line's occurrence among identical
+    lines of the same file.
+  - Re-importing a statement, an overlapping statement, or two imports racing no longer duplicate lines; two identical
+    charges in one statement both stay.
+  - Limit: a second statement holding a genuinely new line identical to one already imported (same day, amount and
+    description, no reference) is skipped; the response counts it.
+  - Before, only lines with a reference were checked, and with a racy count.
+- **Separate migration step and backup role** (`docs/OPERATIONS.md` 4b):
+  - `java -jar app.jar --migrate-only` migrates as the owner and exits.
+  - The API runs with `SPRING_FLYWAY_ENABLED=false` and without the owner's login.
+  - `pg_dump` uses a backup role (`pg_read_all_data`, `BYPASSRLS`, `CREATEDB`).
+  - `docker-compose.prod.yml` gains a one-shot `migrate` service. It also stops giving the API role the owner's password.
+
+## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
+
+The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.
+
+- **A cash or bank account with history is kept.** `DELETE /accounts/cash-flow/:id` first refuses an account in
+  active use by a register, payment method or open shift, as Nest does. Since B5 it then makes the checks of
+  `DELETE /accounts/:id`, with the same messages. It refuses:
+  - a protected or system account;
+  - an account with child accounts;
+  - an account with journal lines ("Account has journal entries and cannot be deleted. Deprecate it instead so
+    history is preserved.");
+  - an account in an account mapping.
+
+  Nest soft-deletes such an account, which drops its balance from every report that skips deleted accounts.
+  Test: `CashAccountDeleteIT`.
+- **A foreign payable is relieved at the bill's posting rate.** Two routes relieve a foreign bill at its carrying
+  rate, the rate it posted at (`DocumentFxRates.documentRate`):
+  - a bill write-off, `POST /vendor-bills/:id/write-off`;
+  - a supplier claim settled against a bill, `POST /procurement/claims/:id/settle`.
+
+  A bill that stores the default rate 1 ("not stated", FX-1) posted at the rate table's rate. Passing that stored 1 on
+  made the relief post at the table rate of the day. Once the rate had moved, the payable's base did not clear, and the
+  AP tie-out (I8) showed the difference. Nest has the same flaw. Tests: the B5 tests in `ArApTieOutIT`.
+- **Discarding a draft journal entry** (`DELETE /journal-entries/:id`, still `journal_entry:create`):
+  - only the draft's author, or a user who also holds `journal_entry:post` (the checker), may discard it. Anyone
+    else gets a 403: "Only the author of draft X, or a user who can post journal entries, may discard it";
+  - each discard writes an audit row (`JournalEntry`, `delete`) with the entry number, description, date, author and
+    total.
+
+  Nest lets any holder of `journal_entry:create` discard anyone's draft, without a trace.
+- **A reversal is not dated before its original.** A reversal date chosen by the caller that falls on an earlier day
+  than the entry it reverses is refused: "A reversal cannot be dated before the entry it reverses (X is dated D)". The
+  same day or later is accepted. The default date (the original's, or today when that is closed) is unchanged.
+- **The balance sheet without `asOf`** answers 400 (see Deviation 3).
+- **Idempotency keys** (kernel, all keyed routes):
+  - A request refused while its arguments were read, bound or validated (before the handler ran) releases its key.
+    Before, the key stayed `pending`, and a corrected retry with the same key answered 409 or `OPERATION_PENDING`
+    forever. The web client rotates keys on 4xx, so mainly other clients (Android, scripts) were affected.
+  - A multipart request (`POST /bank-reconciliation/import-file`) is fingerprinted by its form fields and each
+    file's SHA-256. Before, the file was left out, so reusing a key with another file replayed the first file's
+    result.
+  - Not changed: keys stay unique per organization, not per user. They are client-generated UUIDs; a collision
+    between two users of one organization is not a practical risk.
+
+  The audit's "FX snapshot on reversals" item needed no change: a reversal line copies the original line's currency
+  and exchange rate.
+- **A shift's cash posts on its business date.**
+  - Affected: cash pay-ins and pay-outs, cash adjustments, bank deposits made during a shift, and the over/short
+    variance at close.
+  - Each posts at the time it happens while the shift's business date is today. For an earlier business date (a
+    shift closed after midnight) it posts at the last moment of that day, or now when that day no longer accepts
+    postings (closed period, books locked).
+  - Before, they always posted now, so a late close moved the shift's cash into the next day, or the next period.
+  - Banking a closed shift's drawer later (`banking after close`) still posts on the day the cash reaches the bank.
+- **A locked bank reconciliation freezes the bank account's ledger** through its statement day, as it already froze
+  the statement lines.
+  - Any posting to that account dated on or before the day is refused: "Bank account X is reconciled through D;
+    nothing can be posted to it on D'. Date it after D."
+  - This covers every path into the books (post, draft, post a draft, reversal).
+  - A reversal without a date whose original falls in the reconciled range is dated today, as for settled VAT.
+  - FX revaluations are exempt: they move only the base-currency value of a foreign bank account, not the balance the
+    bank statement shows.
+- **Close checklist reminders** (`GET /fiscal-periods/:id/close-checklist`). Five new advisory items, none blocking:
+  - `vat_settled`: tax was posted in the period, and no unreversed VAT settlement reaches the period end;
+  - `depreciation_posted`: depreciation computed for the period's months but not posted;
+  - `payroll_posted`: payroll runs whose pay period ends in the period and are not posted to the GL (reversed runs
+    excluded);
+  - `recurring_failed`: failed recurring journal runs dated in the period;
+  - `deferrals_released`: deferral releases due by the period end that are still planned.
+
+  The AR/AP tie-out item already exists (A5).
+- **First use of a system account** (`ensureByCode`): two requests creating the same missing account at once both
+  inserted it, and the second failed on the unique code (a 500). Creation is now serialised per organization and code,
+  under a transaction advisory lock taken only when the account is missing, and the lookup runs again under the lock.
+- **Expense form currency:** the amount label shows the organization's currency instead of a hard-coded "UGX".
+- **Supplier debit note lines** go into the posting engine as exact decimals. Before, they went through a JavaScript-style double, which loses cents above about 10^13. The other posting callers already pass decimal strings.
+- **Recurring drafts through the engine:**
+  - `PostingService.stageDraft` now keeps a draft's posting key (`recurring:<template>:<date>`) and its maker.
+  - Staging the same key again returns the existing entry.
+  - Before, the recurring service patched both onto the draft afterwards with raw SQL.
+- **Bank rules after an import:** a line a rule could not auto-post is now logged at WARN, with the count, the line
+  and the reason. Before, it was logged only at DEBUG, so nobody saw it. The line stays unmatched, as before.
 
 ## Extensions beyond Nest (ADR-S005)
 
@@ -637,3 +1036,50 @@ Both are ShedLock-guarded and gated by `app.jobs.enabled`.
 
 **Tests:** `GlAutomationIT`, `GlSchedulesTest`.
 
+
+## Ledger integrity check (finance readiness audit A0, 2026-11-23)
+
+Spring-only: Nest has no counterpart. Audit record: `docs/audits/2026-11-23-finance-accounting-readiness.md`.
+
+**Route.** `GET /reports/accounting/integrity`, under the class-level `report:accounting` of
+`AccountingReportingController`.
+- It runs read-only checks I1–I7, I9 and I11 of the audit: entries balance in base and in their own currency, FX lines,
+  trial balance, account classification, period coverage, closed periods, reversal links, VAT settlements and the
+  inventory tie-out. Since A5 it also runs I8, the AR / AP tie-out per partner, since A6 I13, posting keys replayed
+  with other lines, and since gate G1 I10, fixed assets, and I12, cash drawers (sections A5, A6 and G1 above): all
+  thirteen checks of the audit.
+- It returns `{checkedAt, ok, rowLimit, checks[]}`. Each check lists at most 5,000 rows.
+
+**Nightly job.** `LedgerIntegrityJob` (03:10 UTC, ShedLock `ledger-integrity-check`) runs `LedgerIntegrityMonitor` for
+each organisation with journal entries.
+- One open `LedgerIntegrityFinding` row (V650, tenant RLS) per failing check: refreshed while the check fails, resolved
+  when it passes.
+- An in-app notification (category `accounting`, kind `ledger_integrity`) goes out when a finding opens.
+- `inventory_gl` stays with `InventoryTieOutMonitor`.
+
+**No automatic repair.** Nothing is corrected automatically. The read-only data checks are in
+`docs/audits/2026-11-23-accounting-data-checks.sql`.
+
+**Tests:** `LedgerIntegrityIT`.
+
+## Finance readiness audit B6: missing tests (owner-approved 2026-11-24)
+
+- **Automatic ledger check.** `LedgerInvariantsCheck` is registered on `ApiTestSupport`. After every integration test class under `com.inventoryerp.accounting`, it checks each journal entry the class created, in every organization:
+  - entries are balanced in the base currency;
+  - single-currency entries are also balanced in that currency;
+  - every entry has at least two lines;
+  - lines and accounts belong to the entry's organization;
+  - each reversal points at an original that is reversed by it, and mirrors it account by account.
+
+  It also runs the I10 (fixed assets) and I12 (cash drawers) tie-outs from `LedgerIntegrityService`, but only in the organizations the class created; the shared DEMO history is excluded. A class that corrupts the ledger on purpose opts out with `@LedgerInvariantsCheck.Skip("reason")`. Three classes do: `LedgerIntegrityIT`, `Acc0ControlsIT` and `AssetAndDrawerIntegrityIT`. The I10 and I12 tie-outs run only for a register the class used (a test may post to an asset or drawer account as a plain account).
+- **`FinanceGapsB6IT`** covers:
+  - Cross-tenant refusals: journal read and reverse, period close and reopen, treasury transfer, withdraw, tax-settlement reverse and session force-close. Nothing is written to the other organization's books.
+  - Replay with the same key: a journal reversal and a period close.
+  - Concurrency:
+    - parallel transfers never overdraw the source account;
+    - two parallel posts of one draft post it once;
+    - parallel opens of one register open one session.
+- **Still not covered:**
+  - a period close racing a posting into the same period;
+  - concurrent tax settlements, revaluations and allocation runs;
+  - replay of the recurring run, deferral release and bank import routes.

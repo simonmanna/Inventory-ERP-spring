@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ArrowRight, CheckCircle2, GitBranch, Rocket, XCircle } from 'lucide-react';
+import { ArrowRight, CheckCircle2, DraftingCompass, GitBranch, Rocket, XCircle } from 'lucide-react';
+import { MfgPageHeader } from './mfg-ui';
 import { Link } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -39,11 +40,8 @@ export function EngineeringChangesPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{tx('Engineering & costing')}</h1>
-        <p className="text-sm text-muted-foreground">{tx('BOM revisions under change control, and how actual production compares with standard cost.')}</p>
-      </div>
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={DraftingCompass} title={tx('Engineering & costing')} subtitle={tx('BOM revisions under change control, and how actual production compares with standard cost.')} />
 
       {plmOn && hasPermission(PERMISSIONS.plm.read) && (
         <Link

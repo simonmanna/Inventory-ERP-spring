@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertOctagon, CirclePause, Factory, Moon, Play } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, CalendarClock, CheckCircle2, CirclePause, ClipboardList, Coins, Factory, Gauge as GaugeIcon, Layers, Loader, Moon, Percent, Play, Recycle, Tablet } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { date, money, useOrgCurrency } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
@@ -9,13 +9,14 @@ import { compactMoney } from '@/pages/sales/dashboard/utils';
 import { compactNumber } from '@/pages/sales/reports/report-format';
 import { useOps } from '@/components/ops-dashboard/api';
 import { CalendarHeatmap, Donut, Empty, FlagPill, Gauge, RankedBars, SegmentBar, STATUS, TrendChart, type RankRow } from '@/components/ops-dashboard/charts';
-import { Brief, KpiCard, num, numOrNull, Panel, PeriodSelect, pctText, ProgressCell, qtyText, Reveal, type BriefItem } from '@/components/ops-dashboard/kit';
+import { Brief, num, numOrNull, Panel, PeriodSelect, pctText, ProgressCell, qtyText, Reveal, type BriefItem } from '@/components/ops-dashboard/kit';
 import { Button } from '@/components/ui/button';
 import { StatusPill, type Tone } from '@/components/list';
 import { clampDays, isoDate, rollUp, usePeriod } from '@/components/ops-dashboard/period';
 import type { Board, FloorStatus, OeeReport } from '@/features/manufacturing/api-shopfloor';
 import type { ProductionOrder } from '@/features/manufacturing/types';
 import type { StageWipReport } from '@/features/manufacturing/api-stages';
+import { EmptyState, MfgPageHeader, MfgStatus, pctTone, StatTile, TonePill } from './mfg-ui';
 
 const REPORT = PERMISSIONS.production.report;
 
@@ -32,19 +33,6 @@ const ORDER_TONE: Record<string, Tone> = { draft: 'neutral', confirmed: 'info', 
 const ORDER_LABEL: Record<string, () => string> = {
   draft: () => tx('Draft'), confirmed: () => tx('Confirmed'), in_progress: () => tx('In progress'), qc_hold: () => tx('QC hold'), completed: () => tx('Completed'), cancelled: () => tx('Cancelled'),
 };
-
-/** A small trend line for a headline card. */
-function Sparkline({ values }: { values: number[] }) {
-  if (values.length < 2 || values.every((v) => v === 0)) return null;
-  const max = Math.max(...values) || 1;
-  const points = values.map((v, i) => `${(i / (values.length - 1)) * 100},${28 - (v / max) * 24}`).join(' ');
-  return (
-    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="h-8 w-full text-primary" aria-hidden>
-      <polygon points={`0,30 ${points} 100,30`} fill="currentColor" fillOpacity={0.12} />
-      <polyline points={points} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-    </svg>
-  );
-}
 
 const FLOOR: Record<FloorStatus, { label: () => string; icon: typeof Play; tile: string; dot: string }> = {
   running: { label: () => tx('Running'), icon: Play, tile: 'border-emerald-500/50 bg-emerald-500/10', dot: 'text-emerald-600 dark:text-emerald-400' },
@@ -94,6 +82,7 @@ export function ProductionDashboardPage() {
     };
   }, [orders.data, period, today]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const outputTrend = useMemo(() => rollUp(trends.data ?? [], (r) => r.date, { produced: (r) => num(r.produced), scrap: (r) => num(r.scrap) }, period, period.grain), [trends.data, period]);
   const costTrend = useMemo(() => rollUp(trends.data ?? [], (r) => r.date, { cost: (r) => num(r.cost) }, period, period.grain), [trends.data, period]);
   const heat = useMemo(() => Object.fromEntries((trends.data ?? []).map((r) => [r.date.slice(0, 10), r.orders])), [trends.data]);
 
@@ -166,31 +155,69 @@ export function ProductionDashboardPage() {
   if (k && (k.wastePct ?? 0) >= 3) brief.push({ key: 'waste', tone: 'warn', text: tx('Scrap is {{pct}} of planned output.', { pct: pctText(k.wastePct) }) });
   if (k && (k.yieldPct ?? 0) >= 98) brief.push({ key: 'yield', tone: 'good', text: tx('Yield is healthy at {{pct}} across {{count}} orders.', { pct: pctText(k.yieldPct), count: k.orders }) });
 
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><Factory className="h-5 w-5" aria-hidden /></span>
-          <div>
-            <h1 className="text-xl font-semibold">{tx('Production Dashboard')}</h1>
-            <p className="text-sm text-muted-foreground">{tx('Today\'s floor at a glance, and what production is costing.')}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <PeriodSelect value={period.key} onChange={setPeriod} />
-          <Button asChild variant="outline"><Link to="/manufacturing/boms">{tx('Recipes')}</Link></Button>
-          <Button asChild><Link to="/manufacturing/orders">{tx('Orders')}</Link></Button>
-        </div>
-      </div>
+  const attention = [
+    ...stat.active.filter((o) => o.status !== 'qc_hold' && !!o.scheduledFor && o.scheduledFor.slice(0, 10) < today).map((o) => ({ o, why: 'late' as const })),
+    ...list.filter((o) => o.status === 'qc_hold').map((o) => ({ o, why: 'qc' as const })),
+  ];
+  const STATUS_HEX: Record<string, string> = { draft: '#94a3b8', confirmed: '#0ea5e9', in_progress: '#8b5cf6', qc_hold: '#f59e0b', completed: '#10b981', cancelled: '#f43f5e' };
+  const byStatus = Object.keys(STATUS_HEX).map((s) => ({ key: s, label: ORDER_LABEL[s](), value: list.filter((o) => o.status === s).length, color: STATUS_HEX[s] })).filter((r) => r.value > 0);
 
-      <Reveal className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <KpiCard label={tx('Production orders')} value={qtyText(stat.inProgress)} sub={tx('In progress · {{count}} confirmed', { count: stat.confirmed })} to="/manufacturing/orders"
-          chart={canReport ? <Sparkline values={costTrend.map((r) => num(r.cost))} /> : undefined} loading={orders.isLoading} />
-        <KpiCard label={tx('To produce')} value={qtyText(toProduce)} sub={tx('Units on open orders')} to="/manufacturing/orders" loading={orders.isLoading} />
-        <KpiCard label={tx('Completed')} value={qtyText(stat.completed)} sub={tx('{{count}} today', { count: stat.completedToday })} to="/manufacturing/orders" loading={orders.isLoading} />
-        {canReport && <KpiCard label={tx('Yield')} value={pctText(k?.yieldPct)} sub={tx('Produced vs planned')} ring={k?.yieldPct ?? null} loading={kpis.isLoading} />}
-        {canReport && <KpiCard label={tx('OEE')} value={pctText(oeeTotal)} sub={tx('Target 85%')} ring={oeeTotal} to="/manufacturing/oee" loading={oee.isLoading} />}
+  return (
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={Factory} title={tx('Production Dashboard')} subtitle={tx('Today\'s floor at a glance, and what production is costing.')}
+        actions={
+          <>
+            <PeriodSelect value={period.key} onChange={setPeriod} />
+            <Button asChild variant="outline" size="sm"><Link to="/manufacturing/boms"><Layers className="mr-1.5 h-4 w-4" aria-hidden />{tx('Recipes')}</Link></Button>
+            <Button asChild variant="outline" size="sm"><Link to="/manufacturing/terminal"><Tablet className="mr-1.5 h-4 w-4" aria-hidden />{tx('Terminal')}</Link></Button>
+            <Button asChild size="sm"><Link to="/manufacturing/orders"><ClipboardList className="mr-1.5 h-4 w-4" aria-hidden />{tx('Orders')}</Link></Button>
+          </>
+        } />
+
+      <Reveal className="grid grid-cols-2 gap-3 md:grid-cols-4 2xl:grid-cols-7">
+        <StatTile icon={Loader} tone="progress" label={tx('In progress')} value={qtyText(stat.inProgress)} sub={tx('In progress · {{count}} confirmed', { count: stat.confirmed })} to="/manufacturing/orders" loading={orders.isLoading} />
+        <StatTile icon={CheckCircle2} tone="success" label={tx('Completed')} value={qtyText(stat.completed)} sub={tx('{{count}} today', { count: stat.completedToday })} to="/manufacturing/orders"
+          spark={canReport ? outputTrend.map((r) => num(r.produced)) : undefined} loading={orders.isLoading} />
+        <StatTile icon={Factory} tone="info" label={tx('To produce')} value={qtyText(toProduce)} sub={tx('Units on open orders')} to="/manufacturing/orders" loading={orders.isLoading} />
+        <StatTile icon={CalendarClock} tone={stat.late > 0 ? 'danger' : 'neutral'} label={tx('Late orders')} value={qtyText(stat.late)} sub={tx('Past their scheduled date')} to="/manufacturing/orders" loading={orders.isLoading} />
+        {canReport && <StatTile icon={Coins} tone="info" label={tx('Work in progress')} value={cmoney(wipTotals?.expectedWip)} title={money(wipTotals?.expectedWip, currency)} sub={wipTotals ? (wipTotals.balanced ? tx('Matches the ledger') : tx('Differs by {{value}}', { value: cmoney(drift) })) : undefined} to="/manufacturing/stage-wip" loading={wip.isLoading} />}
+        {canReport && <StatTile icon={Percent} tone={pctTone(k?.yieldPct ?? null, 98, 90)} label={tx('Yield')} value={pctText(k?.yieldPct)} sub={tx('Produced vs planned')} ring={k?.yieldPct ?? null} loading={kpis.isLoading} />}
+        {canReport && <StatTile icon={Recycle} tone={(k?.wastePct ?? 0) >= 3 ? 'warning' : 'neutral'} label={tx('Scrap')} value={pctText(k?.wastePct)} sub={tx('Of planned output')}
+          spark={outputTrend.map((r) => num(r.scrap))} loading={kpis.isLoading} />}
+        {canReport && <StatTile icon={GaugeIcon} tone={pctTone(oeeTotal)} label={tx('OEE')} value={pctText(oeeTotal)} sub={tx('Target 85%')} ring={oeeTotal} to="/manufacturing/oee" loading={oee.isLoading} />}
       </Reveal>
+
+      <Reveal delay={20} className="grid gap-5 lg:grid-cols-3">
+        <Brief items={brief} />
+        <Panel title={tx('Needs attention')} hint={tx('Late orders and orders held for quality checks')} href="/manufacturing/orders" action={tx('Orders')}>
+          {attention.length === 0 ? <EmptyState compact icon={CheckCircle2} title={tx('Nothing needs attention right now.')} /> : (
+            <ul className="divide-y">
+              {attention.slice(0, 6).map(({ o, why }) => (
+                <li key={o.id}>
+                  <Link to={`/manufacturing/orders/${o.id}`} className="-mx-2 flex items-center gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-muted/60">
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-mono text-xs font-semibold text-primary">{o.orderCode}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{o.scheduledFor ? date(o.scheduledFor) : '—'} · {qtyText(num(o.producedQty))} / {qtyText(num(o.plannedQty))}</span>
+                    </span>
+                    {why === 'late' ? <TonePill tone="danger" icon={AlertTriangle}>{tx('Late')}</TonePill> : <MfgStatus status="qc_hold" kind="order" size="xs" />}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+        <Panel title={tx('Orders by status')} hint={tx('Every order on file')} href="/manufacturing/orders" action={tx('Orders')}>
+          <Donut rows={byStatus} size={140} centerSub={tx('orders')} stacked />
+        </Panel>
+      </Reveal>
+
+      {canReport && (
+        <Reveal delay={30}>
+          <Panel title={tx('Output trend')} hint={tx('Good output and scrap in the period')} href="/manufacturing/reports" action={tx('Reports')}>
+            <TrendChart kind="bars" height={200} data={outputTrend} axisFormat={compactNumber} series={[{ key: 'produced', label: tx('Produced'), color: '#10b981' }, { key: 'scrap', label: tx('Scrap'), color: '#f59e0b' }]} />
+          </Panel>
+        </Reveal>
+      )}
 
       <Reveal delay={40} className="grid gap-5 xl:grid-cols-5">
         <Panel className="xl:col-span-3" title={tx('Production orders')} hint={tx('Open now')} href="/manufacturing/orders" action={tx('View all')}>
@@ -260,8 +287,7 @@ export function ProductionDashboardPage() {
         </Reveal>
       )}
 
-      <Reveal delay={80} className="grid gap-5 lg:grid-cols-2">
-        <Brief items={brief} />
+      <Reveal delay={80}>
         {canReport && (
           <Panel title={tx('Equipment effectiveness')} hint={oeeRange.clipped ? tx('Latest 93 days. World class is 85%.') : tx('World class is 85%.')} href="/manufacturing/oee" action={tx('Report')}>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

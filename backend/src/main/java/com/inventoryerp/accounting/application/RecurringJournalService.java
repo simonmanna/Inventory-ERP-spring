@@ -368,13 +368,10 @@ public class RecurringJournalService {
         boolean draft = "draft".equals(t.get("mode")) || t.get("approvedAt") == null;
         Map<String, Object> entry;
         if (draft) {
-            entry = posting.stageDraft(request);
             // Maker = the user who last changed what the template posts (else its author), so they cannot approve
             // what the template generates.
             Object maker = t.get("lastEditedBy") != null ? t.get("lastEditedBy") : t.get("createdBy");
-            jdbc.sql("UPDATE \"JournalEntry\" SET \"postingKey\" = ?, \"createdBy\" = coalesce(?, \"createdBy\")"
-                    + " WHERE id = ? AND \"organizationId\" = ?")
-                    .params(key, maker, entry.get("id"), org).update();
+            entry = posting.stageDraft(request, null, (String) maker);
         } else {
             entry = posting.post(request);
         }

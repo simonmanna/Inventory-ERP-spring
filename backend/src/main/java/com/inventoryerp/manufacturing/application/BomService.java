@@ -181,21 +181,7 @@ public class BomService {
      * PLM). Locks the ECO rows, so the edit and a concurrent approval serialise.
      */
     private void requireBomEditable(Map<String, Object> bom) {
-        List<Map<String, Object>> ecos = com.inventoryerp.kernel.crud.SqlRows.list(db.jdbc().sql("SELECT * FROM"
-                + " \"EngineeringChange\" WHERE \"organizationId\" = ? AND \"newBomId\" = ? AND status IN ('draft',"
-                + " 'approved') ORDER BY id FOR UPDATE").params(MfgDb.org(), bom.get("id")));
-        for (Map<String, Object> eco : ecos) {
-            if ("approved".equals(eco.get("status"))) {
-                throw ApiException.badRequest("BOM " + bom.get("code") + " is part of approved change "
-                        + eco.get("number") + "; it can no longer be edited.");
-            }
-        }
-        EngineeringChangeWorkflow w = changeWorkflow.getIfAvailable();
-        if (w != null) {
-            for (Map<String, Object> eco : ecos) {
-                w.draftEdited(eco, "BOM " + bom.get("code"));
-            }
-        }
+        new EngineeringChangeFreeze(db, changeWorkflow).requireBomEditable(bom);
     }
 
     /** Edit a DRAFT BOM; an active/archived version is immutable. {@code lines} replaces the whole line set. */
@@ -337,10 +323,27 @@ public class BomService {
      * else the newest active version; effective-dated BOMs outside their window are excluded.
      */
     Map<String, Object> resolveForOrder(String outputProductId, String variantId, String bomId) {
+        return resolveForOrder(outputProductId, variantId, bomId, null);
+    }
+
+    /**
+     * As {@link #resolveForOrder(String, String, String)}, effectivity checked at {@code at} (the order's scheduled
+     * date; now when null).
+     */
+    Map<String, Object> resolveForOrder(String outputProductId, String variantId, String bomId, java.time.Instant at) {
         if (bomId != null && !bomId.isEmpty()) {
             Map<String, Object> bom = getOrThrow(bomId);
             if (!"active".equals(bom.get("status"))) {
                 throw ApiException.badRequest("BOM " + bom.get("code") + " is " + bom.get("status") + ", not active.");
+            }
+            // Integrity fix 2026-11-24 (MR-1; deviation: Nest applied effectivity only to the implicit lookup): a named
+            // BOM must be effective on the order's date too (same window test as findActive; null bounds are open).
+            java.time.Instant when = at != null ? at : java.time.Instant.now();
+            java.time.Instant from = (java.time.Instant) bom.get("effectiveFrom");
+            java.time.Instant to = (java.time.Instant) bom.get("effectiveTo");
+            if ((from != null && from.isAfter(when)) || (to != null && to.isBefore(when))) {
+                throw ApiException.badRequest("BOM " + bom.get("code") + " is not effective on "
+                        + when.atZone(java.time.ZoneOffset.UTC).toLocalDate() + ".");
             }
             return bom;
         }

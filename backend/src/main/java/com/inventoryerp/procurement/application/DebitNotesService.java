@@ -352,7 +352,8 @@ public class DebitNotesService {
             }
             // B1 (post-parity): Nest credited the expense leg too, so an inbound note never balanced. A supplier's
             // debit note raises what we owe: Dr expense / Cr AP.
-            Number amt = JsNumbers.js(Money.dec(ln.get("subtotal")));
+            // B5: exact decimal into the engine (a double lost precision on large amounts)
+            BigDecimal amt = Money.dec(ln.get("subtotal"));
             postingLines.add(outbound ? Line.credit(accountId, amt, null) : Line.debit(accountId, amt, null));
             // Control-account policy (V518, "close now"): the income / expense side is configuration (product category,
             // mapping); on a designated AR / AP account it would move AR / AP with no open item behind it.

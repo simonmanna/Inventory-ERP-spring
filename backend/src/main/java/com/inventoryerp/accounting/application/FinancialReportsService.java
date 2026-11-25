@@ -110,7 +110,7 @@ public class FinancialReportsService {
         }
         Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.dateEnd(to, zone()), null,
                 preClosing);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         BigDecimal td = BigDecimal.ZERO;
         BigDecimal tc = BigDecimal.ZERO;
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -235,7 +235,7 @@ public class FinancialReportsService {
         // other income / expense; closing entries are left out so a closed period still reports its result.
         Map<String, BigDecimal[]> grouped = ledger.balances(org(), LedgerQueries.date(from, zone()), LedgerQueries.dateEnd(to, zone()), null,
                 true);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         BigDecimal revenue = BigDecimal.ZERO;
         BigDecimal contra = BigDecimal.ZERO;
         BigDecimal cogs = BigDecimal.ZERO;
@@ -306,12 +306,27 @@ public class FinancialReportsService {
                         "liabilitiesAndEquity", plain(le)));
     }
 
+    /** B5: was a 500 ("Invalid Date", as Nest); a missing or invalid date is the caller's mistake (400). */
+    private Instant balanceSheetAsOf(String asOf) {
+        if (asOf == null || asOf.isBlank()) {
+            throw ApiException.badRequest("asOf is required (YYYY-MM-DD)");
+        }
+        java.time.ZoneId zone = zone();
+        Instant requested;
+        try {
+            requested = LedgerQueries.dateEnd(asOf, zone);
+        } catch (IllegalArgumentException | java.time.DateTimeException e) {
+            requested = null;
+        }
+        if (requested == null) {
+            throw ApiException.badRequest("asOf must be a valid date (YYYY-MM-DD)");
+        }
+        return requested;
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheet(String asOf) {
-        Instant requested = LedgerQueries.dateEnd(asOf, zone());
-        if (requested == null) {
-            throw new IllegalArgumentException("Invalid Date: " + asOf);
-        }
+        Instant requested = balanceSheetAsOf(asOf);
         Instant snap = findSnapshot("ReportBalanceSheetSnapshot", true, requested);
         if (snap != null) {
             Totals totals = new Totals();
@@ -331,10 +346,7 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheetDetailed(String asOf) {
-        Instant requested = LedgerQueries.dateEnd(asOf, zone());
-        if (requested == null) {
-            throw new IllegalArgumentException("Invalid Date: " + asOf);
-        }
+        Instant requested = balanceSheetAsOf(asOf);
         Map<String, List<Map<String, Object>>> rowsBySection = new LinkedHashMap<>();
         Totals totals = aggregate(requested, rowsBySection);
         List<Map<String, Object>> sections = new ArrayList<>();
@@ -353,7 +365,7 @@ public class FinancialReportsService {
 
     private Totals aggregate(Instant asOf, Map<String, List<Map<String, Object>>> rowsBySection) {
         Map<String, BigDecimal[]> grouped = ledger.balances(org(), null, asOf, null);
-        Map<String, AccountMeta> meta = accounts.meta(grouped.keySet());
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(grouped.keySet());
         Totals totals = new Totals();
         for (Map.Entry<String, BigDecimal[]> g : grouped.entrySet()) {
             AccountMeta a = meta.get(g.getKey());
@@ -430,7 +442,7 @@ public class FinancialReportsService {
             ids.add((String) l.get("accountId"));
             byEntry.computeIfAbsent((String) l.get("journalEntryId"), k -> new ArrayList<>()).add(l);
         }
-        Map<String, AccountMeta> meta = accounts.meta(ids);
+        Map<String, AccountMeta> meta = accounts.ledgerMeta(ids);
         Map<String, BigDecimal> sections = new LinkedHashMap<>();
         BigDecimal fxEffect = BigDecimal.ZERO;
         for (List<Map<String, Object>> entry : byEntry.values()) {

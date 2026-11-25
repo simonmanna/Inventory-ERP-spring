@@ -1085,13 +1085,18 @@ export function AppShell() {
   const [autoExpanded, setAutoExpanded] = useState(false);
   useEffect(() => {
     if (sidebarCollapsed || autoExpanded) return;
-    const activeSection = VISIBLE_SECTIONS.find(
-      (s) =>
-        s.title &&
-        s.items.some(
-          (n) => n.to !== '/' && (location.pathname === n.to || location.pathname.startsWith(`${n.to}/`)),
-        ),
-    );
+    // The most specific match wins: /manufacturing/plm/... belongs to Product Lifecycle, not to Production's
+    // /manufacturing dashboard entry that also prefixes it.
+    const matchLength = (s: (typeof VISIBLE_SECTIONS)[number]) =>
+      Math.max(
+        -1,
+        ...s.items
+          .filter((n) => n.to !== '/' && (location.pathname === n.to || location.pathname.startsWith(`${n.to}/`)))
+          .map((n) => n.to.length),
+      );
+    const activeSection = VISIBLE_SECTIONS.filter((s) => s.title && matchLength(s) >= 0).sort(
+      (a, b) => matchLength(b) - matchLength(a),
+    )[0];
     if (activeSection?.title && !expanded[activeSection.title]) {
       persistExpanded({ ...expanded, [activeSection.title]: true });
     }

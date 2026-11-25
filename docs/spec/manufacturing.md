@@ -250,6 +250,21 @@ PLM:
 | ML-9 | `GET /plm/overview` | overdue against DB `CURRENT_DATE` | the org calendar |
 | ML-11 | `GET /plm/items`, `/plm/items/:id`, `/engineering-changes` | unbounded | optional `limit` / `offset` (1–1000) |
 
+Production readiness (`fix/mfg-ready`, `ManufacturingReadyIT`):
+
+| # | Route | Before | Now |
+|---|---|---|---|
+| MR-1 | `POST /production-orders` (named `bomId`, also plan confirm / multistage / child orders) | effectivity applied only when no BOM was named | the named BOM must be effective on `scheduledFor` (today when none): `BOM <code> is not effective on <yyyy-mm-dd>.` |
+| MR-2 | `PUT /boms/:id/lines/:lineId/substitutes`, `PUT /boms/:id/stage-setup`, `PUT /routings/:id/stage-setup` | editable after the ECO carrying the BOM / routing was approved | `BOM <code> is part of approved change <number>; it can no longer be edited.` / `Routing <name> is part of approved change <number>; it can no longer be edited.`; on a draft ECO the edit voids its approvals |
+| MR-3 | `POST /process-costing/periods/:id/close` (last process, standard product) | variance register rows `sourceType = production_order` | `process_costing`, `sourceId` = period id |
+| MR-4 | `POST /production-orders/:id/confirm`, `/rework`, `/child-orders`, `POST /work-orders/:id/time-logs` | unlocked read-modify-write (confirm could re-open a cancelled order; double rework / child orders; time logged after costing) | order lock (time logs: work-order row lock), state re-read |
+| MR-6 | stage QC pass with `minCuringDays`, curing tick | one stage-wide curing clock (newest output) — with daily output no lot ever released | per lot (newest previous-stage output at or before the lot, else the lot's posting time); a curing lot keeps its due time |
+| MR-7 | `quality.lot.decided` → stage gate | a lot of a reversed output decided every undecided lot of the stage | ignored |
+| MR-8 | stage QC pass → next-stage issue | release line had no ledger code, so the released lot's layers were lost (blended issue) | release line carries the transfer's ledger code |
+| MR-9 | `POST /production-orders/:id/cancel` | a failing reservation release marked the transaction rollback-only (500) | soft (`releaseSoft`, no rollback marking) |
+| MR-10 | BOM roll-up co-product share, overhead absorption reversal | `Product` / `JournalLine` read without org predicate | org predicate |
+| MR-11 | `POST /stage-postings/:id/qc-scrap` | loss write-off authorised (own transaction) under the order / stage locks | authorised before the locks; re-checked under them |
+
 
 ## Status
 

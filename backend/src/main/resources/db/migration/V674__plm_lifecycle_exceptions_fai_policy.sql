@@ -1,4 +1,4 @@
--- V644: owner decisions of 2026-11-24 on the PLM application (ADR-S086 §6, §7, §12).
+-- V674: owner decisions of 2026-11-24 on the PLM application (ADR-S086 §6, §7, §12).
 --   * PlmLifecycleException — an authorized, time-boxed exception to the lifecycle policy: one product, one
 --                             activity (purchase, produce, sell, pos, replenish), a reason, a last valid day; revoked
 --                             rows stay as the audit trail.
