@@ -85,24 +85,25 @@ public class BankReconciliationService {
             }
             currencyCode = currencyCode == null ? fx.currency() : currencyCode;
         }
+        // B4: every line carries a duplicate key, unique per bank account (V656); a line already imported is skipped
+        java.util.Map<String, Integer> occurrences = new java.util.HashMap<>();
         for (StatementLine l : lines) {
-            assertUnlocked(organizationId, bankAccountId, OrgDates.parse(l.postedAt()));
-            if (l.externalRef() != null && !l.externalRef().isEmpty()) {
-                long existing = jdbc.sql("SELECT count(*) FROM \"BankStatementLine\" WHERE \"organizationId\" = ?"
-                        + " AND \"bankAccountId\" = ? AND \"externalRef\" = ?").params(organizationId, bankAccountId, l.externalRef())
-                        .query(Long.class).single();
-                if (existing > 0) {
-                    skipped++;
-                    continue;
-                }
-            }
-            jdbc.sql("INSERT INTO \"BankStatementLine\" (id, \"organizationId\", \"bankAccountId\", \"postedAt\", \"externalRef\","
-                            + " description, amount, \"currencyCode\", status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unmatched')")
+            Instant postedAt = OrgDates.parse(l.postedAt());
+            assertUnlocked(organizationId, bankAccountId, postedAt);
+            String key = dedupeKey(l, postedAt, occurrences);
+            int inserted = jdbc.sql("INSERT INTO \"BankStatementLine\" (id, \"organizationId\", \"bankAccountId\","
+                            + " \"postedAt\", \"externalRef\", description, amount, \"currencyCode\", status, \"dedupeKey\")"
+                            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'unmatched', ?) ON CONFLICT (\"organizationId\","
+                            + " \"bankAccountId\", \"dedupeKey\") DO NOTHING")
                     .params(UUID.randomUUID().toString(), organizationId, bankAccountId,
-                            FiscalPeriodControl.ts(OrgDates.parse(l.postedAt())), l.externalRef(), l.description(),
-                            l.amount(), l.currencyCode() != null ? l.currencyCode() : currencyCode)
+                            FiscalPeriodControl.ts(postedAt), l.externalRef(), l.description(),
+                            l.amount(), l.currencyCode() != null ? l.currencyCode() : currencyCode, key)
                     .update();
-            imported++;
+            if (inserted == 0) {
+                skipped++;
+            } else {
+                imported++;
+            }
         }
         int i = imported;
         int s = skipped;
@@ -113,6 +114,31 @@ public class BankReconciliationService {
         AfterCommit.run(() -> events.publish("bank_statement.imported", body("organizationId", organizationId,
                 "bankAccountId", bankAccountId, "imported", i, "skipped", s)));
         return body("imported", imported, "skipped", skipped);
+    }
+
+    /**
+     * The duplicate key of a statement line (V656): its bank reference, else its UTC day, amount (6 dp, trailing zeros
+     * trimmed), the MD5 of its description and its occurrence among identical lines of this import.
+     */
+    static String dedupeKey(StatementLine l, Instant postedAt, java.util.Map<String, Integer> occurrences) {
+        if (l.externalRef() != null && !l.externalRef().isEmpty()) {
+            return "ref:" + l.externalRef();
+        }
+        java.math.BigDecimal amount = l.amount() == null ? java.math.BigDecimal.ZERO
+                : new java.math.BigDecimal(l.amount().toString());
+        String base = "line:" + postedAt.atOffset(java.time.ZoneOffset.UTC).toLocalDate() + "|"
+                + amount.setScale(6, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + "|"
+                + md5(l.description() == null ? "" : l.description());
+        return base + "#" + occurrences.merge(base, 1, Integer::sum);
+    }
+
+    private static String md5(String s) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("MD5")
+                    .digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Transactional

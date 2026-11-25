@@ -155,6 +155,51 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS "Invoice_org_open_idx" ON "Invoice" ("or
   They serve the customer portal, credit exposure and the receivables aging. Check for an `INVALID` index afterwards
   (`\d "Order"`) and drop and rebuild it if a build was interrupted.
 
+### 4b. Separate migration step and backup role (finance readiness audit B4)
+
+In production the API must never hold the schema owner's login. Three roles:
+
+| Role | Used by | Rights |
+|---|---|---|
+| owner (`FLYWAY_USER`, e.g. `erp`) | the migrate step only | owns the schema |
+| API (`DB_USER`, e.g. `erp_app`) | the API | read/write rows, owns nothing; row-level security applies (refused at start otherwise) |
+| backup (`DB_BACKUP_USER`, e.g. `erp_backup`) | `pg_dump` and restore tests (`PGUSER`/`PGPASSWORD` in the API env) | `pg_read_all_data`, `BYPASSRLS` (pg_dump needs it), `CREATEDB`; cannot write live tables |
+
+- **Migrate:** `java -jar app.jar --migrate-only` (or `APP_MIGRATE_ONLY=true`) runs the same Flyway migrations as the
+  API (same `application.yml`: locations, placeholders, baseline, `afterMigrate`) in a minimal context and exits: 0 when
+  the schema is current, 1 on failure. It needs `JDBC_DATABASE_URL`, `FLYWAY_USER`/`FLYWAY_PASSWORD`, and `DB_USER`/
+  `DB_PASSWORD` (the API role is created and granted by `afterMigrate`).
+- **API:** `SPRING_FLYWAY_ENABLED=false`, no `FLYWAY_USER`/`FLYWAY_PASSWORD`, `PGUSER`/`PGPASSWORD` = the backup role.
+  An API started against an unmigrated schema stops at Hibernate validation, so a skipped migrate step fails safe.
+- **Backup role:** `afterMigrate` creates it when `DB_BACKUP_USER`/`DB_BACKUP_PASSWORD` are set and the owner is a
+  superuser (the Docker image). Otherwise create it once as a superuser:
+  `CREATE ROLE erp_backup LOGIN PASSWORD '…' BYPASSRLS CREATEDB; GRANT pg_read_all_data TO erp_backup;`
+
+**Compose:** `docker-compose.prod.yml` runs a one-shot `migrate` service; `api` waits for it to complete successfully.
+
+**systemd (native install):** a oneshot unit holds the owner login in its own root-only environment file, and the API
+unit requires it, so every API start migrates first:
+
+```ini
+# /etc/systemd/system/inventory-erp-migrate.service
+[Unit]
+Description=Inventory ERP database migrations
+After=postgresql.service
+[Service]
+Type=oneshot
+User=ierp
+EnvironmentFile=/etc/inventory-erp/api.env
+EnvironmentFile=/etc/inventory-erp/migrate.env      # FLYWAY_USER, FLYWAY_PASSWORD (mode 0600, root)
+ExecStart=/opt/inventory-erp/jdk/bin/java -jar /opt/inventory-erp/app.jar --migrate-only
+
+# /etc/systemd/system/inventory-erp-api.service, [Unit]: Requires= and After=inventory-erp-migrate.service
+# /etc/inventory-erp/api.env: drop FLYWAY_USER/FLYWAY_PASSWORD; add SPRING_FLYWAY_ENABLED=false, PGUSER, PGPASSWORD
+```
+
+Switch-over: rehearse on a restored copy first; keep the old unit and `api.env` as a backup for rollback (restore them
+and `systemctl daemon-reload`). After the switch, take a backup from the app and run a restore test to prove the
+backup role works.
+
 ## 5. Cut-over from POS-CAFE (Nest) to Spring
 
 1. Rehearse on a copy of the production database: start Spring against it — Flyway baselines at 2
