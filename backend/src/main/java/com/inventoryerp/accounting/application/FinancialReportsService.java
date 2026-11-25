@@ -306,12 +306,27 @@ public class FinancialReportsService {
                         "liabilitiesAndEquity", plain(le)));
     }
 
+    /** B5: was a 500 ("Invalid Date", as Nest); a missing or invalid date is the caller's mistake (400). */
+    private Instant balanceSheetAsOf(String asOf) {
+        if (asOf == null || asOf.isBlank()) {
+            throw ApiException.badRequest("asOf is required (YYYY-MM-DD)");
+        }
+        java.time.ZoneId zone = zone();
+        Instant requested;
+        try {
+            requested = LedgerQueries.dateEnd(asOf, zone);
+        } catch (IllegalArgumentException | java.time.DateTimeException e) {
+            requested = null;
+        }
+        if (requested == null) {
+            throw ApiException.badRequest("asOf must be a valid date (YYYY-MM-DD)");
+        }
+        return requested;
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheet(String asOf) {
-        Instant requested = LedgerQueries.dateEnd(asOf, zone());
-        if (requested == null) {
-            throw new IllegalArgumentException("Invalid Date: " + asOf);
-        }
+        Instant requested = balanceSheetAsOf(asOf);
         Instant snap = findSnapshot("ReportBalanceSheetSnapshot", true, requested);
         if (snap != null) {
             Totals totals = new Totals();
@@ -331,10 +346,7 @@ public class FinancialReportsService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> balanceSheetDetailed(String asOf) {
-        Instant requested = LedgerQueries.dateEnd(asOf, zone());
-        if (requested == null) {
-            throw new IllegalArgumentException("Invalid Date: " + asOf);
-        }
+        Instant requested = balanceSheetAsOf(asOf);
         Map<String, List<Map<String, Object>>> rowsBySection = new LinkedHashMap<>();
         Totals totals = aggregate(requested, rowsBySection);
         List<Map<String, Object>> sections = new ArrayList<>();

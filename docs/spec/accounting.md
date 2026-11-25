@@ -156,7 +156,9 @@ Pending owner approval:
    (the path segment is ignored) and a missing `id` renders the organization's first document.
 3. **Unhandled errors** (an invalid date in a report query, `to` before `from` on POS → GL
    reconciliation, a non-numeric `limit` on dashboard activity) answer 500 like Nest, but the
-   development-only `error` detail text comes from Java rather than Prisma.
+   development-only `error` detail text comes from Java rather than Prisma. Exception (finance readiness audit B5,
+   2026-11-24): the balance sheet (`/reports/accounting/balance-sheet` and `/detailed`) answers 400 "asOf is
+   required (YYYY-MM-DD)" or "asOf must be a valid date (YYYY-MM-DD)" instead of 500.
 
 Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md#deviations) 20):
 
@@ -764,6 +766,59 @@ Everything below is new; Nest has none of it. Tests: `PeriodControlsIT`, `Fiscal
   posts payroll several years ahead. 366 suits a business that never posts into next year early.
 - **Postings outside every period** are already reported nightly: integrity check I5 (`uncovered_day`, A0).
 
+## Finance readiness audit B2: reversing an opening-balance batch (owner-approved 2026-11-24)
+
+Audit finding P2-6: an opening-balance batch could not be undone. The generic journal reversal refuses it (A2), because a
+bare GL reversal would leave the customer and supplier open items behind, and it had no route of its own.
+
+- `POST /opening-balances/{batchId}/reverse`, body `{ reason, date? }`. It needs both `opening_balance:post` and
+  `journal_entry:reverse`, because it undoes posted history. An `Idempotency-Key` is required.
+- All or nothing, in one transaction:
+  1. Each customer invoice of the batch is cancelled, and each supplier bill voided, through its own workflow: the
+     approval gate, separation of duties and the refusal while anything is settled against it all apply, with the
+     batch's reason.
+  2. The batch's GL entry is reversed by the posting engine on `date`, else on the original date. A closed period or
+     the books lock date refuses it; pass a later `date` then.
+  3. One audit row (`OpeningBalanceBatch`, `cancel`) lists what was reversed.
+- Documents already cancelled one by one are skipped. A batch with nothing left is refused: "Opening-balance batch X is
+  already reversed". An unknown batch is a 404.
+- The generic route still refuses the batch's entry, and its message now names this route.
+- Web: the opening balances page lists the batches with a "Reverse batch" action (asks for the reason).
+
+No Nest counterpart.
+## Finance readiness audit B4: database and deployment hardening (owner-approved 2026-11-24)
+
+Audit finding P2-11 and the database items of the P3 list.
+
+- **Guard functions (V655 and `afterMigrate`):** every trigger function in `public`, plus `evidence_purge_enabled` and
+  `evidence_row_changed`, runs with `search_path = public, pg_temp`. They name tables unqualified, so before this a
+  temporary table could shadow `"JournalEntry"` and blind a guard. `afterMigrate` repeats the pin, so trigger functions
+  added later are covered too.
+  - Deviation from the plan: they are not made `SECURITY DEFINER`. Pinning the path closes the hole, and the guards keep
+    running as the caller, under its row-level security.
+- **Constraints (V655):**
+  - The V499/V320 CHECKs (`JournalLine_amounts_non_negative`, `JournalLine_one_side`, `CurrencyRate_rate_positive`) are
+    validated.
+  - New: `JournalLine_exchangeRate_positive`, a unique `reversalOfId` (an entry is reversed at most once), and foreign
+    keys on `reversalOfId` and `reversedEntryId`.
+  - Each is validated only when existing rows pass. Otherwise it stays `NOT VALID` (still enforced on new rows) with a
+    WARNING, so an old database cannot block startup. The live database passed every check read-only on 2026-11-24.
+- **Bank statement duplicates (V656):**
+  - Every statement line carries `dedupeKey`, unique per bank account, and the import inserts with
+    `ON CONFLICT DO NOTHING` (counted as `skipped`).
+  - The key is the bank reference, else the UTC day, amount, description hash and the line's occurrence among identical
+    lines of the same file.
+  - Re-importing a statement, an overlapping statement, or two imports racing no longer duplicate lines; two identical
+    charges in one statement both stay.
+  - Limit: a second statement holding a genuinely new line identical to one already imported (same day, amount and
+    description, no reference) is skipped; the response counts it.
+  - Before, only lines with a reference were checked, and with a racy count.
+- **Separate migration step and backup role** (`docs/OPERATIONS.md` 4b):
+  - `java -jar app.jar --migrate-only` migrates as the owner and exits.
+  - The API runs with `SPRING_FLYWAY_ENABLED=false` and without the owner's login.
+  - `pg_dump` uses a backup role (`pg_read_all_data`, `BYPASSRLS`, `CREATEDB`).
+  - `docker-compose.prod.yml` gains a one-shot `migrate` service. It also stops giving the API role the owner's password.
+
 ## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
 
 The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.
@@ -787,6 +842,65 @@ The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below 
   A bill that stores the default rate 1 ("not stated", FX-1) posted at the rate table's rate. Passing that stored 1 on
   made the relief post at the table rate of the day. Once the rate had moved, the payable's base did not clear, and the
   AP tie-out (I8) showed the difference. Nest has the same flaw. Tests: the B5 tests in `ArApTieOutIT`.
+- **Discarding a draft journal entry** (`DELETE /journal-entries/:id`, still `journal_entry:create`):
+  - only the draft's author, or a user who also holds `journal_entry:post` (the checker), may discard it. Anyone
+    else gets a 403: "Only the author of draft X, or a user who can post journal entries, may discard it";
+  - each discard writes an audit row (`JournalEntry`, `delete`) with the entry number, description, date, author and
+    total.
+
+  Nest lets any holder of `journal_entry:create` discard anyone's draft, without a trace.
+- **A reversal is not dated before its original.** A reversal date chosen by the caller that falls on an earlier day
+  than the entry it reverses is refused: "A reversal cannot be dated before the entry it reverses (X is dated D)". The
+  same day or later is accepted. The default date (the original's, or today when that is closed) is unchanged.
+- **The balance sheet without `asOf`** answers 400 (see Deviation 3).
+- **Idempotency keys** (kernel, all keyed routes):
+  - A request refused while its arguments were read, bound or validated (before the handler ran) releases its key.
+    Before, the key stayed `pending`, and a corrected retry with the same key answered 409 or `OPERATION_PENDING`
+    forever. The web client rotates keys on 4xx, so mainly other clients (Android, scripts) were affected.
+  - A multipart request (`POST /bank-reconciliation/import-file`) is fingerprinted by its form fields and each
+    file's SHA-256. Before, the file was left out, so reusing a key with another file replayed the first file's
+    result.
+  - Not changed: keys stay unique per organization, not per user. They are client-generated UUIDs; a collision
+    between two users of one organization is not a practical risk.
+
+  The audit's "FX snapshot on reversals" item needed no change: a reversal line copies the original line's currency
+  and exchange rate.
+- **A shift's cash posts on its business date.**
+  - Affected: cash pay-ins and pay-outs, cash adjustments, bank deposits made during a shift, and the over/short
+    variance at close.
+  - Each posts at the time it happens while the shift's business date is today. For an earlier business date (a
+    shift closed after midnight) it posts at the last moment of that day, or now when that day no longer accepts
+    postings (closed period, books locked).
+  - Before, they always posted now, so a late close moved the shift's cash into the next day, or the next period.
+  - Banking a closed shift's drawer later (`banking after close`) still posts on the day the cash reaches the bank.
+- **A locked bank reconciliation freezes the bank account's ledger** through its statement day, as it already froze
+  the statement lines.
+  - Any posting to that account dated on or before the day is refused: "Bank account X is reconciled through D;
+    nothing can be posted to it on D'. Date it after D."
+  - This covers every path into the books (post, draft, post a draft, reversal).
+  - A reversal without a date whose original falls in the reconciled range is dated today, as for settled VAT.
+  - FX revaluations are exempt: they move only the base-currency value of a foreign bank account, not the balance the
+    bank statement shows.
+- **Close checklist reminders** (`GET /fiscal-periods/:id/close-checklist`). Five new advisory items, none blocking:
+  - `vat_settled`: tax was posted in the period, and no unreversed VAT settlement reaches the period end;
+  - `depreciation_posted`: depreciation computed for the period's months but not posted;
+  - `payroll_posted`: payroll runs whose pay period ends in the period and are not posted to the GL (reversed runs
+    excluded);
+  - `recurring_failed`: failed recurring journal runs dated in the period;
+  - `deferrals_released`: deferral releases due by the period end that are still planned.
+
+  The AR/AP tie-out item already exists (A5).
+- **First use of a system account** (`ensureByCode`): two requests creating the same missing account at once both
+  inserted it, and the second failed on the unique code (a 500). Creation is now serialised per organization and code,
+  under a transaction advisory lock taken only when the account is missing, and the lookup runs again under the lock.
+- **Expense form currency:** the amount label shows the organization's currency instead of a hard-coded "UGX".
+- **Supplier debit note lines** go into the posting engine as exact decimals. Before, they went through a JavaScript-style double, which loses cents above about 10^13. The other posting callers already pass decimal strings.
+- **Recurring drafts through the engine:**
+  - `PostingService.stageDraft` now keeps a draft's posting key (`recurring:<template>:<date>`) and its maker.
+  - Staging the same key again returns the existing entry.
+  - Before, the recurring service patched both onto the draft afterwards with raw SQL.
+- **Bank rules after an import:** a line a rule could not auto-post is now logged at WARN, with the count, the line
+  and the reason. Before, it was logged only at DEBUG, so nobody saw it. The line stays unmatched, as before.
 
 ## Extensions beyond Nest (ADR-S005)
 
@@ -947,3 +1061,25 @@ each organisation with journal entries.
 `docs/audits/2026-11-23-accounting-data-checks.sql`.
 
 **Tests:** `LedgerIntegrityIT`.
+
+## Finance readiness audit B6: missing tests (owner-approved 2026-11-24)
+
+- **Automatic ledger check.** `LedgerInvariantsCheck` is registered on `ApiTestSupport`. After every integration test class under `com.inventoryerp.accounting`, it checks each journal entry the class created, in every organization:
+  - entries are balanced in the base currency;
+  - single-currency entries are also balanced in that currency;
+  - every entry has at least two lines;
+  - lines and accounts belong to the entry's organization;
+  - each reversal points at an original that is reversed by it, and mirrors it account by account.
+
+  It also runs the I10 (fixed assets) and I12 (cash drawers) tie-outs from `LedgerIntegrityService`, but only in the organizations the class created; the shared DEMO history is excluded. A class that corrupts the ledger on purpose opts out with `@LedgerInvariantsCheck.Skip("reason")`. Three classes do: `LedgerIntegrityIT`, `Acc0ControlsIT` and `AssetAndDrawerIntegrityIT`. The I10 and I12 tie-outs run only for a register the class used (a test may post to an asset or drawer account as a plain account).
+- **`FinanceGapsB6IT`** covers:
+  - Cross-tenant refusals: journal read and reverse, period close and reopen, treasury transfer, withdraw, tax-settlement reverse and session force-close. Nothing is written to the other organization's books.
+  - Replay with the same key: a journal reversal and a period close.
+  - Concurrency:
+    - parallel transfers never overdraw the source account;
+    - two parallel posts of one draft post it once;
+    - parallel opens of one register open one session.
+- **Still not covered:**
+  - a period close racing a posting into the same period;
+  - concurrent tax settlements, revaluations and allocation runs;
+  - replay of the recurring run, deferral release and bank import routes.

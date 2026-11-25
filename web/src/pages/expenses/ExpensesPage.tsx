@@ -610,11 +610,11 @@ function ExpenseFormDialog({
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-xs font-bold text-gray-500 uppercase">
-                            {tx('Amount (UGX) *')}
+                            {tx('Amount ({{currency}}) *', { currency: useAuthStore.getState().organization?.currencyCode ?? '' })}
                           </FormLabel>
                           <div className="relative">
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 pointer-events-none">
-                              {tx('UGX')}
+                              {useAuthStore.getState().organization?.currencyCode ?? ''}
                             </span>
                             <FormControl>
                               <Input

@@ -105,6 +105,11 @@ public class IdempotencyInterceptor implements HandlerInterceptor, ResponseBodyA
         }
         byte[] raw = (byte[]) request.getAttribute(CachedBodyFilter.RAW_BODY);
         String rawBody = raw == null || raw.length == 0 ? "{}" : new String(raw, StandardCharsets.UTF_8);
+        String multipart = multipartFingerprint(request);
+        if (multipart != null) {
+            // B5: a multipart body is not buffered; hash its parts, so a key reused with another file is refused (409)
+            rawBody = multipart;
+        }
         String path = request.getRequestURI() + (request.getQueryString() == null ? "" : "?" + request.getQueryString());
         JsonNode payload = parse(rawBody);
         var begin = service.begin(new IdempotencyService.Request(key,
@@ -179,12 +184,54 @@ public class IdempotencyInterceptor implements HandlerInterceptor, ResponseBodyA
             return null;
         }
         var replay = service.fail(state.operation, status, body, status < 500);
-        if (replay == null && state.rolledBack && !state.committed) {
+        if (replay == null && !state.committed && !state.rolledBack && status < 500 && beforeHandler(ex)) {
+            // B5: the request was refused while binding or validating its arguments, before the handler ran: nothing
+            // can have been written, so release the key (it stayed pending and answered OPERATION_PENDING forever).
+            service.release(state.operation);
+        } else if (replay == null && state.rolledBack && !state.committed) {
             // Gaps h-06 F7: the handler's work rolled back and nothing of it committed, so there is nothing to
             // recover: release the key and let a retry with it run again (it answered OPERATION_PENDING forever).
             service.release(state.operation);
         }
         return replay == null ? null : new Replacement(replay.statusCode(), replay.body());
+    }
+
+    /** Errors Spring raises while reading, binding or validating a handler's arguments: the handler never ran. */
+    static boolean beforeHandler(Exception ex) {
+        return ex instanceof org.springframework.web.bind.MethodArgumentNotValidException
+                || ex instanceof org.springframework.web.method.annotation.HandlerMethodValidationException
+                || ex instanceof org.springframework.http.converter.HttpMessageNotReadableException
+                || ex instanceof org.springframework.web.bind.MissingServletRequestParameterException
+                || ex instanceof org.springframework.web.multipart.support.MissingServletRequestPartException
+                || ex instanceof org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+                || ex instanceof org.springframework.web.HttpMediaTypeNotSupportedException;
+    }
+
+    /**
+     * The fingerprint of a multipart request: each form field and each file's SHA-256, in name order; {@code null}
+     * for any other request.
+     */
+    static String multipartFingerprint(HttpServletRequest request) {
+        var multipart = org.springframework.web.util.WebUtils.getNativeRequest(request,
+                org.springframework.web.multipart.MultipartHttpServletRequest.class);
+        if (multipart == null) {
+            return null;
+        }
+        StringBuilder out = new StringBuilder("multipart");
+        new java.util.TreeMap<>(multipart.getParameterMap()).forEach((name, values) ->
+                out.append('|').append(name).append('=').append(String.join(",", values)));
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            for (var entry : new java.util.TreeMap<>(multipart.getMultiFileMap()).entrySet()) {
+                for (var file : entry.getValue()) {
+                    out.append('|').append(entry.getKey()).append(':').append(java.util.HexFormat.of()
+                            .formatHex(digest.digest(file.getBytes())));
+                }
+            }
+        } catch (IOException | java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Cannot fingerprint the uploaded file", e);
+        }
+        return out.toString();
     }
 
     private JsonNode parse(String rawBody) {

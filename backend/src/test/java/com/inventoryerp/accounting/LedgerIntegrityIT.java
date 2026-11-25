@@ -38,6 +38,7 @@ import tools.jackson.databind.JsonNode;
  * it, the way a legacy row or a bypassing write would arrive) and reported by its own check. P1-1 (a period ending at
  * 00:00 of its last day) and P1-2 (a closing entry reversed while its period stays closed) are reproduced.
  */
+@com.inventoryerp.accounting.support.LedgerInvariantsCheck.Skip("inserts unbalanced and cross-currency entries to prove the integrity checks find them")
 class LedgerIntegrityIT extends AccountingFixtures {
 
     private static final String CASH = "1100";
