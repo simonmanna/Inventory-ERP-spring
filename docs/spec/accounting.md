@@ -865,6 +865,22 @@ The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below 
 
   The audit's "FX snapshot on reversals" item needed no change: a reversal line copies the original line's currency
   and exchange rate.
+- **A shift's cash posts on its business date.**
+  - Affected: cash pay-ins and pay-outs, cash adjustments, bank deposits made during a shift, and the over/short
+    variance at close.
+  - Each posts at the time it happens while the shift's business date is today. For an earlier business date (a
+    shift closed after midnight) it posts at the last moment of that day, or now when that day no longer accepts
+    postings (closed period, books locked).
+  - Before, they always posted now, so a late close moved the shift's cash into the next day, or the next period.
+  - Banking a closed shift's drawer later (`banking after close`) still posts on the day the cash reaches the bank.
+- **A locked bank reconciliation freezes the bank account's ledger** through its statement day, as it already froze
+  the statement lines.
+  - Any posting to that account dated on or before the day is refused: "Bank account X is reconciled through D;
+    nothing can be posted to it on D'. Date it after D."
+  - This covers every path into the books (post, draft, post a draft, reversal).
+  - A reversal without a date whose original falls in the reconciled range is dated today, as for settled VAT.
+  - FX revaluations are exempt: they move only the base-currency value of a foreign bank account, not the balance the
+    bank statement shows.
 
 ## Extensions beyond Nest (ADR-S005)
 
