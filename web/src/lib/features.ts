@@ -24,7 +24,7 @@ export const MODULE_FEATURES: ModuleFeature[] = [
   { key: 'pos', label: 'POS', description: tx('Point of sale terminal, menus, and tables'), sections: ['POS'], core: true },
   { key: 'crm', label: 'CRM', description: tx('Customers, leads, opportunities, and pipeline tracking'), sections: ['CRM'] },
   { key: 'rental', label: tx('Rentals'), description: tx('Hire-out agreements, rental units, returns, and settlement'), sections: ['Rentals'] },
-  { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production'] },
+  { key: 'manufacturing', label: tx('Production (Manufacturing / Bakery)'), description: tx('BOMs, production orders, work orders, and MRP'), sections: ['Production', 'Product Lifecycle'] },
   { key: 'fleet', label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance'), sections: ['Fleet', 'Logistics'] },
   { key: 'quarry', label: tx('Quarry & Extraction'), description: tx('Quarry sites, extraction logs into ROM stock, drilling and blasting, controlled explosives'), sections: ['Quarry'] },
   { key: 'lossPrevention', label: tx('Loss Prevention'), description: tx('Exception intelligence: variances in sales, cash and stock counts raised as cases to review'), sections: [] },

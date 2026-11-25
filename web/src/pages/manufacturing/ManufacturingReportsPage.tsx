@@ -1,4 +1,5 @@
 import { BarChart3, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { MfgPageHeader } from './mfg-ui';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -13,11 +14,8 @@ export function ManufacturingReportsPage() {
   const capacity = useReport('capacity'); // served under work-centers; harmless if 404 → empty
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold"><BarChart3 className="h-6 w-6" /> {tx('Production Reports')}</h1>
-        <p className="text-sm text-muted-foreground">{tx('Costing controls and production analytics.')}</p>
-      </div>
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={BarChart3} title={tx('Production Reports')} subtitle={tx('Costing controls and production analytics.')} />
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
