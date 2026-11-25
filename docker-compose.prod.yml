@@ -7,12 +7,44 @@ services:
     environment:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (never the dev default)}
 
+  # Finance readiness audit B4: migrations run once, as the schema owner, before the API starts; the API itself never
+  # holds the owner's login. Backups use their own role (DB_BACKUP_USER: read-only on the data, BYPASSRLS for pg_dump,
+  # CREATEDB for restore tests), which the migrate step creates when DB_BACKUP_PASSWORD is set.
+  migrate:
+    image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-api:${IMAGE_TAG:-latest}
+    pull_policy: always
+    command: ["--migrate-only"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      JDBC_DATABASE_URL: jdbc:postgresql://db:5432/${DB_NAME:-erp}?stringtype=unspecified
+      FLYWAY_USER: ${DB_USER:-erp}
+      FLYWAY_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (never the dev default)}
+      DB_USER: ${DB_APP_USER:-erp_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD (the API role; never the owner password)}
+      DB_BACKUP_USER: ${DB_BACKUP_USER:-erp_backup}
+      DB_BACKUP_PASSWORD: ${DB_BACKUP_PASSWORD:?set DB_BACKUP_PASSWORD (the backup role)}
+
   api:
     image: ${IMAGE_REGISTRY:?set IMAGE_REGISTRY, e.g. ghcr.io/acme}/inventory-erp-api:${IMAGE_TAG:-latest}
     pull_policy: always
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (never the dev default)}
+      SPRING_FLYWAY_ENABLED: "false"
+      FLYWAY_USER: ""
+      FLYWAY_PASSWORD: ""
+      DB_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD (the API role; never the owner password)}
+      PGUSER: ${DB_BACKUP_USER:-erp_backup}
+      PGPASSWORD: ${DB_BACKUP_PASSWORD:?set DB_BACKUP_PASSWORD (the backup role)}
     deploy:
       resources:
         limits:

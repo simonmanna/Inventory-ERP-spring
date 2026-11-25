@@ -51,6 +51,9 @@ spring:
     placeholders:
       approle: ${DB_USER:erp}
       apppassword: ${DB_PASSWORD:erp}
+      # B4: the backup role (pg_dump / restore tests), created after migrate when set and the owner may create it
+      backuprole: ${DB_BACKUP_USER:}
+      backuppassword: ${DB_BACKUP_PASSWORD:}
     # Lets the app take over an existing POS-CAFE database: V1 (schema) + V2 (reference rows)
     # are already present there, so it starts at V3.
     baseline-on-migrate: true
