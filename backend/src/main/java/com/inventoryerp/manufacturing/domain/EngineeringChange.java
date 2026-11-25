@@ -121,6 +121,56 @@ public class EngineeringChange {
     @Column(name = "dispositionResult")
     private String dispositionResult;
 
+    /** PLM ECO type (ADR-S086); {@code type} stays the kind of change. */
+    @Column(name = "changeTypeId")
+    private String changeTypeId;
+
+    @Column(name = "kanbanState", nullable = false)
+    private String kanbanState;
+
+    @Column(name = "blockedReason")
+    private String blockedReason;
+
+    /** PLM product master-data change (ADR-S086): the proposed values by field. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "productChanges")
+    private String productChanges;
+
+    /** What applying the master-data change did, {@code {field: {from, to}}}. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "productChangesApplied")
+    private String productChangesApplied;
+
+    /** PLM cost policy on apply (ADR-S086): {@code none}, {@code propose} or {@code activate}. */
+    @Column(name = "costPolicy", nullable = false)
+    private String costPolicy;
+
+    @Column(name = "standardCostId")
+    private String standardCostId;
+
+    @Column(name = "revaluationJournalId")
+    private String revaluationJournalId;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "costResult")
+    private String costResult;
+
+    /** PLM first-article inspection (ADR-S086): the first order on the new version is inspected. */
+    @Column(name = "firstArticle", nullable = false)
+    private Boolean firstArticle;
+
+    @Column(name = "faiStatus")
+    private String faiStatus;
+
+    @Column(name = "faiLotId")
+    private String faiLotId;
+
+    @Column(name = "faiOrderId")
+    private String faiOrderId;
+
+    @Column(name = "faiNote")
+    private String faiNote;
+
     public String getId() {
         return id;
     }

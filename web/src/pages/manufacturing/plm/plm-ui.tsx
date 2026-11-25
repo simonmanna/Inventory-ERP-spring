@@ -166,6 +166,7 @@ export function PlmSubNav() {
     { to: '/manufacturing/plm/requests', label: tx('Change requests') },
     { to: '/manufacturing/plm/changes', label: tx('Change orders') },
     { to: '/manufacturing/plm/documents', label: tx('Documents') },
+    { to: '/manufacturing/plm/reports', label: tx('Reports') },
     ...(has(PERMISSIONS.plm.manage) ? [{ to: '/manufacturing/plm/settings', label: tx('Settings') }] : []),
   ];
   return (

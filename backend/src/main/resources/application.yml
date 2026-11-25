@@ -155,6 +155,8 @@ app:
     assets: ${ENABLE_ASSETS:false}
     tasks: ${ENABLE_TASKS:false}
     manufacturing: ${ENABLE_MANUFACTURING:false}
+    # PLM (ADR-S086): an add-on of manufacturing, deployed with it unless ENABLE_PLM says otherwise.
+    plm: ${ENABLE_PLM:${ENABLE_MANUFACTURING:false}}
     processing: ${ENABLE_PROCESSING:${ENABLE_MANUFACTURING:false}}
     rental: ${ENABLE_RENTAL:false}
     repair: ${ENABLE_REPAIR:false}

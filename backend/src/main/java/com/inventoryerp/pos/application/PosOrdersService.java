@@ -10,6 +10,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
 import com.inventoryerp.invoicing.domain.Invoice;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -79,12 +80,16 @@ public class PosOrdersService {
     private final TransactionTemplate tx;
     private final Map<String, String> actorNameCache = new ConcurrentHashMap<>();
 
+    private final org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
+
     public PosOrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, PosVariantService variants, PosAccompanimentService accompaniments,
             PosModifiersService modifiers, PosKdsService kds, PosOverridesService overrides, PosReceiptsService receipts,
             WorkflowService workflows, MilestoneService milestones, PricingPolicy pricing,
             OrderMutationPolicy mutationPolicy, KitchenWaste kitchenWaste, OrderStockReversalService orderStock,
-            PlatformTransactionManager txm) {
+            PlatformTransactionManager txm,
+            org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
+        this.lifecycleGuard = lifecycleGuard;
         this.db = db;
         this.jdbc = db.jdbc();
         this.audit = audit;
@@ -293,6 +298,7 @@ public class PosOrdersService {
             validateLines(lines, bypassRequired);
         }
         List<Resolved> resolved = lines.isEmpty() ? List.of() : resolveLines(lines);
+        requireSellableAtTill(resolved, null);
         String orderType = dto.get("orderType") == null ? "dine_in" : dto.get("orderType").toString();
         String tableId = (String) dto.get("tableId");
         return tx.execute(st -> {
@@ -377,6 +383,7 @@ public class PosOrdersService {
             Map<String, Object> order = lockOrder(orderId);
             assertEditable(order);
             assertVersion(order, dto.get("expectedVersion"));
+            requireSellableAtTill(resolved, orderId);
             writeItems(orderId, resolved, true, false, dto);
             Object guestCount = dto.get("guestCount");
             Object partnerId = dto.get("partnerId");
@@ -420,6 +427,7 @@ public class PosOrdersService {
         Map<String, Object> result = tx.execute(st -> {
             Map<String, Object> order = lockOrder(orderId);
             assertEditable(order);
+            requireSellableAtTill(resolved, orderId);
             Map<String, Object> opts = new LinkedHashMap<>();
             if (dto.containsKey("transactionDiscountPercent")) {
                 opts.put("transactionDiscountPercent", dto.get("transactionDiscountPercent"));
@@ -948,6 +956,31 @@ public class PosOrdersService {
     }
 
     /** Fold variants / accompaniments / modifiers into unitPrice and expand combos. */
+    /**
+     * ADR-S086 §6 (owner decisions 2026-11-24): the {@code pos} column of the PLM lifecycle policy — by default a
+     * product not yet released, or obsolete, is not put on a new ticket line nor rung up in a counter checkout. Only
+     * products new to the order are checked (lines already on a ticket are never refused). Owner decision 2026-11-25:
+     * a sale replayed from an offline till is checked too: the refusal rolls the replay back and the sync push
+     * dead-letters it ({@code LIFECYCLE_BLOCKED}) for a supervisor, who retries it once the product may be sold.
+     */
+    void requireSellableAtTill(List<Resolved> resolved, String orderId) {
+        if (resolved.isEmpty()) {
+            return;
+        }
+        ProductLifecycleGuard guard = lifecycleGuard.getIfAvailable();
+        if (guard == null) {
+            return;
+        }
+        java.util.Set<String> had = new java.util.HashSet<>();
+        if (orderId != null) {
+            had.addAll(jdbc.sql("SELECT DISTINCT \"productId\" FROM \"OrderItem\" WHERE \"orderId\" = ? AND"
+                    + " \"organizationId\" = ? AND \"productId\" IS NOT NULL").params(orderId, org()).query(String.class)
+                    .list());
+        }
+        guard.requireAllowed(ProductLifecycleGuard.POS, resolved.stream().map(Resolved::productId)
+                .filter(p -> p != null && !had.contains(p)).toList());
+    }
+
     List<Resolved> resolveLines(List<Map<String, Object>> inputLines) {
         String orgId = org();
         Map<String, String> skuMap = resolveSkus(inputLines);

@@ -185,6 +185,30 @@ public class SalesOrderChangeService {
     // ------------------------------------------------------------------ impact / validation
 
     @SuppressWarnings("unchecked")
+    /** The PLM lifecycle policy (ADR-S086 §6), when the PLM application is part of the build. */
+    private org.springframework.beans.factory.ObjectProvider<com.inventoryerp.core.application.ProductLifecycleGuard>
+            lifecycleGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLifecycleGuard(org.springframework.beans.factory.ObjectProvider<
+            com.inventoryerp.core.application.ProductLifecycleGuard> lifecycleGuard) {
+        this.lifecycleGuard = lifecycleGuard;
+    }
+
+    /**
+     * Audit 2026-11-24 (ADR-S086 §6): the {@code sell} column of the lifecycle policy for the products {@code
+     * productIds} brings onto the document; products it already carries ({@code had}) stay sellable on it.
+     */
+    private void requireSellable(java.util.Collection<String> productIds, java.util.Set<String> had) {
+        com.inventoryerp.core.application.ProductLifecycleGuard guard = lifecycleGuard == null ? null
+                : lifecycleGuard.getIfAvailable();
+        if (guard == null) {
+            return;
+        }
+        guard.requireAllowed(com.inventoryerp.core.application.ProductLifecycleGuard.SELL, productIds.stream()
+                .filter(p -> p != null && !had.contains(p)).distinct().toList());
+    }
+
     private Map<String, Object> impact(Map<String, Object> o, Map<String, Object> changes) {
         String orderId = str(o.get("id"));
         Map<String, Object> header = changes.get("header") instanceof Map<?, ?> h ? (Map<String, Object>) h : Map.of();
@@ -201,6 +225,16 @@ public class SalesOrderChangeService {
                 : List.of();
         List<Map<String, Object>> add = changes.get("addLines") instanceof List<?> l ? (List<Map<String, Object>>) l
                 : List.of();
+        // A product swapped in or added follows the sell rule, at request and again at approval (both run impact).
+        List<String> incoming = new ArrayList<>();
+        lineChanges.forEach(c -> incoming.add(str(c.get("productId"))));
+        add.forEach(a -> incoming.add(str(a.get("productId"))));
+        if (incoming.stream().anyMatch(java.util.Objects::nonNull)) {
+            java.util.Set<String> had = new java.util.HashSet<>();
+            db.rows("SELECT DISTINCT \"productId\" FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND"
+                    + " \"organizationId\" = ?", orderId, org()).forEach(r -> had.add(str(r.get("productId"))));
+            requireSellable(incoming, had);
+        }
         if (header.isEmpty() && lineChanges.isEmpty() && add.isEmpty()) {
             throw ApiException.badRequest("The change request changes nothing");
         }

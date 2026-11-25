@@ -25,6 +25,7 @@ import {
   useWorkOrderAction,
 } from '@/features/manufacturing/api';
 import { orderProductName } from './ProductionOrdersPage';
+import { OrderBomBanner } from './plm/OrderBomBanner';
 import { tx } from '@/lib/i18n/tx';
 import { QualityChecksPanel } from '@/pages/quality-control/QualityChecksPanel';
 import {
@@ -181,6 +182,8 @@ export function ProductionOrderDetailPage() {
           </div>
         </dl>
       </section>
+
+      <OrderBomBanner orderId={id} />
 
       <OrderStagesPanel orderId={id} />
 

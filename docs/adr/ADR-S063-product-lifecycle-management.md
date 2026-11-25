@@ -6,6 +6,8 @@
 - Migrations: `V440__plm_product_lifecycle.sql`, `V441__plm_dispositions.sql` (apply queue + disposition result)
 - Extension: no NestJS counterpart. Same module `com.inventoryerp.manufacturing`; routes under
   `/manufacturing/plm`; spec [docs/spec/manufacturing.md § ADR-S063](../spec/manufacturing.md).
+- Amended by [ADR-S086](ADR-S086-plm-application.md) (2026-11-24): PLM moved to its own module `com.inventoryerp.plm`
+  and became an add-on application of manufacturing; current spec [docs/spec/plm.md](../spec/plm.md).
 
 ## Context
 

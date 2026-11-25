@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useAuthStore } from '@/stores/auth.store';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { useFeatureAvailable } from '@/lib/use-feature-available';
 import { useBomCompare, useEcoAction, useEcos, useVariances } from '@/features/manufacturing/api-advanced';
 
 const errMsg = (e: any) => {
@@ -22,6 +23,7 @@ export function EngineeringChangesPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canDecide = hasPermission(PERMISSIONS.bom.activate);
   const canReport = hasPermission(PERMISSIONS.production.report);
+  const plmOn = useFeatureAvailable('plm');
   const { data: ecos } = useEcos();
   const action = useEcoAction();
   const [selected, setSelected] = useState<any>();
@@ -41,7 +43,7 @@ export function EngineeringChangesPage() {
     <div className="space-y-5 p-4 sm:p-6">
       <MfgPageHeader icon={DraftingCompass} title={tx('Engineering & costing')} subtitle={tx('BOM revisions under change control, and how actual production compares with standard cost.')} />
 
-      {hasPermission(PERMISSIONS.plm.read) && (
+      {plmOn && hasPermission(PERMISSIONS.plm.read) && (
         <Link
           to="/manufacturing/plm/changes"
           className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm hover:bg-primary/10"

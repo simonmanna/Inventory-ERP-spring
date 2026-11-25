@@ -157,7 +157,12 @@ public class SyncDeadLetterService {
             throw ApiException.badRequest("This operation was dead-lettered before the applied-operation ledger existed;"
                     + " correct and resubmit it from the device");
         }
-        if (!Boolean.TRUE.equals(row.get("retryable"))) {
+        // Owner decision 2026-11-25 (ADR-S086 §6): an offline sale the PLM lifecycle refused is held, not lost. Nothing
+        // of it committed, so once the product is released (or a pos exception granted) a supervisor runs it again
+        // under its original opId; the server re-checks the rule, so a retry while it still applies fails again.
+        boolean lifecycleHeld = com.inventoryerp.core.application.ProductLifecycleGuard.BLOCKED_CODE.equals(
+                row.get("failureCode"));
+        if (!lifecycleHeld && !Boolean.TRUE.equals(row.get("retryable"))) {
             throw ApiException.badRequest("This failure is a business rejection (" + row.get("failureCode")
                     + "); correct and resubmit it from the device");
         }

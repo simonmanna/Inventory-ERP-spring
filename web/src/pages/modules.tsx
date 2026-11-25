@@ -7,6 +7,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import type { CatalogModule } from '@/lib/features';
+import { MODULE_CATALOG_QUERY_KEY, useModuleCatalog } from '@/lib/use-module-catalog';
 
 interface OrgModule {
   id: string;
@@ -15,12 +17,6 @@ interface OrgModule {
   config: Record<string, unknown>;
   enabledAt: string;
   disabledAt: string | null;
-}
-
-interface CatalogModule {
-  name: string;
-  version: string;
-  dependencies: string[];
 }
 
 /**
@@ -39,6 +35,7 @@ const MODULE_META: Record<string, { label: string; description: string }> = {
   expenses: { label: tx('Expenses'), description: tx('Petty cash and operating expense tracking') },
   crm: { label: 'CRM', description: tx('Deals, pipeline, activity timeline, sales analytics') },
   manufacturing: { label: tx('Manufacturing'), description: tx('Bills of materials, production and work orders, MRP') },
+  plm: { label: tx('PLM'), description: tx('Product lifecycle, engineering change orders with typed approval pipelines, product versions and revisions, lifecycle rules for buying and selling') },
   rental: { label: tx('Rental'), description: tx('Rentable units, reservations, agreements, returns, deposits') },
   fleet: { label: tx('Fleet & Logistics'), description: tx('Vehicles and equipment, drivers, dispatch, weighbridge, fuel and maintenance') },
   quarry: { label: tx('Quarry & Extraction'), description: tx('Quarry sites, extraction logs into ROM stock, drilling and blasting, controlled explosives') },
@@ -63,26 +60,31 @@ export function ModulesPage() {
     queryKey: ['org-modules'],
     queryFn: async () => (await api.get<OrgModule[]>('/feature-flags/modules')).data,
   });
-  const catalog = useQuery<CatalogModule[]>({
-    queryKey: ['org-modules-catalog'],
-    queryFn: async () => (await api.get<CatalogModule[]>('/feature-flags/modules/catalog')).data,
-  });
+  const catalog = useModuleCatalog();
+  // The catalog carries each add-on's state, and the sidebar reads it: refresh both after a switch.
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['org-modules'] });
+    qc.invalidateQueries({ queryKey: MODULE_CATALOG_QUERY_KEY });
+  };
   const enable = useMutation({
     mutationFn: async (name: string) => await api.post(`/feature-flags/modules/${name}/enable`, { config: {} }),
     onSuccess: () => {
       notify.success(tx('Module enabled'));
-      qc.invalidateQueries({ queryKey: ['org-modules'] });
+      refresh();
     },
   });
   const disable = useMutation({
     mutationFn: async (name: string) => await api.patch(`/feature-flags/modules/${name}/disable`),
     onSuccess: () => {
       notify.success(tx('Module disabled'));
-      qc.invalidateQueries({ queryKey: ['org-modules'] });
+      refresh();
     },
   });
 
   const byName = new Map((list.data ?? []).map((m) => [m.moduleName, m]));
+  const label = (name: string) => MODULE_META[name]?.label ?? name;
+  // An add-on (PLM) is on wherever its base modules are, unless switched off here (ADR-S086).
+  const isActive = (v: CatalogModule) => (v.addOn ? v.enabled !== false : !!byName.get(v.name)?.isActive);
   const modules = (catalog.data ?? []).filter((m) => !NON_TOGGLEABLE.has(m.name));
   const loading = list.isLoading || catalog.isLoading;
 
@@ -103,8 +105,7 @@ export function ModulesPage() {
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {modules.map((v) => {
           const meta = MODULE_META[v.name] ?? { label: v.name, description: '' };
-          const m = byName.get(v.name);
-          const active = !!m?.isActive;
+          const active = isActive(v);
           return (
             <Card key={v.name}>
               <CardHeader>
@@ -118,6 +119,12 @@ export function ModulesPage() {
                   </Badge>
                 </div>
                 <CardDescription>{meta.description}</CardDescription>
+                {v.dependencies.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {tx('Requires')} {v.dependencies.map(label).join(', ')}
+                    {v.addOn ? ` · ${tx('add-on: on wherever its base module is on')}` : ''}
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 {active ? (

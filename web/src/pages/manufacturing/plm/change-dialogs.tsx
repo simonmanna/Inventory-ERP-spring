@@ -15,6 +15,9 @@ import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
 import { CheckList, Field, LifecyclePill, ProductPicker, UserSelect } from './plm-ui';
+import { COST_POLICY, PRODUCT_FIELDS, useChangeTypes, usePlmSettings } from '@/features/manufacturing/api-plm-app';
+import type { CostPolicy } from '@/features/manufacturing/api-plm';
+import { ChangeTypeSelect, TagPicker } from './plm-app-ui';
 import {
   CHANGE_TYPE, CHANGE_TYPES, DOC_TYPES, LIFECYCLE, PRIORITIES, PRIORITY, STOCK_DISPOSITION, TRANSITIONS, WIP_DISPOSITION,
   selectClass,
@@ -109,12 +112,19 @@ function ChangeTargetFields({ type, productId, value, onChange }: {
       );
     }
     return (
-      <Field label={tx('Target lifecycle state')} required>
+      <Field label={tx('Target lifecycle state')} hint={tx('Optional when the change only sets product data.')}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">{tx('Now')}:</span>
           <LifecyclePill state={item.lifecycleState} />
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onChange({ ...value, targetLifecycleState: '' })}
+            className={cn('rounded-md border px-3 py-1.5 text-sm', value.targetLifecycleState === '' ? 'border-primary bg-primary/10 font-medium' : 'hover:bg-muted')}
+          >
+            {tx('Keep the state')}
+          </button>
           {TRANSITIONS[item.lifecycleState].map((s) => (
             <button
               key={s}
@@ -141,10 +151,12 @@ function ChangeTargetFields({ type, productId, value, onChange }: {
   );
 }
 
-function targetError(type: ChangeType, t: Target): string | null {
+function targetError(type: ChangeType, t: Target, productChanges: Record<string, unknown> = {}): string | null {
   if (type === 'bom' && !t.bomId) return tx('Pick the BOM to revise.');
   if (type === 'routing' && !t.routingId) return tx('Pick the routing to revise.');
-  if (type === 'product' && !t.targetLifecycleState) return tx('Pick the target lifecycle state.');
+  if (type === 'product' && !t.targetLifecycleState && !Object.keys(productChanges).length) {
+    return tx('Pick the target lifecycle state or set some product data.');
+  }
   if (type === 'document' && !t.documentIds.length) return tx('Pick at least one draft document.');
   return null;
 }
@@ -183,8 +195,8 @@ function TypeCards({ value, onChange }: { value: ChangeType; onChange: (t: Chang
 }
 
 /** New engineering change order. */
-export function ChangeDialog({ open, onClose, productId: presetProduct, presetType }: {
-  open: boolean; onClose: () => void; productId?: string; presetType?: ChangeType;
+export function ChangeDialog({ open, onClose, productId: presetProduct, presetType, presetChangeTypeId }: {
+  open: boolean; onClose: () => void; productId?: string; presetType?: ChangeType; presetChangeTypeId?: string;
 }) {
   const navigate = useNavigate();
   const blank = {
@@ -194,15 +206,18 @@ export function ChangeDialog({ open, onClose, productId: presetProduct, presetTy
   };
   const [f, setF] = useState(blank);
   const [target, setTarget] = useState<Target>(blankTarget);
+  const [app, setApp] = useState<AppValues>(blankApp(presetChangeTypeId));
+  const [productData, setProductData] = useState<Record<string, string>>({});
   useEffect(() => {
-    if (open) { setF(blank); setTarget(blankTarget); }
+    if (open) { setF(blank); setTarget(blankTarget); setApp(blankApp(presetChangeTypeId)); setProductData({}); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, presetProduct, presetType]);
+  }, [open, presetProduct, presetType, presetChangeTypeId]);
   const create = useCreateChange();
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }));
 
   const submit = () => {
-    const err = targetError(f.type, target)
+    const productChanges = f.type === 'product' ? productChangesBody(productData) : {};
+    const err = targetError(f.type, target, productChanges)
       ?? (f.type === 'product' && !f.productId ? tx('Pick a product.') : null)
       ?? (f.effectivity === 'date' && !f.effectiveDate ? tx('Pick the effective date.') : null);
     if (err) return notify.error(err);
@@ -220,6 +235,8 @@ export function ChangeDialog({ open, onClose, productId: presetProduct, presetTy
       wipDisposition: f.wipDisposition,
       newRevision: f.newRevision.trim() || undefined,
       ownerId: f.ownerId || undefined,
+      ...appBody(f.type, app),
+      productChanges: Object.keys(productChanges).length ? productChanges : undefined,
     }, {
       onSuccess: (eco) => {
         notify.success(tx('{{n}} created', { n: eco.number }));
@@ -260,6 +277,8 @@ export function ChangeDialog({ open, onClose, productId: presetProduct, presetTy
               <Textarea rows={3} maxLength={4000} value={f.description} onChange={(e) => set('description', e.target.value)} />
             </Field>
           </div>
+          {f.type === 'product' && <ProductDataFields value={productData} onChange={setProductData} />}
+          <AppFields type={f.type} value={app} onChange={setApp} />
           <EffectivityFields f={f} set={(k, v) => setF((s) => ({ ...s, [k]: v }))} />
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={tx('New revision')} hint={tx('Optional; otherwise the next revision (A → B).')}>
@@ -327,8 +346,16 @@ export function EditChangeDialog({ eco, open, onClose }: { eco: ChangeDetail; op
     targetLifecycleState: (eco.targetLifecycleState ?? '') as LifecycleState | '',
   });
   const [f, setF] = useState(init);
+  const initApp = (): AppValues => ({
+    changeTypeId: eco.changeTypeId ?? '', tagIds: (eco.tags ?? []).map((t) => t.id),
+    costPolicy: (eco.costPolicy ?? 'none') as CostPolicy, firstArticle: eco.firstArticle ? 'yes' : 'no',
+  });
+  const initProductData = () => Object.fromEntries(Object.entries(eco.productChanges ?? {})
+    .map(([k, v]) => [k, v == null ? '' : String(v)]));
+  const [app, setApp] = useState<AppValues>(initApp);
+  const [productData, setProductData] = useState<Record<string, string>>(initProductData);
   useEffect(() => {
-    if (open) setF(init());
+    if (open) { setF(init()); setApp(initApp()); setProductData(initProductData()); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, eco.id]);
   const update = useUpdateChange();
@@ -337,6 +364,7 @@ export function EditChangeDialog({ eco, open, onClose }: { eco: ChangeDetail; op
   const submit = () => {
     if (!f.title.trim()) return notify.error(tx('The title cannot be empty.'));
     if (f.effectivity === 'date' && !f.effectiveDate) return notify.error(tx('Pick the effective date.'));
+    const productChanges = eco.type === 'product' ? productChangesBody(productData) : undefined;
     update.mutate({
       id: eco.id,
       body: {
@@ -352,6 +380,11 @@ export function EditChangeDialog({ eco, open, onClose }: { eco: ChangeDetail; op
         ownerId: f.ownerId,
         targetLifecycleState: eco.type === 'product' && f.targetLifecycleState && f.targetLifecycleState !== eco.targetLifecycleState
           ? f.targetLifecycleState : undefined,
+        changeTypeId: app.changeTypeId || undefined,
+        tagIds: app.tagIds,
+        costPolicy: eco.type === 'bom' ? app.costPolicy || 'none' : undefined,
+        firstArticle: eco.type === 'bom' || eco.type === 'routing' ? app.firstArticle === 'yes' : undefined,
+        productChanges,
       },
     }, { onSuccess: () => { notify.success(tx('Change saved')); onClose(); } });
   };
@@ -391,6 +424,8 @@ export function EditChangeDialog({ eco, open, onClose }: { eco: ChangeDetail; op
               <Textarea rows={3} maxLength={4000} value={f.description} onChange={(e) => set('description', e.target.value)} />
             </Field>
           </div>
+          {eco.type === 'product' && <ProductDataFields value={productData} onChange={setProductData} />}
+          <AppFields type={eco.type} value={app} onChange={setApp} explicit />
           <EffectivityFields f={f} set={(k, v) => setF((s) => ({ ...s, [k]: v }))} />
           <Field label={tx('New revision')} hint={tx('Empty = next revision when applied.')}>
             <Input value={f.newRevision} maxLength={10} onChange={(e) => set('newRevision', e.target.value)} className="sm:w-40" />
@@ -403,6 +438,105 @@ export function EditChangeDialog({ eco, open, onClose }: { eco: ChangeDetail; op
       </DialogContent>
     </Dialog>
   );
+}
+
+// ---- ADR-S086: type, tags, cost policy, first article, product data ---------------------------------------------------
+
+interface AppValues {
+  changeTypeId: string;
+  tagIds: string[];
+  /** '' = the organization's default (new changes only). */
+  costPolicy: CostPolicy | '';
+  /** '' = the organization's default (new changes only). */
+  firstArticle: '' | 'yes' | 'no';
+}
+
+const blankApp = (changeTypeId?: string): AppValues => ({ changeTypeId: changeTypeId ?? '', tagIds: [], costPolicy: '', firstArticle: '' });
+
+function appBody(type: ChangeType, a: AppValues) {
+  return {
+    changeTypeId: a.changeTypeId || undefined,
+    tagIds: a.tagIds.length ? a.tagIds : undefined,
+    costPolicy: type === 'bom' && a.costPolicy ? a.costPolicy : undefined,
+    firstArticle: (type === 'bom' || type === 'routing') && a.firstArticle ? a.firstArticle === 'yes' : undefined,
+  };
+}
+
+/** ECO type, tags; for BOM changes the cost policy, for BOM / routing changes the first-article inspection. */
+function AppFields({ type, value, onChange, explicit }: {
+  type: ChangeType; value: AppValues; onChange: (v: AppValues) => void; explicit?: boolean;
+}) {
+  const { data: settings } = usePlmSettings();
+  const { data: types = [] } = useChangeTypes();
+  const set = <K extends keyof AppValues>(k: K, v: AppValues[K]) => onChange({ ...value, [k]: v });
+  const defaultCost = settings?.defaultCostPolicy ?? 'none';
+  const makes = type === 'bom' || type === 'routing';
+  // ADR-S086 §7: a mandatory first-article inspection (organization or ECO type) cannot be opted out of.
+  const ecoType = types.find((t) => t.id === value.changeTypeId) ?? (value.changeTypeId ? undefined : types.find((t) => t.isDefault));
+  const faiMandatory = makes && (!!settings?.firstArticleRequired || !!ecoType?.firstArticleRequired);
+  useEffect(() => {
+    if (faiMandatory && value.firstArticle === 'no') onChange({ ...value, firstArticle: 'yes' });
+  }, [faiMandatory, value, onChange]);
+  return (
+    <div className="grid gap-4 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
+      <Field label={tx('ECO type')} hint={tx('Sets the approval pipeline.')}>
+        <ChangeTypeSelect value={value.changeTypeId} onChange={(v) => set('changeTypeId', v)} />
+      </Field>
+      <Field label={tx('Tags')} className="sm:col-span-2">
+        <TagPicker value={value.tagIds} onChange={(ids) => set('tagIds', ids)} />
+      </Field>
+      {type === 'bom' && (
+        <Field label={tx('Cost on apply')} hint={value.costPolicy ? tx(COST_POLICY[value.costPolicy].hint) : tx(COST_POLICY[defaultCost].hint)}>
+          <select className={selectClass} value={value.costPolicy} onChange={(e) => set('costPolicy', e.target.value as CostPolicy | '')}>
+            {!explicit && <option value="">{tx('Organization default')} ({tx(COST_POLICY[defaultCost].label)})</option>}
+            {(Object.keys(COST_POLICY) as CostPolicy[]).map((p) => <option key={p} value={p}>{tx(COST_POLICY[p].label)}</option>)}
+          </select>
+        </Field>
+      )}
+      {makes && (
+        <Field label={tx('First-article inspection')} hint={faiMandatory
+          ? tx('Mandatory for this organization or ECO type: the first order made on the new version is inspected.')
+          : tx('The first order made on the new version is inspected (a final inspection lot when the product has a plan).')}>
+          <select className={selectClass} value={faiMandatory ? 'yes' : value.firstArticle} disabled={faiMandatory}
+            onChange={(e) => set('firstArticle', e.target.value as AppValues['firstArticle'])}>
+            {!explicit && !faiMandatory && <option value="">{tx('Organization default')} ({settings?.firstArticleDefault ? tx('Yes') : tx('No')})</option>}
+            <option value="yes">{faiMandatory ? tx('Inspect the first article (mandatory)') : tx('Inspect the first article')}</option>
+            {!faiMandatory && <option value="no">{tx('No inspection')}</option>}
+          </select>
+        </Field>
+      )}
+    </div>
+  );
+}
+
+/** Product master data a product ECO sets on apply; an empty field is left as it is. */
+function ProductDataFields({ value, onChange }: { value: Record<string, string>; onChange: (v: Record<string, string>) => void }) {
+  return (
+    <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+      <p className="text-sm font-medium">{tx('Product data')}</p>
+      <p className="text-xs text-muted-foreground">{tx('Set on the product when the change is applied. Leave a field empty to keep it.')}</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {PRODUCT_FIELDS.map((p) => (
+          <Field key={p.field} label={tx(p.label)} className={p.kind === 'textarea' ? 'sm:col-span-2' : undefined}>
+            {p.kind === 'textarea'
+              ? <Textarea rows={2} maxLength={2000} value={value[p.field] ?? ''} onChange={(e) => onChange({ ...value, [p.field]: e.target.value })} />
+              : <Input type={p.kind === 'number' ? 'number' : 'text'} min={p.kind === 'number' ? 0 : undefined} step="any"
+                  value={value[p.field] ?? ''} onChange={(e) => onChange({ ...value, [p.field]: e.target.value })} />}
+          </Field>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function productChangesBody(v: Record<string, string>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const p of PRODUCT_FIELDS) {
+    const raw = (v[p.field] ?? '').trim();
+    if (!raw) continue;
+    out[p.field] = p.kind === 'number' ? Number(raw) : raw;
+  }
+  return out;
 }
 
 /** Cancel (reject) an open ECO; its draft BOM / routing copy is discarded. */

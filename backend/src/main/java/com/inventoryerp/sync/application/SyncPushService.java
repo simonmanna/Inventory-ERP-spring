@@ -467,7 +467,11 @@ public class SyncPushService {
                 // Another attempt of this same opId holds the key: never a dead letter, retry the same opId.
                 return failed(op, 409, message, "OPERATION_PENDING", true);
             }
-            String code = failureCode(op, status, ctx.anchored() ? "PARTIAL_COMMIT" : null);
+            // Owner decision 2026-11-25 (ADR-S086 §6): a sale the PLM lifecycle refused keeps its own code, so a
+            // supervisor can retry it once the product may be sold. Other business codes keep their mapping.
+            String ownCode = com.inventoryerp.core.application.ProductLifecycleGuard.BLOCKED_CODE.equals(apiCode)
+                    ? apiCode : null;
+            String code = failureCode(op, status, ctx.anchored() ? "PARTIAL_COMMIT" : ownCode);
             log.warn("sync op {} ({}) failed [{}]: {}", op.opId(), op.type(), code, message);
             if (!ctx.anchored()) {
                 // Nothing committed: free the key now, so a supervisor retry or a corrected resend may run it again.

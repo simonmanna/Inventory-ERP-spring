@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, Save, Settings2, ShieldCheck, Trash2, UserPlus, X } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Plus, Save, Settings2, ShieldBan, ShieldCheck, Tags, Trash2, UserPlus, Workflow, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,11 +11,26 @@ import {
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { tx } from '@/lib/i18n/tx';
-import { Avatar, Field, Panel, PlmSubNav, UserSelect } from './plm-ui';
+import { Avatar, Field, Panel, PlmSubNav, TabBar, UserSelect } from './plm-ui';
+import { ChangeTypesPanel, PolicyPanel, TagsPanel } from './plm-settings-app';
 
-/** ECO pipeline configuration: stages (order, approval) and who approves at each stage. */
+type Section = 'pipeline' | 'tags' | 'rules';
+
+/**
+ * PLM settings (ADR-S063 / ADR-S086): ECO types with their stage pipelines and approvers, tags, and the lifecycle
+ * rules for purchasing / sales / replenishment with the defaults of new change orders.
+ */
 export function PlmSettingsPage() {
-  const { data: stages = [], isLoading } = usePlmStages();
+  const [params, setParams] = useSearchParams();
+  const section = (params.get('section') as Section) || 'pipeline';
+  const setSection = (v: Section) => {
+    const next = new URLSearchParams(params);
+    if (v === 'pipeline') next.delete('section'); else next.set('section', v);
+    setParams(next, { replace: true });
+  };
+  const [typeId, setTypeId] = useState('');
+  const { data: all = [], isLoading } = usePlmStages(typeId || undefined);
+  const stages = all.filter((s) => !typeId || !s.typeId || s.typeId === typeId);
   const create = useCreateStage();
   const [draft, setDraft] = useState({ name: '', sequence: '', requiresApproval: false, description: '' });
   const add = () => {
@@ -24,6 +40,7 @@ export function PlmSettingsPage() {
       sequence: draft.sequence === '' ? undefined : Number(draft.sequence),
       requiresApproval: draft.requiresApproval,
       description: draft.description.trim() || undefined,
+      typeId: typeId || undefined,
     }, {
       onSuccess: () => { notify.success(tx('Stage added')); setDraft({ name: '', sequence: '', requiresApproval: false, description: '' }); },
     });
@@ -33,11 +50,22 @@ export function PlmSettingsPage() {
     <div className="space-y-4">
       <ListPageHeader
         title={tx('PLM settings')}
-        description={tx('The stages every change order moves through. A stage that requires approval can only be left forwards once its approvers signed off; the last stage means approved.')}
+        description={tx('Each ECO type has its own stages. A stage that requires approval can only be left forwards once its approvers signed off; the last stage means approved.')}
         icon={Settings2}
       />
       <PlmSubNav />
+      <TabBar tabs={[
+        { id: 'pipeline' as const, label: tx('Types and stages'), icon: Workflow },
+        { id: 'tags' as const, label: tx('Tags'), icon: Tags },
+        { id: 'rules' as const, label: tx('Lifecycle rules and defaults'), icon: ShieldBan },
+      ]} value={section} onChange={setSection} />
 
+      {section === 'tags' && <TagsPanel />}
+      {section === 'rules' && <PolicyPanel />}
+      {section === 'pipeline' && (
+      <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
+      <ChangeTypesPanel selected={typeId} onSelect={setTypeId} />
+      <div className="min-w-0 space-y-3">
       {isLoading ? <Skeleton className="h-72 w-full rounded-xl" /> : (
         <div className="space-y-3">
           {stages.map((s, i) => <StageRow key={s.id} stage={s} index={i} final={i === stages.length - 1} />)}
@@ -63,6 +91,9 @@ export function PlmSettingsPage() {
         </div>
         <p className="mt-2 text-xs text-muted-foreground">{tx('Stages are ordered by sequence; without one the stage goes last (and becomes the approved stage).')}</p>
       </Panel>
+      </div>
+      </div>
+      )}
     </div>
   );
 }
@@ -70,13 +101,14 @@ export function PlmSettingsPage() {
 function StageRow({ stage, index, final }: { stage: PlmStage; index: number; final: boolean }) {
   const init = () => ({
     name: stage.name, sequence: String(stage.sequence), requiresApproval: stage.requiresApproval, description: stage.description ?? '',
+    folded: !!stage.folded,
   });
   const [f, setF] = useState(init);
   useEffect(() => setF(init()),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stage.id, stage.name, stage.sequence, stage.requiresApproval, stage.description]);
+    [stage.id, stage.name, stage.sequence, stage.requiresApproval, stage.description, stage.folded]);
   const dirty = f.name !== stage.name || f.sequence !== String(stage.sequence) || f.requiresApproval !== stage.requiresApproval
-    || f.description !== (stage.description ?? '');
+    || f.description !== (stage.description ?? '') || f.folded !== !!stage.folded;
   const update = useUpdateStage();
   const remove = useDeleteStage();
   const open = num(stage.openChanges);
@@ -87,7 +119,7 @@ function StageRow({ stage, index, final }: { stage: PlmStage; index: number; fin
       id: stage.id,
       body: {
         name: f.name.trim(), sequence: f.sequence === '' ? undefined : Number(f.sequence), requiresApproval: f.requiresApproval,
-        description: f.description,
+        description: f.description, folded: f.folded,
       },
     }, { onSuccess: () => notify.success(tx('Stage saved')) });
   };
@@ -108,10 +140,16 @@ function StageRow({ stage, index, final }: { stage: PlmStage; index: number; fin
         <Field label={tx('Description')}>
           <Input value={f.description} maxLength={500} onChange={(e) => setF({ ...f, description: e.target.value })} />
         </Field>
-        <label className="flex h-10 items-center gap-2 whitespace-nowrap text-sm">
-          <input type="checkbox" className="h-4 w-4 accent-primary" checked={f.requiresApproval} onChange={(e) => setF({ ...f, requiresApproval: e.target.checked })} />
-          {tx('Requires approval')}
-        </label>
+        <div className="flex flex-col gap-1">
+          <label className="flex items-center gap-2 whitespace-nowrap text-sm">
+            <input type="checkbox" className="h-4 w-4 accent-primary" checked={f.requiresApproval} onChange={(e) => setF({ ...f, requiresApproval: e.target.checked })} />
+            {tx('Requires approval')}
+          </label>
+          <label className="flex items-center gap-2 whitespace-nowrap text-sm" title={tx('Shown collapsed on the board')}>
+            <input type="checkbox" className="h-4 w-4 accent-primary" checked={f.folded} onChange={(e) => setF({ ...f, folded: e.target.checked })} />
+            {tx('Folded on the board')}
+          </label>
+        </div>
         <div className="flex gap-1">
           <Button size="sm" onClick={save} disabled={!dirty || update.isPending}><Save className="mr-1 h-4 w-4" />{tx('Save')}</Button>
           <Button size="sm" variant="ghost" aria-label={tx('Delete stage')} disabled={open > 0 || remove.isPending}
@@ -160,6 +198,7 @@ function ApproversEditor({ stage }: { stage: PlmStage }) {
             >
               <option value="required">{tx('required')}</option>
               <option value="optional">{tx('optional')}</option>
+              <option value="comment">{tx('comment only')}</option>
             </select>
             <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={tx('Remove')} onClick={() => setRows(rows.filter((_, j) => j !== i))}>
               <X className="h-3.5 w-3.5" />

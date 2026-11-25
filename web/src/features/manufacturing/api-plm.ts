@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import type { EffectivePolicy, LifecycleException } from './api-plm-app';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
@@ -29,7 +30,11 @@ export type DocType =
 export type Effectivity = 'asap' | 'date';
 export type StockDisposition = 'use_up' | 'scrap' | 'rework' | 'return_to_supplier' | 'none';
 export type WipDisposition = 'continue' | 'update' | 'rework';
-export type ApproverKind = 'required' | 'optional';
+/** `comment`: asked for an opinion only — never blocks the stage (ADR-S086). */
+export type ApproverKind = 'required' | 'optional' | 'comment';
+export type KanbanState = 'normal' | 'blocked' | 'ready';
+export type CostPolicy = 'none' | 'propose' | 'activate';
+export type FaiStatus = 'pending' | 'open' | 'no_plan' | 'passed' | 'failed' | 'cancelled';
 
 /** Counts may serialize as numbers or numeric strings. */
 export const num = (v: Num | null | undefined): number => (v == null || v === '' ? 0 : Number(v));
@@ -122,6 +127,9 @@ export interface PlmItemDetail extends PlmItem {
   }>;
   openOrders: Array<{ id: string; orderCode: string; status: string; plannedQty: Num; bomVersion: number | null }>;
   whereUsed: WhereUsedRow[];
+  /** What the lifecycle policy allows for the product today (null when PLM does not manage it). */
+  policy: EffectivePolicy | null;
+  exceptions: LifecycleException[];
 }
 
 export interface StageApprover {
@@ -141,6 +149,11 @@ export interface PlmStage {
   isFinal?: boolean;
   openChanges?: Num;
   approvers?: StageApprover[];
+  /** ECO type the stage belongs to (ADR-S086). */
+  typeId?: string | null;
+  typeName?: string | null;
+  /** Folded in the kanban (e.g. a closing stage). */
+  folded?: boolean;
 }
 
 export interface ChangeRequest {
@@ -205,6 +218,62 @@ export interface ChangeRow {
   pending?: string | null;
   /** What apply did with stock and open orders (BOM changes). */
   dispositionResult?: DispositionResult | null;
+  // ---- ADR-S086 ----
+  changeTypeId?: string | null;
+  changeTypeName?: string | null;
+  changeTypeColor?: string | null;
+  tags?: TagRef[];
+  kanbanState?: KanbanState;
+  blockedReason?: string | null;
+  costPolicy?: CostPolicy;
+  firstArticle?: boolean;
+  faiStatus?: FaiStatus | null;
+  faiLotId?: string | null;
+  faiOrderId?: string | null;
+  faiNote?: string | null;
+  standardCostId?: string | null;
+  revaluationJournalId?: string | null;
+}
+
+export interface TagRef {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+/** An open BOM ECO whose base version is no longer the active one (rebase it). */
+export interface ChangeConflict {
+  baseBomId: string;
+  baseCode: string;
+  baseVersion: number;
+  currentBomId: string;
+  currentCode: string;
+  currentVersion: number;
+  message: string;
+}
+
+/** One master-data field a product ECO sets. */
+export interface ProductDataRow {
+  field: string;
+  current: unknown;
+  proposed: unknown;
+  /** Value before apply (applied changes). */
+  before?: unknown;
+  changes: boolean;
+}
+
+/** What apply did to the standard cost (BOM ECO with a cost policy). */
+export interface CostResult {
+  policy: CostPolicy;
+  standardCostId?: string | null;
+  version?: Num | null;
+  unitCost?: Num | null;
+  previousUnitCost?: Num | null;
+  status?: string | null;
+  revaluationQuantity?: Num | null;
+  revaluationAmount?: Num | null;
+  journalEntryId?: string | null;
+  note?: string | null;
 }
 
 export interface DispositionDocument {
@@ -333,6 +402,16 @@ export interface ChangeDetail extends ChangeRow {
   ownerName: string | null;
   approvedByName: string | null;
   createdByName: string | null;
+  // ---- ADR-S086 ----
+  changeType?: { id: string; name: string; color: string | null } | null;
+  conflict?: ChangeConflict | null;
+  productChanges?: Record<string, unknown> | null;
+  productChangesApplied?: Record<string, { from: unknown; to: unknown }> | null;
+  costResult?: CostResult | null;
+  /** False without inventory_valuation:read: the cost result keeps only policy, status, version and note. */
+  costVisible?: boolean;
+  productData?: ProductDataRow[];
+  faiLot?: { id: string; lotNumber: string; status: string; result: string | null } | null;
 }
 
 export interface ChangeImpact {
@@ -354,6 +433,8 @@ export interface ChangeImpact {
     productId: string; product: ProductRef | null; changes: Record<string, { from: unknown; to: unknown }>; onHand: Num;
   }>;
   cost: { currentUnitCost: Num | null; newUnitCost: Num | null; delta: Num | null; deltaPct: Num | null } | { error: string } | null;
+  /** False without inventory_valuation:read: `cost` is null and the stock's unit costs are left out. */
+  costVisible?: boolean;
   routing: { bomsRepointed: Array<{ id: string; code: string; version: number; status: string }> } | null;
   onHand?: Num;
   whereUsed?: WhereUsedRow[];
@@ -407,6 +488,8 @@ export interface SaveStageBody {
   sequence?: number;
   requiresApproval?: boolean;
   description?: string;
+  typeId?: string;
+  folded?: boolean;
 }
 export interface SaveRequestBody {
   title?: string;
@@ -443,6 +526,11 @@ export interface CreateChangeBody {
   newRevision?: string;
   ownerId?: string;
   requestId?: string;
+  changeTypeId?: string;
+  tagIds?: string[];
+  productChanges?: Record<string, unknown>;
+  costPolicy?: CostPolicy;
+  firstArticle?: boolean;
 }
 export interface UpdateChangeBody {
   title?: string;
@@ -456,6 +544,12 @@ export interface UpdateChangeBody {
   wipDisposition?: WipDisposition;
   newRevision?: string;
   ownerId?: string;
+  changeTypeId?: string;
+  tagIds?: string[];
+  /** Replaces the product changes; `{}` clears them. */
+  productChanges?: Record<string, unknown>;
+  costPolicy?: CostPolicy;
+  firstArticle?: boolean;
 }
 export interface RoutingOperationInput {
   sequence: number;
@@ -489,6 +583,7 @@ export function clean<T extends object>(body: T): T {
 // ---- queries ---------------------------------------------------------------------------------------------------------
 
 const KEY = ['plm'] as const;
+export const PLM_KEY = KEY;
 const get = async <T,>(url: string, params?: Record<string, unknown>) =>
   (await api.get<T>(`${BASE}${url}`, { params: params ? clean(params) : undefined })).data;
 const blankToUndef = (p: Record<string, string | undefined>) =>
@@ -507,8 +602,15 @@ export function usePlmItem(id?: string) {
   return useQuery({ queryKey: [...KEY, 'item', id], queryFn: () => get<PlmItemDetail>(`/items/${id}`), enabled: !!id });
 }
 
-export function usePlmStages() {
-  return useQuery({ queryKey: [...KEY, 'stages'], queryFn: () => get<PlmStage[]>('/stages') });
+/** GET under `/manufacturing/plm` (query params with undefined values dropped). */
+export const plmGet = get;
+
+/** Stages of every ECO type (each row carries `typeId`), or of one type. */
+export function usePlmStages(typeId?: string) {
+  return useQuery({
+    queryKey: [...KEY, 'stages', typeId ?? null],
+    queryFn: () => get<PlmStage[]>('/stages', typeId ? { typeId } : undefined),
+  });
 }
 
 export function usePlmRequests(params: { status?: string; productId?: string; q?: string } = {}) {
@@ -521,7 +623,10 @@ export function usePlmRequest(id?: string) {
 }
 
 export function usePlmChanges(
-  params: { status?: string; stageId?: string; type?: string; productId?: string; q?: string } = {},
+  params: {
+    status?: string; stageId?: string; type?: string; productId?: string; q?: string; changeTypeId?: string;
+    tagId?: string; kanbanState?: string;
+  } = {},
   enabled = true,
 ) {
   const p = blankToUndef(params);
@@ -603,9 +708,9 @@ type Method = 'post' | 'patch' | 'put' | 'delete';
 /** Extra query keys refreshed by writes that create / activate BOMs and routings. */
 const ENGINEERING_KEYS: QueryKey[] = [['boms'], ['bom'], ['routings'], ['ecos']];
 
-function usePlmMutation<V, R = unknown>(
+export function usePlmMutation<V, R = unknown>(
   build: (v: V) => { method: Method; url: string; body?: unknown },
-  opts: { engineering?: boolean } = {},
+  opts: { engineering?: boolean; extraKeys?: QueryKey[] } = {},
 ) {
   const qc = useQueryClient();
   return useMutation<R, unknown, V>({
@@ -619,6 +724,7 @@ function usePlmMutation<V, R = unknown>(
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: KEY });
       if (opts.engineering) ENGINEERING_KEYS.forEach((k) => void qc.invalidateQueries({ queryKey: k }));
+      opts.extraKeys?.forEach((k) => void qc.invalidateQueries({ queryKey: k }));
     },
     onError: (e) => notify.error(tx('Action failed'), plmError(e)),
   });

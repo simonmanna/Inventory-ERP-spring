@@ -11,6 +11,7 @@ import com.inventoryerp.manufacturing.domain.Bom;
 import com.inventoryerp.manufacturing.domain.BomLine;
 import com.inventoryerp.manufacturing.domain.BomLineSubstitute;
 import com.inventoryerp.manufacturing.domain.EngineeringChange;
+import com.inventoryerp.manufacturing.spi.EngineeringChangeWorkflow;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -18,12 +19,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Engineering changes (ADR-S006 package D): revise a BOM into its next draft version under an ECO and compare any
- * two versions. Review (stages, approvals) and apply live in {@link PlmChangeService} (ADR-S063).
+ * two versions. Review (stages, approvals) and apply belong to the {@link EngineeringChangeWorkflow} the PLM module
+ * provides (ADR-S063 / ADR-S086); without it approve / reject / apply keep their ADR-S006 behaviour.
  */
 @Service
 public class EngineeringService {
@@ -35,16 +38,17 @@ public class EngineeringService {
     private final MfgDb db;
     private final SequenceService seq;
     private final BomService boms;
-    private final PlmStageService stages;
-    private final PlmSupport plm;
+    private final ObjectProvider<EngineeringChangeWorkflow> workflow;
+    private final com.inventoryerp.kernel.settings.SettingResolverService settings;
 
-    public EngineeringService(MfgDb db, SequenceService seq, BomService boms, PlmStageService stages,
-            PlmSupport plm) {
+    public EngineeringService(MfgDb db, SequenceService seq, BomService boms,
+            ObjectProvider<EngineeringChangeWorkflow> workflow,
+            com.inventoryerp.kernel.settings.SettingResolverService settings) {
         this.db = db;
         this.seq = seq;
         this.boms = boms;
-        this.stages = stages;
-        this.plm = plm;
+        this.workflow = workflow;
+        this.settings = settings;
     }
 
     /** Clone the BOM (lines + substitutes) into the next draft version and open an ECO for it. */
@@ -115,12 +119,13 @@ public class EngineeringService {
         Map<String, Object> eco = db.insert(EngineeringChange.class, Obj.of("number", seq.next("engineering_change",
                 "ECO-", 5), "title", dto != null && dto.title() != null ? dto.title() : "Revision of " + src.get("code"),
                 "reason", dto == null ? null : dto.reason(), "bomId", bomId, "newBomId", copy.get("id"), "status",
-                "draft", "createdBy", TenantContext.userId(), "type", "bom", "productId", product, "stageId",
-                stages.first().get("id"), "ownerId", TenantContext.userId()));
-        plm.activity(str(eco, "id"), "created", "Created from " + src.get("code") + " v" + src.get("version")
-                + "; new draft version v" + version + ".");
-        plm.event(com.inventoryerp.shared.events.DomainEvents.PLM_CHANGE_CREATED, Obj.of("changeId", eco.get("id"),
-                "number", eco.get("number"), "type", "bom", "productId", product));
+                "draft", "createdBy", TenantContext.userId(), "type", "bom", "productId", product, "ownerId",
+                TenantContext.userId()));
+        EngineeringChangeWorkflow w = activeWorkflow();
+        if (w != null) {
+            w.opened(eco, src, version);
+            eco = require(str(eco, "id"));
+        }
         return Obj.of("change", eco, "bom", boms.withLines(copy));
     }
 
@@ -133,8 +138,37 @@ public class EngineeringService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String status, Integer limit, Integer offset) {
         String page = MfgDb.page(limit, offset);
-        return status != null ? db.list(EngineeringChange.class, " AND status = ? ORDER BY \"createdAt\" DESC, id"
-                + page, status) : db.list(EngineeringChange.class, " ORDER BY \"createdAt\" DESC, id" + page);
+        List<Map<String, Object>> rows = status != null ? db.list(EngineeringChange.class, " AND status = ?"
+                + " ORDER BY \"createdAt\" DESC, id" + page, status)
+                : db.list(EngineeringChange.class, " ORDER BY \"createdAt\" DESC, id" + page);
+        rows.forEach(EngineeringService::maskCost);
+        return rows;
+    }
+
+    /**
+     * Audit 2026-11-24 (ADR-S086 §5): a PLM cost result carries valuation figures (unit standard, revaluation), which
+     * are for users who may read inventory valuation; others keep its policy, status, version and note.
+     */
+    @SuppressWarnings("unchecked")
+    static void maskCost(Map<String, Object> eco) {
+        if (com.inventoryerp.kernel.tenancy.TenantContext.has(
+                com.inventoryerp.kernel.security.Permissions.INVENTORY_VALUATION__READ)) {
+            return;
+        }
+        Object raw = eco.get("costResult");
+        Map<String, Object> kept = new java.util.LinkedHashMap<>();
+        if (raw instanceof tools.jackson.databind.JsonNode n && n.isObject()) {
+            for (String k : List.of("policy", "status", "version", "note")) {
+                kept.put(k, n.get(k));
+            }
+        } else if (raw instanceof Map<?, ?> m) {
+            for (String k : List.of("policy", "status", "version", "note")) {
+                kept.put(k, ((Map<String, Object>) m).get(k));
+            }
+        } else {
+            return;
+        }
+        eco.put("costResult", kept);
     }
 
     @Transactional(readOnly = true)
@@ -144,6 +178,7 @@ public class EngineeringService {
         boolean both = eco.get("bomId") != null && eco.get("newBomId") != null
                 && db.byId(Bom.class, str(eco, "bomId")) != null && db.byId(Bom.class, str(eco, "newBomId")) != null;
         eco.put("comparison", both ? compare(str(eco, "bomId"), str(eco, "newBomId")) : null);
+        maskCost(eco);
         return eco;
     }
 
@@ -210,7 +245,99 @@ public class EngineeringService {
         return v instanceof BigDecimal d ? JsNumbers.dec(d) : v;
     }
 
-    Map<String, Object> require(String id) {
+    // ---- ADR-S006 routes: the PLM workflow when present, else the original behaviour ------------------------------
+
+    /** {@code POST /engineering-changes/:id/approve}. */
+    @Transactional
+    public Map<String, Object> approveChange(String id) {
+        EngineeringChangeWorkflow w = activeWorkflow();
+        if (w != null) {
+            return w.approve(id);
+        }
+        Map<String, Object> eco = lockChange(id);
+        if (!"draft".equals(eco.get("status"))) {
+            throw ApiException.badRequest("Only a draft change can be approved (status " + eco.get("status") + ").");
+        }
+        requireNotOwnChange(eco);
+        return db.update(EngineeringChange.class, id, Obj.of("status", "approved", "approvedById",
+                TenantContext.userId(), "approvedAt", java.time.Instant.now()));
+    }
+
+    /** {@code POST /engineering-changes/:id/reject}. */
+    @Transactional
+    public Map<String, Object> rejectChange(String id) {
+        EngineeringChangeWorkflow w = activeWorkflow();
+        if (w != null) {
+            return w.reject(id);
+        }
+        Map<String, Object> eco = lockChange(id);
+        if (!"draft".equals(eco.get("status")) && !"approved".equals(eco.get("status"))) {
+            throw ApiException.badRequest("Cannot reject a " + eco.get("status") + " change.");
+        }
+        return db.update(EngineeringChange.class, id, Obj.of("status", "rejected"));
+    }
+
+    /** {@code POST /engineering-changes/:id/apply}: activate the new version (archiving the old one). */
+    @Transactional
+    public Map<String, Object> applyChange(String id) {
+        EngineeringChangeWorkflow w = activeWorkflow();
+        if (w != null) {
+            return w.apply(id);
+        }
+        Map<String, Object> eco = lockChange(id);
+        if (!"approved".equals(eco.get("status"))) {
+            throw ApiException.badRequest("Only an approved change can be applied (status " + eco.get("status") + ").");
+        }
+        requireBaseStillActive(eco);
+        boms.activate(str(eco, "newBomId"));
+        return db.update(EngineeringChange.class, id, Obj.of("status", "applied", "appliedAt",
+                java.time.Instant.now()));
+    }
+
+    /**
+     * Integrity fixes 2026-11-24 kept on the ADR-S006 routes when PLM does not serve the organization (they live in the
+     * PLM workflow otherwise). ML-1: the ECO row locked {@code FOR UPDATE}, statuses re-checked on it (404 when
+     * unknown).
+     */
+    private Map<String, Object> lockChange(String id) {
+        require(id);
+        return db.byIdForUpdate(EngineeringChange.class, id);
+    }
+
+    /** ML-4: 403 when the current user raised or owns the ECO, unless {@code plm.allowSelfApproval} is on. */
+    private void requireNotOwnChange(Map<String, Object> eco) {
+        String me = TenantContext.userId();
+        if (me != null && (me.equals(eco.get("createdBy")) || me.equals(eco.get("ownerId")))
+                && !settings.resolveBool("plm.allowSelfApproval",
+                        com.inventoryerp.kernel.settings.SettingResolverService.SettingContext.EMPTY)) {
+            throw ApiException.forbidden("You cannot approve a change you raised.");
+        }
+    }
+
+    /** ML-3: a BOM change applies only on top of the version it was raised against (the base row is locked). */
+    private void requireBaseStillActive(Map<String, Object> eco) {
+        if (eco.get("bomId") == null) {
+            return;
+        }
+        Map<String, Object> base = com.inventoryerp.kernel.crud.SqlRows.one(db.jdbc().sql("SELECT code, version,"
+                + " status::text AS status, \"deletedAt\" FROM \"Bom\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(eco.get("bomId"), MfgDb.org()));
+        if (base != null && "active".equals(base.get("status")) && base.get("deletedAt") == null) {
+            return;
+        }
+        throw ApiException.badRequest("Change " + eco.get("number") + " was raised against "
+                + (base == null ? "?" : base.get("code") + " v" + base.get("version"))
+                + ", which is no longer the active version.");
+    }
+
+    /** The workflow provider (PLM) when it serves the current organization, else null. */
+    private EngineeringChangeWorkflow activeWorkflow() {
+        EngineeringChangeWorkflow w = workflow.getIfAvailable();
+        return w != null && w.active() ? w : null;
+    }
+
+    /** The ECO of this organization, else 404 {@code Engineering change not found}. */
+    public Map<String, Object> require(String id) {
         Map<String, Object> eco = db.byId(EngineeringChange.class, id);
         if (eco == null) {
             throw ApiException.notFound("Engineering change not found");

@@ -149,7 +149,8 @@ import {
 import { useAuthStore } from '@/stores/auth.store';
 import { useSidebarStore } from '@/lib/sidebar.store';
 import { useOrgFeatures, useSidebarTagline } from '@/lib/use-org-features';
-import { featureAvailable, posModeAllows, sectionEnabled } from '@/lib/features';
+import { useModuleCatalog } from '@/lib/use-module-catalog';
+import { featureAvailable, posModeAllows, sectionEnabled, serverModuleAvailable } from '@/lib/features';
 import { usePosSettings, type PosNavVisibility } from '@/features/pos/api';
 import { LicenseBanner } from '@/components/license/LicenseBanner';
 import { OfflineDataBanner } from '@/components/offline/OfflineDataBanner';
@@ -670,18 +671,19 @@ const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    // Product lifecycle management (ADR-S063): its own section so engineering changes are one click away.
-    // Gated with the manufacturing module (lib/features.ts) and per item by plm:read / plm:manage.
+    // Product lifecycle management (ADR-S063), its own application since ADR-S086: an add-on of manufacturing,
+    // gated by the `plm` feature (licensed with manufacturing) and the organization's PLM switch on the Modules screen.
     zone: 'Manufacturing & Operations',
-    title: 'Product Lifecycle',
+    title: 'PLM',
     icon: GitBranch,
     items: [
-      { to: '/manufacturing/plm', label: tx('PLM Overview'), icon: GitBranch, permission: PERMISSIONS.plm.read },
-      { to: '/manufacturing/plm/products', label: tx('PLM Products'), icon: Package, permission: PERMISSIONS.plm.read },
-      { to: '/manufacturing/plm/requests', label: tx('Change Requests'), icon: Inbox, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm', label: tx('PLM Overview'), icon: LayoutDashboard, permission: PERMISSIONS.plm.read },
       { to: '/manufacturing/plm/changes', label: tx('Change Orders'), icon: GitPullRequest, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/requests', label: tx('Change Requests'), icon: Inbox, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/products', label: tx('Products & Versions'), icon: Package, permission: PERMISSIONS.plm.read },
       { to: '/manufacturing/plm/documents', label: tx('Engineering Documents'), icon: FileStack, permission: PERMISSIONS.plm.read },
-      { to: '/manufacturing/plm/settings', label: tx('PLM Settings'), icon: SettingsIcon, permission: PERMISSIONS.plm.manage },
+      { to: '/manufacturing/plm/reports', label: tx('PLM Reports'), icon: BarChart3, permission: PERMISSIONS.plm.read },
+      { to: '/manufacturing/plm/settings', label: tx('PLM Settings'), icon: SettingsIcon, permission: PERMISSIONS.plm.manage, group: 'Configuration' },
     ],
   },
   {
@@ -1071,8 +1073,10 @@ export function AppShell() {
   const { data: license } = useLicense();
   // Menus and Tables only apply to the cafe/restaurant POS mode.
   const { data: posSettings } = usePosSettings();
+  // Add-on applications (PLM) also follow the organization's switch on the Modules screen (ADR-S086).
+  const { data: moduleCatalog } = useModuleCatalog();
   const sections = VISIBLE_SECTIONS.filter((s) =>
-    sectionEnabled(orgFeatures, s.title, license?.features, posSettings?.posMode),
+    sectionEnabled(orgFeatures, s.title, license?.features, posSettings?.posMode, moduleCatalog),
   );
 
   // Accordion state: which titled sections are expanded (expanded sidebar only).
@@ -1210,7 +1214,9 @@ export function AppShell() {
           const items = section.items.filter(
                       (i) =>
                         flagEnabled(i.flag) &&
-                        (!i.feature || featureAvailable(orgFeatures, license?.features, i.feature)) &&
+                        (!i.feature ||
+                          (featureAvailable(orgFeatures, license?.features, i.feature) &&
+                            serverModuleAvailable(moduleCatalog, i.feature))) &&
                         posModeAllows(i.posModes, posSettings?.posMode) &&
                         (!i.posVisibility || posSettings?.[i.posVisibility] !== false) &&
                         (!i.permission || hasPermission(i.permission)) &&

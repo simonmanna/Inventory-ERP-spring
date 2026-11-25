@@ -7,6 +7,7 @@ import static com.inventoryerp.pos.application.PosSql.user;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.core.application.PriceListService;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import com.inventoryerp.core.application.PriceListService.ListPrice;
 import com.inventoryerp.core.application.PriceListService.PriceQuery;
 import com.inventoryerp.core.application.UomConversionService;
@@ -86,6 +87,34 @@ public class OrdersService {
     private final BranchScopeService scopes;
     private final PriceListService priceLists;
     private final TransactionTemplate tx;
+
+    /** The PLM lifecycle policy (ADR-S086 §6), when the PLM application is part of the build. */
+    private org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLifecycleGuard(org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
+        this.lifecycleGuard = lifecycleGuard;
+    }
+
+    /**
+     * ADR-S086 §6 (owner decisions 2026-11-24): a back-office order is a sale, so the lifecycle policy's {@code sell}
+     * column applies to the products it adds; lines already on the order are never re-checked. Owner decision
+     * 2026-11-25: an offline replay is checked like any other request.
+     */
+    private void requireSellable(List<Line> lines, String orderId) {
+        ProductLifecycleGuard guard = lifecycleGuard == null ? null : lifecycleGuard.getIfAvailable();
+        if (guard == null || lines.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> had = new java.util.HashSet<>();
+        if (orderId != null) {
+            had.addAll(db.jdbc().sql("SELECT DISTINCT \"productId\" FROM \"OrderItem\" WHERE \"orderId\" = ? AND"
+                    + " \"organizationId\" = ? AND \"productId\" IS NOT NULL").params(orderId, org()).query(String.class)
+                    .list());
+        }
+        guard.requireAllowed(ProductLifecycleGuard.SELL, lines.stream().map(l -> l.productId)
+                .filter(p -> p != null && !had.contains(p)).toList());
+    }
 
     public OrdersService(PosDb db, AuditService audit, EventBus events, SequenceService sequence,
             DocumentBuilderService builder, WorkflowService workflows, PosInvoiceService billing,
@@ -261,6 +290,7 @@ public class OrdersService {
         for (Map<String, Object> l : maps(dto.get("lines"))) {
             resolved.add(Line.of(l));
         }
+        requireSellable(resolved, null);
         Map<String, Object> order = tx.execute(st -> {
             String orderNumber = nextOrderNumber();
             String partnerId = dto.get("partnerId") != null ? (String) dto.get("partnerId")
@@ -343,6 +373,7 @@ public class OrdersService {
             for (Map<String, Object> l : maps(dto.get("lines"))) {
                 lines.add(Line.of(l));
             }
+            requireSellable(lines, orderId);
             writeItems(orderId, lines, true, false);
             Map<String, Object> fresh = reload(orderId);
             assertCredit(fresh);
@@ -367,6 +398,7 @@ public class OrdersService {
             for (Map<String, Object> l : maps(dto.get("lines"))) {
                 lines.add(Line.of(l));
             }
+            requireSellable(lines, orderId);
             writeItems(orderId, lines, false, true);
             Map<String, Object> fresh = reload(orderId);
             assertCredit(fresh);

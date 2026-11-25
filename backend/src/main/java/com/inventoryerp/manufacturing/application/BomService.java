@@ -15,6 +15,8 @@ import com.inventoryerp.manufacturing.application.MfgCommands.CreateBom;
 import com.inventoryerp.manufacturing.application.MfgCommands.UpdateBom;
 import com.inventoryerp.manufacturing.domain.Bom;
 import com.inventoryerp.manufacturing.domain.BomLine;
+import com.inventoryerp.manufacturing.spi.EngineeringChangeWorkflow;
+import com.inventoryerp.manufacturing.spi.ProductionLifecycleGate;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -28,6 +30,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * Bills of materials (port of {@code bom.service.ts}): versioned recipes per output product, the pure explosion math,
@@ -53,7 +56,8 @@ public class BomService {
 
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
 
-    private final PlmGate plmGate;
+    private final ObjectProvider<ProductionLifecycleGate> lifecycleGate;
+    private final ObjectProvider<EngineeringChangeWorkflow> changeWorkflow;
     private final MfgDb db;
     private final SequenceService seq;
     private final ApprovalsService approvals;
@@ -61,8 +65,10 @@ public class BomService {
     private final ProductVariantService variants;
 
     public BomService(MfgDb db, SequenceService seq, ApprovalsService approvals, PlatformTransactionManager txm,
-            PlmGate plmGate, ProductVariantService variants) {
-        this.plmGate = plmGate;
+            ObjectProvider<ProductionLifecycleGate> lifecycleGate, ProductVariantService variants,
+            ObjectProvider<EngineeringChangeWorkflow> changeWorkflow) {
+        this.lifecycleGate = lifecycleGate;
+        this.changeWorkflow = changeWorkflow;
         this.variants = variants;
         this.db = db;
         this.seq = seq;
@@ -169,6 +175,15 @@ public class BomService {
         return withLines(bom);
     }
 
+    /**
+     * Integrity fix 2026-11-24 (ML-2): approval freezes an ECO's content. Editing the draft BOM of an approved ECO is
+     * refused; editing the draft BOM of a draft ECO voids the approvals it already has (through the change workflow,
+     * PLM). Locks the ECO rows, so the edit and a concurrent approval serialise.
+     */
+    private void requireBomEditable(Map<String, Object> bom) {
+        new EngineeringChangeFreeze(db, changeWorkflow).requireBomEditable(bom);
+    }
+
     /** Edit a DRAFT BOM; an active/archived version is immutable. {@code lines} replaces the whole line set. */
     @Transactional
     public Map<String, Object> update(String id, UpdateBom dto) {
@@ -178,7 +193,7 @@ public class BomService {
                     + " and cannot be edited. Create a new version instead.");
         }
         // Integrity fix 2026-11-24 (ML-2): the draft version of an approved ECO is frozen.
-        plmGate.requireBomEditable(bom);
+        requireBomEditable(bom);
         requireReferences(null, dto.lines(), dto.defaultLocationId(), dto.defaultOutputLocationId(), dto.routingId());
         if (dto.lines() != null) {
             assertNoCycle(str(bom, "outputProductId"),
@@ -224,7 +239,7 @@ public class BomService {
         if ("archived".equals(bom.get("status"))) {
             throw ApiException.badRequest("Cannot re-activate an archived BOM version.");
         }
-        plmGate.requireActivatable(bom);
+        lifecycleGate.ifAvailable(g -> g.requireActivatable(bom)); // PLM lifecycle gate (ADR-S086)
         Map<String, Object> snapshot = Obj.of("amount", 0, "code", bom.get("code"), "product",
                 bom.get("outputProductId"), "version", bom.get("version"));
         Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval("bom_version", id, snapshot));

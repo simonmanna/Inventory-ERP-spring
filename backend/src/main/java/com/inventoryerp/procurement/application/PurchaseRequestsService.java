@@ -1,5 +1,7 @@
 package com.inventoryerp.procurement.application;
 
+import org.springframework.beans.factory.ObjectProvider;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import com.inventoryerp.core.application.ProductVariantService;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
@@ -87,12 +89,14 @@ public class PurchaseRequestsService {
     private final ApprovalsService approvals;
     private final TransactionTemplate tx;
     private final ProductVariantService variants;
+    private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
 
     public PurchaseRequestsService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ProcurementBudgetService budgets, ApprovalsService approvals, PlatformTransactionManager txm,
-            ProductVariantService variants) {
+            ProductVariantService variants, ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
         this.jdbc = jdbc;
         this.variants = variants;
+        this.lifecycleGuard = lifecycleGuard;
         this.budgets = budgets;
         this.approvals = approvals;
         this.sequence = sequence;
@@ -107,6 +111,9 @@ public class PurchaseRequestsService {
         if (input.lines() == null || input.lines().isEmpty()) {
             throw ApiException.badRequest("At least one line is required");
         }
+        // ADR-S086: the PLM lifecycle policy may refuse buying a product (obsolete, being phased out).
+        lifecycleGuard.ifAvailable(g -> g.requireAllowed(ProductLifecycleGuard.PURCHASE,
+                input.lines().stream().map(LineInput::productId).toList()));
         // Phase I2 (D2, audit V-7): a requested product with variants names an active variant of its own, as the PO and
         // the goods receipt made from the request will.
         for (LineInput ln : input.lines()) {

@@ -1,6 +1,7 @@
 import { FileText, ListTree, Package, Route as RouteIcon, type LucideIcon } from 'lucide-react';
 import type { Tone } from '@/components/list/list-page';
 import { tx } from '@/lib/i18n/tx';
+import type { PolicyActivity } from '@/features/manufacturing/api-plm-app';
 import type {
   ChangeStatus, ChangeType, DocStatus, DocType, LifecycleState, Priority, ReasonCode, RequestStatus, StockDisposition,
   WipDisposition,
@@ -151,3 +152,12 @@ export function qty(v: unknown): string {
   const n = Number(v);
   return Number.isNaN(n) ? String(v) : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
+
+/** The activities of the lifecycle policy (ADR-S086 §6), for the settings matrix and the product rules tab. */
+export const ACTIVITY_LABEL: Record<PolicyActivity, { label: string; hint: string }> = {
+  purchase: { label: 'Purchase', hint: 'New purchase requests, RFQs and purchase orders (receipts against placed orders are never refused)' },
+  produce: { label: 'Produce', hint: 'Production orders and firmed MRP suggestions' },
+  sell: { label: 'Sell', hint: 'New lines on sales quotations, sales orders, back-office orders and customer invoices' },
+  pos: { label: 'Point of sale', hint: 'New lines on till orders; lines already on a ticket and sales replayed from an offline till are never refused' },
+  replenish: { label: 'Replenish', hint: 'Reorder-rule suggestions and alert-driven requests' },
+};

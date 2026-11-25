@@ -1,5 +1,7 @@
 package com.inventoryerp.procurement.application;
 
+import org.springframework.beans.factory.ObjectProvider;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
 import static com.inventoryerp.procurement.application.ProcurementSql.org;
 import static com.inventoryerp.procurement.application.ProcurementSql.user;
@@ -74,12 +76,15 @@ public class RfqService {
     private final SupplierService suppliers;
     private final RequisitionToOrderService orders;
     private final CurrencyService currencies;
+    private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
     private final TransactionTemplate tx;
 
     public RfqService(JdbcClient jdbc, SequenceService seq, AuditService audit, EventBus events,
             ApprovalsService approvals, SupplierService suppliers, RequisitionToOrderService orders,
-            PlatformTransactionManager txm, CurrencyService currencies) {
+            PlatformTransactionManager txm, CurrencyService currencies,
+            ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
         this.currencies = currencies;
+        this.lifecycleGuard = lifecycleGuard;
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -102,6 +107,9 @@ public class RfqService {
         if (reqIds.isEmpty() && free.isEmpty()) {
             throw ApiException.badRequest("Add at least one line");
         }
+        // ADR-S086: the PLM lifecycle policy may refuse buying a product (request lines were checked when raised).
+        lifecycleGuard.ifAvailable(g -> g.requireAllowed(ProductLifecycleGuard.PURCHASE,
+                free.stream().map(LineInput::productId).toList()));
         String weights = weightsJson(in.weights());
         String orgId = org();
         String id = UUID.randomUUID().toString();

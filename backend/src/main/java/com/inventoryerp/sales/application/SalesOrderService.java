@@ -1,5 +1,7 @@
 package com.inventoryerp.sales.application;
 
+import org.springframework.beans.factory.ObjectProvider;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
@@ -73,6 +75,7 @@ public class SalesOrderService {
     private final AuditService audit;
     private final EventBus events;
     private final ProductVariantService variants;
+    private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
     private ProductSizingService sizing;
 
     /** Sell by size (ADR-S066). */
@@ -94,8 +97,10 @@ public class SalesOrderService {
     public SalesOrderService(SalesDb db, SalesSettingsService settings, SalesLinePricing pricing,
             SalesPricingEngine engine, ApprovalsService approvals, CreditService credit, SalesAtpService atp,
             DocumentBuilderService builder, SequenceService sequence, AuditService audit, EventBus events,
-            PriceSnapshotService snapshots, ProductVariantService variants) {
+            PriceSnapshotService snapshots, ProductVariantService variants,
+            ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
         this.variants = variants;
+        this.lifecycleGuard = lifecycleGuard;
         this.snapshots = snapshots;
         this.credit = credit;
         this.atp = atp;
@@ -523,8 +528,17 @@ public class SalesOrderService {
     @SuppressWarnings("unchecked")
     void writeLines(String orderId, String partnerId, String agreementId, LocalDate on, Object raw,
             String defaultLocation, PriceScope scope) {
-        db.update("DELETE FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ?", orderId, org());
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
+        // ADR-S086: the PLM lifecycle policy may refuse selling a product (obsolete) — checked before anything is
+        // written, and only for products added to the document: lines it already had stay editable.
+        lifecycleGuard.ifAvailable(g -> {
+            java.util.Set<Object> had = new java.util.HashSet<>();
+            db.rows("SELECT DISTINCT \"productId\" FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ?",
+                    orderId, org()).forEach(r -> had.add(r.get("productId")));
+            g.requireAllowed(ProductLifecycleGuard.SELL, lines.stream()
+                    .map(x -> x.get("productId") instanceof String p && !had.contains(p) ? p : null).toList());
+        });
+        db.update("DELETE FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ?", orderId, org());
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> l : lines) {
             rows.add(line(partnerId, agreementId, on, l, defaultLocation, scope));

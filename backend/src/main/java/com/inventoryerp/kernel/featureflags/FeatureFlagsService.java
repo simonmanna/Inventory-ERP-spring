@@ -146,6 +146,35 @@ public class FeatureFlagsService {
                 .executeUpdate();
     }
 
+    /**
+     * Switch an add-on module off for this tenant (ADR-S086). An add-on is on by default, so unlike
+     * {@link #disableModule} this leaves a row with {@code isActive = false} even when the tenant had none.
+     */
+    @Transactional
+    public void switchOffAddOn(String name) {
+        String orgId = TenantContext.organizationId();
+        invalidateModules(orgId);
+        List<OrganizationModule> rows = em.createQuery(
+                        "select m from OrganizationModule m where m.organizationId = :org and m.moduleName = :name",
+                        OrganizationModule.class)
+                .setParameter("org", orgId)
+                .setParameter("name", name)
+                .getResultList();
+        OrganizationModule row = rows.isEmpty() ? new OrganizationModule() : rows.getFirst();
+        if (rows.isEmpty()) {
+            row.setOrganizationId(orgId);
+            row.setModuleName(name);
+            row.setConfig(EntityJson.toJson(Map.of()));
+            row.setEnabledAt(Instant.now());
+        }
+        row.setIsActive(false);
+        row.setDisabledAt(Instant.now());
+        if (rows.isEmpty()) {
+            em.persist(row);
+        }
+        em.flush();
+    }
+
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listModules() {
         return EntityJson.list(em.createQuery(
@@ -159,6 +188,20 @@ public class FeatureFlagsService {
         String orgId = TenantContext.organizationId();
         return moduleCache.get(orgId + "::" + name, k -> jdbc.sql("""
                         SELECT "isActive" FROM "OrganizationModule" WHERE "organizationId" = ? AND "moduleName" = ?""")
+                .params(orgId, name)
+                .query(Boolean.class)
+                .optional()
+                .orElse(false));
+    }
+
+    /**
+     * Has this tenant explicitly switched the module off (a row with {@code isActive = false})? An add-on module
+     * (ADR-S086) is on by default and off only then.
+     */
+    public boolean isModuleSwitchedOff(String name) {
+        String orgId = TenantContext.organizationId();
+        return moduleCache.get(orgId + "::off::" + name, k -> jdbc.sql("""
+                        SELECT NOT "isActive" FROM "OrganizationModule" WHERE "organizationId" = ? AND "moduleName" = ?""")
                 .params(orgId, name)
                 .query(Boolean.class)
                 .optional()

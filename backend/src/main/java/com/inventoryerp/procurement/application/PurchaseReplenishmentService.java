@@ -1,5 +1,7 @@
 package com.inventoryerp.procurement.application;
 
+import org.springframework.beans.factory.ObjectProvider;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import com.inventoryerp.core.application.ProductVariantService;
 import com.inventoryerp.core.application.UomConversionService;
 import static com.inventoryerp.procurement.application.ProcurementSql.NOW;
@@ -69,10 +71,13 @@ public class PurchaseReplenishmentService {
 
     private final ProductVariantService variants;
     private final UomConversionService uom;
+    private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
 
     public PurchaseReplenishmentService(JdbcClient jdbc, PurchaseRequestsService requests, AuditService audit,
-            PlatformTransactionManager txm, ProductVariantService variants, UomConversionService uom) {
+            PlatformTransactionManager txm, ProductVariantService variants, UomConversionService uom,
+            ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
         this.jdbc = jdbc;
+        this.lifecycleGuard = lifecycleGuard;
         this.variants = variants;
         this.uom = uom;
         this.requests = requests;
@@ -165,9 +170,21 @@ public class PurchaseReplenishmentService {
         for (Map<String, Object> r : rules) {
             perProduct.merge(r.get("productId") + "|" + r.get("variantId"), 1, Integer::sum);
         }
+        // ADR-S086: a product the PLM lifecycle policy keeps from being replenished or bought is never suggested.
+        java.util.Set<String> blocked = new java.util.HashSet<>();
+        ProductLifecycleGuard guard = lifecycleGuard.getIfAvailable();
+        if (guard != null && !rules.isEmpty()) {
+            List<String> ids = rules.stream().map(r -> (String) r.get("productId")).distinct().toList();
+            blocked.addAll(guard.blocked(ProductLifecycleGuard.REPLENISH, ids));
+            blocked.addAll(guard.blocked(ProductLifecycleGuard.PURCHASE, ids));
+        }
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : rules) {
             Map<String, Object> s = evaluate(r, perProduct.get(r.get("productId") + "|" + r.get("variantId")) == 1);
+            if (blocked.contains((String) r.get("productId"))) {
+                s.put("needed", false);
+                s.put("lifecycleBlocked", true);
+            }
             if (all || Boolean.TRUE.equals(s.get("needed"))) {
                 out.add(s);
             }

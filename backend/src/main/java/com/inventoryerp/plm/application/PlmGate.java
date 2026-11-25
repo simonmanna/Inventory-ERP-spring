@@ -1,0 +1,120 @@
+package com.inventoryerp.plm.application;
+
+import static com.inventoryerp.kernel.crud.SqlRows.str;
+
+import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.manufacturing.spi.ProductionLifecycleGate;
+import com.inventoryerp.shared.web.ApiException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import org.springframework.stereotype.Component;
+
+/**
+ * Lifecycle gates on production (ADR-S063), plugged into manufacturing through {@link ProductionLifecycleGate}
+ * (ADR-S086). Only products registered in PLM are gated, and only while the PLM application is on for the
+ * organization, so organizations that do not use PLM keep the exact ADR-S006 behaviour:
+ * <ul>
+ *   <li>a production order follows the {@code produce} column of the lifecycle policy (ADR-S086 §6; by default
+ *       refused in {@code concept}, {@code design}, {@code phase_out} and {@code obsolete}: prototype runs are
+ *       allowed), with the authorized exceptions in force;</li>
+ *   <li>a BOM cannot be activated for an obsolete product, or with an obsolete component.</li>
+ * </ul>
+ */
+@Component
+public class PlmGate implements ProductionLifecycleGate {
+
+    /** Set while an ECO disposition recreates a not-started order (see {@link #replacing}). */
+    private static final ThreadLocal<Boolean> REPLACING = new ThreadLocal<>();
+
+    private final PlmDb db;
+    private final PlmApp app;
+    private final PlmLifecyclePolicy policy;
+
+    public PlmGate(PlmDb db, PlmApp app, PlmLifecyclePolicy policy) {
+        this.db = db;
+        this.app = app;
+        this.policy = policy;
+    }
+
+    /** Whether the PLM application is on for the current organization (its gates apply only then). */
+    boolean active() {
+        return app.on();
+    }
+
+    /** The product's lifecycle state, or null when it is not under PLM. */
+    String state(String productId) {
+        if (productId == null) {
+            return null;
+        }
+        return db.jdbc().sql("SELECT \"lifecycleState\" FROM \"PlmItem\" WHERE \"organizationId\" = ?"
+                + " AND \"productId\" = ?").params(PlmDb.org(), productId).query(String.class).optional().orElse(null);
+    }
+
+    /**
+     * Run {@code body} as an ECO disposition recreating a not-started production order on the new version: the order
+     * replaces one that already existed for the same quantity, so a product being phased out may still be made for it
+     * (audit 2026-11-24). Other blocks (obsolete, not yet released) still apply.
+     */
+    static <T> T replacing(java.util.function.Supplier<T> body) {
+        Boolean previous = REPLACING.get();
+        REPLACING.set(Boolean.TRUE);
+        try {
+            return body.get();
+        } finally {
+            if (previous == null) {
+                REPLACING.remove();
+            } else {
+                REPLACING.set(previous);
+            }
+        }
+    }
+
+    /** Production orders: the {@code produce} column of the lifecycle policy, with its exceptions. */
+    @Override
+    public void requireProducible(String productId) {
+        if (!active() || productId == null) {
+            return;
+        }
+        if (Boolean.TRUE.equals(REPLACING.get()) && "phase_out".equals(state(productId))) {
+            return;
+        }
+        policy.requireAllowed(com.inventoryerp.core.application.ProductLifecycleGuard.PRODUCE, List.of(productId));
+    }
+
+    /** BOM activation: refused for an obsolete output or with obsolete components. */
+    @Override
+    @SuppressWarnings("unchecked")
+    public void requireActivatable(Map<String, Object> bom) {
+        if (!active()) {
+            return;
+        }
+        String output = str(bom, "outputProductId");
+        if ("obsolete".equals(state(output))) {
+            throw ApiException.badRequest("Product " + code(output) + " is obsolete; its BOMs cannot be activated.");
+        }
+        List<String> components = new ArrayList<>();
+        Object lines = bom.get("lines");
+        if (lines instanceof List<?> l) {
+            for (Object o : l) {
+                components.add(str((Map<String, Object>) o, "componentProductId"));
+            }
+        }
+        if (components.isEmpty()) {
+            return;
+        }
+        List<Map<String, Object>> obsolete = SqlRows.list(db.jdbc().sql("SELECT p.code FROM \"PlmItem\" i JOIN"
+                + " \"Product\" p ON p.id = i.\"productId\" WHERE i.\"organizationId\" = ? AND i.\"lifecycleState\""
+                + " = 'obsolete' AND i.\"productId\" = ANY(?::text[]) ORDER BY p.code")
+                .params(PlmDb.org(), components.toArray(String[]::new)));
+        if (!obsolete.isEmpty()) {
+            throw ApiException.badRequest("BOM " + bom.get("code") + " uses obsolete component(s): "
+                    + String.join(", ", obsolete.stream().map(r -> str(r, "code")).toList()) + ".");
+        }
+    }
+
+    private String code(String productId) {
+        return db.jdbc().sql("SELECT code FROM \"Product\" WHERE id = ?").param(productId).query(String.class)
+                .optional().orElse(productId);
+    }
+}

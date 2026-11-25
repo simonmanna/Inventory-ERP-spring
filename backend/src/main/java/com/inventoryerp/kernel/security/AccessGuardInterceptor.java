@@ -1,6 +1,8 @@
 package com.inventoryerp.kernel.security;
 
 import com.inventoryerp.kernel.featureflags.FeatureFlagsService;
+import com.inventoryerp.kernel.modules.ModuleAccess;
+import com.inventoryerp.kernel.modules.ModuleRegistry;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -8,11 +10,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.lang.annotation.Annotation;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
@@ -29,33 +27,18 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class AccessGuardInterceptor implements HandlerInterceptor {
 
-    private static final Logger log = LoggerFactory.getLogger(AccessGuardInterceptor.class);
-
-    /** Modules whose boot-time gate is an env flag (Nest {@code MODULE_ENV_FLAGS} → app.modules.*). */
-    private static final Map<String, String> MODULE_ENV_FLAGS = Map.ofEntries(
-            Map.entry("task", "app.modules.tasks"),
-            Map.entry("manufacturing", "app.modules.manufacturing"),
-            Map.entry("rental", "app.modules.rental"),
-            Map.entry("repair", "app.modules.repair"),
-            Map.entry("hr", "app.modules.hr"),
-            Map.entry("beverage", "app.modules.beverage"),
-            Map.entry("fixed-asset", "app.modules.assets"),
-            Map.entry("communication", "app.modules.communication"),
-            Map.entry("fleet", "app.modules.fleet"),
-            Map.entry("quarry", "app.modules.quarry"),
-            Map.entry("portal", "app.modules.portal"),
-            Map.entry("alerts", "app.modules.alerts"),
-            Map.entry("loss-prevention", "app.modules.lossprevention"));
-
     private final PermissionService permissions;
-    private final FeatureFlagsService flags;
-    private final Environment env;
-    private final Set<String> warned = ConcurrentHashMap.newKeySet();
+    private final ModuleAccess modules;
 
-    public AccessGuardInterceptor(PermissionService permissions, FeatureFlagsService flags, Environment env) {
+    @Autowired
+    public AccessGuardInterceptor(PermissionService permissions, ModuleAccess modules) {
         this.permissions = permissions;
-        this.flags = flags;
-        this.env = env;
+        this.modules = modules;
+    }
+
+    /** Without add-on manifests (unit tests of the guard). */
+    public AccessGuardInterceptor(PermissionService permissions, FeatureFlagsService flags, Environment env) {
+        this(permissions, new ModuleAccess(flags, env, ModuleRegistry.empty()));
     }
 
     @Override
@@ -143,21 +126,10 @@ public class AccessGuardInterceptor implements HandlerInterceptor {
     /**
      * Whether a module is on for the organization, as {@link RequiresModule} decides it. Public for routes that cannot
      * carry the annotation because the organization is known only inside the handler (an edge agent's public
-     * enrolment, ADR-S077). Call it inside the organization's tenant context.
+     * enrolment, ADR-S077). Call it inside the organization's tenant context. Delegates to {@link ModuleAccess}.
      */
     public boolean moduleAllowed(String orgId, String required) {
-        if (!flags.hasAnyModuleRow()) {
-            if (warned.add(orgId)) {
-                log.warn("Organization {} has no OrganizationModule rows; allowing '{}' by default. "
-                        + "Backfill organization modules to make module gating explicit for this tenant.", orgId, required);
-            }
-            return true;
-        }
-        if (flags.isModuleEnabled(required)) {
-            return true;
-        }
-        String property = MODULE_ENV_FLAGS.get(required);
-        return property != null && env.getProperty(property, Boolean.class, false);
+        return modules.allowed(orgId, required);
     }
 
     /**

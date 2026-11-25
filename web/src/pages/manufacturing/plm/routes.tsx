@@ -11,10 +11,11 @@ const PlmChangesPage = lazy(() => import('./PlmChangesPage').then((m) => ({ defa
 const PlmChangeDetailPage = lazy(() => import('./PlmChangeDetailPage').then((m) => ({ default: m.PlmChangeDetailPage })));
 const PlmDocumentsPage = lazy(() => import('./PlmDocumentsPage').then((m) => ({ default: m.PlmDocumentsPage })));
 const PlmSettingsPage = lazy(() => import('./PlmSettingsPage').then((m) => ({ default: m.PlmSettingsPage })));
+const PlmReportsPage = lazy(() => import('./PlmReportsPage').then((m) => ({ default: m.PlmReportsPage })));
 
 const read = PERMISSIONS.plm.read;
 
-/** Product lifecycle management screens (ADR-S063). Static segments before :id. */
+/** Product lifecycle management screens (ADR-S063, ADR-S086). Static segments before :id. */
 export const plmRoutes = (
   <>
     <Route path="/manufacturing/plm" element={<RequirePermission permission={read}><PlmOverviewPage /></RequirePermission>} />
@@ -24,6 +25,7 @@ export const plmRoutes = (
     <Route path="/manufacturing/plm/changes" element={<RequirePermission permission={read}><PlmChangesPage /></RequirePermission>} />
     <Route path="/manufacturing/plm/changes/:id" element={<RequirePermission permission={read}><PlmChangeDetailPage /></RequirePermission>} />
     <Route path="/manufacturing/plm/documents" element={<RequirePermission permission={read}><PlmDocumentsPage /></RequirePermission>} />
+    <Route path="/manufacturing/plm/reports" element={<RequirePermission permission={read}><PlmReportsPage /></RequirePermission>} />
     <Route path="/manufacturing/plm/settings" element={<RequirePermission permission={PERMISSIONS.plm.manage}><PlmSettingsPage /></RequirePermission>} />
   </>
 );

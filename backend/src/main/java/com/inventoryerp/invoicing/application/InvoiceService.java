@@ -4,6 +4,7 @@ import static com.inventoryerp.invoicing.application.DocumentBuilderService.NOW;
 import static com.inventoryerp.invoicing.application.DocumentBuilderService.ts;
 
 import com.inventoryerp.core.application.PriceSnapshotService;
+import com.inventoryerp.core.application.ProductLifecycleGuard;
 import com.inventoryerp.accounting.application.JournalService;
 import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
@@ -89,6 +90,14 @@ public class InvoiceService {
     @org.springframework.beans.factory.annotation.Autowired
     void setPostGuards(org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards) {
         this.postGuards = postGuards;
+    }
+
+    /** The PLM lifecycle policy (ADR-S086 §6), when the PLM application is part of the build. */
+    private org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLifecycleGuard(org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard) {
+        this.lifecycleGuard = lifecycleGuard;
     }
 
     public InvoiceService(JdbcClient jdbc, EventBus events, WorkflowService workflow, DocumentBuilderService builder,
@@ -354,11 +363,35 @@ public class InvoiceService {
 
     // ------------------------------------------------------------------ create / edit
 
-    /** Create a draft invoice. */
+    /**
+     * Create a draft invoice. A product on it is a new sale, so the lifecycle policy's {@code sell} column applies
+     * (ADR-S086 §6); the contract, dunning and opening-balance invoices that also come here bill accounts, not
+     * products.
+     */
     @Transactional
     public Map<String, Object> create(InvoiceInput dto) {
         builder.assertVariants(dto.lines(), false, false);
+        requireSellable(dto.lines(), null);
         return createDraft(dto);
+    }
+
+    /**
+     * ADR-S086 §6 (owner decision 2026-11-24): products the invoice adds must be sellable in their lifecycle state;
+     * the ones already on it are never refused. Invoices copied from a delivery or an order ({@link #createCopied})
+     * bill sales already made and are not checked.
+     */
+    private void requireSellable(List<LineInput> lines, String invoiceId) {
+        ProductLifecycleGuard guard = lifecycleGuard == null ? null : lifecycleGuard.getIfAvailable();
+        if (guard == null || lines == null || lines.isEmpty()) {
+            return;
+        }
+        java.util.Set<String> had = new java.util.HashSet<>();
+        if (invoiceId != null) {
+            had.addAll(jdbc.sql("SELECT DISTINCT \"productId\" FROM \"DocumentLine\" WHERE \"documentId\" = ? AND"
+                    + " \"productId\" IS NOT NULL").param(invoiceId).query(String.class).list());
+        }
+        guard.requireAllowed(ProductLifecycleGuard.SELL, lines.stream().map(LineInput::productId)
+                .filter(p -> p != null && !had.contains(p)).toList());
     }
 
     /**
@@ -546,6 +579,7 @@ public class InvoiceService {
         if (!"draft".equals(String.valueOf(doc.get("status")))) {
             throw ApiException.badRequest("Only draft invoices can be edited");
         }
+        requireSellable(dto.lines(), id);
         jdbc.sql("DELETE FROM \"DocumentLine\" WHERE \"documentId\" = ?").param(id).update();
         Totals totals = builder.prepareLines(priced(dto, (String) doc.get("branchId")), UnitRole.SALES,
                 builder.fiscalTaxMap(dto.fiscalPositionId(), dto.partnerId()));

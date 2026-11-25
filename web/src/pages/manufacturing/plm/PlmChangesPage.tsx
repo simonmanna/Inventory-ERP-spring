@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   DndContext, DragOverlay, PointerSensor, closestCorners, useDraggable, useDroppable, useSensor, useSensors,
@@ -16,7 +16,7 @@ import { ListCard, ListPageHeader } from '@/components/list/list-page';
 import { FilterSelect, ListToolbar, SearchInput } from '@/components/list/list-toolbar';
 import { useAuthStore } from '@/stores/auth.store';
 import {
-  useMoveChangeStage, usePlmChanges, usePlmStages, type ChangeRow, type ChangeStatus, type PlmStage,
+  num, useMoveChangeStage, usePlmChanges, usePlmStages, type ChangeRow, type ChangeStatus, type PlmStage,
 } from '@/features/manufacturing/api-plm';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { notify } from '@/lib/notify';
@@ -27,6 +27,8 @@ import {
 } from './plm-ui';
 import { ChangeDialog } from './change-dialogs';
 import { CHANGE_STATUS, CHANGE_TYPE, CHANGE_TYPES, day } from './vocab';
+import { useChangeTypes, usePlmTags } from '@/features/manufacturing/api-plm-app';
+import { ChangeTypeChip, ColorDot, FaiPill, KANBAN_STATES, KanbanDot, TagChips } from './plm-app-ui';
 
 /** The stage an ECO sits in (legacy ECOs without a stage: first stage while draft, last once approved). */
 function stageOf(c: ChangeRow, stages: PlmStage[]): string | undefined {
@@ -49,8 +51,31 @@ export function PlmChangesPage() {
   const q = useDebouncedValue(search, 250);
   const [type, setType] = useState('');
   const [status, setStatus] = useState('open');
-  const { data: stages = [], isLoading: stagesLoading } = usePlmStages();
-  const { data = [], isLoading } = usePlmChanges({ status: view === 'board' ? 'open' : status, type, q });
+  const [tagId, setTagId] = useState('');
+  const [kanban, setKanban] = useState('');
+  const { data: changeTypes = [] } = useChangeTypes();
+  const { data: tags = [] } = usePlmTags();
+  // ECO types (ADR-S086): the board shows one type's pipeline; the table can filter by type.
+  const boardType = params.get('changeType') || '';
+  const setBoardType = (id: string) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set('changeType', id); else next.delete('changeType');
+    setParams(next, { replace: true });
+  };
+  const defaultType = changeTypes.find((t) => t.isDefault)?.id ?? changeTypes[0]?.id ?? '';
+  const activeType = view === 'board' ? (boardType || defaultType) : boardType;
+  useEffect(() => {
+    if (boardType && changeTypes.length && !changeTypes.some((t) => t.id === boardType)) setBoardType('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changeTypes, boardType]);
+  const { data: allStages = [], isLoading: stagesLoading } = usePlmStages();
+  const stages = useMemo(
+    () => (activeType ? allStages.filter((s) => !s.typeId || s.typeId === activeType) : allStages),
+    [allStages, activeType],
+  );
+  const { data = [], isLoading } = usePlmChanges({
+    status: view === 'board' ? 'open' : status, type, q, changeTypeId: activeType || undefined, tagId, kanbanState: kanban,
+  }, view === 'table' || !!activeType || !changeTypes.length);
   const [creating, setCreating] = useState(false);
 
   return (
@@ -72,8 +97,18 @@ export function PlmChangesPage() {
           ))}
         </div>
         <SearchInput value={search} onChange={setSearch} placeholder={tx('Search number or title…')} />
-        <FilterSelect value={type} onChange={setType} allLabel={tx('Any type')}
+        <FilterSelect value={type} onChange={setType} allLabel={tx('Any kind')}
           options={CHANGE_TYPES.map((t) => ({ value: t, label: CHANGE_TYPE[t].label }))} />
+        {view === 'table' && changeTypes.length > 1 && (
+          <FilterSelect value={boardType} onChange={setBoardType} allLabel={tx('Any ECO type')}
+            options={changeTypes.map((t) => ({ value: t.id, label: t.name }))} />
+        )}
+        {tags.length > 0 && (
+          <FilterSelect value={tagId} onChange={setTagId} allLabel={tx('Any tag')}
+            options={tags.map((t) => ({ value: t.id, label: t.name }))} />
+        )}
+        <FilterSelect value={kanban} onChange={setKanban} allLabel={tx('Any state')}
+          options={(Object.keys(KANBAN_STATES) as Array<keyof typeof KANBAN_STATES>).map((k) => ({ value: k, label: tx(KANBAN_STATES[k].label) }))} />
         {view === 'table' && (
           <FilterSelect value={status} onChange={setStatus} allLabel={tx('Any status')}
             options={[{ value: 'open', label: tx('Open') }, ...(Object.keys(CHANGE_STATUS) as ChangeStatus[]).map((s) => ({ value: s, label: CHANGE_STATUS[s].label }))]} />
@@ -87,6 +122,18 @@ export function PlmChangesPage() {
         <div className="flex gap-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-80 w-72 rounded-xl" />)}</div>
       ) : view === 'board' ? (
         <>
+          {changeTypes.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {changeTypes.map((t) => (
+                <button key={t.id} type="button" onClick={() => setBoardType(t.id === defaultType ? '' : t.id)}
+                  className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm transition',
+                    activeType === t.id ? 'border-primary bg-primary/10 font-medium' : 'bg-card hover:bg-muted')}>
+                  <ColorDot color={t.color} />{t.name}
+                  <span className="rounded-full bg-muted px-1.5 text-[11px] text-muted-foreground">{num(t.openChanges)}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <Board stages={stages} changes={data} editable={canChange} onOpen={(id) => navigate(`/manufacturing/plm/changes/${id}`)} />
           <p className="text-xs text-muted-foreground">{tx('Applied and cancelled changes are in the table view.')}</p>
         </>
@@ -100,7 +147,8 @@ export function PlmChangesPage() {
               <TableRow>
                 <TableHead>{tx('ECO')}</TableHead>
                 <TableHead>{tx('Title')}</TableHead>
-                <TableHead>{tx('Type')}</TableHead>
+                <TableHead>{tx('Kind')}</TableHead>
+                <TableHead>{tx('ECO type')}</TableHead>
                 <TableHead>{tx('Product')}</TableHead>
                 <TableHead>{tx('Stage')}</TableHead>
                 <TableHead>{tx('Status')}</TableHead>
@@ -114,11 +162,15 @@ export function PlmChangesPage() {
               {data.map((c) => (
                 <TableRow key={c.id} className="cursor-pointer" onClick={() => navigate(`/manufacturing/plm/changes/${c.id}`)}>
                   <TableCell className="whitespace-nowrap font-mono text-xs">{c.number}</TableCell>
-                  <TableCell className="max-w-[260px] font-medium">{c.title}</TableCell>
+                  <TableCell className="max-w-[260px] font-medium">
+                    <span className="flex items-center gap-1.5"><KanbanDot state={c.kanbanState} reason={c.blockedReason} />{c.title}</span>
+                    <TagChips tags={c.tags} max={3} className="mt-1" />
+                  </TableCell>
                   <TableCell><ChangeTypeBadge type={c.type} /></TableCell>
+                  <TableCell><ChangeTypeChip name={c.changeTypeName} color={c.changeTypeColor} /></TableCell>
                   <TableCell className="max-w-[200px] text-sm"><ProductLabel product={c.product} /></TableCell>
                   <TableCell className="text-sm">{c.stageName ?? stages.find((s) => s.id === stageOf(c, stages))?.name ?? '—'}</TableCell>
-                  <TableCell><ChangeStatusPill status={c.status} /> {c.status === 'approved' && c.applyQueued && <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">{tx('Queued')}</span>}</TableCell>
+                  <TableCell><ChangeStatusPill status={c.status} /> {c.status === 'applied' && c.faiStatus && <FaiPill status={c.faiStatus} />} {c.status === 'approved' && c.applyQueued && <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">{tx('Queued')}</span>}</TableCell>
                   <TableCell><PriorityPill priority={c.priority} /></TableCell>
                   <TableCell className="text-sm">{c.ownerName ?? '—'}</TableCell>
                   <TableCell className="whitespace-nowrap text-sm text-muted-foreground">{day(c.createdAt)}</TableCell>
@@ -130,7 +182,7 @@ export function PlmChangesPage() {
         </ListCard>
       )}
 
-      <ChangeDialog open={creating} onClose={() => setCreating(false)} />
+      <ChangeDialog open={creating} onClose={() => setCreating(false)} presetChangeTypeId={activeType || undefined} />
     </div>
   );
 }
@@ -185,6 +237,17 @@ function Column({ stage, final, changes, editable, stages, onOpen, onMove }: {
   onOpen: (id: string) => void; onMove: (c: ChangeRow, stageId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage.id, disabled: !editable });
+  const [unfolded, setUnfolded] = useState(false);
+  if (stage.folded && !unfolded) {
+    // A folded stage (ADR-S086) stays a drop target but takes little room.
+    return (
+      <div ref={setNodeRef} className={cn('flex w-11 shrink-0 cursor-pointer flex-col items-center gap-2 rounded-xl border bg-muted/40 py-3 transition-colors', isOver && 'border-primary bg-primary/5')}
+        onClick={() => setUnfolded(true)} title={tx('Unfold {{s}}', { s: stage.name })}>
+        <span className="rounded-full bg-background px-1.5 text-xs text-muted-foreground">{changes.length}</span>
+        <span className="text-sm font-semibold [writing-mode:vertical-rl]">{stage.name}</span>
+      </div>
+    );
+  }
   return (
     <div ref={setNodeRef} className={cn('flex w-72 shrink-0 flex-col rounded-xl border bg-muted/40 transition-colors', isOver && 'border-primary bg-primary/5')}>
       <div className="px-3 pb-2 pt-3">
@@ -256,11 +319,16 @@ function Card({ change: c, overlay }: { change: ChangeRow; overlay?: boolean }) 
   return (
     <div className={cn('cursor-pointer space-y-2 rounded-lg border border-l-4 bg-card p-2.5 pr-7 text-left shadow-sm transition hover:shadow-md', border, overlay && 'rotate-2 shadow-lg')}>
       <div className="flex items-center gap-1.5">
+        <KanbanDot state={c.kanbanState} reason={c.blockedReason} />
         <span className="font-mono text-[11px] text-muted-foreground">{c.number}</span>
         <ChangeTypeBadge type={c.type} />
         <PriorityPill priority={c.priority} hideNormal />
       </div>
       <p className="text-sm font-medium leading-snug">{c.title}</p>
+      {c.kanbanState === 'blocked' && c.blockedReason && (
+        <p className="line-clamp-2 rounded bg-rose-50 px-1.5 py-0.5 text-[11px] text-rose-800 dark:bg-rose-500/10 dark:text-rose-300">{c.blockedReason}</p>
+      )}
+      <TagChips tags={c.tags} max={4} />
       {c.product && <p className="truncate text-xs text-muted-foreground"><span className="font-mono">{c.product.code}</span> {c.product.name}</p>}
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {c.status === 'approved' && <ChangeStatusPill status={c.status} />} {c.status === 'approved' && c.applyQueued && <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">{tx('Queued')}</span>}
