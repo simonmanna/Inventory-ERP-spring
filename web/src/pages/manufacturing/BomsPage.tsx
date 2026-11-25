@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Plus, Trash2, CheckCircle2 } from 'lucide-react';
+import { Layers, Plus, Trash2, CheckCircle2 } from 'lucide-react';
+import { MfgPageHeader, MfgStatus } from './mfg-ui';
 import { Link } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -14,14 +15,8 @@ import { useAuthStore } from '@/stores/auth.store';
 import { notify } from '@/lib/notify';
 import { useActivateBom, useBoms, useCreateBom, useRoutings } from '@/features/manufacturing/api';
 import { useProductOptions } from '@/features/manufacturing/options';
-import type { Bom, BomStatus } from '@/features/manufacturing/types';
+import type { Bom } from '@/features/manufacturing/types';
 import { tx } from '@/lib/i18n/tx';
-
-const STATUS_VARIANT: Record<BomStatus, 'default' | 'secondary' | 'outline'> = {
-  draft: 'secondary',
-  active: 'default',
-  archived: 'outline',
-};
 
 interface DraftLine {
   componentProductId: string;
@@ -102,18 +97,13 @@ export function BomsPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">{tx('Bills of Materials')}</h1>
-          <p className="text-sm text-muted-foreground">{tx('Recipes keyed on the finished product. Activate a draft to produce against it.')}</p>
-        </div>
-        {canCreate && (
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={Layers} title={tx('Bills of Materials')} subtitle={tx('Recipes keyed on the finished product. Activate a draft to produce against it.')}
+        actions={canCreate && (
           <Button onClick={() => setOpen(true)}>
             <Plus className="mr-2 h-4 w-4" /> {tx('New BOM')}
           </Button>
-        )}
-      </div>
+        )} />
 
       <Card>
         <CardHeader>
@@ -146,7 +136,7 @@ export function BomsPage() {
                     <TableCell className="text-right">{Number(b.outputQuantity)}</TableCell>
                     <TableCell className="text-center">{b.version}</TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[b.status]}>{b.status}</Badge>
+                      <MfgStatus status={b.status} kind="bom" />
                       {b.isDefault && <Badge variant="outline" className="ml-1">{tx('default')}</Badge>}
                     </TableCell>
                     <TableCell className="text-right">

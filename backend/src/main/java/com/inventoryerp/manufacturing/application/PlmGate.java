@@ -52,6 +52,25 @@ public class PlmGate {
         }
     }
 
+    /**
+     * Integrity fix 2026-11-24 (MR-2): as {@link #requireBomEditable}, for the new routing of a routing ECO (its stage
+     * set-up): refused once the ECO is approved; on a draft ECO the approvals it already has are voided.
+     */
+    public void requireRoutingEditable(Map<String, Object> routing) {
+        List<Map<String, Object>> ecos = SqlRows.list(db.jdbc().sql("SELECT * FROM \"EngineeringChange\" WHERE"
+                + " \"organizationId\" = ? AND \"newRoutingId\" = ? AND status IN ('draft', 'approved') ORDER BY id"
+                + " FOR UPDATE").params(MfgDb.org(), routing.get("id")));
+        for (Map<String, Object> eco : ecos) {
+            if ("approved".equals(eco.get("status"))) {
+                throw ApiException.badRequest("Routing " + routing.get("name") + " is part of approved change "
+                        + eco.get("number") + "; it can no longer be edited.");
+            }
+        }
+        for (Map<String, Object> eco : ecos) {
+            plm.reopenAfterEdit(eco, "routing " + routing.get("name"));
+        }
+    }
+
     /** The product's lifecycle state, or null when it is not under PLM. */
     String state(String productId) {
         if (productId == null) {

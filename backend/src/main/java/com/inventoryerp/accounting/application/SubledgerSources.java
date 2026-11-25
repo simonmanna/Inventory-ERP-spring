@@ -133,7 +133,8 @@ public class SubledgerSources {
     static final Kind EXPENSE = new Kind("expense", "expense", "Expense", "expenseCode", "void the expense",
             "POST /expenses/{id}/void", "/expenses");
     static final Kind OPENING_BALANCE = new Kind("opening_balance", "opening-balance batch", null, null,
-            "post a control-account adjustment naming the partner", null, "/opening-balances");
+            "reverse the whole batch (its invoices and bills are cancelled with it)",
+            "POST /opening-balances/{id}/reverse", "/opening-balances");
 
     /** sourceType → document kind. Every sourceType a customer / supplier sub-ledger posts under. */
     private static final Map<String, Kind> SUBLEDGER = Map.ofEntries(

@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Boxes, ClipboardCheck, MoveRight, Printer, ShieldCheck, Thermometer, Hammer } from 'lucide-react';
+import { Boxes, CheckCircle2, ClipboardCheck, Hourglass, MoveRight, Printer, ShieldCheck, Thermometer, Hammer } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  DataTablePagination, FilterChips, FilterSelect, ListPageHeader, ListToolbar, SearchInput, useListState, type ActiveChip,
+  DataTablePagination, FilterChips, FilterSelect, ListToolbar, SearchInput, useListState, type ActiveChip,
 } from '@/components/list';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify, apiMessage } from '@/lib/notify';
@@ -19,6 +19,17 @@ import {
 import { BatchStatusPill, QcPill } from './precast-ui';
 import { CuringActionDialog, type CuringAction } from './CuringActions';
 import { curingProgressPct, daysLabel, num, pct, toOptions } from './precast-format';
+import { EmptyState, MfgPageHeader, ProgressRing, TONE_PILL } from '../mfg-ui';
+
+/** Time left until a batch may be released, e.g. "2d 5h"; null once due. */
+function countdown(until: string | null): string | null {
+  if (!until) return null;
+  const ms = new Date(until).getTime() - Date.now();
+  if (!(ms > 0)) return null;
+  const h = Math.floor(ms / 3_600_000);
+  const d = Math.floor(h / 24);
+  return d > 0 ? `${d}d ${h % 24}h` : h > 0 ? `${h}h ${Math.floor((ms % 3_600_000) / 60_000)}m` : `${Math.max(1, Math.floor(ms / 60_000))}m`;
+}
 
 // No status in the URL means "curing" (the yard's default view); "all" lifts the filter.
 const FILTERS = { status: '', area: '', ready: '' };
@@ -42,8 +53,14 @@ export function CuringBoardPage() {
   ];
   const rows = data?.data ?? [];
   return (
-    <div className="space-y-4">
-      <ListPageHeader icon={Thermometer} title={tx('Curing board')} description={tx('Blocks curing in chambers and yards. Log temperatures, move pallets, cube when ready.')} />
+    <div className="space-y-4 p-4 sm:p-6">
+      <MfgPageHeader icon={Thermometer} title={tx('Curing board')} subtitle={tx('Blocks curing in chambers and yards. Log temperatures, move pallets, cube when ready.')}
+        badges={rows.length > 0 && (
+          <>
+            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', TONE_PILL.success)}><CheckCircle2 className="h-3 w-3" aria-hidden />{tx('{{n}} ready', { n: rows.filter((r) => r.status === 'curing' && r.ready).length })}</span>
+            <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset', TONE_PILL.info)}><Hourglass className="h-3 w-3" aria-hidden />{tx('{{n}} curing', { n: rows.filter((r) => r.status === 'curing' && !r.ready).length })}</span>
+          </>
+        )} />
       <ListToolbar chips={<FilterChips chips={chips} onClearAll={list.clearFilters} />}>
         <SearchInput value={list.searchInput} onChange={list.setSearchInput} placeholder={tx('Search batch, order, product…')} />
         <FilterSelect value={status} onChange={(v) => list.setFilter('status', v)} allLabel={BATCH_STATUS_LABEL.curing}
@@ -60,7 +77,7 @@ export function CuringBoardPage() {
       ) : isError ? (
         <p className="p-8 text-center text-destructive">{tx('Could not load the curing batches.')}</p>
       ) : !rows.length ? (
-        <p className="p-8 text-center text-muted-foreground">{chips.length ? tx('No batches match these filters.') : tx('Nothing is curing right now.')}</p>
+        <EmptyState icon={Thermometer} title={chips.length ? tx('No batches match these filters.') : tx('Nothing is curing right now.')} />
       ) : (
         <div className={cn('grid gap-3 sm:grid-cols-2 xl:grid-cols-3', isFetching && 'opacity-60 transition-opacity')}>
           {rows.map((b) => <BatchCard key={b.id} batch={b} onAction={(action) => setActive({ action, batch: b })} />)}
@@ -93,7 +110,8 @@ export function BatchCard({ batch: b, onAction }: { batch: CuringBatch; onAction
     }
   };
   return (
-    <Card className={cn('flex flex-col', b.status === 'curing' && b.ready && 'border-emerald-500/60')}>
+    <Card className={cn('flex flex-col overflow-hidden', b.status === 'curing' && b.ready && 'border-emerald-500/60 ring-1 ring-emerald-500/30')}>
+      <div className={cn('h-1.5', b.status === 'curing' ? (b.ready ? 'bg-emerald-500' : 'bg-sky-500') : b.status === 'failed' ? 'bg-rose-500' : 'bg-muted-foreground/30')} aria-hidden />
       <CardContent className="flex flex-1 flex-col gap-3 p-4">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -112,6 +130,18 @@ export function BatchCard({ batch: b, onAction }: { batch: CuringBatch; onAction
           <div><dt className="text-xs text-muted-foreground">{tx('Days')}</dt><dd className="font-semibold tabular-nums">{daysLabel(b.daysCured, b.minCuringDays)}</dd></div>
           <div className="col-span-3"><dt className="text-xs text-muted-foreground">{tx('Curing area')}</dt><dd className="truncate">{b.curingAreaName ?? '—'}{b.palletLocation ? ` · ${b.palletLocation}` : ''}</dd></div>
         </dl>
+        {b.status === 'curing' && (
+          <div className={cn('flex items-center gap-3 rounded-xl p-2.5 ring-1 ring-inset', b.ready ? TONE_PILL.success : TONE_PILL.info)}>
+            <ProgressRing value={progress} size={52} stroke={10} tone={b.ready ? 'success' : 'info'} />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide">
+                {b.ready ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> : <Hourglass className="h-3.5 w-3.5" aria-hidden />}
+                {b.ready ? tx('Ready to cube') : tx('Release in')}
+              </div>
+              <div className="text-xl font-bold tabular-nums">{b.ready ? '✓' : countdown(b.curingUntil) ?? '—'}</div>
+            </div>
+          </div>
+        )}
         <div className="space-y-1">
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>{b.status === 'curing' ? (b.ready ? tx('Ready to cube') : tx('Curing until')) : tx('Curing until')}</span>

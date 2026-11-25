@@ -46,3 +46,43 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA bi TO superset_reader;
     END IF;
 END $bi$;
+
+-- Finance readiness audit B4 (V655): trigger functions in public name tables unqualified; pin their search_path with
+-- pg_temp last so a temporary table cannot shadow "JournalEntry" and blind a guard. Repeated here so trigger functions
+-- added by later migrations are pinned too. A function the migration role does not own is skipped with a warning.
+DO $pin$
+DECLARE f record;
+BEGIN
+    FOR f IN SELECT p.oid::regprocedure AS sig FROM pg_proc p
+              WHERE p.pronamespace = 'public'::regnamespace
+                AND (p.prorettype = 'trigger'::regtype
+                     OR p.proname IN ('evidence_purge_enabled', 'evidence_row_changed'))
+                AND NOT coalesce(array_to_string(p.proconfig, ',') LIKE '%search_path=public, pg_temp%', false)
+    LOOP
+        BEGIN
+            EXECUTE format('ALTER FUNCTION %s SET search_path = public, pg_temp', f.sig);
+        EXCEPTION WHEN insufficient_privilege THEN
+            RAISE WARNING 'B4: cannot pin the search_path of % (not its owner)', f.sig;
+        END;
+    END LOOP;
+END $pin$;
+
+-- Finance readiness audit B4: the backup role (DB_BACKUP_USER / DB_BACKUP_PASSWORD). pg_dump needs to read every row
+-- (BYPASSRLS, pg_read_all_data) and a restore test creates a new database (CREATEDB); it owns nothing and cannot write
+-- the live tables. Creating a BYPASSRLS role needs a superuser: otherwise a warning asks for it to be created by hand.
+DO $backup$
+DECLARE
+    role text := btrim($q$ ${backuprole} $q$);
+    pw text := substr($q$ ${backuppassword}$q$, 2);
+BEGIN
+    IF role = '' OR pw = '' OR EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role) THEN
+        RETURN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = current_user AND rolsuper) THEN
+        RAISE WARNING 'B4: backup role % does not exist and % may not create a BYPASSRLS role; create it as a superuser'
+            ' (docs/OPERATIONS.md, "Separate migration step and backup role")', role, current_user;
+        RETURN;
+    END IF;
+    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER BYPASSRLS CREATEDB NOCREATEROLE', role, pw);
+    EXECUTE format('GRANT pg_read_all_data TO %I', role);
+END $backup$;

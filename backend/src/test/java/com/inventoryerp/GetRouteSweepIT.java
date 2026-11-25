@@ -17,8 +17,6 @@ class GetRouteSweepIT extends ApiTestSupport {
     /** 500s that Nest gives too and that Spring keeps on purpose (route pattern → where it is documented). */
     private static final Map<String, String> NEST_500 = Map.of(
             "/api/v1/pos/menu/accompaniments/report/sales", "Nest bug kept: unknown Prisma field",
-            "/api/v1/reports/accounting/balance-sheet", "no asOf = invalid date, accounting Deviation 3",
-            "/api/v1/reports/accounting/balance-sheet/detailed", "no asOf = invalid date, accounting Deviation 3",
             "/api/v1/currencies/rate", "missing codes, accounting Deviation 3 / parity D3",
             "/api/v1/rental/scores/{partnerId}", "always fails in Nest, docs/spec/rental.md");
 

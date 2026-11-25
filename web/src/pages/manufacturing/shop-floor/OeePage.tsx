@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { TrendingUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { DateRangeFilter, FilterSelect, ListPageHeader, ListToolbar } from '@/components/list';
+import { DateRangeFilter, FilterSelect, ListToolbar } from '@/components/list';
+import { Gauge } from '@/components/ops-dashboard/charts';
+import { EmptyState, MfgPageHeader, PageSkeleton, pctTone, ProgressBar } from '../mfg-ui';
 import { date } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useWorkCenters } from '@/features/manufacturing/api';
@@ -11,6 +13,7 @@ import { minutesLabel, pct, qty, useOee } from '@/features/manufacturing/api-sho
 import { OeeTiles, ShiftReportStatusPill } from './shopfloor-ui';
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
+const asPct = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v) * 100);
 
 /** OEE report (ADR-S015): availability × performance × quality per work centre and shift for a period. */
 export function OeePage() {
@@ -21,26 +24,37 @@ export function OeePage() {
   const centres = useWorkCenters();
   const { data, isLoading, isError } = useOee({ from: from || undefined, to: to || undefined, workCenterId: workCenterId || undefined });
   return (
-    <div className="space-y-4">
-      <ListPageHeader icon={TrendingUp} title={tx('OEE')}
-        description={tx('Overall equipment effectiveness per work centre and shift, from shift reports (at most 93 days).')} />
+    <div className="space-y-4 p-4 sm:p-6">
+      <MfgPageHeader icon={TrendingUp} title={tx('OEE')}
+        subtitle={tx('Overall equipment effectiveness per work centre and shift, from shift reports (at most 93 days).')} />
       <ListToolbar>
         <DateRangeFilter from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t); }} />
         <FilterSelect value={workCenterId} onChange={setWorkCenterId} allLabel={tx('All work centres')}
           options={(centres.data ?? []).map((c: any) => ({ value: c.id, label: c.name }))} />
       </ListToolbar>
-      {isLoading && <p className="text-muted-foreground">{tx('Loading…')}</p>}
+      {isLoading && <PageSkeleton />}
       {isError && <p className="text-destructive">{tx('Could not load the OEE report.')}</p>}
       {data && (
         <>
           <Card>
             <CardHeader><CardTitle>{tx('All work centres · {{n}} shifts', { n: data.total.shifts })}</CardTitle></CardHeader>
-            <CardContent><OeeTiles oee={data.total} /></CardContent>
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <Gauge label={tx('OEE')} value={asPct(data.total.oee)} threshold={{ good: 85, warn: 60 }} size={128} sub={tx('Target 85%')} />
+                <Gauge label={tx('Availability')} value={asPct(data.total.availability)} threshold={{ good: 90, warn: 75 }} size={112}
+                  sub={tx('{{run}} of {{planned}} min running', { run: data.total.runMinutes, planned: data.total.plannedMinutes })} />
+                <Gauge label={tx('Performance')} value={asPct(data.total.performance)} threshold={{ good: 95, warn: 75 }} size={112} />
+                <Gauge label={tx('Quality')} value={asPct(data.total.quality)} threshold={{ good: 99, warn: 95 }} size={112}
+                  sub={tx('{{good}} good of {{total}}', { good: Number(data.total.goodQty), total: Number(data.total.totalQty) })} />
+              </div>
+              <p className="text-center text-xs text-muted-foreground">{tx('OEE = availability × performance × quality')}</p>
+              <OeeTiles oee={data.total} compact />
+            </CardContent>
           </Card>
           <Card>
             <CardHeader><CardTitle>{tx('By work centre')}</CardTitle></CardHeader>
             <CardContent className="overflow-x-auto">
-              {data.workCenters.length === 0 ? <p className="text-sm text-muted-foreground">{tx('No shift reports in this period.')}</p> : (
+              {data.workCenters.length === 0 ? <EmptyState compact icon={TrendingUp} title={tx('No shift reports in this period.')} /> : (
                 <Table>
                   <TableHeader><TableRow>
                     <TableHead>{tx('Work centre')}</TableHead><TableHead className="text-right">{tx('Shifts')}</TableHead>
@@ -61,7 +75,7 @@ export function OeePage() {
                         <TableCell className="text-right">{pct(w.availability)}</TableCell>
                         <TableCell className="text-right">{pct(w.performance)}</TableCell>
                         <TableCell className="text-right">{pct(w.quality)}</TableCell>
-                        <TableCell className="text-right font-semibold">{pct(w.oee)}</TableCell>
+                        <TableCell className="min-w-36 text-right font-semibold">{pct(w.oee)}<ProgressBar className="mt-1" size="xs" value={asPct(w.oee)} tone={pctTone(asPct(w.oee))} ariaLabel={tx('OEE')} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
