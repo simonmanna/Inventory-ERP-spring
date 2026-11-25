@@ -196,6 +196,15 @@ public final class SettingRegistry {
                 "warn = the posted entry of the key is returned as before, the difference is logged and listed by the"
                         + " ledger integrity check (default); refuse = the posting is refused with 409.",
                 "warn", List.of("warn", "refuse"), false, ORG_ONLY);
+        // Finance readiness audit B1 (P2-2): period coverage, set on the fiscal periods page (/fiscal-periods/controls).
+        def("accounting.autoCreatePeriods", "accounting", "bool", "Create Next Year's Periods Automatically",
+                "60 days before the last fiscal period ends, a nightly job creates the next fiscal year and its periods"
+                        + " with the same periodicity. Off = an in-app alert is raised instead, at most once a week.",
+                true, null, false, ORG_ONLY);
+        def("accounting.futurePostingLimitDays", "accounting", "number", "Furthest Posting Date Ahead (Days)",
+                "A posting dated more than this many days after today is refused, to catch a mistyped year. 0 = no"
+                        + " limit. 366 suits a business that never posts into next year early.",
+                3650, null, false, ORG_ONLY);
         def("pos.stockLocationId", "inventory", "string", "POS Stock Location",
                 "Location the POS sells stock from. Blank = first active warehouse.", "", null, false, ORG_ONLY);
         def("pos.storeCreditIssueLimit", "accounting", "number", "Store Credit Issue Limit",

@@ -753,6 +753,45 @@ export function useLockPeriod() {
   });
 }
 
+/* ── Period controls (finance readiness audit B1) ─────────────── */
+
+export interface PeriodControlsInput {
+  /** Nothing dated on or before this day posts; null = the books are not locked. */
+  booksLockDate: string | null;
+  requireFiscalPeriod: boolean;
+  autoCreatePeriods: boolean;
+  /** 0 = no limit. */
+  futurePostingLimitDays: number;
+}
+
+export interface PeriodControls extends PeriodControlsInput {
+  today: string;
+  /** End of the last fiscal period, or null when there are none. */
+  periodsThrough: string | null;
+  openPeriodCoversToday: boolean;
+  autoCreateLeadDays: number;
+}
+
+export function usePeriodControls() {
+  return useQuery({
+    queryKey: ['period-controls'],
+    queryFn: async () => (await api.get<PeriodControls>('/fiscal-periods/controls')).data,
+  });
+}
+
+export function useUpdatePeriodControls() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: PeriodControlsInput) =>
+      (await api.put<PeriodControls>('/fiscal-periods/controls', input)).data,
+    onSuccess: (data) => {
+      qc.setQueryData(['period-controls'], data);
+      notify.success(tx('Period controls saved'));
+    },
+    onError: (e) => toastMutationError(tx('Failed'), e),
+  });
+}
+
 /* ── Fiscal Years (year-end close, ADR-S023) ──────────────────── */
 
 export interface FiscalYear {
