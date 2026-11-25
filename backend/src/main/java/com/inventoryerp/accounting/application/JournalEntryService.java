@@ -32,8 +32,11 @@ public class JournalEntryService {
     private final PostingService posting;
     private final JdbcClient jdbc;
     private final SubledgerSources subledger;
+    private final com.inventoryerp.kernel.audit.AuditService audit;
 
-    public JournalEntryService(EntityManager em, PostingService posting, JdbcClient jdbc, SubledgerSources subledger) {
+    public JournalEntryService(EntityManager em, PostingService posting, JdbcClient jdbc, SubledgerSources subledger,
+            com.inventoryerp.kernel.audit.AuditService audit) {
+        this.audit = audit;
         this.em = em;
         this.posting = posting;
         this.jdbc = jdbc;
@@ -196,8 +199,31 @@ public class JournalEntryService {
         return posting.postDraft(id);
     }
 
+    /**
+     * Discards a draft (finance readiness audit B5): only its author, or a user who may post journal entries (the
+     * checker), may discard it, and the discard is audited with what the draft held.
+     */
+    @org.springframework.transaction.annotation.Transactional
     public void discard(String id) {
+        Map<String, Object> draft = jdbc.sql("SELECT e.\"entryNumber\", e.description, e.\"postingDate\","
+                        + " e.status::text AS status, e.\"createdBy\", (SELECT sum(l.\"baseDebit\") FROM \"JournalLine\" l"
+                        + " WHERE l.\"journalEntryId\" = e.id) AS total FROM \"JournalEntry\" e WHERE e.id = ? AND"
+                        + " e.\"organizationId\" = ? FOR UPDATE OF e").params(id, TenantContext.organizationId())
+                .query().listOfRows().stream().findFirst().orElse(null);
+        if (draft != null && "draft".equals(draft.get("status"))) {
+            String author = (String) draft.get("createdBy");
+            String me = TenantContext.userId();
+            boolean own = author == null || author.equals(me);
+            if (!own && !TenantContext.has(com.inventoryerp.kernel.security.Permissions.JOURNAL_ENTRY__POST)) {
+                throw ApiException.forbidden("Only the author of draft " + (draft.get("entryNumber") != null
+                        ? draft.get("entryNumber") : id) + ", or a user who can post journal entries, may discard it");
+            }
+        }
         posting.discardDraft(id);
+        Map<String, Object> old = new java.util.LinkedHashMap<>(draft);
+        old.remove("status");
+        audit.recordInTx(com.inventoryerp.kernel.audit.AuditService.AuditInput.of("JournalEntry", id, "delete", old,
+                null));
     }
 
     /**

@@ -222,6 +222,11 @@ public class PostingService {
         // a settlement entry's reversal is exempt, as the settlement itself is
         String lockSource = "tax_settlement".equals(original.getSourceType()) ? "tax_settlement" : "reversal";
         Instant when = date != null ? AccountingDay.normalize(date, zone) : reversalDate(original.getPostingDate());
+        if (date != null && AccountingDay.of(when, zone).isBefore(AccountingDay.of(original.getPostingDate(), zone))) {
+            // B5: a reversal dated before its original would undo it in a period where it did not yet exist
+            throw ApiException.badRequest("A reversal cannot be dated before the entry it reverses ("
+                    + original.getEntryNumber() + " is dated " + AccountingDay.of(original.getPostingDate(), zone) + ")");
+        }
         if (date == null && taxLockedThrough(organizationId, when, originalAccounts, lockSource) != null) {
             // the original's date is inside a settled VAT period: reverse today, never into filed VAT (G-2)
             when = Instant.now();

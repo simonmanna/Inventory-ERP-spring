@@ -156,7 +156,9 @@ Pending owner approval:
    (the path segment is ignored) and a missing `id` renders the organization's first document.
 3. **Unhandled errors** (an invalid date in a report query, `to` before `from` on POS → GL
    reconciliation, a non-numeric `limit` on dashboard activity) answer 500 like Nest, but the
-   development-only `error` detail text comes from Java rather than Prisma.
+   development-only `error` detail text comes from Java rather than Prisma. Exception (finance readiness audit B5,
+   2026-11-24): the balance sheet (`/reports/accounting/balance-sheet` and `/detailed`) answers 400 "asOf is
+   required (YYYY-MM-DD)" or "asOf must be a valid date (YYYY-MM-DD)" instead of 500.
 
 Approved by the owner (`phase/inv-hardening`, [inventory deviation](inventory.md#deviations) 20):
 
@@ -840,6 +842,29 @@ The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below 
   A bill that stores the default rate 1 ("not stated", FX-1) posted at the rate table's rate. Passing that stored 1 on
   made the relief post at the table rate of the day. Once the rate had moved, the payable's base did not clear, and the
   AP tie-out (I8) showed the difference. Nest has the same flaw. Tests: the B5 tests in `ArApTieOutIT`.
+- **Discarding a draft journal entry** (`DELETE /journal-entries/:id`, still `journal_entry:create`):
+  - only the draft's author, or a user who also holds `journal_entry:post` (the checker), may discard it. Anyone
+    else gets a 403: "Only the author of draft X, or a user who can post journal entries, may discard it";
+  - each discard writes an audit row (`JournalEntry`, `delete`) with the entry number, description, date, author and
+    total.
+
+  Nest lets any holder of `journal_entry:create` discard anyone's draft, without a trace.
+- **A reversal is not dated before its original.** A reversal date chosen by the caller that falls on an earlier day
+  than the entry it reverses is refused: "A reversal cannot be dated before the entry it reverses (X is dated D)". The
+  same day or later is accepted. The default date (the original's, or today when that is closed) is unchanged.
+- **The balance sheet without `asOf`** answers 400 (see Deviation 3).
+- **Idempotency keys** (kernel, all keyed routes):
+  - A request refused while its arguments were read, bound or validated (before the handler ran) releases its key.
+    Before, the key stayed `pending`, and a corrected retry with the same key answered 409 or `OPERATION_PENDING`
+    forever. The web client rotates keys on 4xx, so mainly other clients (Android, scripts) were affected.
+  - A multipart request (`POST /bank-reconciliation/import-file`) is fingerprinted by its form fields and each
+    file's SHA-256. Before, the file was left out, so reusing a key with another file replayed the first file's
+    result.
+  - Not changed: keys stay unique per organization, not per user. They are client-generated UUIDs; a collision
+    between two users of one organization is not a practical risk.
+
+  The audit's "FX snapshot on reversals" item needed no change: a reversal line copies the original line's currency
+  and exchange rate.
 
 ## Extensions beyond Nest (ADR-S005)
 
