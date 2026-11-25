@@ -1623,7 +1623,8 @@ public class CashSessionService {
                     ? List.of(PostingRequest.Line.debit(cash, abs, null), PostingRequest.Line.credit(shortOver, abs, null))
                     : List.of(PostingRequest.Line.debit(shortOver, abs, null), PostingRequest.Line.credit(cash, abs, null));
         }
-        posting.post(new PostingRequest("CASH", Instant.now(), description, null, null, "cash_movement", movementId, null,
+        posting.post(new PostingRequest("CASH", shiftPostingDate(session), description, null, null, "cash_movement",
+                movementId, null,
                 "cash_movement:" + movementId, branchId, null, null, lines));
     }
 
@@ -1642,7 +1643,7 @@ public class CashSessionService {
         }
         String amt = plain(amount);
         Map.Entry<PostingRequest.Line, CurrencyService.Resolution> line = bankLine(bank, amount, exchangeRate);
-        PostingRequest req = new PostingRequest("BANK", Instant.now(), "Bank deposit: " + bankName, null, null,
+        PostingRequest req = new PostingRequest("BANK", shiftPostingDate(session), "Bank deposit: " + bankName, null, null,
                 "cash_movement", movementId, null, "cash_movement:" + movementId, (String) session.get("branchId"), null,
                 null, List.of(line.getKey(), PostingRequest.Line.credit(cash, amt, null)));
         if (line.getValue() == null) {
@@ -1650,6 +1651,28 @@ public class CashSessionService {
         } else {
             posting.post(req, List.of(line.getValue()));
         }
+    }
+
+    /**
+     * The posting date of a shift's cash movement, deposit or variance (finance readiness audit B5): now while the
+     * shift's business date is today; for an earlier business date (a shift closed after midnight), the last moment of
+     * that day, or now when that day no longer accepts postings (closed period, books locked). Was always now, so a
+     * late close moved the shift's cash into the next day, or the next period.
+     */
+    Instant shiftPostingDate(Map<String, Object> session) {
+        Instant now = Instant.now();
+        Object bd = session == null ? null : session.get("businessDate");
+        if (bd == null) {
+            return now;
+        }
+        java.time.LocalDate day = bd instanceof java.time.LocalDate l ? l
+                : bd instanceof java.sql.Date d ? d.toLocalDate()
+                : java.time.LocalDate.parse(bd.toString().substring(0, 10));
+        java.time.ZoneId zone = AccountingDay.zone(jdbc);
+        if (!day.isBefore(AccountingDay.of(now, zone))) {
+            return now;
+        }
+        return posting.openDateOrToday(AccountingDay.endInclusive(day, zone));
     }
 
     /** difference = counted − expected: short (&lt;0) → Dr short/over Cr cash; over → Dr cash Cr short/over. */
@@ -1661,7 +1684,7 @@ public class CashSessionService {
                 ? List.of(PostingRequest.Line.debit(shortOver, abs, null), PostingRequest.Line.credit(cash, abs, null))
                 : List.of(PostingRequest.Line.debit(cash, abs, null), PostingRequest.Line.credit(shortOver, abs, null));
         String sid = (String) session.get("id");
-        posting.post(new PostingRequest("CASH", Instant.now(), "Cash over/short — session " + sid, null, null,
+        posting.post(new PostingRequest("CASH", shiftPostingDate(session), "Cash over/short — session " + sid, null, null,
                 "cash_session_variance", sid, null, "cash_session_variance:" + sid, (String) session.get("branchId"), null,
                 null, lines));
     }

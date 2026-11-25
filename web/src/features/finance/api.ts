@@ -136,7 +136,7 @@ export interface OpeningBalancePayload {
 }
 
 export interface OpeningBalanceList {
-  entries: { id: string; entryNumber: string; postingDate: string; description: string; total: string; status: string }[];
+  entries: { id: string; entryNumber: string; postingDate: string; description: string; total: string; status: string; batchId: string }[];
   documents: {
     id: string;
     documentNumber: string;
@@ -146,6 +146,7 @@ export interface OpeningBalanceList {
     totalAmount: string;
     amountResidual: string;
     status: string;
+    batchId: string;
   }[];
 }
 
@@ -166,6 +167,21 @@ export function usePostOpeningBalances() {
       notify.success(tx('Opening balances posted'));
     },
     onError: (e) => notify.error(apiMessage(e, tx('Could not post opening balances'))),
+  });
+}
+
+/** B2: reverse a whole opening-balance batch (invoices cancelled, bills voided, GL entry reversed). */
+export function useReverseOpeningBalances() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ batchId, reason, date }: { batchId: string; reason: string; date?: string }) =>
+      idempotentPost(`/opening-balances/${batchId}/reverse`, date ? { reason, date } : { reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['opening-balances'] });
+      qc.invalidateQueries({ queryKey: ['trial-balance'] });
+      notify.success(tx('Opening-balance batch reversed'));
+    },
+    onError: (e) => notify.error(apiMessage(e, tx('Could not reverse the opening-balance batch'))),
   });
 }
 

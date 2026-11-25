@@ -156,6 +156,16 @@ public class AccountResolverService {
                 .setParameter("code", code).setParameter("org", organizationId)
                 .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
         if (account == null) {
+            // B5: two first uses at once both found nothing and both inserted; the second failed on the unique code
+            // (a 500). Serialise creation per organization and code, then look again under the lock.
+            em.createNativeQuery("SELECT pg_advisory_xact_lock(hashtextextended(?1 || '|ensure-account|' || ?2, 0))")
+                    .setParameter(1, organizationId).setParameter(2, code).getResultList();
+            account = em.createQuery("select a from Account a where a.code = :code and a.organizationId = :org"
+                            + " and a.deletedAt is null", Account.class)
+                    .setParameter("code", code).setParameter("org", organizationId)
+                    .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+        }
+        if (account == null) {
             AccountCategory category = em.createQuery("select c from AccountCategory c where c.key = :key",
                             AccountCategory.class)
                     .setParameter("key", categoryKey).setMaxResults(1).getResultList().stream().findFirst().orElse(null);

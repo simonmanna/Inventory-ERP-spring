@@ -195,6 +195,30 @@ public class PeriodCloseChecklistService {
                 + " l.\"periodTo\" >= e.\"postingDate\"::date)", org, startAt, endAt,
                 CostingDimensionGuard.COSTING_SOURCES.toArray(String[]::new));
         checks.add(check("costing_close", "Costing period closed (cost close cockpit)", false, costingUnlocked));
+        // Finance readiness audit B5 (P3): advisory reminders for the other sub-ledgers that feed the GL.
+        long taxActivity = count("SELECT count(*) FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id ="
+                + " l.\"journalEntryId\" WHERE e.\"organizationId\" = ? AND e.status::text IN ('posted', 'reversed')"
+                + " AND e.\"postingDate\" >= ? AND e.\"postingDate\" <= ? AND l.\"accountId\" IN (SELECT \"accountId\""
+                + " FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key IN ('tax_payable', 'tax_receivable')"
+                + " AND \"deletedAt\" IS NULL UNION SELECT \"accountId\" FROM \"Tax\" WHERE \"organizationId\" = ? AND"
+                + " \"accountId\" IS NOT NULL)", org, startAt, endAt, org, org);
+        long vatSettled = taxActivity == 0 ? 1 : count("SELECT count(*) FROM \"TaxSettlement\" WHERE"
+                + " \"organizationId\" = ? AND \"reversedAt\" IS NULL AND \"periodTo\"::date >= ?::date", org, end);
+        checks.add(check("vat_settled", "VAT settled through the period end", false, vatSettled == 0 ? 1 : 0));
+        checks.add(check("depreciation_posted", "Depreciation for the period posted", false,
+                count("SELECT count(*) FROM \"AssetDepreciation\" WHERE \"organizationId\" = ? AND NOT \"isPosted\""
+                        + " AND period >= to_char(?::timestamp, 'YYYY-MM') AND period <= to_char(?::timestamp, 'YYYY-MM')",
+                        org, start, end)));
+        checks.add(check("payroll_posted", "Payroll runs of the period posted to the GL", false,
+                count("SELECT count(*) FROM \"HrPayrollRun\" r JOIN \"HrPayrollPeriod\" p ON p.id = r.\"periodId\""
+                        + " WHERE r.\"organizationId\" = ? AND r.status::text <> 'REVERSED' AND NOT r.\"glPosted\""
+                        + " AND p.\"deletedAt\" IS NULL AND p.\"endDate\" >= ? AND p.\"endDate\" <= ?", org, start, end)));
+        checks.add(check("recurring_failed", "No failed recurring journal runs", false,
+                count("SELECT count(*) FROM \"RecurringJournalRun\" WHERE \"organizationId\" = ? AND status = 'failed'"
+                        + " AND \"runDate\" >= ?::date AND \"runDate\" <= ?::date", org, start, end)));
+        checks.add(check("deferrals_released", "Deferral releases due in the period posted", false,
+                count("SELECT count(*) FROM \"DeferralRelease\" WHERE \"organizationId\" = ? AND status = 'planned'"
+                        + " AND \"periodEnd\" <= ?::date", org, end)));
         // LC-3 (ADR-S053): landed-cost shares parked because their goods could not be followed must be resolved.
         // The full landed-cost reconciliation (six balances, classification, location) is on its own page.
         checks.add(check("landed_cost_lineage", "Landed cost lineage exceptions resolved", false,

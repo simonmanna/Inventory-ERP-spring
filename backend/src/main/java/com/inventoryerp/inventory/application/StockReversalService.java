@@ -230,7 +230,7 @@ public class StockReversalService {
     private List<Map<String, Object>> ledgerRows(String referenceType, String referenceId, String type) {
         return SqlRows.list(jdbc.sql("SELECT * FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
                         + " AND \"referenceType\" = ? AND \"referenceId\" = ?" + (type != null ? " AND type::text = ?" : "")
-                        + " ORDER BY \"createdAt\" ASC")
+                        + " ORDER BY \"createdAt\" ASC, seq ASC")
                 .params(type != null ? List.of(org(), referenceType, referenceId, type)
                         : List.of(org(), referenceType, referenceId)));
     }
@@ -362,7 +362,7 @@ public class StockReversalService {
                         + " LEFT JOIN \"InventorySerial\" s ON s.id = l.\"serialId\""
                         + " JOIN \"Product\" p ON p.id = l.\"productId\""
                         + " WHERE l.\"organizationId\" = ? AND ((l.\"referenceType\" = ? AND l.\"referenceId\" = ?)" + legacy
-                        + ") ORDER BY l.\"createdAt\" ASC")
+                        + ") ORDER BY l.\"createdAt\" ASC, l.seq ASC")
                 .params(params));
         if (rows.isEmpty()) {
             throw ApiException.badRequest(p.referenceId() + " has no posted stock movements to reverse");
@@ -637,7 +637,7 @@ public class StockReversalService {
                         + " LEFT JOIN \"InventorySerial\" s ON s.id = l.\"serialId\""
                         + " JOIN \"Product\" p ON p.id = l.\"productId\""
                         + " WHERE l.\"organizationId\" = ? AND " + where + " AND l.\"quantityChange\" < 0"
-                        + " ORDER BY l.\"createdAt\" ASC, l.id ASC")
+                        + " ORDER BY l.\"createdAt\" ASC, l.seq ASC")
                 .params(params));
     }
 
