@@ -764,6 +764,27 @@ Everything below is new; Nest has none of it. Tests: `PeriodControlsIT`, `Fiscal
   posts payroll several years ahead. 366 suits a business that never posts into next year early.
 - **Postings outside every period** are already reported nightly: integrity check I5 (`uncovered_day`, A0).
 
+## Finance readiness audit B2: reversing an opening-balance batch (owner-approved 2026-11-24)
+
+Audit finding P2-6: an opening-balance batch could not be undone. The generic journal reversal refuses it (A2), because a
+bare GL reversal would leave the customer and supplier open items behind, and it had no route of its own.
+
+- `POST /opening-balances/{batchId}/reverse`, body `{ reason, date? }`. It needs both `opening_balance:post` and
+  `journal_entry:reverse`, because it undoes posted history. An `Idempotency-Key` is required.
+- All or nothing, in one transaction:
+  1. Each customer invoice of the batch is cancelled, and each supplier bill voided, through its own workflow: the
+     approval gate, separation of duties and the refusal while anything is settled against it all apply, with the
+     batch's reason.
+  2. The batch's GL entry is reversed by the posting engine on `date`, else on the original date. A closed period or
+     the books lock date refuses it; pass a later `date` then.
+  3. One audit row (`OpeningBalanceBatch`, `cancel`) lists what was reversed.
+- Documents already cancelled one by one are skipped. A batch with nothing left is refused: "Opening-balance batch X is
+  already reversed". An unknown batch is a 404.
+- The generic route still refuses the batch's entry, and its message now names this route.
+- Web: the opening balances page lists the batches with a "Reverse batch" action (asks for the reason).
+
+No Nest counterpart.
+
 ## Finance readiness audit B5: fixes for issues found during the audit (owner-approved 2026-11-24)
 
 The owner asked on 2026-11-24 to fix the issues the audit found. Each fix below is a deviation from Nest.

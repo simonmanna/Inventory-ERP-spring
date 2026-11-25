@@ -124,11 +124,14 @@ class GenericReversalAllowlistIT extends AccountingFixtures {
     }
 
     @Test
-    @DisplayName("A2: opening-balance batches stay refused; a payment allocation is undone by voiding the payment")
+    @DisplayName("A2: opening-balance batches stay refused and name the batch reversal (B2); a payment allocation is"
+            + " undone by voiding the payment")
     void openingBalanceAndPaymentAllocationRefused() {
         Books b = freshBooks();
-        refused(b, systemEntry(b, "opening_balance", UUID.randomUUID().toString()), "opening-balance batch",
-                "out of step with the control account", "post a control-account adjustment naming the partner");
+        String batch = UUID.randomUUID().toString();
+        refused(b, systemEntry(b, "opening_balance", batch), "opening-balance batch",
+                "out of step with the control account", "reverse the whole batch",
+                "(POST /opening-balances/" + batch + "/reverse)");
         String payment = UUID.randomUUID().toString();
         refused(b, systemEntry(b, "payment_allocation", payment), "void the payment",
                 "(POST /payments/" + payment + "/void)");

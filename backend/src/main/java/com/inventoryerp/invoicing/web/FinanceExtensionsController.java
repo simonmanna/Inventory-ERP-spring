@@ -14,6 +14,7 @@ import com.inventoryerp.kernel.security.RequirePermissions;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
@@ -68,6 +69,12 @@ public class FinanceExtensionsController {
             @Valid List<PartnerLineRequest> customers,
             @Valid List<PartnerLineRequest> suppliers) {}
 
+    /** {@code POST /opening-balances/{batchId}/reverse} (finance readiness audit B2). */
+    public record ReverseOpeningBalanceRequest(
+            @NotBlank(message = "reason should not be empty")
+            @Size(max = 500, message = "reason must be shorter than or equal to 500 characters") String reason,
+            @Pattern(regexp = DATE, message = DATE_MSG) String date) {}
+
     /** E-mail body for invoices and statements. */
     public record EmailRequest(
             @Email(message = "to must be an email") String to,
@@ -110,6 +117,18 @@ public class FinanceExtensionsController {
                         .map(a -> new AccountLine(a.accountId(), a.debit(), a.credit(), a.description(),
                                 a.currencyCode(), a.exchangeRate())).toList(),
                 partners(dto.customers()), partners(dto.suppliers())));
+    }
+
+    /**
+     * Reverses a whole opening-balance batch: its invoices are cancelled, its bills voided and its GL entry reversed,
+     * in one transaction. Undoing posted history, so it also needs {@code journal_entry:reverse}.
+     */
+    @PostMapping("/opening-balances/{batchId}/reverse")
+    @Idempotent(required = true)
+    @RequirePermissions({Permissions.OPENING_BALANCE__POST, Permissions.JOURNAL_ENTRY__REVERSE})
+    public Map<String, Object> reverseOpeningBalances(@PathVariable String batchId,
+            @Valid @RequestBody ReverseOpeningBalanceRequest dto) {
+        return openings.reverse(batchId, dto.reason(), dto.date());
     }
 
     private static List<PartnerLine> partners(List<PartnerLineRequest> in) {
