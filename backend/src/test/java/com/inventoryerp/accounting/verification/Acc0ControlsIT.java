@@ -26,6 +26,7 @@ import tools.jackson.databind.JsonNode;
  * overlap (R1, V512), the database refuses lines added to a posted entry and unbalanced posted entries (R2, V513), the
  * API role cannot switch the evidence guards off (R7, V513), and account queries are scoped to the organization (R6).
  */
+@com.inventoryerp.accounting.support.LedgerInvariantsCheck.Skip("inserts unbalanced entries to prove the database guards and controls refuse them")
 class Acc0ControlsIT extends AccountingFixtures {
 
     private String status(String periodId) {
