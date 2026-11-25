@@ -120,8 +120,16 @@ public class PlmRevisionService {
         Map<String, Object> a = snap(from);
         Map<String, Object> b = snap(to);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("from", summary(from));
-        out.put("to", summary(to));
+        boolean seesCost = PlmReportService.seesCost();
+        Map<String, Object> fromSummary = summary(from);
+        Map<String, Object> toSummary = summary(to);
+        if (!seesCost) {
+            // Audit 2026-11-24: the revision's unit cost is inventory valuation (ADR-S086 §5).
+            fromSummary.put("unitCost", null);
+            toSummary.put("unitCost", null);
+        }
+        out.put("from", fromSummary);
+        out.put("to", toSummary);
         out.put("recorded", snapshotted(from) && snapshotted(to));
 
         Map<String, Object> pa = (Map<String, Object>) a.getOrDefault("product", Map.of());
@@ -137,7 +145,6 @@ public class PlmRevisionService {
         out.put("routing", compareRoutings((Map<String, Object>) a.get("routing"), (Map<String, Object>) b.get("routing")));
         out.put("documents", compareDocuments((List<Map<String, Object>>) a.getOrDefault("documents", List.of()),
                 (List<Map<String, Object>>) b.getOrDefault("documents", List.of())));
-        boolean seesCost = PlmReportService.seesCost();
         BigDecimal ca = seesCost ? (BigDecimal) from.get("unitCost") : null;
         BigDecimal cb = seesCost ? (BigDecimal) to.get("unitCost") : null;
         out.put("cost", Obj.of("from", ca, "to", cb, "delta", ca == null || cb == null ? null : cb.subtract(ca)));

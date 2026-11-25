@@ -266,4 +266,29 @@ class SalesOrderIT extends ApiTestSupport {
         assertThat(assertAuthorizationMatrix("com.inventoryerp.sales")).isGreaterThan(30);
         assertThat(new BigDecimal("1")).isPositive();
     }
+
+    @Test
+    @DisplayName("PLM sell rule (ADR-S086 §6): a change request cannot add or swap in a product not released for sale;"
+            + " the order's own products stay amendable")
+    void plmSellRuleOnChangeRequests() {
+        String design = product("Prototype paver " + UUID.randomUUID(), 3000);
+        ok(201, "POST", "/manufacturing/plm/items", Map.of("productId", design, "lifecycleState", "design"));
+        String code = jdbc.sql("SELECT code FROM \"Product\" WHERE id = ?").param(design).query(String.class).single();
+        String id = call("POST", "/sales/orders", Map.of("partnerId", customer, "lines", List.of(Map.of("productId",
+                blocks, "quantity", 10))), repToken).body().get("id").asString();
+        assertThat(call("POST", "/sales/orders/" + id + "/confirm", null, repToken).status()).isEqualTo(200);
+        String lineId = ok(200, "GET", "/sales/orders/" + id, null).get("lines").get(0).get("id").asString();
+        String refusal = "Product " + code + " is in design and cannot be sold.";
+        Res added = call("POST", "/sales/orders/" + id + "/change-requests", Map.of("reason", "add a prototype",
+                "changes", Map.of("addLines", List.of(Map.of("productId", design, "quantity", 5)))), repToken);
+        assertThat(added.status()).isEqualTo(400);
+        assertThat(added.body().get("message").asString()).isEqualTo(refusal);
+        Res swapped = call("POST", "/sales/orders/" + id + "/change-requests", Map.of("reason", "swap", "changes",
+                Map.of("lines", List.of(Map.of("lineId", lineId, "productId", design)))), repToken);
+        assertThat(swapped.status()).isEqualTo(400);
+        assertThat(swapped.body().get("message").asString()).isEqualTo(refusal);
+        // The order's own product is not re-checked.
+        assertThat(call("POST", "/sales/orders/" + id + "/change-requests", Map.of("reason", "more", "changes",
+                Map.of("lines", List.of(Map.of("lineId", lineId, "quantity", 12)))), repToken).status()).isEqualTo(201);
+    }
 }

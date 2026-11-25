@@ -296,10 +296,11 @@ public class PlmDispositionService {
         Object scheduled = old.get("scheduledFor");
         String notes = (old.get("notes") == null ? "" : old.get("notes") + "\n") + "Replaces " + old.get("orderCode")
                 + " (" + number + ").";
-        Map<String, Object> created = production.createOrder(new CreateOrder(newBomId, null, null,
-                str(old, "locationId"), str(old, "outputLocationId"), null, dec(old, "plannedQty"),
+        // A replacement of an existing order: a phase-out product may still be made for it (PlmGate#replacing).
+        Map<String, Object> created = PlmGate.replacing(() -> production.createOrder(new CreateOrder(newBomId, null,
+                null, str(old, "locationId"), str(old, "outputLocationId"), null, dec(old, "plannedQty"),
                 scheduled == null ? null : scheduled.toString().substring(0, 10), str(old, "batchNumber"), null, null,
-                notes, null, null));
+                notes, null, null)));
         String newId = str(created, "id");
         Map<String, Object> links = new LinkedHashMap<>();
         if (old.get("requestId") != null) {

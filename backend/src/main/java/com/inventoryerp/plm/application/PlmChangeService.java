@@ -157,6 +157,16 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
     @Transactional
     public List<Map<String, Object>> list(String status, String stageId, String type, String productId, String q,
             String changeTypeId, String tagId, String kanbanState) {
+        return list(status, stageId, type, productId, q, changeTypeId, tagId, kanbanState, null);
+    }
+
+    /**
+     * The change list. {@code costStatus} (ADR-S086 §5) finds the changes whose cost step is {@code pending},
+     * {@code failed}, {@code incomplete}, ... for investigation. The cost result is masked as on every ECO read.
+     */
+    @Transactional
+    public List<Map<String, Object>> list(String status, String stageId, String type, String productId, String q,
+            String changeTypeId, String tagId, String kanbanState, String costStatus) {
         stages.types();
         StringBuilder sql = new StringBuilder("SELECT e.*, s.name AS \"stageName\", s.sequence AS \"stageSequence\","
                 + " s.folded AS \"stageFolded\", r.number AS \"requestNumber\", t.name AS \"changeTypeName\","
@@ -181,6 +191,10 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
             sql.append(" AND EXISTS (SELECT 1 FROM \"PlmChangeTag\" ct WHERE ct.\"changeId\" = e.id AND ct.\"tagId\" = ?)");
             params.add(tagId);
         }
+        if (costStatus != null && !costStatus.isBlank()) {
+            sql.append(" AND e.\"costResult\" ->> 'status' = ?");
+            params.add(costStatus);
+        }
         if (q != null && !q.isBlank()) {
             sql.append(" AND (e.number ILIKE ? OR e.title ILIKE ?)");
             params.add("%" + q.trim() + "%");
@@ -201,6 +215,7 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
             r.put("product", p.get(str(r, "productId")));
             r.put("ownerName", names.get(str(r, "ownerId")));
             r.put("tags", tagged.getOrDefault(str(r, "id"), List.of()));
+            r.put("costResult", PlmCostService.visibleResult(r.get("costResult")));
         });
         return rows;
     }
@@ -420,6 +435,7 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
         // ADR-S086: cost policy and first article, defaulted from the PLM settings where the change names none.
         Map<String, Object> settled = new LinkedHashMap<>();
         String costPolicy = dto.costPolicy();
+        cost.requireMayActivate(costPolicy);
         if (costPolicy == null && "bom".equals(dto.type())) {
             costPolicy = cost.fit(settings.defaultCostPolicy(), productId);
         }
@@ -533,6 +549,7 @@ public class PlmChangeService implements EngineeringChangeWorkflow {
             data.put("productChanges", changes.isEmpty() ? null : new PlmDb.Json(changes));
         }
         if (dto.costPolicy() != null) {
+            cost.requireMayActivate(dto.costPolicy());
             cost.validate(dto.costPolicy(), str(eco, "type"), str(eco, "productId"));
             data.put("costPolicy", dto.costPolicy());
         }

@@ -176,12 +176,15 @@ public class PlmSupport {
                 actor(), "stageId", stageId));
     }
 
-    /** Outbox event with the organization id first. */
+    /**
+     * Outbox event with the organization id first, published once the caller's transaction commits (audit 2026-11-24:
+     * a rolled-back change announces nothing).
+     */
     void event(String name, Map<String, Object> payload) {
         Map<String, Object> p = new LinkedHashMap<>();
         p.put("organizationId", PlmDb.org());
         p.putAll(payload);
-        events.publish(name, p);
+        events.publishOnCommit(name, p);
     }
 
     /** The organization's time zone (UTC when unset or invalid): effective dates are org calendar days. */

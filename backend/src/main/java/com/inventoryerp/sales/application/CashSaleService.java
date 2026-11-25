@@ -568,11 +568,41 @@ public class CashSaleService {
         return out;
     }
 
+    /** The PLM lifecycle policy (ADR-S086 §6), when the PLM application is part of the build. */
+    private org.springframework.beans.factory.ObjectProvider<com.inventoryerp.core.application.ProductLifecycleGuard>
+            lifecycleGuard;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setLifecycleGuard(org.springframework.beans.factory.ObjectProvider<
+            com.inventoryerp.core.application.ProductLifecycleGuard> lifecycleGuard) {
+        this.lifecycleGuard = lifecycleGuard;
+    }
+
+    /**
+     * Audit 2026-11-24 (ADR-S086 §6): the {@code sell} column of the lifecycle policy for the products {@code
+     * productIds} brings onto the document; products it already carries ({@code had}) stay sellable on it.
+     */
+    private void requireSellable(java.util.Collection<String> productIds, java.util.Set<String> had) {
+        com.inventoryerp.core.application.ProductLifecycleGuard guard = lifecycleGuard == null ? null
+                : lifecycleGuard.getIfAvailable();
+        if (guard == null) {
+            return;
+        }
+        guard.requireAllowed(com.inventoryerp.core.application.ProductLifecycleGuard.SELL, productIds.stream()
+                .filter(p -> p != null && !had.contains(p)).distinct().toList());
+    }
+
     /** Replace the lines of a draft: priced (explicit price or the pricing engine) and taxed by the tax engine. */
     @SuppressWarnings("unchecked")
     private void writeLines(String id, String partnerId, LocalDate on, Object raw) {
-        db.update("DELETE FROM \"SalesSubmissionLine\" WHERE \"submissionId\" = ? AND \"organizationId\" = ?", id, org());
         List<Map<String, Object>> lines = raw instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
+        // A cash sale is a sale: products new to the submission follow the sell rule, checked before anything is
+        // written; its own lines stay editable after the product is retired.
+        java.util.Set<String> had = new java.util.HashSet<>();
+        db.rows("SELECT DISTINCT \"productId\" FROM \"SalesSubmissionLine\" WHERE \"submissionId\" = ? AND"
+                + " \"organizationId\" = ?", id, org()).forEach(r -> had.add(str(r.get("productId"))));
+        requireSellable(lines.stream().map(x -> str(x.get("productId"))).toList(), had);
+        db.update("DELETE FROM \"SalesSubmissionLine\" WHERE \"submissionId\" = ? AND \"organizationId\" = ?", id, org());
         List<LineInput> inputs = new ArrayList<>();
         List<Map<String, Object>> meta = new ArrayList<>();
         for (Map<String, Object> l : lines) {

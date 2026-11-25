@@ -24,6 +24,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class PlmGate implements ProductionLifecycleGate {
 
+    /** Set while an ECO disposition recreates a not-started order (see {@link #replacing}). */
+    private static final ThreadLocal<Boolean> REPLACING = new ThreadLocal<>();
+
     private final PlmDb db;
     private final PlmApp app;
     private final PlmLifecyclePolicy policy;
@@ -48,10 +51,32 @@ public class PlmGate implements ProductionLifecycleGate {
                 + " AND \"productId\" = ?").params(PlmDb.org(), productId).query(String.class).optional().orElse(null);
     }
 
+    /**
+     * Run {@code body} as an ECO disposition recreating a not-started production order on the new version: the order
+     * replaces one that already existed for the same quantity, so a product being phased out may still be made for it
+     * (audit 2026-11-24). Other blocks (obsolete, not yet released) still apply.
+     */
+    static <T> T replacing(java.util.function.Supplier<T> body) {
+        Boolean previous = REPLACING.get();
+        REPLACING.set(Boolean.TRUE);
+        try {
+            return body.get();
+        } finally {
+            if (previous == null) {
+                REPLACING.remove();
+            } else {
+                REPLACING.set(previous);
+            }
+        }
+    }
+
     /** Production orders: the {@code produce} column of the lifecycle policy, with its exceptions. */
     @Override
     public void requireProducible(String productId) {
         if (!active() || productId == null) {
+            return;
+        }
+        if (Boolean.TRUE.equals(REPLACING.get()) && "phase_out".equals(state(productId))) {
             return;
         }
         policy.requireAllowed(com.inventoryerp.core.application.ProductLifecycleGuard.PRODUCE, List.of(productId));

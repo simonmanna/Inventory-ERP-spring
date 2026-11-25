@@ -138,8 +138,37 @@ public class EngineeringService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String status, Integer limit, Integer offset) {
         String page = MfgDb.page(limit, offset);
-        return status != null ? db.list(EngineeringChange.class, " AND status = ? ORDER BY \"createdAt\" DESC, id"
-                + page, status) : db.list(EngineeringChange.class, " ORDER BY \"createdAt\" DESC, id" + page);
+        List<Map<String, Object>> rows = status != null ? db.list(EngineeringChange.class, " AND status = ?"
+                + " ORDER BY \"createdAt\" DESC, id" + page, status)
+                : db.list(EngineeringChange.class, " ORDER BY \"createdAt\" DESC, id" + page);
+        rows.forEach(EngineeringService::maskCost);
+        return rows;
+    }
+
+    /**
+     * Audit 2026-11-24 (ADR-S086 §5): a PLM cost result carries valuation figures (unit standard, revaluation), which
+     * are for users who may read inventory valuation; others keep its policy, status, version and note.
+     */
+    @SuppressWarnings("unchecked")
+    static void maskCost(Map<String, Object> eco) {
+        if (com.inventoryerp.kernel.tenancy.TenantContext.has(
+                com.inventoryerp.kernel.security.Permissions.INVENTORY_VALUATION__READ)) {
+            return;
+        }
+        Object raw = eco.get("costResult");
+        Map<String, Object> kept = new java.util.LinkedHashMap<>();
+        if (raw instanceof tools.jackson.databind.JsonNode n && n.isObject()) {
+            for (String k : List.of("policy", "status", "version", "note")) {
+                kept.put(k, n.get(k));
+            }
+        } else if (raw instanceof Map<?, ?> m) {
+            for (String k : List.of("policy", "status", "version", "note")) {
+                kept.put(k, ((Map<String, Object>) m).get(k));
+            }
+        } else {
+            return;
+        }
+        eco.put("costResult", kept);
     }
 
     @Transactional(readOnly = true)
@@ -149,6 +178,7 @@ public class EngineeringService {
         boolean both = eco.get("bomId") != null && eco.get("newBomId") != null
                 && db.byId(Bom.class, str(eco, "bomId")) != null && db.byId(Bom.class, str(eco, "newBomId")) != null;
         eco.put("comparison", both ? compare(str(eco, "bomId"), str(eco, "newBomId")) : null);
+        maskCost(eco);
         return eco;
     }
 

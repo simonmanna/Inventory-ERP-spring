@@ -98,7 +98,10 @@ public class PlmCostService {
         }
     }
 
-    /** A default cost policy as far as the product allows it: activate → propose off standard cost; none if serial. */
+    /**
+     * A default cost policy as far as the product and the user allow it: activate → propose off standard cost or for a
+     * user who may not approve standard cost; none if serial-tracked.
+     */
     String fit(String policy, String productId) {
         if (policy == null || "none".equals(policy) || productId == null) {
             return "none";
@@ -107,7 +110,24 @@ public class PlmCostService {
         if (Boolean.TRUE.equals(p.get("serialTracking"))) {
             return "none";
         }
-        return "activate".equals(policy) && !"STANDARD".equals(p.get("method")) ? "propose" : policy;
+        return "activate".equals(policy) && (!"STANDARD".equals(p.get("method")) || !mayApprove()) ? "propose"
+                : policy;
+    }
+
+    /**
+     * Audit 2026-11-24: {@code activate} approves and activates a standard cost, so the user who names it must hold
+     * {@code standard_cost:approve}, as on the Standard costs screen.
+     */
+    void requireMayActivate(String policy) {
+        if ("activate".equals(policy) && !mayApprove()) {
+            throw ApiException.forbidden("costPolicy activate approves and activates a standard cost; it needs the"
+                    + " standard_cost:approve permission (use propose).");
+        }
+    }
+
+    private static boolean mayApprove() {
+        return com.inventoryerp.kernel.tenancy.TenantContext.has(
+                com.inventoryerp.kernel.security.Permissions.STANDARD_COST__APPROVE);
     }
 
     /** Whether applying {@code eco} has a cost step: a BOM change with a cost policy other than {@code none}. */
@@ -432,6 +452,12 @@ public class PlmCostService {
     }
 
     private String activationBlocker(Map<String, Object> p, Object version) {
+        // The person applying approves the standard: without standard_cost:approve it stays a proposal. The hourly
+        // switch-over job has no user; the policy was authorized by whoever set it (requireMayActivate).
+        if (com.inventoryerp.kernel.tenancy.TenantContext.userId() != null && !mayApprove()) {
+            return "The user applying the change may not approve standard cost; standard cost"
+                    + (version == null ? "" : " v" + version) + " waits for approval in Standard costs.";
+        }
         if (!"STANDARD".equals(p.get("method"))) {
             return "Product " + p.get("code") + " is costed at " + p.get("method") + "; the standard waits for"
                     + " activation in Standard costs.";

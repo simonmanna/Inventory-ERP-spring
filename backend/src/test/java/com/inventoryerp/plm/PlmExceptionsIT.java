@@ -109,11 +109,22 @@ class PlmExceptionsIT extends PlmTestSupport {
     }
 
     /** A DEMO user who may read PLM but not inventory valuation. */
-    String plmReader() {
+    static JsonNode byId(JsonNode rows, String id) {
+        for (JsonNode r : rows) {
+            if (id.equals(r.get("id").asString())) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    String plmReader(String... extra) {
         String role = UUID.randomUUID().toString();
+        List<String> perms = new ArrayList<>(List.of("plm:read"));
+        perms.addAll(Arrays.asList(extra));
         jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
                 + " VALUES (?, ?, ?, false, ?, now())").params(role, demoOrg, "PLM reader " + role,
-                        new String[] {"plm:read"}).update();
+                        perms.toArray(String[]::new)).update();
         String email = "plm-reader-" + suffix() + "@demo.test";
         createUser(demoOrg, email, "Reader@12345", role);
         return login("DEMO", email, "Reader@12345");
@@ -390,7 +401,7 @@ class PlmExceptionsIT extends PlmTestSupport {
         jdbc.sql("UPDATE \"EngineeringChange\" SET \"costResult\" = ?::jsonb WHERE id = ?").params("{\"policy\":"
                 + "\"activate\",\"status\":\"active\",\"version\":3,\"unitCost\":12.5,\"revaluationAmount\":40,"
                 + "\"note\":null}", ecoId).update();
-        String reader = plmReader();
+        String reader = plmReader("bom:read");
 
         // ECO detail.
         JsonNode adminView = ok(200, "GET", PLM + "/changes/" + ecoId, null);
@@ -402,6 +413,23 @@ class PlmExceptionsIT extends PlmTestSupport {
         assertThat(readerView.get("costResult").get("version").asInt()).isEqualTo(3);
         assertThat(readerView.get("costResult").has("unitCost")).isFalse();
         assertThat(readerView.get("costResult").has("revaluationAmount")).isFalse();
+
+        // Change list (audit 2026-11-24), with the cost-status filter for investigation (ADR-S086 §5).
+        JsonNode adminRow = byId(ok(200, "GET", PLM + "/changes?costStatus=active", null), ecoId);
+        assertThat(adminRow.get("costResult").get("unitCost").asDouble()).isEqualTo(12.5);
+        JsonNode readerRow = byId(okAs(reader, 200, "GET", PLM + "/changes?costStatus=active", null), ecoId);
+        assertThat(readerRow.get("costResult").get("status").asString()).isEqualTo("active");
+        assertThat(readerRow.get("costResult").has("unitCost")).isFalse();
+        assertThat(byId(ok(200, "GET", PLM + "/changes?costStatus=failed", null), ecoId)).isNull();
+
+        // The ADR-S006 engineering-change reads (bom:read) mask the same figures.
+        JsonNode legacy = okAs(reader, 200, "GET", "/manufacturing/engineering-changes/" + ecoId, null);
+        assertThat(legacy.get("costResult").get("version").asInt()).isEqualTo(3);
+        assertThat(legacy.get("costResult").has("unitCost")).isFalse();
+        JsonNode legacyRow = byId(okAs(reader, 200, "GET", "/manufacturing/engineering-changes", null), ecoId);
+        assertThat(legacyRow.get("costResult").has("revaluationAmount")).isFalse();
+        assertThat(ok(200, "GET", "/manufacturing/engineering-changes/" + ecoId, null).get("costResult")
+                .get("unitCost").asDouble()).isEqualTo(12.5);
 
         // Revisions.
         List<JsonNode> adminRevs = new ArrayList<>();
@@ -425,6 +453,8 @@ class PlmExceptionsIT extends PlmTestSupport {
         assertThat(readerCmp.get("costVisible").asBoolean()).isFalse();
         assertThat(readerCmp.get("cost").get("from").isNull()).isTrue();
         assertThat(readerCmp.get("cost").get("delta").isNull()).isTrue();
+        assertThat(readerCmp.get("from").get("unitCost").isNull()).isTrue();
+        assertThat(readerCmp.get("to").get("unitCost").isNull()).isTrue();
         assertThat(readerCmp.get("bom").get("added")).hasSize(1);
 
         // Impact of an open change.

@@ -207,8 +207,8 @@ public class PlmController {
             @RequestParam(required = false) String stageId, @RequestParam(required = false) String type,
             @RequestParam(required = false) String productId, @RequestParam(required = false) String q,
             @RequestParam(required = false) String changeTypeId, @RequestParam(required = false) String tagId,
-            @RequestParam(required = false) String kanbanState) {
-        return changes.list(status, stageId, type, productId, q, changeTypeId, tagId, kanbanState);
+            @RequestParam(required = false) String kanbanState, @RequestParam(required = false) String costStatus) {
+        return changes.list(status, stageId, type, productId, q, changeTypeId, tagId, kanbanState, costStatus);
     }
 
     @PostMapping("/changes")

@@ -1005,4 +1005,35 @@ class CashSaleIT extends ApiTestSupport {
                 CashSaleController.InvoiceSource.class))
                 .isGreaterThan(20);
     }
+
+    @Test
+    @DisplayName("PLM sell rule (ADR-S086 §6): a product not released for sale cannot be put on a cash sale; lines the"
+            + " draft already had stay editable after the product is retired")
+    void plmSellRule() {
+        String design = product("Prototype block " + UUID.randomUUID(), 35_000, 21_000);
+        ok(201, "POST", "/manufacturing/plm/items", Map.of("productId", design, "lifecycleState", "design"));
+        String code = jdbc.sql("SELECT code FROM \"Product\" WHERE id = ?").param(design).query(String.class).single();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("branchId", branch);
+        body.put("customerName", "ABC Construction");
+        body.put("lines", List.of(Map.of("productId", design, "quantity", 1, "unitPrice", 35_000, "taxId", vat)));
+        Res refused = as("POST", "/sales/cash-sales", body);
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).isEqualTo("Product " + code + " is in design and cannot"
+                + " be sold.");
+
+        String released = product("Released block " + UUID.randomUUID(), 35_000, 21_000);
+        stock(released, location, 10, 21_000);
+        String item = ok(201, "POST", "/manufacturing/plm/items", Map.of("productId", released, "lifecycleState",
+                "released")).get("id").asString();
+        body.put("lines", List.of(Map.of("productId", released, "quantity", 1, "unitPrice", 35_000, "taxId", vat)));
+        String id = ok(201, "POST", "/sales/cash-sales", body).get("id").asString();
+        // Adding the unreleased product to the draft is refused; the draft's own line stays editable once retired.
+        assertThat(as("PATCH", "/sales/cash-sales/" + id, Map.of("lines", List.of(Map.of("productId", released,
+                "quantity", 1, "unitPrice", 35_000, "taxId", vat), Map.of("productId", design, "quantity", 1,
+                "unitPrice", 35_000, "taxId", vat)))).status()).isEqualTo(400);
+        jdbc.sql("UPDATE \"PlmItem\" SET \"lifecycleState\" = 'obsolete' WHERE id = ?").param(item).update();
+        ok(200, "PATCH", "/sales/cash-sales/" + id, Map.of("lines", List.of(Map.of("productId", released, "quantity",
+                2, "unitPrice", 35_000, "taxId", vat))));
+    }
 }
