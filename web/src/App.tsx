@@ -19,6 +19,7 @@ import { RequireReport } from '@/components/require-report';
 import { PERMISSIONS } from '@erp/shared';
 import { fleetRoutes } from '@/pages/fleet/routes';
 import { qualityRoutes } from '@/pages/quality/routes';
+import { qualityControlRoutes } from '@/pages/quality-control/routes';
 import { quarryRoutes } from '@/pages/quarry/routes';
 import { analyticsRoutes } from '@/pages/analytics/routes';
 import { crushingRoutes } from '@/pages/crushing/routes';
@@ -587,6 +588,8 @@ export function App() {
             {fleetRoutes}
             {/* Quality management (ADR-S013) — core-available, quality:* permissions */}
             {qualityRoutes}
+            {/* Quality control (ADR-S087) — core-available, quality_control:* permissions */}
+            {qualityControlRoutes}
             {/* Quarry & extraction (ADR-S012) — screens in pages/quarry/routes.tsx */}
             {quarryRoutes}
             {/* Management dashboards (ADR-S020) — screens in pages/analytics/routes.tsx */}

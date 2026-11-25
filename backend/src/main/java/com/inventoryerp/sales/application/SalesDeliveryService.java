@@ -520,6 +520,7 @@ public class SalesDeliveryService {
         writeLogistics(id, logistics);
         audit.record(AuditInput.of("FleetLoad", id, "create", null, Obj.of("orderId", orderId, "plate", plate, "net", net,
                 "method", method, "plannedDate", planned.toString(), "rescheduledFromId", rescheduledFrom)));
+        qcSync(id);
         return get(id);
     }
 
@@ -725,6 +726,7 @@ public class SalesDeliveryService {
                 }
                 dispatch.replan(id, lines);
                 fulfilment.rebuild(str(t.get("orderId")));
+                qcSync(id);
                 changes.put("lines", "re-planned");
             }
         }
@@ -756,6 +758,37 @@ public class SalesDeliveryService {
                 null, null, null, null, blank(str(in.get("notes"))) ? null : str(in.get("notes")))).get("id"));
     }
 
+    private com.inventoryerp.qualitycontrol.application.QcGate qcGate;
+
+    /** Quality-control gate (ADR-S087); optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setQcGate(com.inventoryerp.qualitycontrol.application.QcGate qcGate) {
+        this.qcGate = qcGate;
+    }
+
+    private void qcSync(String id) {
+        if (qcGate != null) {
+            qcGate.sync(qcDoc(id));
+        }
+    }
+
+    /** A delivery as the quality gate sees it: its load lines in base units at the dispatch warehouse. */
+    private com.inventoryerp.qualitycontrol.application.QcSourceDoc qcDoc(String id) {
+        Map<String, Object> t = db.row("SELECT id, code, \"locationId\" FROM \"FleetLoad\" WHERE id = ? AND"
+                + " \"organizationId\" = ?", id, org());
+        List<com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line> lines = new ArrayList<>();
+        for (Map<String, Object> l : db.rows("SELECT l.id, l.\"productId\", dl.\"variantId\", l.\"plannedQty\","
+                + " l.\"uomFactor\", l.\"batchNumber\" FROM \"FleetLoadLine\" l JOIN \"FleetDeliveryOrderLine\" dl ON"
+                + " dl.id = l.\"deliveryOrderLineId\" WHERE l.\"organizationId\" = ? AND l.\"loadId\" = ? ORDER BY"
+                + " l.id", org(), id)) {
+            lines.add(new com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line(str(l.get("id")), str(l.get("productId")),
+                    str(l.get("variantId")), dec(l.get("plannedQty")).multiply(dec(l.get("uomFactor"))),
+                    str(l.get("batchNumber"))));
+        }
+        return new com.inventoryerp.qualitycontrol.application.QcSourceDoc("sales_delivery", id, str(t.get("code")), "delivery", null,
+                null, null, null, str(t.get("locationId")), lines);
+    }
+
     /** Posting approval (when the setting is on): nobody approves their own delivery. */
     @Transactional
     public Map<String, Object> approve(String id) {
@@ -781,7 +814,14 @@ public class SalesDeliveryService {
         if (Boolean.TRUE.equals(t.get("approvalRequired")) && t.get("approvedAt") == null) {
             throw ApiException.badRequest("This delivery is waiting for approval");
         }
+        // ADR-S087: blocking quality checks of the delivery hold the issue (before any stock or GL write).
+        if (qcGate != null) {
+            qcGate.assertComplete("sales_delivery", id, List.of());
+        }
         dispatch.dispatch(id, null);
+        if (qcGate != null) {
+            qcGate.onCompleted(qcDoc(id).at(null));
+        }
         fulfilment.rebuild(str(t.get("orderId")));
         return get(id);
     }
@@ -802,6 +842,9 @@ public class SalesDeliveryService {
         String reason = str(in.get("reason"));
         if (blank(reason)) {
             throw ApiException.badRequest("reason should not be empty");
+        }
+        if (qcGate != null) {
+            qcGate.cancelFor("sales_delivery", id, List.of(), reason);
         }
         dispatch.cancel(id, reason);
         fulfilment.rebuild(str(t.get("orderId")));

@@ -22,6 +22,7 @@ import {
   useRejectProduction, useReportProduction, useStageIssueFromFloor, useStartWorkOrder,
   type Downtime, type ProductionReport, type Queue, type QueueItem,
 } from '@/features/manufacturing/api-shopfloor';
+import { useSourceChecks, CHECK_STATUS_LABEL } from '@/features/quality-control/api';
 import { BigNumber, ReasonGrid, ShiftReportStatusPill, isNum } from './shopfloor-ui';
 import { EmptyState, MfgStatus, PageSkeleton, ProgressBar, statusMeta, TONE_BORDER, TONE_FILL } from '../mfg-ui';
 
@@ -456,6 +457,10 @@ function FinishDialog({ item, onClose }: { item: QueueItem; onClose: () => void 
   const complete = useCompleteWorkOrder();
   const [notes, setNotes] = useState('');
   const done = useClose(onClose);
+  const canSeeChecks = useAuthStore((s) => s.hasPermission(PERMISSIONS.qualityControl.read));
+  // ADR-S087: the operation's quality checks come first, in order; the server refuses Finish while one blocks.
+  const checks = useSourceChecks('work_order', item.id, canSeeChecks);
+  const blocking = (checks.data ?? []).filter((c) => c.blocksSource);
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-lg">
@@ -463,10 +468,26 @@ function FinishDialog({ item, onClose }: { item: QueueItem; onClose: () => void 
           <DialogTitle>{tx('Finish {{name}}?', { name: item.name })}</DialogTitle>
           <DialogDescription>{tx('Closes the operation and costs its logged time. Report the last output first.')}</DialogDescription>
         </DialogHeader>
+        {(checks.data?.length ?? 0) > 0 && (
+          <div className="space-y-2">
+            <div className="text-sm font-medium">{tx('Quality checks')}</div>
+            <ol className="space-y-1.5">
+              {checks.data!.map((c, i) => (
+                <li key={c.id} className={cn('flex items-center justify-between gap-2 rounded-md border px-3 py-2', c.blocksSource && 'border-destructive/60')}>
+                  <span className="text-sm"><span className="mr-2 text-muted-foreground">{i + 1}.</span>{c.title}</span>
+                  {c.status === 'pending'
+                    ? <Button asChild size="sm" className="h-10"><Link to={`/quality-control/checks/${c.id}`}>{tx('Do check')}</Link></Button>
+                    : <span className="text-sm text-muted-foreground">{CHECK_STATUS_LABEL[c.status]}</span>}
+                </li>
+              ))}
+            </ol>
+            {blocking.length > 0 && <p className="text-sm text-destructive">{tx('Finish is available once the blocking checks are done.')}</p>}
+          </div>
+        )}
         <Textarea rows={2} placeholder={tx('Notes (optional)')} value={notes} onChange={(e) => setNotes(e.target.value)} />
         <DialogFooter>
           <Button variant="outline" className="h-12" onClick={onClose}>{tx('Cancel')}</Button>
-          <Button className="h-12" disabled={complete.isPending}
+          <Button className="h-12" disabled={complete.isPending || blocking.length > 0}
             onClick={() => done(complete.mutateAsync({ id: item.id, body: { notes: notes.trim() || undefined } }), tx('Work order finished'), tx('Could not finish the work order'))}>
             <Square className="mr-1.5 h-4 w-4" />{tx('Finish')}
           </Button>

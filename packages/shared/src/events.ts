@@ -338,7 +338,41 @@ export const EVENTS = {
   TaskAssigned: 'task.assigned',
   CrmDealAssigned: 'crm.deal.assigned',
   QualityCapaCreated: 'quality.capa.created',
+  // Quality control (ADR-S087).
+  QualityControlCheckDone: 'quality_control.check.done',
+  QualityControlCheckFailed: 'quality_control.check.failed',
+  QualityControlAlertCreated: 'quality_control.alert.created',
+  QualityControlAlertAssigned: 'quality_control.alert.assigned',
+  QualityControlAlertStageChanged: 'quality_control.alert.stage_changed',
 } as const;
+
+/** Payload of `quality_control.alert.*` events (ADR-S087 §8). */
+export interface QualityControlAlertPayload {
+  organizationId: string;
+  alertId: string;
+  alertNumber: string;
+  origin: 'manual' | 'auto';
+  checkId: string | null;
+  stageId: string;
+  fromStageId?: string | null;
+  closed?: boolean;
+  teamId: string | null;
+  responsibleUserId: string | null;
+}
+
+/** Payload of `quality_control.check.*` events (ADR-S087). */
+export interface QualityControlCheckPayload {
+  organizationId: string;
+  checkId: string;
+  checkNumber: string;
+  status: 'passed' | 'failed' | 'waived';
+  revision: number;
+  controlPointId: string | null;
+  sourceType: string;
+  sourceId: string | null;
+  teamId: string | null;
+  responsibleUserId: string | null;
+}
 
 /** Payload emitted for a created/updated/deleted tenant entity. */
 /** Common payload of `sales.cash_sale.*` events (ADR-S056). */
@@ -492,6 +526,11 @@ export interface DomainEventMap {
   'task.assigned': { organizationId: string; taskId: string; title: string; assignedToId: string };
   'crm.deal.assigned': { organizationId: string; dealId: string; ownerId: string };
   'quality.capa.created': { organizationId: string; capaId: string; capaNumber: string; ownerUserId: string | null };
+  'quality_control.check.done': QualityControlCheckPayload;
+  'quality_control.check.failed': QualityControlCheckPayload;
+  'quality_control.alert.created': QualityControlAlertPayload;
+  'quality_control.alert.assigned': QualityControlAlertPayload;
+  'quality_control.alert.stage_changed': QualityControlAlertPayload;
   'partner.created': EntityEventPayload;
   'partner.updated': EntityEventPayload;
   'partner.deleted': EntityEventPayload;

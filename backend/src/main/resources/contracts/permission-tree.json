@@ -877,6 +877,13 @@
     "ncr": "quality:ncr",
     "capa": "quality:capa"
   },
+  "qualityControl": {
+    "read": "quality_control:read",
+    "configure": "quality_control:configure",
+    "check": "quality_control:check",
+    "alert": "quality_control:alert",
+    "manage": "quality_control:manage"
+  },
   "quarry": {
     "report": "quarry:report",
     "settings": "quarry:settings"

@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * RBAC permission catalog, format {@code resource:action}. Mirrors packages/shared/src/permissions.ts
- * exactly (741 permissions). Constant name = GROUP__ACTION.
+ * exactly (746 permissions). Constant name = GROUP__ACTION.
  */
 public final class Permissions {
 
@@ -637,6 +637,11 @@ public final class Permissions {
     public static final String QUALITY__DISPOSE = "quality:dispose";
     public static final String QUALITY__NCR = "quality:ncr";
     public static final String QUALITY__CAPA = "quality:capa";
+    public static final String QUALITY_CONTROL__READ = "quality_control:read";
+    public static final String QUALITY_CONTROL__CONFIGURE = "quality_control:configure";
+    public static final String QUALITY_CONTROL__CHECK = "quality_control:check";
+    public static final String QUALITY_CONTROL__ALERT = "quality_control:alert";
+    public static final String QUALITY_CONTROL__MANAGE = "quality_control:manage";
     public static final String QUARRY__REPORT = "quarry:report";
     public static final String QUARRY__SETTINGS = "quarry:settings";
     public static final String QUARRY_SITE__READ = "quarry_site:read";
@@ -1381,6 +1386,11 @@ public final class Permissions {
             "quality:dispose",
             "quality:ncr",
             "quality:capa",
+            "quality_control:read",
+            "quality_control:configure",
+            "quality_control:check",
+            "quality_control:alert",
+            "quality_control:manage",
             "quarry:report",
             "quarry:settings",
             "quarry_site:read",
@@ -1545,5 +1555,8 @@ public final class Permissions {
             "tables:merge",
             "tables:split",
             "tables:edit",
-            "branch:read");
+            "branch:read",
+            "quality_control:read",
+            "quality_control:check",
+            "quality_control:alert");
 }
