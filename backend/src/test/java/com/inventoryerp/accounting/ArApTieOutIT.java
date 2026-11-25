@@ -146,11 +146,69 @@ class ArApTieOutIT extends AccountingFixtures {
         assertThat(monitor(b).resolved()).containsExactly(LedgerIntegrityService.AR_AP_TIEOUT);
     }
 
+    // ------------------------------------------------------------------ B5: foreign AP relieved at its posting rate
+
+    @Test
+    @DisplayName("B5: a foreign bill storing rate 1 is written off at the rate it posted at, so AP ties after the rate"
+            + " moves")
+    void foreignBillWriteOffAtItsPostingRate() {
+        String ccy = demoRate(testCurrency(), 3740);
+        String supplier = demoPartner("B5 FX supplier", true);
+        String bill = foreignBill(supplier, ccy, 500);
+        demoRate(ccy, 3900, today());
+
+        demoMoney("POST", "/vendor-bills/" + bill + "/write-off", Map.of("reason", "B5 waived", "amount", 100));
+        assertApAtPostingRate(supplier, bill, "400");
+    }
+
+    @Test
+    @DisplayName("B5: a supplier claim settled against a foreign bill storing rate 1 relieves AP at the bill's rate")
+    void foreignBillClaimAtItsPostingRate() {
+        String ccy = demoRate(testCurrency(), 3740);
+        String supplier = demoPartner("B5 FX claim supplier", true);
+        String bill = foreignBill(supplier, ccy, 500);
+        demoRate(ccy, 3900, today());
+
+        String claim = ok(201, "POST", "/procurement/claims", Map.of("partnerId", supplier, "type", "price", "amount",
+                50, "description", "B5 over-priced", "vendorBillId", bill)).get("id").asString();
+        ok(200, "POST", "/procurement/claims/" + claim + "/submit", null);
+        ok(200, "POST", "/procurement/claims/" + claim + "/accept", Map.of("response", "agreed"));
+        demoMoney("POST", "/procurement/claims/" + claim + "/settle", Map.of("classification", "price_variance"));
+        assertApAtPostingRate(supplier, bill, "450");
+    }
+
+    private String foreignBill(String supplier, String ccy, int amount) {
+        String bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today(), "currencyId",
+                ccy, "lines", List.of(Map.of("productId", service(), "quantity", 1, "unitPrice", amount)))).get("id")
+                .asString();
+        ok(200, "POST", "/vendor-bills/" + bill + "/post", Map.of("override3WM", true, "overrideApproval", true));
+        assertThat(jdbc.sql("SELECT \"exchangeRate\" FROM \"Document\" WHERE id = ?").param(bill)
+                .query(BigDecimal.class).single()).as("no stated rate stored (FX-1)").isEqualByComparingTo("1");
+        return bill;
+    }
+
+    /** The bill's open balance is {@code residual} and the payable carries it at 3,740, not at today's 3,900. */
+    private void assertApAtPostingRate(String supplier, String bill, String residual) {
+        assertThat(jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?").param(bill)
+                .query(BigDecimal.class).single()).isEqualByComparingTo(residual);
+        BigDecimal base = new BigDecimal(residual).multiply(new BigDecimal("3740"));
+        assertThat(glOnControl(demoOrg, "payable", supplier)).as("AP relieved at 3,740, not at today's 3,900")
+                .isEqualByComparingTo(base.negate());
+        JsonNode row = partnerRow(run("ap.reconciliation"), supplier);
+        assertThat(row).as("the supplier is in the AP reconciliation").isNotNull();
+        assertThat(dec(row.get("values").get("difference"))).isEqualByComparingTo("0");
+        assertThat(i8Partners(demoReport())).doesNotContain(supplier);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private String demoRate(String ccy, int rate) {
-        ok(201, "POST", "/currencies/rates", Map.of("fromCode", ccy, "toCode", baseCurrency(demoOrg), "asOf",
-                LocalDate.now().minusDays(1).toString(), "rate", rate));
+        return demoRate(ccy, rate, LocalDate.now().minusDays(1).toString());
+    }
+
+    private String demoRate(String ccy, int rate, String asOf) {
+        ok(201, "POST", "/currencies/rates", Map.of("fromCode", ccy, "toCode", baseCurrency(demoOrg), "asOf", asOf,
+                "rate", rate));
         return ccy;
     }
 
