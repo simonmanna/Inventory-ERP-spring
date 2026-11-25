@@ -530,10 +530,14 @@ public class InvoiceService {
     /** Edit a draft invoice (lines replaced, totals recomputed). */
     @Transactional
     public Map<String, Object> update(String id, InvoiceInput dto) {
+        // Sales readiness R1: lock before reading the status, so an edit never races a post.
+        jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
+                .query().listOfRows();
         Map<String, Object> doc = builder.document(id, "sales_invoice");
         if (doc == null) {
             throw ApiException.notFound("Invoice not found");
         }
+        assertNotGenerated(id);
         if (dto.lines() != null) {
             builder.assertSaleable(dto.lines());
             builder.assertVariants(dto.lines(), false, false);
@@ -554,7 +558,7 @@ public class InvoiceService {
                         + " incoterm = ?, \"incotermLocation\" = ?, \"sourceDocument\" = ?, \"currencyId\" = ?,"
                         + " \"exchangeRate\" = ?, reference = ?, notes = ?, subtotal = ?, \"discountTotal\" = ?,"
                         + " \"taxAmount\" = ?, \"totalAmount\" = ?, \"amountResidual\" = ?, \"updatedAt\" = " + NOW
-                        + " WHERE id = ? AND \"organizationId\" = ?")
+                        + " WHERE id = ? AND \"organizationId\" = ? AND status = 'draft'")
                 .params(dto.partnerId(), ts(dto.issueDate()), ts(term.dueDate()), term.paymentTermId(),
                         term.paymentTermName(), dto.paymentMode(), dto.fiscalPositionId(), names.fiscalPositionName(),
                         dto.invoicingJournalId(), names.invoicingJournalName(), dto.salespersonId(),
@@ -566,6 +570,21 @@ public class InvoiceService {
                 .update();
         builder.insertLines(id, totals.prepared(), false);
         return withLinesAndPartner(id);
+    }
+
+    /**
+     * Sales readiness R1 (B1): a draft generated from a sales order or a branch cash sale carries exactly what its
+     * source authorised (lines linked to order lines, prices, quantities, taxes). Editing it would let the invoice
+     * diverge from the source; discard the draft ({@code POST /invoices/:id/cancel}) and invoice the source again.
+     */
+    private void assertNotGenerated(String id) {
+        Map<String, Object> src = SqlRows.one(jdbc.sql("SELECT \"sourceType\", \"sourceDocument\" FROM \"Document\""
+                + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
+        String type = src == null ? null : (String) src.get("sourceType");
+        if ("sales_order".equals(type) || "cash_sale".equals(type)) {
+            throw ApiException.badRequest("This invoice was generated from " + ("cash_sale".equals(type) ? "cash sale"
+                    : "sales order") + " " + src.get("sourceDocument") + "; cancel the draft and invoice it again");
+        }
     }
 
     Map<String, Object> withLinesAndPartner(String id) {
@@ -586,7 +605,10 @@ public class InvoiceService {
         boolean delivered = Boolean.TRUE.equals(jdbc.sql("SELECT data->>'stockIssuedBy' IS NOT NULL FROM \"Document\""
                 + " WHERE id = ? AND \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional()
                 .orElse(false));
-        if (delivered && "draft".equals(String.valueOf(doc.get("status")))) {
+        // Sales readiness R1: every draft with a commercial source is rechecked against it, goods or not.
+        boolean sourced = jdbc.sql("SELECT \"sourceType\" IS NOT NULL FROM \"Document\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional().orElse(false);
+        if ((delivered || sourced) && "draft".equals(String.valueOf(doc.get("status")))) {
             if (postGuards != null) {
                 postGuards.orderedStream().forEach(g -> g.beforePost(id));
             }
@@ -715,6 +737,14 @@ public class InvoiceService {
         if ("cancelled".equals(String.valueOf(doc.get("status")))) {
             withReversal(doc, id);
             return doc;
+        }
+        if ("draft".equals(String.valueOf(doc.get("status")))) {
+            // Sales readiness R1: a draft has no ledger, stock or settlement effect, so discarding it needs no approval
+            // or reversal; its source (sales order lines, delivery orders) becomes invoiceable again.
+            workflow.transition("invoice", id, "cancel", Obj.of("reason", reasonIn == null || reasonIn.isBlank()
+                    ? "Draft discarded" : reasonIn), doc);
+            publish("invoice.cancelled", doc);
+            return builder.document(id);
         }
         String reason = reversals.requireReason(reasonIn, "cancel an invoice");
         if (userAction) {
