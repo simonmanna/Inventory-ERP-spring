@@ -18,6 +18,7 @@ import { GrnStatusPill } from './po-ui';
 import { api } from '@/lib/api';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { QualityChecksPanel } from '@/pages/quality-control/QualityChecksPanel';
 import { useUomCode } from '@/features/uom/api';
 
 interface GRNProduct {
@@ -262,6 +263,7 @@ export default function GoodsReceiptDetailPage() {
                 <div className="mt-2 border-t pt-2"><Row label={tx('Total Cost')} value={<strong className="text-lg">{money(totalCost)}</strong>} /></div>
               </div>
             </div>
+            <QualityChecksPanel sources={[{ sourceType: 'goods_receipt', sourceId: grn.id }]} />
           </TabsContent>
 
           {posted && (

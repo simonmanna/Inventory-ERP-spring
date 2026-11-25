@@ -90,9 +90,32 @@ public class WorkOrderService {
                     + ((Number) op.get("setupMins")).intValue());
             data.put("status", "pending");
             data.put("createdBy", TenantContext.userId());
-            db.insert(WorkOrder.class, data);
+            Map<String, Object> wo = db.insert(WorkOrder.class, data);
+            if (qcGate != null) {
+                qcGate.sync(qcDoc(wo, order));
+            }
         }
         return list(productionOrderId);
+    }
+
+    private com.inventoryerp.qualitycontrol.application.QcGate qcGate;
+
+    /** Quality-control gate (ADR-S087); optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setQcGate(com.inventoryerp.qualitycontrol.application.QcGate qcGate) {
+        this.qcGate = qcGate;
+    }
+
+    /** A work order as the quality gate sees it: its operation, work centre and the order's planned output. */
+    private static com.inventoryerp.qualitycontrol.application.QcSourceDoc qcDoc(Map<String, Object> wo,
+            Map<String, Object> order) {
+        List<com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line> lines = order == null ? List.of()
+                : List.of(new com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line("main",
+                        str(order, "outputProductId"), str(order, "outputVariantId"), dec(order, "plannedQty"),
+                        str(order, "batchNumber")));
+        String ref = (order == null ? "" : order.get("orderCode") + " / ") + wo.get("name");
+        return new com.inventoryerp.qualitycontrol.application.QcSourceDoc("work_order", str(wo, "id"), ref,
+                "work_order", str(wo, "id"), str(wo, "routingOperationId"), str(wo, "workCenterId"), null, null, lines);
     }
 
     /** By operation sequence, each with its work centre and resource. */
@@ -139,6 +162,9 @@ public class WorkOrderService {
         if (!"pending".equals(wo.get("status")) && !"paused".equals(wo.get("status"))) {
             throw ApiException.badRequest("Cannot start a " + wo.get("status") + " work order.");
         }
+        if (qcGate != null) {
+            qcGate.sync(qcDoc(wo, db.byId(ProductionOrder.class, str(wo, "productionOrderId"))));
+        }
         Instant now = Instant.now();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "in_progress");
@@ -179,6 +205,10 @@ public class WorkOrderService {
                     + "; work-order time can no longer be costed to it.");
         }
         quality.validateReason(dto.scrapReasonCode());
+        // ADR-S087: blocking quality checks of the work order hold its completion (before any write).
+        if (qcGate != null) {
+            qcGate.assertComplete("work_order", id, List.of());
+        }
         int logged = closeOpenLogs(wo);
         int labourMins = dto.labourMins() != null ? dto.labourMins() : logged;
         Map<String, Object> resource = wo.get("resourceId") == null ? null
@@ -213,6 +243,9 @@ public class WorkOrderService {
         }
         data.put("updatedBy", TenantContext.userId());
         Map<String, Object> updated = db.update(WorkOrder.class, id, data);
+        if (qcGate != null) {
+            qcGate.onCompleted(qcDoc(wo, order).at(null));
+        }
 
         if (labourCost.signum() > 0) {
             String orderId = str(wo, "productionOrderId");

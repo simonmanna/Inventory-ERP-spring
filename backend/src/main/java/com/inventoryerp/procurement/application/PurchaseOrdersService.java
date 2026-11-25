@@ -653,6 +653,37 @@ public class PurchaseOrdersService {
     }
 
     /** Insert the draft GRN (+ lines) shared by the immediate-post and approval-draft paths. */
+    private com.inventoryerp.qualitycontrol.application.QcGate qcGate;
+
+    /** Quality-control gate (ADR-S087); optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setQcGate(com.inventoryerp.qualitycontrol.application.QcGate qcGate) {
+        this.qcGate = qcGate;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> lines(Map<String, Object> grn) {
+        return (List<Map<String, Object>>) grn.get("lines");
+    }
+
+    /** A one-shot receive before its GRN exists, for the pre-receipt check (lines in base units). */
+    private static com.inventoryerp.qualitycontrol.application.QcSourceDoc qcDoc(String grnId, String receiptNumber, Map<String, Object> po,
+            ReceiveInput dto, List<Resolved> resolved) {
+        List<com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line> out = new ArrayList<>();
+        int i = 0;
+        for (Resolved r : resolved) {
+            i++;
+            if (r.line().productId() == null) {
+                continue;
+            }
+            BigDecimal factor = r.unit() == null || r.unit().factor() == null ? BigDecimal.ONE : r.unit().factor();
+            out.add(new com.inventoryerp.qualitycontrol.application.QcSourceDoc.Line("line-" + i, r.line().productId(), r.variantId(),
+                    r.line().quantity().multiply(factor), r.line().batchNumber()));
+        }
+        return new com.inventoryerp.qualitycontrol.application.QcSourceDoc("goods_receipt", grnId, receiptNumber, "receipt", null, null,
+                null, (String) po.get("partnerId"), dto.warehouseId(), out);
+    }
+
     private Map<String, Object> insertGrnDraft(String grnId, String orgId, String receiptNumber, Map<String, Object> po,
             ReceiveInput dto, List<Resolved> resolved) {
         Map<String, Object> grn = SqlRows.one(GoodsReceiptNote.class, jdbc.sql("INSERT INTO \"GoodsReceiptNote\" (id,"
@@ -823,13 +854,25 @@ public class PurchaseOrdersService {
         snapshot.put("createdBy", user());
         Map<String, Object> gate = approvals.checkOrRequestApproval("goods_receipt", grnId, snapshot);
         if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
-            Map<String, Object> draft = tx.execute(st -> insertGrnDraft(grnId, orgId, receiptNumber, po, dto, resolved));
+            Map<String, Object> draft = tx.execute(st -> {
+                Map<String, Object> d = insertGrnDraft(grnId, orgId, receiptNumber, po, dto, resolved);
+                if (qcGate != null) {
+                    qcGate.sync(GoodsReceiptsService.qcDoc(d, lines(d)));
+                }
+                return d;
+            });
             audit.record(AuditInput.of("GoodsReceiptNote", grnId, "create", null, Obj.of("receiptNumber", receiptNumber,
                     "status", "draft", "purchaseOrderId", id, "approvalRequestId", gate.get("requestId"))));
             return Obj.of("grn", draft, "status", po.get("status"), "approvalRequired", true, "approvalRequestId",
                     gate.get("requestId"));
         }
 
+        // ADR-S087 §6: a one-shot receive cannot do the checks a pre-receipt control point requires.
+        if (qcGate != null && Boolean.TRUE.equals(tx.execute(st -> qcGate.preReceiptRequired(qcDoc(grnId, receiptNumber,
+                po, dto, resolved))))) {
+            throw ApiException.badRequest("Quality checks are required before this receipt is posted. Save it as a"
+                    + " draft goods receipt, complete the checks, then post.");
+        }
         Instant date = dto.receivedAt() != null ? ProcurementSql.date(dto.receivedAt()) : nowMs();
         Map<String, Object> result = tx.execute(st -> {
             // 1. GRN (draft)
@@ -873,6 +916,10 @@ public class PurchaseOrdersService {
                 BigDecimal taxRate = poLine != null ? Money.dec(poLine.get("taxRate")) : Money.ZERO;
                 receiptNet = receiptNet.add(lineNet);
                 receiptTax = receiptTax.add(Money.div(lineNet.multiply(taxRate), BigDecimal.valueOf(100)));
+            }
+            // ADR-S087 §7: quarantine and post-receipt checks commit or roll back with the receipt.
+            if (qcGate != null) {
+                qcGate.onCompleted(GoodsReceiptsService.qcDoc(grn, lines(grn)));
             }
             // 4b. Voucher the receipt: Dr GRNI + Dr Input Tax / Cr AP (GRNI nets to zero).
             stockPosting.postReceiptVoucher((String) po.get("partnerId"), receiptNet, receiptTax, date, "goods_receipt",

@@ -257,4 +257,9 @@ public final class DomainEvents {
     public static final String TASK_ASSIGNED = "task.assigned";
     public static final String CRM_DEAL_ASSIGNED = "crm.deal.assigned";
     public static final String QUALITY_CAPA_CREATED = "quality.capa.created";
+    public static final String QUALITY_CONTROL_CHECK_DONE = "quality_control.check.done";
+    public static final String QUALITY_CONTROL_CHECK_FAILED = "quality_control.check.failed";
+    public static final String QUALITY_CONTROL_ALERT_CREATED = "quality_control.alert.created";
+    public static final String QUALITY_CONTROL_ALERT_ASSIGNED = "quality_control.alert.assigned";
+    public static final String QUALITY_CONTROL_ALERT_STAGE_CHANGED = "quality_control.alert.stage_changed";
 }

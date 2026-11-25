@@ -26,6 +26,7 @@ import {
 } from '@/features/manufacturing/api';
 import { orderProductName } from './ProductionOrdersPage';
 import { tx } from '@/lib/i18n/tx';
+import { QualityChecksPanel } from '@/pages/quality-control/QualityChecksPanel';
 import {
   DUE_TONE, dueLabel, dueState, EmptyState, Fact, fmtMoney, fmtQty, MfgCard, MfgPageHeader, MfgStatus, n, PageSkeleton, PlanActualBar,
   ProgressRing, progressPct, TONE_FILL, TonePill, type MfgTone,
@@ -216,6 +217,11 @@ export function ProductionOrderDetailPage() {
           )}
         </MfgCard>
       </div>
+
+      <QualityChecksPanel sources={[
+        { sourceType: 'production_order', sourceId: id },
+        ...(workOrders ?? []).map((w: { id: string; name?: string }) => ({ sourceType: 'work_order' as const, sourceId: w.id, label: w.name })),
+      ]} />
 
       <OrderAdvancedPanel order={order as any} />
 

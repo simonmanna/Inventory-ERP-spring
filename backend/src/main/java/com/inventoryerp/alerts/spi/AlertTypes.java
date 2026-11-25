@@ -17,6 +17,7 @@ public final class AlertTypes {
     public static final String BUDGET_OVERRUN = "budget_overrun";
     public static final String CAPA_OVERDUE = "capa_overdue";
     public static final String LP_AGENT_HEALTH = "lp_agent_health";
+    public static final String QUALITY_ALERT_OPEN = "quality_alert_open";
 
     /** Scanned every hour: what the yard should act on today. */
     public static final String HOURLY = "hourly";
@@ -71,7 +72,9 @@ public final class AlertTypes {
                     BELL_AND_EMAIL),
             new Definition(LP_AGENT_HEALTH, "Loss-prevention edge agents offline or degraded", HOURLY, BigDecimal.ZERO,
                     "hours", "Alert when an edge agent has been offline or degraded this many hours", REPEAT_DAILY,
-                    BELL_AND_EMAIL));
+                    BELL_AND_EMAIL),
+            new Definition(QUALITY_ALERT_OPEN, "Quality alerts left open", DAILY, new BigDecimal("3"), "days",
+                    "Alert when a quality alert has stayed open this many days", REPEAT_WEEKLY, BELL_AND_EMAIL));
 
     /** Who receives a type until its rule says otherwise. */
     public static final String DEFAULT_RECIPIENT_PERMISSION = Permissions.ALERTS__READ;

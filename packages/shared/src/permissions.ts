@@ -1095,6 +1095,20 @@ export const PERMISSIONS = {
     /// Corrective / preventive actions.
     capa: 'quality:capa',
   },
+  // ---- Quality control (module qualitycontrol, ADR-S087): Odoo-style control points, operator checks, alerts, SPC ----
+  // Core-available (no module flag). Route <-> permission matrix: docs/spec/quality-control.md §Routes.
+  qualityControl: {
+    /// Control points, checks, alerts, attachments and statistics.
+    read: 'quality_control:read',
+    /// Control points (versioned), teams, worksheet templates, failure classes, alert stages / tags / root causes.
+    configure: 'quality_control:configure',
+    /// Execute pending checks, record samples, attach check photos.
+    check: 'quality_control:check',
+    /// Create, move and edit quality alerts; attach alert evidence.
+    alert: 'quality_control:alert',
+    /// Waive or reset a check, open a correction check, retry a quarantine move (audited).
+    manage: 'quality_control:manage',
+  },
   // ---- Quarry & extraction (module quarry, ADR-S012, construction-materials Track C Phase 2.2) ----
   // Route ↔ permission matrix: docs/spec/quarry.md §Routes. Every quarry role needs quarry_site:read (form lookups).
   quarry: {
@@ -1422,4 +1436,5 @@ export const MANAGER_PERMISSIONS: readonly string[] = [
   'partner:read', 'partners.view', 'products.view', 'product:read', 'menu.view', 'user:read',
   'tables:view', 'tables:transfer', 'tables:merge', 'tables:split', 'tables:edit',
   'branch:read',
+  'quality_control:read', 'quality_control:check', 'quality_control:alert',
 ];
