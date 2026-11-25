@@ -222,8 +222,15 @@ public class PostingService {
         // a settlement entry's reversal is exempt, as the settlement itself is
         String lockSource = "tax_settlement".equals(original.getSourceType()) ? "tax_settlement" : "reversal";
         Instant when = date != null ? AccountingDay.normalize(date, zone) : reversalDate(original.getPostingDate());
-        if (date == null && taxLockedThrough(organizationId, when, originalAccounts, lockSource) != null) {
-            // the original's date is inside a settled VAT period: reverse today, never into filed VAT (G-2)
+        if (date != null && AccountingDay.of(when, zone).isBefore(AccountingDay.of(original.getPostingDate(), zone))) {
+            // B5: a reversal dated before its original would undo it in a period where it did not yet exist
+            throw ApiException.badRequest("A reversal cannot be dated before the entry it reverses ("
+                    + original.getEntryNumber() + " is dated " + AccountingDay.of(original.getPostingDate(), zone) + ")");
+        }
+        if (date == null && (taxLockedThrough(organizationId, when, originalAccounts, lockSource) != null
+                || bankReconciledThrough(organizationId, when, originalAccounts) != null)) {
+            // the original's date is inside a settled VAT period or a reconciled bank statement: reverse today, never
+            // into filed VAT (G-2) or a locked reconciliation (B5)
             when = Instant.now();
         }
         fiscalPeriod.assertOpen(when);
@@ -331,6 +338,31 @@ public class PostingService {
             throw ApiException.badRequest("VAT is settled through " + FiscalPeriodControl.day(settled)
                     + "; tax cannot be posted on " + FiscalPeriodControl.day(date, zone));
         }
+        // an FX revaluation moves only the base value of a foreign bank account, not what the bank statement shows
+        String[] bank = "fx_revaluation".equals(sourceType) ? null : bankReconciledThrough(org, date, accountIds);
+        if (bank != null) {
+            throw ApiException.badRequest("Bank account " + bank[0] + " is reconciled through " + bank[1]
+                    + "; nothing can be posted to it on " + AccountingDay.of(date, AccountingDay.zone(jdbc, org))
+                    + ". Date it after " + bank[1] + ".");
+        }
+    }
+
+    /**
+     * Finance readiness audit B5: a locked bank reconciliation ({@code BankReconciliationStatement}) freezes its bank
+     * account's ledger through the statement day, as it freezes the statement lines. Returns the account code and that
+     * day when posting {@code accountIds} on {@code date} would land on or before it, else {@code null}.
+     */
+    private String[] bankReconciledThrough(String org, Instant date, java.util.Collection<String> accountIds) {
+        if (accountIds == null || accountIds.isEmpty()) {
+            return null;
+        }
+        java.time.LocalDate day = AccountingDay.of(date, AccountingDay.zone(jdbc, org));
+        return jdbc.sql("SELECT a.code, to_char(max(s.\"statementDate\"), 'YYYY-MM-DD') AS through"
+                        + " FROM \"BankReconciliationStatement\" s JOIN \"Account\" a ON a.id = s.\"bankAccountId\""
+                        + " WHERE s.\"organizationId\" = ? AND s.\"bankAccountId\" = ANY(?::text[]) GROUP BY a.code"
+                        + " HAVING max(s.\"statementDate\")::date >= ?::date ORDER BY a.code LIMIT 1")
+                .params(org, new java.util.LinkedHashSet<>(accountIds).toArray(String[]::new), java.sql.Date.valueOf(day))
+                .query((rs, n) -> new String[] {rs.getString(1), rs.getString(2)}).optional().orElse(null);
     }
 
     /** The settled VAT period end when posting {@code accountIds} on {@code date} would hit a tax account in it. */
@@ -376,6 +408,28 @@ public class PostingService {
      */
     @Transactional
     public Map<String, Object> stageDraft(PostingRequest request, String controlAdjustmentReason) {
+        return stageDraft(request, controlAdjustmentReason, null);
+    }
+
+    /**
+     * As {@link #stageDraft(PostingRequest, String)}, with the draft's maker: {@code makerId} (else the current user)
+     * is the creator who may not approve it. A {@code postingKey} is kept on the draft, and a second stage of the same
+     * key returns the draft (or entry) already there: finance audit B5 moved this out of the recurring service's raw
+     * SQL.
+     */
+    @Transactional
+    public Map<String, Object> stageDraft(PostingRequest request, String controlAdjustmentReason, String makerId) {
+        if (request.postingKey() != null) {
+            jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(? || '|' || ?, 0))")
+                    .params(TenantContext.organizationId(), request.postingKey()).query().listOfRows();
+            JournalEntry existing = em.createQuery("select e from JournalEntry e where e.organizationId = :org"
+                            + " and e.postingKey = :key", JournalEntry.class)
+                    .setParameter("org", TenantContext.organizationId()).setParameter("key", request.postingKey())
+                    .setMaxResults(1).getResultList().stream().findFirst().orElse(null);
+            if (existing != null) {
+                return render(existing, lines(existing.getId()));
+            }
+        }
         if (request.lines() == null || request.lines().size() < 2) {
             throw ApiException.badRequest("A journal entry requires at least two lines");
         }
@@ -413,7 +467,8 @@ public class PostingService {
         entry.setBranchId(request.branchId());
         entry.setCostCenterId(request.costCenterId());
         entry.setDimensions(entryDims == null ? null : EntityJson.toJson(entryDims));
-        entry.setCreatedBy(TenantContext.userId());
+        entry.setCreatedBy(makerId != null ? makerId : TenantContext.userId());
+        entry.setPostingKey(request.postingKey());
         if (adjustment) {
             entry.setControlAdjustment(true);
             entry.setControlAdjustmentReason(controlAdjustmentReason.strip());

@@ -40,6 +40,7 @@ import tools.jackson.databind.json.JsonMapper;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@org.junit.jupiter.api.extension.ExtendWith(com.inventoryerp.accounting.support.LedgerInvariantsCheck.class)
 public abstract class ApiTestSupport {
 
     @LocalServerPort

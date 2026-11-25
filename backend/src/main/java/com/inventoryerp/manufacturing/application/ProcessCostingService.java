@@ -431,8 +431,9 @@ public class ProcessCostingService {
                         "Process " + code + " · output");
             }
             if (std != null && completed.subtract(value).signum() != 0) {
+                // Integrity fix 2026-11-24 (MR-3): registered against the process period, not a production order.
                 String je = standards.postProductionVariances(periodId, code, productId, completed.subtract(value),
-                        unitsCompleted, value, wip, date);
+                        unitsCompleted, value, wip, date, "process_costing");
                 if (je != null) {
                     journals.add(je);
                 }

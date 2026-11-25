@@ -59,6 +59,7 @@ class GlControlPermissionsIT extends ApiTestSupport {
         c.put("POST /cost-centers/allocation-rules/{id}/run", List.of("cost_center:allocate"));
         c.put("POST /cost-centers/allocation-runs/{id}/reverse", List.of("cost_center:allocate"));
         c.put("POST /opening-balances", List.of("opening_balance:post"));
+        c.put("POST /opening-balances/{batchId}/reverse", List.of("opening_balance:post", "journal_entry:reverse"));
         return c;
     }
 

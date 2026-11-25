@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { CalendarRange, Plus, Save, Trash2 } from 'lucide-react';
+import { MfgPageHeader } from './mfg-ui';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,11 +42,8 @@ export function ShopFloorPage() {
   const canQuality = hasPermission(PERMISSIONS.productionOrder.qc);
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{tx('Shop floor')}</h1>
-        <p className="text-sm text-muted-foreground">{tx('Finite-capacity schedule, work-centre calendars and quality masters.')}</p>
-      </div>
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={CalendarRange} title={tx('Shop floor')} subtitle={tx('Finite-capacity schedule, work-centre calendars and quality masters.')} />
       <Tabs defaultValue="schedule">
         <TabsList>
           <TabsTrigger value="schedule">{tx('Schedule')}</TabsTrigger>

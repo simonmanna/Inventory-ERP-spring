@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Plus, Trash2, Upload } from 'lucide-react';
+import { Plus, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { isPostingAccount, useAccounts, useCurrencies } from '@/features/accounting/api';
+import { PERMISSIONS } from '@erp/shared';
 import { useAuthStore } from '@/stores/auth.store';
-import { useOpeningBalances, usePostOpeningBalances, localDay } from '@/features/finance/api';
+import { useOpeningBalances, usePostOpeningBalances, useReverseOpeningBalances, localDay } from '@/features/finance/api';
 import { usePartners } from '@/features/partners/api';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
@@ -79,6 +80,31 @@ export function OpeningBalancesPage() {
   const { data: partners } = usePartners({ page: 1, pageSize: 1000 });
   const { data: history } = useOpeningBalances();
   const post = usePostOpeningBalances();
+  const reverse = useReverseOpeningBalances();
+  const has = useAuthStore((st) => st.hasPermission);
+  // B2: same permissions as POST /opening-balances/{batchId}/reverse
+  const canReverse = has(PERMISSIONS.openingBalance.post) && has(PERMISSIONS.journalEntry.reverse);
+  const batches = useMemo(() => {
+    const m = new Map<string, { batchId: string; date: string; label: string; items: number; open: number }>();
+    const touch = (batchId: string, day: string, label: string, open: boolean) => {
+      const b = m.get(batchId) ?? { batchId, date: day, label, items: 0, open: 0 };
+      b.items += 1;
+      if (open) b.open += 1;
+      if (label && !b.label) b.label = label;
+      m.set(batchId, b);
+    };
+    (history?.entries ?? []).forEach((e) => touch(e.batchId, e.postingDate, e.description, e.status === 'posted'));
+    (history?.documents ?? []).forEach((d) => touch(d.batchId, d.issueDate, '', d.status !== 'cancelled'));
+    return [...m.values()];
+  }, [history]);
+
+  function reverseBatch(batchId: string) {
+    const reason = window.prompt(
+      tx('Reverse this whole opening-balance batch? Its invoices are cancelled, its bills voided and its journal entry reversed. Reason:'),
+    );
+    if (!reason || !reason.trim()) return;
+    reverse.mutate({ batchId, reason: reason.trim() });
+  }
   const base = useAuthStore((s) => s.organization?.currencyCode ?? '');
   const { data: currencies } = useCurrencies();
   const codes = useMemo(() => (currencies ?? []).map((c) => c.code).filter((c) => c !== base), [currencies, base]);
@@ -246,6 +272,50 @@ export function OpeningBalancesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {batches.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{tx('Batches')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{tx('Date')}</TableHead>
+                  <TableHead>{tx('Description')}</TableHead>
+                  <TableHead className="text-right">{tx('Items')}</TableHead>
+                  <TableHead>{tx('Status')}</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {batches.map((b) => (
+                  <TableRow key={b.batchId}>
+                    <TableCell>{date(b.date)}</TableCell>
+                    <TableCell>{b.label || tx('Opening balance')}</TableCell>
+                    <TableCell className="text-right">{b.items}</TableCell>
+                    <TableCell>{b.open === 0 ? tx('Reversed') : tx('Posted')}</TableCell>
+                    <TableCell className="text-right">
+                      {canReverse && b.open > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={reverse.isPending}
+                          onClick={() => reverseBatch(b.batchId)}
+                        >
+                          <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                          {tx('Reverse batch')}
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

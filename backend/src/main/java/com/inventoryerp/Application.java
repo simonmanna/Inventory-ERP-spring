@@ -17,6 +17,10 @@ public class Application {
     }
 
     public static void main(String[] args) {
+        if (com.inventoryerp.kernel.migrate.MigrateOnly.requested(args)) {
+            // B4: a separate migration step (as the schema owner); the API then starts without the owner's login
+            System.exit(com.inventoryerp.kernel.migrate.MigrateOnly.run(args));
+        }
         SpringApplication.run(Application.class, args);
     }
 }

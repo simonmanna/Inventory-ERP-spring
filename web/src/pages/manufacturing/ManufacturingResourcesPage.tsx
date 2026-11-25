@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Plus, Factory } from 'lucide-react';
+import { MfgPageHeader } from './mfg-ui';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,11 +40,8 @@ export function ManufacturingResourcesPage() {
   };
 
   return (
-    <div className="space-y-6 p-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold"><Factory className="h-6 w-6" /> {tx('Work Centres & Resources')}</h1>
-        <p className="text-sm text-muted-foreground">{tx('Machines, people and spaces that execute production operations.')}</p>
-      </div>
+    <div className="space-y-5 p-4 sm:p-6">
+      <MfgPageHeader icon={Factory} title={tx('Work Centres & Resources')} subtitle={tx('Machines, people and spaces that execute production operations.')} />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between">

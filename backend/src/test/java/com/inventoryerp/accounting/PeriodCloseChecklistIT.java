@@ -200,6 +200,28 @@ class PeriodCloseChecklistIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("B5: VAT, depreciation, payroll, recurring-run and deferral reminders are advisory items")
+    void subledgerReminders() {
+        JsonNode list = ok(200, "GET", "/fiscal-periods/" + periodId + "/close-checklist", null);
+        for (String key : List.of("vat_settled", "depreciation_posted", "payroll_posted", "recurring_failed",
+                "deferrals_released")) {
+            JsonNode c = check(list, key);
+            assertThat(c.get("blocking").asBoolean()).as(key).isFalse();
+            assertThat(c.get("ok").asBoolean()).as(key + " on a quiet month").isTrue();
+        }
+        String template = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"RecurringJournalTemplate\" (id, \"organizationId\", name, frequency, \"startDate\","
+                + " lines) VALUES (?, ?, 'B5 rent', 'monthly', '2008-04-01', '[]'::jsonb)").params(template, demoOrg)
+                .update();
+        jdbc.sql("INSERT INTO \"RecurringJournalRun\" (id, \"organizationId\", \"templateId\", \"runDate\", status,"
+                + " error) VALUES (?, ?, ?, '2008-04-10', 'failed', 'Account inactive')")
+                .params(UUID.randomUUID().toString(), demoOrg, template).update();
+        JsonNode after = check(ok(200, "GET", "/fiscal-periods/" + periodId + "/close-checklist", null), "recurring_failed");
+        assertThat(after.get("ok").asBoolean()).isFalse();
+        assertThat(after.get("count").asInt()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("tenant isolation and authorization")
     void isolation() {
         assertThat(call("GET", "/fiscal-periods/" + periodId + "/close-checklist", null,

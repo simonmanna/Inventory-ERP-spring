@@ -149,6 +149,17 @@ public class StockReservationService {
         return Obj.of("released", close(sourceType, sourceId, "released", "releasedAt"));
     }
 
+    /**
+     * {@link #release} for a caller that keeps a release failure soft and runs it under a savepoint in its own
+     * transaction (production cancel). Integrity fix 2026-11-24 (MR-9): a failure does not mark the caller's
+     * transaction rollback-only — through {@link #release} it did, so the caller's commit failed although it had
+     * caught the error.
+     */
+    @Transactional(noRollbackFor = RuntimeException.class)
+    public Map<String, Object> releaseSoft(String sourceType, String sourceId) {
+        return release(sourceType, sourceId);
+    }
+
     /** Mark a source's reservations consumed. */
     @Transactional
     public Map<String, Object> consume(String sourceType, String sourceId) {

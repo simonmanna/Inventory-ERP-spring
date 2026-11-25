@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowLeft, CheckCircle2, Gauge, LogIn, LogOut, PackageMinus, Pause, Play, Plus, Square, Timer, Wrench,
+  AlertTriangle, ArrowLeft, CheckCircle2, Contrast, Gauge, LogIn, LogOut, PackageMinus, Pause, Play, Plus, Square, Timer, Users, Wrench,
 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -23,9 +23,11 @@ import {
   type Downtime, type ProductionReport, type Queue, type QueueItem,
 } from '@/features/manufacturing/api-shopfloor';
 import { useSourceChecks, CHECK_STATUS_LABEL } from '@/features/quality-control/api';
-import { BigNumber, FLOOR_BORDER, FloorStatusPill, ReasonGrid, ShiftReportStatusPill, isNum } from './shopfloor-ui';
+import { BigNumber, ReasonGrid, ShiftReportStatusPill, isNum } from './shopfloor-ui';
+import { EmptyState, MfgStatus, PageSkeleton, ProgressBar, statusMeta, TONE_BORDER, TONE_FILL } from '../mfg-ui';
 
 const STORE_KEY = 'shopfloor.terminal.workCenter';
+const HC_KEY = 'shopfloor.terminal.highContrast';
 
 function remembered(): string {
   try { return window.localStorage.getItem(STORE_KEY) ?? ''; } catch { return ''; }
@@ -42,9 +44,21 @@ export function TerminalPage() {
     remember(id);
     setParams(id ? { wc: id } : {}, { replace: true });
   };
+  const [hc, setHc] = useState(() => { try { return window.localStorage.getItem(HC_KEY) === '1'; } catch { return false; } });
+  const toggleHc = () => setHc((v) => {
+    try { window.localStorage.setItem(HC_KEY, v ? '0' : '1'); } catch { /* ignore */ }
+    return !v;
+  });
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-3 sm:p-6">
-      {wc ? <Terminal workCenterId={wc} onChange={() => choose('')} /> : <WorkCentrePicker onPick={choose} />}
+    <div className={cn('min-h-full rounded-2xl', hc && 'dark bg-black text-white [&_.border]:border-zinc-500 [&_.text-muted-foreground]:text-zinc-300')}>
+      <div className="mx-auto max-w-5xl space-y-4 p-3 sm:p-6">
+        <div className="flex justify-end">
+          <Button variant={hc ? 'secondary' : 'outline'} size="sm" aria-pressed={hc} onClick={toggleHc}>
+            <Contrast className="mr-1.5 h-4 w-4" aria-hidden />{hc ? tx('Standard display') : tx('High contrast')}
+          </Button>
+        </div>
+        {wc ? <Terminal workCenterId={wc} onChange={() => choose('')} /> : <WorkCentrePicker onPick={choose} />}
+      </div>
     </div>
   );
 }
@@ -57,23 +71,27 @@ function WorkCentrePicker({ onPick }: { onPick: (id: string) => void }) {
         <h1 className="text-2xl font-bold">{tx('Operator terminal')}</h1>
         <p className="text-sm text-muted-foreground">{tx('Choose your work centre.')}</p>
       </div>
-      {board.isLoading && <p className="text-muted-foreground">{tx('Loading…')}</p>}
+      {board.isLoading && <PageSkeleton />}
       {board.isError && <p className="text-destructive">{tx('Could not load the work centres.')}</p>}
       {board.data && board.data.workCenters.length === 0 && (
-        <p className="text-muted-foreground">{tx('No active work centres. Create them under Work Centres.')}</p>
+        <EmptyState icon={Wrench} title={tx('No active work centres. Create them under Work Centres.')} />
       )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {board.data?.workCenters.map((c) => (
-          <button key={c.workCenterId} type="button" onClick={() => onPick(c.workCenterId)}
-            className={cn('min-h-[96px] rounded-xl border border-l-8 bg-card p-4 text-left shadow-sm transition hover:bg-muted', FLOOR_BORDER[c.status])}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-lg font-semibold">{c.name}</span>
-              <FloorStatusPill status={c.status} />
-            </div>
-            <div className="text-sm text-muted-foreground">{c.code}</div>
-            {c.workOrders[0] && <div className="mt-1 text-sm">{c.workOrders[0].orderCode} · {c.workOrders[0].name}</div>}
-          </button>
-        ))}
+        {board.data?.workCenters.map((c) => {
+          const m = statusMeta(c.status, 'floor');
+          const Icon = m.icon;
+          return (
+            <button key={c.workCenterId} type="button" onClick={() => onPick(c.workCenterId)}
+              className={cn('flex min-h-[112px] items-start gap-4 rounded-2xl border-2 bg-card p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring motion-reduce:hover:translate-y-0', TONE_BORDER[m.tone])}>
+              <span className={cn('grid h-14 w-14 shrink-0 place-items-center rounded-xl text-white', TONE_FILL[m.tone])}><Icon className="h-7 w-7" aria-hidden /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-lg font-semibold">{c.name}</span>
+                <span className="block text-sm text-muted-foreground">{c.code} · {m.label()}</span>
+                {c.workOrders[0] && <span className="mt-1 block truncate text-sm">{c.workOrders[0].orderCode} · {c.workOrders[0].name}</span>}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -113,7 +131,7 @@ function Terminal({ workCenterId, onChange }: { workCenterId: string; onChange: 
     }
   };
 
-  if (queue.isLoading) return <p className="text-muted-foreground">{tx('Loading…')}</p>;
+  if (queue.isLoading) return <PageSkeleton />;
   if (queue.isError || !queue.data) {
     return (
       <div className="space-y-3">
@@ -131,37 +149,40 @@ function Terminal({ workCenterId, onChange }: { workCenterId: string; onChange: 
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={onChange}><ArrowLeft className="mr-1 h-4 w-4" />{tx('Change work centre')}</Button>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-bold">{q.workCenter.name}</h1>
-            <FloorStatusPill status={status} />
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-            <span>{q.workCenter.code}</span>
-            {q.currentShiftReport ? (
-              <Link className="text-primary underline-offset-2 hover:underline" to={`/manufacturing/shift-reports/${q.currentShiftReport.id}`}>
-                {q.currentShiftReport.code}
-              </Link>
-            ) : <span>{tx('No shift report yet')}</span>}
-            {q.currentShiftReport && <ShiftReportStatusPill status={q.currentShiftReport.status} />}
-            <span>· {tx('{{n}} on shift', { n: q.operators.length })}</span>
-          </div>
+      <Button variant="ghost" size="sm" className="-ml-2" onClick={onChange}><ArrowLeft className="mr-1 h-4 w-4" />{tx('Change work centre')}</Button>
+      <div className={cn('overflow-hidden rounded-2xl border-2 bg-card shadow-sm', TONE_BORDER[statusMeta(status, 'floor').tone])}>
+        <div className={cn('flex items-center gap-2 px-4 py-2 text-base font-bold uppercase tracking-wide text-white', TONE_FILL[statusMeta(status, 'floor').tone])}>
+          {(() => { const I = statusMeta(status, 'floor').icon; return <I className="h-5 w-5" aria-hidden />; })()}
+          {statusMeta(status, 'floor').label()}
         </div>
-        {canManage && (
-          mine ? (
-            <Button size="lg" variant="outline" className="h-14 text-base" disabled={clockOff.isPending}
-              onClick={() => run(clockOff.mutateAsync(mine.id), tx('Clocked off'), tx('Could not clock off'))}>
-              <LogOut className="mr-2 h-5 w-5" />{tx('Clock off')}
-            </Button>
-          ) : (
-            <Button size="lg" className="h-14 text-base" disabled={clockOn.isPending}
-              onClick={() => run(clockOn.mutateAsync({ workCenterId }), tx('Clocked on'), tx('Could not clock on'))}>
-              <LogIn className="mr-2 h-5 w-5" />{tx('Clock on')}
-            </Button>
-          )
-        )}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="min-w-0 space-y-1">
+            <h1 className="text-2xl font-bold sm:text-3xl">{q.workCenter.name}</h1>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <span>{q.workCenter.code}</span>
+              {q.currentShiftReport ? (
+                <Link className="text-primary underline-offset-2 hover:underline" to={`/manufacturing/shift-reports/${q.currentShiftReport.id}`}>
+                  {q.currentShiftReport.code}
+                </Link>
+              ) : <span>{tx('No shift report yet')}</span>}
+              {q.currentShiftReport && <ShiftReportStatusPill status={q.currentShiftReport.status} />}
+              <span className="inline-flex items-center gap-1"><Users className="h-4 w-4" aria-hidden />{tx('{{n}} on shift', { n: q.operators.length })}</span>
+            </div>
+          </div>
+          {canManage && (
+            mine ? (
+              <Button size="lg" variant="outline" className="h-14 w-full text-base sm:w-auto" disabled={clockOff.isPending}
+                onClick={() => run(clockOff.mutateAsync(mine.id), tx('Clocked off'), tx('Could not clock off'))}>
+                <LogOut className="mr-2 h-5 w-5" />{tx('Clock off')}
+              </Button>
+            ) : (
+              <Button size="lg" className="h-14 w-full text-base sm:w-auto" disabled={clockOn.isPending}
+                onClick={() => run(clockOn.mutateAsync({ workCenterId }), tx('Clocked on'), tx('Could not clock on'))}>
+                <LogIn className="mr-2 h-5 w-5" />{tx('Clock on')}
+              </Button>
+            )
+          )}
+        </div>
       </div>
 
       {stops.map((d) => (
@@ -196,7 +217,7 @@ function Terminal({ workCenterId, onChange }: { workCenterId: string; onChange: 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">{tx('Work orders')}</h2>
         {q.workOrders.length === 0 && q.stagesWithoutWorkOrders.length === 0 && (
-          <p className="rounded-lg border border-dashed p-6 text-center text-muted-foreground">{tx('Nothing queued at this work centre.')}</p>
+          <EmptyState compact icon={Wrench} title={tx('Nothing queued at this work centre.')} className="rounded-2xl border border-dashed" />
         )}
         {q.workOrders.map((w) => (
           <WorkOrderCard key={w.id} item={w} canManage={canManage} canReport={canReport} canIssue={canIssue}
@@ -277,7 +298,7 @@ function WorkOrderCard({ item: w, canManage, canReport, canIssue, starting, onSt
   const running = w.status === 'in_progress';
   const held = w.multiStage && w.qcGate && w.qcStatus && !['passed', 'not_required'].includes(w.qcStatus);
   return (
-    <div className={cn('space-y-3 rounded-xl border border-l-8 bg-card p-4 shadow-sm',
+    <div className={cn('space-y-3 rounded-2xl border border-l-8 bg-card p-4 shadow-sm',
       running ? 'border-l-emerald-500' : w.status === 'paused' ? 'border-l-amber-500' : 'border-l-muted-foreground/30')}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
@@ -292,8 +313,13 @@ function WorkOrderCard({ item: w, canManage, canReport, canIssue, starting, onSt
           </div>
           {held && <div className="text-sm text-amber-700 dark:text-amber-400">{tx('QC checkpoint: {{status}}', { status: w.qcStatus })}</div>}
         </div>
-        <span className="rounded-full bg-muted px-3 py-1 text-sm">{w.status === 'in_progress' ? tx('Running') : w.status === 'paused' ? tx('Stopped') : tx('Pending')}</span>
+        <MfgStatus size="lg" kind="floor" status={running ? 'running' : w.status === 'paused' ? 'paused' : 'idle'}
+          label={w.status === 'in_progress' ? tx('Running') : w.status === 'paused' ? tx('Stopped') : tx('Pending')} />
       </div>
+      {Number(w.multiStage ? w.plannedOutputQty : w.plannedQty) > 0 && (
+        <ProgressBar size="lg" showLabel tone={running ? 'success' : 'progress'} ariaLabel={tx('Progress')}
+          value={(Number(w.multiStage ? w.stageQtyGood : w.qtyGood) / Number(w.multiStage ? w.plannedOutputQty : w.plannedQty)) * 100} />
+      )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {canManage && !running && (
           <Button className="h-14 bg-emerald-600 text-base text-white hover:bg-emerald-700" disabled={starting} onClick={onStart}>
