@@ -25,18 +25,28 @@ public class MigrateOnly {
 
     static final String FLAG = "--migrate-only";
 
+    static final String ENABLE_FLYWAY = "--spring.flyway.enabled=true";
+
     /** Whether this launch only migrates. */
     public static boolean requested(String[] args) {
         return Arrays.asList(args).contains(FLAG) || "true".equalsIgnoreCase(System.getenv("APP_MIGRATE_ONLY"));
     }
 
+    /** The arguments the migrate context starts with: the launch's own, without the flag, plus Flyway forced on. */
+    static String[] arguments(String[] args) {
+        return java.util.stream.Stream.concat(Arrays.stream(args).filter(a -> !FLAG.equals(a)),
+                java.util.stream.Stream.of(ENABLE_FLYWAY)).toArray(String[]::new);
+    }
+
     /** Runs the migrations (Flyway runs while the context starts) and returns the process exit code. */
     public static int run(String[] args) {
-        String[] rest = Arrays.stream(args).filter(a -> !FLAG.equals(a)).toArray(String[]::new);
+        // Flyway is forced on as a command-line argument: those outrank environment variables, and the migrate step
+        // shares the API's env file, which holds SPRING_FLYWAY_ENABLED=false in production (a default property would
+        // lose to it and the step would exit 0 without migrating).
+        String[] rest = arguments(args);
         try (ConfigurableApplicationContext ctx = new SpringApplicationBuilder(MigrateOnly.class)
                 .web(WebApplicationType.NONE)
                 .bannerMode(Banner.Mode.OFF)
-                .properties("spring.flyway.enabled=true")
                 .run(rest)) {
             System.out.println("Migrations applied; schema is current.");
             return 0;

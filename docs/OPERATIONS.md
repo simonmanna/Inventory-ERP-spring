@@ -168,7 +168,10 @@ In production the API must never hold the schema owner's login. Three roles:
 - **Migrate:** `java -jar app.jar --migrate-only` (or `APP_MIGRATE_ONLY=true`) runs the same Flyway migrations as the
   API (same `application.yml`: locations, placeholders, baseline, `afterMigrate`) in a minimal context and exits: 0 when
   the schema is current, 1 on failure. It needs `JDBC_DATABASE_URL`, `FLYWAY_USER`/`FLYWAY_PASSWORD`, and `DB_USER`/
-  `DB_PASSWORD` (the API role is created and granted by `afterMigrate`).
+  `DB_PASSWORD` (the API role is created and granted by `afterMigrate`). It forces Flyway on as a command-line
+  argument, so `SPRING_FLYWAY_ENABLED=false` in a shared env file does not stop it (builds before this fix need
+  `SPRING_FLYWAY_ENABLED=true` in `migrate.env`, which is read after `api.env`). Check its log for
+  `Successfully applied` or `Schema ... is up to date`, not only the exit code.
 - **API:** `SPRING_FLYWAY_ENABLED=false`, no `FLYWAY_USER`/`FLYWAY_PASSWORD`, `PGUSER`/`PGPASSWORD` = the backup role.
   An API started against an unmigrated schema stops at Hibernate validation, so a skipped migrate step fails safe.
 - **Backup role:** `afterMigrate` creates it when `DB_BACKUP_USER`/`DB_BACKUP_PASSWORD` are set and the owner is a
