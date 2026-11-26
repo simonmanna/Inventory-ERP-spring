@@ -1148,4 +1148,52 @@ class CashSaleIT extends ApiTestSupport {
         ledger.receivableTiesOut(c);
         ledger.trialBalanceZero();
     }
+
+    @Test
+    @DisplayName("R6 Q7: showroom tax point 'at_invoice' — VAT held at confirm, moved to output VAT by the invoice; void undoes it")
+    void showroomVatAtInvoice() {
+        String vatAccount = liability("Output VAT showroom");
+        String vat18 = tax("VATTP", 18, vatAccount);
+        ok(200, "PUT", "/sales/settings", Map.of("showroomTaxPoint", "at_invoice"));
+        try {
+            String c = partner("Tax point buyer " + sfx);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("branchId", branch);
+            body.put("partnerId", c);
+            body.put("customerName", "Tax point buyer");
+            body.put("lines", List.of(Map.of("productId", goods, "quantity", 2, "unitPrice", 35_000, "taxId", vat18)));
+            String id = ok(201, "POST", "/sales/cash-sales", body).get("id").asString();
+            verify(id, pay(id, "cash", null, 82_600, null));
+            money("/sales/cash-sales/" + id + "/confirm", null, 200);
+            String held = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code = '2216'")
+                    .param(demoOrg).query(String.class).single();
+            BigDecimal held0 = balance(held).add(new BigDecimal("12600"));
+            assertThat(balance(vatAccount)).as("no output VAT at confirm").isEqualByComparingTo("0");
+            assertThat(revenueOf(id)).isEqualByComparingTo("70000");
+            assertThat(unbilled(c)).isEqualByComparingTo("82600");
+            ok(200, "POST", "/sales/cash-sales/" + id + "/submit", null);
+            ok(200, "POST", "/sales/cash-sales/" + id + "/start-review", null);
+            ok(200, "POST", "/sales/cash-sales/" + id + "/approve", null);
+            money("/sales/cash-sales/" + id + "/generate-invoice", null, 200);
+            assertThat(balance(vatAccount)).as("output VAT at invoice").isEqualByComparingTo("-12600");
+            assertThat(balance(held)).as("held VAT released").isEqualByComparingTo(held0);
+            assertThat(revenueOf(id)).isEqualByComparingTo("70000");
+            assertThat(unbilled(c)).isEqualByComparingTo("0");
+            ledger.receivableTiesOut(c);
+            ledger.trialBalanceZero();
+
+            // a sale confirmed under 'at_invoice' and voided before invoicing leaves nothing held
+            String v = ok(201, "POST", "/sales/cash-sales", body).get("id").asString();
+            verify(v, pay(v, "cash", null, 82_600, null));
+            money("/sales/cash-sales/" + v + "/confirm", null, 200);
+            assertThat(balance(held)).isEqualByComparingTo(held0.subtract(new BigDecimal("12600")));
+            money("/sales/cash-sales/" + v + "/void", Map.of("reason", "Customer changed mind", "goodsReturned", true),
+                    200);
+            assertThat(balance(held)).isEqualByComparingTo(held0);
+            assertThat(balance(vatAccount)).isEqualByComparingTo("-12600");
+            ledger.trialBalanceZero();
+        } finally {
+            ok(200, "PUT", "/sales/settings", Map.of("showroomTaxPoint", "at_confirm"));
+        }
+    }
 }

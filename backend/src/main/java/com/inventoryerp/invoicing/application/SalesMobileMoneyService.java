@@ -73,6 +73,9 @@ public class SalesMobileMoneyService {
                 .params(partnerId, org()).query(Long.class).single() == 0) {
             throw ApiException.badRequest("Partner not found");
         }
+        if ("deposit".equals(purpose)) {
+            deposits.assertAdvanceAllowed(str(in.get("salesOrderId")));
+        }
         if ("invoice".equals(purpose) && in.get("documentId") == null) {
             throw ApiException.badRequest("documentId is required to collect an invoice");
         }

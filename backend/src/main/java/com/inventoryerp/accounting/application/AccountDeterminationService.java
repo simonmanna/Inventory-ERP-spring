@@ -20,6 +20,11 @@ public class AccountDeterminationService {
         return resolver.byMapping(key);
     }
 
+    /** Resolve an org-level mapping, or {@code null} when it is not configured. */
+    public String mappedOptional(String key) {
+        return resolver.byMappingOptional(key);
+    }
+
     public String receivableAccount(String partnerReceivableAccountId) {
         return partnerReceivableAccountId != null ? partnerReceivableAccountId : mapped("accounts_receivable");
     }

@@ -54,6 +54,13 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['rejectedToQuarantine', 'Goods the customer rejects go to quarantine, not back to saleable stock', 'bool'],
     ['rejectedQuarantineLocationId', 'Quarantine location ID (empty = SALES-QUARANTINE)', 'text'],
   ]],
+  ['Accounting policies (accountant sign-off)', [
+    ['depositTaxPoint', 'VAT on order advances is due at', ['delivery', 'receipt']],
+    ['depositApplication', 'Apply order deposits to invoices', ['manual', 'oldest_first']],
+    ['showroomTaxPoint', 'Showroom (cash sale) VAT is due at', ['at_confirm', 'at_invoice']],
+    ['overOrderExcess', 'Loads above the ordered quantity (within tolerance) are', ['bill', 'absorb']],
+    ['rebateTaxId', 'Tax ID that rebate credit notes reverse (empty = rebates carry no VAT)', 'text'],
+  ]],
   ['Credit', [
     ['overLimitPolicy', 'Order over the credit limit', ['flag', 'approve', 'block']],
     ['cashBypassesCredit', 'Cash orders skip the credit check', 'bool'],

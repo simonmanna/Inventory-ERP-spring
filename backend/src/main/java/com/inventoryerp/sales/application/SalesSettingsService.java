@@ -36,6 +36,9 @@ public class SalesSettingsService {
             Map.entry("billingPolicy", Set.of("ordered", "delivered")),
             Map.entry("depositApplication", Set.of("manual", "oldest_first")),
             Map.entry("depositTaxPoint", Set.of("delivery", "receipt")),
+            // Sales readiness R6 (B2): accountant-decided policies; defaults = shipped behaviour (V683)
+            Map.entry("showroomTaxPoint", Set.of("at_confirm", "at_invoice")),
+            Map.entry("overOrderExcess", Set.of("bill", "absorb")),
             Map.entry("stockCheckPolicy", Set.of("none", "warn", "block")),
             Map.entry("numberingScope", Set.of("organization", "branch")),
             Map.entry("overLimitPolicy", Set.of("flag", "approve", "block")),
@@ -185,6 +188,23 @@ public class SalesSettingsService {
                 sets.add("\"" + k + "\" = ?");
                 params.add(v);
             }
+        }
+        if (in.containsKey("rebateTaxId")) {
+            // R6 Q6: the output tax a rebate settlement credit note reverses (blank = rebates carry no VAT)
+            String v = SalesDb.blank(str(in.get("rebateTaxId"))) ? null : str(in.get("rebateTaxId"));
+            if (v != null) {
+                Map<String, Object> tax = db.row("SELECT rate, \"isGroup\", \"isActive\" FROM \"Tax\" WHERE id = ? AND"
+                        + " \"organizationId\" = ? AND \"deletedAt\" IS NULL", v, org());
+                if (tax == null) {
+                    throw ApiException.badRequest("rebateTaxId is not a tax of this organization");
+                }
+                if (Boolean.TRUE.equals(tax.get("isGroup")) || Boolean.FALSE.equals(tax.get("isActive"))
+                        || dec(tax.get("rate")).signum() <= 0) {
+                    throw ApiException.badRequest("rebateTaxId must be an active single tax with a positive rate");
+                }
+            }
+            sets.add("\"rebateTaxId\" = ?");
+            params.add(v);
         }
         if (in.containsKey("requireTaxNumberAbove")) {
             BigDecimal v = dec(in.get("requireTaxNumberAbove"));

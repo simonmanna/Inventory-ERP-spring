@@ -56,7 +56,22 @@ public class BranchSaleRecognitionService {
 
     /** Accrual request: the submission, its customer, branch, date and lines. */
     public record Accrual(String submissionId, String number, String partnerId, String branchId, Instant date,
-            List<SaleLine> lines) {}
+            List<SaleLine> lines, boolean deferTax) {
+
+        /** Output VAT at confirm (the shipped showroom tax point). */
+        public Accrual(String submissionId, String number, String partnerId, String branchId, Instant date,
+                List<SaleLine> lines) {
+            this(submissionId, number, partnerId, branchId, date, lines, false);
+        }
+    }
+
+    /** Mapping key of the account that holds showroom VAT until the invoice is issued (R6 Q7, tax point at invoice). */
+    public static final String DEFERRED_TAX_KEY = "output_tax_deferred";
+
+    /** The output-VAT-not-yet-invoiced liability (created on first use). */
+    public String deferredTaxAccount() {
+        return accounts.ensureByCode("2216", "Output VAT not yet invoiced", "current_liability", DEFERRED_TAX_KEY);
+    }
 
     /** The {@code unbilled_receivable} account (created on first use). */
     public String unbilledAccount() {
@@ -90,8 +105,20 @@ public class BranchSaleRecognitionService {
                 a.branchId(), null, null));
         g.itemLines().forEach(it -> post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), a.partnerId(),
                 "Revenue " + a.number(), a.branchId(), it.costCenterId(), it.glDimensions())));
-        g.taxByAccount().forEach((acc, amt) -> post.add(new Line(acc, null, JsNumbers.dec(amt), null, "Output tax "
-                + a.number(), a.branchId(), null, null)));
+        if (a.deferTax()) {
+            // R6 Q7 (showroomTaxPoint = at_invoice): VAT is not due yet; hold it until the invoice moves it to output VAT
+            BigDecimal tax = BigDecimal.ZERO;
+            for (BigDecimal amt : g.taxByAccount().values()) {
+                tax = tax.add(amt);
+            }
+            if (tax.signum() != 0) {
+                post.add(new Line(deferredTaxAccount(), null, JsNumbers.dec(tax), null, "Output tax not yet invoiced " + a.number(),
+                        a.branchId(), null, null));
+            }
+        } else {
+            g.taxByAccount().forEach((acc, amt) -> post.add(new Line(acc, null, JsNumbers.dec(amt), null, "Output tax "
+                    + a.number(), a.branchId(), null, null)));
+        }
         return posting.post(new PostingRequest("SALES", a.date(), "Cash sale " + a.number() + " (revenue accrual)", null,
                 null, "cash_sale", a.submissionId(), null, "css:" + a.submissionId() + ":accrual", a.branchId(), null,
                 null, post));

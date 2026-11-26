@@ -42,20 +42,19 @@ Tax treatment (VAT tax point on advances, deliveries) must be confirmed for Ugan
 ## Sales Accounting Go-Live Sign-off
 
 Reviewer condition B2 (2026-11-24): developers do not decide accounting policy. For each question the accountant
-records the decision; the code ships the **current behaviour** below until a decision says otherwise. Where a
-question is not yet a setting, the "Configurable" column says so; making it one is follow-up work (R6b), with the
-current behaviour as its default so nothing changes until the accountant chooses. Any decision that differs from
+records the decision; the code ships the **current behaviour** below until a decision says otherwise. Every policy that can be switched without new accountant-approved postings is a setting (Sales settings,
+"Accounting policies") whose default is the current behaviour, so nothing changes until the accountant chooses. Any decision that differs from
 the current behaviour is its own PR, linked in "Implementation ref", with its test in "Test evidence".
 
 | # | Question | Current behaviour (shipped default) | Configurable today | Decision | Approved treatment | Approver | Date | Implementation ref | Test evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | VAT on advances (tax point) | Plain deposits carry no VAT; VAT arises on the final invoice. A down-payment *invoice* carries the order's first tax when `depositTaxPoint = receipt` | Partly: `SalesSettings.depositTaxPoint` (`delivery` / `receipt`) affects down-payment invoices only | pending | | | | | `SalesBillingIT.downPaymentInvoice` |
+| 1 | VAT on advances (tax point) | `delivery`: plain deposits carry no VAT; VAT arises on the final invoice | Yes: `depositTaxPoint`. `receipt` = advances on taxed orders must be a down-payment invoice (which charges the VAT); plain deposits on taxed orders are refused at all three entry points (V683 / R6) | pending | | | | feat/sales-accounting-policy-settings | `SalesAccountingPolicyIT.vatOnAdvances`, `SalesBillingIT.downPaymentInvoice` |
 | 2 | Deposit application across invoices | Manual by default; `oldest_first` applies open deposits when an order invoice posts. No pro-rata | Yes: `depositApplication` (`manual` / `oldest_first`) | pending | | | | | `SalesBillingIT`, `SalesLifecycleIntegrityIT.fullLifecycle` |
 | 3 | Returns: contra-income or reduce revenue | `salesReturnsAccountId` set → returns post there; blank → they reduce the line's revenue account | Yes: `salesReturnsAccountId` | pending | | | | | `SalesReturnFlowIT` |
-| 4 | Contractor revenue recognition | Revenue is recognised at invoice posting. The stored `revenueRecognition` setting is **not read by any posting** | No (setting exists but has no effect) | pending | | | | | — |
-| 5 | Weighbridge excess over ordered | Absorbed: excess is reported beside the line, never billed (`billableQty` = accepted) | No | pending | | | | | `SalesWeighbridgeIT`, `SalesQuantityBucketsIT` |
-| 6 | Rebate VAT | Rebate settlement credit notes carry no VAT; accruals are gross | No | pending | | | | | none (no rebate IT exists) |
-| 7 | Showroom VAT tax point | Output VAT is credited when the cash sale is confirmed (accrual P3); the invoice reclassifies only | No | pending | | | | | `CashSaleIT` T1/T4, T5 |
+| 4 | Contractor revenue recognition | Revenue at invoice posting. `revenueRecognition = at_ownership_transfer` is refused by the settings service until the transit postings (§3 rows C–E) are approved | Locked to `at_invoice`; the alternative needs accountant-approved postings first (not built) | pending | | | | — | — |
+| 5 | Weighbridge excess over ordered | `bill`: a load above the ordered quantity (within the line tolerance) is billed as accepted. Excess the customer reports above what was dispatched is never billed | Yes: `overOrderExcess` (`bill` / `absorb` = billable capped at ordered − cancelled) (V683 / R6) | pending | | | | feat/sales-accounting-policy-settings | `SalesAccountingPolicyIT.overOrderExcess` |
+| 6 | Rebate VAT | No VAT on rebate settlement credit notes; accruals gross | Yes: `rebateTaxId`. Set = the credit note is VAT-inclusive (customer credit unchanged), output VAT reduced, the VAT share cleared from the accrual against rebate cost (V683 / R6) | pending | | | | feat/sales-accounting-policy-settings | `SalesAccountingPolicyIT.rebateVat` |
+| 7 | Showroom VAT tax point | `at_confirm`: output VAT credited when the cash sale is confirmed (accrual P3); the invoice reclassifies only | Yes: `showroomTaxPoint` (`at_invoice` = VAT held on 2216 "Output VAT not yet invoiced" at confirm, moved to the tax account by the invoice; a void reverses it) (V683 / R6) | pending | | | | feat/sales-accounting-policy-settings | `CashSaleIT.showroomVatAtInvoice`, T1/T4, T5 |
 | 8 | EFRIS fiscal trigger | Unset: no fiscal document is requested | Yes, per branch profile: `fiscalTrigger` (`at_confirm` / `at_invoice` / unset) | pending | | | | | `CashSaleIT` T24–T26 |
 | 9 | Walk-in customer policy | Sales without a partner post to the profile's `walkInPartnerId`; a TIN is required above `requireTaxNumberAbove` (0 = never) | Yes: branch profile `walkInPartnerId`, `SalesSettings.requireTaxNumberAbove` | pending | | | | | `CashSaleIT` T11/T12 |
 

@@ -210,6 +210,24 @@ public class InvoicingWorkflowsInitializer {
             }
             post.add(new Line(unbilled, null, JsNumbers.dec(accrued), partnerId, "Accrued cash sale "
                     + full.get("documentNumber"), null, null, null));
+            // R6 Q7 (showroom tax point at invoice): VAT held at confirm becomes output VAT now. Read from the accrual
+            // itself, so a sale accrued under the other setting is reclassified the way it was booked.
+            String deferredAccount = determination.mappedOptional(BranchSaleRecognitionService.DEFERRED_TAX_KEY);
+            BigDecimal deferred = deferredAccount == null ? BigDecimal.ZERO : jdbc.sql("SELECT COALESCE(sum(credit - debit),"
+                    + " 0) FROM \"JournalLine\" WHERE \"journalEntryId\" = ? AND \"accountId\" = ?").params(accrual,
+                            deferredAccount).query(BigDecimal.class).single();
+            if (deferred.signum() != 0) {
+                BigDecimal invoiceTax = BigDecimal.ZERO;
+                for (BigDecimal amt : g.taxByAccount().values()) {
+                    invoiceTax = invoiceTax.add(amt);
+                }
+                if (invoiceTax.compareTo(deferred) != 0) {
+                    throw ApiException.badRequest("Invoice tax does not match the tax held for the sale");
+                }
+                post.add(new Line(deferredAccount, JsNumbers.dec(deferred), null, null, "Output tax now invoiced "
+                        + full.get("documentNumber"), null, null, null));
+                g.taxByAccount().forEach((acc, amt) -> post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax")));
+            }
         } else {
             g.itemLines().forEach(it -> post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), partnerId,
                     "Revenue", null, it.costCenterId(), it.glDimensions())));

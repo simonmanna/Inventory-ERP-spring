@@ -945,8 +945,12 @@ public class CashSaleService {
                     p.get("id"), org());
         }
         // P3 — revenue and VAT, once
+        // R6 Q7: showroom VAT tax point (default at confirm; "at_invoice" holds VAT until the head-office invoice)
+        Map<String, Object> taxPoint = db.row("SELECT \"showroomTaxPoint\" FROM \"SalesSettings\" WHERE"
+                + " \"organizationId\" = ?", org());
+        boolean deferTax = taxPoint != null && "at_invoice".equals(taxPoint.get("showroomTaxPoint"));
         Map<String, Object> entry = recognition.accrue(new BranchSaleRecognitionService.Accrual(id, number, partnerId,
-                branchId, postDate, sale));
+                branchId, postDate, sale, deferTax));
         db.update("UPDATE \"SalesSubmission\" SET \"executionStatus\" = 'confirmed', \"confirmedAt\" = " + NOW + ","
                 + " \"confirmedById\" = ?, \"paidTotal\" = ?, \"accrualJournalEntryId\" = ?, version = version + 1,"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ?"
