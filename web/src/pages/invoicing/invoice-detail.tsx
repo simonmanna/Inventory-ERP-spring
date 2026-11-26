@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HandoverTab } from '@/pages/sales/HandoverTab';
-import { money, date, statusLabel } from '@/lib/format';
+import { money, date, statusLabel, localDateInput } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
 import { useCancelInvoice, useCreatePayment, useInvoice, usePostInvoice } from '@/features/invoicing/api';
@@ -28,6 +28,8 @@ import { Field } from '@/pages/crm/crm-ui';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { InvoiceLinesTable } from './InvoiceLinesTable';
 import { api } from '@/lib/api';
+import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 
 /** The branch cash sale behind a head-office invoice (GET /sales/invoices/:id/cash-sale). */
 interface InvoiceCashSale {
@@ -112,6 +114,7 @@ export function InvoiceDetailPage() {
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
   const [reference, setReference] = useState('');
+  const [postOpen, setPostOpen] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
 
   const entry = useJournalEntry(inv?.journalEntryId ?? undefined);
@@ -209,9 +212,10 @@ export function InvoiceDetailPage() {
       } else {
         await createPayment.mutateAsync({
           partnerId: inv.partnerId,
-          paymentDate: new Date().toISOString().slice(0, 10),
+          paymentDate: localDateInput(),
           amount: amt,
           paymentMethod: method,
+          reference: reference.trim() || undefined,
           allocations: [{ documentId: inv.id, amount: amt }],
         });
       }
@@ -237,7 +241,8 @@ export function InvoiceDetailPage() {
   const balanced = Math.abs(journalTotalDebit - journalTotalCredit) < 0.01;
   const th = 'py-2 pr-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground';
   const canEmail = !isDraft && inv.status !== 'cancelled' && has(PERMISSIONS.invoice.send);
-  const canCancel = canModify && has(PERMISSIONS.invoice.cancel);
+  // POS sales are cancelled (refunded) from the POS, not through the back-office invoice route.
+  const canCancel = canModify && !isPosInvoice && has(PERMISSIONS.invoice.cancel);
 
   return (
     <div className="space-y-4">
@@ -255,7 +260,7 @@ export function InvoiceDetailPage() {
         <div data-tour="invoice.actions" className="flex flex-wrap items-center gap-2">
           {isProforma && <span className="text-sm text-muted-foreground">{tx('Proforma, not a tax invoice')}</span>}
           {!isProforma && isDraft && has(PERMISSIONS.invoice.post) && (
-            <Button data-tour="invoice.post" onClick={() => postInvoice.mutate(inv.id)} disabled={postInvoice.isPending}>
+            <Button data-tour="invoice.post" onClick={() => setPostOpen(true)} disabled={postInvoice.isPending}>
               {postInvoice.isPending ? tx('Posting...') : tx('Confirm')}
             </Button>
           )}
@@ -597,7 +602,9 @@ export function InvoiceDetailPage() {
             <DialogTitle>{tx('Cancel Invoice')}</DialogTitle>
             <DialogDescription>
               {tx('This will cancel')} {inv.documentNumber} {tx('and prevent further changes or payments.')}{' '}
-              {tx('Its journal entry is reversed. An invoice with payments, deposits or debit notes applied cannot be cancelled until those are voided or reversed.')}
+              {isDraft
+                ? tx('This discards the draft. Nothing was posted, so no ledger or stock entry changes; its order lines can be invoiced again.')
+                : tx('Its journal entry is reversed. An invoice with payments, deposits or debit notes applied cannot be cancelled until those are voided or reversed.')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -616,11 +623,28 @@ export function InvoiceDetailPage() {
               variant="destructive"
               disabled={cancelInvoice.isPending || !cancelReason.trim()}
               onClick={() => cancelInvoice.mutate({ id: inv.id, reason: cancelReason.trim() }, {
-                onSuccess: () => { setCancelOpen(false); setCancelReason(''); },
+                onSuccess: () => { setCancelOpen(false); setCancelReason(''); toast.success(isDraft ? tx('Draft discarded') : tx('Invoice cancelled')); },
+                onError: (e) => toast.error(apiErrorMessage(e, tx('Could not cancel the invoice'))),
               })}
             >
               {cancelInvoice.isPending ? tx('Cancelling...') : tx('Cancel Invoice')}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={postOpen} onOpenChange={setPostOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{tx('Post invoice')} {inv.documentNumber}?</DialogTitle>
+            <DialogDescription>{tx('Posting books the receivable, revenue and tax in the ledger. A posted invoice can only be undone by cancelling it (with a reason) or by a credit note.')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPostOpen(false)}>{tx('Back')}</Button>
+            <Button disabled={postInvoice.isPending} onClick={() => postInvoice.mutate(inv.id, {
+              onSuccess: () => { setPostOpen(false); toast.success(tx('Invoice posted')); },
+              onError: (e) => toast.error(apiErrorMessage(e, tx('Could not post the invoice'))),
+            })}>{postInvoice.isPending ? tx('Posting...') : tx('Post')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

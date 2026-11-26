@@ -121,7 +121,7 @@ public class GatePassSources {
         String sql = switch (type) {
             case "delivery" -> """
                     SELECT l.code AS number, coalesce(d."branchId", %s) AS "branchId", d."partnerId", pa.name AS "partnerName",
-                           l.status, l.status = 'cancelled' AS cancelled, l."stockIssuedAt" IS NOT NULL AS "goodsIssued",
+                           l.status, l.status IN ('cancelled', 'returned') AS cancelled, l."stockIssuedAt" IS NOT NULL AS "goodsIssued",
                            d."sourceType" AS "orderType", d."sourceId" AS "orderId",
                            coalesce(nullif(trim(e."firstName" || ' ' || coalesce(e."lastName", '')), ''),
                                     l."transporterDriverName") AS "bearerName",
@@ -140,7 +140,13 @@ public class GatePassSources {
                     LOC_NAME.formatted("l.\"destinationLocationId\""));
             case "sales_order" -> """
                     SELECT o.number, o."branchId", o."partnerId", pa.name AS "partnerName", o.status,
-                           o.status = 'cancelled' AS cancelled, o."deliveryStatus" = 'full' AS "goodsIssued",
+                           o.status = 'cancelled' AS cancelled,
+                           (o."deliveryStatus" = 'full' OR NOT EXISTS (SELECT 1 FROM "SalesOrderLine" sl
+                               JOIN "Product" sp ON sp.id = sl."productId" WHERE sl."orderId" = o.id
+                               AND sp."trackInventory") OR EXISTS (SELECT 1 FROM "FleetLoad" fl JOIN "FleetDeliveryOrder" fd
+                               ON fd.id = fl."deliveryOrderId" WHERE fd."organizationId" = o."organizationId"
+                               AND fd."sourceType" = 'sales_order' AND fd."sourceId" = o.id
+                               AND fl."stockIssuedAt" IS NOT NULL AND fl.status <> 'returned')) AS "goodsIssued",
                            o.total, o."invoiceStatus", h.driver AS "bearerName", h."contactPhone" AS "bearerPhone",
                            h.vehicle AS "vehiclePlate", h."courierName" AS "transportCompany",
                            coalesce(h.address, o."deliveryAddress", %s) AS destination

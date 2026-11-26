@@ -148,7 +148,7 @@ export function SalesOrderPage() {
         discountPercent: n(l.discountPercent), taxId: l.taxId || null, promisedDate: l.promisedDate || undefined,
       })),
     };
-    return isNew ? salesApi.createOrder(body) : salesApi.updateOrder({ id: o!.id, ...body });
+    return isNew ? salesApi.createOrder(body) : salesApi.updateOrder({ id: o!.id, ...body, version: o!.version });
   });
   const action = useSalesMutation(salesApi.orderAction);
   const close = useSalesMutation(salesApi.closeShort);

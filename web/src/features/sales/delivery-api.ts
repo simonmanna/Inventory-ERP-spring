@@ -19,6 +19,8 @@ export interface DeliveryLine {
   id: string; deliveryOrderLineId: string; orderLineId: string | null; productId: string; productName: string | null;
   uomCode: string | null; plannedQty: number; loadedQty: number | null; dispatchedQty: number | null; deliveredQty: number | null;
   returnedQty: number | null; damagedQty: number; rejectedQty: number; shortageQty: number; batchNumber: string | null;
+  /** Serial-tracked product: the dispatch must name one serial number per base unit (R4d). */
+  serialTracking?: boolean; serialNumbers?: string[];
   /** Phase A A3 buckets (plan §3): dispatched = accepted + returned + damaged + confirmed shortage + pending dispute. */
   acceptedQty?: number; pendingDisputedQty?: number; confirmedShortageQty?: number; excessQty?: number;
   weightPendingQty?: number; weightConfirmedQty?: number;
@@ -174,7 +176,6 @@ export interface DeliveryPlan {
 }
 
 const KEY = ['sales', 'order-delivery'] as const;
-export const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
 export function useDeliverySummary(orderId: string) {
   return useQuery({

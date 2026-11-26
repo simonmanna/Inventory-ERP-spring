@@ -1,8 +1,10 @@
 package com.inventoryerp.kernel.idempotency;
 
+import java.util.Map;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.ConfigurableTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionExecution;
@@ -18,9 +20,27 @@ import org.springframework.transaction.TransactionExecutionListener;
 class IdempotencyTransactionListener implements TransactionExecutionListener, SmartInitializingSingleton {
 
     private final ObjectProvider<PlatformTransactionManager> managers;
+    private final ObjectProvider<JdbcClient> jdbc;
 
-    IdempotencyTransactionListener(ObjectProvider<PlatformTransactionManager> managers) {
+    IdempotencyTransactionListener(ObjectProvider<PlatformTransactionManager> managers, ObjectProvider<JdbcClient> jdbc) {
         this.managers = managers;
+        this.jdbc = jdbc;
+    }
+
+    /**
+     * Sales readiness R2 (P1-3): on a route of {@link IdempotencyService#EVIDENCE_ROUTES}, stamp the operation record
+     * inside the committing transaction, so a crash after the commit leaves evidence that the money moved.
+     */
+    @Override
+    public void beforeCommit(TransactionExecution transaction) {
+        if (!transaction.isNewTransaction() || transaction.isReadOnly()
+                || BusinessOutcome.RETRY_SAFE_TX.equals(transaction.getTransactionName())) {
+            return;
+        }
+        BusinessOutcome.Operation op = BusinessOutcome.current();
+        if (op != null && op.path() != null && IdempotencyService.needsCommitEvidence(op.path())) {
+            BusinessOutcome.record(jdbc.getObject(), Map.of("committed", true), false);
+        }
     }
 
     @Override

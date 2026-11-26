@@ -13,6 +13,7 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.InvoiceDeliveryService;
 import com.inventoryerp.invoicing.application.PaymentService;
 import com.inventoryerp.invoicing.application.PaymentService.PaymentInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -104,7 +105,7 @@ public class SalesCreditFlowService {
     }
 
     private Map<String, Object> post(String partner, String invoiceId, String type, String reason, List<LineInput> lines) {
-        Map<String, Object> cn = creditNotes.create(new CreditNoteInput(partner, LocalDate.now().toString(), null, null, reason,
+        Map<String, Object> cn = creditNotes.create(new CreditNoteInput(partner, LocalDate.now(BusinessZone.get()).toString(), null, null, reason,
                 blank(invoiceId) ? null : invoiceId, lines));
         String id = str(cn.get("id"));
         creditNotes.post(id, "none");
@@ -147,10 +148,10 @@ public class SalesCreditFlowService {
         String m = blank(method) ? "bank" : method;
         CreditNoteService.ForeignCredit fc = creditNotes.foreignCredit(creditNoteId);
         if (fc == null) {
-            return payments.createCustomerRefund(new PaymentInput(partnerId, LocalDate.now().toString(), amount, m,
+            return payments.createCustomerRefund(new PaymentInput(partnerId, LocalDate.now(BusinessZone.get()).toString(), amount, m,
                     accountId, reference, null, List.of(), null, true, null, null), true, true);
         }
-        return payments.createForeignCreditRefund(new PaymentInput(partnerId, LocalDate.now().toString(), amount, m,
+        return payments.createForeignCreditRefund(new PaymentInput(partnerId, LocalDate.now(BusinessZone.get()).toString(), amount, m,
                 accountId, reference, null, List.of(), null, true, null, null, fc.currency(), exchangeRate),
                 fc.carryingRate());
     }

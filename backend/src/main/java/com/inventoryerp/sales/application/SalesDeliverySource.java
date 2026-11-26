@@ -49,6 +49,13 @@ public class SalesDeliverySource implements DeliverySourcePort {
     }
 
     @Override
+    public BigDecimal overDeliveryTolerancePct(String sourceLineId) {
+        Map<String, Object> l = db.row("SELECT \"tolerancePct\" FROM \"SalesOrderLine\" WHERE id = ? AND \"organizationId\" = ?",
+                sourceLineId, org());
+        return l == null || l.get("tolerancePct") == null ? BigDecimal.ZERO : dec(l.get("tolerancePct"));
+    }
+
+    @Override
     public void assertDeliverable(String sourceId) {
         Map<String, Object> o = db.row("SELECT number, status, \"onHold\", \"holdReason\" FROM \"SalesOrder\" WHERE id = ?"
                 + " AND \"organizationId\" = ?", sourceId, org());

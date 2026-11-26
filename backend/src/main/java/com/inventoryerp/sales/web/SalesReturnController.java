@@ -79,21 +79,21 @@ public class SalesReturnController {
     }
 
     @PostMapping("/returns/{id}/receive")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__RETURN_WRITE)
     public Map<String, Object> receive(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return returns.receive(id, body(b));
     }
 
     @PostMapping("/returns/{id}/inspect")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__RETURN_WRITE)
     public Map<String, Object> inspect(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return returns.inspect(id, body(b));
     }
 
     @PostMapping("/returns/{id}/close")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__RETURN_APPROVE)
     public Map<String, Object> close(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return returns.close(id, body(b));

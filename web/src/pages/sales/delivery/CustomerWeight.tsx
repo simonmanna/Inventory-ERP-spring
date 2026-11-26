@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { AlertTriangle, CheckCircle2, FileUp, Scale, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +10,7 @@ import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
-  idem, readDataUrl, useDeliveryAction, type CustomerWeight, type CustomerWeightBody, type CustomerWeightResult,
+  readDataUrl, useDeliveryAction, type CustomerWeight, type CustomerWeightBody, type CustomerWeightResult,
   type SalesDelivery, type WeightOutcome, type WeightSplitLine,
 } from '@/features/sales/delivery-api';
 import { Labeled } from './DeliveryEditorDialog';
@@ -136,13 +137,13 @@ export function CustomerWeightDialog({ delivery, onClose }: { delivery: SalesDel
   };
 
   const record = useDeliveryAction(async (allocations?: CustomerWeightBody['allocations']) => {
-    const res = await api.post<SalesDelivery & { customerWeightResult: CustomerWeightResult }>(
-      `/sales/deliveries/${delivery.id}/customer-weight`, { ...body, allocations }, idem());
+    const res = await idempotentPost<SalesDelivery & { customerWeightResult: CustomerWeightResult }>(
+      `/sales/deliveries/${delivery.id}/customer-weight`, { ...body, allocations });
     if (form.files.length) {
       await uploadWeightEvidence(delivery.id, form);
       setForm((f) => ({ ...f, files: [] }));
     }
-    return res.data.customerWeightResult;
+    return res.customerWeightResult;
   });
 
   const submit = (allocations?: CustomerWeightBody['allocations']) => record.mutate(allocations, {

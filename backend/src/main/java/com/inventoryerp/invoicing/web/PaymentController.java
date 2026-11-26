@@ -100,7 +100,7 @@ public class PaymentController {
 
     /** FX-2 F: allocate a payment's unallocated remainder (advance) to open documents ({@code {allocations}}). */
     @PostMapping("/payments/{id}/allocations")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.PAYMENT__ALLOCATE)
     public Map<String, Object> allocate(@PathVariable String id, @RequestBody Map<String, Object> body) {
         List<PaymentService.AllocationInput> in = new java.util.ArrayList<>();

@@ -118,7 +118,7 @@ public class SalesFulfilmentService {
         }
         if (!changed.isEmpty()) {
             orders.refreshStatus(orderId);
-            atp.reserveOrder(orderId);
+            atp.followOrder(orderId);
         }
         return changed;
     }
@@ -229,21 +229,34 @@ public class SalesFulfilmentService {
      * Nightly reconciliation body: rebuild every open order with fleet deliveries, record how many lines drifted
      * (a drift means an event was missed; the rebuild repaired it).
      */
-    @Transactional
     public Map<String, Object> reconcile() {
         List<Map<String, Object>> drift = new ArrayList<>();
         List<Map<String, Object>> open = db.rows("SELECT DISTINCT o.id FROM \"SalesOrder\" o JOIN \"FleetDeliveryOrder\" d"
                 + " ON d.\"sourceType\" = 'sales_order' AND d.\"sourceId\" = o.id WHERE o.\"organizationId\" = ? AND"
                 + " o.status IN ('confirmed', 'in_fulfilment')", org());
+        // Sales readiness R5 (SO-5): each order is rebuilt in its own transaction (locks held per order, one failure
+        // recorded instead of rolling back the whole organisation).
         for (Map<String, Object> o : open) {
-            for (Map<String, Object> c : rebuild(str(o.get("id")))) {
-                c.put("orderId", o.get("id"));
-                drift.add(c);
+            try {
+                List<Map<String, Object>> changes = perOrder.execute(s -> rebuild(str(o.get("id"))));
+                for (Map<String, Object> c : changes == null ? List.<Map<String, Object>>of() : changes) {
+                    c.put("orderId", o.get("id"));
+                    drift.add(c);
+                }
+            } catch (RuntimeException e) {
+                drift.add(Obj.of("orderId", o.get("id"), "error", e.getMessage()));
             }
         }
-        db.update("INSERT INTO \"SalesReconciliation\" (id, \"organizationId\", \"ordersChecked\", \"linesDrifted\","
+        perOrder.executeWithoutResult(s -> db.update("INSERT INTO \"SalesReconciliation\" (id, \"organizationId\", \"ordersChecked\", \"linesDrifted\","
                 + " details) VALUES (?, ?, ?, ?, ?::jsonb)", SalesDb.newId(), org(), open.size(), drift.size(),
-                SalesDb.toJson(drift));
+                SalesDb.toJson(drift)));
         return Obj.of("ordersChecked", open.size(), "linesDrifted", drift.size(), "details", drift);
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate perOrder;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTransactions(org.springframework.transaction.PlatformTransactionManager txm) {
+        this.perOrder = new org.springframework.transaction.support.TransactionTemplate(txm);
     }
 }

@@ -17,11 +17,13 @@ import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.PreparedLine;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Totals;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.Savepoints;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.sequence.SequenceService;
@@ -267,7 +269,7 @@ public class SalesOrderService {
         header.put("branchId", access.documentBranch(str(header.get("branchId"))));
         header.put("partnerId", partnerId);
         if (header.get("agreementId") == null) {
-            String project = engine.projectAgreement(partnerId, str(header.get("siteId")), LocalDate.now());
+            String project = engine.projectAgreement(partnerId, str(header.get("siteId")), LocalDate.now(BusinessZone.get()));
             if (project != null) {
                 header.put("agreementId", project);
             }
@@ -279,7 +281,7 @@ public class SalesOrderService {
         header.put("createdById", user());
         Map<String, Object> row = db.insert("SalesOrder", header);
         String id = str(row.get("id"));
-        writeLines(id, partnerId, str(header.get("agreementId")), LocalDate.now(), in.get("lines"),
+        writeLines(id, partnerId, str(header.get("agreementId")), LocalDate.now(BusinessZone.get()), in.get("lines"),
                 str(header.get("locationId")), PriceScope.of(header));
         audit.record(AuditInput.of("SalesOrder", id, "create", null, Obj.of("number", row.get("number"))));
         return get(id);
@@ -329,7 +331,7 @@ public class SalesOrderService {
             m.put("quotationLineId", l.get("id"));
             lines.add(m);
         }
-        writeLines(id, str(q.get("partnerId")), null, LocalDate.now(), lines, str(header.get("locationId")),
+        writeLines(id, str(q.get("partnerId")), null, LocalDate.now(BusinessZone.get()), lines, str(header.get("locationId")),
                 PriceScope.of(header));
         // Review U-5: the order keeps each quote line's saved factor (same unit), not today's re-resolved one.
         for (Map<String, Object> l : quoteLines) {
@@ -351,6 +353,13 @@ public class SalesOrderService {
         if (!"draft".equals(o.get("status"))) {
             throw ApiException.badRequest("Only draft orders can be edited; request a change for a confirmed order");
         }
+        // Sales readiness R4 (SO-11): a save based on an older copy would silently overwrite someone else's edit.
+        if (in.get("version") instanceof Number v && v.intValue() != ((Number) o.get("version")).intValue()) {
+            throw ApiException.conflict("This order was changed by someone else since you opened it; reload it and"
+                    + " apply your changes again");
+        }
+        in = new LinkedHashMap<>(in);
+        in.remove("version");
         Map<String, Object> d = header(in, false);
         if (d.containsKey("branchId")) {
             d.put("branchId", access.documentBranch(str(d.get("branchId"))));
@@ -370,7 +379,7 @@ public class SalesOrderService {
         db.patch("SalesOrder", id, d, true);
         if (in.containsKey("lines")) {
             writeLines(id, str(d.getOrDefault("partnerId", o.get("partnerId"))), str(d.getOrDefault("agreementId",
-                    o.get("agreementId"))), LocalDate.now(), in.get("lines"), str(d.getOrDefault("locationId",
+                    o.get("agreementId"))), LocalDate.now(BusinessZone.get()), in.get("lines"), str(d.getOrDefault("locationId",
                             o.get("locationId"))), PriceScope.of(o, d));
         }
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("fields", d.keySet(), "lines",
@@ -387,8 +396,33 @@ public class SalesOrderService {
         }
         db.update("UPDATE \"SalesOrder\" SET \"deletedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", id,
                 org());
+        closeCreditRequests(id, "Order deleted");
         audit.record(AuditInput.of("SalesOrder", id, "delete"));
         return Obj.of("ok", true);
+    }
+
+    private org.springframework.beans.factory.ObjectProvider<com.inventoryerp.fleet.application.FleetDeliveryOrderService>
+            deliveryOrders;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeliveryOrders(org.springframework.beans.factory.ObjectProvider<
+            com.inventoryerp.fleet.application.FleetDeliveryOrderService> deliveryOrders) {
+        this.deliveryOrders = deliveryOrders;
+    }
+
+    /** Sales readiness R4d (DEL-1): bring the order's live delivery order in step with its lines. */
+    void resyncDeliveries(String id) {
+        var service = deliveryOrders == null ? null : deliveryOrders.getIfAvailable();
+        if (service != null) {
+            service.resyncFromSource("sales_order", id);
+        }
+    }
+
+    /** Sales readiness R3: a deleted or cancelled order leaves no credit request waiting for a decision. */
+    private void closeCreditRequests(String id, String why) {
+        db.update("UPDATE \"SalesCreditRequest\" SET status = 'cancelled', \"decisionComment\" = ?, \"decidedAt\" = " + NOW
+                + ", \"updatedAt\" = " + NOW + " WHERE \"orderId\" = ? AND \"organizationId\" = ? AND status = 'pending'", why,
+                id, org());
     }
 
     /** Copy of an order as a new draft (any status). */
@@ -475,6 +509,14 @@ public class SalesOrderService {
         }
         if (create && d.get("terms") == null) {
             d.put("terms", settings.settings().get("defaultQuoteTerms"));
+        }
+        // Sales readiness R4 (SO-12): every reference on the order belongs to the caller's organisation.
+        for (String[] ref : new String[][] {{"locationId", "InventoryLocation", "Location not found"}, {"siteId", "FleetCustomerSite",
+                        "Customer site not found"}, {"paymentTermId", "PaymentTerm", "Payment term not found"},
+                {"teamId", "CrmTeam", "Team not found"}, {"branchId", "Branch", "Branch not found"}}) {
+            if (d.get(ref[0]) != null && !db.exists(ref[1], str(d.get(ref[0])))) {
+                throw ApiException.notFound(ref[2]);
+            }
         }
         return d;
     }
@@ -813,7 +855,7 @@ public class SalesOrderService {
     List<String> approvalReasons(Map<String, Object> o, List<Map<String, Object>> lines) {
         Map<String, Object> s = settings.settings();
         List<String> reasons = new ArrayList<>(engine.breaches(str(o.get("partnerId")), str(o.get("branchId")),
-                LocalDate.now(), lines.stream().filter(l -> !Set.of("quotation", "agreement").contains(str(l.get(
+                LocalDate.now(BusinessZone.get()), lines.stream().filter(l -> !Set.of("quotation", "agreement").contains(str(l.get(
                         "priceSource")))).toList(), dec(s.get("orderMaxDiscountPercent")), Boolean.TRUE.equals(s.get(
                                 "marginCheck"))));
         reasons.addAll(agreements.releaseReasons(o, lines));
@@ -881,7 +923,13 @@ public class SalesOrderService {
     }
 
     private Map<String, Object> finishConfirm(String id) {
-        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? FOR UPDATE", id);
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                id, org());
+        // Sales readiness R3 (P1-1): only a live draft (from confirm) or an order whose commercial approval was just
+        // given (pending_approval) can be confirmed here; every other path must go through confirm() first.
+        if (o == null || o.get("deletedAt") != null || !Set.of("draft", "pending_approval").contains(o.get("status"))) {
+            throw ApiException.badRequest("Only draft orders can be confirmed");
+        }
         Map<String, Object> policy0 = settings.settings();
         boolean cash = "cash".equals(o.get("paymentMode")) && Boolean.TRUE.equals(policy0.get("cashBypassesCredit"));
         CreditService.Decision c = cash ? new CreditService.Decision(null, "pass", List.of(), Map.of())
@@ -938,10 +986,25 @@ public class SalesOrderService {
         return out;
     }
 
-    /** SG-8: confirm after a credit request was approved, whatever the order's approval state was. */
+    /**
+     * SG-8: confirm a draft after its credit request was approved. Sales readiness R3 (P1-1): this runs the full
+     * {@link #confirm} checks (lines, stock policy, commercial approval), so a credit approval never confirms an order
+     * past them; the approved request then covers the credit check. An order waiting for commercial approval stays
+     * there (its approval confirms it).
+     */
     @Transactional
     public Map<String, Object> confirmAfterCredit(String id) {
-        return finishConfirm(id);
+        // A refusal rolls back only this attempt (savepoint, called on this instance so the transaction is not marked
+        // rollback-only): the caller's credit decision still commits and the refusal is returned as confirmError.
+        Map<String, Object>[] out = new Map[1];
+        try {
+            Savepoints.run(db.jdbc(), () -> out[0] = confirm(id));
+            return out[0];
+        } catch (ApiException refused) {
+            Map<String, Object> o = get(id);
+            o.put("confirmError", refused.getMessage());
+            return o;
+        }
     }
 
     /** Put an open order on hold (no fulfilment while held). */
@@ -1021,6 +1084,7 @@ public class SalesOrderService {
                 "cancelReason", blank(reason) ? null : reason, "onHold", false, "version",
                 ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "cancel", null, Obj.of("reason", reason)));
+        closeCreditRequests(id, "Order cancelled");
         atp.releaseOrder(id);
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("reason", blank(reason) ? null : reason);
@@ -1059,10 +1123,12 @@ public class SalesOrderService {
         db.patch("SalesOrder", id, Obj.of("version", ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("lineId", lineId, "closedShort", cancel,
                 "reason", reason)));
+        // Sales readiness R4d (DEL-1): the live delivery order follows (refused when deliveries already plan more).
+        resyncDeliveries(id);
         publish(DomainEvents.SALES_ORDER_LINE_CLOSED_SHORT, id, Map.of("lineId", lineId, "quantity",
                 JsNumbers.js(cancel)));
         refreshStatus(id);
-        atp.reserveOrder(id);
+        atp.followOrder(id);
         return get(id);
     }
 
@@ -1078,8 +1144,10 @@ public class SalesOrderService {
      */
     @Transactional
     public void refreshStatus(String id) {
-        Map<String, Object> o = db.row("SELECT status FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", id,
-                org());
+        // Sales readiness R4 (SO-6): under the order lock, so concurrent fleet / invoice subscribers serialise and the
+        // order turns done (and announces it) exactly once.
+        Map<String, Object> o = db.row("SELECT status FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                id, org());
         if (o == null || !OPEN.contains(o.get("status"))) {
             return;
         }
@@ -1095,7 +1163,9 @@ public class SalesOrderService {
         String delivery = delivered.signum() == 0 && !allDelivered ? "none" : allDelivered ? "full" : "partial";
         String invoice = invoiced.signum() == 0 ? billable.signum() > 0 ? "to_invoice" : "nothing"
                 : invoiced.compareTo(billable) >= 0 && allDelivered ? "invoiced" : "partial";
-        String status = allDelivered && "invoiced".equals(invoice) ? "done"
+        // SO-7: an order closed short on every line before anything left has nothing to deliver or bill: it is done.
+        boolean nothingLeft = dec(s.get("open")).signum() == 0 && invoiced.signum() == 0 && billable.signum() == 0;
+        String status = allDelivered && ("invoiced".equals(invoice) || nothingLeft) ? "done"
                 : delivered.signum() > 0 || invoiced.signum() > 0 ? "in_fulfilment" : str(o.get("status"));
         Map<String, Object> d = Obj.of("deliveryStatus", delivery, "invoiceStatus", invoice, "status", status);
         if ("done".equals(status)) {
@@ -1116,12 +1186,12 @@ public class SalesOrderService {
         Map<String, Object> payload = Obj.of("v", 1, "organizationId", org(), "orderId", id, "number", o.get("number"),
                 "partnerId", o.get("partnerId"), "total", o.get("total"));
         payload.putAll(extra);
-        events.publish(event, payload);
+        events.publishOnCommit(event, payload);
     }
 
     /** SG-9: numbers run per branch when the setting says so; the branch code in the prefix keeps series apart. */
     String nextNumber(String branchId) {
-        int year = LocalDate.now().getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         String code = branchCode(branchId);
         return code == null ? sequence.next("sales_order:" + year, "SO-" + year + "-", 5)
                 : sequence.next("sales_order:" + code + ":" + year, "SO-" + code + "-" + year + "-", 5);

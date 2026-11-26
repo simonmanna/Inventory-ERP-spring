@@ -95,7 +95,6 @@ export const DELIVERY_STATUS_LABEL: Record<DeliveryStatus, string> = {
 };
 export const METHOD_LABEL: Record<string, string> = { cash: tx('Cash'), mobile_money: tx('Mobile money'), bank: tx('Bank') };
 
-export const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
 /** Download the sale's printable "CASH SALES FORM" (server-rendered) in the given format. */
 async function downloadCashSaleForm(id: string, format: 'excel' | 'pdf', fallbackName: string) {

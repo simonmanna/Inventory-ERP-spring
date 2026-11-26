@@ -288,6 +288,19 @@ public class SalesHandoverService {
         }
         String method = str(next.get("method"));
         String status = str(next.get("status"));
+        // Sales readiness R4d (DEL-6): once an order has deliveries they are the record of what left and arrived; the
+        // free handover status may then not claim a dispatch or delivery of its own (the plan fields stay editable).
+        if (SALES_ORDER.equals(type) && !java.util.Objects.equals(status, before.get("status"))
+                && Set.of("dispatched", "delivered").contains(status)
+                && (db.count("SELECT count(*) FROM \"FleetDeliveryOrder\" WHERE \"organizationId\" = ? AND \"sourceType\" ="
+                        + " 'sales_order' AND \"sourceId\" = ? AND status <> 'cancelled'", List.of(org(), id)) > 0
+                    || db.count("SELECT count(*) FROM \"SalesOrderLine\" l JOIN \"Product\" p ON p.id = l.\"productId\""
+                            + " WHERE l.\"orderId\" = ? AND l.\"organizationId\" = ? AND p.\"trackInventory\"",
+                            List.of(id, org())) > 0)) {
+            // Stocked goods leave only through a delivery, which issues them from stock and books their cost.
+            throw ApiException.badRequest("Stocked goods on this order leave through deliveries: dispatch and confirm"
+                    + " them on the Delivery tab instead of marking the handover " + status);
+        }
         if (!METHODS.contains(method)) {
             throw ApiException.badRequest("method must be one of: " + String.join(", ", METHODS));
         }

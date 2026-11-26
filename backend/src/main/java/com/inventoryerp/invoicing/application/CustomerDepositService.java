@@ -10,6 +10,7 @@ import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.accounting.application.TenderAccount;
 import com.inventoryerp.invoicing.application.PaymentService.AllocationInput;
 import com.inventoryerp.invoicing.application.PaymentService.PaymentInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -166,7 +167,7 @@ public class CustomerDepositService {
         String cur = in.currencyCode() == null || in.currencyCode().isBlank() ? base
                 : in.currencyCode().trim().toUpperCase();
         boolean foreign = !cur.equals(base);
-        LocalDate date = in.receivedDate() == null ? LocalDate.now() : LocalDate.parse(in.receivedDate().substring(0, 10));
+        LocalDate date = in.receivedDate() == null ? LocalDate.now(BusinessZone.get()) : LocalDate.parse(in.receivedDate().substring(0, 10));
         TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org, method, in.accountId(), null,
                 foreign ? cur : null);
         BigDecimal rate = BigDecimal.ONE;
@@ -231,7 +232,7 @@ public class CustomerDepositService {
         TenderAccount.Resolved tender = TenderAccount.resolve(jdbc, determination, org, in.paymentMethod(), in.accountId(),
                 null);
         String id = UUID.randomUUID().toString();
-        LocalDate date = in.receivedDate() == null ? LocalDate.now() : in.receivedDate();
+        LocalDate date = in.receivedDate() == null ? LocalDate.now(BusinessZone.get()) : in.receivedDate();
         String depositAccount = depositAccount();
         Map<String, Object> entry = posting.post(new PostingRequest(tender.journalCode(), date.atStartOfDay()
                 .toInstant(ZoneOffset.UTC), "Cash sale " + in.cashSaleNumber() + " payment", null, null,
@@ -347,7 +348,7 @@ public class CustomerDepositService {
         if (net.signum() <= 0) {
             return null;
         }
-        LocalDate date = doc.get("issueDate") instanceof Instant i ? i.atZone(ZoneOffset.UTC).toLocalDate() : LocalDate.now();
+        LocalDate date = doc.get("issueDate") instanceof Instant i ? i.atZone(ZoneOffset.UTC).toLocalDate() : LocalDate.now(BusinessZone.get());
         // ADR-S080: a foreign down-payment invoice holds the deposit in its currency at the invoice's carrying rate
         String cur = fxRates.currencyOf(doc);
         boolean foreign = !cur.equals(fxRates.base());
@@ -432,7 +433,7 @@ public class CustomerDepositService {
         // a foreign deposit is relieved at its own rate (non-monetary, IFRIC 22); the gap to the invoice rate is
         // realised FX, computed by the payment's FX settlement exactly as for a foreign receipt
         Map<String, Object> pay = payments.createDepositApplication(new PaymentInput((String) d.get("partnerId"),
-                LocalDate.now().toString(), amount, PaymentService.DEPOSIT_METHOD, depositAccount(),
+                LocalDate.now(BusinessZone.get()).toString(), amount, PaymentService.DEPOSIT_METHOD, depositAccount(),
                 reference == null ? "Deposit " + d.get("number") : reference, branchId,
                 List.of(new AllocationInput(documentId, null, amount)), null, false, null,
                 null, foreign ? cur : null, foreign ? SqlRows.dec(d, "exchangeRate") : null, null, null));
@@ -747,10 +748,10 @@ public class CustomerDepositService {
                 .param(org()));
         String currency = o == null || o.get("currencyCode") == null ? "" : str(o.get("currencyCode"));
         return CustomerDepositReceiptPdf.render(new CustomerDepositReceiptPdf.Receipt(b, "DEP-0000-00000",
-                LocalDate.now().toString(), "open", "Sample Customer Ltd", "CUST-000", null, "SO-0000-00000",
+                LocalDate.now(BusinessZone.get()).toString(), "open", "Sample Customer Ltd", "CUST-000", null, "SO-0000-00000",
                 "Advance / deposit", "Bank transfer", "TRX-0000", null, currency, new BigDecimal("1000000"),
                 new BigDecimal("400000"), BigDecimal.ZERO, new BigDecimal("600000"), null, List.of(
-                        new CustomerDepositReceiptPdf.HistoryRow(LocalDate.now().toString(), "Applied to invoice"
+                        new CustomerDepositReceiptPdf.HistoryRow(LocalDate.now(BusinessZone.get()).toString(), "Applied to invoice"
                                 + " INV-0000-000000", new BigDecimal("400000"), false)), null));
     }
 

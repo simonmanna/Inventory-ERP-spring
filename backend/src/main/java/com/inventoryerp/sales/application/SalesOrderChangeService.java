@@ -9,6 +9,7 @@ import static com.inventoryerp.sales.application.SalesDb.user;
 import com.inventoryerp.credit.application.CreditService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -100,7 +101,7 @@ public class SalesOrderChangeService {
         }
         Map<String, Object> changes = in.get("changes") instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
         Map<String, Object> impact = impact(o, changes);
-        int year = LocalDate.now().getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         String id = SalesDb.newId();
         String number = sequence.next("sales_order_change:" + year, "CR-" + year + "-", 5);
         db.update("INSERT INTO \"SalesOrderChangeRequest\" (id, \"organizationId\", \"orderId\", number, status, reason,"
@@ -134,6 +135,7 @@ public class SalesOrderChangeService {
         impact(o, changes); // re-validate against the current quantities
         Map<String, Object> before = snapshot(orderId);
         apply(o, changes);
+        orders.resyncDeliveries(orderId);
         int revision = ((Number) o.get("revision")).intValue() + 1;
         db.patch("SalesOrder", orderId, Obj.of("revision", revision, "version",
                 ((Number) o.get("version")).intValue() + 1), true);
@@ -148,7 +150,7 @@ public class SalesOrderChangeService {
         audit.record(AuditInput.of("SalesOrder", orderId, "update", before, Obj.of("changeRequest", cr.get("number"),
                 "revision", revision)));
         orders.publish(DomainEvents.SALES_ORDER_AMENDED, orderId, Map.of("revision", revision, "changeRequestId", id));
-        atp.reserveOrder(orderId);
+        atp.followOrder(orderId);
         BigDecimal delta = dec(after.get("total")).subtract(dec(before.get("total")));
         if (delta.signum() > 0) {
             CreditService.Decision c = credit.check("amendment", str(o.get("partnerId")), "sales_order", orderId,
@@ -283,7 +285,7 @@ public class SalesOrderChangeService {
             }
         }
         for (Map<String, Object> a : add) {
-            Map<String, Object> m = orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId")),
+            Map<String, Object> m = orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(BusinessZone.get()), a, str(o.get("locationId")),
                     SalesOrderService.PriceScope.of(o));
             valueAfter = valueAfter.add(net(dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get(
                     "discountPercent"))));
@@ -377,7 +379,7 @@ public class SalesOrderChangeService {
         List<Map<String, Object>> add = changes.get("addLines") instanceof List<?> l ? (List<Map<String, Object>>) l
                 : List.of();
         for (Map<String, Object> a : add) {
-            newLines.add(orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(), a, str(o.get("locationId")),
+            newLines.add(orders.line(str(o.get("partnerId")), str(o.get("agreementId")), LocalDate.now(BusinessZone.get()), a, str(o.get("locationId")),
                     SalesOrderService.PriceScope.of(o)));
         }
         List<String> ids = orders.insertLines(orderId, newLines, sort);

@@ -55,6 +55,22 @@ public class IdempotencyService {
                     + "|[^/]+/(banking|force-close|reconcile))|accounts/cash-flow/(deposit|withdraw)|treasury/transfer"
                     + "|expenses(/[^/]+/(pay|void))?|payments(/[^/]+/void)?|supplier-payments)$");
 
+    /**
+     * Sales readiness R2 (P1-3): money routes whose handlers do not save a business outcome themselves. Every write
+     * transaction of such a handler stamps {@code {"committed": true}} on the operation record before it commits
+     * ({@link IdempotencyTransactionListener}), so a record left pending with no outcome provably committed nothing
+     * and is re-run once abandoned, while one with the stamp answers OPERATION_PENDING (check before retrying).
+     */
+    public static final Pattern EVIDENCE_ROUTES = Pattern.compile(
+            "/(invoices(/[^/]+/(post|cancel))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
+                    + "|customer-deposits(/[^/]+/(apply|refund|void|applications/[^/]+/reverse))?"
+                    + "|payments/[^/]+/allocations|payments/mobile-money"
+                    + "|sales/(orders/[^/]+/(invoices|deposits|apply-deposits|deliveries|milestones/[^/]+/invoice)"
+                    + "|invoices/(batch|[^/]+/write-off)|credit-notes(/[^/]+/(allocate|refund))?"
+                    + "|cash-sales/[^/]+/(approve-and-invoice|generate-invoice|cancel-invoice|void)"
+                    + "|deliveries/[^/]+/(issue|confirm|fail|return|cancel|pod-correction)"
+                    + "|returns/[^/]+/receive))$");
+
     private static final Pattern RECOVERABLE_SALE = Pattern.compile("/pos/(checkout|tabs/[^/]+/settle|orders/[^/]+/settle)$");
     private static final Pattern PIN_STRIPPED = Pattern.compile("/cash-sessions/|/pos/shift/handover$");
     private static final long ABANDONED_AFTER_MS = 2 * 60_000L;
@@ -150,7 +166,7 @@ public class IdempotencyService {
             }
             if ("pending".equals(row.status()) || "indeterminate".equals(row.status())) {
                 boolean noOutcome = row.responseJson() == null || row.responseJson().isEmpty();
-                boolean abandoned = OUTCOME_ROUTES.matcher(stripQuery(req.path())).find() && noOutcome
+                boolean abandoned = recordsOutcome(req.path()) && noOutcome
                         && System.currentTimeMillis() - row.createdAt().toEpochMilli() > ABANDONED_AFTER_MS;
                 if (recoverableSale) {
                     recovery = row.responseJson();
@@ -255,7 +271,7 @@ public class IdempotencyService {
         if (saved != null && ("business_completed".equals(saved.status()) || "completed".equals(saved.status()))) {
             return new Replay(saved.statusCode(), saved.responseJson());
         }
-        if (OUTCOME_ROUTES.matcher(stripQuery(op.path())).find() && httpException && errorStatus < 500
+        if (recordsOutcome(op.path()) && httpException && errorStatus < 500
                 && saved != null && (saved.responseJson() == null || saved.responseJson().isEmpty())) {
             ObjectNode body = mapper.createObjectNode();
             JsonNode err = mapper.valueToTree(errorBody);
@@ -376,6 +392,17 @@ public class IdempotencyService {
                             json == null ? null : mapper.readTree(json), created.toInstant());
                 })
                 .optional();
+    }
+
+    /** True when a pending record of {@code path} with no outcome provably committed nothing. */
+    static boolean recordsOutcome(String path) {
+        String p = stripQuery(path);
+        return OUTCOME_ROUTES.matcher(p).find() || EVIDENCE_ROUTES.matcher(p).find();
+    }
+
+    /** True when the route's write transactions must stamp commit evidence on the record (R2, P1-3). */
+    static boolean needsCommitEvidence(String path) {
+        return EVIDENCE_ROUTES.matcher(stripQuery(path)).find();
     }
 
     private static String stripQuery(String path) {

@@ -245,6 +245,22 @@ class GatePassIT extends ApiTestSupport {
         assertThat(view.get("warnings").valueStream().map(JsonNode::asString)).contains("goods_not_issued", "unpaid");
         assertThat(view.get("prefill").get("destination").asString()).isEqualTo("Plot 7, Site road");
         JsonNode p = ok(201, "POST", "/gate-passes", issueBody("sales_order", order));
+        // Sales readiness R4d (DEL-5): stocked goods that were never issued from stock may not leave.
+        Res blocked = as("POST", "/gate-passes/" + p.get("id").asString() + "/gate-out", Map.of("plate", "UAX123B"));
+        assertThat(blocked.status()).as(blocked.raw().body()).isEqualTo(400);
+        assertThat(blocked.raw().body()).contains("have not been issued from stock yet");
+        assertThat(ok(200, "GET", "/gate-passes/" + p.get("id").asString(), null).get("problems").toString())
+                .contains("goods_not_issued");
+
+        // Goods that are not stock-tracked have nothing to issue: gate-out marks the handover dispatched.
+        String loose = insert("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
+                + " \"costPrice\", \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, ?, 'consumable'::\"ProductType\", 500,"
+                + " 0, false, now())", "GL-" + sfx, "Sand bags " + sfx);
+        order = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "requestedDate", "2026-11-20",
+                "deliveryMethod", "delivery", "deliveryAddress", "Plot 7, Site road", "branchId", branch,
+                "lines", List.of(Map.of("productId", loose, "quantity", 4)))).get("id").asString();
+        ok(200, "POST", "/sales/orders/" + order + "/confirm", null);
+        p = ok(201, "POST", "/gate-passes", issueBody("sales_order", order));
         JsonNode out = ok(200, "POST", "/gate-passes/" + p.get("id").asString() + "/gate-out", Map.of("plate", "UAX123B"));
         assertThat(out.get("sourceUpdate").asString()).isEqualTo("Handover marked dispatched");
         JsonNode h = ok(200, "GET", "/sales/orders/" + order + "/handover", null);

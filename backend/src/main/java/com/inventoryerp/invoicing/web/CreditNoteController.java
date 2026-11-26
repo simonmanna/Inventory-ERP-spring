@@ -60,7 +60,7 @@ public class CreditNoteController {
     }
 
     @PostMapping
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.CREDIT_NOTE__CREATE)
     public Map<String, Object> create(@Valid @RequestBody CreateCreditNoteRequest dto) {
         return creditNotes.create(new CreditNoteInput(dto.partnerId(), dto.issueDate(), dto.currencyId(), dto.reference(),
@@ -68,7 +68,7 @@ public class CreditNoteController {
     }
 
     @PostMapping("/{id}/post")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.CREDIT_NOTE__POST)
     public Map<String, Object> post(@PathVariable String id, @RequestParam(required = false) String disposition) {
         return creditNotes.post(id, "scrap".equals(disposition) ? "scrap" : "restock");
@@ -80,7 +80,7 @@ public class CreditNoteController {
             @NotNull(message = "must be a number conforming to the specified constraints") java.math.BigDecimal amount) {}
 
     @PostMapping("/{id}/allocate")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.CREDIT_NOTE__POST)
     public Map<String, Object> allocate(@PathVariable String id, @Valid @RequestBody AllocateCreditRequest dto) {
         return creditNotes.allocate(id, dto.documentId(), dto.amount());
@@ -93,7 +93,7 @@ public class CreditNoteController {
 
     /** Credit-note document reversal; see {@link CreditNoteService#reverse}. */
     @PostMapping("/{id}/reverse")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.CREDIT_NOTE__REVERSE)
     public Map<String, Object> reverse(@PathVariable String id,
             @Valid @RequestBody(required = false) ReverseCreditNoteRequest dto) {

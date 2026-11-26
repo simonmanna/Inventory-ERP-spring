@@ -318,7 +318,7 @@ public class FleetDiscrepancyService {
     }
 
     private void publishDecided(Map<String, Object> before, Map<String, Object> after) {
-        events.publish(DomainEvents.FLEET_DELIVERY_DISCREPANCY_DECIDED, Obj.of("organizationId", FleetDb.org(),
+        events.publishOnCommit(DomainEvents.FLEET_DELIVERY_DISCREPANCY_DECIDED, Obj.of("organizationId", FleetDb.org(),
                 "discrepancyId", after.get("id"), "code", before.get("code"), "loadId", before.get("loadId"),
                 "loadLineId", before.get("loadLineId"), "kind", before.get("kind"), "deliveryOrderId",
                 before.get("deliveryOrderId"), "status", after.get("status"), "claimDecision",

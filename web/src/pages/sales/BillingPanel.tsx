@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -28,7 +29,6 @@ interface Billing {
   invoices: Array<{ id: string; documentNumber: string; status: string; totalAmount: number; amountResidual: number; downPayment: boolean }>;
 }
 
-const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
 /** Invoicing, deposits / down payments and mobile-money collection of a sales order (ADR-S011 S6). */
 export function BillingPanel({ order }: { order: SalesOrder }) {
@@ -36,31 +36,38 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
   const qc = useQueryClient();
   const has = useAuthStore((s) => s.hasPermission);
   const { data } = useQuery({ queryKey: ['sales', 'billing', order.id], queryFn: async () => (await api.get<Billing>(`/sales/orders/${order.id}/billing`)).data });
+  // Only gateways the server reports as connected (the test gateway is off outside tests and demos).
+  const { data: gateways } = useQuery({
+    queryKey: ['mobile-money', 'providers'],
+    queryFn: async () => (await api.get<Array<{ code: string; configured: boolean }>>('/payments/mobile-money/providers')).data,
+  });
+  const liveGateways = (gateways ?? []).filter((g) => g.configured);
+  const [gateway, setGateway] = useState('');
   const refresh = () => qc.invalidateQueries({ queryKey: ['sales'] });
   const err = (e: unknown) => toast.error(apiErrorMessage(e, tx('Action failed')));
   const invoice = useMutation({
-    mutationFn: async (body: Record<string, unknown>) => (await api.post<{ id: string; documentNumber: string }>(`/sales/orders/${order.id}/invoices`, body, idem())).data,
+    mutationFn: async (body: Record<string, unknown>) => idempotentPost<{ id: string; documentNumber: string }>(`/sales/orders/${order.id}/invoices`, body),
     onSuccess: (d) => { refresh(); toast.success(tx('Draft invoice') + ' ' + d.documentNumber); navigate(`/invoices/${d.id}`); },
     onError: err,
   });
   const deposit = useMutation({
-    mutationFn: async (body: Record<string, unknown>) => (await api.post(`/sales/orders/${order.id}/deposits`, body, idem())).data,
+    mutationFn: async (body: Record<string, unknown>) => idempotentPost(`/sales/orders/${order.id}/deposits`, body),
     onSuccess: () => { refresh(); setDialog(null); toast.success(tx('Deposit recorded')); }, onError: err,
   });
   const momo = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
-      const r = (await api.post<{ id: string }>('/payments/mobile-money', body, idem())).data;
+      const r = await idempotentPost<{ id: string }>('/payments/mobile-money', body);
       return (await api.post<{ status: string }>(`/payments/mobile-money/${r.id}/refresh`, {})).data;
     },
     onSuccess: (r) => { refresh(); setDialog(null); toast[r.status === 'succeeded' ? 'success' : 'message'](tx('Mobile money') + ': ' + r.status); },
     onError: err,
   });
   const apply = useMutation({
-    mutationFn: async ({ depositId, documentId }: { depositId: string; documentId: string }) => (await api.post(`/customer-deposits/${depositId}/apply`, { documentId }, idem())).data,
+    mutationFn: async ({ depositId, documentId }: { depositId: string; documentId: string }) => idempotentPost(`/customer-deposits/${depositId}/apply`, { documentId }),
     onSuccess: () => { refresh(); toast.success(tx('Deposit applied')); }, onError: err,
   });
   const settle = useMutation({
-    mutationFn: async ({ url, body }: { url: string; body: Record<string, unknown> }) => (await api.post(url, body, idem())).data,
+    mutationFn: async ({ url, body }: { url: string; body: Record<string, unknown> }) => idempotentPost(url, body),
     onSuccess: () => { refresh(); setRefunding(null); setVoiding(null); setReason(''); toast.success(tx('Done')); }, onError: err,
   });
   const [refunding, setRefunding] = useState<Billing['deposits'][number] | null>(null);
@@ -115,7 +122,7 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
                 <select className="h-7 rounded border bg-background px-1" value={target[d.id] ?? ''} onChange={(e) => setTarget({ ...target, [d.id]: e.target.value })}>
                   <option value="">{tx('Apply to…')}</option>{postedOpen.map((i) => <option key={i.id} value={i.id}>{i.documentNumber}</option>)}
                 </select>
-                <Button size="sm" variant="ghost" disabled={!target[d.id]} onClick={() => apply.mutate({ depositId: d.id, documentId: target[d.id] })}>{tx('Apply')}</Button>
+                <Button size="sm" variant="ghost" disabled={!target[d.id] || apply.isPending} onClick={() => apply.mutate({ depositId: d.id, documentId: target[d.id] })}>{tx('Apply')}</Button>
               </>}
               {d.status === 'open' && Number(d.available) > 0 && d.source !== 'cash_sale' && canRefund && <Button size="sm" variant="ghost" onClick={() => { setAmount(Number(d.available)); setMethod('bank'); setFx({ currency: d.currencyCode ?? '', accountId: '', rate: '' }); setRefunding(d); }}>{tx('Refund')}</Button>}
               {d.source === 'receipt' && d.status === 'open' && Number(d.available) === Number(d.amount) && canRefund && <Button size="sm" variant="ghost" onClick={() => setVoiding(d)}>{tx('Void')}</Button>}
@@ -155,16 +162,22 @@ export function BillingPanel({ order }: { order: SalesOrder }) {
             <Field label={tx('Method')}>
               <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value)}>
                 <option value="bank">{tx('Bank transfer')}</option><option value="cash">{tx('Cash')}</option><option value="cheque">{tx('Cheque')}</option>
-                <option value="mobile_money">{tx('Mobile money (recorded)')}</option><option value="momo_request">{tx('Mobile money — request on phone')}</option>
+                <option value="mobile_money">{tx('Mobile money (recorded)')}</option>{liveGateways.length > 0 && <option value="momo_request">{tx('Mobile money — request on phone')}</option>}
               </select></Field>
             {method !== 'momo_request' && <DepositCurrencyFields value={fx} onChange={setFx} />}
+            {method === 'momo_request' && liveGateways.length > 1 && <Field label={tx('Provider')}>
+              <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={gateway || liveGateways[0].code} onChange={(e) => setGateway(e.target.value)}>
+                {liveGateways.map((g) => <option key={g.code} value={g.code}>{g.code}</option>)}
+              </select></Field>}
             {method === 'momo_request' && <Field label={tx('Customer phone')}><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+2567…" /></Field>}
           </div>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>{tx('Cancel')}</Button>
-            <Button disabled={dialog === 'deposit' && method !== 'momo_request' && depositCurrencyIncomplete(fx, base)} onClick={() => {
+            <Button disabled={invoice.isPending || deposit.isPending || momo.isPending
+              || (dialog === 'deposit' && method === 'momo_request' && liveGateways.length === 0)
+              || (dialog === 'deposit' && method !== 'momo_request' && depositCurrencyIncomplete(fx, base))} onClick={() => {
               if (dialog === 'down') { invoice.mutate({ mode: 'down_payment', percent }); setDialog(null); }
-              else if (method === 'momo_request') momo.mutate({ provider: 'mock', partnerId: order.partnerId, phone, amount, purpose: 'deposit', salesOrderId: order.id });
+              else if (method === 'momo_request') momo.mutate({ provider: gateway || liveGateways[0]?.code, partnerId: order.partnerId, phone, amount, purpose: 'deposit', salesOrderId: order.id });
               else deposit.mutate({ amount, paymentMethod: method, ...depositCurrencyBody(fx, base) });
             }}>{tx('Confirm')}</Button>
           </DialogFooter>

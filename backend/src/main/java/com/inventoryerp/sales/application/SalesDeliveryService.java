@@ -21,6 +21,7 @@ import com.inventoryerp.fleet.application.DispatchCommands;
 import com.inventoryerp.fleet.application.FleetDispatchService;
 import com.inventoryerp.fleet.application.FleetWeighbridgeRuleService;
 import com.inventoryerp.fleet.application.WeighbridgeTicketService;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -250,6 +251,7 @@ public class SalesDeliveryService {
         t.put("lines", db.rows("SELECT l.id, l.\"deliveryOrderLineId\", dl.\"sourceLineId\" AS \"orderLineId\", l.\"productId\","
                 + " pr.name AS \"productName\", u.code AS \"uomCode\", l.\"plannedQty\", l.\"loadedQty\", l.\"dispatchedQty\","
                 + " l.\"deliveredQty\", l.\"returnedQty\", l.\"damagedQty\", l.\"rejectedQty\", l.\"billableQty\", l.\"batchNumber\","
+                + " COALESCE(pr.\"serialTracking\", false) AS \"serialTracking\", l.\"serialNumbers\"::text AS \"serialNumbers\","
                 + " CASE WHEN l.\"deliveredQty\" IS NULL THEN 0 ELSE GREATEST(COALESCE(l.\"dispatchedQty\", 0) - l.\"deliveredQty\""
                 + " - COALESCE(l.\"returnedQty\", 0) - l.\"damagedQty\", 0) END AS \"shortageQty\" FROM \"FleetLoadLine\" l"
                 + " LEFT JOIN \"FleetDeliveryOrderLine\" dl ON dl.id = l.\"deliveryOrderLineId\" LEFT JOIN \"Product\" pr ON"
@@ -259,6 +261,9 @@ public class SalesDeliveryService {
         List<Map<String, Object>> lineRows = (List<Map<String, Object>>) t.get("lines");
         Map<String, Map<String, Object>> views = quantities.views(lineRows.stream().map(l -> str(l.get("id"))).toList());
         for (Map<String, Object> l : lineRows) {
+            Object sn = l.get("serialNumbers");
+            l.put("serialNumbers", sn == null ? List.of() : List.of(tools.jackson.databind.json.JsonMapper.builder().build()
+                    .readValue(str(sn), String[].class)));
             Map<String, Object> v = views.get(str(l.get("id")));
             if (v != null) {
                 for (String k : List.of("acceptedQty", "pendingDisputedQty", "confirmedShortageQty", "excessQty",
@@ -506,7 +511,7 @@ public class SalesDeliveryService {
         if (net != null && lines.size() > 1) {
             throw ApiException.badRequest("A weighed delivery carries one line; split it into one delivery per product");
         }
-        LocalDate planned = in.get("plannedDate") == null ? LocalDate.now() : SalesDb.date(str(in.get("plannedDate")));
+        LocalDate planned = in.get("plannedDate") == null ? LocalDate.now(BusinessZone.get()) : SalesDb.date(str(in.get("plannedDate")));
         Map<String, Object> load = dispatch.addLoad(deliveryOrder, new LoadInput(planned, lines, "Sales delivery",
                 blank(str(in.get("notes"))) ? null : str(in.get("notes"))));
         String id = str(load.get("id"));
@@ -730,6 +735,11 @@ public class SalesDeliveryService {
                 changes.put("lines", "re-planned");
             }
         }
+        if (changes.containsKey("lines") || changes.containsKey("plannedDate") || changes.containsKey("locationId")) {
+            // Sales readiness R4d (DEL-3): an approval covers what was approved; a material edit needs a new one.
+            db.update("UPDATE \"FleetLoad\" SET \"approvedAt\" = NULL, \"approvedById\" = NULL WHERE id = ? AND"
+                    + " \"organizationId\" = ?", id, org());
+        }
         if (!changes.isEmpty()) {
             audit.record(AuditInput.of("FleetLoad", id, "update", before, changes));
         }
@@ -796,8 +806,16 @@ public class SalesDeliveryService {
         if (!Boolean.TRUE.equals(t.get("approvalRequired"))) {
             throw ApiException.badRequest("This delivery needs no approval");
         }
-        Map<String, Object> raw = db.row("SELECT \"createdBy\" FROM \"FleetLoad\" WHERE id = ?", id);
-        if (user() != null && user().equals(raw.get("createdBy"))) {
+        Map<String, Object> raw = db.row("SELECT \"createdBy\", status, \"stockIssuedAt\", (SELECT a.\"actorId\" FROM"
+                + " \"AuditLog\" a WHERE a.\"organizationId\" = l.\"organizationId\" AND a.entity = 'FleetLoad' AND"
+                + " a.\"entityId\" = l.id AND a.action::text = 'update' AND (a.\"newValues\" -> 'lines' IS NOT NULL OR"
+                + " a.\"newValues\" -> 'plannedDate' IS NOT NULL OR a.\"newValues\" -> 'locationId' IS NOT NULL) ORDER BY a.\"createdAt\" DESC LIMIT 1) AS \"editedBy\""
+                + " FROM \"FleetLoad\" l WHERE l.id = ? AND l.\"organizationId\" = ? FOR UPDATE OF l", id, org());
+        if (raw.get("stockIssuedAt") != null || !Set.of("planned", "loading", "weighed").contains(str(raw.get("status")))) {
+            throw ApiException.badRequest("Only a delivery that has not left can be approved");
+        }
+        // Sales readiness R4d (DEL-3): neither the creator nor the last editor approves.
+        if (user() != null && (user().equals(raw.get("createdBy")) || user().equals(raw.get("editedBy")))) {
             throw ApiException.forbidden("You cannot approve your own delivery");
         }
         db.update("UPDATE \"FleetLoad\" SET \"approvedAt\" = " + NOW + ", \"approvedById\" = ? WHERE id = ? AND \"organizationId\" = ?", user(),
@@ -809,15 +827,30 @@ public class SalesDeliveryService {
     /** Issue the stock and post cost of goods (dispatch). The order's quantities update at once. */
     @Transactional
     public Map<String, Object> issue(String id) {
+        return issue(id, Map.of());
+    }
+
+    /**
+     * Issue with the serial numbers of serial-tracked lines (sales readiness R4d, DEL-2):
+     * {@code lines: [{loadLineId, serialNumbers: [...]}]}, recorded on the trip lines and passed to the stock issue.
+     */
+    @Transactional
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> issue(String id, Map<String, Object> in) {
         Map<String, Object> t = require(id);
         orders.lock(str(t.get("orderId"))); // plan §8: sales order → delivery order → trip → order lines
-        if (Boolean.TRUE.equals(t.get("approvalRequired")) && t.get("approvedAt") == null) {
-            throw ApiException.badRequest("This delivery is waiting for approval");
+        if (in != null && in.get("lines") instanceof List<?> given && !given.isEmpty()) {
+            Map<String, List<String>> serials = new LinkedHashMap<>();
+            for (Object o : given) {
+                if (o instanceof Map<?, ?> m && m.get("loadLineId") != null && m.get("serialNumbers") instanceof List<?> sn) {
+                    serials.put(str(m.get("loadLineId")), sn.stream().map(String::valueOf).toList());
+                }
+            }
+            if (!serials.isEmpty()) {
+                dispatch.setSerials(id, serials);
+            }
         }
-        // ADR-S087: blocking quality checks of the delivery hold the issue (before any stock or GL write).
-        if (qcGate != null) {
-            qcGate.assertComplete("sales_delivery", id, List.of());
-        }
+        // Approval and blocking quality checks run in beforeDispatch, from every dispatch route (R4d, DEL-4).
         dispatch.dispatch(id, null);
         if (qcGate != null) {
             qcGate.onCompleted(qcDoc(id).at(null));
@@ -933,8 +966,10 @@ public class SalesDeliveryService {
             if (!blank(reason) && !REASONS.contains(reason)) {
                 throw ApiException.badRequest("reason must be one of: " + String.join(", ", REASONS.stream().sorted().toList()));
             }
+            List<String> backSerials = l.get("rejectedSerialNumbers") instanceof List<?> sn
+                    ? sn.stream().map(String::valueOf).toList() : null;
             lines.add(new PodLineInput(str(l.get("loadLineId")), delivered, rejected.signum() > 0 ? rejected : null, blank(reason)
-                    ? null : reason, str(l.get("notes")), damaged.signum() > 0 ? damaged : null));
+                    ? null : reason, str(l.get("notes")), damaged.signum() > 0 ? damaged : null, backSerials));
         }
         String receiver = str(in.get("receiverName"));
         if (blank(receiver)) {

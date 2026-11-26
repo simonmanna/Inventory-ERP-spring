@@ -302,7 +302,28 @@ branch scope.
 - Verification queries and rollback in `docs/runbooks/sales-quote-migration.md`.
 
 ## Deviations
-None yet (no parity routes involved).
+No parity routes are involved. Behaviour changes of the 2026-11-26 readiness fixes (R2–R5, owner to approve):
+
+- Money routes of orders, cash sales, deliveries and returns require an Idempotency-Key (400 without one).
+- Credit approval of a draft re-runs the full confirm checks in a savepoint; when they fail the order stays a draft and
+  the requester is told why. A `pending_approval` order is no longer confirmed by a credit approval. Pending credit
+  requests close when the order is deleted or cancelled. Sales events go out after commit only.
+- Down payments of an order together may not exceed the order total.
+- Close short and approved change requests resync the delivery order; a change that leaves less than is already planned
+  on deliveries is refused. A trip may not dispatch more than the order line (plus its tolerance) allows.
+- Serial-tracked lines name their serial numbers before dispatch (`POST /sales/deliveries/:id/issue` takes an optional
+  `{lines:[{loadLineId, serialNumbers}]}`; column `FleetLoadLine.serialNumbers`, V677). Returns name the serials that
+  came back.
+- A material delivery edit (lines, date, warehouse) clears its approval; neither the creator nor the last editor may
+  approve; only a delivery that has not left can be approved. Approval and blocking QC run from every dispatch route,
+  fleet trip routes included (`DispatchGate`).
+- The handover may not mark an order with stocked goods, or with deliveries, dispatched/delivered.
+- Order status refresh runs under the order lock; an order closed short on every line before anything left becomes
+  done. Re-planning reservations after a change respects `reservationTrigger = none`.
+- A draft save carrying an older `version` answers 409. Header references (warehouse, site, payment term, team, branch)
+  must belong to the organisation (404).
+- Business dates (issue, deposit, planned delivery, numbering year) use the organisation's business zone.
+- The backorder and reconcile jobs run one transaction per order.
 
 ## Central pricing engine (ADR-S022)
 

@@ -16,8 +16,13 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class MobileMoneyGateways {
 
+    /**
+     * Test gateway: any phone not ending in 0 succeeds. Sales readiness R2b (INV-3): it is configured only when
+     * {@code app.payments.allow-test-gateway=true} (tests, demos), so production can never book a deposit or receipt
+     * for money that was not collected.
+     */
     @Bean
-    PaymentGateway mockMobileMoney() {
+    PaymentGateway mockMobileMoney(@Value("${app.payments.allow-test-gateway:false}") boolean allowTestGateway) {
         Map<String, String> outcomes = new ConcurrentHashMap<>();
         return new PaymentGateway() {
             @Override
@@ -27,7 +32,7 @@ public class MobileMoneyGateways {
 
             @Override
             public boolean configured() {
-                return true;
+                return allowTestGateway;
             }
 
             @Override

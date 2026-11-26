@@ -107,3 +107,9 @@ once its source is cancelled.
 Post-parity extension (owner request 2026-11-23); see ADR-S085. The delivery modules' existing routes and responses
 are unchanged. At gate-out, the cash sale delivery method is set only when it was empty: pickup for a person or
 courier, delivery for a driver.
+
+Sales readiness R4d (2026-11-26, owner to approve): a pass for a delivery, sales order, invoice or cash sale whose goods
+have not been issued from stock shows the problem `goods_not_issued`, and gate-out answers 400 "The goods on this pass
+have not been issued from stock yet (dispatch the delivery, confirm the sale or post the invoice first); they may not
+leave". A delivery that is cancelled or returned counts as cancelled; a sales order counts as issued once it is fully
+delivered or one of its trips has dispatched.

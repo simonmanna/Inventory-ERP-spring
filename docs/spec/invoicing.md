@@ -58,6 +58,24 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Money routes require an Idempotency-Key; settlement is validated** (sales readiness R2/R2b, 2026-11-26, owner to
+  approve).
+  - Invoice post/cancel, credit-note create/post/allocate/reverse, customer-deposit apply/refund/void, payment
+    allocations and mobile money answer 400 "An Idempotency-Key header is required for this operation so a retry can
+    never charge twice." without the header (Nest accepted the call). The web always sends one.
+  - Each of those routes stamps its idempotency record before commit, so a key whose response was lost replays the
+    committed outcome instead of running again.
+  - A payment allocation locks the document and must match direction, partner and status: inbound settles a posted
+    customer invoice or debit note of the same partner, outbound-receivable a credit note, outbound a vendor bill.
+    Otherwise 400 "Document X is not an open invoice of this partner" (credit note / bill for the other directions). Nest allocated to any id.
+  - A credit note must credit a posted customer invoice of the same customer (checked on create and again on post, under
+    the invoice lock): "The credited document must be a customer invoice", "Invoice X belongs to another customer",
+    "Invoice X is S; only a posted invoice can be credited".
+  - Cancelling a down-payment invoice voids its open down-payment deposit, and is refused while that deposit is applied
+    or refunded.
+  - The mock mobile-money gateway is off unless `app.payments.allow-test-gateway=true` (tests, demo).
+  - Invoicing events (posted, cancelled, paid, credit note) are published after commit only.
+
 - **Generated invoices are not editable; drafts can be discarded** (sales readiness R1, 2026-11-24, owner to approve).
   - `PATCH /invoices/:id` locks the document first and answers 400 "This invoice was generated from sales order X;
     cancel the draft and invoice it again" for a draft whose `sourceType` is `sales_order` or `cash_sale`. The UPDATE

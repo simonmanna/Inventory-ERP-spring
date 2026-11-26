@@ -554,11 +554,13 @@ public class PaymentService {
                 allocatedEvent(org, paymentId, (String) inv.get("id"), allocAmount);
                 continue;
             }
-            Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
-                    .params(alloc.documentId(), org));
+            // Sales readiness R2b (INV-1): lock the document so concurrent receipts cannot both relieve the same residual.
+            Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " FOR UPDATE").params(alloc.documentId(), org));
             if (doc == null) {
                 throw ApiException.badRequest("Document " + alloc.documentId() + " not found");
             }
+            assertSettleable(doc, direction, counterOverride, dto.partnerId());
             if (!payCurrency.equals(fxRates.currencyOf(doc))) {
                 throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is in "
                         + fxRates.currencyOf(doc) + "; settle it with a " + fxRates.currencyOf(doc) + " payment");
@@ -585,7 +587,7 @@ public class PaymentService {
                 paid.put("organizationId", org);
                 paid.put("documentId", doc.get("id"));
                 paid.put("documentNumber", doc.get("documentNumber"));
-                events.publish("invoice.paid", paid);
+                events.publishOnCommit("invoice.paid", paid);
             }
         }
         if (allocated.compareTo(amount) > 0) {
@@ -614,7 +616,7 @@ public class PaymentService {
         received.put("organizationId", org);
         received.put("paymentId", paymentId);
         received.put("amount", JsNumbers.dec(amount));
-        events.publish("payment.received", received);
+        events.publishOnCommit("payment.received", received);
         Map<String, Object> result = findOne(paymentId);
         if (!nested) {
             Map<String, Object> outcome = new LinkedHashMap<>();
@@ -872,6 +874,25 @@ public class PaymentService {
                 .update();
     }
 
+    /**
+     * Sales readiness R2b (INV-1): a payment settles only a posted document of its own partner and side. A receipt
+     * relieves a customer invoice or debit note, a customer refund a credit note, a supplier payment a vendor bill.
+     * Before this a receipt could be allocated to another customer's invoice, a vendor bill, or a draft (which then
+     * showed as paid without ever posting revenue).
+     */
+    private static void assertSettleable(Map<String, Object> doc, String direction, String counterOverride,
+            String partnerId) {
+        String type = String.valueOf(doc.get("documentType"));
+        boolean typeOk = "inbound".equals(direction) ? Set.of("sales_invoice", "debit_note").contains(type)
+                : "receivable".equals(counterOverride) ? "credit_note".equals(type) : "vendor_bill".equals(type);
+        if (!typeOk || !String.valueOf(doc.get("partnerId")).equals(partnerId)
+                || !"posted".equals(String.valueOf(doc.get("status")))) {
+            throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is not an open "
+                    + ("inbound".equals(direction) ? "invoice" : "receivable".equals(counterOverride) ? "credit note"
+                            : "bill") + " of this partner");
+        }
+    }
+
     /** Settle an allocation onto an invoice / document. */
     private void apply(String table, String statusType, Map<String, Object> row, BigDecimal amount) {
         BigDecimal newPaid = Money.dec(row.get("amountPaid")).add(amount);
@@ -891,7 +912,7 @@ public class PaymentService {
         p.put("paymentId", paymentId);
         p.put("documentId", documentId);
         p.put("amount", JsNumbers.dec(amount));
-        events.publish("payment.allocated", p);
+        events.publishOnCommit("payment.allocated", p);
     }
 
     static String residualStatus(BigDecimal total, BigDecimal residual) {
@@ -972,7 +993,7 @@ public class PaymentService {
         voided.put("organizationId", org());
         voided.put("paymentId", id);
         voided.put("amount", JsNumbers.dec(Money.dec(payment.get("amount"))));
-        events.publish("payment.voided", voided);
+        events.publishOnCommit("payment.voided", voided);
         return SqlRows.one(Payment.class, jdbc.sql("SELECT * FROM \"Payment\" WHERE id = ?").param(id));
     }
 

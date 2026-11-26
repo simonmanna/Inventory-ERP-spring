@@ -34,6 +34,7 @@ export const PROBLEM_LABELS: Record<string, string> = {
   expired: tx('This gate pass has expired'),
   source_cancelled: tx('The source document was cancelled — the goods may not leave'),
   source_missing: tx('The source document no longer exists'),
+  goods_not_issued: tx('The goods have not been issued from stock yet — dispatch the delivery first'),
 };
 
 export const BEARER_LABELS: Record<BearerType, string> = {
