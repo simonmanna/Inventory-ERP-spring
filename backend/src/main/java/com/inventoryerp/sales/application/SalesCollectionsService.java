@@ -350,7 +350,7 @@ public class SalesCollectionsService {
             throw ApiException.badRequest("amount must be greater than 0");
         }
         LocalDate date = SalesDb.date(str(in.get("promisedDate")));
-        if (date == null || date.isBefore(LocalDate.now())) {
+        if (date == null || date.isBefore(LocalDate.now(BusinessZone.get()))) {
             throw ApiException.badRequest("promisedDate must be today or later");
         }
         String id = SalesDb.newId();
@@ -468,7 +468,7 @@ public class SalesCollectionsService {
                    AND d."documentType"::text IN ('sales_invoice', 'debit_note', 'credit_note')
                    AND d."amountResidual" <> 0""" + lineScope + " " + """
                  ORDER BY d."issueDate" DESC, d."documentNumber" DESC""", lineParams);
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(BusinessZone.get());
         BigDecimal due = BigDecimal.ZERO;
         BigDecimal overdue = BigDecimal.ZERO;
         LocalDate oldest = null;
@@ -634,7 +634,7 @@ public class SalesCollectionsService {
     @Transactional(readOnly = true)
     public Map<String, Object> statementRun(LocalDate asOfIn) {
         access.assertAllBranches();
-        LocalDate asOf = asOfIn == null ? LocalDate.now() : asOfIn;
+        LocalDate asOf = asOfIn == null ? LocalDate.now(BusinessZone.get()) : asOfIn;
         int sent = 0;
         int skipped = 0;
         for (Map<String, Object> c : db.rows("SELECT DISTINCT d.\"partnerId\", p.email FROM \"Document\" d JOIN \"Partner\" p"

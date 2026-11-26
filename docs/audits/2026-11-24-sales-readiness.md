@@ -30,14 +30,14 @@ Green CI is not production approval.
 
 | Stage | Scope | Exit condition | State |
 |---|---|---|---|
-| R1 | B1 invoice integrity | a generated invoice cannot diverge from its source | done (this PR) |
+| R1 | B1 invoice integrity | a generated invoice cannot diverge from its source | done (PR #72) |
 | R2 | B3 + P1-3 idempotency | every money route retry-safe | done 2026-11-26 (with R2b settlement) |
-| R3 | P1-1, P1-2, P1-4 | approval and event integrity | done 2026-11-26 (SO-10 kernel approval open) |
-| R4 | P1-5, P1-6, P1-7 | concurrency, dates, tenancy | mostly done 2026-11-26 (X-6 partial) |
-| R5 | P1-8, T5, T31, lifecycle ITs | integration + concurrency evidence | jobs per order + SalesReadinessR2R4IT; concurrency ITs open |
-| R6 | B2 | accountant sign-off table complete | |
+| R3 | P1-1, P1-2, P1-4 | approval and event integrity | done 2026-11-26 (SO-10 kernel approval: #72) |
+| R4 | P1-5, P1-6, P1-7 | concurrency, dates, tenancy | done (X-6 #72; P1-6 leftovers in the 2026-11-26 re-review below) |
+| R5 | P1-8, T5, T31, lifecycle ITs | integration + concurrency evidence | done: `SalesLifecycleIntegrityIT`, `CashSaleIT` T5/T31 (#73); gate-out and credit races below |
+| R6 | B2 | accountant sign-off table complete | table + Sales settings → Accounting policies shipped (#74, #75); **accountant decisions pending** |
 | R6b → R4d | delivery / gate-pass review | review done, blockers closed | done 2026-11-26 (DEL-1..DEL-6) |
-| R7 | rehearsal on a restored live copy | owner go-live decision | |
+| R7 | rehearsal on a restored live copy | owner go-live decision | data checks + rehearsal done 2026-11-26 (V683 31 ms); live = main f80b1871; **owner go-live decision pending** |
 
 ## R1 — invoice integrity
 
@@ -120,3 +120,18 @@ R6/R7 round (2026-11-26, owner decisions on DEL-9, INV-11 and down payments):
 | R5 | Concurrency ITs: double issue, double receipt (plus the existing concurrent-planning IT). |
 
 Down payments keep the current model (owner decision). Rehearsal on a restored live copy: see the PR.
+
+## 2026-11-26 — re-review of main f80b1871 (branch `fix/sales-review-gaps`)
+
+| ID | Gap found | Fix | Evidence |
+|---|---|---|---|
+| P1-6b | 45 `LocalDate.now()` calls left in sales and invoicing used the JVM's UTC day (live: `APP_TIMEZONE=Africa/Kampala`). Between 00:00 and 03:00 Kampala a cash sale got yesterday's date/number year and a sale dated today was refused as "in the future"; agreement expiry, collections, recurring orders, rebates, pricing date and report "today" were a day behind in that window. | Every one now reads `LocalDate.now(BusinessZone.get())`. Posting instants stay UTC midnight of the business day, as elsewhere. | `CashSaleIT.businessDay` |
+| X-7b | `GET /customer-deposits` returned every row; every cash-sale payment adds one. | Server-paged: `limit` (default 500, max 1000) and `offset`, newest first (oldest first when filtered by `salesOrderId`), total in `X-Total-Count`. Internal callers keep the full per-order list. The deposits screen shows "Showing n / total" + Load more and takes the open balance from its own `status=open` query. | web only; no IT change needed for the shape (array kept) |
+| X-1b | `POST /sales/rebates/accruals/{id}/settle` (issues a credit note) took an optional key. | `@Idempotent(required = true)` and in `EVIDENCE_ROUTES`. The web already sends a key. | `SalesAgreementIT.rebates` (no key → 400, nothing settled; same key → same credit note) |
+| DEL-11 | No test of the stale-pass block. | — | `GatePassIT.staleGatePass` |
+| R5b | No race tests for gate-out or for confirm vs credit approval. | — | `GatePassIT.concurrentGateOut`, `SalesCreditPolicyIT.confirmVersusCreditApproval` |
+
+Deviation for owner approval: the deposit list is now newest first and capped per page (was: all rows, oldest first).
+
+Still open (owner/accountant): the sign-off decisions in `sales-postings.md`, the deviations in `invoicing.md`, `sales.md`
+and `gate-pass.md`, `APP_PAYMENTS_ALLOW_TEST_GATEWAY` on live (mock mobile money is off), and the go-live decision.

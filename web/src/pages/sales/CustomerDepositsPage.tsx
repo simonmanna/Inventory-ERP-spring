@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Ban, Plus, Printer, Undo2, Wallet } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -33,6 +33,7 @@ export interface Deposit {
 interface Application { id: string; kind: string; amount: number; documentId: string; documentNumber: string | null; paymentId: string; reversedAt: string | null; createdAt: string }
 
 const th = 'px-3 py-2';
+const DEPOSIT_PAGE = 200;
 const selectCls = 'h-9 w-full rounded-md border bg-background px-2 text-sm';
 const METHODS: Array<[string, string]> = [['bank', 'Bank transfer'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['mobile_money', 'Mobile money (recorded)']];
 
@@ -72,14 +73,23 @@ export function CustomerDepositsList({ partnerId, partnerName, status, unclassif
   const canRecord = has(PERMISSIONS.sales.depositRecord);
   const canRefund = has(PERMISSIONS.sales.depositRefund);
   const canClassify = has(PERMISSIONS.sales.depositClassify);
-  const qk = ['customer-deposits', partnerId ?? null, status ?? null];
-  const { data } = useQuery({ queryKey: qk, queryFn: async () => (await api.get<Deposit[]>('/customer-deposits', { params: { partnerId, status } })).data });
+  // server-paged, newest first (every cash-sale payment adds a deposit); the open balance comes from its own query
+  const [limit, setLimit] = useState(DEPOSIT_PAGE);
+  const qk = ['customer-deposits', partnerId ?? null, status ?? null, limit];
+  const q = useQuery({ queryKey: qk, placeholderData: keepPreviousData, queryFn: async () => {
+    const r = await api.get<Deposit[]>('/customer-deposits', { params: { partnerId, status, limit } });
+    return { rows: r.data, total: Number(r.headers['x-total-count'] ?? r.data.length) };
+  } });
+  const openQ = useQuery({ queryKey: ['customer-deposits', partnerId ?? null, 'open-balance'], enabled: !status || status === 'open',
+    queryFn: async () => (await api.get<Deposit[]>('/customer-deposits', { params: { partnerId, status: 'open', limit: 1000 } })).data });
+  const total = q.data?.total ?? 0;
   const [action, setAction] = useState<Action>(null);
   const done = () => { void qc.invalidateQueries({ queryKey: ['customer-deposits'] }); void qc.invalidateQueries({ queryKey: ['sales'] }); setAction(null); };
-  const rows = [...(data ?? [])].reverse().filter((d) => !unclassifiedOnly || !d.kind);
+  const loaded = q.data?.rows ?? [];
+  const rows = loaded.filter((d) => !unclassifiedOnly || !d.kind);
   const base = useBaseCurrency();
   // functional value at each deposit's own rate, so foreign deposits are not added up at face value
-  const totalOpen = rows.filter((d) => d.status === 'open').reduce((a, d) => a + Number(d.availableBase ?? d.available), 0);
+  const totalOpen = (openQ.data ?? []).filter((d) => !unclassifiedOnly || !d.kind).reduce((a, d) => a + Number(d.availableBase ?? d.available), 0);
   const cm = (d: Deposit, v: number) => (d.currencyCode ? money(v, d.currencyCode) : money(v));
   return (
     <div className="space-y-2">
@@ -120,10 +130,14 @@ export function CustomerDepositsList({ partnerId, partnerName, status, unclassif
                 </tr>
               );
             })}
-            {data && !rows.length && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">{tx('No deposits.')}</td></tr>}
+            {q.data && !rows.length && <tr><td colSpan={10} className="p-6 text-center text-muted-foreground">{tx('No deposits.')}</td></tr>}
           </tbody>
         </table>
       </div>
+      {total > loaded.length && <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{tx('Showing')} {loaded.length} / {total}</span>
+        {limit < 1000 && <Button variant="outline" size="sm" disabled={q.isFetching} onClick={() => setLimit((l) => Math.min(1000, l + DEPOSIT_PAGE))}>{tx('Load more')}</Button>}
+      </div>}
       {action?.kind === 'new' && <NewDepositDialog partnerId={partnerId} partnerName={partnerName} onClose={() => setAction(null)} onDone={done} />}
       {action?.kind === 'apply' && <ApplyDialog deposit={action.deposit} onClose={() => setAction(null)} onDone={done} />}
       {action?.kind === 'refund' && <RefundDialog deposit={action.deposit} onClose={() => setAction(null)} onDone={done} />}

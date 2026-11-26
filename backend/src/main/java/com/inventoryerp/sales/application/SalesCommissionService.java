@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -343,7 +344,7 @@ public class SalesCommissionService {
 
     static LocalDate month(String month) {
         if (blank(month)) {
-            return LocalDate.now().withDayOfMonth(1);
+            return LocalDate.now(BusinessZone.get()).withDayOfMonth(1);
         }
         try {
             return LocalDate.parse(month.length() == 7 ? month + "-01" : month.substring(0, 10)).withDayOfMonth(1);

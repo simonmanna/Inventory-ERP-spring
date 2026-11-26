@@ -93,6 +93,56 @@ class SalesCreditPolicyIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("race: credit approvals and clerk confirms at once — one decision, the order confirmed once, no error")
+    void confirmVersusCreditApproval() throws Exception {
+        ok(200, "PUT", "/sales/settings", Map.of("overLimitPolicy", "block"));
+        String partner = customer();
+        String id = order(partner, Map.of()).get("id").asString();
+        String rid = call("POST", "/sales/orders/" + id + "/credit-request", Map.of("reason", "Advance coming"), clerkToken)
+                .body().get("id").asString();
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(4);
+        List<java.util.concurrent.Future<Integer>> approvals = new java.util.ArrayList<>();
+        List<java.util.concurrent.Future<Res>> confirms = new java.util.ArrayList<>();
+        try {
+            for (int i = 0; i < 2; i++) {
+                approvals.add(pool.submit(() -> {
+                    start.await();
+                    return as("POST", "/sales/credit-requests/" + rid + "/approve", Map.of("comment", "ok")).status();
+                }));
+                confirms.add(pool.submit(() -> {
+                    start.await();
+                    return confirm(id);
+                }));
+            }
+            start.countDown();
+            List<Integer> a = new java.util.ArrayList<>();
+            for (var f : approvals) {
+                a.add(f.get());
+            }
+            List<Integer> c = new java.util.ArrayList<>();
+            StringBuilder bodies = new StringBuilder();
+            for (var f : confirms) {
+                Res r = f.get();
+                c.add(r.status());
+                bodies.append(r.status()).append(' ').append(r.raw().body()).append('\n');
+            }
+            assertThat(a).containsExactlyInAnyOrder(200, 400);
+            assertThat(c).as("refused before the approval or already confirmed, never a server error:\n" + bodies).isSubsetOf(200, 400);
+        } finally {
+            pool.shutdownNow();
+        }
+        JsonNode o = ok(200, "GET", "/sales/orders/" + id, null);
+        assertThat(o.get("status").asString()).isEqualTo("confirmed");
+        assertThat(o.get("onHold").asBoolean()).isFalse();
+        assertThat(jdbc.sql("SELECT count(*) FROM \"SalesCreditRequest\" WHERE \"orderId\" = ? AND status = 'approved'")
+                .param(id).query(Long.class).single()).isEqualTo(1);
+        // the order counts once in the customer's exposure
+        assertThat(jdbc.sql("SELECT \"exposureAtDecision\" FROM \"SalesCreditRequest\" WHERE id = ?").param(rid)
+                .query(java.math.BigDecimal.class).single()).isEqualByComparingTo("20000000");
+    }
+
+    @Test
     @DisplayName("approve policy: confirming opens a request and waits; rejecting leaves the order a draft with the reason")
     void approvePolicyRejected() {
         ok(200, "PUT", "/sales/settings", Map.of("overLimitPolicy", "approve"));

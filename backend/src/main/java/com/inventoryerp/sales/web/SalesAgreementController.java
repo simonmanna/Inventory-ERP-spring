@@ -138,7 +138,7 @@ public final class SalesAgreementController {
         }
 
         @PostMapping("/accruals/{id}/settle")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__REBATE_MANAGE)
         public Map<String, Object> settle(@PathVariable String id) {
             return svc.settle(id);

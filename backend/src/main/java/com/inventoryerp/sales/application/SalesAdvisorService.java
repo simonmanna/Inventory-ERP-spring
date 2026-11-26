@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
@@ -65,7 +66,7 @@ public class SalesAdvisorService {
     public List<Map<String, Object>> advisories() {
         access.assertAllBranches();
         List<Map<String, Object>> out = new ArrayList<>();
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(BusinessZone.get());
         churn(out, today);
         if (access.canSeeCost()) {
             negativeMargin(out, today);

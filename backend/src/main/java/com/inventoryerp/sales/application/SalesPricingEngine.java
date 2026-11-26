@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -171,7 +172,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
     @SuppressWarnings("unchecked")
     public Map<String, Object> resolve(Map<String, Object> in) {
         String partnerId = blank(str(in.get("partnerId"))) ? null : str(in.get("partnerId"));
-        LocalDate on = in.get("date") == null ? LocalDate.now() : SalesDb.date(str(in.get("date")));
+        LocalDate on = in.get("date") == null ? LocalDate.now(BusinessZone.get()) : SalesDb.date(str(in.get("date")));
         List<Map<String, Object>> out = new ArrayList<>();
         if (in.get("lines") instanceof List<?> lines) {
             for (Object o : lines) {
@@ -236,7 +237,7 @@ public class SalesPricingEngine implements QuotationPricingPort, PricingEngine {
             product.put("costPrice", v.get("cost"));
             product.put("name", product.get("name") + " (" + v.get("name") + ")");
         }
-        LocalDate on = c.on() == null ? LocalDate.now() : c.on();
+        LocalDate on = c.on() == null ? LocalDate.now(BusinessZone.get()) : c.on();
         BigDecimal factor = blank(c.uomId()) ? BigDecimal.ONE : factorToBase(c.productId(), c.uomId());
         BigDecimal list = listPrice(c, dec(product.get("salesPrice")), factor, baseUom, salesUom, !blank(c.variantId()))
                 .setScale(6, RoundingMode.HALF_UP);

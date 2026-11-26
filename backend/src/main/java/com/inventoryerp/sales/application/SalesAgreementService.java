@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -67,7 +68,7 @@ public class SalesAgreementService {
         }
         if (!blank(q.get("expiringWithin"))) {
             sql.append(" AND a.status = 'active' AND a.\"endDate\" <= ?");
-            params.add(LocalDate.now().plusDays(SalesDb.parseInt(q.get("expiringWithin"), 30)));
+            params.add(LocalDate.now(BusinessZone.get()).plusDays(SalesDb.parseInt(q.get("expiringWithin"), 30)));
         }
         sql.append(" ORDER BY a.\"endDate\", a.number");
         return db.rows(sql.toString(), params);
@@ -159,7 +160,7 @@ public class SalesAgreementService {
         }
         Map<String, Object> d = header(in, true);
         d.put("partnerId", partnerId);
-        int year = LocalDate.now().getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         d.put("number", sequence.next("sales_agreement:" + year, "AGR-" + year + "-", 5));
         d.put("createdById", user());
         Map<String, Object> row = db.insert("SalesAgreement", d);
@@ -289,7 +290,7 @@ public class SalesAgreementService {
         if (db.count("SELECT count(*) FROM \"SalesAgreementLine\" WHERE \"agreementId\" = ?", List.of(id)) == 0) {
             throw ApiException.badRequest("Add at least one line before activating");
         }
-        if (((LocalDate) a.get("endDate")).isBefore(LocalDate.now())) {
+        if (((LocalDate) a.get("endDate")).isBefore(LocalDate.now(BusinessZone.get()))) {
             throw ApiException.badRequest("Agreement has already ended");
         }
         db.patch("SalesAgreement", id, Obj.of("status", "active", "approvedById", user(), "approvedAt", Instant.now()),
@@ -356,7 +357,7 @@ public class SalesAgreementService {
         if (partnerId != null && !partnerId.equals(a.get("partnerId"))) {
             throw ApiException.badRequest("Agreement " + a.get("number") + " belongs to another customer");
         }
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(BusinessZone.get());
         if (today.isBefore((LocalDate) a.get("startDate")) || today.isAfter((LocalDate) a.get("endDate"))) {
             throw ApiException.badRequest("Agreement " + a.get("number") + " is not valid today");
         }
@@ -376,7 +377,7 @@ public class SalesAgreementService {
         }
         Map<String, Object> a = db.row("SELECT * FROM \"SalesAgreement\" WHERE id = ? AND \"organizationId\" = ?",
                 agreementId, org());
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(BusinessZone.get());
         if (a == null || !"active".equals(a.get("status")) || today.isBefore((LocalDate) a.get("startDate"))
                 || today.isAfter((LocalDate) a.get("endDate"))) {
             out.add("Agreement " + (a == null ? "" : a.get("number")) + " is not active today");

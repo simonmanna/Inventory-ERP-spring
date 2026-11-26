@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 
@@ -299,7 +300,7 @@ public final class SalesReportKit {
                     throw ApiException.badRequest("Unknown report parameter: " + k);
                 }
             }
-            LocalDate to = p.get("to") == null ? LocalDate.now() : SalesDb.date(p.get("to"));
+            LocalDate to = p.get("to") == null ? LocalDate.now(BusinessZone.get()) : SalesDb.date(p.get("to"));
             LocalDate from = p.get("from") == null ? to.withDayOfYear(1) : SalesDb.date(p.get("from"));
             if (from.isAfter(to)) {
                 throw ApiException.badRequest("from must be on or before to");

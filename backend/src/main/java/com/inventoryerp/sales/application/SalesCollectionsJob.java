@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.time.LocalDate;
 import java.util.List;
@@ -38,11 +39,11 @@ public class SalesCollectionsJob {
         for (String orgId : orgs) {
             try {
                 TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
-                    collections.expirePromises(LocalDate.now());
+                    collections.expirePromises(LocalDate.now(BusinessZone.get()));
                     Boolean auto = jdbc.sql("SELECT \"dunningAutoRun\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?")
                             .param(orgId).query(Boolean.class).optional().orElse(false);
                     if (Boolean.TRUE.equals(auto)) {
-                        collections.run(LocalDate.now(), "scheduled");
+                        collections.run(LocalDate.now(BusinessZone.get()), "scheduled");
                     }
                 });
             } catch (RuntimeException e) {
@@ -59,7 +60,7 @@ public class SalesCollectionsJob {
         for (String orgId : orgs) {
             try {
                 TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
-                    collections.statementRun(LocalDate.now());
+                    collections.statementRun(LocalDate.now(BusinessZone.get()));
                 });
             } catch (RuntimeException e) {
                 log.warn("Statement run failed for {}: {}", orgId, e.toString());

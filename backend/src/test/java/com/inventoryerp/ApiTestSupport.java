@@ -169,7 +169,7 @@ public abstract class ApiTestSupport {
                     + "|credit-notes(/[^/]+/(allocate|refund))?"
                     + "|cash-sales/[^/]+/(confirm|approve-and-invoice|generate-invoice|cancel-invoice|void)"
                     + "|deliveries/[^/]+/(fail|return|approve|issue|pod-correction|confirm|customer-weight|cancel)"
-                    + "|returns/[^/]+/(receive|inspect|close)))(\\?.*)?$");
+                    + "|returns/[^/]+/(receive|inspect|close)|rebates/accruals/[^/]+/settle))(\\?.*)?$");
 
     /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
     protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";

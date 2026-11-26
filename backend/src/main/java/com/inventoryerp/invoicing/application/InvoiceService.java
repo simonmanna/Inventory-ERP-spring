@@ -544,7 +544,7 @@ public class InvoiceService {
         if (dto.lines() == null) {
             return null;
         }
-        java.time.LocalDate on = dto.issueDate() == null ? java.time.LocalDate.now()
+        java.time.LocalDate on = dto.issueDate() == null ? java.time.LocalDate.now(BusinessZone.get())
                 : EntityPatch.toInstant(dto.issueDate()).atZone(BusinessZone.get()).toLocalDate();
         List<LineInput> out = new ArrayList<>();
         for (LineInput l : dto.lines()) {

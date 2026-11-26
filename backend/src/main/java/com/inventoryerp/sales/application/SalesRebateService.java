@@ -197,7 +197,7 @@ public class SalesRebateService {
     @Transactional
     @SuppressWarnings("unchecked")
     public Map<String, Object> accrue(LocalDate asOf) {
-        LocalDate on = asOf == null ? LocalDate.now() : asOf;
+        LocalDate on = asOf == null ? LocalDate.now(BusinessZone.get()) : asOf;
         List<Map<String, Object>> touched = new ArrayList<>();
         BigDecimal posted = BigDecimal.ZERO;
         for (Map<String, Object> p : db.rows("SELECT * FROM \"RebateProgram\" WHERE \"organizationId\" = ? AND status ="
@@ -297,7 +297,7 @@ public class SalesRebateService {
                             new Line(accrual, null, abs, partnerId, desc, null, null, null))
                     : List.of(new Line(accrual, abs, null, partnerId, desc, null, null, null),
                             new Line(rebates, null, abs, partnerId, desc, null, null, null));
-            posting.post(new PostingRequest("GEN", LocalDate.now().atStartOfDay().toInstant(ZoneOffset.UTC), desc, null,
+            posting.post(new PostingRequest("GEN", LocalDate.now(BusinessZone.get()).atStartOfDay().toInstant(ZoneOffset.UTC), desc, null,
                     null, "rebate_accrual", id, null, null, null, null, null, lines));
             audit.record(AuditInput.of("RebateAccrual", id, "update", null, Obj.of("amount", amount, "delta", delta)));
         }
@@ -336,7 +336,7 @@ public class SalesRebateService {
         if ("settled".equals(a.get("status"))) {
             throw ApiException.badRequest("Rebate accrual is already settled");
         }
-        if (!((LocalDate) a.get("periodEnd")).isBefore(LocalDate.now())) {
+        if (!((LocalDate) a.get("periodEnd")).isBefore(LocalDate.now(BusinessZone.get()))) {
             throw ApiException.badRequest("Rebate period has not ended yet");
         }
         BigDecimal amount = dec(a.get("amount"));
@@ -358,7 +358,7 @@ public class SalesRebateService {
                 ? LineInput.of(null, accrualAccount(), desc, BigDecimal.ONE, amount, BigDecimal.ZERO, null, null)
                 : new LineInput(null, null, null, null, accrualAccount(), desc, BigDecimal.ONE, amount, BigDecimal.ZERO,
                         null, null, null, "manual", taxId, null, true);
-        Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(a.get("partnerId")), LocalDate.now()
+        Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(a.get("partnerId")), LocalDate.now(BusinessZone.get())
                 .toString(), null, "REBATE", desc, open == null ? null : str(open.get("id")), List.of(line)));
         String cnId = str(cn.get("id"));
         creditNotes.post(cnId, "none");

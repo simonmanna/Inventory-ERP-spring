@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.time.LocalDate;
 import java.util.List;
@@ -32,7 +33,7 @@ public class SalesRecurringOrderJob {
         List<String> orgs = jdbc.sql("SELECT id FROM \"Organization\" WHERE \"deletedAt\" IS NULL").query(String.class).list();
         for (String org : orgs) {
             try {
-                TenantContext.run(TenantContext.TenantStore.organization(org), () -> recurring.runDue(LocalDate.now()));
+                TenantContext.run(TenantContext.TenantStore.organization(org), () -> recurring.runDue(LocalDate.now(BusinessZone.get())));
             } catch (RuntimeException e) {
                 log.warn("Recurring sales orders failed for {}: {}", org, e.toString());
             }

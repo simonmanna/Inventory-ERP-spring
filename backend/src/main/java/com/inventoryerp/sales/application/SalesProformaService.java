@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -123,7 +124,7 @@ public class SalesProformaService {
             throw ApiException.badRequest("Add at least one line first");
         }
         Map<String, Object> cur = db.row("SELECT id FROM \"Currency\" WHERE code = ?", o.get("currencyCode"));
-        HeaderInput h = new HeaderInput(str(o.get("partnerId")), LocalDate.now().toString(), str(in.get("dueDate")),
+        HeaderInput h = new HeaderInput(str(o.get("partnerId")), LocalDate.now(BusinessZone.get()).toString(), str(in.get("dueDate")),
                 str(o.get("paymentTermId")), null, null, null, null, null, null, str(o.get("ownerId")), null, null,
                 str(o.get("deliveryAddress")), null, null, str(o.get("number")), cur == null ? null : str(cur.get("id")),
                 dec(o.get("exchangeRate")).signum() > 0 ? dec(o.get("exchangeRate")) : BigDecimal.ONE,

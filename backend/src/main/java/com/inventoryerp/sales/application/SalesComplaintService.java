@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
@@ -82,7 +83,7 @@ public class SalesComplaintService {
 
     Map<String, Object> insert(String partnerId, String orderId, String deliveryOrderId, String discrepancyId,
             String category, String description) {
-        int year = LocalDate.now().getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         String id = SalesDb.newId();
         String number = sequence.next("customer_complaint:" + year, "CMP-" + year + "-", 5);
         db.update("INSERT INTO \"CustomerComplaint\" (id, \"organizationId\", number, \"partnerId\", \"orderId\","
