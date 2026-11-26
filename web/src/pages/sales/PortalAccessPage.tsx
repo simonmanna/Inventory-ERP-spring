@@ -30,6 +30,7 @@ export function PortalAccessPage() {
   const revoke = useMutation({
     mutationFn: async (id: string) => (await api.post(`/sales/portal/access/${id}/revoke`, {})).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'portal-access'] }),
+    onError: (e) => toast.error(apiErrorMessage(e, tx('Could not revoke the link'))),
   });
   const now = new Date();
   return (

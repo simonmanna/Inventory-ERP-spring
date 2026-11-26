@@ -51,7 +51,8 @@ public class SalesRecurringOrderService {
 
     @Transactional
     public Map<String, Object> stop(String id) {
-        if (db.update("UPDATE \"SalesRecurringOrder\" SET active = false, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?",
+        if (db.update("UPDATE \"SalesRecurringOrder\" SET active = false, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?",
                 id, org()) == 0) {
             throw ApiException.notFound("Recurring order not found");
         }
@@ -76,21 +77,25 @@ public class SalesRecurringOrderService {
             String id = str(r.get("id"));
             LocalDate end = r.get("endDate") instanceof LocalDate d ? d : null;
             if (end != null && end.isBefore(today)) {
-                db.update("UPDATE \"SalesRecurringOrder\" SET active = false, \"updatedAt\" = " + NOW + " WHERE id = ?", id);
+                db.update("UPDATE \"SalesRecurringOrder\" SET active = false, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", id, org());
                 continue;
             }
-            Map<String, Object> source = db.row("SELECT \"partnerId\" FROM \"SalesOrder\" WHERE id = ?", r.get("sourceOrderId"));
+            Map<String, Object> source = db.row("SELECT \"partnerId\" FROM \"SalesOrder\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", r.get("sourceOrderId"), org());
             try {
                 db.requireActivePartner(str(source.get("partnerId")));
             } catch (com.inventoryerp.shared.web.ApiException e) {
-                db.update("UPDATE \"SalesRecurringOrder\" SET active = false, \"updatedAt\" = " + NOW + " WHERE id = ?", id);
+                db.update("UPDATE \"SalesRecurringOrder\" SET active = false, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", id, org());
                 alerts.send(str(r.get("createdById")), "sales_recurring_stopped", "A recurring sales order stopped", e.getMessage(),
                         Obj.of("entityType", "sales_order", "entityId", r.get("sourceOrderId")));
                 continue;
             }
             Map<String, Object> copy = orders.duplicate(str(r.get("sourceOrderId")));
             db.update("UPDATE \"SalesRecurringOrder\" SET \"lastOrderId\" = ?, \"runCount\" = \"runCount\" + 1, \"nextRunDate\" = ?, \"updatedAt\" = "
-                    + NOW + " WHERE id = ?", copy.get("id"), advance((LocalDate) r.get("nextRunDate"), str(r.get("frequency"))), id);
+                    + NOW + " WHERE id = ?"
+                            + " AND \"organizationId\" = ?", copy.get("id"), advance((LocalDate) r.get("nextRunDate"), str(r.get("frequency"))), id, org());
             alerts.send(str(r.get("createdById")), "sales_recurring_created", "Recurring order " + copy.get("number") + " is ready",
                     "Review and confirm the draft.", Obj.of("entityType", "sales_order", "entityId", copy.get("id")));
             made++;

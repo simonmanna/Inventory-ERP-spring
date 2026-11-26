@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import com.inventoryerp.kernel.common.BusinessZone;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -143,7 +144,7 @@ public class SalesCollectionsService {
     @Transactional
     public Map<String, Object> run(LocalDate asOfIn, String trigger) {
         access.assertAllBranches();
-        LocalDate asOf = asOfIn == null ? LocalDate.now() : asOfIn;
+        LocalDate asOf = asOfIn == null ? LocalDate.now(BusinessZone.get()) : asOfIn;
         List<Map<String, Object>> levels = db.rows("SELECT * FROM \"DunningLevel\" WHERE \"organizationId\" = ? AND"
                 + " \"isActive\" ORDER BY \"daysOverdue\" DESC, sequence DESC", org());
         if (levels.isEmpty()) {
@@ -155,6 +156,8 @@ public class SalesCollectionsService {
                 + " ?, ?)", runId, org(), asOf, trigger, user());
         int entries = 0;
         int skipped = 0;
+        // A customer overdue in two currencies gets one entry (and one reminder) per currency, but one fee and hold.
+        Set<String> charged = new java.util.HashSet<>();
         for (Map<String, Object> c : overdueCustomers(asOf)) {
             String partnerId = str(c.get("partnerId"));
             int days = ((Number) c.get("maxDays")).intValue();
@@ -174,36 +177,59 @@ public class SalesCollectionsService {
             }
             // only reminders sent since the oldest invoice now overdue fell due count (a settled customer restarts at 1)
             Map<String, Object> last = db.row("SELECT \"levelSequence\", \"createdAt\" FROM \"DunningEntry\" WHERE"
-                    + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"createdAt\" >= ? ORDER BY \"createdAt\" DESC"
-                    + " LIMIT 1", org(), partnerId, c.get("oldestDue"));
+                    + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"createdAt\" >= ? AND (\"currencyCode\" IS NULL OR"
+                    + " \"currencyCode\" = ?) ORDER BY \"createdAt\" DESC LIMIT 1", org(), partnerId, c.get("oldestDue"),
+                    c.get("currencyCode"));
             int seq = ((Number) level.get("sequence")).intValue();
             if (last != null && ((Number) last.get("levelSequence")).intValue() >= seq) {
                 skipped++;
                 continue;
             }
             entries++;
-            entry(runId, c, level, asOf);
+            entry(runId, c, level, asOf, charged.add(partnerId));
         }
-        db.update("UPDATE \"DunningRun\" SET entries = ?, skipped = ? WHERE id = ?", entries, skipped, runId);
+        db.update("UPDATE \"DunningRun\" SET entries = ?, skipped = ? WHERE id = ?"
+                + " AND \"organizationId\" = ?", entries, skipped, runId, org());
         audit.record(AuditInput.of("DunningRun", runId, "create", null, Obj.of("entries", entries, "skipped", skipped)));
         return run(runId);
     }
 
+    /**
+     * Overdue customers per currency (sales readiness INV-12): residuals of one currency only, net of the customer's
+     * open credit in that currency (posted credit notes not yet used, receipts not yet allocated). A customer whose
+     * credit covers what is overdue is not chased.
+     */
     private List<Map<String, Object>> overdueCustomers(LocalDate asOf) {
         return db.rows("""
-                SELECT d."partnerId", p.name, p.email, COALESCE(sum(d."amountResidual"), 0) AS overdue,
+                WITH od AS (
+                SELECT d."partnerId", COALESCE(d."currencyId", '') AS cur, p.name, p.email,
+                       COALESCE(sum(d."amountResidual"), 0) AS gross,
                        max((?::date - d."dueDate"::date)) AS "maxDays",
                        min(d."dueDate") AS "oldestDue",
                        jsonb_agg(jsonb_build_object('id', d.id, 'number', d."documentNumber", 'dueDate', d."dueDate"::date,
-                           'residual', d."amountResidual") ORDER BY d."dueDate") AS invoices
+                           'residual', d."amountResidual", 'currency', d."currencyId") ORDER BY d."dueDate") AS invoices
                   FROM "Document" d JOIN "Partner" p ON p.id = d."partnerId"
                  WHERE d."organizationId" = ? AND d."documentType"::text IN ('sales_invoice', 'debit_note')
                    AND d.status::text = 'posted' AND d."amountResidual" > 0 AND d."dueDate"::date < ?::date
-                 GROUP BY d."partnerId", p.name, p.email""", asOf, org(), asOf);
+                 GROUP BY d."partnerId", COALESCE(d."currencyId", ''), p.name, p.email)
+                SELECT od."partnerId", NULLIF(od.cur, '') AS "currencyCode", od.name, od.email, od."maxDays", od."oldestDue",
+                       od.invoices,
+                       od.gross - COALESCE((SELECT sum(c."amountResidual") FROM "Document" c WHERE c."organizationId" = ?
+                           AND c."partnerId" = od."partnerId" AND c."documentType"::text = 'credit_note'
+                           AND c.status::text = 'posted' AND c."amountResidual" > 0
+                           AND COALESCE(c."currencyId", '') = od.cur), 0)
+                                - COALESCE((SELECT sum(y."unallocatedAmount") FROM "Payment" y WHERE y."organizationId" = ?
+                           AND y."partnerId" = od."partnerId" AND y.direction::text = 'inbound'
+                           AND y.status::text = 'posted' AND y."unallocatedAmount" > 0
+                           AND COALESCE(y."currencyId", '') = od.cur), 0) AS overdue
+                  FROM od""", asOf, org(), asOf, org(), org()).stream()
+                .filter(c -> dec(c.get("overdue")).signum() > 0).toList();
     }
 
-    private void entry(String runId, Map<String, Object> c, Map<String, Object> level, LocalDate asOf) {
+    private void entry(String runId, Map<String, Object> c, Map<String, Object> level, LocalDate asOf,
+            boolean firstForCustomer) {
         String partnerId = str(c.get("partnerId"));
+        String entryId = SalesDb.newId();
         String channel = str(level.get("channel"));
         String delivery = "none";
         String recipient = null;
@@ -216,22 +242,17 @@ public class SalesCollectionsService {
                 delivery = "letter";
                 error = "No e-mail on file — print the letter";
             } else {
-                try {
-                    boolean sent = notifications.sendExternalEmail(recipient, subject, body,
-                            new NotificationsService.Attachment("statement.pdf", "application/pdf", statements.pdf("ar",
-                                    partnerId, null, asOf.toString())));
-                    delivery = sent ? "sent" : "logged";
-                } catch (RuntimeException e) {
-                    delivery = "failed";
-                    error = e.getMessage();
-                }
+                // INV-12: the statement is rendered now (same data as the entry) but the e-mail leaves only after the
+                // run commits; its outcome is written back to the entry then.
+                delivery = "queued";
+                sendAfterCommit(entryId, recipient, subject, body, statements.pdf("ar", partnerId, null, asOf.toString()));
             }
         } else if ("letter".equals(channel)) {
             delivery = "letter";
         }
         String feeInvoiceId = null;
         BigDecimal fee = dec(level.get("feeAmount"));
-        if (fee.signum() > 0) {
+        if (fee.signum() > 0 && firstForCustomer) {
             String feeAccount = accounts.ensureByCode("4290", "Late Payment Fees", "other_income", "dunning_fee_income");
             Map<String, Object> inv = invoices.create(new InvoiceInput(partnerId, asOf.toString(), null, null, null, null,
                     null, null, null, null, null, null, "Dunning " + level.get("name"), null, null, null,
@@ -239,26 +260,68 @@ public class SalesCollectionsService {
                             + level.get("name") + ")", BigDecimal.ONE, fee, null, null, null))));
             feeInvoiceId = str(inv.get("id"));
         }
-        boolean hold = Boolean.TRUE.equals(level.get("setCreditHold"));
+        boolean hold = firstForCustomer && Boolean.TRUE.equals(level.get("setCreditHold"));
         if (hold) {
             credit.setHold(partnerId, true, "Dunning level " + level.get("sequence") + " (" + level.get("name") + ")");
         }
         db.update("INSERT INTO \"DunningEntry\" (id, \"organizationId\", \"runId\", \"partnerId\", \"levelId\","
                 + " \"levelSequence\", \"overdueAmount\", \"maxDaysOverdue\", invoices, channel, delivery, recipient,"
-                + " \"feeInvoiceId\", \"creditHoldSet\", error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?)",
-                SalesDb.newId(), org(), runId, partnerId, level.get("id"), level.get("sequence"), dec(c.get("overdue")),
-                ((Number) c.get("maxDays")).intValue(), str(c.get("invoices")), channel, delivery, recipient, feeInvoiceId,
-                hold, error);
+                + " \"feeInvoiceId\", \"creditHoldSet\", error, \"currencyCode\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?,"
+                + " ?, ?, ?, ?, ?)", entryId, org(), runId, partnerId, level.get("id"), level.get("sequence"),
+                dec(c.get("overdue")), ((Number) c.get("maxDays")).intValue(), str(c.get("invoices")), channel, delivery,
+                recipient, feeInvoiceId, hold, error, c.get("currencyCode"));
+    }
+
+    /** Send a reminder once the run committed, then record sent / logged / failed on its entry (own transaction). */
+    private void sendAfterCommit(String entryId, String to, String subject, String body, byte[] pdf) {
+        String orgId = org();
+        Runnable send = () -> {
+            String delivery;
+            String error = null;
+            try {
+                delivery = notifications.sendExternalEmail(to, subject, body, new NotificationsService.Attachment(
+                        "statement.pdf", "application/pdf", pdf)) ? "sent" : "logged";
+            } catch (RuntimeException e) {
+                delivery = "failed";
+                error = e.getMessage();
+            }
+            String d = delivery;
+            String err = error;
+            afterCommitTx.executeWithoutResult(st -> db.jdbc().sql("UPDATE \"DunningEntry\" SET delivery = ?, error = ?"
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(d, err, entryId, orgId).update());
+        };
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            send.run();
+                        }
+                    });
+        } else {
+            send.run();
+        }
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate afterCommitTx;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTransactions(org.springframework.transaction.PlatformTransactionManager txm) {
+        this.afterCommitTx = new org.springframework.transaction.support.TransactionTemplate(txm);
+        this.afterCommitTx.setPropagationBehavior(
+                org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     private static String render(String template, Map<String, Object> c) {
-        return template.replace("{{customer}}", str(c.get("name"))).replace("{{amount}}", dec(c.get("overdue"))
+        String cur = blank(str(c.get("currencyCode"))) ? "" : str(c.get("currencyCode")) + " ";
+        return template.replace("{{customer}}", str(c.get("name"))).replace("{{amount}}", cur + dec(c.get("overdue"))
                 .stripTrailingZeros().toPlainString()).replace("{{days}}", String.valueOf(c.get("maxDays")));
     }
 
     @Transactional(readOnly = true)
     public Map<String, Object> run(String runId) {
-        Map<String, Object> r = db.row("SELECT * FROM \"DunningRun\" WHERE id = ? AND \"organizationId\" = ?", runId, org());
+        Map<String, Object> r = db.row("SELECT * FROM \"DunningRun\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", runId, org());
         if (r == null) {
             throw ApiException.notFound("Dunning run not found");
         }
@@ -295,7 +358,7 @@ public class SalesCollectionsService {
                 + " \"createdById\") VALUES (?, ?, ?, ?, ?, ?, ?)", id, org(), partnerId, amount, date, str(in.get("notes")),
                 user());
         audit.record(AuditInput.of("PromiseToPay", id, "create", null, in));
-        return db.row("SELECT * FROM \"PromiseToPay\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"PromiseToPay\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     @Transactional(readOnly = true)
@@ -310,7 +373,7 @@ public class SalesCollectionsService {
         db.require("PromiseToPay", id, "Promise not found");
         db.update("UPDATE \"PromiseToPay\" SET status = 'cancelled', \"resolvedAt\" = now() WHERE id = ? AND status ="
                 + " 'open'", id);
-        return db.row("SELECT * FROM \"PromiseToPay\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"PromiseToPay\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     /** Promises past their date: kept when the customer's receipts since the promise reach the amount, else broken. */
@@ -323,8 +386,9 @@ public class SalesCollectionsService {
                     + " ? AND \"partnerId\" = ? AND direction::text = 'inbound' AND status::text = 'posted' AND"
                     + " \"createdAt\" >= ? AND \"paymentMethod\" <> 'customer_deposit'", org(), t.get("partnerId"),
                     t.get("paidSince")).get("paid"));
-            db.update("UPDATE \"PromiseToPay\" SET status = ?, \"resolvedAt\" = now() WHERE id = ?", paid.compareTo(dec(t.get(
-                    "amount"))) >= 0 ? "kept" : "broken", t.get("id"));
+            db.update("UPDATE \"PromiseToPay\" SET status = ?, \"resolvedAt\" = now() WHERE id = ?"
+                    + " AND \"organizationId\" = ?", paid.compareTo(dec(t.get(
+                    "amount"))) >= 0 ? "kept" : "broken", t.get("id"), org());
             n++;
         }
         return n;

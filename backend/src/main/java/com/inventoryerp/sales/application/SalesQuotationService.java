@@ -537,7 +537,8 @@ public class SalesQuotationService {
         if (inputs.isEmpty()) {
             insertLayoutRows(id, layout, List.of());
             db.update("UPDATE \"SalesQuotation\" SET subtotal = 0, \"discountTotal\" = 0, \"taxAmount\" = 0, total = 0,"
-                    + " \"maxDiscountPercent\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?", id);
+                    + " \"maxDiscountPercent\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                            + " AND \"organizationId\" = ?", id, org());
             return;
         }
         // Optional products (shown to the customer, taken only when chosen) are priced like any line but stay out of
@@ -595,10 +596,10 @@ public class SalesQuotationService {
         }
         insertLayoutRows(id, layout, priced);
         db.update("UPDATE \"SalesQuotation\" SET subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?, total = ?,"
-                + " \"maxDiscountPercent\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?",
+                + " \"maxDiscountPercent\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?",
                 sums == null ? BigDecimal.ZERO : sums.subtotal(), sums == null ? BigDecimal.ZERO
                         : sums.discountTotal(), sums == null ? BigDecimal.ZERO : sums.taxAmount(),
-                sums == null ? BigDecimal.ZERO : sums.total(), maxDisc.setScale(4, RoundingMode.HALF_UP), id);
+                sums == null ? BigDecimal.ZERO : sums.total(), maxDisc.setScale(4, RoundingMode.HALF_UP), id, org());
     }
 
     /** The line's own id when it is a line of this quotation (once); else null, so the row gets a new id. */
@@ -625,9 +626,10 @@ public class SalesQuotationService {
         }
         Totals t = inputs.isEmpty() ? null : builder.prepareLines(inputs);
         db.update("UPDATE \"SalesQuotation\" SET subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?, total = ?,"
-                + " \"updatedAt\" = " + NOW + " WHERE id = ?", t == null ? BigDecimal.ZERO : t.subtotal(), t == null
+                + " \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", t == null ? BigDecimal.ZERO : t.subtotal(), t == null
                         ? BigDecimal.ZERO : t.discountTotal(), t == null ? BigDecimal.ZERO : t.taxAmount(), t == null
-                                ? BigDecimal.ZERO : t.total(), id);
+                                ? BigDecimal.ZERO : t.total(), id, org());
     }
 
     /** Writes the priced lines and the section / note rows in display order; layout rows carry no amounts. */
@@ -987,7 +989,8 @@ public class SalesQuotationService {
         if (!"draft".equals(q.get("status")) || q.get("approvalRequestId") != null) {
             throw ApiException.badRequest("Only draft quotations can be deleted; cancel it instead");
         }
-        db.update("UPDATE \"SalesQuotation\" SET \"deletedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", id,
+        db.update("UPDATE \"SalesQuotation\" SET \"deletedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?", id,
                 org());
         audit.record(AuditInput.of("SalesQuotation", id, "delete"));
         return Obj.of("ok", true);
@@ -1298,7 +1301,8 @@ public class SalesQuotationService {
                 address = c == null ? null : str(c.get("email"));
             }
             if (blank(address)) {
-                Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ?", q.get("partnerId"));
+                Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?", q.get("partnerId"), org());
                 address = p == null ? null : str(p.get("email"));
             }
             if (blank(address)) {

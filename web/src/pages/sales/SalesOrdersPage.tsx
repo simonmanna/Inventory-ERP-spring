@@ -72,7 +72,9 @@ export function SalesOrdersPage() {
             {data && data.data.length === 0 && <tr><td colSpan={7} className="p-6 text-center text-muted-foreground">{tx('No sales orders.')}</td></tr>}
           </tbody>
           {data && data.data.length > 0 && (
-            <tfoot><tr className="border-t font-semibold"><td colSpan={6} className="px-3 py-2">{data.meta.total} {tx('orders')}</td><td className="px-3 py-2 text-right tabular-nums">{money(data.totals?.total ?? 0)}</td></tr></tfoot>
+            <tfoot><tr className="border-t font-semibold"><td colSpan={6} className="px-3 py-2">{data.meta.total} {tx('orders')}</td><td className="px-3 py-2 text-right tabular-nums">{(data.totals?.byCurrency?.length ?? 0) > 1
+              ? data.totals!.byCurrency!.map((c) => <div key={c.currencyCode ?? '-'}>{money(c.total, c.currencyCode ?? undefined)}</div>)
+              : money(data.totals?.total ?? 0, data.totals?.byCurrency?.[0]?.currencyCode ?? undefined)}</td></tr></tfoot>
           )}
         </table>
         {data && data.meta.totalPages > 1 && (

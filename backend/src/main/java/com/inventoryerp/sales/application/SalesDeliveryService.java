@@ -75,15 +75,18 @@ public class SalesDeliveryService {
                    t."tripExpenses", t.notes, t."locationId", loc.name AS "locationName", t."createdAt",
                    d.id AS "deliveryOrderId", d.code AS "deliveryOrderCode",
                    d."sourceId" AS "orderId", d."sourceNumber" AS "orderNumber", d."branchId", p.name AS "partnerName",
-                   COALESCE((SELECT sum(l."plannedQty") FROM "FleetLoadLine" l WHERE l."loadId" = t.id), 0) AS "plannedQty",
-                   COALESCE((SELECT sum(l."dispatchedQty") FROM "FleetLoadLine" l WHERE l."loadId" = t.id), 0) AS "dispatchedQty",
-                   COALESCE((SELECT sum(l."deliveredQty") FROM "FleetLoadLine" l WHERE l."loadId" = t.id), 0) AS "deliveredQty",
-                   COALESCE((SELECT sum(l."damagedQty") FROM "FleetLoadLine" l WHERE l."loadId" = t.id), 0) AS "damagedQty",
-                   COALESCE((SELECT sum(l."rejectedQty") FROM "FleetLoadLine" l WHERE l."loadId" = t.id), 0) AS "rejectedQty",
-                   (SELECT count(*) FROM "FleetLoadLine" l WHERE l."loadId" = t.id) AS "lineCount",
-                   (SELECT string_agg(DISTINCT u.code, ', ') FROM "FleetLoadLine" l JOIN "UnitOfMeasure" u ON u.id = l."uomId"
-                     WHERE l."loadId" = t.id) AS "uomCodes"
+                   COALESCE(agg."plannedQty", 0) AS "plannedQty", COALESCE(agg."dispatchedQty", 0) AS "dispatchedQty",
+                   COALESCE(agg."deliveredQty", 0) AS "deliveredQty", COALESCE(agg."damagedQty", 0) AS "damagedQty",
+                   COALESCE(agg."rejectedQty", 0) AS "rejectedQty", COALESCE(agg."lineCount", 0) AS "lineCount",
+                   agg."uomCodes"
               FROM "FleetLoad" t
+              -- Sales readiness X-7: one aggregate per trip instead of seven correlated sub-queries.
+              LEFT JOIN LATERAL (SELECT sum(l."plannedQty") AS "plannedQty", sum(l."dispatchedQty") AS "dispatchedQty",
+                     sum(l."deliveredQty") AS "deliveredQty", sum(l."damagedQty") AS "damagedQty",
+                     sum(l."rejectedQty") AS "rejectedQty", count(*) AS "lineCount",
+                     string_agg(DISTINCT u.code, ', ') AS "uomCodes"
+                FROM "FleetLoadLine" l LEFT JOIN "UnitOfMeasure" u ON u.id = l."uomId"
+               WHERE l."loadId" = t.id) agg ON true
               JOIN "FleetDeliveryOrder" d ON d.id = t."deliveryOrderId"
               LEFT JOIN "Partner" p ON p.id = d."partnerId"
               LEFT JOIN "InventoryLocation" loc ON loc.id = t."locationId"
@@ -167,8 +170,33 @@ public class SalesDeliveryService {
     /** Deliveries of sales orders. Filters: orderId, status (csv), failed, from, to. */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(Map<String, String> q) {
+        List<Object> params = new ArrayList<>();
+        StringBuilder where = listWhere(q, params);
+        // Sales readiness X-7: server paging (limit / offset, default 500 = the old fixed cut).
+        int limit = Math.max(1, Math.min(1000, intParam(q.get("limit"), 500)));
+        int offset = Math.max(0, intParam(q.get("offset"), 0));
+        params.add(limit);
+        params.add(offset);
+        List<Map<String, Object>> rows = db.rows(LIST + where + " ORDER BY t.\"createdAt\" DESC, t.id LIMIT ? OFFSET ?",
+                params);
+        rows.forEach(SalesDeliveryService::weighVerification);
+        addBuckets(rows);
+        return rows;
+    }
+
+    /** Rows of the {@link #list} filter (for the X-Total-Count header). */
+    @Transactional(readOnly = true)
+    public long count(Map<String, String> q) {
+        List<Object> params = new ArrayList<>();
+        StringBuilder where = listWhere(q, params);
+        return db.jdbc().sql("SELECT count(*) FROM \"FleetLoad\" t JOIN \"FleetDeliveryOrder\" d ON d.id ="
+                + " t.\"deliveryOrderId\" LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\"" + where).params(params)
+                .query(Long.class).single();
+    }
+
+    private StringBuilder listWhere(Map<String, String> q, List<Object> params) {
         StringBuilder where = new StringBuilder(" WHERE t.\"organizationId\" = ? AND d.\"sourceType\" = 'sales_order'");
-        List<Object> params = new ArrayList<>(List.of(org()));
+        params.add(org());
         where.append(access.branchClause("d.\"branchId\"", params));
         if (!blank(q.get("orderId"))) {
             where.append(" AND d.\"sourceId\" = ?");
@@ -191,10 +219,28 @@ public class SalesDeliveryService {
             where.append(" AND t.\"createdAt\" < ?::date + 1");
             params.add(SalesDb.date(q.get("to")));
         }
-        List<Map<String, Object>> rows = db.rows(LIST + where + " ORDER BY t.\"createdAt\" DESC LIMIT 500", params);
-        rows.forEach(SalesDeliveryService::weighVerification);
-        addBuckets(rows);
-        return rows;
+        if (!blank(q.get("search"))) {
+            String like = "%" + q.get("search").trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    + "%";
+            where.append(" AND (t.code ILIKE ? OR d.\"sourceNumber\" ILIKE ? OR p.name ILIKE ? OR t.\"deliveryNoteNumber\""
+                    + " ILIKE ? OR t.\"transporterPlate\" ILIKE ?)");
+            params.addAll(List.of(like, like, like, like, like));
+        }
+        return where;
+    }
+
+    private static List<Object> withPage(List<Object> params, Map<String, String> q) {
+        params.add(Math.max(1, Math.min(1000, intParam(q.get("limit"), 1000))));
+        params.add(Math.max(0, intParam(q.get("offset"), 0)));
+        return params;
+    }
+
+    private static int intParam(String v, int dflt) {
+        try {
+            return blank(v) ? dflt : Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return dflt;
+        }
     }
 
     private Map<String, Object> require(String id) {
@@ -574,7 +620,8 @@ public class SalesDeliveryService {
         }
         if (all || in.containsKey("destinationLocationId")) {
             String loc = blank(str(in.get("destinationLocationId"))) ? null : str(in.get("destinationLocationId"));
-            if (loc != null && db.count("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ? AND \"organizationId\" = ?",
+            if (loc != null && db.count("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?",
                     List.of(loc, org())) == 0) {
                 throw ApiException.badRequest("Destination warehouse not found");
             }
@@ -607,7 +654,8 @@ public class SalesDeliveryService {
         });
         params.add(id);
         params.add(org());
-        db.update("UPDATE \"FleetLoad\" SET " + set + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?",
+        db.update("UPDATE \"FleetLoad\" SET " + set + ", \"updatedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?",
                 params.toArray());
     }
 
@@ -818,7 +866,8 @@ public class SalesDeliveryService {
         if (user() != null && (user().equals(raw.get("createdBy")) || user().equals(raw.get("editedBy")))) {
             throw ApiException.forbidden("You cannot approve your own delivery");
         }
-        db.update("UPDATE \"FleetLoad\" SET \"approvedAt\" = " + NOW + ", \"approvedById\" = ? WHERE id = ? AND \"organizationId\" = ?", user(),
+        db.update("UPDATE \"FleetLoad\" SET \"approvedAt\" = " + NOW + ", \"approvedById\" = ? WHERE id = ?"
+                + " AND \"organizationId\" = ?", user(),
                 id, org());
         audit.record(AuditInput.of("FleetLoad", id, "approve"));
         return get(id);
@@ -988,7 +1037,8 @@ public class SalesDeliveryService {
                     + " \"organizationId\" = ?", l.get("rejectedQty") == null ? BigDecimal.ZERO : dec(l.get("rejectedQty")),
                     str(l.get("loadLineId")), id, org());
         }
-        db.update("UPDATE \"FleetLoad\" SET \"arrivedAt\" = COALESCE(?::timestamp(3), \"deliveredAt\") WHERE id = ? AND \"organizationId\" = ?",
+        db.update("UPDATE \"FleetLoad\" SET \"arrivedAt\" = COALESCE(?::timestamp(3), \"deliveredAt\") WHERE id = ?"
+                + " AND \"organizationId\" = ?",
                 arrivedAt, id, org());
         if (in.get("customerWeight") != null) {
             // Phase A A2: after damaged / rejected are on the lines, so the ceiling excludes them.
@@ -1288,8 +1338,14 @@ public class SalesDeliveryService {
     }
 
     public FleetDeliveryNoteService.Pdf note(String id) {
+        return note(id, true);
+    }
+
+    /** The delivery note PDF; only an explicit print counts a copy (sales readiness DEL-12). */
+    @Transactional
+    public FleetDeliveryNoteService.Pdf note(String id, boolean print) {
         require(id);
-        return notes.render(id);
+        return notes.render(id, print);
     }
 
     /**
@@ -1317,6 +1373,10 @@ public class SalesDeliveryService {
             where.append(" AND o.\"partnerId\" = ?");
             params.add(q.get("partnerId"));
         }
+        // Sales readiness X-7: scoped by default to orders still open or confirmed in the last 90 days.
+        if (blank(q.get("orderId")) && !"true".equals(q.get("all"))) {
+            where.append(" AND (o.status <> 'done' OR o.\"updatedAt\" >= now() - interval '90 days')");
+        }
         if ("true".equals(q.get("varianceOnly"))) {
             where.append(" AND (l.\"qtyDelivered\" <> l.\"qtyAccepted\" OR l.\"qtyInvoiced\" - l.\"qtyCredited\" <> l.\"qtyBillable\")");
         }
@@ -1329,9 +1389,10 @@ public class SalesDeliveryService {
                        l."qtyBillable" - (l."qtyInvoiced" - l."qtyCredited") AS "toInvoice",
                        CASE WHEN l.quantity - l."qtyCancelled" > 0 THEN round(l."qtyAccepted" * 100 / (l.quantity - l."qtyCancelled"), 2) ELSE 0 END AS "percentDelivered"
                   FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId" LEFT JOIN "Partner" p ON p.id = o."partnerId"
-                  LEFT JOIN (SELECT dl."sourceLineId" AS line, sum(ll."damagedQty") AS damaged, sum(ll."rejectedQty") AS rejected
-                               FROM "FleetLoadLine" ll JOIN "FleetDeliveryOrderLine" dl ON dl.id = ll."deliveryOrderLineId"
-                              WHERE ll."organizationId" = current_setting('app.org_id', true) GROUP BY 1) x ON x.line = l.id
-                """ + where + " ORDER BY o.\"createdAt\" DESC, l.\"sortOrder\" LIMIT 1000", params);
+                  -- Sales readiness X-7: per line (index on sourceLineId), not a scan of every load line of the org.
+                  LEFT JOIN LATERAL (SELECT sum(ll."damagedQty") AS damaged, sum(ll."rejectedQty") AS rejected
+                               FROM "FleetDeliveryOrderLine" dl JOIN "FleetLoadLine" ll ON ll."deliveryOrderLineId" = dl.id
+                              WHERE dl."sourceLineId" = l.id AND dl."organizationId" = o."organizationId") x ON true
+                """ + where + " ORDER BY o.\"createdAt\" DESC, l.\"sortOrder\" LIMIT ? OFFSET ?", withPage(params, q));
     }
 }

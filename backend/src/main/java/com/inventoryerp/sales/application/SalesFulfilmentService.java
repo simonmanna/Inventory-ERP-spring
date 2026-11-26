@@ -110,8 +110,9 @@ public class SalesFulfilmentService {
                     || accepted.compareTo(dec(l.get("qtyAccepted"))) != 0 || billable.compareTo(previous) != 0;
             if (diff) {
                 db.update("UPDATE \"SalesOrderLine\" SET \"qtyLoaded\" = ?, \"qtyDispatched\" = ?, \"qtyReceived\" = ?,"
-                        + " \"qtyAccepted\" = ?, \"qtyDelivered\" = ?, \"qtyBillable\" = ? WHERE id = ?", loaded, dispatched,
-                        received, accepted, dispatched, billable, lineId);
+                        + " \"qtyAccepted\" = ?, \"qtyDelivered\" = ?, \"qtyBillable\" = ? WHERE id = ?"
+                                + " AND \"organizationId\" = ?", loaded, dispatched,
+                        received, accepted, dispatched, billable, lineId, org());
                 changed.add(Obj.of("lineId", lineId, "dispatched", JsNumbers.js(dispatched), "accepted",
                         JsNumbers.js(accepted), "billable", JsNumbers.js(billable)));
             }
@@ -178,7 +179,8 @@ public class SalesFulfilmentService {
                     + net.stripTrailingZeros().toPlainString() + "); issue a credit note first");
         }
         decide(orderId, lineId, "manual", qty, dec(l.get("qtyBillable")), reason);
-        db.update("UPDATE \"SalesOrderLine\" SET \"qtyBillable\" = ? WHERE id = ?", qty, lineId);
+        db.update("UPDATE \"SalesOrderLine\" SET \"qtyBillable\" = ? WHERE id = ?"
+                + " AND \"organizationId\" = ?", qty, lineId, org());
         audit.record(AuditInput.of("SalesOrder", orderId, "update", null, Obj.of("lineId", lineId, "billable", qty,
                 "reason", reason)));
         orders.refreshStatus(orderId);

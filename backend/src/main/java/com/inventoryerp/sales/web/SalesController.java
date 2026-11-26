@@ -277,13 +277,13 @@ public final class SalesController {
 
         @PostMapping("/{id}/approve")
         @Idempotent(required = true)
-        @RequirePermissions(Permissions.SALES__QUOTATION_APPROVE)
+        @RequirePermissions(Permissions.SALES__ORDER_APPROVE)
         public Map<String, Object> approve(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             return svc.approve(id, text(b, "comment"));
         }
 
         @PostMapping("/{id}/reject")
-        @RequirePermissions(Permissions.SALES__QUOTATION_APPROVE)
+        @RequirePermissions(Permissions.SALES__ORDER_APPROVE)
         public Map<String, Object> reject(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             return svc.reject(id, text(b, "reason"));
         }

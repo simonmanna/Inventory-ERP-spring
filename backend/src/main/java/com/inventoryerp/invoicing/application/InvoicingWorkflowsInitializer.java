@@ -87,7 +87,6 @@ public class InvoicingWorkflowsInitializer {
     @PostConstruct
     void register() {
         registry.register(invoiceWorkflow());
-        registry.register(creditNoteWorkflow());
         registry.register(vendorBillWorkflow());
         registry.register(paymentWorkflow());
     }
@@ -116,10 +115,15 @@ public class InvoicingWorkflowsInitializer {
                 .orElse(fallback);
     }
 
-    private String warehouse(String org) {
+    /**
+     * The document's stock location: a warehouse of its branch when it has one (sales readiness INV-10), else the
+     * organisation's oldest warehouse (Nest behaviour).
+     */
+    private String warehouse(String org, Object branchId) {
         return jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type = 'warehouse'"
-                        + " AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" ASC LIMIT 1")
-                .param(org).query(String.class).optional().orElse(null);
+                        + " AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY (\"branchId\" IS NOT DISTINCT FROM ?::text"
+                        + " AND ?::text IS NOT NULL) DESC, \"createdAt\" ASC LIMIT 1")
+                .params(org, branchId, branchId).query(String.class).optional().orElse(null);
     }
 
     private Map<String, Object> product(String id) {
@@ -173,7 +177,7 @@ public class InvoicingWorkflowsInitializer {
             String productId = (String) line.get("productId");
             Map<String, Object> product = productId == null ? null : product(productId);
             if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {
-                String location = warehouse(ctx.organizationId());
+                String location = warehouse(ctx.organizationId(), doc.get("branchId"));
                 if (Boolean.TRUE.equals(product.get("batchTracking"))) {
                     location = lotWarehouse(ctx.organizationId(), productId, line, location);
                 }
@@ -193,7 +197,7 @@ public class InvoicingWorkflowsInitializer {
         String partnerId = (String) full.get("partnerId");
         post.add(new Line(g.counterAccount(), JsNumbers.dec(d(full.get("totalAmount"))), null, partnerId,
                 "Invoice " + full.get("documentNumber"), null, null, null));
-        String accrual = jdbc.sql("SELECT data->>'revenueAccruedBy' FROM \"Document\" WHERE id = ?").param(id)
+        String accrual = jdbc.sql("SELECT data->>'revenueAccruedBy' FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(id, com.inventoryerp.kernel.tenancy.TenantContext.organizationId())
                 .query(String.class).optional().orElse(null);
         if (accrual != null) {
             // Branch cash sale (ADR-S056 P4): revenue and VAT were accrued at showroom confirm — the invoice only
@@ -271,27 +275,6 @@ public class InvoicingWorkflowsInitializer {
 
     // ------------------------------------------------------------------ credit note
 
-    private WorkflowDefinition creditNoteWorkflow() {
-        return new WorkflowDefinition("credit_note", "draft", List.of(
-                new Transition("draft", "posted", "post", "credit_note:post", null, ctx -> {
-                    String id = (String) ctx.entity().get("id");
-                    Map<String, Object> full = builder.document(id);
-                    List<Map<String, Object>> lines = builder.lines(id, false);
-                    String partnerId = (String) full.get("partnerId");
-                    Grouped g = builder.groupForPosting(partnerId, lines, "sales", null);
-                    List<Line> post = new ArrayList<>();
-                    post.add(new Line(g.counterAccount(), null, JsNumbers.dec(d(full.get("totalAmount"))), partnerId,
-                            "Credit note " + full.get("documentNumber"), null, null, null));
-                    g.itemLines().forEach(it -> post.add(new Line(it.accountId(), JsNumbers.dec(it.amount()), null,
-                            partnerId, "Revenue reversal", null, it.costCenterId(), it.glDimensions())));
-                    g.taxByAccount().forEach((acc, amt) -> post.add(Line.debit(acc, JsNumbers.dec(amt),
-                            "Output tax reversal")));
-                    posting.post(new PostingRequest("SALES", instant(full.get("issueDate")),
-                            "Credit note " + full.get("documentNumber"), (String) full.get("currencyId"),
-                            d(full.get("exchangeRate")), "credit_note", id, null, null, null, null, null,
-                            post));
-                }, null)));
-    }
 
     // ------------------------------------------------------------------ vendor bill
 
@@ -596,7 +579,7 @@ public class InvoicingWorkflowsInitializer {
                 continue;
             }
             String location = match != null && match.locationId() != null ? match.locationId()
-                    : warehouse(ctx.organizationId());
+                    : warehouse(ctx.organizationId(), full.get("branchId"));
             if (location == null) {
                 throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
             }
@@ -944,7 +927,7 @@ public class InvoicingWorkflowsInitializer {
                 if (inv != null) {
                     restore("Invoice", "InvoiceStatus", inv, d(alloc.get("amount")));
                 }
-                jdbc.sql("DELETE FROM \"PaymentAllocation\" WHERE id = ?").param(alloc.get("id")).update();
+                jdbc.sql("DELETE FROM \"PaymentAllocation\" WHERE id = ? AND \"organizationId\" = ?").params(alloc.get("id"), com.inventoryerp.kernel.tenancy.TenantContext.organizationId()).update();
                 continue;
             }
             Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
@@ -952,7 +935,7 @@ public class InvoicingWorkflowsInitializer {
             if (doc != null) {
                 restore("Document", "DocumentStatus", doc, d(alloc.get("amount")));
             }
-            jdbc.sql("DELETE FROM \"PaymentAllocation\" WHERE id = ?").param(alloc.get("id")).update();
+            jdbc.sql("DELETE FROM \"PaymentAllocation\" WHERE id = ? AND \"organizationId\" = ?").params(alloc.get("id"), com.inventoryerp.kernel.tenancy.TenantContext.organizationId()).update();
         }
         jdbc.sql("UPDATE \"Payment\" SET \"allocatedAmount\" = 0, \"unallocatedAmount\" = 0, \"updatedAt\" = " + NOW
                 + " WHERE id = ?").param(payment.get("id")).update();

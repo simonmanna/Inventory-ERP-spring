@@ -192,7 +192,7 @@ class DocumentsIT extends ApiTestSupport {
         assertThat(tpl.get("isActive").asBoolean()).isFalse();
         ok(201, "POST", "/documents/templates/" + tpl.get("id").asString() + "/activate", null);
         assertThat(ok(200, "GET", "/documents/" + id + "/preview?format=html", null).get("content").asString())
-                .startsWith("<b>INV-");
+                .startsWith("<b>DRAFT-INV-");
 
         String other = invoice();
         JsonNode rel = ok(201, "POST", "/documents/" + id + "/relations", Map.of("toDocumentId", other,

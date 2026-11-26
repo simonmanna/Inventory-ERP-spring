@@ -368,6 +368,10 @@ public class FleetDeliveryOrderService {
     private Map<String, Object> fromSource(DeliverySourcePort port, FromSourceInput in) {
         port.assertDeliverable(in.sourceId());
         DeliverySourcePort.Source src = port.load(in.sourceId());
+        // Sales readiness DEL-12: the same per-order lock the sales delivery routes take, so two creates of a delivery
+        // order for one sales order queue and the second reads the first (a clear refusal, not a unique-index 500).
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtext(?))").param("sales-delivery:" + in.sourceId()).query()
+                .listOfRows();
         assertNoLiveOrder("sales_order", in.sourceId(), "Sales order " + src.number());
         List<Line> lines = new ArrayList<>();
         for (DeliverySourcePort.SourceLine l : src.lines()) {

@@ -43,6 +43,12 @@ public class DocumentEngineService {
     private final JdbcClient jdbc;
     private final DmsStore store;
     private final SequenceService sequence;
+    private com.inventoryerp.kernel.sequence.GaplessSequenceService gapless;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setGapless(com.inventoryerp.kernel.sequence.GaplessSequenceService gapless) {
+        this.gapless = gapless;
+    }
     private final AuditService audit;
     private final EventOutboxService outbox;
     private final TransactionTemplate tx;
@@ -178,9 +184,13 @@ public class DocumentEngineService {
         if (numberingKey != null && !numberingKey.isEmpty()
                 && (documentNumber == null || documentNumber.isEmpty()
                         || documentNumber.startsWith(DmsRules.DRAFT_NUMBER_PREFIX))) {
-            documentNumber = sequence.next(DmsRules.composeSequenceKey(numberingKey, year),
-                    DmsRules.composeSequencePrefix((String) def.get("numberingPrefix"), year),
-                    def.get("numberingPadding") == null ? 5 : ((Number) def.get("numberingPadding")).intValue());
+            int padding = def.get("numberingPadding") == null ? 5 : ((Number) def.get("numberingPadding")).intValue();
+            String seqKey = DmsRules.composeSequenceKey(numberingKey, year);
+            String seqPrefix = DmsRules.composeSequencePrefix((String) def.get("numberingPrefix"), year);
+            // Sales readiness INV-11: sales invoices and credit notes share the gap-free counter of their own post.
+            documentNumber = gapless != null && ("sales_invoice".equals(code) || "credit_note".equals(code))
+                    ? gapless.next(seqKey, seqPrefix, padding)
+                    : sequence.next(seqKey, seqPrefix, padding);
             numberingApplied = true;
         }
 

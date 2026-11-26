@@ -20,6 +20,8 @@ import { apiMessage, notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import { useCreditNote, usePostCreditNote, useReverseCreditNote } from '@/features/invoicing/api';
 import { tx } from '@/lib/i18n/tx';
+import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 
 function SummaryRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
@@ -100,7 +102,10 @@ export function CreditNoteDetailPage() {
                 <option value="restock">{tx('Restock goods')}</option>
                 <option value="scrap">{tx('Scrap goods')}</option>
               </select>
-              <Button onClick={() => postCreditNote.mutate({ id: cn.id, disposition })} disabled={postCreditNote.isPending}>
+              <Button onClick={() => postCreditNote.mutate({ id: cn.id, disposition }, {
+                onSuccess: () => toast.success(tx('Credit note posted')),
+                onError: (e) => toast.error(apiErrorMessage(e, tx('Could not post the credit note'))),
+              })} disabled={postCreditNote.isPending}>
                 {tx('Post')}
               </Button>
             </div>

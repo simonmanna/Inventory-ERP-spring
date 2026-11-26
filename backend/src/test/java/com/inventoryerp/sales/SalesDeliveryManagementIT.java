@@ -318,7 +318,11 @@ class SalesDeliveryManagementIT extends ApiTestSupport {
         assertThat(l.get("damagedQty").asDouble()).isEqualTo(1);
         assertThat(l.get("rejectedQty").asDouble()).isEqualTo(2);
         assertThat(l.get("shortageQty").asDouble()).isEqualTo(1);
-        assertThat(onHand(blocks)).as("10 out, 2 rejected back").isEqualByComparingTo(before.subtract(new BigDecimal("8")));
+        // DEL-9b: rejected goods go to quarantine, not back to the yard.
+        assertThat(onHand(blocks)).as("10 out, nothing back to the yard").isEqualByComparingTo(before.subtract(new BigDecimal("10")));
+        assertThat(jdbc.sql("SELECT COALESCE(sum(s.quantity), 0) FROM \"StockItem\" s JOIN \"InventoryLocation\" l ON l.id ="
+                + " s.\"locationId\" WHERE s.\"productId\" = ? AND l.code = 'SALES-QUARANTINE'").param(blocks)
+                .query(BigDecimal.class).single()).as("2 rejected in quarantine").isGreaterThanOrEqualTo(new BigDecimal("2"));
         JsonNode s = line(summary(o), blocks);
         assertThat(s.get("delivered").asDouble()).isEqualTo(6);
         assertThat(s.get("rejected").asDouble()).isEqualTo(2);
@@ -329,7 +333,7 @@ class SalesDeliveryManagementIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("the customer refuses the whole load: it is returned to stock and the delivery reads returned")
+    @DisplayName("the customer refuses the whole load: it comes back into quarantine and the delivery reads returned")
     void wholeLoadReturned() {
         JsonNode o = order(qty(granite, 5));
         String id = planned(o, qty(granite, 5), Map.of()).get("id").asString();
@@ -337,7 +341,11 @@ class SalesDeliveryManagementIT extends ApiTestSupport {
         money("/sales/deliveries/" + id + "/issue", null);
         JsonNode r = money("/sales/deliveries/" + id + "/return", Map.of("reason", "Wrong grade"));
         assertThat(r.get("stage").asString()).isEqualTo("returned");
-        assertThat(onHand(granite)).isEqualByComparingTo(before);
+        // DEL-9b: a load the customer refused comes back into quarantine, not the yard.
+        assertThat(onHand(granite)).isEqualByComparingTo(before.subtract(new BigDecimal("5")));
+        assertThat(jdbc.sql("SELECT COALESCE(sum(s.quantity), 0) FROM \"StockItem\" s JOIN \"InventoryLocation\" l ON l.id ="
+                + " s.\"locationId\" WHERE s.\"productId\" = ? AND l.code = 'SALES-QUARANTINE'").param(granite)
+                .query(BigDecimal.class).single()).isGreaterThanOrEqualTo(new BigDecimal("5"));
         assertThat(line(summary(o), granite).get("toSchedule").asDouble()).isEqualTo(5);
     }
 

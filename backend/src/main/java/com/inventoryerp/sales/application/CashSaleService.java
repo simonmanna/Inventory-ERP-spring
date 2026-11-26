@@ -421,8 +421,9 @@ public class CashSaleService {
         for (Map<String, Object> e : exceptions) {
             Instant at = e.get("rejectedAt") instanceof Instant i ? i : Instant.now();
             long days = java.time.Duration.between(at, Instant.now()).toDays();
-            Map<String, Object> prof = db.row("SELECT \"rejectedAlertDays\" FROM \"BranchSalesProfile\" WHERE id = ?",
-                    e.get("profileId"));
+            Map<String, Object> prof = db.row("SELECT \"rejectedAlertDays\" FROM \"BranchSalesProfile\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?",
+                    e.get("profileId"), org());
             e.put("ageDays", days);
             e.put("overdue", prof != null && days >= ((Number) prof.get("rejectedAlertDays")).longValue());
         }
@@ -683,8 +684,9 @@ public class CashSaleService {
                 + " COALESCE(sum(\"lineTotal\"), 0) AS tot, COALESCE(sum(quantity * \"unitPrice\" * \"discountPercent\" / 100), 0)"
                 + " AS disc FROM \"SalesSubmissionLine\" WHERE \"submissionId\" = ? AND \"organizationId\" = ?", id, org());
         db.update("UPDATE \"SalesSubmission\" SET subtotal = ?, \"taxTotal\" = ?, \"grandTotal\" = ?, \"discountTotal\" = ?,"
-                + " \"updatedAt\" = " + NOW + " WHERE id = ?", dec(t.get("sub")), dec(t.get("tax")), dec(t.get("tot")),
-                dec(t.get("disc")).setScale(6, RoundingMode.HALF_UP), id);
+                + " \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", dec(t.get("sub")), dec(t.get("tax")), dec(t.get("tot")),
+                dec(t.get("disc")).setScale(6, RoundingMode.HALF_UP), id, org());
     }
 
     // ------------------------------------------------------------------ payments
@@ -815,7 +817,7 @@ public class CashSaleService {
         if (pay == null) {
             throw ApiException.notFound("Payment not found");
         }
-        db.update("DELETE FROM \"SalesSubmissionPayment\" WHERE id = ?", paymentId);
+        db.update("DELETE FROM \"SalesSubmissionPayment\" WHERE id = ? AND \"organizationId\" = ?", paymentId, org());
         event(id, "payment_removed", null, null, null, null, str(pay.get("method")) + " " + JsNumbers.js(dec(pay.get(
                 "amount"))) + (pay.get("reference") == null ? "" : " ref " + pay.get("reference")));
         return get(id);
@@ -929,26 +931,30 @@ public class CashSaleService {
                     .reference(number).date(postDate).notes("Cash sale " + number));
             BigDecimal unitCost = issued.quantity().signum() == 0 ? BigDecimal.ZERO
                     : issued.totalValue().divide(dec(l.get("quantity")), 6, RoundingMode.HALF_UP);
-            db.update("UPDATE \"SalesSubmissionLine\" SET \"costSnapshot\" = ?, \"issueLedgerCode\" = ? WHERE id = ?",
-                    unitCost, issued.ledgerCode(), l.get("id"));
+            db.update("UPDATE \"SalesSubmissionLine\" SET \"costSnapshot\" = ?, \"issueLedgerCode\" = ? WHERE id = ?"
+                    + " AND \"organizationId\" = ?",
+                    unitCost, issued.ledgerCode(), l.get("id"), org());
         }
         // P2 — verified money, held as a cash-sale deposit on the branch tender account
         for (Map<String, Object> p : payments) {
             Map<String, Object> dep = deposits.receiveForCashSale(new CashSaleDeposit(partnerId, id, number, branchId,
                     dec(p.get("amount")), str(p.get("method")), str(p.get("accountId")), saleDate, str(p.get("reference")),
                     "css:" + id + ":pay:" + p.get("id")));
-            db.update("UPDATE \"SalesSubmissionPayment\" SET \"customerDepositId\" = ? WHERE id = ?", dep.get("id"),
-                    p.get("id"));
+            db.update("UPDATE \"SalesSubmissionPayment\" SET \"customerDepositId\" = ? WHERE id = ?"
+                    + " AND \"organizationId\" = ?", dep.get("id"),
+                    p.get("id"), org());
         }
         // P3 — revenue and VAT, once
         Map<String, Object> entry = recognition.accrue(new BranchSaleRecognitionService.Accrual(id, number, partnerId,
                 branchId, postDate, sale));
         db.update("UPDATE \"SalesSubmission\" SET \"executionStatus\" = 'confirmed', \"confirmedAt\" = " + NOW + ","
                 + " \"confirmedById\" = ?, \"paidTotal\" = ?, \"accrualJournalEntryId\" = ?, version = version + 1,"
-                + " \"updatedAt\" = " + NOW + " WHERE id = ?", user(), paid, entry.get("id"), id);
+                + " \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", user(), paid, entry.get("id"), id, org());
         event(id, "confirm", "draft", "confirmed", null, null, null);
         if ("at_confirm".equals(str(profile.get("fiscalTrigger")))) {
-            fiscal.request(db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?", id), "issue", null, fiscalPayload(id),
+            fiscal.request(db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", id, org()), "issue", null, fiscalPayload(id),
                     null);
         }
         publish(DomainEvents.SALES_CASH_SALE_CONFIRMED, id, null);
@@ -1090,8 +1096,9 @@ public class CashSaleService {
         if (!Objects.equals(before, status)) {
             event(id, "delivery_" + status, null, null, null, null, null);
             if ("delivered".equals(status)) {
-                db.update("UPDATE \"SalesSubmission\" SET \"deliveredAt\" = " + NOW + ", \"deliveredById\" = ? WHERE id = ?",
-                        user(), id);
+                db.update("UPDATE \"SalesSubmission\" SET \"deliveredAt\" = " + NOW + ", \"deliveredById\" = ? WHERE id = ?"
+                        + " AND \"organizationId\" = ?",
+                        user(), id, org());
             }
         }
         patch.put("version", ((Number) s.get("version")).intValue() + 1);
@@ -1105,7 +1112,8 @@ public class CashSaleService {
      * invoice's own delivery address and date (printed on the invoice), so a later change on the sale reaches both.
      */
     private void mirrorDelivery(String id) {
-        Map<String, Object> s = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ? AND \"organizationId\" = ?", id, org());
+        Map<String, Object> s = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", id, org());
         if (s != null && s.get("currentInvoiceId") != null) {
             handovers.mirrorCashSale(str(s.get("currentInvoiceId")), s);
             db.update("UPDATE \"Document\" SET \"deliveryAddress\" = ?, \"deliveryDate\" = ?, \"updatedAt\" = " + NOW
@@ -1302,7 +1310,8 @@ public class CashSaleService {
                 str(s.get("accrualJournalEntryId")));
         String docId = str(doc.get("id"));
         invoices.post(docId);
-        BigDecimal residual = dec(db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?", docId)
+        BigDecimal residual = dec(db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", docId, org())
                 .get("amountResidual"));
         Map<String, Map<String, Object>> paidBy = new HashMap<>();
         for (Map<String, Object> p : db.rows("SELECT * FROM \"SalesSubmissionPayment\" WHERE \"submissionId\" = ? AND"
@@ -1333,7 +1342,8 @@ public class CashSaleService {
         mirrorDelivery(id);
         Map<String, Object> profile = profiles.get(str(s.get("profileId")));
         if ("at_invoice".equals(str(profile.get("fiscalTrigger")))) {
-            fiscal.request(db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?", id), "issue", docId,
+            fiscal.request(db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", id, org()), "issue", docId,
                     fiscalPayload(id), null);
             out = get(id);
         }
@@ -1419,7 +1429,9 @@ public class CashSaleService {
         requireProcessing(s, "invoiced");
         String docId = str(s.get("currentInvoiceId"));
         deposits.unapplyCashSale(id, docId, "Invoice cancelled: " + reason);
-        invoices.cancel(docId);
+        // Sales readiness INV-17: the user's reason, the invoice_cancel approval gate and the document_reversal
+        // separation-of-duties pair apply exactly as on the invoice's own cancel route.
+        invoices.cancel(docId, reason);
         db.update("UPDATE \"SalesSubmissionInvoice\" SET status = 'cancelled', \"cancelledAt\" = " + NOW + ","
                 + " \"cancelledById\" = ?, \"cancelReason\" = ? WHERE \"submissionId\" = ? AND \"invoiceId\" = ? AND status ="
                 + " 'active'", user(), reason, id, docId);
@@ -1488,8 +1500,9 @@ public class CashSaleService {
         }
         String fromProcessing = str(s.get("processingStatus"));
         db.update("UPDATE \"SalesSubmission\" SET \"executionStatus\" = 'voided', \"voidedAt\" = " + NOW + ","
-                + " \"voidedById\" = ?, \"voidReason\" = ?, version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ?",
-                user(), reason, id);
+                + " \"voidedById\" = ?, \"voidReason\" = ?, version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?",
+                user(), reason, id, org());
         event(id, "void", "confirmed", "voided", fromProcessing, fromProcessing, reason + " (deposits: " + action + ")");
         publish(DomainEvents.SALES_CASH_SALE_VOIDED, id, reason);
         audit.record(AuditInput.of("SalesSubmission", id, "cancel", null, Obj.of("void", number, "reason", reason)));
@@ -1499,7 +1512,7 @@ public class CashSaleService {
     /** After a successful fiscal cancel of an invoice, a replacement invoice may be fiscalised again. */
     private void resetFiscalAfterCancel(String id) {
         db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = CASE WHEN \"fiscalStatus\" = 'cancelled' THEN 'none'"
-                + " ELSE \"fiscalStatus\" END WHERE id = ?", id);
+                + " ELSE \"fiscalStatus\" END WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     // ------------------------------------------------------------------ rejected-sale alerts (job)
@@ -1549,7 +1562,7 @@ public class CashSaleService {
 
     private void publish(String event, String id, String reason) {
         Map<String, Object> s = db.row("SELECT number, \"branchId\", \"partnerId\", \"grandTotal\", \"currentInvoiceId\""
-                + " FROM \"SalesSubmission\" WHERE id = ?", id);
+                + " FROM \"SalesSubmission\" WHERE id = ? AND \"organizationId\" = ?", id, org());
         Map<String, Object> payload = Obj.of("v", 1, "organizationId", org(), "submissionId", id, "number",
                 s.get("number"), "branchId", s.get("branchId"), "partnerId", s.get("partnerId"), "grandTotal",
                 s.get("grandTotal"), "invoiceId", s.get("currentInvoiceId"), "reason", reason);
@@ -1570,7 +1583,8 @@ public class CashSaleService {
 
     private Map<String, Object> fiscalPayload(String id) {
         Map<String, Object> s = db.row("SELECT number, \"customerName\", \"customerTin\", \"customerAddress\", \"grandTotal\","
-                + " \"taxTotal\", \"currencyCode\", \"saleDate\" FROM \"SalesSubmission\" WHERE id = ?", id);
+                + " \"taxTotal\", \"currencyCode\", \"saleDate\" FROM \"SalesSubmission\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?", id, org());
         Map<String, Object> p = new LinkedHashMap<>();
         s.forEach((k, v) -> p.put(k, v == null ? null : String.valueOf(v)));
         p.put("lines", EntityJson.toJson(db.rows("SELECT description, quantity, \"unitPrice\", \"lineTax\", \"lineTotal\""
@@ -1583,8 +1597,9 @@ public class CashSaleService {
     }
 
     private boolean segregated(Map<String, Object> s) {
-        Map<String, Object> p = db.row("SELECT \"requireSegregation\" FROM \"BranchSalesProfile\" WHERE id = ?",
-                s.get("profileId"));
+        Map<String, Object> p = db.row("SELECT \"requireSegregation\" FROM \"BranchSalesProfile\" WHERE id = ?"
+                + " AND \"organizationId\" = ?",
+                s.get("profileId"), org());
         return p != null && Boolean.TRUE.equals(p.get("requireSegregation"));
     }
 

@@ -220,7 +220,7 @@ public class PaymentService {
 
     private Map<String, Object> partner(Object id) {
         return id == null ? null : SqlRows.one(com.inventoryerp.core.domain.Partner.class,
-                jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?").param(id));
+                jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
     }
 
     /** One payment with partner and allocations (+ document); null when missing. */
@@ -236,7 +236,7 @@ public class PaymentService {
                 + " \"PaymentAllocation\" WHERE \"paymentId\" = ?").param(id));
         for (Map<String, Object> a : allocs) {
             a.put("document", a.get("documentId") == null ? null : SqlRows.one(Document.class,
-                    jdbc.sql("SELECT * FROM \"Document\" WHERE id = ?").param(a.get("documentId"))));
+                    jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(a.get("documentId"), org())));
         }
         p.put("allocations", allocs);
         return p;
@@ -994,7 +994,7 @@ public class PaymentService {
         voided.put("paymentId", id);
         voided.put("amount", JsNumbers.dec(Money.dec(payment.get("amount"))));
         events.publishOnCommit("payment.voided", voided);
-        return SqlRows.one(Payment.class, jdbc.sql("SELECT * FROM \"Payment\" WHERE id = ?").param(id));
+        return SqlRows.one(Payment.class, jdbc.sql("SELECT * FROM \"Payment\" WHERE id = ? AND \"organizationId\" = ?").params(id, org()));
     }
 
     /** The allocations the void gave back (its {@code voidedAllocations} snapshot), for the reversal record. */

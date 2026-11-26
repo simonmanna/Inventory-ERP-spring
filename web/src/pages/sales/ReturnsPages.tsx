@@ -20,6 +20,7 @@ import type { SalesOrder } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { AttachmentPanel } from '@/components/dms/AttachmentPanel';
 import { HeaderSelect, useHeaderOptions } from './OrderHeaderFields';
+import { useAsk } from '@/components/ask-dialog';
 
 interface ReturnLine { id: string; orderLineId: string; description: string; quantity: number; receivedQty: number; disposition: string | null; creditQty: number | null; inspectionNotes: string | null }
 interface SalesReturn {
@@ -80,17 +81,19 @@ export function ReturnDetailPage() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['sales'] }); toast.success(tx('Done')); },
     onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))),
   });
+  const { ask, dialog } = useAsk();
   if (!r) return <Skeleton className="h-64 w-full" />;
   const canWrite = has(PERMISSIONS.sales.returnWrite);
   const canApprove = has(PERMISSIONS.sales.returnApprove);
   const closable = r.physicalReturn ? r.status === 'inspected' : r.status === 'approved';
   return (
     <div className="space-y-4">
+      {dialog}
       <div className="text-sm"><button className="font-medium text-primary hover:underline" onClick={() => navigate('/sales/returns')}>{tx('Returns')}</button> / <strong>{r.number}</strong> · {r.status}
         <button className="ml-3 text-primary hover:underline" onClick={() => navigate(`/sales/orders/${r.orderId}`)}>{r.orderNumber}</button></div>
       <div className="flex flex-wrap gap-2">
         {r.status === 'requested' && canApprove && <Button onClick={() => act.mutate({ action: 'approve' })}>{tx('Approve')}</Button>}
-        {['requested', 'approved'].includes(r.status) && canApprove && <Button variant="outline" onClick={() => { const reason = prompt(tx('Reason')); if (reason) act.mutate({ action: 'reject', body: { reason } }); }}>{tx('Reject')}</Button>}
+        {['requested', 'approved'].includes(r.status) && canApprove && <Button variant="outline" onClick={async () => { const reason = await ask({ title: `${tx('Reject')} ${r.number}?`, label: tx('Reason'), confirmLabel: tx('Reject'), destructive: true }); if (reason) act.mutate({ action: 'reject', body: { reason } }); }}>{tx('Reject')}</Button>}
         {r.status === 'approved' && r.physicalReturn && canWrite && <Button onClick={() => act.mutate({ action: 'receive' })}>{tx('Receive goods')}</Button>}
         {/* Every line is sent with the disposition its select shows ("Restock" until changed, the server's own default). */}
         {r.status === 'received' && canWrite && <Button onClick={() => act.mutate({ action: 'inspect', body: { lines: (r.lines ?? []).map((l) => ({ lineId: l.id, ...disp[l.id], disposition: disp[l.id]?.disposition ?? 'restock' })) } })}>{tx('Record inspection')}</Button>}

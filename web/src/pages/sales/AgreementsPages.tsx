@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { useAsk } from '@/components/ask-dialog';
 import { cn } from '@/lib/utils';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
@@ -308,6 +309,7 @@ function StatementDetail({ id, canManage, onClose }: { id: string; canManage: bo
   const { data: s } = useQuery({ queryKey: key, queryFn: async () => (await api.get<StatementFull>(`/sales/commissions/statements/${id}`)).data });
   const refresh = () => { void qc.invalidateQueries({ queryKey: key }); void qc.invalidateQueries({ queryKey: ['sales', 'commission-statements'] }); };
   const fail = (e: unknown) => toast.error(apiErrorMessage(e, tx('Action failed')));
+  const { ask, dialog } = useAsk();
   const pdf = async () => {
     try {
       const r = await api.get(`/sales/commissions/statements/${id}/pdf`, { responseType: 'blob' });
@@ -318,18 +320,19 @@ function StatementDetail({ id, canManage, onClose }: { id: string; canManage: bo
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+        {dialog}
         <DialogHeader><DialogTitle>{s?.number}</DialogTitle></DialogHeader>
         {s && <div className="space-y-3 text-sm">
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={pdf}>PDF</Button>
-            {canManage && s.status === 'draft' && <Button size="sm" variant="outline" onClick={() => { const amount = Number(prompt(tx('Adjustment amount (negative to reduce)'))); const reason = amount ? prompt(tx('Reason')) : null; if (amount && reason) api.post(`/sales/commissions/statements/${id}/adjustments`, { amount, reason }).then(refresh).catch(fail); }}>{tx('Add adjustment')}</Button>}
-            <Button size="sm" variant="outline" onClick={() => { const reason = prompt(tx('What is wrong with this statement?')); if (reason) api.post(`/sales/commissions/statements/${id}/disputes`, { reason }).then(refresh).catch(fail); }}>{tx('Dispute')}</Button>
+            {canManage && s.status === 'draft' && <Button size="sm" variant="outline" onClick={async () => { const amount = Number(await ask({ title: tx('Add adjustment'), label: tx('Adjustment amount (negative to reduce)'), input: 'number', confirmLabel: tx('Next') }) ?? 0); const reason = amount ? await ask({ title: tx('Add adjustment'), label: tx('Reason'), confirmLabel: tx('Add adjustment') }) : null; if (amount && reason) api.post(`/sales/commissions/statements/${id}/adjustments`, { amount, reason }).then(refresh).catch(fail); }}>{tx('Add adjustment')}</Button>}
+            <Button size="sm" variant="outline" onClick={async () => { const reason = await ask({ title: tx('Dispute'), label: tx('What is wrong with this statement?'), confirmLabel: tx('Dispute') }); if (reason) api.post(`/sales/commissions/statements/${id}/disputes`, { reason }).then(refresh).catch(fail); }}>{tx('Dispute')}</Button>
           </div>
           <p>{tx('Lines')} {money(s.linesTotal ?? 0)} + {tx('adjustments')} {money(s.adjustmentTotal)} + {tx('carried in')} {money(s.carriedIn)} = <strong>{money(s.total)}</strong></p>
           <table className="w-full"><thead className="text-left text-xs text-muted-foreground"><tr><th>{tx('Document')}</th><th>{tx('Description')}</th><th className="text-right">{tx('Base')}</th><th className="text-right">{tx('Rate')}</th><th className="text-right">{tx('Amount')}</th></tr></thead>
             <tbody>{(s.lines ?? []).map((l, i) => <tr key={i} className="border-t"><td className="py-1">{l.number}{l.paymentId && <span className="block text-[11px] text-muted-foreground">{tx('payment')} {l.paymentId.slice(0, 8)}</span>}{l.splitFrom && <span className="block text-[11px] text-muted-foreground">{tx('split')}</span>}</td><td className="py-1">{l.description}</td><td className="py-1 text-right tabular-nums">{money(l.revenue)}</td><td className="py-1 text-right tabular-nums">{Number(l.rate)}</td><td className="py-1 text-right tabular-nums">{money(l.amount)}</td></tr>)}</tbody></table>
           {s.adjustments.length > 0 && <div><h3 className="font-semibold">{tx('Adjustments')}</h3><ul className="list-disc pl-4">{s.adjustments.map((a) => <li key={a.id}>{money(a.amount)}: {a.reason}</li>)}</ul></div>}
-          {s.disputes.length > 0 && <div><h3 className="font-semibold">{tx('Disputes')}</h3><ul className="space-y-1">{s.disputes.map((d) => <li key={d.id} className="flex items-center justify-between gap-2 rounded border p-2"><span>{d.reason} · {tx(d.status)}{d.resolution && ` · ${d.resolution}`}</span>{canManage && d.status === 'open' && <Button size="sm" variant="outline" onClick={() => { const resolution = prompt(tx('How was this resolved?')); if (resolution) api.post(`/sales/commissions/disputes/${d.id}/resolve`, { resolution }).then(refresh).catch(fail); }}>{tx('Resolve')}</Button>}</li>)}</ul></div>}
+          {s.disputes.length > 0 && <div><h3 className="font-semibold">{tx('Disputes')}</h3><ul className="space-y-1">{s.disputes.map((d) => <li key={d.id} className="flex items-center justify-between gap-2 rounded border p-2"><span>{d.reason} · {tx(d.status)}{d.resolution && ` · ${d.resolution}`}</span>{canManage && d.status === 'open' && <Button size="sm" variant="outline" onClick={async () => { const resolution = await ask({ title: tx('Resolve dispute'), label: tx('How was this resolved?'), confirmLabel: tx('Resolve') }); if (resolution) api.post(`/sales/commissions/disputes/${d.id}/resolve`, { resolution }).then(refresh).catch(fail); }}>{tx('Resolve')}</Button>}</li>)}</ul></div>}
         </div>}
       </DialogContent>
     </Dialog>

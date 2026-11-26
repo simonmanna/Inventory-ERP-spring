@@ -158,7 +158,8 @@ public class SalesStatementService {
         boolean delivered = false;
         String error = null;
         // Checked here because a refusal inside the email call would roll back the whole batch.
-        Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?", partnerId, org());
+        Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", partnerId, org());
         if (blank(recipient) && (p == null || blank(str(p.get("email"))))) {
             error = "Customer has no email on file";
         } else {
@@ -219,7 +220,7 @@ public class SalesStatementService {
                 + " WHERE id = ? AND \"organizationId\" = ?", by, str(in.get("note")), logId, org()) == 0) {
             throw ApiException.notFound("Statement not found");
         }
-        return db.row("SELECT * FROM \"SalesStatementLog\" WHERE id = ?", logId);
+        return db.row("SELECT * FROM \"SalesStatementLog\" WHERE id = ? AND \"organizationId\" = ?", logId, org());
     }
 
     @Transactional
@@ -251,7 +252,7 @@ public class SalesStatementService {
                 + " WHERE id = ? AND \"organizationId\" = ? AND status = 'open'", status, resolution, user(), id, org()) == 0) {
             throw ApiException.notFound("Open dispute not found");
         }
-        return db.row("SELECT * FROM \"SalesStatementDispute\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"SalesStatementDispute\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     @Transactional(readOnly = true)

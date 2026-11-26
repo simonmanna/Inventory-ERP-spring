@@ -143,7 +143,7 @@ public class SalesRebateService {
         }
         audit.record(AuditInput.of("RebateProgram", id, current == null ? "create" : "update", null, Obj.of("fields",
                 in.keySet())));
-        return db.row("SELECT * FROM \"RebateProgram\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"RebateProgram\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     /** Validated tiers sorted by threshold. */
@@ -300,7 +300,8 @@ public class SalesRebateService {
                     null, "rebate_accrual", id, null, null, null, null, null, lines));
             audit.record(AuditInput.of("RebateAccrual", id, "update", null, Obj.of("amount", amount, "delta", delta)));
         }
-        Map<String, Object> out = db.row("SELECT * FROM \"RebateAccrual\" WHERE id = ?", id);
+        Map<String, Object> out = db.row("SELECT * FROM \"RebateAccrual\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", id, org());
         out.put("delta", JsNumbers.js(delta));
         return out;
     }
@@ -355,6 +356,6 @@ public class SalesRebateService {
         db.patch("RebateAccrual", accrualId, Obj.of("status", "settled", "creditNoteId", cnId), true);
         audit.record(AuditInput.of("RebateAccrual", accrualId, "approve", null, Obj.of("creditNoteId", cnId, "amount",
                 amount)));
-        return db.row("SELECT * FROM \"RebateAccrual\" WHERE id = ?", accrualId);
+        return db.row("SELECT * FROM \"RebateAccrual\" WHERE id = ? AND \"organizationId\" = ?", accrualId, org());
     }
 }

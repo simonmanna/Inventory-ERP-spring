@@ -157,7 +157,7 @@ export function useSalesMutation<TVars, TOut = unknown>(fn: (v: TVars) => Promis
 export function useSalesOrders(params: Record<string, string | number | undefined>) {
   return useQuery({
     queryKey: ['sales', 'orders', params],
-    queryFn: async () => (await api.get<Paged<SalesOrder, { count: number; total: number }>>('/sales/orders', { params: clean(params) })).data,
+    queryFn: async () => (await api.get<Paged<SalesOrder, { count: number; total: number; byCurrency?: Array<{ currencyCode: string | null; count: number; total: number }> }>>('/sales/orders', { params: clean(params) })).data,
     placeholderData: keepPreviousData,
   });
 }

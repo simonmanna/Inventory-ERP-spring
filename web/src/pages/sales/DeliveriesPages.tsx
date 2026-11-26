@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Camera, CheckCircle2, FileText, PackageCheck, Truck } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -18,6 +18,8 @@ import { useAuthStore } from '@/stores/auth.store';
 import type { SalesDelivery } from '@/features/sales/delivery-api';
 import { kg } from '@/pages/fleet/weighbridge/weighbridge-format';
 import { DeliveryWeighbridgeTab, VerificationPill, WeighSummary } from './delivery/DeliveryWeighbridge';
+import { DispatchDialog } from './delivery/DeliveryActionsHost';
+import { idempotentPost } from '@/lib/idempotent-request';
 
 type DeliveryWeigh = Pick<SalesDelivery, 'weighTicketNumber' | 'weighNetKg' | 'weighVerification' | 'weighbridgeTickets' | 'weighbridge'>;
 interface Delivery extends DeliveryWeigh { id: string; code: string; status: string; vehiclePlate: string | null; driverName: string | null; plannedDate: string | null; dispatchedAt: string | null; deliveredAt: string | null; deliveryNoteNumber: string | null; approvalRequired: boolean; approvedAt: string | null; manualGross: number | null; manualTare: number | null; cancelReason: string | null; returnReason: string | null; orderId: string; orderNumber: string | null; partnerName: string | null; dispatchedQty: number; deliveredQty: number; damagedQty: number; rejectedQty: number;
@@ -28,7 +30,6 @@ interface Recon { orderId: string; lineId: string; number: string; partnerName: 
 
 const n = (v: unknown) => Number(v ?? 0);
 const th = 'px-3 py-2';
-const key = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
 function DeliveryTable({ rows }: { rows: Delivery[] }) {
   const navigate = useNavigate();
@@ -50,18 +51,44 @@ function DeliveryTable({ rows }: { rows: Delivery[] }) {
   );
 }
 
+const PAGE = 100;
+
+/** X-7: one server-paged delivery list (search + "load more"; the server sends the filter's total in X-Total-Count). */
+function PagedDeliveries({ failed }: { failed?: boolean }) {
+  const [search, setSearch] = useState('');
+  const [limit, setLimit] = useState(PAGE);
+  const q = useQuery({
+    queryKey: ['sales', 'deliveries', failed ? 'failed' : 'all', search, limit],
+    placeholderData: keepPreviousData,
+    queryFn: async () => {
+      const r = await api.get<Delivery[]>('/sales/deliveries', { params: { failed: failed || undefined, search: search || undefined, limit } });
+      return { rows: r.data, total: Number(r.headers['x-total-count'] ?? r.data.length) };
+    },
+  });
+  const rows = q.data?.rows ?? [];
+  const total = q.data?.total ?? 0;
+  return (
+    <div className="space-y-3">
+      <Input className="max-w-sm" placeholder={tx('Search delivery, order, customer, plate…')} value={search} onChange={(e) => { setSearch(e.target.value); setLimit(PAGE); }} />
+      <DeliveryTable rows={rows} />
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{tx('Showing')} {rows.length} / {total}</span>
+        {rows.length < total && <Button variant="outline" size="sm" disabled={q.isFetching} onClick={() => setLimit((l) => l + PAGE)}>{tx('Load more')}</Button>}
+      </div>
+    </div>
+  );
+}
+
 /** All sales deliveries, the failed ones, and order lines reconciled against what moved. */
 export function DeliveriesPage() {
-  const all = useQuery({ queryKey: ['sales', 'deliveries'], queryFn: async () => (await api.get<Delivery[]>('/sales/deliveries')).data });
-  const failed = useQuery({ queryKey: ['sales', 'deliveries', 'failed'], queryFn: async () => (await api.get<Delivery[]>('/sales/deliveries', { params: { failed: true } })).data });
   const recon = useQuery({ queryKey: ['sales', 'deliveries', 'recon'], queryFn: async () => (await api.get<Recon[]>('/sales/deliveries/reconciliation')).data });
   return (
     <div className="space-y-4">
       <ListPageHeader icon={Truck} title={tx('Deliveries')} description={tx('Delivery notes, proof of delivery, damaged and rejected goods. Start a delivery from a confirmed sales order.')} />
       <Tabs defaultValue="all">
         <TabsList><TabsTrigger value="all">{tx('All')}</TabsTrigger><TabsTrigger value="failed">{tx('Failed or short')}</TabsTrigger><TabsTrigger value="recon">{tx('Reconciliation')}</TabsTrigger></TabsList>
-        <TabsContent value="all" className="mt-3"><DeliveryTable rows={all.data ?? []} /></TabsContent>
-        <TabsContent value="failed" className="mt-3"><DeliveryTable rows={failed.data ?? []} /></TabsContent>
+        <TabsContent value="all" className="mt-3"><PagedDeliveries /></TabsContent>
+        <TabsContent value="failed" className="mt-3"><PagedDeliveries failed /></TabsContent>
         <TabsContent value="recon" className="mt-3">
           <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
             <table className="w-full min-w-[960px] text-sm">
@@ -88,6 +115,11 @@ export function DeliveryPage() {
   const { data: d } = useQuery({ queryKey: qk, queryFn: async () => (await api.get<Delivery>(`/sales/deliveries/${id}`)).data });
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.deliveryWrite));
   const canApprove = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.deliveryApprove));
+  // X-8: the issue and confirm routes need their own permissions (sales:delivery:dispatch / :confirm), not write.
+  const canDispatch = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.deliveryDispatch));
+  const canConfirm = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.deliveryConfirm));
+  const [issueOpen, setIssueOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [receiver, setReceiver] = useState('');
   const [phone, setPhone] = useState('');
   const [entry, setEntry] = useState<Record<string, { deliveredQty: number; damagedQty: number; rejectedQty: number; reason: string }>>({});
@@ -99,7 +131,11 @@ export function DeliveryPage() {
     setEntry(Object.fromEntries((d.lines ?? []).map((l) => [l.id, { deliveredQty: n(l.dispatchedQty), damagedQty: 0, rejectedQty: 0, reason: '' }])));
     setPodOpen(true);
   };
-  const submitPod = () => api.post(`/sales/deliveries/${id}/confirm`, { receiverName: receiver, receiverPhone: phone || undefined, lines: Object.entries(entry).map(([loadLineId, e]) => ({ loadLineId, ...e, reason: e.reason || undefined })) }, key()).then(() => { setPodOpen(false); done(); }).catch(fail);
+  const submitPod = () => {
+    setBusy(true);
+    idempotentPost(`/sales/deliveries/${id}/confirm`, { receiverName: receiver, receiverPhone: phone || undefined, lines: Object.entries(entry).map(([loadLineId, e]) => ({ loadLineId, ...e, reason: e.reason || undefined })) })
+      .then(() => { setPodOpen(false); done(); }).catch(fail).finally(() => setBusy(false));
+  };
   const photo = async (f: File | undefined) => {
     if (!f) return;
     const dataUrl = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); });
@@ -107,7 +143,7 @@ export function DeliveryPage() {
   };
   const note = async () => {
     try {
-      const r = await api.get(`/sales/deliveries/${id}/note`, { responseType: 'blob' });
+      const r = await api.get(`/sales/deliveries/${id}/note?print=true`, { responseType: 'blob' });
       const url = URL.createObjectURL(r.data as Blob);
       const a = document.createElement('a'); a.href = url; a.download = `${d.deliveryNoteNumber ?? d.code}.pdf`; a.click(); URL.revokeObjectURL(url);
     } catch (e) { fail(e); }
@@ -117,9 +153,10 @@ export function DeliveryPage() {
     <div className="space-y-4">
       <div className="text-sm"><Link to="/sales/deliveries" className="font-medium text-primary hover:underline">{tx('Deliveries')}</Link><span className="mx-1.5 text-muted-foreground">/</span><span className="font-semibold">{d.code}</span><span className="ml-3 text-muted-foreground">{tx(d.status)}</span></div>
       <div className="flex flex-wrap gap-2">
-        {waiting && canApprove && <Button onClick={() => api.post(`/sales/deliveries/${id}/approve`).then(done).catch(fail)}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>}
-        {d.status === 'planned' && canWrite && <Button disabled={waiting} onClick={() => api.post(`/sales/deliveries/${id}/issue`, null, key()).then(done).catch(fail)}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Issue stock')}</Button>}
-        {['dispatched', 'in_transit'].includes(d.status) && canWrite && <Button onClick={openPod}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Confirm delivery')}</Button>}
+        {issueOpen && <DispatchDialog delivery={d as unknown as SalesDelivery} onClose={() => setIssueOpen(false)} />}
+        {waiting && canApprove && <Button disabled={busy} onClick={() => { setBusy(true); idempotentPost(`/sales/deliveries/${id}/approve`).then(done).catch(fail).finally(() => setBusy(false)); }}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>}
+        {d.status === 'planned' && canDispatch && <Button disabled={waiting} onClick={() => setIssueOpen(true)}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Issue stock')}</Button>}
+        {['dispatched', 'in_transit'].includes(d.status) && canConfirm && <Button onClick={openPod}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Confirm delivery')}</Button>}
         {d.deliveryNoteNumber && <Button variant="outline" onClick={note}><FileText className="mr-1.5 h-4 w-4" />{tx('Delivery note')}</Button>}
         {canWrite && <label className="inline-flex h-9 cursor-pointer items-center rounded-md border bg-background px-3 text-sm hover:bg-muted"><Camera className="mr-1.5 h-4 w-4" />{tx('Add photo')}<input type="file" accept="image/*" className="hidden" onChange={(e) => { void photo(e.target.files?.[0]); e.target.value = ''; }} /></label>}
       </div>
@@ -152,7 +189,7 @@ export function DeliveryPage() {
                 <td className="py-1 pl-1"><Input type="number" min={0} value={e.deliveredQty} onChange={(v) => set({ deliveredQty: Number(v.target.value) })} /></td>
                 <td className="py-1 pl-1"><Input type="number" min={0} value={e.damagedQty} onChange={(v) => set({ damagedQty: Number(v.target.value) })} /></td>
                 <td className="py-1 pl-1"><Input type="number" min={0} value={e.rejectedQty} onChange={(v) => set({ rejectedQty: Number(v.target.value) })} /></td></tr>); })}</tbody></table>
-          <DialogFooter><Button variant="outline" onClick={() => setPodOpen(false)}>{tx('Cancel')}</Button><Button disabled={!receiver.trim()} onClick={submitPod}>{tx('Confirm')}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setPodOpen(false)}>{tx('Cancel')}</Button><Button disabled={!receiver.trim() || busy} onClick={submitPod}>{tx('Confirm')}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -200,7 +237,7 @@ export function MilestonesPanel({ orderId, total }: { orderId: string; total: nu
       <h2 className="mb-2 font-semibold">{tx('Milestone billing')}</h2>
       <ul className="space-y-1">{rows.map((m) => (
         <li key={m.id} className="flex items-center justify-between rounded border p-2"><span>{m.name} · {Number(m.amount).toLocaleString()} {m.documentNumber && <span className="text-xs text-muted-foreground">({m.documentNumber})</span>}</span>
-          {m.status === 'pending' && canInvoice && <Button size="sm" variant="outline" onClick={() => api.post(`/sales/orders/${orderId}/milestones/${m.id}/invoice`, null, key()).then(() => qc.invalidateQueries({ queryKey: qk })).catch(fail)}>{tx('Invoice')}</Button>}</li>
+          {m.status === 'pending' && canInvoice && <Button size="sm" variant="outline" onClick={() => idempotentPost(`/sales/orders/${orderId}/milestones/${m.id}/invoice`).then(() => qc.invalidateQueries({ queryKey: qk })).catch(fail)}>{tx('Invoice')}</Button>}</li>
       ))}</ul>
       <div className="mt-2 flex gap-2"><Input placeholder={tx('Milestone')} value={name} onChange={(e) => setName(e.target.value)} /><Input className="w-24" type="number" min={0} max={100} placeholder="%" value={percent} onChange={(e) => setPercent(e.target.value)} /><Button size="sm" variant="outline" disabled={!name.trim() || !Number(percent)} onClick={add}>{tx('Add')}</Button></div>
       <p className="mt-1 text-xs text-muted-foreground">{tx('Order total')}: {Number(total).toLocaleString()}</p>

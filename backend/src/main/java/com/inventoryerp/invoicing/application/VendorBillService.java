@@ -401,7 +401,7 @@ public class VendorBillService {
             }
             // P1-5 (ADR-PROCUREMENT-001): segregation of duties — whoever raised the bill / its approval request cannot
             // also approve it by posting with override.
-            String requester = jdbc.sql("SELECT \"createdById\" FROM \"ApprovalRequest\" WHERE id = ?").param(pending)
+            String requester = jdbc.sql("SELECT \"createdById\" FROM \"ApprovalRequest\" WHERE id = ? AND \"organizationId\" = ?").params(pending, org())
                     .query(String.class).optional().orElse(null);
             if (userId != null && (userId.equals(requester) || userId.equals(doc.get("createdBy")))) {
                 throw ApiException.forbidden("You cannot approve a bill you created — another approver must decide");
@@ -597,7 +597,7 @@ public class VendorBillService {
     /** Supplier payments, posted debit notes and settled supplier claims block a void; each is named with its action. */
     private void assertNothingSettled(String id, String number) {
         List<Map<String, Object>> paid = reversals.appliedPayments(id);
-        BigDecimal amountPaid = jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ?").param(id)
+        BigDecimal amountPaid = jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(id, org())
                 .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
         List<String> notes = reversals.postedDebitNotes(id);
         List<String> claims = jdbc.sql("SELECT \"claimNumber\" FROM \"SupplierClaim\" WHERE \"vendorBillId\" = ? AND"

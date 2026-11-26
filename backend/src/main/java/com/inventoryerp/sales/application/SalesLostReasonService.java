@@ -55,7 +55,8 @@ public class SalesLostReasonService {
                 + " AND \"organizationId\" = ?", name, active, id, org()) == 0) {
             throw ApiException.notFound("Lost reason not found");
         }
-        return db.row("SELECT id, name, \"isActive\", \"sortOrder\" FROM \"SalesLostReason\" WHERE id = ?", id);
+        return db.row("SELECT id, name, \"isActive\", \"sortOrder\" FROM \"SalesLostReason\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", id, org());
     }
 
     /** 400 unless the reason exists in this organization and is active. */

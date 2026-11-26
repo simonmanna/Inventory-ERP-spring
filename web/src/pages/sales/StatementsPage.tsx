@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date, money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
+import { useAsk } from '@/components/ask-dialog';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { useAuthStore } from '@/stores/auth.store';
@@ -40,13 +41,15 @@ export function StatementsPage() {
   const open = (o: Outstanding) => { setPartnerId(o.partnerId); setPartnerName(o.partnerName); setTab('statement'); };
   const bulk = (partnerIds?: string[]) => api.post('/sales/statements/send-bulk', { partnerIds }).then((r) => toast.success(`${r.data.sent} ${tx('sent')}, ${r.data.failed} ${tx('failed')}`)).catch(fail);
   const picked = Object.keys(selected).filter((k) => selected[k]);
+  const { ask, dialog } = useAsk();
   return (
     <div className="space-y-4">
+      {dialog}
       <ListPageHeader icon={BookOpen} title={tx('Customer Statements')} description={tx('Who owes what, statements that reconcile to the ledger, and what was sent to whom.')} />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList><TabsTrigger value="outstanding">{tx('Outstanding')}</TabsTrigger><TabsTrigger value="statement">{tx('Statement')}</TabsTrigger></TabsList>
         <TabsContent value="outstanding" className="mt-3 space-y-2">
-          {canManage && <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!picked.length} onClick={() => bulk(picked)}><Mail className="mr-1.5 h-4 w-4" />{tx('Send to selected')} ({picked.length})</Button><Button variant="outline" onClick={() => { if (confirm(tx('Send a statement to every customer with a balance?'))) void bulk(); }}>{tx('Send to all')}</Button></div>}
+          {canManage && <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!picked.length} onClick={() => bulk(picked)}><Mail className="mr-1.5 h-4 w-4" />{tx('Send to selected')} ({picked.length})</Button><Button variant="outline" onClick={async () => { if (await ask({ title: tx('Send a statement to every customer with a balance?'), confirmLabel: tx('Send to all') }) !== null) void bulk(); }}>{tx('Send to all')}</Button></div>}
           <div className="overflow-x-auto rounded-xl border bg-card shadow-sm">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="bg-muted/40 text-left text-xs font-semibold uppercase text-muted-foreground"><tr><th className="w-8" /><th className={th}>{tx('Customer')}</th><th className={`${th} text-right`}>{tx('Documents')}</th><th className={`${th} text-right`}>{tx('Outstanding')}</th><th className={`${th} text-right`}>{tx('Overdue')}</th><th className={th}>{tx('Oldest due')}</th><th className={th}>{tx('Last sent')}</th></tr></thead>
@@ -74,6 +77,7 @@ function OneStatement({ partnerId, canManage }: { partnerId: string; canManage: 
   const params = Object.fromEntries(Object.entries(f).filter(([, v]) => v));
   const { data: s } = useQuery({ queryKey: ['sales', 'statement', partnerId, f], queryFn: async () => (await api.get<Statement>(`/sales/statements/${partnerId}`, { params })).data });
   const refresh = () => qc.invalidateQueries({ queryKey: ['sales', 'statement', partnerId] });
+  const { ask, dialog } = useAsk();
   const pdf = async () => {
     try {
       const r = await api.get(`/sales/statements/${partnerId}/pdf`, { params: { from: f.from || undefined, to: f.to || undefined }, responseType: 'blob' });
@@ -85,6 +89,7 @@ function OneStatement({ partnerId, canManage }: { partnerId: string; canManage: 
   const rec = s.reconciliation;
   return (
     <div className="space-y-3">
+      {dialog}
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Field label={tx('From')}><Input type="date" value={f.from} onChange={(e) => setF({ ...f, from: e.target.value })} /></Field>
         <Field label={tx('To')}><Input type="date" value={f.to} onChange={(e) => setF({ ...f, to: e.target.value })} /></Field>
@@ -95,7 +100,7 @@ function OneStatement({ partnerId, canManage }: { partnerId: string; canManage: 
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" onClick={pdf}><FileText className="mr-1.5 h-4 w-4" />PDF</Button>
         {canManage && <Button variant="outline" onClick={() => api.post(`/sales/statements/${partnerId}/send`, { from: f.from || undefined, to: f.to || undefined }).then((r) => { if (r.data.error) toast.error(r.data.error); else toast.success(tx('Sent')); void refresh(); }).catch(fail)}><Mail className="mr-1.5 h-4 w-4" />{tx('Email statement')}</Button>}
-        <Button variant="outline" onClick={() => { const reason = prompt(tx('What does the customer dispute?')); if (reason) api.post(`/sales/statements/${partnerId}/disputes`, { reason }).then(refresh).catch(fail); }}>{tx('Record a dispute')}</Button>
+        <Button variant="outline" onClick={async () => { const reason = await ask({ title: tx('Record a dispute'), label: tx('What does the customer dispute?'), confirmLabel: tx('Record') }); if (reason) api.post(`/sales/statements/${partnerId}/disputes`, { reason }).then(refresh).catch(fail); }}>{tx('Record a dispute')}</Button>
       </div>
       <div className={`rounded-xl border p-3 text-sm ${rec.reconciled === false ? 'border-amber-300 bg-amber-50 text-amber-900 dark:bg-transparent' : 'bg-card'}`}>
         <p><strong>{tx('Closing balance')}: {money(rec.closingBalance)}</strong>{s.filtered && <span className="ml-2 text-xs">({tx('filtered')})</span>}{s.mergedRecords > 0 && <span className="ml-2 text-xs">({s.mergedRecords} {tx('merged records')})</span>}</p>
@@ -131,7 +136,7 @@ function OneStatement({ partnerId, canManage }: { partnerId: string; canManage: 
             {canManage && !l.confirmedAt && !l.error && <Button size="sm" variant="outline" onClick={() => { const confirmedBy = prompt(tx('Who at the customer confirmed the balance?')); if (confirmedBy) api.post(`/sales/statements/log/${l.id}/confirm`, { confirmedBy }).then(refresh).catch(fail); }}>{tx('Confirmed')}</Button>}</li>)}</ul></section>
         <section className="rounded-xl border bg-card p-4 text-sm shadow-sm"><h2 className="mb-2 font-semibold">{tx('Disputes')}</h2>
           <ul className="space-y-1">{s.disputes.map((d) => <li key={d.id} className="flex items-center justify-between gap-2 rounded border p-2"><span>{d.reason} · {tx(d.status)}{d.resolution && <span className="block text-xs text-muted-foreground">{d.resolution}</span>}</span>
-            {canManage && d.status === 'open' && <Button size="sm" variant="outline" onClick={() => { const resolution = prompt(tx('How was this resolved?')); if (resolution) api.post(`/sales/statements/disputes/${d.id}/resolve`, { status: 'resolved', resolution }).then(refresh).catch(fail); }}>{tx('Resolve')}</Button>}</li>)}</ul></section>
+            {canManage && d.status === 'open' && <Button size="sm" variant="outline" onClick={async () => { const resolution = await ask({ title: tx('Resolve dispute'), label: tx('How was this resolved?'), confirmLabel: tx('Resolve') }); if (resolution) api.post(`/sales/statements/disputes/${d.id}/resolve`, { status: 'resolved', resolution }).then(refresh).catch(fail); }}>{tx('Resolve')}</Button>}</li>)}</ul></section>
       </div>
     </div>
   );
