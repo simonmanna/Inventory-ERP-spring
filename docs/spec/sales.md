@@ -47,7 +47,12 @@ States: `draft → pending_approval → approved → sent → accepted | rejecte
 - Lines: product, unit snapshot (`uomId`, `uomFactor`), qty, unitPrice, priceSource + ruleId, discount %, taxes,
   optional flag.
 - Editing a `sent` / `accepted` quotation creates an immutable `SalesQuotationRevision` (full snapshot, `revision++`).
-- Expiry job (ShedLock, daily) moves past-`validUntil` quotes to `expired`.
+- `rejected` covers two cases told apart by `declinedAt`: an internal approval rejection (`declinedAt` null) is edited
+  in place and resubmitted; a customer decline (`declinedAt` set: staff, portal or online link) is not editable or
+  resubmittable in place — **Revise** snapshots the declined terms and reopens a new revision (V675).
+- Expiry job (ShedLock, daily) moves past-`validUntil` quotes to `expired` and alerts the owner. Opening the list does
+  the same (expire + alert): whichever runs first expires and alerts a quote exactly once.
+- Conversion to a proforma keeps each line's variant and unit (the unit factor is resolved again, as for orders).
 - Submit checks: discount bands, margin floor, amount bands (S2), credit (S3) → approval when a rule triggers.
 - Convert → `SalesOrder` (or proforma through `DocumentBuilderService`).
 

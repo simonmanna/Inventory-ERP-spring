@@ -349,6 +349,8 @@ export interface Quotation {
   terms: string | null;
   approvalReasons: string[];
   rejectionReason: string | null;
+  /** Set when the customer declined (status rejected): changes need a new revision, not an in-place edit. */
+  declinedAt?: string | null;
   approvedAt: string | null;
   sentAt: string | null;
   acceptedAt: string | null;

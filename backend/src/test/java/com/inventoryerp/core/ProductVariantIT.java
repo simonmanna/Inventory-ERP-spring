@@ -382,6 +382,22 @@ class ProductVariantIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("a quotation converted to a proforma invoice keeps the variant")
+    void quotationToProformaKeepsVariant() {
+        String p = product(100, 40);
+        String bl = byName(configure(p).get("variants"), "Black, Large").get("id").asString();
+        String id = ok(201, "POST", "/sales/quotations", Map.of("partnerId", partner(true), "lines",
+                List.of(Map.of("productId", p, "variantId", bl, "quantity", 1)))).get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + id + "/submit", null);
+        String proforma = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "proforma"))
+                .get("convertedId").asString();
+        Map<String, Object> line = jdbc.sql("SELECT \"variantId\", \"variantName\" FROM \"DocumentLine\" WHERE"
+                + " \"documentId\" = ?").param(proforma).query().singleRow();
+        assertThat(line.get("variantId")).isEqualTo(bl);
+        assertThat(line.get("variantName")).isEqualTo("Black, Large");
+    }
+
+    @Test
     @DisplayName("tenant isolation and authorization of every variant route")
     void isolationAndAuthorization() {
         String p = product(10, 5);

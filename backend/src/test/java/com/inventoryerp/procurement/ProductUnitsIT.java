@@ -385,6 +385,24 @@ class ProductUnitsIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("a quotation converted to a proforma invoice keeps the quoted unit, quantity and unit price")
+    void quotationToProformaKeepsUnit() {
+        String drink = product("Nectar", 1500);
+        setUnits(drink, List.of(unitRow(pack, 6, false, true, 8500)));
+        String id = ok(201, "POST", "/sales/quotations", Map.of("partnerId", customer, "lines",
+                List.of(Map.of("productId", drink, "quantity", 2, "uomId", pack)))).get("id").asString();
+        ok(200, "POST", "/sales/quotations/" + id + "/submit", null);
+        String proforma = ok(200, "POST", "/sales/quotations/" + id + "/convert", Map.of("target", "proforma"))
+                .get("convertedId").asString();
+        Map<String, Object> line = jdbc.sql("SELECT \"uomId\", \"uomFactor\", quantity, \"unitPrice\" FROM"
+                + " \"DocumentLine\" WHERE \"documentId\" = ?").param(proforma).query().singleRow();
+        assertThat(line.get("uomId")).as("the pack, not the base unit").isEqualTo(pack);
+        assertThat((BigDecimal) line.get("uomFactor")).isEqualByComparingTo("6");
+        assertThat((BigDecimal) line.get("quantity")).isEqualByComparingTo("2");
+        assertThat((BigDecimal) line.get("unitPrice")).isEqualByComparingTo("8500");
+    }
+
+    @Test
     @DisplayName("Phase I2 N6: a quotation converted to an Orders-module order keeps the quoted unit")
     void quotationToOrderKeepsUnit() {
         String drink = product("Juice", 1500);

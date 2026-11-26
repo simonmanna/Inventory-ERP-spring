@@ -135,6 +135,56 @@ class SalesQuoteProformaIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("opening the list expires overdue quotations and alerts the owner once; the job then finds nothing")
+    void listExpiryNotifies() {
+        String id = quote(Map.of("validUntil", LocalDate.now().minusDays(1).toString())).get("id").asString();
+        String number = ok(200, "GET", "/sales/quotations/" + id, null).get("number").asString();
+        ok(200, "GET", "/sales/quotations?q=" + number, null);
+        assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("status").asString()).isEqualTo("expired");
+        ok(200, "GET", "/sales/quotations?q=" + number, null);
+        TenantContext.run(TenantContext.TenantStore.organization(demoOrg), quotations::expireAndNotify);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"Notification\" WHERE category = 'sales_quotation_expired' AND title LIKE ?")
+                .param("%" + number + "%").query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("a customer-declined quotation is not edited or resubmitted in place: revise snapshots it and reopens it;"
+            + " an internal approval rejection stays editable")
+    void customerDeclineNeedsRevision() {
+        String id = approved(quote(Map.of()));
+        JsonNode declined = ok(200, "POST", "/sales/quotations/" + id + "/decline", Map.of("reason", "Too expensive"));
+        assertThat(declined.get("status").asString()).isEqualTo("rejected");
+        assertThat(declined.get("declinedAt").isNull()).isFalse();
+
+        Map<String, Object> edit = Map.of("lines", List.of(Map.of("productId", product, "quantity", 2, "unitPrice", 90)));
+        Res put = as("PUT", "/sales/quotations/" + id, edit);
+        assertThat(put.status()).isEqualTo(400);
+        assertThat(put.body().get("message").asString())
+                .isEqualTo("The customer declined this quotation; revise it to make a new offer");
+        assertThat(as("POST", "/sales/quotations/" + id + "/submit", null).status()).isEqualTo(400);
+        assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("total").asDouble()).as("terms unchanged")
+                .isEqualTo(250);
+
+        JsonNode revised = ok(200, "POST", "/sales/quotations/" + id + "/revise", null);
+        assertThat(revised.get("status").asString()).isEqualTo("draft");
+        assertThat(revised.get("revision").asInt()).isEqualTo(1);
+        assertThat(revised.get("declinedAt").isNull()).isTrue();
+        JsonNode snap = ok(200, "GET", "/sales/quotations/" + id + "/revisions", null).get(0);
+        assertThat(snap.get("status").asString()).isEqualTo("rejected");
+        assertThat(snap.get("total").asDouble()).as("the declined terms are kept").isEqualTo(250);
+        assertThat(ok(200, "PUT", "/sales/quotations/" + id, edit).get("total").asDouble()).isEqualTo(180);
+
+        // An internal rejection (approval needed: discount beyond the limit) is still edited in place.
+        String internal = quote(Map.of("lines", List.of(Map.of("productId", product, "quantity", 1, "unitPrice", 1))))
+                .get("id").asString();
+        assertThat(ok(200, "POST", "/sales/quotations/" + internal + "/submit", null).get("status").asString())
+                .isEqualTo("pending_approval");
+        JsonNode rejected = ok(200, "POST", "/sales/quotations/" + internal + "/reject", Map.of("reason", "Too low"));
+        assertThat(rejected.get("declinedAt").isNull()).isTrue();
+        assertThat(ok(200, "PUT", "/sales/quotations/" + internal, edit).get("status").asString()).isEqualTo("draft");
+    }
+
+    @Test
     @DisplayName("a declined quotation records a catalog reason; an unknown reason is refused")
     void lostReason() {
         JsonNode reasons = ok(200, "GET", "/sales/lost-reasons", null);
