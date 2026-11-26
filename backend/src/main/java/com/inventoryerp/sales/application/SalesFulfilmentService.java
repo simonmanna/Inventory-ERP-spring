@@ -81,6 +81,11 @@ public class SalesFulfilmentService {
         // Lock first, then read: a rebuild from an earlier event must not write back a quantity older than the lock holder's.
         db.rows("SELECT id FROM \"SalesOrderLine\" WHERE \"orderId\" = ? FOR UPDATE", orderId);
         Map<String, Map<String, Object>> fromFleet = fleetQuantities(orderId);
+        // R6 Q5: excess over the ordered quantity (a load within tolerance above the order) is billed by default;
+        // "absorb" caps the automatic billable quantity at ordered − cancelled. Manual decisions are left as decided.
+        Map<String, Object> policy = db.row("SELECT \"overOrderExcess\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?",
+                org());
+        boolean absorbExcess = policy != null && "absorb".equals(policy.get("overOrderExcess"));
         List<Map<String, Object>> changed = new ArrayList<>();
         for (Map<String, Object> l : db.rows("SELECT l.*, p.\"billingBasis\" FROM \"SalesOrderLine\" l LEFT JOIN"
                 + " \"Product\" p ON p.id = l.\"productId\" WHERE l.\"orderId\" = ? FOR UPDATE OF l", orderId)) {
@@ -95,7 +100,8 @@ public class SalesFulfilmentService {
             // the ordered basis keeps ordered-quantity billing as before A4 (owner decision 2026-11-16).
             BigDecimal auto = switch (basis) {
                 case "ordered" -> dispatched.min(dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled"))));
-                default -> accepted;
+                default -> absorbExcess ? accepted.min(dec(l.get("quantity")).subtract(dec(l.get("qtyCancelled")))
+                        .max(BigDecimal.ZERO)) : accepted;
             };
             Map<String, Object> last = db.row("SELECT basis, quantity FROM \"SalesFulfilmentDecision\" WHERE"
                     + " \"orderLineId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1", lineId);

@@ -302,6 +302,13 @@ branch scope.
 - Verification queries and rollback in `docs/runbooks/sales-quote-migration.md`.
 
 ## Deviations
+
+- **R6 accounting policy settings (2026-11-26, V683, owner to approve).** New `SalesSettings` keys, each defaulting to
+  the shipped behaviour: `showroomTaxPoint` (`at_confirm` | `at_invoice`), `overOrderExcess` (`bill` | `absorb`),
+  `rebateTaxId` (tax or null). `depositTaxPoint = receipt` now also refuses a plain advance on a taxed order at
+  `POST /sales/orders/{id}/deposits`, `POST /customer-deposits` (with `salesOrderId`) and the mobile-money deposit
+  initiation, pointing to the down-payment invoice. The accountant's choices are recorded in `sales-postings.md`,
+  "Sales Accounting Go-Live Sign-off".
 No parity routes are involved. Behaviour changes of the 2026-11-26 readiness fixes (R2–R5, owner to approve):
 
 - Money routes of orders, cash sales, deliveries and returns require an Idempotency-Key (400 without one).

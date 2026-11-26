@@ -77,6 +77,7 @@ public class CustomerDepositController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
     public Map<String, Object> receive(@RequestBody Map<String, Object> b) {
+        deposits.assertAdvanceAllowed(s(b, "salesOrderId"));
         return deposits.receive(new DepositInput(s(b, "partnerId"), s(b, "salesOrderId"), d(b, "amount"),
                 s(b, "paymentMethod"), s(b, "accountId"), s(b, "receivedDate"), s(b, "reference"), s(b, "notes"),
                 s(b, "currencyCode"), d(b, "exchangeRate"), s(b, "kind")));

@@ -9,6 +9,7 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.invoicing.application.CreditNoteService;
 import com.inventoryerp.invoicing.application.CreditNoteService.CreditNoteInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
@@ -347,11 +348,33 @@ public class SalesRebateService {
                 + " AND \"documentType\" = 'sales_invoice' AND status = 'posted' AND \"amountResidual\" > 0"
                 + " ORDER BY (\"amountResidual\" >= ?) DESC, \"issueDate\", \"documentNumber\" LIMIT 1", org(),
                 a.get("partnerId"), amount);
+        // R6 Q6: with a rebate tax set, the credit note is VAT-inclusive (the customer's credit stays the accrued amount)
+        // and reverses that share of output VAT; without one it carries no VAT (shipped behaviour).
+        Map<String, Object> policy = db.row("SELECT \"rebateTaxId\" FROM \"SalesSettings\" WHERE \"organizationId\" = ?",
+                org());
+        String taxId = policy == null ? null : str(policy.get("rebateTaxId"));
+        LineInput line = taxId == null
+                ? LineInput.of(null, accrualAccount(), desc, BigDecimal.ONE, amount, BigDecimal.ZERO, null, null)
+                : new LineInput(null, null, null, null, accrualAccount(), desc, BigDecimal.ONE, amount, BigDecimal.ZERO,
+                        null, null, null, "manual", taxId, null, true);
         Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(a.get("partnerId")), LocalDate.now()
-                .toString(), null, "REBATE", desc, open == null ? null : str(open.get("id")), List.of(LineInput.of(null, accrualAccount(), desc,
-                        BigDecimal.ONE, amount, BigDecimal.ZERO, null, null))));
+                .toString(), null, "REBATE", desc, open == null ? null : str(open.get("id")), List.of(line)));
         String cnId = str(cn.get("id"));
         creditNotes.post(cnId, "none");
+        if (taxId != null) {
+            // The accrual was booked gross (Dr rebates / Cr accrual); the credit note cleared only its net share from the
+            // accrual. The VAT recovered lowers the rebate cost: Dr accrual / Cr rebates for the credit note's tax.
+            BigDecimal tax = dec(db.row("SELECT \"taxAmount\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?",
+                    cnId, org()).get("taxAmount")).setScale(2, RoundingMode.HALF_UP);
+            if (tax.signum() > 0) {
+                String vatDesc = "Rebate VAT recovered · " + desc;
+                posting.post(new PostingRequest("GEN", LocalDate.now(BusinessZone.get()).atStartOfDay(BusinessZone.get())
+                        .toInstant(), vatDesc, null, null, "rebate_accrual", accrualId, null, "rebate_vat:" + accrualId,
+                        null, null, null, List.of(new Line(accrualAccount(), tax, null, str(a.get("partnerId")), vatDesc,
+                                null, null, null), new Line(rebateAccount(), null, tax, str(a.get("partnerId")), vatDesc,
+                                        null, null, null))));
+            }
+        }
         db.patch("RebateAccrual", accrualId, Obj.of("status", "settled", "creditNoteId", cnId), true);
         audit.record(AuditInput.of("RebateAccrual", accrualId, "approve", null, Obj.of("creditNoteId", cnId, "amount",
                 amount)));

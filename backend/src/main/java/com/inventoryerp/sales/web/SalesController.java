@@ -397,6 +397,7 @@ public final class SalesController {
             Map<String, Object> o = svc.require(id);
             Map<String, Object> in = body(b);
             Object amount = in.get("amount");
+            deposits.assertAdvanceAllowed(id);
             return deposits.receive(new CustomerDepositService.DepositInput(String.valueOf(o.get("partnerId")), id,
                     amount == null ? null : new java.math.BigDecimal(amount.toString()), text(b, "paymentMethod"),
                     text(b, "accountId"), text(b, "receivedDate"), text(b, "reference"), text(b, "notes"),

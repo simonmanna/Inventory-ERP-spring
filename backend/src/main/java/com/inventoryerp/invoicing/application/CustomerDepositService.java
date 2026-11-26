@@ -139,6 +139,24 @@ public class CustomerDepositService {
 
     // ------------------------------------------------------------------ receipt / down payment
 
+    /** Resolved per call, so the guards (in modules that use this service) form no bean cycle. */
+    private ObjectProvider<DepositReceiptGuard> receiptGuards;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReceiptGuards(ObjectProvider<DepositReceiptGuard> receiptGuards) {
+        this.receiptGuards = receiptGuards;
+    }
+
+    /**
+     * R6 Q1: whether a plain advance may be taken against {@code salesOrderId} (no-op without an order). Called by the
+     * deposit routes and the mobile-money initiation, before any money is collected.
+     */
+    public void assertAdvanceAllowed(String salesOrderId) {
+        if (salesOrderId != null && !salesOrderId.isBlank() && receiptGuards != null) {
+            receiptGuards.orderedStream().forEach(g -> g.beforeAdvance(salesOrderId));
+        }
+    }
+
     /** Deposit received (P2): Dr tender / Cr Customer Deposits. */
     @Transactional
     public Map<String, Object> receive(DepositInput in) {
