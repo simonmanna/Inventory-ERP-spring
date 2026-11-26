@@ -172,6 +172,12 @@ public class NotificationsService {
      * propagates.
      */
     public boolean sendExternalEmail(String to, String subject, String textBody, Attachment attachment) {
+        return sendExternalEmail(to, java.util.List.of(), subject, textBody, attachment);
+    }
+
+    /** {@link #sendExternalEmail(String, String, String, Attachment)} with copies to {@code cc}. */
+    public boolean sendExternalEmail(String to, java.util.List<String> cc, String subject, String textBody,
+            Attachment attachment) {
         if (smtp == null) {
             log.warn("[DEV-EMAIL] to={} subject={} attachment={}", to, subject,
                     attachment == null ? "-" : attachment.filename());
@@ -182,6 +188,9 @@ public class NotificationsService {
             var helper = new MimeMessageHelper(message, true, "UTF-8");
             helper.setFrom(smtpFrom);
             helper.setTo(to);
+            if (cc != null && !cc.isEmpty()) {
+                helper.setCc(cc.toArray(String[]::new));
+            }
             helper.setSubject(subject);
             helper.setText(textBody, "<p>" + HtmlUtils.htmlEscape(textBody).replace("\n", "<br>") + "</p>");
             if (attachment != null) {

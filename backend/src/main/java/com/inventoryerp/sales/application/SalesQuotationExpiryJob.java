@@ -10,7 +10,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** Daily 05:40: quotations past their validity expire and their owners are told (SG-3). */
+/**
+ * Daily 05:40: quotations past their validity expire and their owners are told (SG-3); open offers nearing their
+ * expiration date remind their owners once (sales setting {@code quoteExpiryReminderDays}).
+ */
 @Component
 @ConditionalOnProperty(name = "app.jobs.enabled", havingValue = "true", matchIfMissing = true)
 public class SalesQuotationExpiryJob {
@@ -32,6 +35,7 @@ public class SalesQuotationExpiryJob {
         for (String org : orgs) {
             try {
                 TenantContext.run(TenantContext.TenantStore.organization(org), quotations::expireAndNotify);
+                TenantContext.run(TenantContext.TenantStore.organization(org), quotations::remindExpiring);
             } catch (RuntimeException e) {
                 log.warn("Quotation expiry failed for {}: {}", org, e.toString());
             }

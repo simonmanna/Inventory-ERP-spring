@@ -121,10 +121,17 @@ class SalesQuoteProformaIT extends ApiTestSupport {
         assertThat(as("POST", "/sales/quotations/" + id + "/submit", null).status()).isEqualTo(400);
     }
 
+    /** An approved offer whose expiration date passed yesterday (drafts never expire). */
+    String overdueOffer() {
+        String id = approved(quote(Map.of()));
+        jdbc.sql("UPDATE \"SalesQuotation\" SET \"validUntil\" = CURRENT_DATE - 1 WHERE id = ?").param(id).update();
+        return id;
+    }
+
     @Test
     @DisplayName("the expiry job expires overdue quotations and alerts the owner once")
     void expiry() {
-        String id = quote(Map.of("validUntil", LocalDate.now().minusDays(1).toString())).get("id").asString();
+        String id = overdueOffer();
         int n = TenantContext.run(TenantContext.TenantStore.organization(demoOrg), quotations::expireAndNotify);
         assertThat(n).isGreaterThanOrEqualTo(1);
         assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("status").asString()).isEqualTo("expired");
@@ -137,7 +144,7 @@ class SalesQuoteProformaIT extends ApiTestSupport {
     @Test
     @DisplayName("opening the list expires overdue quotations and alerts the owner once; the job then finds nothing")
     void listExpiryNotifies() {
-        String id = quote(Map.of("validUntil", LocalDate.now().minusDays(1).toString())).get("id").asString();
+        String id = overdueOffer();
         String number = ok(200, "GET", "/sales/quotations/" + id, null).get("number").asString();
         ok(200, "GET", "/sales/quotations?q=" + number, null);
         assertThat(ok(200, "GET", "/sales/quotations/" + id, null).get("status").asString()).isEqualTo("expired");

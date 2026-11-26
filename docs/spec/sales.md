@@ -50,11 +50,49 @@ States: `draft → pending_approval → approved → sent → accepted | rejecte
 - `rejected` covers two cases told apart by `declinedAt`: an internal approval rejection (`declinedAt` null) is edited
   in place and resubmitted; a customer decline (`declinedAt` set: staff, portal or online link) is not editable or
   resubmittable in place — **Revise** snapshots the declined terms and reopens a new revision (V675).
-- Expiry job (ShedLock, daily) moves past-`validUntil` quotes to `expired` and alerts the owner. Opening the list does
-  the same (expire + alert): whichever runs first expires and alerts a quote exactly once.
+- Expiry job (ShedLock, daily) moves past-`validUntil` **open offers** (`approved` / `sent`) to `expired` and alerts the
+  owner. Opening the list does the same (expire + alert): whichever runs first expires and alerts a quote exactly once.
+  Drafts never expire; a draft past its date cannot be submitted ("The expiration date has passed; set a new one before
+  submitting"). An expired-but-not-yet-swept offer refuses send / accept / convert / email.
+- Expiry follow-up (V676): `validityDaysLeft` on list rows and detail; list filter `expiringWithin=N` (open offers due
+  within N days); the job also reminds the owner once, `quoteExpiryReminderDays` (default 3, 0 = off) before the date
+  (`expiryRemindedAt`; a new `validUntil` or a revision re-arms it).
 - Conversion to a proforma keeps each line's variant and unit (the unit factor is resolved again, as for orders).
 - Submit checks: discount bands, margin floor, amount bands (S2), credit (S3) → approval when a rule triggers.
-- Convert → `SalesOrder` (or proforma through `DocumentBuilderService`).
+- Convert → `SalesOrder` (or proforma through `DocumentBuilderService`). The proforma keeps the payment term, delivery
+  date / address, currency and rate; the counter order keeps branch and payment term, and its notes carry the delivery
+  address and date.
+
+#### Quotations production readiness (2026-11-26, V676)
+- **Optional products** (`isOptional` per line): priced and shown (PDF prefix "Optional:"), not counted in the header
+  totals. Approval amount and credit checks use the total with every option. Accept takes `optionalLineIds` (staff:
+  `POST /{id}/accept`; customer: public accept) — those lines become regular and the totals are recomputed; untaken
+  options never reach the order or proforma. A quotation needs at least one non-optional priced line to submit.
+- **Stable line ids**: a saved line sent back with its `id` keeps it; unknown ids get a new one.
+- **Order discount** (% or amount), **exchange rate**, **contact**, **customer site** and **agreement** are editable
+  on the quotation form.
+- **Preview pricing**: `POST /sales/quotations/resolve-prices` and `/crm/quotations/resolve-prices` (quotation write)
+  price lines exactly as saving does (customer, date, branch, site, currency, agreement, variant, unit, quantity).
+  Submit-time pricing memoizes identical resolutions.
+- **Email compose**: `POST /{id}/email` takes `to`, `cc` (≤ 10, validated), `subject`, `body`; defaults from the sales
+  settings `quoteEmailSubject` / `quoteEmailBody` (placeholders `{number} {customer} {validUntil} {total} {company}
+  {link}`, filled by the client). The PDF is rendered in a read-only transaction, the mail sent outside any
+  transaction, then the quotation is marked sent; the answer says whether SMTP delivered it.
+- **Mark as sent** needs `sales:quotation:send` (CRM family: `crm:quotation:write`) in the UI too, and leaves a done
+  timeline activity "Quotation N sent" on the opportunity / customer.
+- **CRM decline** passes `lostReasonId` through, as the sales route does.
+- **List totals** carry `totals.byCurrency` (`currencyCode`, `count`, `total`); the screen shows one total per currency.
+- **Duplicate**: `POST /{id}/duplicate` (201) → a new draft with the same header and lines (rule prices re-resolved).
+- **Templates** (`SalesQuotationTemplate`, RLS): `GET/POST /sales/quotation-templates`, `GET/DELETE
+  /sales/quotation-templates/{id}`; saved from a quotation (lines, notes, terms), name unique per organization
+  (case-insensitive, 409), soft delete. The editor starts a new quotation from `?templateId=`.
+- **Revision history**: `GET /crm/quotations/{id}/revisions` (the sales route already existed); the editor compares any
+  two revisions (or one with the current) field by field and line by line.
+- **After online acceptance** (`quoteOnlineAcceptAction`: `none` | `sales_order` | `proforma`): the acceptance commits
+  first; the conversion runs in its own transaction. On success the owner is notified
+  (`sales.quote_link.converted`) and the public page shows the order number, or for a proforma the advance to pay with
+  the bank / mobile money details. On failure the acceptance stands and the owner is told to convert by hand
+  (`sales.quote_link.convert_failed`).
 
 ### 3.2 Sales order (`SalesOrder`, `SO-YYYY-nnnnn`)
 States: `draft → pending_approval → confirmed → in_fulfilment → done | cancelled`; overlays `on_hold` (credit / manual);

@@ -32,6 +32,10 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['quoteApprovalAmount', 'Approval above this amount (0 = off)', 'num'],
     ['defaultQuoteTerms', 'Default terms', 'text'],
     ['quoteLineImages', 'Product images on quotations (optional Image column, print and PDF)', 'bool'],
+    ['quoteExpiryReminderDays', 'Remind the owner this many days before an offer expires (0 = off)', 'num'],
+    ['quoteOnlineAcceptAction', 'When the customer accepts online', ['none', 'sales_order', 'proforma']],
+    ['quoteEmailSubject', 'Email subject ({number} {customer} {validUntil} {total} {company})', 'text'],
+    ['quoteEmailBody', 'Email message (also {link}: the online link)', 'text'],
   ]],
   ['Proforma invoices', [
     ['proformaAdvancePercent', 'Default advance %', 'num'],

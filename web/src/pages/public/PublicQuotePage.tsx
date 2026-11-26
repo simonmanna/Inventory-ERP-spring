@@ -39,6 +39,10 @@ interface PublicQuote {
   company: { name: string };
   link: { decision: 'accepted' | 'declined' | null; decidedAt: string | null; signerName: string | null; expiresAt: string };
   canAnswer: boolean;
+  convertedType?: 'sales_order' | 'order' | 'proforma' | null;
+  convertedNumber?: string | null;
+  /** After an automatic proforma: the advance to pay and where to pay it. */
+  payment?: { number: string; total: number; advanceAmount: number | null; bankDetails: string | null; mobileDetails: string | null; dueDate: string | null } | null;
 }
 
 /** The customer's view of one shared quotation: read, download, accept or decline (CRM enhancements T3a). */
@@ -53,6 +57,8 @@ export function PublicQuotePage() {
   const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /** Optional products the customer takes with the acceptance. */
+  const [options, setOptions] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -70,7 +76,7 @@ export function PublicQuotePage() {
     setBusy(true);
     setFormError(null);
     try {
-      const body = action === 'accept' ? { signerName: signer, note: note || undefined } : { signerName: signer || undefined, reason: note || undefined };
+      const body = action === 'accept' ? { signerName: signer, note: note || undefined, optionalLineIds: options } : { signerName: signer || undefined, reason: note || undefined };
       const r = await fetch(`${base}/${action}`, { method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const out = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(Array.isArray(out.message) ? out.message.join(', ') : out.message || tx('Something went wrong. Please try again.'));
@@ -98,6 +104,8 @@ export function PublicQuotePage() {
   if (!q) return <Shell><div className="flex justify-center p-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-label={tx('Loading')} /></div></Shell>;
 
   const cur = q.currencyCode;
+  const optionalLines = q.lines.filter((l) => !l.displayType && l.isOptional);
+  const extra = optionalLines.filter((l) => options.includes(l.id)).reduce((t, l) => t + Number(l.lineTotal || 0), 0);
   return (
     <Shell company={q.company?.name}>
       <div className="space-y-4">
@@ -117,7 +125,17 @@ export function PublicQuotePage() {
         </div>
 
         {q.link?.decision === 'accepted' && (
-          <Banner tone="ok"><CheckCircle2 className="h-5 w-5" aria-hidden />{tx('Accepted by')} {q.link.signerName}{q.link.decidedAt ? ` · ${dateTime(q.link.decidedAt)}` : ''}. {tx('Thank you, we will be in touch about the next steps.')}</Banner>
+          <Banner tone="ok"><CheckCircle2 className="h-5 w-5" aria-hidden />{tx('Accepted by')} {q.link.signerName}{q.link.decidedAt ? ` · ${dateTime(q.link.decidedAt)}` : ''}. {q.convertedType === 'sales_order' && q.convertedNumber ? `${tx('Your order')} ${q.convertedNumber} ${tx('has been created.')}` : tx('Thank you, we will be in touch about the next steps.')}</Banner>
+        )}
+        {q.payment && (
+          <div className="rounded-xl border bg-card p-5 text-sm">
+            <h2 className="mb-2 text-lg font-semibold">{tx('Advance payment')}</h2>
+            <p>{tx('Proforma invoice')} <strong>{q.payment.number}</strong> · {tx('Total')} {money(q.payment.total, cur)}</p>
+            {Number(q.payment.advanceAmount ?? 0) > 0 && <p className="mt-1 text-base">{tx('Please pay an advance of')} <strong className="tabular-nums">{money(Number(q.payment.advanceAmount), cur)}</strong>{q.payment.dueDate ? ` ${tx('by')} ${date(q.payment.dueDate)}` : ''}.</p>}
+            {q.payment.bankDetails && <div className="mt-3"><p className="font-medium">{tx('Bank transfer')}</p><p className="whitespace-pre-line text-muted-foreground">{q.payment.bankDetails}</p></div>}
+            {q.payment.mobileDetails && <div className="mt-3"><p className="font-medium">{tx('Mobile money')}</p><p className="whitespace-pre-line text-muted-foreground">{q.payment.mobileDetails}</p></div>}
+            <p className="mt-3 text-xs text-muted-foreground">{tx('Please quote')} {q.payment.number} {tx('as the payment reference.')}</p>
+          </div>
         )}
         {q.link?.decision === 'declined' && (
           <Banner tone="no"><XCircle className="h-5 w-5" aria-hidden />{tx('You declined this quotation')}{q.link.decidedAt ? ` · ${dateTime(q.link.decidedAt)}` : ''}. {tx('Thank you for letting us know.')}</Banner>
@@ -168,6 +186,18 @@ export function PublicQuotePage() {
             {mode === 'view' ? (
               <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void answer('accept'); }}>
                 <h2 className="text-lg font-semibold">{tx('Accept this quotation')}</h2>
+                {optionalLines.length > 0 && (
+                  <fieldset className="space-y-1.5 rounded-lg border p-3 text-sm">
+                    <legend className="px-1 font-medium">{tx('Optional products')}</legend>
+                    {optionalLines.map((l) => (
+                      <label key={l.id} className="flex items-center justify-between gap-2">
+                        <span className="flex items-center gap-2"><input type="checkbox" checked={options.includes(l.id)} onChange={(e) => setOptions((o) => (e.target.checked ? [...o, l.id] : o.filter((x) => x !== l.id)))} />{l.productName ?? l.description}{l.variantName ? ` — ${l.variantName}` : ''}</span>
+                        <span className="tabular-nums">+{money(l.lineTotal, cur)}</span>
+                      </label>
+                    ))}
+                    <p className="pt-1 text-right font-medium">{tx('Total with your choices')}: {money(Number(q.total) + extra, cur)}</p>
+                  </fieldset>
+                )}
                 <label className="block text-sm"><span className="mb-1 block font-medium">{tx('Your full name')}</span>
                   <Input required minLength={2} maxLength={120} autoComplete="name" value={signer} onChange={(e) => setSigner(e.target.value)} />
                 </label>

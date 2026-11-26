@@ -349,6 +349,21 @@ public class CrmPlannerService {
         touchDeal(dealId);
     }
 
+    /** A done timeline entry: the quotation was handed to the customer by other means than the app's email. */
+    @Transactional
+    public void logQuotationSent(String dealId, String partnerId, String number) {
+        if (blank(dealId) && blank(partnerId)) {
+            return;
+        }
+        db.update("INSERT INTO \"Activity\" (id, \"organizationId\", type, title, body, \"dealId\", \"partnerId\","
+                + " status, completed, \"completedAt\", \"assignedToId\", \"createdById\", \"occurredAt\", \"updatedAt\")"
+                + " VALUES (?, ?, 'task'::\"ActivityType\", ?, ?, ?, ?, 'done'::\"TaskStatus\", true, " + NOW + ", ?, ?, "
+                + NOW + ", " + NOW + ")", CrmDb.newId(), org(), "Quotation " + number + " sent",
+                "Marked as sent to the customer.", blank(dealId) ? null : dealId, blank(partnerId) ? null : partnerId,
+                user(), user());
+        touchDeal(dealId);
+    }
+
     /**
      * A done timeline entry for something the customer did online (accepted or declined a quotation link, sent the
      * website form), assigned to {@code ownerId}. Runs without a signed-in user.

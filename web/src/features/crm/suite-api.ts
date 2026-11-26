@@ -99,6 +99,13 @@ export interface CrmSettings {
   autoWinOnConversion: boolean;
   /** Quotations offer product images: an Image column each user can show or hide, also on print and PDF. */
   quoteLineImages?: boolean;
+  /** Email compose defaults; placeholders {number} {customer} {validUntil} {total} {company} {link}. */
+  quoteEmailSubject?: string | null;
+  quoteEmailBody?: string | null;
+  /** Remind the owner this many days before an open offer expires (0 = off). */
+  quoteExpiryReminderDays?: number;
+  /** What an online acceptance starts. */
+  quoteOnlineAcceptAction?: 'none' | 'sales_order' | 'proforma';
   assignmentMode: 'manual' | 'round_robin' | 'least_loaded';
   assignmentPool: string[];
   rottingDays: number;
@@ -304,6 +311,13 @@ export interface QuoteLine {
   lineSubtotal?: number;
   lineTax?: number;
   lineTotal?: number;
+  /** Optional product: shown to the customer, counted only when taken. */
+  isOptional?: boolean;
+  /** Size of a line sold by size (ADR-S066). */
+  pieces?: number | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
   stock?: { onHand: number; reserved: number; available: number; sufficient: boolean } | null;
 }
 
@@ -327,6 +341,13 @@ export interface Quotation {
   /** Promised delivery date; becomes the sales order's commitment date. */
   commitmentDate?: string | null;
   lostReasonId?: string | null;
+  siteId?: string | null;
+  agreementId?: string | null;
+  exchangeRate?: number | null;
+  orderDiscountPercent?: number | null;
+  orderDiscountAmount?: number | null;
+  /** Days of validity left on the business calendar (negative: past its date; null: no date). */
+  validityDaysLeft?: number | null;
   number: string;
   revision: number;
   dealId: string | null;
@@ -363,6 +384,10 @@ export interface Quotation {
   credit?: CreditInfo | null;
   canApprove?: boolean;
 }
+
+export interface QuoteRevision { id: string; revision: number; status: QuoteStatus; total: number; reason: string | null; createdById: string | null; createdAt: string; snapshot: Record<string, unknown> & { lines?: QuoteLine[] } }
+export interface QuoteTemplate { id: string; name: string; description: string | null; notes: string | null; terms: string | null; lineCount: number; createdAt: string; lines?: Array<Record<string, unknown>> }
+export type QuoteTotals = { count: number; total: number; byCurrency?: Array<{ currencyCode: string; count: number; total: number }> };
 
 export interface PriceRule {
   id: string;
@@ -582,7 +607,34 @@ export const crmApi = {
     (await api.post<Quotation & { converted: { type: string; id: string; number: string } }>(`${quoteBase()}/${id}/convert`, { target, allowBackorder },
       { headers: { 'Idempotency-Key': idempotencyKey ?? crypto.randomUUID() } })).data,
   deleteQuote: async (id: string) => (await api.delete(`${quoteBase()}/${id}`)).data,
+  /** Prices exactly as saving will (customer, date, branch, site, currency, agreement; variant / unit / quantity). */
+  resolveQuotePrices: async (body: { partnerId?: string; issueDate?: string; branchId?: string; siteId?: string; currencyCode?: string; agreementId?: string; lines: Array<{ productId: string; quantity: number; variantId?: string; uomId?: string }> }) =>
+    (await api.post<{ lines: ResolvedPrice[] }>(`${quoteBase()}/resolve-prices`, body)).data,
+  acceptQuote: async ({ id, optionalLineIds }: { id: string; optionalLineIds?: string[] }) =>
+    (await api.post<Quotation>(`${quoteBase()}/${id}/accept`, { optionalLineIds: optionalLineIds ?? [] })).data,
+  duplicateQuote: async (id: string) => (await api.post<Quotation>(`${quoteBase()}/${id}/duplicate`, {})).data,
+  emailQuote: async ({ id, ...body }: { id: string; to?: string; cc?: string[]; subject?: string; body?: string }) =>
+    (await api.post<{ ok: boolean; sentTo: string; cc: string[]; delivered: boolean }>(`${quoteBase()}/${id}/email`, body)).data,
+  saveQuoteTemplate: async (body: { name: string; quotationId: string; description?: string }) => (await api.post<QuoteTemplate>('/sales/quotation-templates', body)).data,
+  deleteQuoteTemplate: async (id: string) => (await api.delete(`/sales/quotation-templates/${id}`)).data,
+  quoteTemplate: async (id: string) => (await api.get<QuoteTemplate>(`/sales/quotation-templates/${id}`)).data,
 };
+
+export function useQuoteRevisions(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ['crm-suite', 'quote-revisions', id],
+    queryFn: async () => (await api.get<QuoteRevision[]>(`${quoteBase()}/${id}/revisions`)).data,
+    enabled: !!id && enabled,
+  });
+}
+
+export function useQuoteTemplates(enabled = true) {
+  return useQuery({
+    queryKey: ['crm-suite', 'quote-templates'],
+    queryFn: async () => (await api.get<QuoteTemplate[]>('/sales/quotation-templates')).data,
+    enabled, retry: false,
+  });
+}
 
 export function useSavedFilters(scope: string) {
   return useQuery({
@@ -609,7 +661,7 @@ export function usePriceRules(params: Record<string, string | undefined> = {}) {
 export function useQuotations(params: Record<string, string | number | undefined>) {
   return useQuery({
     queryKey: ['crm-suite', 'quotes', params],
-    queryFn: async () => (await api.get<Paged<Quotation, { count: number; total: number }>>(quoteBase(), { params: clean(params) })).data,
+    queryFn: async () => (await api.get<Paged<Quotation, QuoteTotals>>(quoteBase(), { params: clean(params) })).data,
     placeholderData: keepPreviousData,
   });
 }

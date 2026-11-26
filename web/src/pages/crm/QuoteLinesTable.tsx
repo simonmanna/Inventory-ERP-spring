@@ -123,7 +123,7 @@ export function QuoteLinesTable(p: Props) {
     lines.forEach((l, i) => {
       if (l.displayType === 'line_section') { current = i; out.set(i, 0); return; }
       const a = amounts[i];
-      if (current >= 0 && a) out.set(current, (out.get(current) ?? 0) + (p.taxIncluded ? a.total : a.sub));
+      if (current >= 0 && a && !l.isOptional) out.set(current, (out.get(current) ?? 0) + (p.taxIncluded ? a.total : a.sub));
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,6 +158,11 @@ export function QuoteLinesTable(p: Props) {
       {l.productId && l.size && <LineSizeFields productId={l.productId} variantId={l.variantId} value={l.size} disabled={!editable}
         onChange={(size, q) => p.onPatch(i, { size, ...(q !== null ? { quantity: q } : {}) }, true)} />}
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+        {editable
+          ? <label className="inline-flex cursor-pointer items-center gap-1 rounded bg-muted px-1.5 py-0.5" title={tx('Offered to the customer, counted only when taken')}>
+              <input type="checkbox" className="h-3 w-3" checked={!!l.isOptional} onChange={(e) => p.onPatch(i, { isOptional: e.target.checked }, true)} />{tx('Optional')}
+            </label>
+          : l.isOptional && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-900 dark:bg-amber-950 dark:text-amber-200">{tx('Optional')}</span>}
         {l.priceSource && l.productId && <span className="rounded bg-muted px-1.5 py-0.5">{SOURCE_LABEL[l.priceSource] ?? l.priceSource}</span>}
         {l.listPrice != null && Number(l.listPrice) !== Number(l.unitPrice) && <span>{tx('List')} {m(Number(l.listPrice))}</span>}
         {l.stock && (l.stock.sufficient
@@ -316,7 +321,7 @@ export function QuoteLinesTable(p: Props) {
                 {show('marginPct') && <td className={cn('py-1.5 pr-3 pt-3', num, marginPct != null && marginPct < 0 && 'text-destructive')}>{marginPct == null ? '—' : `${marginPct.toFixed(1)}%`}</td>}
                 {show('taxExcl') && <td className={cn('py-1.5 pr-3 pt-3', num)}>{m(a.sub)}</td>}
                 {show('taxIncl') && <td className={cn('py-1.5 pr-3 pt-3', num)}>{m(a.total)}</td>}
-                <td className={cn('py-1.5 pr-3 pt-3 font-medium', num)}>{m(p.taxIncluded ? a.total : a.sub)}</td>
+                <td className={cn('py-1.5 pr-3 pt-3 font-medium', num, l.isOptional && 'text-muted-foreground')} title={l.isOptional ? tx('Optional: not in the total') : undefined}>{m(p.taxIncluded ? a.total : a.sub)}{l.isOptional && <span className="block text-[10px] font-normal">{tx('not in total')}</span>}</td>
                 {removeCell(i)}
               </tr>
             );

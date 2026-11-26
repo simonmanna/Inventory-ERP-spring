@@ -98,4 +98,30 @@ public class CrmQuotationService {
     public Map<String, Object> convert(String id, Map<String, Object> in) {
         return sales.convert(id, in);
     }
+
+    /** Email with the compose dialog's {@code to}, {@code cc}, {@code subject} and {@code body}. */
+    public Map<String, Object> email(String id, Map<String, Object> in) {
+        return sales.email(id, in);
+    }
+
+    /** Accept, taking the optional products {@code optionalLineIds}. */
+    public Map<String, Object> accept(String id, List<String> optionalLineIds) {
+        return sales.accept(id, optionalLineIds);
+    }
+
+    public Map<String, Object> decline(String id, String reason, String lostReasonId) {
+        return sales.decline(id, reason, lostReasonId);
+    }
+
+    public Map<String, Object> duplicate(String id) {
+        return sales.duplicate(id);
+    }
+
+    public Map<String, Object> previewPrices(Map<String, Object> in) {
+        return sales.previewPrices(in);
+    }
+
+    public List<Map<String, Object>> revisions(String id) {
+        return sales.revisions(id);
+    }
 }

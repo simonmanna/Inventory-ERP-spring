@@ -910,8 +910,7 @@ public final class CrmSuiteController {
         @PostMapping("/{id}/email")
         @RequirePermissions(Permissions.CRM__QUOTATION_WRITE)
         public Map<String, Object> email(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
-            Object to = body(b).get("to");
-            return svc.email(id, to == null ? null : to.toString());
+            return svc.email(id, body(b));
         }
 
         @PostMapping("/{id}/send")
@@ -922,15 +921,36 @@ public final class CrmSuiteController {
 
         @PostMapping("/{id}/accept")
         @RequirePermissions(Permissions.CRM__QUOTATION_WRITE)
-        public Map<String, Object> accept(@PathVariable String id) {
-            return svc.accept(id);
+        public Map<String, Object> accept(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.accept(id, com.inventoryerp.sales.application.SalesQuotationService.optionalLineIds(b));
+        }
+
+        @PostMapping("/{id}/duplicate")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.CRM__QUOTATION_WRITE)
+        public Map<String, Object> duplicate(@PathVariable String id) {
+            return svc.duplicate(id);
+        }
+
+        @PostMapping("/resolve-prices")
+        @RequirePermissions(Permissions.CRM__QUOTATION_WRITE)
+        public Map<String, Object> resolvePrices(@RequestBody(required = false) Map<String, Object> b) {
+            return svc.previewPrices(body(b));
+        }
+
+        @GetMapping("/{id}/revisions")
+        @RequirePermissions(Permissions.CRM__QUOTATION_READ)
+        public List<Map<String, Object>> revisions(@PathVariable String id) {
+            return svc.revisions(id);
         }
 
         @PostMapping("/{id}/decline")
         @RequirePermissions(Permissions.CRM__QUOTATION_WRITE)
         public Map<String, Object> decline(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            // audit fix 7: the lost reason was dropped on this facade
             Object r = body(b).get("reason");
-            return svc.decline(id, r == null ? null : r.toString());
+            Object lost = body(b).get("lostReasonId");
+            return svc.decline(id, r == null ? null : r.toString(), lost == null ? null : lost.toString());
         }
 
         @PostMapping("/{id}/cancel")

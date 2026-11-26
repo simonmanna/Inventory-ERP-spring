@@ -47,6 +47,8 @@ export const RULES: readonly Rule[] = [
     'files', 'dms', 'hr-documents', 'hr-documents-expiring',
     // personal messages, alerts, payment-provider state, external portal
     'communication', 'alerts', 'mobile-money', 'portal',
+    // quotation email compose: the recipient lookup is read fresh when the dialog opens
+    'quote-email',
   ]],
   ['cache-strict', [
     /report/, /^balance-sheet/, 'pnl', 'trial-balance', 'general-ledger', /^cash-flow(?!-operation-types)/, 'ap-aging', 'ar-aging',
@@ -88,7 +90,7 @@ export const RULES: readonly Rule[] = [
   ]],
   ['cache-permissioned', [
     // people
-    'partners', 'partner', /^crm-/, 'pos-customers', 'customer-deposits', /^procurement-suppliers/, 'supplier-portal',
+    'partners', 'partner', /^crm-/, 'quote-editor', 'pos-customers', 'customer-deposits', /^procurement-suppliers/, 'supplier-portal',
     /^hr/,
     // stock
     /^inventory/, 'stock-adjustments', 'replenishment', 'mfg-availability', 'shipments', 'returns', 'return',

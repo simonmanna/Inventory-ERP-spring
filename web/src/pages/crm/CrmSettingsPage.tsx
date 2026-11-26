@@ -355,6 +355,18 @@ function PolicyTab({ settings, users }: { settings: CrmSettings; users: Array<{ 
         <Field label={tx('Default terms & conditions')}><Textarea rows={3} value={s.defaultQuoteTerms ?? ''} onChange={(e) => set({ defaultQuoteTerms: e.target.value })} /></Field>
       </section>
       <section className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
+        <h3 className="font-semibold">{tx('Quotation follow-up')}</h3>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label={tx('Expiry reminder (days before)')} hint={tx('0 = no reminder')}><Input type="number" min={0} max={90} value={s.quoteExpiryReminderDays ?? 3} onChange={(e) => set({ quoteExpiryReminderDays: Number(e.target.value) })} /></Field>
+          <Field label={tx('When the customer accepts online')}>
+            <OptionalSelect value={s.quoteOnlineAcceptAction ?? 'none'} onChange={(v) => set({ quoteOnlineAcceptAction: (v || 'none') as CrmSettings['quoteOnlineAcceptAction'] })}
+              options={[{ value: 'none', label: tx('Nothing: a salesperson converts it') }, { value: 'sales_order', label: tx('Create the sales order') }, { value: 'proforma', label: tx('Create a proforma invoice (advance payment)') }]} placeholder="" />
+          </Field>
+        </div>
+        <Field label={tx('Email subject')} hint={tx('Placeholders: {number} {customer} {validUntil} {total} {company}')}><Input value={s.quoteEmailSubject ?? ''} placeholder="Quotation {number} from {company}" onChange={(e) => set({ quoteEmailSubject: e.target.value })} /></Field>
+        <Field label={tx('Email message')} hint={tx('Also {link}: the online link, when included')}><Textarea rows={6} value={s.quoteEmailBody ?? ''} onChange={(e) => set({ quoteEmailBody: e.target.value })} /></Field>
+      </section>
+      <section className="space-y-3 rounded-xl border bg-card p-4 shadow-sm">
         <h3 className="font-semibold">{tx('Pipeline')}</h3>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={tx('Rotting after (days without stage change)')}><Input type="number" min={1} value={s.rottingDays} onChange={(e) => set({ rottingDays: Number(e.target.value) })} /></Field>
@@ -379,6 +391,7 @@ function PolicyTab({ settings, users }: { settings: CrmSettings; users: Array<{ 
       <Button disabled={save.isPending} onClick={() => save.mutate({
         quoteMaxDiscountPercent: s.quoteMaxDiscountPercent, quoteApprovalAmount: s.quoteApprovalAmount, quoteValidityDays: s.quoteValidityDays,
         creditCheck: s.creditCheck, autoWinOnConversion: s.autoWinOnConversion, quoteLineImages: !!s.quoteLineImages, defaultQuoteTerms: s.defaultQuoteTerms, rottingDays: s.rottingDays,
+        quoteExpiryReminderDays: s.quoteExpiryReminderDays ?? 3, quoteOnlineAcceptAction: s.quoteOnlineAcceptAction ?? 'none', quoteEmailSubject: s.quoteEmailSubject ?? null, quoteEmailBody: s.quoteEmailBody ?? null,
         assignmentMode: s.assignmentMode, assignmentPool: s.assignmentPool, useLeads: s.useLeads,
       }, { onSuccess: () => toast.success(tx('Settings saved')), onError: onErr(tx('Could not save')) })}>{tx('Save settings')}</Button>
     </div>
