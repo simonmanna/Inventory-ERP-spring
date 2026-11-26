@@ -4,6 +4,8 @@ import type { QuoteLine } from '@/features/crm/suite-api';
 
 export type TaxOption = { id: string; name: string; rate: number | string };
 export const isLayout = (l: QuoteLine) => l.displayType === 'line_section' || l.displayType === 'line_note';
+/** Lines that count in the totals: priced and not an optional product. */
+export const counts = (l: QuoteLine) => !isLayout(l) && !l.isOptional;
 
 /** Untaxed, tax and total of one priced line (server figures when saved, otherwise a client estimate). */
 export function lineAmounts(l: QuoteLine, rate: number, useServer: boolean) {

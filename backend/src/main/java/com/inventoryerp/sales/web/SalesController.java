@@ -10,6 +10,7 @@ import com.inventoryerp.sales.application.SalesFulfilmentService;
 import com.inventoryerp.sales.application.SalesOrderChangeService;
 import com.inventoryerp.sales.application.SalesOrderService;
 import com.inventoryerp.sales.application.SalesQuotationService;
+import com.inventoryerp.sales.application.SalesQuotationTemplateService;
 import com.inventoryerp.sales.application.SalesReportService;
 import com.inventoryerp.sales.application.SalesSettingsService;
 import java.util.HashMap;
@@ -117,10 +118,25 @@ public final class SalesController {
             return svc.send(id);
         }
 
+        /** Body {@code {optionalLineIds?}}: the optional products the customer took. */
         @PostMapping("/{id}/accept")
         @RequirePermissions(Permissions.SALES__QUOTATION_WRITE)
-        public Map<String, Object> accept(@PathVariable String id) {
-            return svc.accept(id);
+        public Map<String, Object> accept(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.accept(id, SalesQuotationService.optionalLineIds(b));
+        }
+
+        @PostMapping("/{id}/duplicate")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.SALES__QUOTATION_WRITE)
+        public Map<String, Object> duplicate(@PathVariable String id) {
+            return svc.duplicate(id);
+        }
+
+        /** Price lines in the editor as saving will price them (header context + variant / unit / quantity). */
+        @PostMapping("/resolve-prices")
+        @RequirePermissions(Permissions.SALES__QUOTATION_WRITE)
+        public Map<String, Object> resolvePrices(@RequestBody(required = false) Map<String, Object> b) {
+            return svc.previewPrices(body(b));
         }
 
         @PostMapping("/{id}/decline")
@@ -149,6 +165,47 @@ public final class SalesController {
             Map<String, Object> in = body(b);
             in.putIfAbsent("target", "sales_order");
             return svc.convert(id, in);
+        }
+    }
+
+    /**
+     * {@code /sales/quotation-templates}: reusable lines, notes and terms for repeat offers (sales or CRM quotation
+     * users).
+     */
+    @RestController
+    @RequestMapping("/sales/quotation-templates")
+    public static class QuotationTemplateController {
+
+        private final SalesQuotationTemplateService svc;
+
+        public QuotationTemplateController(SalesQuotationTemplateService svc) {
+            this.svc = svc;
+        }
+
+        @GetMapping
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_READ, Permissions.CRM__QUOTATION_READ}, anyOf = true)
+        public List<Map<String, Object>> list() {
+            return svc.list();
+        }
+
+        @GetMapping("/{id}")
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_READ, Permissions.CRM__QUOTATION_READ}, anyOf = true)
+        public Map<String, Object> get(@PathVariable String id) {
+            return svc.get(id);
+        }
+
+        /** Body {@code {name, quotationId, description?}}. */
+        @PostMapping
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_WRITE, Permissions.CRM__QUOTATION_WRITE}, anyOf = true)
+        public Map<String, Object> create(@RequestBody(required = false) Map<String, Object> b) {
+            return svc.create(body(b));
+        }
+
+        @DeleteMapping("/{id}")
+        @RequirePermissions(value = {Permissions.SALES__QUOTATION_WRITE, Permissions.CRM__QUOTATION_WRITE}, anyOf = true)
+        public Map<String, Object> delete(@PathVariable String id) {
+            return svc.delete(id);
         }
     }
 

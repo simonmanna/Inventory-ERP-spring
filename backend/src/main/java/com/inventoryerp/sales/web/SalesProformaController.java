@@ -108,7 +108,8 @@ public class SalesProformaController {
     @RequirePermissions(Permissions.SALES__QUOTATION_SEND)
     public Map<String, Object> quotationEmail(@PathVariable String id,
             @RequestBody(required = false) Map<String, Object> b) {
-        return quotations.email(id, SalesController.text(b, "to"));
+        // {to?, cc?: [..], subject?, body?}: the compose dialog's choices (defaults when absent)
+        return quotations.email(id, SalesController.body(b));
     }
 
     @GetMapping("/lost-reasons")

@@ -60,7 +60,8 @@ public class CrmConfigService {
 
     /** Quotation policy keys owned by the sales settings since ADR-S011 (shown and edited here unchanged). */
     static final List<String> QUOTE_KEYS = List.of("quoteMaxDiscountPercent", "quoteApprovalAmount", "creditCheck",
-            "quoteValidityDays", "defaultQuoteTerms", "autoWinOnConversion", "quoteLineImages");
+            "quoteValidityDays", "defaultQuoteTerms", "autoWinOnConversion", "quoteLineImages", "quoteEmailSubject",
+            "quoteEmailBody", "quoteExpiryReminderDays", "quoteOnlineAcceptAction");
 
     // ------------------------------------------------------------------ defaults
 

@@ -28,6 +28,7 @@ public class SalesSettingsService {
             "make_to_order");
     private static final Map<String, Set<String>> CHOICES = Map.ofEntries(
             Map.entry("reservationTrigger", Set.of("none", "confirm")),
+            Map.entry("quoteOnlineAcceptAction", Set.of("none", "sales_order", "proforma")),
             Map.entry("physicalMovement", Set.of("direct", "via_transit")),
             Map.entry("ownershipTransfer", Set.of("at_dispatch", "at_delivery", "at_acceptance")),
             Map.entry("cogsRecognition", Set.of("at_ownership_transfer", "at_revenue_recognition")),
@@ -135,6 +136,24 @@ public class SalesSettingsService {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));
+            }
+        }
+        if (in.containsKey("quoteExpiryReminderDays")) {
+            int v = in.get("quoteExpiryReminderDays") instanceof Number n ? n.intValue() : -1;
+            if (v < 0 || v > 90) {
+                throw ApiException.badRequest("quoteExpiryReminderDays must be between 0 and 90");
+            }
+            sets.add("\"quoteExpiryReminderDays\" = ?");
+            params.add(v);
+        }
+        for (String k : List.of("quoteEmailSubject", "quoteEmailBody")) {
+            if (in.containsKey(k)) {
+                String v = str(in.get(k));
+                if (v != null && v.length() > ("quoteEmailBody".equals(k) ? 20_000 : 300)) {
+                    throw ApiException.badRequest(k + " is too long");
+                }
+                sets.add("\"" + k + "\" = ?");
+                params.add(SalesDb.blank(v) ? null : v);
             }
         }
         for (String k : List.of("proformaBankDetails", "proformaMobileDetails")) {

@@ -97,6 +97,16 @@ public class SalesQuotationService {
     private SalesProformaService proformas;
 
     private SalesProductImages images;
+    private org.springframework.transaction.support.TransactionTemplate tx;
+    private org.springframework.transaction.support.TransactionTemplate readTx;
+
+    /** Email (audit fix 4): the PDF is read in one transaction, mailed outside any, and the quote marked sent after. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTransactions(org.springframework.transaction.PlatformTransactionManager transactions) {
+        this.tx = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        this.readTx = new org.springframework.transaction.support.TransactionTemplate(transactions);
+        this.readTx.setReadOnly(true);
+    }
 
     /** Product images on quotation lines (sales setting {@code quoteLineImages}). */
     @org.springframework.beans.factory.annotation.Autowired
@@ -196,6 +206,13 @@ public class SalesQuotationService {
             where.append(" AND q.\"issueDate\" <= ?");
             params.add(SalesDb.date(p.get("to")));
         }
+        if (!blank(p.get("expiringWithin"))) {
+            // Expiry follow-up: open offers (approved / sent) whose validity ends within N days, today included.
+            int days = Math.max(0, Math.min(365, SalesDb.parseInt(p.get("expiringWithin"), 7)));
+            where.append(" AND q.status IN ('approved', 'sent') AND q.\"validUntil\" >= ? AND q.\"validUntil\" <= ?");
+            params.add(java.sql.Date.valueOf(today()));
+            params.add(java.sql.Date.valueOf(today().plusDays(days)));
+        }
         int page = Math.max(1, SalesDb.parseInt(p.get("page"), 1));
         int pageSize = Math.min(200, Math.max(1, SalesDb.parseInt(p.get("pageSize"), 50)));
         List<Map<String, Object>> rows = db.rows(SELECT + where + " ORDER BY q.\"createdAt\" DESC OFFSET "
@@ -204,6 +221,13 @@ public class SalesQuotationService {
                 + " \"SalesQuotation\" q LEFT JOIN \"Partner\" p ON p.id = q.\"partnerId\" LEFT JOIN \"Deal\" d ON d.id ="
                 + " q.\"dealId\"" + where, params.toArray());
         long total = ((Number) totals.get("count")).longValue();
+        // Audit fix 10: one grand total per currency (the single "total" adds currencies together; kept for old clients).
+        totals.put("byCurrency", db.rows("SELECT q.\"currencyCode\", count(*) AS count, COALESCE(sum(q.total), 0) AS total"
+                + " FROM \"SalesQuotation\" q LEFT JOIN \"Partner\" p ON p.id = q.\"partnerId\" LEFT JOIN \"Deal\" d ON d.id ="
+                + " q.\"dealId\"" + where + " GROUP BY q.\"currencyCode\" ORDER BY q.\"currencyCode\"", params.toArray()));
+        for (Map<String, Object> r : rows) {
+            r.put("validityDaysLeft", daysLeft(r.get("validUntil")));
+        }
         return Obj.of("data", rows, "meta", Obj.of("page", page, "pageSize", pageSize, "total", total, "totalPages",
                 Math.max(1, (long) Math.ceil((double) total / pageSize))), "totals", totals);
     }
@@ -240,6 +264,8 @@ public class SalesQuotationService {
         q.put("lineImages", withImages);
         q.put("credit", credit(str(q.get("partnerId")), BigDecimal.ZERO));
         q.put("canApprove", canApprove());
+        // Audit fix 9 / expiry follow-up: days of validity left on the business calendar (negative = past its date).
+        q.put("validityDaysLeft", daysLeft(q.get("validUntil")));
         return q;
     }
 
@@ -359,6 +385,7 @@ public class SalesQuotationService {
         }
         if (in.containsKey("validUntil")) {
             d.put("validUntil", SalesDb.date(str(in.get("validUntil"))));
+            d.put("expiryRemindedAt", null);
         }
         d.putAll(commercial(in));
         if (d.containsKey("branchId")) {
@@ -428,6 +455,12 @@ public class SalesQuotationService {
             g.requireAllowed(ProductLifecycleGuard.SELL, lines.stream()
                     .map(x -> x.get("productId") instanceof String p && !had.contains(p) ? p : null).toList());
         });
+        // Audit fix 13: a line sent back with its id keeps it (the rows are rewritten under the same ids), so line ids
+        // stay stable across saves; an id that is not a line of this quotation is ignored and the row gets a new one.
+        Set<String> known = new java.util.HashSet<>();
+        db.rows("SELECT id FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ?", id, org())
+                .forEach(r -> known.add(str(r.get("id"))));
+        Set<String> reused = new java.util.HashSet<>();
         db.update("DELETE FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"organizationId\" = ?", id, org());
         List<LineInput> inputs = new ArrayList<>();
         List<Map<String, Object>> meta = new ArrayList<>();
@@ -442,7 +475,8 @@ public class SalesQuotationService {
                 if (blank(str(l.get("description")))) {
                     throw ApiException.badRequest("description should not be empty");
                 }
-                layout.add(Obj.of("displayType", displayType, "description", str(l.get("description"))));
+                layout.add(Obj.of("displayType", displayType, "description", str(l.get("description")), "id",
+                        keepId(l, known, reused)));
                 continue;
             }
             Integer leadTime = l.get("leadTimeDays") == null || blank(str(l.get("leadTimeDays"))) ? null
@@ -496,7 +530,8 @@ public class SalesQuotationService {
                     disc, null, null, null, "manual", blank(taxId) ? null : taxId, null, incl, uomId, null, size));
             meta.add(Obj.of("listPrice", list, "source", source, "ruleId", price == null || !"rule".equals(source)
                     ? null : price.ruleId(), "variantId", variant == null ? null : variant.id(), "uomId", uomId,
-                    "leadTimeDays", leadTime));
+                    "leadTimeDays", leadTime, "isOptional", Boolean.TRUE.equals(l.get("isOptional")), "id",
+                    keepId(l, known, reused)));
             layout.add(inputs.size() - 1);
         }
         if (inputs.isEmpty()) {
@@ -505,9 +540,14 @@ public class SalesQuotationService {
                     + " \"maxDiscountPercent\" = 0, \"updatedAt\" = " + NOW + " WHERE id = ?", id);
             return;
         }
+        // Optional products (shown to the customer, taken only when chosen) are priced like any line but stay out of
+        // the totals; the order discount is sized on the lines that count and applies to a chosen option alike.
         BigDecimal orderNet = BigDecimal.ZERO;
-        for (LineInput li : inputs) {
-            orderNet = orderNet.add(SalesDiscounts.net(li.quantity(), li.unitPrice(), li.discountPercent()));
+        for (int k = 0; k < inputs.size(); k++) {
+            if (!Boolean.TRUE.equals(meta.get(k).get("isOptional"))) {
+                LineInput li = inputs.get(k);
+                orderNet = orderNet.add(SalesDiscounts.net(li.quantity(), li.unitPrice(), li.discountPercent()));
+            }
         }
         BigDecimal orderPercent = SalesDiscounts.orderPercent(header.get("orderDiscountPercent") == null ? null
                 : dec(header.get("orderDiscountPercent")), header.get("orderDiscountAmount") == null ? null
@@ -520,6 +560,13 @@ public class SalesQuotationService {
             }
         }
         Totals totals = builder.prepareLines(inputs);
+        List<LineInput> counted = new ArrayList<>();
+        for (int k = 0; k < inputs.size(); k++) {
+            if (!Boolean.TRUE.equals(meta.get(k).get("isOptional"))) {
+                counted.add(inputs.get(k));
+            }
+        }
+        Totals sums = counted.size() == inputs.size() ? totals : counted.isEmpty() ? null : builder.prepareLines(counted);
         BigDecimal maxDisc = BigDecimal.ZERO;
         List<Map<String, Object>> priced = new ArrayList<>();
         int i = 0;
@@ -538,7 +585,7 @@ public class SalesQuotationService {
                     pl.unitPrice(), "discountPercent", pl.discountPercent(), "priceSource", m.get("source"),
                     "priceRuleId", m.get("ruleId"), "lineDiscountPercent", m.get("lineDiscountPercent"), "taxId", pl.taxId(), "taxInclusive", pl.taxInclusive(),
                     "leadTimeDays", m.get("leadTimeDays"), "lineSubtotal", pl.subtotal(), "lineTax", pl.taxAmount(),
-                    "lineTotal", pl.total()));
+                    "lineTotal", pl.total(), "isOptional", m.get("isOptional"), "id", m.get("id")));
             priced.getLast().putAll(ProductSizingService.Sizing.columns(pl.sizing()));
             // Phase I1b (U-1): keep the resolved factor (the column defaulted to 1 for every line).
             if (pl.uomFactor() != null) {
@@ -548,8 +595,39 @@ public class SalesQuotationService {
         }
         insertLayoutRows(id, layout, priced);
         db.update("UPDATE \"SalesQuotation\" SET subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?, total = ?,"
-                + " \"maxDiscountPercent\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?", totals.subtotal(),
-                totals.discountTotal(), totals.taxAmount(), totals.total(), maxDisc.setScale(4, RoundingMode.HALF_UP), id);
+                + " \"maxDiscountPercent\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?",
+                sums == null ? BigDecimal.ZERO : sums.subtotal(), sums == null ? BigDecimal.ZERO
+                        : sums.discountTotal(), sums == null ? BigDecimal.ZERO : sums.taxAmount(),
+                sums == null ? BigDecimal.ZERO : sums.total(), maxDisc.setScale(4, RoundingMode.HALF_UP), id);
+    }
+
+    /** The line's own id when it is a line of this quotation (once); else null, so the row gets a new id. */
+    private static String keepId(Map<String, Object> line, Set<String> known, Set<String> reused) {
+        String id = str(line.get("id"));
+        return id != null && known.contains(id) && reused.add(id) ? id : null;
+    }
+
+    /**
+     * Header totals again from the stored lines at their stored prices (no re-pricing): after the customer took
+     * optional products, which then count like any line.
+     */
+    private void retotal(String id) {
+        List<LineInput> inputs = new ArrayList<>();
+        for (Map<String, Object> l : db.rows("SELECT * FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
+                + " \"organizationId\" = ? AND \"displayType\" IS NULL AND NOT \"isOptional\" ORDER BY \"sortOrder\"", id,
+                org())) {
+            inputs.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), null, null,
+                    str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
+                    dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
+                    Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
+                    ProductSizingService.Sizing.stored(l)).withUnitSnapshot(str(l.get("uomId")), SalesDb.decOrNull(
+                            l.get("uomFactor"))));
+        }
+        Totals t = inputs.isEmpty() ? null : builder.prepareLines(inputs);
+        db.update("UPDATE \"SalesQuotation\" SET subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?, total = ?,"
+                + " \"updatedAt\" = " + NOW + " WHERE id = ?", t == null ? BigDecimal.ZERO : t.subtotal(), t == null
+                        ? BigDecimal.ZERO : t.discountTotal(), t == null ? BigDecimal.ZERO : t.taxAmount(), t == null
+                                ? BigDecimal.ZERO : t.total(), id);
     }
 
     /** Writes the priced lines and the section / note rows in display order; layout rows carry no amounts. */
@@ -563,9 +641,13 @@ public class SalesQuotationService {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> l = (Map<String, Object>) entry;
                 row = Obj.of("quotationId", id, "displayType", l.get("displayType"), "description", l.get("description"),
-                        "quantity", BigDecimal.ONE, "unitPrice", BigDecimal.ZERO, "priceSource", "manual");
+                        "quantity", BigDecimal.ONE, "unitPrice", BigDecimal.ZERO, "priceSource", "manual", "id",
+                        l.get("id"));
             }
             row.put("sortOrder", sort++);
+            if (row.get("id") == null) {
+                row.remove("id"); // insert() assigns a new id
+            }
             db.insert("SalesQuotationLine", row);
         }
     }
@@ -585,9 +667,13 @@ public class SalesQuotationService {
         if (declined(q)) {
             throw ApiException.badRequest(DECLINED_LOCKED);
         }
-        if (db.count("SELECT count(*) FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL",
-                List.of(id)) == 0) {
+        if (db.count("SELECT count(*) FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL"
+                + " AND NOT \"isOptional\"", List.of(id)) == 0) {
             throw ApiException.badRequest("Add at least one line before submitting");
+        }
+        // Audit fix 8: drafts no longer expire; one past its date cannot go out until it gets a new one.
+        if (expired(q)) {
+            throw ApiException.badRequest("The expiration date has passed; set a new one before submitting");
         }
         List<String> reasons = approvalReasons(q);
         if (reasons.isEmpty()) {
@@ -620,7 +706,10 @@ public class SalesQuotationService {
                     + "% exceeds the " + limit.stripTrailingZeros().toPlainString() + "% limit");
         }
         BigDecimal amount = dec(s.get("quoteApprovalAmount"));
-        BigDecimal total = dec(q.get("total"));
+        // The customer may still take the optional products: amount and credit are checked at the largest total.
+        BigDecimal total = dec(q.get("total")).add(dec(db.row("SELECT COALESCE(sum(\"lineTotal\"), 0) AS t FROM"
+                + " \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL AND \"isOptional\"",
+                str(q.get("id"))).get("t")));
         if (amount.signum() > 0 && total.compareTo(amount) > 0) {
             reasons.add("Total exceeds the approval amount of " + amount.stripTrailingZeros().toPlainString());
         }
@@ -644,6 +733,8 @@ public class SalesQuotationService {
         String partnerId = str(q.get("partnerId"));
         LocalDate on = (LocalDate) q.get("issueDate");
         BigDecimal max = BigDecimal.ZERO;
+        // Lines repeating a product / variant / unit / quantity are authorized once (one engine call per distinct line).
+        Map<List<String>, BigDecimal> resolved = new HashMap<>();
         for (Map<String, Object> l : db.rows("SELECT \"productId\", \"variantId\", \"uomId\", quantity, \"unitPrice\","
                 + " \"discountPercent\", \"listPrice\" FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
                 + " \"displayType\" IS NULL", str(q.get("id")))) {
@@ -653,10 +744,12 @@ public class SalesQuotationService {
             // re-priced as it was priced (its unit, the quotation's site, branch, currency and agreement), so a rule
             // or agreement price is not mistaken for a discount, nor a unit's price for one.
             BigDecimal authorized = l.get("productId") == null ? dec(l.get("unitPrice"))
-                    : engine.resolve(new SalesPricingEngine.Context(partnerId, str(l.get("productId")),
-                            dec(l.get("quantity")), str(l.get("uomId")), str(q.get("siteId")), str(q.get("branchId")),
-                            str(q.get("currencyCode")), on, str(q.get("agreementId")), str(l.get("variantId")))).price()
-                            .net();
+                    : resolved.computeIfAbsent(java.util.Arrays.asList(str(l.get("productId")), str(l.get("variantId")),
+                            str(l.get("uomId")), dec(l.get("quantity")).stripTrailingZeros().toPlainString()),
+                            k -> engine.resolve(new SalesPricingEngine.Context(partnerId, str(l.get("productId")),
+                                    dec(l.get("quantity")), str(l.get("uomId")), str(q.get("siteId")),
+                                    str(q.get("branchId")), str(q.get("currencyCode")), on, str(q.get("agreementId")),
+                                    str(l.get("variantId")))).price().net());
             if (authorized.signum() > 0 && net.compareTo(authorized) < 0) {
                 max = max.max(BigDecimal.ONE.subtract(net.divide(authorized, 10, RoundingMode.HALF_UP)).multiply(HUNDRED));
             }
@@ -734,20 +827,44 @@ public class SalesQuotationService {
 
     // ------------------------------------------------------------------ customer lifecycle
 
-    /** Mark sent to the customer (approved quotes only); moves an opportunity in an early stage to proposal. */
+    /**
+     * Mark sent to the customer (approved quotes only) and record it on the CRM timeline of the opportunity /
+     * customer (audit fix 12: "Mark as sent" left no trace there; the opportunity stage is not changed).
+     */
     @Transactional
     public Map<String, Object> send(String id) {
+        Map<String, Object> q = markSent(id);
+        QuotationOpportunityPort port = opportunities.getIfAvailable();
+        if (port != null) {
+            port.quotationSent(str(q.get("dealId")), str(q.get("partnerId")), str(q.get("number")));
+        }
+        return get(id);
+    }
+
+    private Map<String, Object> markSent(String id) {
         Map<String, Object> q = lock(id);
         if (!Set.of("approved", "sent").contains(q.get("status"))) {
             throw ApiException.badRequest("Only approved quotations can be sent");
         }
+        if (expired(q)) {
+            throw ApiException.badRequest("Quotation has expired; revise it first");
+        }
         db.patch("SalesQuotation", id, Obj.of("status", "sent", "sentAt", java.time.Instant.now()), true);
         audit.record(AuditInput.of("SalesQuotation", id, "issue", null, Obj.of("status", "sent")));
-        return get(id);
+        return q;
     }
 
     @Transactional
     public Map<String, Object> accept(String id) {
+        return accept(id, null);
+    }
+
+    /**
+     * Customer acceptance. {@code optionalLineIds}: the optional products the customer took; they become ordinary
+     * lines and the totals include them (unknown ids or lines that are not optional are refused).
+     */
+    @Transactional
+    public Map<String, Object> accept(String id, List<String> optionalLineIds) {
         Map<String, Object> q = lock(id);
         if (!Set.of("approved", "sent").contains(q.get("status"))) {
             throw ApiException.badRequest("Only approved or sent quotations can be accepted");
@@ -755,8 +872,22 @@ public class SalesQuotationService {
         if (expired(q)) {
             throw ApiException.badRequest("Quotation has expired; revise it first");
         }
+        List<String> chosen = optionalLineIds == null ? List.of() : optionalLineIds.stream().filter(x -> !blank(x))
+                .distinct().toList();
+        if (!chosen.isEmpty()) {
+            List<Object> params = new ArrayList<>(List.of(id, org()));
+            params.addAll(chosen);
+            int n = db.update("UPDATE \"SalesQuotationLine\" SET \"isOptional\" = false WHERE \"quotationId\" = ? AND"
+                    + " \"organizationId\" = ? AND \"isOptional\" AND \"displayType\" IS NULL AND id IN ("
+                    + SalesDb.marks(chosen.size()) + ")", params.toArray());
+            if (n != chosen.size()) {
+                throw ApiException.badRequest("optionalLineIds must be optional lines of this quotation");
+            }
+            retotal(id);
+        }
         db.patch("SalesQuotation", id, Obj.of("status", "accepted", "acceptedAt", java.time.Instant.now()), true);
-        audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("status", "accepted")));
+        audit.record(AuditInput.of("SalesQuotation", id, "update", null, chosen.isEmpty() ? Obj.of("status", "accepted")
+                : Obj.of("status", "accepted", "optionalLineIds", chosen)));
         return get(id);
     }
 
@@ -811,7 +942,8 @@ public class SalesQuotationService {
         Map<String, Object> s = config.settings();
         db.patch("SalesQuotation", id, Obj.of("status", "draft", "revision", ((Number) q.get("revision")).intValue() + 1,
                 "approvalReasons", List.of(), "approvalRequestId", null, "approvedById", null, "approvedAt", null,
-                "rejectionReason", null, "declinedAt", null, "sentAt", null, "acceptedAt", null, "validUntil", today().plusDays(
+                "rejectionReason", null, "declinedAt", null, "sentAt", null, "acceptedAt", null, "expiryRemindedAt", null,
+                "validUntil", today().plusDays(
                         ((Number) s.get("quoteValidityDays")).longValue())), true);
         audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("revision", "new")));
         return get(id);
@@ -881,9 +1013,10 @@ public class SalesQuotationService {
         if (expired(q)) {
             throw ApiException.badRequest("Quotation has expired; revise it first");
         }
+        // Optional products the customer did not take never reach the order or proforma.
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.\"trackInventory\" FROM \"SalesQuotationLine\" l LEFT"
                 + " JOIN \"Product\" pr ON pr.id = l.\"productId\" WHERE l.\"quotationId\" = ? AND l.\"displayType\" IS NULL"
-                + " ORDER BY l.\"sortOrder\"", id);
+                + " AND NOT l.\"isOptional\" ORDER BY l.\"sortOrder\"", id);
         if ("order".equals(target)) {
             List<String> shortages = shortages(lines);
             if (!shortages.isEmpty() && !Boolean.TRUE.equals(in.get("allowBackorder"))) {
@@ -918,7 +1051,21 @@ public class SalesQuotationService {
             Map<String, Object> dto = new LinkedHashMap<>();
             dto.put("partnerId", q.get("partnerId"));
             dto.put("orderType", "delivery");
-            dto.put("notes", "From quotation " + q.get("number") + (q.get("notes") == null ? "" : " — " + q.get("notes")));
+            // Audit fix 3: the branch and payment terms carry over; Orders has no delivery fields, so the address and
+            // promised date go into the notes the order prints.
+            dto.put("branchId", q.get("branchId"));
+            dto.put("paymentTermId", q.get("paymentTermId"));
+            StringBuilder notes = new StringBuilder("From quotation " + q.get("number"));
+            if (q.get("notes") != null) {
+                notes.append(" — ").append(q.get("notes"));
+            }
+            if (q.get("deliveryAddress") != null) {
+                notes.append("\nDeliver to: ").append(q.get("deliveryAddress"));
+            }
+            if (q.get("commitmentDate") != null) {
+                notes.append("\nDelivery date: ").append(q.get("commitmentDate"));
+            }
+            dto.put("notes", notes.toString());
             dto.put("lines", orderLines);
             Map<String, Object> order = orders.createOrder(dto);
             convertedId = str(order.get("id"));
@@ -934,10 +1081,16 @@ public class SalesQuotationService {
                         Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
                         ProductSizingService.Sizing.stored(l)));
             }
+            // Audit fix 3: payment terms, delivery date / address, currency and rate carry over (as from a sales order).
+            Map<String, Object> cur = db.row("SELECT id FROM \"Currency\" WHERE code = ?", q.get("currencyCode"));
+            BigDecimal rate = dec(q.get("exchangeRate"));
             HeaderInput h = new HeaderInput(str(q.get("partnerId")), today().toString(), q.get("validUntil") == null
-                    ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),
-                    null, null, null, null, null, str(q.get("number")), null, null, str(q.get("number")),
-                    str(q.get("notes")), null, "crm_quotation", str(q.get("branchId")));
+                    ? null : q.get("validUntil").toString(), str(q.get("paymentTermId")), null, null, null, null, null,
+                    null, str(q.get("ownerId")), null, q.get("commitmentDate") == null ? null
+                            : q.get("commitmentDate").toString(), str(q.get("deliveryAddress")), null, null,
+                    str(q.get("number")), cur == null ? null : str(cur.get("id")), rate.signum() > 0 ? rate
+                            : BigDecimal.ONE, str(q.get("number")), str(q.get("notes")), null, "crm_quotation",
+                    str(q.get("branchId")));
             Map<String, Object> doc = builder.createDocument("proforma_invoice", h, inputs);
             convertedId = str(doc.get("id"));
             proformas.applyTerms(convertedId, in, null);
@@ -992,8 +1145,9 @@ public class SalesQuotationService {
      */
     @Transactional
     public int expireAndNotify() {
+        // Audit fix 8: only offers made to the customer expire; a draft past its date is refused on submit instead.
         List<Map<String, Object>> expired = db.rows("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW
-                + " WHERE \"organizationId\" = ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < ?"
+                + " WHERE \"organizationId\" = ? AND status IN ('approved', 'sent') AND \"validUntil\" < ?"
                 + " AND \"deletedAt\" IS NULL RETURNING id, number, \"ownerId\", \"createdById\"", org(),
                 java.sql.Date.valueOf(today()));
         for (Map<String, Object> e : expired) {
@@ -1002,6 +1156,30 @@ public class SalesQuotationService {
                             "sales_quotation", "entityId", e.get("id")));
         }
         return expired.size();
+    }
+
+    /**
+     * Expiry follow-up: tell the owner once when an open offer (approved / sent) is within the sales setting
+     * {@code quoteExpiryReminderDays} of its expiration date (0 = off). A new validity date re-arms the reminder.
+     */
+    @Transactional
+    public int remindExpiring() {
+        int days = ((Number) config.settings().getOrDefault("quoteExpiryReminderDays", 0)).intValue();
+        if (days <= 0) {
+            return 0;
+        }
+        List<Map<String, Object>> due = db.rows("UPDATE \"SalesQuotation\" SET \"expiryRemindedAt\" = " + NOW
+                + " WHERE \"organizationId\" = ? AND status IN ('approved', 'sent') AND \"deletedAt\" IS NULL AND"
+                + " \"expiryRemindedAt\" IS NULL AND \"validUntil\" >= ? AND \"validUntil\" <= ? RETURNING id, number,"
+                + " \"validUntil\", \"ownerId\", \"createdById\"", org(), java.sql.Date.valueOf(today()),
+                java.sql.Date.valueOf(today().plusDays(days)));
+        for (Map<String, Object> e : due) {
+            alerts.send(str(e.get("ownerId") != null ? e.get("ownerId") : e.get("createdById")),
+                    "sales_quotation_expiring", "Quotation " + e.get("number") + " expires on " + e.get("validUntil"),
+                    "Follow up with the customer, or revise it to extend the offer.", Obj.of("entityType",
+                            "sales_quotation", "entityId", e.get("id")));
+        }
+        return due.size();
     }
 
     /** Customer-facing PDF; internal notes never appear. Product images follow the sales setting. */
@@ -1054,13 +1232,19 @@ public class SalesQuotationService {
     /** The customer PDF of quotation row {@code q} in {@code layout}. */
     private byte[] render(Map<String, Object> q, QuoteLayout layout, Boolean withImages) {
         boolean showImages = config.quoteLineImages() && !Boolean.FALSE.equals(withImages);
-        List<Map<String, Object>> lines = db.rows("SELECT l.\"displayType\", l.description, l.quantity, l.\"unitPrice\","
+        List<Map<String, Object>> lines = db.rows("SELECT l.\"displayType\", l.\"isOptional\" AS optional, l.description,"
+                + " l.quantity, l.\"unitPrice\","
                 + " l.\"discountPercent\", l.\"lineTotal\" AS total, l.pieces, l.length, l.width, l.height,"
                 + " p.\"sizingUnit\", p.image, COALESCE(NULLIF(u.symbol, ''), u.code) AS unit, t.name AS tax FROM"
                 + " \"SalesQuotationLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\" LEFT JOIN \"UnitOfMeasure\" u"
                 + " ON u.id = l.\"uomId\" LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\" WHERE l.\"quotationId\" = ? AND"
-                + " l.\"organizationId\" = ? AND NOT COALESCE(l.\"isOptional\", false) ORDER BY l.\"sortOrder\"",
-                str(q.get("id")), org());
+                + " l.\"organizationId\" = ? ORDER BY l.\"sortOrder\"", str(q.get("id")), org());
+        // Optional products print, marked as such; the totals below never include them.
+        for (Map<String, Object> l : lines) {
+            if (Boolean.TRUE.equals(l.remove("optional"))) {
+                l.put("description", "Optional: " + l.get("description"));
+            }
+        }
         if (showImages) {
             Map<String, byte[]> loaded = new HashMap<>();
             for (Map<String, Object> l : lines) {
@@ -1086,26 +1270,191 @@ public class SalesQuotationService {
     }
 
     /** Email the PDF to the customer; an approved quotation becomes sent. */
-    @Transactional
     public Map<String, Object> email(String id, String to) {
+        return email(id, Obj.of("to", to));
+    }
+
+    /**
+     * Email the PDF to the customer ({@code to}, optional {@code cc} list, {@code subject}, {@code body}; defaults: the
+     * quotation contact's or customer's email and a standard text); an approved quotation becomes sent and the CRM
+     * timeline records it. Audit fix 4: the PDF is rendered in a read transaction, the mail goes out with no
+     * transaction open, and only then is the quote marked sent (a failure after the mail never leaves a customer
+     * holding an email for a rollback; a failed mail changes nothing).
+     */
+    public Map<String, Object> email(String id, Map<String, Object> in) {
+        record Outgoing(Map<String, Object> q, String to, List<String> cc, String subject, String body, byte[] pdf) {}
+        Outgoing out = readTx.execute(status -> {
+            Map<String, Object> q = require(id);
+            if (!Set.of("approved", "sent").contains(q.get("status"))) {
+                throw ApiException.badRequest("Only approved quotations can be sent");
+            }
+            if (expired(q)) {
+                throw ApiException.badRequest("Quotation has expired; revise it first");
+            }
+            String address = str(in.get("to"));
+            if (blank(address) && q.get("contactId") != null) {
+                Map<String, Object> c = db.row("SELECT email FROM \"Contact\" WHERE id = ? AND \"organizationId\" = ?",
+                        q.get("contactId"), org());
+                address = c == null ? null : str(c.get("email"));
+            }
+            if (blank(address)) {
+                Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ?", q.get("partnerId"));
+                address = p == null ? null : str(p.get("email"));
+            }
+            if (blank(address)) {
+                throw ApiException.badRequest("Customer has no email on file. Add one in Partners or pass \"to\".");
+            }
+            List<String> cc = SalesDb.strings(in.get("cc")).stream().map(String::trim).filter(x -> !x.isEmpty())
+                    .distinct().toList();
+            for (String a : java.util.stream.Stream.concat(java.util.stream.Stream.of(address.trim()), cc.stream())
+                    .toList()) {
+                if (!a.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+")) {
+                    throw ApiException.badRequest("Not an email address: " + a);
+                }
+            }
+            if (cc.size() > 10) {
+                throw ApiException.badRequest("At most 10 cc addresses");
+            }
+            String subject = blank(str(in.get("subject"))) ? "Quotation " + q.get("number") : str(in.get("subject"));
+            String body = blank(str(in.get("body"))) ? "Please find attached quotation " + q.get("number")
+                    + ", valid until " + q.get("validUntil") + "." : str(in.get("body"));
+            if (subject.length() > 300 || body.length() > 20_000) {
+                throw ApiException.badRequest("The subject or message is too long");
+            }
+            return new Outgoing(q, address.trim(), cc, subject, body, render(q, config.quoteLayout(), null));
+        });
+        boolean sent = mail.sendExternalEmail(out.to(), out.cc(), out.subject(), out.body(),
+                new com.inventoryerp.kernel.notifications.NotificationsService.Attachment(out.q().get("number") + ".pdf",
+                        "application/pdf", out.pdf()));
+        tx.executeWithoutResult(status -> {
+            markSent(id);
+            QuotationOpportunityPort port = opportunities.getIfAvailable();
+            if (port != null) {
+                port.quotationEmailed(str(out.q().get("dealId")), str(out.q().get("partnerId")), str(out.q().get("number")),
+                        out.to(), sent);
+            }
+        });
+        return Obj.of("ok", true, "sentTo", out.to(), "cc", out.cc(), "delivered", sent);
+    }
+
+    // ------------------------------------------------------------------ pricing preview, duplicate
+
+    /**
+     * Audit fix 5: price lines while the quotation is edited exactly as saving will price them: the customer, the
+     * quotation date (business calendar when absent), branch, site, currency and agreement of the header, and each
+     * line's variant, unit and quantity. Answers {@code {lines: [{listPrice, unitPrice, discountPercent, source,
+     * taxId, taxInclusive, description}]}} in input order.
+     */
+    @Transactional(readOnly = true)
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> previewPrices(Map<String, Object> in) {
+        String partnerId = blank(str(in.get("partnerId"))) ? null : str(in.get("partnerId"));
+        LocalDate on = blank(str(in.get("issueDate"))) ? today() : SalesDb.date(str(in.get("issueDate")));
+        String currency = blank(str(in.get("currencyCode"))) ? orgCurrency() : str(in.get("currencyCode"));
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<?> lines = in.get("lines") instanceof List<?> l ? l : List.of();
+        if (lines.size() > 500) {
+            throw ApiException.badRequest("At most 500 lines");
+        }
+        for (Object o : lines) {
+            Map<String, Object> l = o instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+            String productId = str(l.get("productId"));
+            if (blank(productId)) {
+                throw ApiException.badRequest("productId should not be empty");
+            }
+            BigDecimal qty = l.get("quantity") == null ? BigDecimal.ONE : dec(l.get("quantity"));
+            QuotationPricingPort.Price price = engine.resolve(new SalesPricingEngine.Context(partnerId, productId,
+                    qty.signum() > 0 ? qty : BigDecimal.ONE, blank(str(l.get("uomId"))) ? null : str(l.get("uomId")),
+                    blank(str(in.get("siteId"))) ? null : str(in.get("siteId")), blank(str(in.get("branchId"))) ? null
+                            : str(in.get("branchId")), currency, on, blank(str(in.get("agreementId"))) ? null
+                                    : str(in.get("agreementId")), blank(str(l.get("variantId"))) ? null
+                                            : str(l.get("variantId")))).price();
+            out.add(Obj.of("productId", productId, "listPrice", JsNumbers.js(price.listPrice()), "unitPrice",
+                    JsNumbers.js(price.unitPrice()), "discountPercent", JsNumbers.js(price.discountPercent()), "source",
+                    price.source(), "taxId", price.taxId(), "taxInclusive", price.taxInclusive(), "description",
+                    price.description()));
+        }
+        return Obj.of("partnerId", partnerId, "lines", out);
+    }
+
+    /**
+     * A new draft with this quotation's customer, terms and lines (enhancement: repeat offers). Prices follow today's
+     * rules except manual ones, which are kept; the date and validity start again; nothing of the source's approval,
+     * sending or answers is copied.
+     */
+    @Transactional
+    public Map<String, Object> duplicate(String id) {
         Map<String, Object> q = require(id);
-        if (!Set.of("approved", "sent").contains(q.get("status"))) {
-            throw ApiException.badRequest("Only approved quotations can be sent");
+        Map<String, Object> in = new LinkedHashMap<>();
+        for (String k : List.of("partnerId", "contactId", "notes", "terms", "internalNotes", "branchId", "paymentTermId",
+                "siteId", "deliveryAddress", "agreementId", "currencyCode", "exchangeRate", "orderDiscountPercent",
+                "orderDiscountAmount")) {
+            if (q.get(k) != null) {
+                in.put(k, q.get(k) instanceof BigDecimal b ? b : q.get(k).toString());
+            }
         }
-        Map<String, Object> p = db.row("SELECT email FROM \"Partner\" WHERE id = ?", q.get("partnerId"));
-        String address = !blank(to) ? to.trim() : p == null ? null : str(p.get("email"));
-        if (blank(address)) {
-            throw ApiException.badRequest("Customer has no email on file. Add one in Partners or pass \"to\".");
+        if (q.get("dealId") != null && opportunities.getIfAvailable() != null) {
+            try {
+                opportunity(str(q.get("dealId")));
+                in.put("dealId", q.get("dealId"));
+            } catch (ApiException e) {
+                // the opportunity is closed to this user (or gone): the copy simply has none
+            }
         }
-        boolean sent = mail.sendExternalEmail(address, "Quotation " + q.get("number"), "Please find attached quotation "
-                + q.get("number") + ", valid until " + q.get("validUntil") + ".", new com.inventoryerp.kernel.notifications
-                        .NotificationsService.Attachment(q.get("number") + ".pdf", "application/pdf", pdf(id)));
-        send(id);
-        QuotationOpportunityPort port = opportunities.getIfAvailable();
-        if (port != null) {
-            port.quotationEmailed(str(q.get("dealId")), str(q.get("partnerId")), str(q.get("number")), address, sent);
+        in.put("lines", linesAsInput(id));
+        Map<String, Object> copy = create(in);
+        audit.record(AuditInput.of("SalesQuotation", str(copy.get("id")), "update", null, Obj.of("duplicateOf",
+                q.get("number"))));
+        return copy;
+    }
+
+    /**
+     * The quotation's lines as an editor would send them (no ids): manual prices kept, rule / list prices left for
+     * re-pricing, sizes, options, sections and notes as they are. Also the content of a quotation template.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> linesAsInput(String id) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> l : db.rows("SELECT * FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND"
+                + " \"organizationId\" = ? ORDER BY \"sortOrder\"", id, org())) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            if (l.get("displayType") != null) {
+                m.put("displayType", l.get("displayType"));
+                m.put("description", l.get("description"));
+                out.add(m);
+                continue;
+            }
+            for (String k : List.of("productId", "variantId", "uomId", "description", "taxId", "taxInclusive",
+                    "leadTimeDays", "isOptional", "pieces", "length", "width", "height")) {
+                if (l.get(k) != null) {
+                    m.put(k, l.get(k) instanceof BigDecimal b ? JsNumbers.js(b) : l.get(k));
+                }
+            }
+            m.put("quantity", JsNumbers.js(dec(l.get("quantity"))));
+            if (l.get("productId") == null || "manual".equals(l.get("priceSource"))) {
+                m.put("unitPrice", JsNumbers.js(dec(l.get("unitPrice"))));
+                m.put("discountPercent", JsNumbers.js(l.get("lineDiscountPercent") != null
+                        ? dec(l.get("lineDiscountPercent")) : dec(l.get("discountPercent"))));
+            }
+            out.add(m);
         }
-        return Obj.of("ok", true, "sentTo", address, "delivered", sent);
+        return out;
+    }
+
+    /** {@code optionalLineIds} of an accept body (absent = none). */
+    public static List<String> optionalLineIds(Map<String, Object> b) {
+        Object v = b == null ? null : b.get("optionalLineIds");
+        if (v != null && !(v instanceof List<?>)) {
+            throw ApiException.badRequest("optionalLineIds must be an array");
+        }
+        return v == null ? List.of() : ((List<?>) v).stream().map(String::valueOf).toList();
+    }
+
+    /** Days of validity left on the business calendar ({@code validUntil} − today; null without a date). */
+    static Integer daysLeft(Object validUntil) {
+        LocalDate v = validUntil instanceof LocalDate d ? d : validUntil == null ? null
+                : LocalDate.parse(validUntil.toString().substring(0, 10));
+        return v == null ? null : (int) java.time.temporal.ChronoUnit.DAYS.between(today(), v);
     }
 
     private void visibility(StringBuilder where, List<Object> params) {

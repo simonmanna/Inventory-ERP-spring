@@ -8,7 +8,7 @@ import { defaultUnitId, unitPrice as priceForUnit, withVariantPrices } from '@/f
 import { cachedVariantOption } from '@/features/products/variants-api';
 import { toast } from 'sonner';
 import { QuoteShareDialog } from './quote-share';
-import { AlertTriangle, CheckCircle2, ChevronDown, Handshake, History, Link2, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, Clock, Copy, FileStack, Handshake, History, Link2, Mail, PackageCheck, Printer, Send, ShoppingCart, ThumbsDown, Trash2, UserPlus, XCircle } from 'lucide-react';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -33,7 +33,8 @@ import { PartnerPicker } from './crm-dialogs';
 import { InlineField, SmartButton, StatusRibbon } from '@/pages/sales/sales-ui';
 import { QuoteLinesTable, type QuoteLine } from './QuoteLinesTable';
 import { EMPTY_SIZE, sizeOf, sizePayload } from '@/features/products/sizing';
-import { isLayout, lineAmounts, useQuoteImageColumn } from './quote-lines';
+import { counts, isLayout, lineAmounts, useQuoteImageColumn } from './quote-lines';
+import { QuoteAcceptDialog, QuoteEmailDialog, QuoteRevisionsDialog, SaveTemplateDialog } from './quote-dialogs';
 
 const blankLine = (taxInclusive?: boolean): QuoteLine => ({ productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null, size: EMPTY_SIZE, ...(taxInclusive !== undefined ? { taxInclusive } : {}) });
 const layoutLine = (displayType: 'line_section' | 'line_note'): QuoteLine => ({ displayType, productId: null, description: '', quantity: 1, unitPrice: 0, discountPercent: 0, taxId: null });
@@ -52,11 +53,22 @@ export function QuotationEditorPage() {
   const taxes = useTaxOptions();
   const canWrite = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationWrite) || s.hasPermission(PERMISSIONS.sales.quotationWrite));
   const canConvert = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.quotationConvert) || s.hasPermission(PERMISSIONS.sales.quotationConvert));
-  const canPrice = useAuthStore((s) => s.hasPermission(PERMISSIONS.crm.pricingRead));
   const canCreateCustomer = useAuthStore((s) => s.hasPermission(PERMISSIONS.partners.create));
   // PDF / print / email follow the same API family as the rest of the editor (quoteBase): /sales or /crm.
   const docBase = quoteBase();
+  // Audit fix 11: Mark as sent, Email and the online link all need the send right of the API family in use.
   const canEmail = useAuthStore((s) => (docBase.startsWith('/sales') ? s.hasPermission(PERMISSIONS.sales.quotationSend) : s.hasPermission(PERMISSIONS.crm.quotationWrite)));
+  const canAgreements = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.agreementRead));
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [acceptOpen, setAcceptOpen] = useState(false);
+  const [revisionsOpen, setRevisionsOpen] = useState(false);
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [contactId, setContactId] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [agreementId, setAgreementId] = useState('');
+  const [currencyCode, setCurrencyCode] = useState('');
+  const [exchangeRate, setExchangeRate] = useState(1);
+  const [orderDisc, setOrderDisc] = useState<{ kind: 'percent' | 'amount'; value: number }>({ kind: 'percent', value: 0 });
   const [newCustomerOpen, setNewCustomerOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const orgCurrency = useAuthStore((s) => s.organization?.currencyCode ?? 'IDR');
@@ -85,6 +97,25 @@ export function QuotationEditorPage() {
   const [backorder, setBackorder] = useState(false);
   const [shortages, setShortages] = useState<string[] | null>(null);
   const [tab, setTab] = useState('lines');
+  // Header pick lists of the chosen customer; a list the user cannot read stays empty (and its field hidden).
+  const contactsQ = useQuery({
+    queryKey: ['quote-editor', 'contacts', partnerId],
+    queryFn: async () => { try { return ((await api.get<{ contacts?: Array<{ id: string; firstName: string; lastName: string | null; email: string | null; isActive?: boolean }> }>(`/partners/${partnerId}`)).data.contacts ?? []).filter((c) => c.isActive !== false); } catch { return []; } },
+    enabled: !!partnerId, staleTime: 60_000, retry: false,
+  });
+  const sitesQ = useQuery({
+    queryKey: ['quote-editor', 'sites', partnerId],
+    queryFn: async () => { try { const d = (await api.get('/fleet/customer-sites', { params: { partnerId, pageSize: 200 } })).data; return ((Array.isArray(d) ? d : d.data) ?? []) as Array<{ id: string; name: string }>; } catch { return []; } },
+    enabled: !!partnerId, staleTime: 60_000, retry: false,
+  });
+  const agreementsQ = useQuery({
+    queryKey: ['sales', 'agreements', 'active', partnerId],
+    queryFn: async () => { try { return (await api.get<Array<{ id: string; number: string; name: string }>>('/sales/agreements', { params: { partnerId, status: 'active' } })).data; } catch { return []; } },
+    enabled: !!partnerId && canAgreements, staleTime: 60_000, retry: false,
+  });
+  const contacts = contactsQ.data ?? [];
+  const sites = sitesQ.data ?? [];
+  const agreements = agreementsQ.data ?? [];
   const imageColumn = useQuoteImageColumn();
   /** The organization shows product images on quotations; each user still shows or hides the column. */
   const imagesOn = Boolean(lk?.settings.quoteLineImages ?? q?.lineImages);
@@ -97,6 +128,9 @@ export function QuotationEditorPage() {
       setValidUntil(q.validUntil?.slice(0, 10) ?? ''); setOwnerId(q.ownerId ?? ''); setNotes(q.notes ?? ''); setTerms(q.terms ?? '');
       setInternalNotes(q.internalNotes ?? ''); setHeader({ branchId: q.branchId ?? '', paymentTermId: q.paymentTermId ?? '', deliveryAddress: q.deliveryAddress ?? '', commitmentDate: q.commitmentDate?.slice(0, 10) ?? '' });
       setLines(q.lines?.length ? q.lines.map((l) => ({ ...l, displayType: l.displayType ?? null, size: sizeOf(l as Parameters<typeof sizeOf>[0]) })) : []); setDirty(false); setTaxMode(null);
+      setContactId(q.contactId ?? ''); setSiteId(q.siteId ?? ''); setAgreementId(q.agreementId ?? ''); setCurrencyCode(q.currencyCode ?? '');
+      setExchangeRate(Number(q.exchangeRate ?? 1) || 1);
+      setOrderDisc(Number(q.orderDiscountAmount ?? 0) > 0 ? { kind: 'amount', value: Number(q.orderDiscountAmount) } : { kind: 'percent', value: Number(q.orderDiscountPercent ?? 0) });
     }
   }, [q]);
   useEffect(() => {
@@ -112,6 +146,26 @@ export function QuotationEditorPage() {
       description: l.description, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), discountPercent: Number(l.discountPercent), taxId: l.taxId ?? null })));
   }, [isNew, deal]);
   useEffect(() => { if (isNew && lk?.settings.defaultQuoteTerms) setTerms((t) => t || lk.settings.defaultQuoteTerms || ''); }, [isNew, lk]);
+  // A new quotation from a template starts from its lines, notes and terms (prices follow the rules once a customer is set).
+  const templateId = isNew ? params.get('templateId') : null;
+  const template = useQuery({ queryKey: ['crm-suite', 'quote-template', templateId], queryFn: () => crmApi.quoteTemplate(templateId!), enabled: !!templateId, retry: false });
+  const fromTemplate = useRef(false);
+  useEffect(() => {
+    if (!template.data || fromTemplate.current) return;
+    fromTemplate.current = true;
+    const t = template.data;
+    setLines((t.lines ?? []).map((raw) => {
+      const l = raw as Partial<QuoteLine> & { displayType?: string | null };
+      if (l.displayType === 'line_section' || l.displayType === 'line_note') return layoutLine(l.displayType);
+      return { ...blankLine(typeof l.taxInclusive === 'boolean' ? l.taxInclusive : undefined), productId: l.productId ?? null, variantId: l.variantId ?? null, uomId: l.uomId ?? null,
+        description: l.description ?? '', quantity: Number(l.quantity ?? 1), unitPrice: Number(l.unitPrice ?? 0), discountPercent: Number(l.discountPercent ?? 0),
+        taxId: l.taxId ?? null, isOptional: !!l.isOptional, leadTimeDays: l.leadTimeDays ?? null, priceSource: l.unitPrice != null ? 'manual' as const : undefined,
+        size: sizeOf(l as Parameters<typeof sizeOf>[0]) };
+    }).map((l, i) => (isLayout(l) ? { ...l, description: String(((template.data!.lines ?? [])[i] as { description?: string }).description ?? '') } : l)));
+    if (t.notes) setNotes(t.notes);
+    if (t.terms) setTerms(t.terms);
+    setDirty(true);
+  }, [template.data]);
 
   // A customer decline keeps the declined terms: change them through Revise (snapshot + new revision), not in place.
   const declined = q?.status === 'rejected' && !!q.declinedAt;
@@ -122,9 +176,15 @@ export function QuotationEditorPage() {
   const est = useMemo(() => {
     let sub = 0; let tax = 0; let total = 0;
     const byTax = new Map<string, { label: string; amount: number }>();
+    let net = 0;
+    for (const l of lines) if (counts(l)) net += Number(l.quantity || 0) * Number(l.unitPrice || 0) * (1 - Number(l.discountPercent || 0) / 100);
+    // The order discount the server folds into each counted line, as a share of the lines' net.
+    const orderPct = orderDisc.kind === 'percent' ? Math.min(100, Math.max(0, orderDisc.value)) : net > 0 ? Math.min(100, (orderDisc.value / net) * 100) : 0;
     for (const l of lines) {
-      if (isLayout(l)) continue;
-      const a = lineAmounts(l, taxRate(l.taxId), useServer);
+      if (!counts(l)) continue;
+      const raw = useServer ? lineAmounts(l, taxRate(l.taxId), true) : lineAmounts(l, taxRate(l.taxId), false);
+      const k = useServer ? 1 : 1 - orderPct / 100;
+      const a = { sub: raw.sub * k, tax: raw.tax * k, total: raw.total * k };
       sub += a.sub; tax += a.tax; total += a.total;
       if (l.taxId && a.tax) {
         const t = taxes.data?.find((x) => x.id === l.taxId);
@@ -135,7 +195,7 @@ export function QuotationEditorPage() {
     }
     return { sub, tax, total, byTax: [...byTax.values()] };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, taxes.data, useServer]);
+  }, [lines, taxes.data, useServer, orderDisc]);
   const pricedWithTax = lines.filter((l) => !isLayout(l) && l.taxId);
   const taxIncluded = taxMode ? taxMode === 'incl' : pricedWithTax.length > 0 && pricedWithTax.every((l) => l.taxInclusive);
   const chooseTaxMode = (mode: 'excl' | 'incl') => {
@@ -155,7 +215,7 @@ export function QuotationEditorPage() {
   const setProduct = (i: number, pid: string | null) => {
     const prod = productById(pid);
     const next = lines.map((x, j) => (j === i ? { ...x, productId: pid, variantId: null, size: EMPTY_SIZE, uomId: defaultUnitId(prod, 'sales') ?? null, priceSource: undefined,
-      description: canPrice ? '' : prod?.name ?? '', unitPrice: prod ? Number(prod.salesPrice ?? 0) : x.unitPrice, taxId: prod?.taxId ?? x.taxId,
+      description: canWrite ? '' : prod?.name ?? '', unitPrice: prod ? Number(prod.salesPrice ?? 0) : x.unitPrice, taxId: prod?.taxId ?? x.taxId,
       ...(taxMode ? { taxInclusive: taxMode === 'incl' } : {}) } : x));
     setLines(next); setDirty(true); void priceLines(i, next);
   };
@@ -189,19 +249,25 @@ export function QuotationEditorPage() {
     if (delta <= 0) return;
     const prod = productById(pid);
     const row: QuoteLine = { ...blankLine(taxMode ? taxMode === 'incl' : undefined), productId: pid, uomId: defaultUnitId(prod, 'sales') ?? null,
-      description: canPrice ? '' : prod?.name ?? '', unitPrice: Number(prod?.salesPrice ?? 0), taxId: prod?.taxId ?? null };
+      description: canWrite ? '' : prod?.name ?? '', unitPrice: Number(prod?.salesPrice ?? 0), taxId: prod?.taxId ?? null };
     // Replace a trailing empty line instead of leaving it behind.
     const base = lines.length && !isLayout(lines[lines.length - 1]) && !lines[lines.length - 1].productId && !lines[lines.length - 1].description ? lines.slice(0, -1) : lines;
     const next = [...base, row];
     setLines(next); setDirty(true); void priceLines(next.length - 1, next);
   };
 
-  const priceLines = async (idx?: number, current: QuoteLine[] = lines) => {
-    if (!canPrice) return;
-    const targets = current.map((l, i) => ({ l, i })).filter(({ l, i }) => !isLayout(l) && l.productId && (idx === undefined || i === idx));
+  /**
+   * Audit fix 5: price lines as saving will (customer, date, branch, site, currency and agreement of the header).
+   * `ctx` carries a header value just picked (state updates later); `skipManual` leaves typed prices alone.
+   */
+  const priceLines = async (idx?: number, current: QuoteLine[] = lines, ctx: Partial<{ partnerId: string; agreementId: string; currencyCode: string; branchId: string; siteId: string; issueDate: string }> = {}, skipManual = false) => {
+    if (!canWrite) return;
+    const targets = current.map((l, i) => ({ l, i })).filter(({ l, i }) => !isLayout(l) && l.productId && (idx === undefined || i === idx) && !(skipManual && l.priceSource === 'manual'));
     if (!targets.length) return;
+    const c = { partnerId, agreementId, currencyCode, branchId: header.branchId, siteId, issueDate, ...ctx };
     try {
-      const res = await crmApi.resolvePrices({ partnerId: partnerId || undefined, lines: targets.map(({ l }) => ({
+      const res = await crmApi.resolveQuotePrices({ partnerId: c.partnerId || undefined, issueDate: c.issueDate || undefined, branchId: c.branchId || undefined,
+        siteId: c.siteId || undefined, currencyCode: c.currencyCode || undefined, agreementId: c.agreementId || undefined, lines: targets.map(({ l }) => ({
         productId: l.productId!, quantity: Number(l.quantity || 1), variantId: l.variantId || undefined, uomId: l.uomId || undefined,
       })) });
       setLines((ls) => ls.map((l, i) => {
@@ -218,7 +284,7 @@ export function QuotationEditorPage() {
           taxInclusive: taxMode ? taxMode === 'incl' : r.taxInclusive, description: l.description || r.description };
       }));
       setDirty(true);
-      if (idx === undefined) toast.success(tx('Customer prices applied'));
+      if (idx === undefined && !skipManual) toast.success(tx('Customer prices applied'));
     } catch (e) { toast.error(apiErrorMessage(e, tx('Could not price the lines'))); }
   };
 
@@ -227,9 +293,15 @@ export function QuotationEditorPage() {
       partnerId, issueDate, validUntil: validUntil || undefined, ownerId: ownerId || undefined, notes, terms, internalNotes,
       branchId: header.branchId || null, paymentTermId: header.paymentTermId || null, deliveryAddress: header.deliveryAddress || null,
       commitmentDate: header.commitmentDate || null,
+      contactId: contactId || null, siteId: siteId || null, ...(agreementId ? { agreementId } : isNew ? {} : { agreementId: null }),
+      ...(currencyCode ? { currencyCode } : {}), exchangeRate: exchangeRate > 0 ? exchangeRate : 1,
+      orderDiscountPercent: orderDisc.kind === 'percent' && orderDisc.value > 0 ? orderDisc.value : null,
+      orderDiscountAmount: orderDisc.kind === 'amount' && orderDisc.value > 0 ? orderDisc.value : null,
+      // Audit fix 13: each line goes back with its id, so line ids stay stable across saves.
       lines: lines.filter((l) => (isLayout(l) ? l.description.trim() : l.productId || l.description)).map((l) => (isLayout(l)
-        ? { displayType: l.displayType, description: l.description.trim() }
+        ? { ...(l.id ? { id: l.id } : {}), displayType: l.displayType, description: l.description.trim() }
         : {
+          ...(l.id ? { id: l.id } : {}), isOptional: !!l.isOptional,
           productId: l.productId || undefined, variantId: l.variantId || undefined, uomId: l.uomId || undefined, description: l.description || undefined, quantity: Number(l.quantity),
           // ADR-S066: the typed size (only offered for products sold by size) decides the quantity server-side
           ...(l.productId ? sizePayload(l.size ?? EMPTY_SIZE, 'volume') : {}),
@@ -253,6 +325,7 @@ export function QuotationEditorPage() {
     return convertKeys.current.get(k)!;
   };
   const del = useCrmMutation(crmApi.deleteQuote);
+  const duplicate = useCrmMutation(crmApi.duplicateQuote);
 
   const doSave = (then?: (saved: Quotation) => void) => {
     if (!partnerId) return toast.error(tx('Choose a customer'));
@@ -270,7 +343,11 @@ export function QuotationEditorPage() {
   if (!isNew && isLoading) return <Skeleton className="h-96 w-full" />;
   if (!isNew && !q) return <p className="text-sm text-muted-foreground">{tx('Quotation not found.')}</p>;
   const status = q?.status ?? 'draft';
-  const currency = q?.currencyCode ?? deal?.currencyCode;
+  const currency = currencyCode || q?.currencyCode || deal?.currencyCode;
+  // Audit fix 9: an offer past its date (the server expires it on the next list read or nightly) is shown as expired.
+  const daysLeft = q?.validityDaysLeft ?? null;
+  const overdue = !!q && ['approved', 'sent'].includes(status) && daysLeft !== null && daysLeft < 0;
+  const hasOptional = (q?.lines ?? []).some((l) => !l.displayType && l.isOptional);
 
   const ribbon = [tx('Draft'), tx('Approved'), tx('Sent'), tx('Accepted'), tx('Converted')];
   const step = ({ approved: 1, sent: 2, accepted: 3, converted: 4 } as Record<string, number>)[status] ?? 0;
@@ -279,11 +356,14 @@ export function QuotationEditorPage() {
   type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
   const menu: MenuItem[] = [];
   if (q) {
-    if (['approved', 'sent'].includes(status) && canEmail) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Send className={ico} />, onSelect: () => { api.post(`${docBase}/${q.id}/email`, {}).then((r) => toast.success(tx('Sent to') + ' ' + r.data.sentTo)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not send')))); } });
-    if (['approved', 'sent', 'accepted', 'rejected'].includes(status) && canEmail) menu.push({ key: 'share', label: tx('Online link for the customer'), icon: <Link2 className={ico} />, onSelect: () => setShareOpen(true) });
+    if (['approved', 'sent'].includes(status) && !overdue && canEmail) menu.push({ key: 'email', label: tx('Email to customer'), icon: <Mail className={ico} />, onSelect: () => setEmailOpen(true) });
+    if (['approved', 'sent', 'accepted', 'rejected'].includes(status) && !overdue && canEmail) menu.push({ key: 'share', label: tx('Online link for the customer'), icon: <Link2 className={ico} />, onSelect: () => setShareOpen(true) });
     menu.push({ key: 'pdf', label: tx('Download PDF'), icon: <Printer className={ico} />, onSelect: () => downloadBlob(`${docBase}/${q.id}/pdf?images=${printImages}`, `${q.number}.pdf`) });
     menu.push({ key: 'print', label: tx('Print'), icon: <Printer className={ico} />, onSelect: () => printPdf(`${docBase}/${q.id}/pdf?images=${printImages}`) });
-    if (['approved', 'sent'].includes(status) && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setDialog('decline'); } });
+    if (['approved', 'sent'].includes(status) && !overdue && canWrite) menu.push({ key: 'decline', label: tx('Customer declined'), icon: <ThumbsDown className={ico} />, onSelect: () => { setReason(''); setLostReasonId(''); setDialog('decline'); } });
+    menu.push({ key: 'revisions', label: tx('Revision history'), icon: <History className={ico} />, onSelect: () => setRevisionsOpen(true) });
+    if (canWrite) menu.push({ key: 'duplicate', label: tx('Duplicate'), icon: <Copy className={ico} />, onSelect: () => duplicate.mutate(q.id, { onSuccess: (c) => { toast.success(tx('Copied to') + ' ' + c.number); navigate(`${base}/${c.id}`); }, onError: (e) => toast.error(apiErrorMessage(e, tx('Could not duplicate'))) }) });
+    if (canWrite) menu.push({ key: 'template', label: tx('Save as template'), icon: <FileStack className={ico} />, onSelect: () => setTemplateOpen(true) });
     if (!['converted', 'draft'].includes(status) && canWrite) menu.push({ key: 'revise', label: tx('Revise'), icon: <History className={ico} />, onSelect: () => run('revise', undefined, tx('New revision in draft')) });
     if (!['converted', 'cancelled'].includes(status) && canWrite) menu.push({ key: 'cancel', label: tx('Cancel quotation'), icon: <XCircle className={ico} />, danger: true, onSelect: () => run('cancel', undefined, tx('Cancelled')) });
     if (status === 'draft' && canWrite) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(q.id, { onSuccess: () => navigate(base), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
@@ -300,6 +380,11 @@ export function QuotationEditorPage() {
           <span className="font-semibold">{q ? q.number : tx('New')}</span>
           {q && q.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{q.revision}</span>}
           {q && <span className="ml-3"><QuoteStatusPill status={status} /></span>}
+          {q && ['approved', 'sent'].includes(status) && daysLeft !== null && (
+            <span className={cn('ml-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs', daysLeft < 0 ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200' : daysLeft <= 7 ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200' : 'bg-muted text-muted-foreground')}>
+              <Clock className="h-3 w-3" />{daysLeft < 0 ? tx('Expired') : daysLeft === 0 ? tx('Expires today') : `${tx('Valid')} ${daysLeft} ${daysLeft === 1 ? tx('more day') : tx('more days')}`}
+            </span>
+          )}
         </div>
         {showRibbon && <div data-tour="sales.quote.ribbon" className="w-full max-w-lg"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
@@ -312,9 +397,10 @@ export function QuotationEditorPage() {
             <Button onClick={() => run('approve', {}, tx('Approved'))}><CheckCircle2 className="mr-1.5 h-4 w-4" />{tx('Approve')}</Button>
             <Button variant="destructive" onClick={() => { setReason(''); setDialog('reject'); }}>{tx('Reject')}</Button>
           </>}
-          {q && status === 'approved' && canWrite && <Button variant="secondary" onClick={() => run('send', undefined, tx('Marked as sent'))}><Send className="mr-1.5 h-4 w-4" />{tx('Mark as sent')}</Button>}
-          {q && ['approved', 'sent'].includes(status) && canWrite && <Button variant="secondary" onClick={() => run('accept', undefined, tx('Accepted by customer'))}>{tx('Customer accepted')}</Button>}
-          {q && ['approved', 'sent', 'accepted'].includes(status) && canConvert && (
+          {q && status === 'approved' && !overdue && canEmail && <Button variant="secondary" onClick={() => run('send', undefined, tx('Marked as sent'))}><Send className="mr-1.5 h-4 w-4" />{tx('Mark as sent')}</Button>}
+          {q && ['approved', 'sent'].includes(status) && !overdue && canWrite && <Button variant="secondary" onClick={() => (hasOptional ? setAcceptOpen(true) : run('accept', undefined, tx('Accepted by customer')))}>{tx('Customer accepted')}</Button>}
+          {q && overdue && canWrite && <Button variant="secondary" onClick={() => run('revise', undefined, tx('New revision in draft'))}><History className="mr-1.5 h-4 w-4" />{tx('Revise')}</Button>}
+          {q && ['approved', 'sent', 'accepted'].includes(status) && !overdue && canConvert && (
             <Button data-tour="sales.quote.convert" onClick={() => { setShortages(null); setBackorder(false); setDialog('convert'); }}><PackageCheck className="mr-1.5 h-4 w-4" />{tx('Convert')}</Button>
           )}
           {menu.length > 0 && (
@@ -339,6 +425,8 @@ export function QuotationEditorPage() {
         </div>
       </div>
 
+      {overdue && <Banner tone="danger" title={tx('Expired')} items={[tx('The validity of this offer has passed. Revise it to send the customer a new one.')]} />}
+      {q && status === 'draft' && daysLeft !== null && daysLeft < 0 && <Banner tone="warning" title={tx('Expiration date passed')} items={[tx('Set a new expiration date before submitting.')]} />}
       {q?.status === 'pending_approval' && (
         <Banner tone="warning" title={tx('Waiting for approval')} items={q.approvalReasons} />
       )}
@@ -363,7 +451,7 @@ export function QuotationEditorPage() {
               {editable ? (
                 <div data-tour="sales.quote.customer" className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
-                    <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} />
+                    <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setContactId(''); setSiteId(''); setAgreementId(''); setDirty(true); void priceLines(undefined, lines, { partnerId: i, siteId: '', agreementId: '' }, true); }} />
                   </div>
                   {canCreateCustomer && (
                     <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
@@ -377,6 +465,33 @@ export function QuotationEditorPage() {
               // Use the new customer at once.
               setPartnerId(c.id); setPartnerName(c.name); setDirty(true);
             }} />
+            {(contacts.length > 0 || contactId) && (
+              <InlineField label={tx('Contact')}>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" disabled={!editable} value={contactId} onChange={(e) => { setContactId(e.target.value); setDirty(true); }}>
+                  <option value="">{tx('None')}</option>
+                  {contactId && !contacts.some((c) => c.id === contactId) && <option value={contactId}>{contactId}</option>}
+                  {contacts.map((c) => <option key={c.id} value={c.id}>{[c.firstName, c.lastName].filter(Boolean).join(' ')}{c.email ? ` · ${c.email}` : ''}</option>)}
+                </select>
+              </InlineField>
+            )}
+            {(sites.length > 0 || siteId) && (
+              <InlineField label={tx('Customer site')}>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" disabled={!editable} value={siteId} onChange={(e) => { setSiteId(e.target.value); setDirty(true); void priceLines(undefined, lines, { siteId: e.target.value }, true); }}>
+                  <option value="">{tx('None')}</option>
+                  {siteId && !sites.some((x) => x.id === siteId) && <option value={siteId}>{siteId}</option>}
+                  {sites.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
+              </InlineField>
+            )}
+            {(agreements.length > 0 || agreementId) && (
+              <InlineField label={tx('Agreement')}>
+                <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" disabled={!editable} value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); void priceLines(undefined, lines, { agreementId: e.target.value }, true); }}>
+                  <option value="">{tx('None (automatic)')}</option>
+                  {agreementId && !agreements.some((a) => a.id === agreementId) && <option value={agreementId}>{agreementId}</option>}
+                  {agreements.map((a) => <option key={a.id} value={a.id}>{a.number} · {a.name}</option>)}
+                </select>
+              </InlineField>
+            )}
             <InlineField label={tx('Delivery address')}><Input disabled={!editable} value={header.deliveryAddress} placeholder={tx('Same as customer')} onChange={(e) => { const deliveryAddress = e.target.value; setHeader((h) => ({ ...h, deliveryAddress })); setDirty(true); }} /></InlineField>
             <InlineField label={tx('Payment terms')}><HeaderSelect value={header.paymentTermId} options={opts.terms} disabled={!editable} none={tx('Customer default')} onChange={(paymentTermId) => { setHeader((h) => ({ ...h, paymentTermId })); setDirty(true); }} /></InlineField>
           </div>
@@ -409,7 +524,7 @@ export function QuotationEditorPage() {
 
           <TabsContent value="lines" className="mt-0 space-y-4 px-2 pb-5 pt-1 sm:px-5">
             <QuoteLinesTable lines={lines} editable={editable} useServer={useServer} currency={currency} taxIncluded={taxIncluded}
-              products={products.data ?? []} taxes={taxes.data ?? []} uoms={uoms.data ?? []} canPrice={canPrice}
+              products={products.data ?? []} taxes={taxes.data ?? []} uoms={uoms.data ?? []} canPrice={canWrite && editable}
               onPatch={patchLine} onProduct={setProduct} onUnit={setUnit} onReprice={(i) => void priceLines(i)}
               onRemove={(i) => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}
               onMove={moveRow} onAdd={addRow} onCatalogAdd={catalogAdd} imageColumn={imagesOn ? imageColumn : undefined} />
@@ -418,6 +533,19 @@ export function QuotationEditorPage() {
                 className="resize-y border-transparent bg-transparent px-0 shadow-none focus-visible:border-input focus-visible:px-3 disabled:cursor-default disabled:opacity-100"
                 onChange={(e) => { setTerms(e.target.value); setDirty(true); }} />
               <div data-tour="sales.quote.totals" className="text-sm">
+                {(editable || orderDisc.value > 0) && (
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-muted-foreground">{tx('Order discount')}</span>
+                    <span className="flex items-center gap-1">
+                      <Input aria-label={tx('Order discount')} type="number" min={0} step="any" disabled={!editable} className="h-8 w-24 text-right" value={orderDisc.value}
+                        onChange={(e) => { setOrderDisc((d) => ({ ...d, value: Math.max(0, Number(e.target.value)) })); setDirty(true); }} />
+                      <select aria-label={tx('Order discount type')} disabled={!editable} className="h-8 rounded-md border bg-background px-1 text-xs" value={orderDisc.kind}
+                        onChange={(e) => { setOrderDisc((d) => ({ ...d, kind: e.target.value as 'percent' | 'amount' })); setDirty(true); }}>
+                        <option value="percent">%</option><option value="amount">{currency ?? orgCurrency}</option>
+                      </select>
+                    </span>
+                  </div>
+                )}
                 <div className="border-t pt-2">
                   <Row label={tx('Untaxed Amount') + ':'} value={<strong>{money(useServer ? q!.subtotal : est.sub, currency)}</strong>} />
                   {useServer && Number(q!.discountTotal) > 0 && <Row label={tx('Discount') + ':'} value={'− ' + money(q!.discountTotal, currency)} />}
@@ -440,7 +568,16 @@ export function QuotationEditorPage() {
                   <OptionalSelect disabled={!editable} value={ownerId} onChange={(v) => { setOwnerId(v); setDirty(true); }} options={(lk?.users ?? []).map((u) => ({ value: u.id, label: u.name }))} placeholder={tx('Opportunity owner / me')} noneLabel={tx('Opportunity owner / me')} />
                 </InlineField>
                 <InlineField label={tx('Branch')}><HeaderSelect value={header.branchId} options={opts.branches} disabled={!editable} none={tx('From my scope')} onChange={(branchId) => { setHeader((h) => ({ ...h, branchId })); setDirty(true); }} /></InlineField>
-                <InlineField label={tx('Currency')}><span className="text-sm">{currency ?? orgCurrency}</span></InlineField>
+                <InlineField label={tx('Currency')}>
+                  {editable && opts.currencies.length > 0
+                    ? <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={currencyCode || currency || orgCurrency} onChange={(e) => { setCurrencyCode(e.target.value); if (e.target.value === orgCurrency) setExchangeRate(1); setDirty(true); void priceLines(undefined, lines, { currencyCode: e.target.value }, true); }}>
+                        {opts.currencies.map((c) => <option key={c.id} value={c.code ?? c.id}>{c.code ?? c.name}</option>)}
+                      </select>
+                    : <span className="text-sm">{currency ?? orgCurrency}</span>}
+                </InlineField>
+                {(currency ?? orgCurrency) !== orgCurrency && (
+                  <InlineField label={tx('Exchange rate')}><Input type="number" min={0} step="any" disabled={!editable} value={exchangeRate} title={`1 ${currency} = ? ${orgCurrency}`} onChange={(e) => { setExchangeRate(Number(e.target.value)); setDirty(true); }} /></InlineField>
+                )}
                 {opportunityId && <InlineField label={tx('Opportunity')}><Link to={`/crm/opportunities/${opportunityId}`} className="text-primary hover:underline">{q?.dealName ?? deal?.name ?? tx('Open')}</Link></InlineField>}
                 {q && (
                   <>
@@ -479,10 +616,14 @@ export function QuotationEditorPage() {
       {q && <RecordChatter contextType="SalesQuotation" contextId={q.id} />}
 
       {q && <QuoteShareDialog quotationId={q.id} status={status} open={shareOpen} onOpenChange={setShareOpen} />}
+      {q && <QuoteEmailDialog q={q} open={emailOpen} onOpenChange={setEmailOpen} canShare={canEmail} onSent={() => void qc.invalidateQueries({ queryKey: ['crm-suite'] })} />}
+      {q && <QuoteAcceptDialog q={q} open={acceptOpen} onOpenChange={setAcceptOpen} onDone={() => void qc.invalidateQueries({ queryKey: ['crm-suite'] })} />}
+      {q && <QuoteRevisionsDialog q={q} open={revisionsOpen} onOpenChange={setRevisionsOpen} />}
+      {q && <SaveTemplateDialog q={q} open={templateOpen} onOpenChange={setTemplateOpen} />}
       <Dialog open={dialog === 'reject' || dialog === 'decline'} onOpenChange={(v) => !v && setDialog(null)}>
         <DialogContent className="max-w-md">
-          {dialog === 'decline' && <Field label={tx('Lost reason')}><HeaderSelect value={lostReasonId} options={(lostReasons.data ?? []).filter((r) => r.isActive)} none={tx('Choose…')} onChange={setLostReasonId} /></Field>}
           <DialogHeader><DialogTitle>{dialog === 'reject' ? tx('Reject quotation') : tx('Customer declined')}</DialogTitle></DialogHeader>
+          {dialog === 'decline' && <Field label={tx('Lost reason')}><HeaderSelect value={lostReasonId} options={(lostReasons.data ?? []).filter((r) => r.isActive)} none={tx('Choose…')} onChange={setLostReasonId} /></Field>}
           <Field label={tx('Reason')}><Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(null)}>{tx('Cancel')}</Button>

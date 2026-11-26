@@ -30,6 +30,11 @@ public class CrmQuotationPorts implements QuotationOpportunityPort {
     }
 
     @Override
+    public void quotationSent(String dealId, String partnerId, String number) {
+        planner.logQuotationSent(dealId, partnerId, number);
+    }
+
+    @Override
     public void quotationEmailed(String dealId, String partnerId, String number, String sentTo, boolean delivered) {
         planner.logQuotationEmail(dealId, partnerId, number, sentTo, delivered);
     }

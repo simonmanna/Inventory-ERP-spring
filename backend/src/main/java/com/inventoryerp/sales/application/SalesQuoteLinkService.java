@@ -66,6 +66,13 @@ public class SalesQuoteLinkService {
     private final AuditService audit;
     private final ObjectProvider<QuotationOpportunityPort> opportunities;
     private final TransactionTemplate tx;
+    private SalesSettingsService settings;
+
+    /** The sales setting {@code quoteOnlineAcceptAction}: what an online acceptance starts. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSettings(SalesSettingsService settings) {
+        this.settings = settings;
+    }
 
     public SalesQuoteLinkService(SalesDb db, SalesQuotationService quotations, NotificationsService notifications,
             AuditService audit, ObjectProvider<QuotationOpportunityPort> opportunities,
@@ -157,23 +164,60 @@ public class SalesQuoteLinkService {
         });
     }
 
-    /** Customer acceptance: {@code signerName} (required) and an optional {@code note}. */
+    /**
+     * Customer acceptance: {@code signerName} (required), an optional {@code note} and {@code optionalLineIds} (the
+     * optional products taken). Committed first; then, when the sales setting {@code quoteOnlineAcceptAction} says so,
+     * the quotation is converted (sales order, or a proforma whose advance and payment details the customer then sees)
+     * in a transaction of its own: a conversion that fails leaves the acceptance standing and tells the owner.
+     */
     public Map<String, Object> accept(String token, Map<String, Object> in, Client client) {
         String signer = str(in.get("signerName"));
         if (blank(signer) || signer.trim().length() < 2 || signer.trim().length() > 120) {
             throw ApiException.badRequest("Type your full name to accept");
         }
         String note = note(in.get("note"));
-        return withLink(token, l -> {
+        List<String> options = SalesQuotationService.optionalLineIds(in);
+        boolean[] decidedNow = {false};
+        Map<String, Object> out = withLink(token, l -> {
             shown(l);
             // lock order quotation → link, as in revise() (which revokes the link under the quotation lock)
             Map<String, Object> terms = currentTerms(l);
             if (alreadyDecided(l, "accepted")) {
                 return publicView(l);
             }
-            quotations.accept(l.quotationId());
-            return decided(l, "accepted", signer.trim(), note, client, terms);
+            quotations.accept(l.quotationId(), options);
+            decidedNow[0] = true;
+            // the decision snapshot records the terms as accepted, with the options taken
+            return decided(l, "accepted", signer.trim(), note, client, currentTerms(l));
         });
+        return decidedNow[0] ? afterAcceptance(token, out) : out;
+    }
+
+    /** The configured action after an online acceptance (see {@link #accept}); returns the customer's view. */
+    private Map<String, Object> afterAcceptance(String token, Map<String, Object> accepted) {
+        String action = withLink(token, l -> str(settings.settings().get("quoteOnlineAcceptAction")));
+        if (blank(action) || "none".equals(action)) {
+            return accepted;
+        }
+        try {
+            return withLink(token, l -> {
+                Map<String, Object> converted = quotations.convert(l.quotationId(), Obj.of("target", action));
+                @SuppressWarnings("unchecked")
+                Map<String, Object> doc = (Map<String, Object>) converted.get("converted");
+                notifyOwner(l.quotationId(), "Quotation " + converted.get("number") + " converted after online acceptance",
+                        ("proforma".equals(action) ? "Proforma invoice " : "Sales order ") + doc.get("number")
+                                + " was created automatically.", "sales.quote_link.converted");
+                return publicView(l);
+            });
+        } catch (RuntimeException e) {
+            withLink(token, l -> {
+                notifyOwner(l.quotationId(), "Quotation " + accepted.get("number") + " accepted online: convert it by hand",
+                        "The automatic " + ("proforma".equals(action) ? "proforma invoice" : "sales order")
+                                + " could not be created: " + e.getMessage(), "sales.quote_link.convert_failed");
+                return null;
+            });
+            return accepted;
+        }
     }
 
     /** Customer decline with an optional {@code reason} and {@code signerName}. */
@@ -295,6 +339,17 @@ public class SalesQuoteLinkService {
         boolean open = Set.of("approved", "sent").contains(out.get("status")) && link.get("decision") == null
                 && !(out.get("validUntil") instanceof java.time.LocalDate v && v.isBefore(SalesQuotationService.today()));
         out.put("canAnswer", open);
+        // After an automatic conversion the customer sees what was created; for a proforma, the advance to pay and
+        // where to pay it (sales settings bank / mobile money details).
+        out.remove("convertedId");
+        if ("converted".equals(out.get("status")) && "proforma".equals(out.get("convertedType"))) {
+            Map<String, Object> qrow = db.row("SELECT \"convertedId\" FROM \"SalesQuotation\" WHERE id = ?", l.quotationId());
+            Map<String, Object> pf = qrow == null ? null : db.row("SELECT \"documentNumber\" AS number, \"totalAmount\" AS"
+                    + " total, (data->>'advanceAmount')::numeric AS \"advanceAmount\", data->>'bankDetails' AS"
+                    + " \"bankDetails\", data->>'mobileDetails' AS \"mobileDetails\", \"dueDate\" FROM \"Document\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", qrow.get("convertedId"), org());
+            out.put("payment", pf);
+        }
         return out;
     }
 

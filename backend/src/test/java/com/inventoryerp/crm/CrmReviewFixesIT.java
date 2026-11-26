@@ -103,12 +103,14 @@ class CrmReviewFixesIT extends ApiTestSupport {
     @DisplayName("an approved quote past validUntil cannot be converted")
     void expiredQuoteNotConverted() {
         LocalDate past = LocalDate.now(BusinessZone.get()).minusDays(2);
-        String id = quote(1, Map.of("issueDate", past.minusDays(10).toString(), "validUntil", past.toString()))
-                .get("id").asString();
+        String id = quote(1, Map.of("issueDate", past.minusDays(10).toString())).get("id").asString();
         JsonNode submitted = ok(200, "POST", "/crm/quotations/" + id + "/submit", null);
         if ("pending_approval".equals(submitted.get("status").asString())) {
             ok(200, "POST", "/crm/quotations/" + id + "/approve", Map.of());
         }
+        // An expired draft can no longer be submitted, so the offer passes its date after approval.
+        jdbc.sql("UPDATE \"SalesQuotation\" SET \"validUntil\" = ? WHERE id = ?").params(java.sql.Date.valueOf(past), id)
+                .update();
         Res r = as("POST", "/crm/quotations/" + id + "/convert", Map.of("target", "proforma"));
         assertThat(r.status()).isEqualTo(400);
         assertThat(r.body().get("message").asString()).isEqualTo("Quotation has expired; revise it first");
