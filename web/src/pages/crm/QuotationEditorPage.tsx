@@ -113,7 +113,9 @@ export function QuotationEditorPage() {
   }, [isNew, deal]);
   useEffect(() => { if (isNew && lk?.settings.defaultQuoteTerms) setTerms((t) => t || lk.settings.defaultQuoteTerms || ''); }, [isNew, lk]);
 
-  const editable = isNew || (!!q && ['draft', 'rejected'].includes(q.status) && canWrite);
+  // A customer decline keeps the declined terms: change them through Revise (snapshot + new revision), not in place.
+  const declined = q?.status === 'rejected' && !!q.declinedAt;
+  const editable = isNew || (!!q && ['draft', 'rejected'].includes(q.status) && !declined && canWrite);
   const taxRate = (taxId: string | null) => Number(taxes.data?.find((t) => t.id === taxId)?.rate ?? 0);
   const useServer = !!q && !dirty;
   /** Untaxed amount, one row per tax and total: the saved figures, or an estimate while editing. */
@@ -340,7 +342,9 @@ export function QuotationEditorPage() {
       {q?.status === 'pending_approval' && (
         <Banner tone="warning" title={tx('Waiting for approval')} items={q.approvalReasons} />
       )}
-      {q?.status === 'rejected' && <Banner tone="danger" title={tx('Rejected')} items={[q.rejectionReason ?? '']} />}
+      {q?.status === 'rejected' && (declined
+        ? <Banner tone="danger" title={tx('Declined by the customer')} items={[q.rejectionReason ?? '', canWrite ? tx('Use Actions → Revise to make a new offer.') : '']} />
+        : <Banner tone="danger" title={tx('Rejected')} items={[q.rejectionReason ?? '']} />)}
       {q?.status === 'converted' && (
         <Banner tone="success" title={q.convertedType === 'proforma' ? tx('Converted to proforma invoice') : tx('Converted to order')}
           items={[q.convertedNumber ?? '']} link={convertedLink ?? undefined} />

@@ -63,6 +63,7 @@ public class SalesQuotationService {
     public static final String SALES_APPROVAL_ENTITY = "sales_quotation";
     static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
     static final Set<String> EDITABLE = Set.of("draft", "rejected");
+    static final String DECLINED_LOCKED = "The customer declined this quotation; revise it to make a new offer";
     static final Set<String> DISPLAY_TYPES = Set.of("line_section", "line_note");
 
     private static final Logger log = LoggerFactory.getLogger(SalesQuotationService.class);
@@ -159,10 +160,14 @@ public class SalesQuotationService {
 
     // ------------------------------------------------------------------ queries
 
-    /** Paginated list {@code {data, meta, totals}}; expired quotes are flagged on read. */
+    /**
+     * Paginated list {@code {data, meta, totals}}. Overdue quotes expire on read, and their owners are told exactly as
+     * the daily job tells them: whichever runs first expires (and notifies) a quote once, so opening the list after
+     * midnight no longer swallows the expiry notification.
+     */
     @Transactional
     public Map<String, Object> list(Map<String, String> p) {
-        expireOverdue();
+        expireAndNotify();
         StringBuilder where = new StringBuilder(" WHERE q.\"organizationId\" = ? AND q.\"deletedAt\" IS NULL");
         List<Object> params = new ArrayList<>(List.of(org()));
         visibility(where, params);
@@ -329,6 +334,9 @@ public class SalesQuotationService {
         Map<String, Object> q = lock(id);
         if (!EDITABLE.contains(q.get("status"))) {
             throw ApiException.badRequest("Only draft quotations can be edited; revise it to make changes");
+        }
+        if (declined(q)) {
+            throw ApiException.badRequest(DECLINED_LOCKED);
         }
         Map<String, Object> d = new LinkedHashMap<>();
         if (in.containsKey("partnerId")) {
@@ -574,6 +582,9 @@ public class SalesQuotationService {
         if (!EDITABLE.contains(q.get("status"))) {
             throw ApiException.badRequest("Only draft quotations can be submitted");
         }
+        if (declined(q)) {
+            throw ApiException.badRequest(DECLINED_LOCKED);
+        }
         if (db.count("SELECT count(*) FROM \"SalesQuotationLine\" WHERE \"quotationId\" = ? AND \"displayType\" IS NULL",
                 List.of(id)) == 0) {
             throw ApiException.badRequest("Add at least one line before submitting");
@@ -765,8 +776,11 @@ public class SalesQuotationService {
         if (!blank(lostReasonId)) {
             lostReasons.assertActive(lostReasonId);
         }
+        // declinedAt tells a customer decline (terms the customer saw: revise to change them) from an internal
+        // approval rejection (still editable in place)
         db.patch("SalesQuotation", id, Obj.of("status", "rejected", "lostReasonId", blank(lostReasonId) ? null : lostReasonId,
-                "rejectionReason", blank(reason) ? "Declined by customer" : reason), true);
+                "rejectionReason", blank(reason) ? "Declined by customer" : reason, "declinedAt", java.time.Instant.now()),
+                true);
         audit.record(AuditInput.of("SalesQuotation", id, "reject", null, Obj.of("byCustomer", true, "reason", reason)));
         return get(id);
     }
@@ -797,7 +811,7 @@ public class SalesQuotationService {
         Map<String, Object> s = config.settings();
         db.patch("SalesQuotation", id, Obj.of("status", "draft", "revision", ((Number) q.get("revision")).intValue() + 1,
                 "approvalReasons", List.of(), "approvalRequestId", null, "approvedById", null, "approvedAt", null,
-                "rejectionReason", null, "sentAt", null, "acceptedAt", null, "validUntil", today().plusDays(
+                "rejectionReason", null, "declinedAt", null, "sentAt", null, "acceptedAt", null, "validUntil", today().plusDays(
                         ((Number) s.get("quoteValidityDays")).longValue())), true);
         audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("revision", "new")));
         return get(id);
@@ -814,6 +828,14 @@ public class SalesQuotationService {
             audit.record(AuditInput.of("SalesQuotation", id, "update", null, Obj.of("shareLink", "revoked", "reason",
                     why)));
         }
+    }
+
+    /**
+     * Rejected by the customer (not by an internal approver): the declined terms stay as they were sent, so the quote
+     * is changed only through a new revision, which snapshots them first.
+     */
+    private static boolean declined(Map<String, Object> q) {
+        return "rejected".equals(q.get("status")) && q.get("declinedAt") != null;
     }
 
     /** Past {@code validUntil} on the business calendar (the quote is valid through that day). */
@@ -904,10 +926,13 @@ public class SalesQuotationService {
         } else {
             List<LineInput> inputs = new ArrayList<>();
             for (Map<String, Object> l : lines) {
-                inputs.add(new LineInput(str(l.get("productId")), null, null, null, null, str(l.get("description")),
-                        dec(l.get("quantity")), dec(l.get("unitPrice")), dec(l.get("discountPercent")), null, null, null,
-                        "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")), null,
-                        null, ProductSizingService.Sizing.stored(l)));
+                // The quoted variant and unit carry over, as for the other targets: a price quoted per box stays per
+                // box. The unit factor is resolved again (as Orders and sales orders do), not copied from the line.
+                inputs.add(new LineInput(str(l.get("productId")), null, str(l.get("variantId")), null, null,
+                        str(l.get("description")), dec(l.get("quantity")), dec(l.get("unitPrice")),
+                        dec(l.get("discountPercent")), null, null, null, "manual", str(l.get("taxId")), null,
+                        Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
+                        ProductSizingService.Sizing.stored(l)));
             }
             HeaderInput h = new HeaderInput(str(q.get("partnerId")), today().toString(), q.get("validUntil") == null
                     ? null : q.get("validUntil").toString(), null, null, null, null, null, null, null, str(q.get("ownerId")),
@@ -960,8 +985,11 @@ public class SalesQuotationService {
 
     // ------------------------------------------------------------------ helpers
 
-    /** Mark approved / sent quotes past their validity date as expired. */
-    /** Expire overdue quotations and tell their owners; returns how many expired. */
+    /**
+     * Expire quotations past {@code validUntil} on the business calendar (not the database's UTC date) and tell their
+     * owners; returns how many expired. Called by the daily job and on every list read. The conditional UPDATE locks
+     * each row it expires, so two concurrent callers never expire (or notify about) the same quote twice.
+     */
     @Transactional
     public int expireAndNotify() {
         List<Map<String, Object>> expired = db.rows("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW
@@ -1078,17 +1106,6 @@ public class SalesQuotationService {
             port.quotationEmailed(str(q.get("dealId")), str(q.get("partnerId")), str(q.get("number")), address, sent);
         }
         return Obj.of("ok", true, "sentTo", address, "delivered", sent);
-    }
-
-    /**
-     * Expire quotes past {@code validUntil} on the business calendar (production-readiness P1: it compared with the
-     * database's UTC {@code CURRENT_DATE}, so between midnight local and midnight UTC it disagreed with
-     * {@link #expired}). Only touches rows when there is something to expire.
-     */
-    void expireOverdue() {
-        db.update("UPDATE \"SalesQuotation\" SET status = 'expired', \"updatedAt\" = " + NOW + " WHERE \"organizationId\" ="
-                + " ? AND status IN ('draft', 'approved', 'sent') AND \"validUntil\" < ? AND \"deletedAt\" IS NULL", org(),
-                java.sql.Date.valueOf(today()));
     }
 
     private void visibility(StringBuilder where, List<Object> params) {
