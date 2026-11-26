@@ -100,6 +100,13 @@ public class FleetDispatchService {
     private final CreditService credit;
 
     private com.inventoryerp.core.application.SaleableProducts saleable;
+    private org.springframework.beans.factory.ObjectProvider<DispatchGate> dispatchGates;
+
+    /** R4d (DEL-4): source modules' dispatch checks, run by every dispatch route (resolved lazily: no bean cycle). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDispatchGates(org.springframework.beans.factory.ObjectProvider<DispatchGate> dispatchGates) {
+        this.dispatchGates = dispatchGates;
+    }
 
     /** Sell at any stage (ADR-S060): only the product's own switch stops a sale. */
     @org.springframework.beans.factory.annotation.Autowired
@@ -1001,6 +1008,31 @@ public class FleetDispatchService {
         }
     }
 
+    /**
+     * Sales readiness R4d (DEL-1 / DEL-7): a sales-order trip never dispatches more of a line than the order allows.
+     * What all trips of the delivery-order line then hold (its planned quantity, with this trip's loaded quantity in
+     * place of its planned one) must stay within the line's ordered quantity plus the order line's tolerance.
+     */
+    private void assertWithinSource(DeliverySourcePort port, String tripId, String code) {
+        for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT tl.\"plannedQty\", tl.\"loadedQty\","
+                + " ol.\"orderedQty\", ol.\"plannedQty\" AS \"linePlanned\", ol.\"sourceLineId\", ol.description FROM"
+                + " \"FleetLoadLine\" tl JOIN \"FleetDeliveryOrderLine\" ol ON ol.id = tl.\"deliveryOrderLineId\" WHERE"
+                + " tl.\"organizationId\" = ? AND tl.\"loadId\" = ?").params(FleetDb.org(), tripId))) {
+            BigDecimal planned = SqlRows.dec(l, "plannedQty");
+            BigDecimal qty = l.get("loadedQty") != null ? SqlRows.dec(l, "loadedQty") : planned;
+            BigDecimal after = SqlRows.dec(l, "linePlanned").subtract(planned).add(qty);
+            BigDecimal tolerance = l.get("sourceLineId") == null ? BigDecimal.ZERO
+                    : port.overDeliveryTolerancePct((String) l.get("sourceLineId"));
+            BigDecimal allowed = SqlRows.dec(l, "orderedQty").multiply(BigDecimal.ONE.add(tolerance.movePointLeft(2)))
+                    .setScale(3, RoundingMode.HALF_UP);
+            if (after.compareTo(allowed) > 0) {
+                throw ApiException.badRequest("Trip " + code + " would dispatch more of \"" + l.get("description")
+                        + "\" than the order allows (" + allowed.stripTrailingZeros().toPlainString() + " in total on its"
+                        + " deliveries); reduce the loaded quantity");
+            }
+        }
+    }
+
     private void applyLoaded(Map<String, Object> t, List<Map<String, Object>> lines, Map<String, BigDecimal> qty,
             Map<String, String> batches) {
         BigDecimal tonnes = BigDecimal.ZERO;
@@ -1052,11 +1084,15 @@ public class FleetDispatchService {
             DeliverySourcePort port = orders.sourcePort("sales_order", (String) order.get("sourceId"));
             if (port != null) {
                 port.assertDeliverable((String) order.get("sourceId"));
+                assertWithinSource(port, id, code);
             }
         }
         creditGate(order, t);
         if (t.get("stockIssuedAt") != null) {
             throw ApiException.conflict("Trip " + code + " already issued its stock");
+        }
+        if (dispatchGates != null) {
+            dispatchGates.orderedStream().forEach(gate -> gate.beforeDispatch(id, (String) order.get("sourceType")));
         }
         assertAssigned(t);
         weighRules.assertDispatchable(t);
@@ -1086,6 +1122,10 @@ public class FleetDispatchService {
                 if (batch != null) {
                     m.strategy("MANUAL");
                 }
+                List<String> serials = serials((String) l.get("id"));
+                if (!serials.isEmpty()) {
+                    m.serials(serials);
+                }
                 StockMove.Issued issued = stock.issue(m);
                 data.put("stockLedgerCode", issued.ledgerCode());
                 data.put("unitCost", issued.unitCost());
@@ -1114,7 +1154,7 @@ public class FleetDispatchService {
                 Obj.of("status", "dispatched", "stockValue", JsNumbers.dec(total), "deliveryNoteNumber",
                         after.get("deliveryNoteNumber"))));
         orders.refreshStatus((String) order.get("id"));
-        events.publish(DomainEvents.FLEET_TRIP_DISPATCHED, tripEvent(after));
+        events.publishOnCommit(DomainEvents.FLEET_TRIP_DISPATCHED, tripEvent(after));
         return get(id);
     }
 
@@ -1193,7 +1233,8 @@ public class FleetDispatchService {
             }
             Map<String, Object> data = Obj.of("deliveredQty", delivered, "returnedQty", returned, "damagedQty", damaged);
             if (returned.signum() > 0) {
-                String ledger = putBack(t, order, l, returned, "Returned at delivery of trip " + code);
+                String ledger = putBack(t, order, l, returned, "Returned at delivery of trip " + code,
+                        returnedSerials(l, p.returnedSerialNumbers(), returned, dispatched));
                 data.put("returnLedgerCode", ledger);
                 diffs.add(new Diff(l, "returned", p.reason(), dispatched, delivered, returned, p.notes()));
             }
@@ -1270,7 +1311,7 @@ public class FleetDispatchService {
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", Obj.of("status", t.get("status")),
                 Obj.of("status", "delivered", "receiver", in.receiverName().trim(), "discrepancies", diffs.size())));
         orders.refreshStatus((String) order.get("id"));
-        events.publish(DomainEvents.FLEET_TRIP_DELIVERED, tripEvent(after));
+        events.publishOnCommit(DomainEvents.FLEET_TRIP_DELIVERED, tripEvent(after));
         return get(id);
     }
 
@@ -1399,7 +1440,7 @@ public class FleetDispatchService {
         ev.put("distanceKm", after.get("distanceKm") == null ? null : JsNumbers.dec((BigDecimal) after.get("distanceKm")));
         ev.put("freightAmount", after.get("freightAmount") == null ? null
                 : JsNumbers.dec((BigDecimal) after.get("freightAmount")));
-        events.publish(DomainEvents.FLEET_TRIP_CLOSED, ev);
+        events.publishOnCommit(DomainEvents.FLEET_TRIP_CLOSED, ev);
         return get(id);
     }
 
@@ -1439,7 +1480,8 @@ public class FleetDispatchService {
             BigDecimal qty = SqlRows.dec(l, "dispatchedQty");
             Map<String, Object> data = Obj.of("deliveredQty", BigDecimal.ZERO, "returnedQty", qty);
             if (qty.signum() > 0) {
-                data.put("returnLedgerCode", putBack(t, order, l, qty, "Load returned: trip " + code));
+                data.put("returnLedgerCode", putBack(t, order, l, qty, "Load returned: trip " + code,
+                        serials((String) l.get("id"))));
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), data);
             if (qty.signum() > 0) {
@@ -1462,7 +1504,7 @@ public class FleetDispatchService {
         orders.refreshStatus((String) order.get("id"));
         Map<String, Object> ev = tripEvent(after);
         ev.put("reason", in.reason().trim());
-        events.publish(DomainEvents.FLEET_TRIP_RETURNED, ev);
+        events.publishOnCommit(DomainEvents.FLEET_TRIP_RETURNED, ev);
         return get(id);
     }
 
@@ -1520,13 +1562,73 @@ public class FleetDispatchService {
                 .params(dl, FleetDb.org()).query(String.class).optional().orElse(null);
     }
 
+    /**
+     * Sales readiness R4d (DEL-2): record the serial numbers a trip line will issue (serial-tracked goods), before it
+     * is dispatched. {@code byLine}: load line id → serial numbers (base units). An empty list clears them.
+     */
+    @Transactional
+    public void setSerials(String tripId, Map<String, List<String>> byLine) {
+        Locked k = lockTrip(tripId);
+        if (k.trip().get("stockIssuedAt") != null) {
+            throw ApiException.conflict("Trip " + k.trip().get("code") + " already issued its stock");
+        }
+        for (Map.Entry<String, List<String>> e : byLine.entrySet()) {
+            List<String> list = e.getValue() == null ? List.of() : e.getValue().stream().map(String::trim)
+                    .filter(x -> !x.isEmpty()).toList();
+            if (new java.util.HashSet<>(list).size() != list.size()) {
+                throw ApiException.badRequest("A serial number is entered twice");
+            }
+            int n = db.jdbc().sql("UPDATE \"FleetLoadLine\" SET \"serialNumbers\" = ?::jsonb WHERE id = ? AND \"loadId\" = ?"
+                    + " AND \"organizationId\" = ?").params(list.isEmpty() ? null : SERIALS_JSON.writeValueAsString(list),
+                            e.getKey(), tripId, FleetDb.org()).update();
+            if (n == 0) {
+                throw ApiException.badRequest("Line " + e.getKey() + " is not on trip " + k.trip().get("code"));
+            }
+        }
+    }
+
+    private static final tools.jackson.databind.json.JsonMapper SERIALS_JSON =
+            tools.jackson.databind.json.JsonMapper.builder().build();
+
+    /** Serial numbers recorded on a trip line (empty when none). */
+    List<String> serials(String loadLineId) {
+        String raw = db.jdbc().sql("SELECT \"serialNumbers\"::text FROM \"FleetLoadLine\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(loadLineId, FleetDb.org()).query(String.class).optional().orElse(null);
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return List.of(SERIALS_JSON.readValue(raw, String[].class));
+    }
+
+    /** The serials handed back at delivery: all of them when everything came back, else the ones named (a subset). */
+    private List<String> returnedSerials(Map<String, Object> l, List<String> named, BigDecimal returned,
+            BigDecimal dispatched) {
+        List<String> issued = serials((String) l.get("id"));
+        if (issued.isEmpty()) {
+            return List.of();
+        }
+        if (named == null || named.isEmpty()) {
+            if (returned.compareTo(dispatched) == 0) {
+                return issued;
+            }
+            throw ApiException.badRequest("Name the serial numbers that came back on "
+                    + productName((String) l.get("productId")));
+        }
+        for (String sn : named) {
+            if (!issued.contains(sn)) {
+                throw ApiException.badRequest("Serial number " + sn + " was not dispatched on this line");
+            }
+        }
+        return named;
+    }
+
     private List<Map<String, Object>> lines(String tripId) {
         return db.list(FleetLoadLine.class, " AND \"loadId\" = ? ORDER BY \"createdAt\", id", tripId);
     }
 
     /** Receive returned goods back into the trip's yard at the issue cost (current cost in stock mode invoiced). */
     private String putBack(Map<String, Object> t, Map<String, Object> order, Map<String, Object> l, BigDecimal qty,
-            String notes) {
+            String notes, List<String> serials) {
         if (!tracked((String) l.get("productId"))) {
             return null;
         }
@@ -1539,6 +1641,9 @@ public class FleetDispatchService {
                 .batch((String) l.get("batchNumber")).source(STOCK_SOURCE + "_return", (String) t.get("id")).reference((String) t.get("code")).notes(notes);
         if (issuedHere && l.get("unitCost") != null) {
             m.unitCost(SqlRows.dec(l, "unitCost"));
+        }
+        if (serials != null && !serials.isEmpty()) {
+            m.serials(serials);
         }
         return stock.receiveReturn(m).ledgerCode();
     }

@@ -1553,7 +1553,7 @@ public class CashSaleService {
         Map<String, Object> payload = Obj.of("v", 1, "organizationId", org(), "submissionId", id, "number",
                 s.get("number"), "branchId", s.get("branchId"), "partnerId", s.get("partnerId"), "grandTotal",
                 s.get("grandTotal"), "invoiceId", s.get("currentInvoiceId"), "reason", reason);
-        events.publish(event, payload);
+        events.publishOnCommit(event, payload);
     }
 
     private void notify(String userId, String title, String body, String id) {

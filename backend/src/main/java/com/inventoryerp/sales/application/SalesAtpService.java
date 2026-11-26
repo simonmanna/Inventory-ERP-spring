@@ -206,6 +206,23 @@ public class SalesAtpService {
 
     /** Reserve / re-plan every open stock line of an order (idempotent; called on confirm, change, close short). */
     @Transactional
+    /**
+     * Sales readiness R4 (SO-8): re-plan an order's reservations after it changed (close short, amendment, fulfilment
+     * rebuild) only where reservations are in use: the organisation reserves on confirmation, or this order was
+     * reserved by hand. An organisation that opted out ({@code reservationTrigger = none}) gets none by itself.
+     */
+    public void followOrder(String orderId) {
+        // No settings row yet = the column default, 'confirm'.
+        boolean auto = db.count("SELECT count(*) FROM \"SalesSettings\" WHERE \"organizationId\" = ? AND"
+                + " \"reservationTrigger\" = 'none'", List.of(org())) == 0;
+        boolean reserved = auto || db.count("SELECT count(*) FROM \"StockReservation\" r JOIN \"SalesOrderLine\" l ON"
+                + " l.id = r.\"sourceId\" WHERE r.\"organizationId\" = ? AND r.\"sourceType\" = ? AND l.\"orderId\" = ?",
+                List.of(org(), SOURCE, orderId)) > 0;
+        if (reserved) {
+            reserveOrder(orderId);
+        }
+    }
+
     public Map<String, Object> reserveOrder(String orderId) {
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", orderId,
                 org());
@@ -410,7 +427,6 @@ public class SalesAtpService {
     }
 
     /** Backorder job body: retry reservations of orders with unreserved stock lines. Returns orders re-planned. */
-    @Transactional
     public int retryBackorders() {
         List<Map<String, Object>> orders = db.rows("""
                 SELECT DISTINCT o.id, o.priority, o."confirmedAt" FROM "SalesOrder" o JOIN "SalesOrderLine" l ON l."orderId" = o.id
@@ -418,10 +434,27 @@ public class SalesAtpService {
                  WHERE o."organizationId" = ? AND o.status IN ('confirmed', 'in_fulfilment') AND o."deletedAt" IS NULL
                    AND pr."trackInventory" AND l.quantity - l."qtyCancelled" - l."qtyDelivered" - l."qtyReserved" > 0
                  ORDER BY o.priority DESC, o."confirmedAt\"""", org());
+        // Sales readiness R5 (SO-5): one transaction per order, so the stock-cell locks of one order are released before
+        // the next, and a failing order does not roll back (or hold up) the others.
+        int done = 0;
         for (Map<String, Object> o : orders) {
-            reserveOrder(str(o.get("id")));
+            String id = str(o.get("id"));
+            try {
+                perOrder.executeWithoutResult(s -> reserveOrder(id));
+                done++;
+            } catch (RuntimeException e) {
+                LOG.warn("Backorder reservation of sales order {} failed: {}", id, e.toString());
+            }
         }
-        return orders.size();
+        return done;
+    }
+
+    private org.springframework.transaction.support.TransactionTemplate perOrder;
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger(SalesAtpService.class);
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTransactions(org.springframework.transaction.PlatformTransactionManager txm) {
+        this.perOrder = new org.springframework.transaction.support.TransactionTemplate(txm);
     }
 
     // ------------------------------------------------------------------ helpers

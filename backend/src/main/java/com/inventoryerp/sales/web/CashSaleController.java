@@ -148,7 +148,7 @@ public final class CashSaleController {
         }
 
         @PostMapping("/{id}/confirm")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__CASH_SALE_CONFIRM)
         public Map<String, Object> confirm(@PathVariable String id) {
             return svc.confirm(id);
@@ -229,21 +229,21 @@ public final class CashSaleController {
 
         /** Approve and invoice in one step: invoice posted, payments applied, delivery copied (one transaction). */
         @PostMapping("/{id}/approve-and-invoice")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions({Permissions.SALES__CASH_SALE_APPROVE, Permissions.SALES__CASH_SALE_INVOICE})
         public Map<String, Object> approveAndInvoice(@PathVariable String id) {
             return svc.approveAndInvoice(id);
         }
 
         @PostMapping("/{id}/generate-invoice")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__CASH_SALE_INVOICE)
         public Map<String, Object> generateInvoice(@PathVariable String id) {
             return svc.generateInvoice(id);
         }
 
         @PostMapping("/{id}/cancel-invoice")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__CASH_SALE_INVOICE)
         public Map<String, Object> cancelInvoice(@PathVariable String id,
                 @RequestBody(required = false) Map<String, Object> b) {
@@ -251,7 +251,7 @@ public final class CashSaleController {
         }
 
         @PostMapping("/{id}/void")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__CASH_SALE_VOID)
         public Map<String, Object> voidSale(@PathVariable String id, @RequestBody Map<String, Object> b) {
             return svc.voidSale(id, body(b));

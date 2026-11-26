@@ -193,7 +193,7 @@ export function useCreateInvoice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateInvoiceInput) =>
-      (await api.post<Invoice>('/invoices', input)).data,
+      idempotentPost<Invoice>('/invoices', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invoices'] }),
   });
 }
@@ -201,7 +201,7 @@ export function useCreateInvoice() {
 export function usePostInvoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => (await api.post<Invoice>(`/invoices/${id}/post`)).data,
+    mutationFn: async (id: string) => idempotentPost<Invoice>(`/invoices/${id}/post`),
     onSuccess: (_d, id) => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoice', id] });
@@ -254,7 +254,7 @@ export function useCancelInvoice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, reason }: { id: string; reason: string }) =>
-      (await api.post<Invoice>(`/invoices/${id}/cancel`, { reason })).data,
+      idempotentPost<Invoice>(`/invoices/${id}/cancel`, { reason }),
     onSuccess: (_d, { id }) => {
       qc.invalidateQueries({ queryKey: ['invoices'] });
       qc.invalidateQueries({ queryKey: ['invoice', id] });
@@ -348,7 +348,7 @@ export function useCreateCreditNote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: CreateCreditNoteInput) =>
-      (await api.post<Invoice>('/credit-notes', input)).data,
+      idempotentPost<Invoice>('/credit-notes', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['credit-notes'] }),
   });
 }
@@ -363,7 +363,7 @@ export function usePostCreditNote() {
       const id = typeof arg === 'string' ? arg : arg.id;
       const disposition = typeof arg === 'string' ? undefined : arg.disposition;
       const qs = disposition ? `?disposition=${disposition}` : '';
-      return (await api.post<Invoice>(`/credit-notes/${id}/post${qs}`)).data;
+      return idempotentPost<Invoice>(`/credit-notes/${id}/post${qs}`);
     },
     onSuccess: (_d, arg) => {
       const id = typeof arg === 'string' ? arg : arg.id;

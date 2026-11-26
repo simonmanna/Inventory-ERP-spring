@@ -13,6 +13,7 @@ import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.InvoiceService;
 import com.inventoryerp.invoicing.application.InvoiceService.InvoiceInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -176,7 +177,7 @@ public class SalesBillingService {
         }
         assertTaxRules(o);
         String mode = blank(str(in.get("mode"))) ? "regular" : str(in.get("mode"));
-        String issue = blank(str(in.get("issueDate"))) ? LocalDate.now().toString() : str(in.get("issueDate"));
+        String issue = blank(str(in.get("issueDate"))) ? LocalDate.now(BusinessZone.get()).toString() : str(in.get("issueDate"));
         String number = str(o.get("number"));
         Map<String, Object> doc;
         if ("down_payment".equals(mode)) {
@@ -188,6 +189,15 @@ public class SalesBillingService {
             }
             if (amount.compareTo(dec(o.get("total"))) > 0) {
                 throw ApiException.badRequest("A down payment cannot exceed the order total");
+            }
+            // Sales readiness R2b (INV-7): together with the order's live down-payment invoices (the order is locked).
+            BigDecimal already = dec(db.row("SELECT COALESCE(sum(k.amount), 0) AS s FROM \"SalesInvoiceLink\" k JOIN"
+                    + " \"Document\" d ON d.id = k.\"documentId\" WHERE k.\"orderId\" = ? AND k.\"organizationId\" = ? AND"
+                    + " k.kind = 'down_payment' AND d.status::text <> 'cancelled'", orderId, org()).get("s"));
+            if (already.add(amount).compareTo(dec(o.get("total"))) > 0) {
+                throw ApiException.badRequest("Down payments on sales order " + number + " would exceed the order total"
+                        + " (already " + already.stripTrailingZeros().toPlainString() + " of "
+                        + dec(o.get("total")).stripTrailingZeros().toPlainString() + ")");
             }
             boolean taxOnReceipt = "receipt".equals(settings.settings().get("depositTaxPoint"));
             Map<String, Object> taxed = !taxOnReceipt ? null : db.row("SELECT \"taxId\" FROM \"SalesOrderLine\" WHERE"
@@ -468,7 +478,7 @@ public class SalesBillingService {
         }
         String account = l.get("incomeAccountId") != null ? str(l.get("incomeAccountId"))
                 : str(settings.settings().get("salesReturnsAccountId"));
-        Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(o.get("partnerId")), LocalDate.now()
+        Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(o.get("partnerId")), LocalDate.now(BusinessZone.get())
                 .toString(), null, str(x.get("code")), "Delivery " + ("weight".equals(x.get("kind")) ? "weight variance"
                         : "shortage") + " " + x.get("code") + " confirmed after invoice " + inv.get("documentNumber")
                         + " of sales order " + o.get("number") + ". The goods did not arrive: the line carries no"

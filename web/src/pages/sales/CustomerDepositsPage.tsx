@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -31,7 +32,6 @@ export interface Deposit {
 }
 interface Application { id: string; kind: string; amount: number; documentId: string; documentNumber: string | null; paymentId: string; reversedAt: string | null; createdAt: string }
 
-const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 const th = 'px-3 py-2';
 const selectCls = 'h-9 w-full rounded-md border bg-background px-2 text-sm';
 const METHODS: Array<[string, string]> = [['bank', 'Bank transfer'], ['cash', 'Cash'], ['cheque', 'Cheque'], ['mobile_money', 'Mobile money (recorded)']];
@@ -169,7 +169,7 @@ function sourceLabel(source: string) {
 
 function useAction(onDone: () => void, success: string) {
   return useMutation({
-    mutationFn: async ({ url, body }: { url: string; body: Record<string, unknown> }) => (await api.post(url, body, idem())).data,
+    mutationFn: async ({ url, body }: { url: string; body: Record<string, unknown> }) => idempotentPost(url, body),
     onSuccess: () => { toast.success(tx(success)); onDone(); },
     onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))),
   });

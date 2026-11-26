@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -36,7 +37,7 @@ import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
 import { PartnerCreateDialog } from '@/pages/partners/PartnerCreateDialog';
 import {
-  DELIVERY_STATUS_LABEL, METHOD_LABEL, cashSaleWhatsappText, downloadCashSaleExcel, downloadCashSalePdf, idem, useBranchProfiles, useCashSale, usePaymentModes,
+  DELIVERY_STATUS_LABEL, METHOD_LABEL, cashSaleWhatsappText, downloadCashSaleExcel, downloadCashSalePdf, useBranchProfiles, useCashSale, usePaymentModes,
   type CashSale, type TimelineEvent,
 } from '@/features/sales/cash-sales-api';
 import { ExecutionPill, FiscalPill, ProcessingPill } from './cash-sales-ui';
@@ -213,7 +214,8 @@ export function CashSalePage() {
     }
   }, tx('Saved'));
   const act = (path: string, ok: string, payload?: unknown, money?: boolean) =>
-    run(() => api.post(`/sales/cash-sales/${id}/${path}`, payload ?? null, money ? idem() : undefined), ok);
+    run(() => (money ? idempotentPost(`/sales/cash-sales/${id}/${path}`, payload ?? null)
+      : api.post(`/sales/cash-sales/${id}/${path}`, payload ?? null)), ok);
 
   if (!isNew && isLoading) return <Skeleton className="h-96 w-full" />;
   const actions = s?.actions ?? [];

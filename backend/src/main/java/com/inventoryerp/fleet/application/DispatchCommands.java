@@ -205,12 +205,20 @@ public final class DispatchCommands {
                 "site_closed", "other"}) String reason,
             @Size(max = 1000) String notes,
             // Phase A A3: damaged at the site (a physical fact of its own, with a "damaged" claim).
-            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal damagedQty) {
+            @DecimalMin("0") @Digits(integer = 11, fraction = 3) BigDecimal damagedQty,
+            // Sales readiness R4d (DEL-2): which of the dispatched serial numbers came back (serial-tracked goods).
+            @Size(max = 10000) List<@NotBlank String> returnedSerialNumbers) {
 
         /** Without a damaged quantity (callers before Phase A A3). */
         public PodLineInput(String loadLineId, BigDecimal deliveredQty, BigDecimal returnedQty, String reason,
                 String notes) {
-            this(loadLineId, deliveredQty, returnedQty, reason, notes, null);
+            this(loadLineId, deliveredQty, returnedQty, reason, notes, null, null);
+        }
+
+        /** Without returned serial numbers (callers before R4d). */
+        public PodLineInput(String loadLineId, BigDecimal deliveredQty, BigDecimal returnedQty, String reason,
+                String notes, BigDecimal damagedQty) {
+            this(loadLineId, deliveredQty, returnedQty, reason, notes, damagedQty, null);
         }
     }
 

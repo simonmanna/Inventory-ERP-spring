@@ -89,7 +89,7 @@ public class InvoiceController {
     }
 
     @PostMapping
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVOICE__CREATE)
     public Map<String, Object> create(@Valid @RequestBody CreateInvoiceRequest dto) {
         return invoices.create(dto.toInput());
@@ -109,7 +109,7 @@ public class InvoiceController {
     }
 
     @PostMapping("/{id}/post")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVOICE__POST)
     public Map<String, Object> post(@PathVariable String id) {
         return invoices.postChecked(id);
@@ -122,7 +122,7 @@ public class InvoiceController {
 
     /** Sales-invoice document reversal: GL, stock and residual undone together; see {@link InvoiceService#cancel}. */
     @PostMapping("/{id}/cancel")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.INVOICE__CANCEL)
     public Map<String, Object> cancel(@PathVariable String id,
             @Valid @RequestBody(required = false) ReversalRequest dto) {

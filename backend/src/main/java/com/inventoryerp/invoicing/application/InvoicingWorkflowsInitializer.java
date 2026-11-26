@@ -25,6 +25,7 @@ import jakarta.annotation.PostConstruct;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -931,18 +932,23 @@ public class InvoicingWorkflowsInitializer {
         jdbc.sql("UPDATE \"Payment\" SET \"voidedAt\" = " + NOW + ", \"voidedById\" = ?, \"voidReason\" = ?,"
                         + " \"voidedAllocations\" = ?::jsonb, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(ctx.userId(), reason, EntityJson.toJson(allocations), payment.get("id")).update();
-        for (Map<String, Object> alloc : allocations) {
+        // Sales readiness R2b (P1-5): restore each settled document under a row lock, in id order, so a void cannot race
+        // a concurrent receipt or credit allocation on the same invoice.
+        List<Map<String, Object>> ordered = new ArrayList<>(allocations);
+        ordered.sort(Comparator.comparing(a -> String.valueOf(a.get("invoiceId") != null ? a.get("invoiceId")
+                : a.get("documentId"))));
+        for (Map<String, Object> alloc : ordered) {
             if (alloc.get("invoiceId") != null) {
-                Map<String, Object> inv = SqlRows.one(jdbc.sql("SELECT * FROM \"Invoice\" WHERE id = ? AND \"organizationId\" = ?")
-                        .params(alloc.get("invoiceId"), org));
+                Map<String, Object> inv = SqlRows.one(jdbc.sql("SELECT * FROM \"Invoice\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " FOR UPDATE").params(alloc.get("invoiceId"), org));
                 if (inv != null) {
                     restore("Invoice", "InvoiceStatus", inv, d(alloc.get("amount")));
                 }
                 jdbc.sql("DELETE FROM \"PaymentAllocation\" WHERE id = ?").param(alloc.get("id")).update();
                 continue;
             }
-            Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
-                    .params(alloc.get("documentId"), org));
+            Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT * FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
+                    + " FOR UPDATE").params(alloc.get("documentId"), org));
             if (doc != null) {
                 restore("Document", "DocumentStatus", doc, d(alloc.get("amount")));
             }

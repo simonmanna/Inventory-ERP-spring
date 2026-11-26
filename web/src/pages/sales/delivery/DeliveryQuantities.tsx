@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { FileUp, History, PencilLine, X } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
@@ -6,13 +7,12 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { api } from '@/lib/api';
 import { dateTime } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/auth.store';
 import {
-  idem, readDataUrl, useDeliveryAction, useLineHistory, type ClaimDecision, type DeliveryClaim, type DeliveryLine,
+  readDataUrl, useDeliveryAction, useLineHistory, type ClaimDecision, type DeliveryClaim, type DeliveryLine,
   type SalesDelivery,
 } from '@/features/sales/delivery-api';
 import { Labeled } from './DeliveryEditorDialog';
@@ -179,7 +179,7 @@ export function PodCorrectionDialog({ d, onClose }: { d: SalesDelivery; onClose:
       reason: reason.trim(),
       evidence: files.map((f) => f.dataUrl),
     };
-    await api.post(`/sales/deliveries/${d.id}/pod-correction`, body, idem());
+    await idempotentPost(`/sales/deliveries/${d.id}/pod-correction`, body);
   }, tx('Proof of delivery corrected'));
   const changed = lines.some((l) => values[l.id] && n(values[l.id]) > n(l.deliveredQty));
   const invalid = lines.some((l) => values[l.id] && (n(values[l.id]) < n(l.deliveredQty)

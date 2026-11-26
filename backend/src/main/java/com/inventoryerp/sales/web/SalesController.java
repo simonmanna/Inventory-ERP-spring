@@ -269,14 +269,14 @@ public final class SalesController {
         }
 
         @PostMapping("/{id}/confirm")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__ORDER_CONFIRM)
         public Map<String, Object> confirm(@PathVariable String id) {
             return svc.confirm(id);
         }
 
         @PostMapping("/{id}/approve")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__QUOTATION_APPROVE)
         public Map<String, Object> approve(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             return svc.approve(id, text(b, "comment"));
@@ -384,14 +384,14 @@ public final class SalesController {
         }
 
         @PostMapping("/{id}/invoices")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__INVOICE_CREATE)
         public Map<String, Object> invoice(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             return billing.createInvoice(id, body(b));
         }
 
         @PostMapping("/{id}/deposits")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
         public Map<String, Object> deposit(@PathVariable String id, @RequestBody Map<String, Object> b) {
             Map<String, Object> o = svc.require(id);
@@ -405,7 +405,7 @@ public final class SalesController {
         }
 
         @PostMapping("/{id}/apply-deposits")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
         public List<Map<String, Object>> applyDeposits(@PathVariable String id, @RequestBody Map<String, Object> b) {
             svc.require(id);
@@ -444,7 +444,7 @@ public final class SalesController {
         }
 
         @PostMapping("/{id}/approve")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__ORDER_AMEND_APPROVE)
         public Map<String, Object> approve(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
             return svc.approve(id, text(b, "comment"));
@@ -488,7 +488,7 @@ public final class SalesController {
         }
 
         @PostMapping("/invoices/batch")
-        @Idempotent
+        @Idempotent(required = true)
         @RequirePermissions(Permissions.SALES__INVOICE_CREATE)
         public List<Map<String, Object>> batch(@RequestBody Map<String, Object> b) {
             return billing.batch(body(b));

@@ -23,6 +23,7 @@ import com.inventoryerp.invoicing.domain.Invoice;
 import com.inventoryerp.invoicing.domain.InvoiceItem;
 import com.inventoryerp.invoicing.domain.Payment;
 import com.inventoryerp.invoicing.domain.PaymentAllocation;
+import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -117,6 +118,8 @@ public class InvoiceService {
         this.priceLists = priceLists;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // Sales readiness R2 (P1-4): the approval request it writes is reused on retry, so its commit must not keep the key.
+        this.newTx.setName(BusinessOutcome.RETRY_SAFE_TX);
     }
 
     private static String org() {
@@ -128,7 +131,7 @@ public class InvoiceService {
         payload.put("organizationId", org());
         payload.put("documentId", doc.get("id"));
         payload.put("documentNumber", doc.get("documentNumber"));
-        events.publish(event, payload);
+        events.publishOnCommit(event, payload);
     }
 
     // ------------------------------------------------------------------ list
@@ -796,6 +799,7 @@ public class InvoiceService {
         jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
                 .query().listOfRows();
         assertNothingSettled(id, (String) doc.get("documentNumber"));
+        voidDownPaymentDeposit(id, (String) doc.get("documentNumber"), reason);
         workflow.transition("invoice", id, "cancel", Obj.of("reason", reason), doc);
         reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("sales_invoice",
                 id, (String) doc.get("documentNumber"), (String) doc.get("partnerId"), reason, "Document",
@@ -804,6 +808,26 @@ public class InvoiceService {
         Map<String, Object> out = builder.document(id);
         withReversal(out, id);
         return out;
+    }
+
+    /**
+     * Sales readiness R2b (INV-2): a posted down-payment invoice registered a customer deposit (its Cr side). The cancel
+     * reverses that entry, so the deposit must go too: refused while any of it was applied or refunded, otherwise voided
+     * (it has no entry of its own). Before this the deposit stayed open and could clear receivables with no cash.
+     */
+    private void voidDownPaymentDeposit(String id, String number, String reason) {
+        Map<String, Object> dep = SqlRows.one(jdbc.sql("SELECT id, number, status, \"appliedAmount\", \"refundedAmount\""
+                + " FROM \"CustomerDeposit\" WHERE \"documentId\" = ? AND \"organizationId\" = ? AND source ="
+                + " 'down_payment_invoice' FOR UPDATE").params(id, org()));
+        if (dep == null || "void".equals(String.valueOf(dep.get("status")))) {
+            return;
+        }
+        if (SqlRows.dec(dep, "appliedAmount").signum() > 0 || SqlRows.dec(dep, "refundedAmount").signum() > 0) {
+            throw ApiException.badRequest("Invoice " + number + " cannot be cancelled: its down payment deposit "
+                    + dep.get("number") + " has been applied or refunded (reverse its applications and refunds first).");
+        }
+        jdbc.sql("UPDATE \"CustomerDeposit\" SET status = 'void', notes = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params("Down-payment invoice " + number + " cancelled: " + reason, dep.get("id")).update();
     }
 
     /** Additive {@code reversal} block (reason, who, when, entry links) on a cancelled invoice. */

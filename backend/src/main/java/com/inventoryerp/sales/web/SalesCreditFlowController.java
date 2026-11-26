@@ -35,14 +35,14 @@ public class SalesCreditFlowController {
     }
 
     @PostMapping("/credit-notes")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__CREDIT_NOTE_WRITE)
     public Map<String, Object> create(@RequestBody Map<String, Object> b) {
         return svc.create(SalesController.body(b));
     }
 
     @PostMapping("/credit-notes/{id}/allocate")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__CREDIT_NOTE_WRITE)
     public Map<String, Object> allocate(@PathVariable String id, @RequestBody Map<String, Object> b) {
         Object amount = SalesController.body(b).get("amount");
@@ -50,7 +50,7 @@ public class SalesCreditFlowController {
     }
 
     @PostMapping("/credit-notes/{id}/refund")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__CREDIT_NOTE_WRITE)
     public Map<String, Object> refund(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return svc.refund(id, SalesController.body(b));
@@ -64,7 +64,7 @@ public class SalesCreditFlowController {
     }
 
     @PostMapping("/invoices/{id}/write-off")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__WRITE_OFF_POST)
     public Map<String, Object> writeOff(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return svc.writeOff(id, SalesController.body(b));

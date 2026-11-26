@@ -618,6 +618,99 @@ public class FleetDeliveryOrderService {
         return get(id);
     }
 
+    /**
+     * Sales readiness R4d (DEL-1): bring the live delivery order of a source document (a sales order) back in step with
+     * it after the document changed (line closed short, change request applied). Each line's ordered quantity becomes
+     * what the source still has open plus what this delivery order already dispatched; a source line it does not have
+     * yet (added or split by a change request) is added; a line whose product changed takes the new product while
+     * nothing is planned on it. Refused when the source would drop below what deliveries already plan, so goods can
+     * never be planned or issued past the order. No-op without a live delivery order.
+     */
+    @Transactional
+    public void resyncFromSource(String sourceType, String sourceId) {
+        Map<String, Object> order = SqlRows.one(db.jdbc().sql("SELECT id, status FROM \"FleetDeliveryOrder\" WHERE"
+                + " \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ? AND status NOT IN ('cancelled',"
+                + " 'closed') ORDER BY \"createdAt\" LIMIT 1 FOR UPDATE").params(FleetDb.org(), sourceType, sourceId));
+        DeliverySourcePort port = order == null ? null : sourcePort(sourceType, sourceId);
+        if (port == null) {
+            return;
+        }
+        String id = (String) order.get("id");
+        DeliverySourcePort.Source src = port.load(sourceId);
+        Map<String, Map<String, Object>> bySource = new LinkedHashMap<>();
+        for (Map<String, Object> l : SqlRows.list(db.jdbc().sql("SELECT * FROM \"FleetDeliveryOrderLine\" WHERE"
+                + " \"organizationId\" = ? AND \"deliveryOrderId\" = ? ORDER BY \"lineNumber\" FOR UPDATE")
+                .params(FleetDb.org(), id))) {
+            if (l.get("sourceLineId") != null) {
+                bySource.put((String) l.get("sourceLineId"), l);
+            }
+        }
+        int next = bySource.values().stream().mapToInt(l -> ((Number) l.get("lineNumber")).intValue()).max().orElse(0);
+        for (DeliverySourcePort.SourceLine sl : src.lines()) {
+            Map<String, Object> l = bySource.remove(sl.sourceLineId());
+            BigDecimal dispatched = l == null ? BigDecimal.ZERO : SqlRows.dec(l, "dispatchedQty");
+            BigDecimal target = sl.quantity().add(dispatched).setScale(3, RoundingMode.HALF_UP);
+            if (l == null) {
+                if (target.signum() <= 0) {
+                    continue;
+                }
+                Map<String, Object> product = product(sl.productId());
+                Map<String, Object> ld = new LinkedHashMap<>();
+                ld.put("deliveryOrderId", id);
+                ld.put("lineNumber", ++next);
+                ld.put("productId", sl.productId());
+                ld.put("variantId", sl.variantId());
+                ld.put("description", sl.description());
+                ld.put("uomId", sl.uomId() != null ? sl.uomId() : product.get("uomId"));
+                ld.put("uomFactor", sl.uomFactor() == null ? BigDecimal.ONE : sl.uomFactor());
+                ld.put("orderedQty", target);
+                ld.put("sourceLineId", sl.sourceLineId());
+                ld.put("unitPrice", sl.unitPrice());
+                ld.put("discountPercent", sl.discountPercent());
+                ld.put("taxId", sl.taxId());
+                db.insert(FleetDeliveryOrderLine.class, ld);
+                continue;
+            }
+            BigDecimal planned = SqlRows.dec(l, "plannedQty");
+            if (target.compareTo(planned) < 0) {
+                throw ApiException.badRequest("Line \"" + l.get("description") + "\" has " + planned.stripTrailingZeros()
+                        .toPlainString() + " planned on deliveries, more than the order now allows ("
+                        + target.stripTrailingZeros().toPlainString() + "); cancel or replan those deliveries first");
+            }
+            Map<String, Object> patch = new LinkedHashMap<>();
+            if (target.compareTo(SqlRows.dec(l, "orderedQty")) != 0) {
+                patch.put("orderedQty", target);
+            }
+            if (!sl.productId().equals(l.get("productId"))
+                    || !java.util.Objects.equals(sl.variantId(), l.get("variantId"))) {
+                if (planned.signum() > 0) {
+                    throw ApiException.badRequest("Line \"" + l.get("description") + "\" is planned on a delivery;"
+                            + " cancel that delivery before changing its product");
+                }
+                patch.put("productId", sl.productId());
+                patch.put("variantId", sl.variantId());
+                patch.put("description", sl.description());
+                patch.put("uomId", sl.uomId() != null ? sl.uomId() : product(sl.productId()).get("uomId"));
+                patch.put("uomFactor", sl.uomFactor() == null ? BigDecimal.ONE : sl.uomFactor());
+                patch.put("unitPrice", sl.unitPrice());
+                patch.put("discountPercent", sl.discountPercent());
+                patch.put("taxId", sl.taxId());
+            }
+            if (!patch.isEmpty()) {
+                db.update(FleetDeliveryOrderLine.class, (String) l.get("id"), patch);
+            }
+        }
+        // A delivery-order line whose source line is gone (or has no product any more) keeps only what it planned.
+        for (Map<String, Object> l : bySource.values()) {
+            BigDecimal planned = SqlRows.dec(l, "plannedQty");
+            if (SqlRows.dec(l, "orderedQty").compareTo(planned) != 0) {
+                db.update(FleetDeliveryOrderLine.class, (String) l.get("id"), Obj.of("orderedQty", planned));
+            }
+        }
+        audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", null, Obj.of("resyncedFrom", sourceType)));
+        refreshStatus(id);
+    }
+
     /** Re-derive the status from lines and trips (called after every trip change). */
     public void refreshStatus(String id) {
         Map<String, Object> o = require(id, false);

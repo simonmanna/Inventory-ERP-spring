@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -31,7 +32,6 @@ const REASONS: Record<string, string> = {
   wrong_grade: tx('Wrong grade'), damaged: tx('Damaged'), short_quantity: tx('Short quantity'), excess_quantity: tx('Excess quantity'),
   quality_rejection: tx('Quality rejection'), other: tx('Other'),
 };
-const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
 /** Return (RMA) register (ADR-S011 S7). */
 export function ReturnsPage() {
@@ -74,7 +74,9 @@ export function ReturnDetailPage() {
   const [outcome, setOutcome] = useState('credit_note');
   const act = useMutation({
     mutationFn: async ({ action, body }: { action: string; body?: Record<string, unknown> }) =>
-      (await api.post<SalesReturn>(`/sales/returns/${id}/${action}`, body ?? {}, ['receive', 'inspect', 'close'].includes(action) ? idem() : undefined)).data,
+      ['receive', 'inspect', 'close'].includes(action)
+        ? idempotentPost<SalesReturn>(`/sales/returns/${id}/${action}`, body ?? {})
+        : (await api.post<SalesReturn>(`/sales/returns/${id}/${action}`, body ?? {})).data,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['sales'] }); toast.success(tx('Done')); },
     onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))),
   });

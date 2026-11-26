@@ -31,12 +31,12 @@ Green CI is not production approval.
 | Stage | Scope | Exit condition | State |
 |---|---|---|---|
 | R1 | B1 invoice integrity | a generated invoice cannot diverge from its source | done (this PR) |
-| R2 | B3 + P1-3 idempotency | every money route retry-safe | |
-| R3 | P1-1, P1-2, P1-4 | approval and event integrity | |
-| R4 | P1-5, P1-6, P1-7 | concurrency, dates, tenancy | |
-| R5 | P1-8, T5, T31, lifecycle ITs | integration + concurrency evidence | |
+| R2 | B3 + P1-3 idempotency | every money route retry-safe | done 2026-11-26 (with R2b settlement) |
+| R3 | P1-1, P1-2, P1-4 | approval and event integrity | done 2026-11-26 (SO-10 kernel approval open) |
+| R4 | P1-5, P1-6, P1-7 | concurrency, dates, tenancy | mostly done 2026-11-26 (X-6 partial) |
+| R5 | P1-8, T5, T31, lifecycle ITs | integration + concurrency evidence | jobs per order + SalesReadinessR2R4IT; concurrency ITs open |
 | R6 | B2 | accountant sign-off table complete | |
-| R6b | delivery / gate-pass review | review done, blockers closed | |
+| R6b → R4d | delivery / gate-pass review | review done, blockers closed | done 2026-11-26 (DEL-1..DEL-6) |
 | R7 | rehearsal on a restored live copy | owner go-live decision | |
 
 ## R1 — invoice integrity
@@ -82,3 +82,26 @@ WHERE d."sourceType" = 'sales_order' AND d.status::text IN ('posted', 'paid')
 
 Invoices created before V500 have no `documentLineId` on their links and appear in the first part with
 `invoiced_qty` empty; compare those by hand.
+
+## 2026-11-26 — R2 to R5 fixes (branch in /home/ierp-sales-r2, not merged)
+
+Blockers from the 2026-11-26 order-to-cash re-review:
+
+| ID | Fix |
+|---|---|
+| INV-1 | Payment allocation locks the document and checks direction, partner and status; void restore locks in id order. |
+| INV-2 | Credit notes must credit a posted invoice of the same customer (create and post). |
+| INV-3 | Down-payment invoice cancel voids its deposit (refused once applied/refunded); cumulative down-payment cap. |
+| SO-1 | Credit approval re-runs confirm in a savepoint; requester told on failure; pending requests closed on delete/cancel. |
+| DEL-1 | Close short and approved changes resync the delivery order; dispatch capped at order line + tolerance. |
+| DEL-2 | Serial numbers captured at dispatch (V677) and on returns. |
+| X-1/X-2 | `@Idempotent(required = true)` on all sales/invoicing money routes; generic commit-evidence stamp; web keys held per dialog. |
+| X-3 | Events published after commit (`publishOnCommit`) in sales, invoicing and fleet dispatch. |
+
+Also: mock mobile-money gateway off outside test/demo; DEL-3 approval reset; DEL-4 gates on every dispatch route; DEL-5
+gate-out blocked until goods are issued; DEL-6 handover refused for stocked goods; SO-6/SO-7 status refresh under lock and
+closed-short-to-done; SO-8 reservation trigger respected; SO-11 stale save 409; SO-12 header tenancy; X-5 business-zone
+dates; SO-5 jobs per order; invoice post confirm dialog and error toasts.
+
+Still open: SO-10 (kernel approval request resolution), X-6 (a full org-predicate sweep), concurrency ITs, R6 accountant
+decisions, R7 performance (pagination, N+1) and the rehearsal.

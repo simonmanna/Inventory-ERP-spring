@@ -1,4 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { api } from '@/lib/api';
 
 // ---- Types (Sales / order-to-cash, ADR-S011) ----
@@ -56,6 +57,8 @@ export interface SalesOrder {
   id: string;
   number: string;
   revision: number;
+  /** Optimistic-lock counter: sent back on save so a stale copy cannot overwrite a newer edit (SO-11). */
+  version?: number;
   status: SalesOrderStatus;
   onHold: boolean;
   holdReason: string | null;
@@ -130,20 +133,19 @@ export interface SalesSummary {
 }
 
 const clean = (p: Record<string, unknown>) => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined && v !== ''));
-const idem = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
 
 export const salesApi = {
   createOrder: async (body: Record<string, unknown>) => (await api.post<SalesOrder>('/sales/orders', body)).data,
   updateOrder: async ({ id, ...body }: { id: string } & Record<string, unknown>) => (await api.put<SalesOrder>(`/sales/orders/${id}`, body)).data,
   deleteOrder: async (id: string) => (await api.delete(`/sales/orders/${id}`)).data,
   orderAction: async ({ id, action, body }: { id: string; action: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject'; body?: Record<string, unknown> }) =>
-    (await api.post<SalesOrder>(`/sales/orders/${id}/${action}`, body ?? {}, action === 'confirm' ? idem() : undefined)).data,
+    idempotentPost<SalesOrder>(`/sales/orders/${id}/${action}`, body ?? {}),
   closeShort: async ({ id, lineId, reason }: { id: string; lineId: string; reason: string }) =>
     (await api.post<SalesOrder>(`/sales/orders/${id}/lines/${lineId}/close-short`, { reason })).data,
   requestChange: async ({ id, ...body }: { id: string; reason: string; changes: Record<string, unknown> }) =>
     (await api.post<ChangeRequest>(`/sales/orders/${id}/change-requests`, body)).data,
   decideChange: async ({ id, action, comment }: { id: string; action: 'approve' | 'reject'; comment?: string }) =>
-    (await api.post<ChangeRequest>(`/sales/change-requests/${id}/${action}`, { comment }, idem())).data,
+    idempotentPost<ChangeRequest>(`/sales/change-requests/${id}/${action}`, { comment }),
   updateSettings: async (body: Record<string, unknown>) => (await api.put('/sales/settings', body)).data,
 };
 

@@ -108,41 +108,43 @@ public class SalesDeliveryController {
     }
 
     @PostMapping("/deliveries/{id}/cancel")
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_CANCEL)
     public Map<String, Object> cancel(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return deliveries.cancel(id, SalesController.body(b));
     }
 
     @PostMapping("/deliveries/{id}/fail")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
     public Map<String, Object> fail(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return deliveries.fail(id, SalesController.body(b));
     }
 
     @PostMapping("/deliveries/{id}/return")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
     public Map<String, Object> returnLoad(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return deliveries.returnLoad(id, SalesController.body(b));
     }
 
     @PostMapping("/deliveries/{id}/approve")
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_APPROVE)
     public Map<String, Object> approve(@PathVariable String id) {
         return deliveries.approve(id);
     }
 
     @PostMapping("/deliveries/{id}/issue")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_DISPATCH)
-    public Map<String, Object> issue(@PathVariable String id) {
-        return deliveries.issue(id);
+    public Map<String, Object> issue(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+        return deliveries.issue(id, SalesController.body(b));
     }
 
     /** Phase A A3: authorised correction of a recorded proof of delivery (evidence, reason, not the recorder). */
     @PostMapping("/deliveries/{id}/pod-correction")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_POD_CORRECT)
     public Map<String, Object> podCorrection(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deliveries.correctPod(id, SalesController.body(b));
@@ -156,7 +158,7 @@ public class SalesDeliveryController {
     }
 
     @PostMapping("/deliveries/{id}/confirm")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
     public Map<String, Object> confirm(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deliveries.confirm(id, SalesController.body(b));
@@ -164,7 +166,7 @@ public class SalesDeliveryController {
 
     /** Phase A A2: the customer's weighing of a delivered delivery (evidence, comparison, weight claims). */
     @PostMapping("/deliveries/{id}/customer-weight")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DELIVERY_CONFIRM)
     public Map<String, Object> customerWeight(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deliveries.customerWeight(id, SalesController.body(b));
@@ -196,7 +198,7 @@ public class SalesDeliveryController {
     }
 
     @PostMapping("/orders/{id}/milestones/{milestoneId}/invoice")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__INVOICE_CREATE)
     public Map<String, Object> invoiceMilestone(@PathVariable String id, @PathVariable String milestoneId) {
         return milestones.invoice(id, milestoneId);

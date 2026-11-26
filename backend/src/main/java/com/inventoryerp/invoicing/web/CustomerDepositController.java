@@ -74,7 +74,7 @@ public class CustomerDepositController {
     }
 
     @PostMapping("/customer-deposits")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
     public Map<String, Object> receive(@RequestBody Map<String, Object> b) {
         return deposits.receive(new DepositInput(s(b, "partnerId"), s(b, "salesOrderId"), d(b, "amount"),
@@ -91,21 +91,21 @@ public class CustomerDepositController {
 
     /** FX-2 D: classify a deposit as advance or refundable ({@code {kind, reason}}). */
     @PostMapping("/customer-deposits/{id}/classify")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DEPOSIT_CLASSIFY)
     public Map<String, Object> classify(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deposits.classify(id, s(b, "kind"), s(b, "reason"));
     }
 
     @PostMapping("/customer-deposits/{id}/apply")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DEPOSIT_RECORD)
     public Map<String, Object> apply(@PathVariable String id, @RequestBody Map<String, Object> b) {
         return deposits.apply(id, s(b, "documentId"), d(b, "amount"));
     }
 
     @PostMapping("/customer-deposits/{id}/refund")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DEPOSIT_REFUND)
     public Map<String, Object> refund(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return deposits.refund(id, d(b, "amount"), s(b, "paymentMethod"), s(b, "accountId"), s(b, "reason"),
@@ -113,7 +113,7 @@ public class CustomerDepositController {
     }
 
     @PostMapping("/customer-deposits/{id}/void")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.SALES__DEPOSIT_REFUND)
     public Map<String, Object> voidDeposit(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
         return deposits.voidDeposit(id, s(b, "reason"));
@@ -121,7 +121,7 @@ public class CustomerDepositController {
 
     /** Reverse one application of the deposit (its payment voided, the invoice re-opened, the credit back on it). */
     @PostMapping("/customer-deposits/{id}/applications/{paymentId}/reverse")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.PAYMENT__VOID)
     public Map<String, Object> reverseApplication(@PathVariable String id, @PathVariable String paymentId,
             @RequestBody(required = false) Map<String, Object> b) {
@@ -135,7 +135,7 @@ public class CustomerDepositController {
     }
 
     @PostMapping("/payments/mobile-money")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.PAYMENT__CREATE)
     public Map<String, Object> initiate(@RequestBody Map<String, Object> b) {
         return mobileMoney.initiate(body(b));

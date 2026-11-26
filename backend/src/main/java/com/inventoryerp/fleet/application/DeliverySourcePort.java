@@ -19,6 +19,14 @@ public interface DeliverySourcePort {
     /** Refuse delivery when the source is not deliverable now (on hold, cancelled, closed). */
     void assertDeliverable(String sourceId);
 
+    /**
+     * Sales readiness R4d (DEL-7): how far (percent) a dispatch may go over a source line's quantity (weighed or
+     * loaded goods). Default none.
+     */
+    default BigDecimal overDeliveryTolerancePct(String sourceLineId) {
+        return BigDecimal.ZERO;
+    }
+
     record Source(String number, String partnerId, String branchId, String locationId, String siteId,
             LocalDate requestedDate, List<SourceLine> lines) {}
 

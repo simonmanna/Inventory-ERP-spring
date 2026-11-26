@@ -14,6 +14,7 @@ import com.inventoryerp.invoicing.application.CreditNoteService.CreditNoteInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
 import com.inventoryerp.invoicing.application.PaymentService;
 import com.inventoryerp.invoicing.application.PaymentService.PaymentInput;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -135,7 +136,7 @@ public class SalesReturnService {
         if (lines.isEmpty()) {
             throw ApiException.badRequest("Add at least one line to return");
         }
-        int year = LocalDate.now().getYear();
+        int year = LocalDate.now(BusinessZone.get()).getYear();
         String id = SalesDb.newId();
         String number = sequence.next("sales_return:" + year, "RMA-" + year + "-", 5);
         db.update("INSERT INTO \"SalesReturn\" (id, \"organizationId\", number, \"orderId\", \"partnerId\", reason,"
@@ -251,7 +252,7 @@ public class SalesReturnService {
         db.update("UPDATE \"SalesReturn\" SET status = 'received', \"receiveLocationId\" = ?, \"receivedAt\" = now(),"
                 + " \"updatedAt\" = now() WHERE id = ?", location, id);
         returnedProjection(str(r.get("orderId")));
-        events.publish(DomainEvents.SALES_RETURN_RECEIVED, Obj.of("v", 1, "organizationId", org(), "returnId", id,
+        events.publishOnCommit(DomainEvents.SALES_RETURN_RECEIVED, Obj.of("v", 1, "organizationId", org(), "returnId", id,
                 "number", r.get("number"), "orderId", r.get("orderId")));
         audit.record(AuditInput.of("SalesReturn", id, "update", null, Obj.of("status", "received", "location", location)));
         return get(id);
@@ -419,7 +420,7 @@ public class SalesReturnService {
         String refundId = null;
         String replacementId = null;
         if (!cnLines.isEmpty()) {
-            Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(r.get("partnerId")), LocalDate.now()
+            Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(r.get("partnerId")), LocalDate.now(BusinessZone.get())
                     .toString(), null, str(r.get("number")), "Return " + r.get("number") + " of sales order " + o.get(
                             "number"), invoiceId, cnLines));
             creditNoteId = str(cn.get("id"));
@@ -460,7 +461,7 @@ public class SalesReturnService {
                     r.get("complaintId"));
         }
         orders.refreshStatus(orderId);
-        events.publish(DomainEvents.SALES_RETURN_CLOSED, Obj.of("v", 1, "organizationId", org(), "returnId", id, "number",
+        events.publishOnCommit(DomainEvents.SALES_RETURN_CLOSED, Obj.of("v", 1, "organizationId", org(), "returnId", id, "number",
                 r.get("number"), "orderId", orderId, "outcome", outcome));
         audit.record(AuditInput.of("SalesReturn", id, "update", null, Obj.of("status", "closed", "outcome", outcome,
                 "creditNoteId", creditNoteId)));

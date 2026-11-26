@@ -6,6 +6,7 @@ import com.inventoryerp.invoicing.application.PaymentService.PaymentInput;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
@@ -117,17 +118,34 @@ public class SalesMobileMoneyService {
         String paymentId = null;
         String depositId = null;
         String ref = r.get("provider") + " " + r.get("providerRef");
+        String today = LocalDate.now(BusinessZone.get()).toString();
         switch ((String) r.get("purpose")) {
             case "deposit" -> depositId = (String) deposits.receive(new DepositInput(partnerId, (String) r.get(
-                    "salesOrderId"), amount, "mobile_money", null, LocalDate.now().toString(), ref, null)).get("id");
-            case "invoice" -> paymentId = (String) payments.createReceipt(new PaymentInput(partnerId, LocalDate.now()
-                    .toString(), amount, "mobile_money", null, ref, null, List.of(new AllocationInput((String) r.get(
-                            "documentId"), null, amount)), null, false, null, null), true, true).get("id");
-            default -> paymentId = (String) payments.createReceipt(new PaymentInput(partnerId, LocalDate.now().toString(),
+                    "salesOrderId"), amount, "mobile_money", null, today, ref, null)).get("id");
+            case "invoice" -> paymentId = (String) payments.createReceipt(new PaymentInput(partnerId, today, amount,
+                    "mobile_money", null, ref, null, invoiceAllocation((String) r.get("documentId"), partnerId, amount),
+                    null, false, null, null), true, true).get("id");
+            default -> paymentId = (String) payments.createReceipt(new PaymentInput(partnerId, today,
                     amount, "mobile_money", null, ref, null, List.of(), null, false, null, null), true, true).get("id");
         }
         jdbc.sql("UPDATE \"MobileMoneyRequest\" SET status = 'succeeded', \"paymentId\" = ?, \"depositId\" = ?,"
                 + " \"completedAt\" = now() WHERE id = ?").params(paymentId, depositId, id).update();
+    }
+
+    /**
+     * Sales readiness R2b (INV-5): the money was collected, so it is always booked. It settles what is still open on the
+     * invoice; the rest (or all of it, when the invoice was paid or cancelled meanwhile) stays on the receipt as an
+     * advance. Before this the allocation failed, the refresh rolled back and the request stayed pending forever.
+     */
+    private List<AllocationInput> invoiceAllocation(String documentId, String partnerId, BigDecimal amount) {
+        Map<String, Object> doc = documentId == null ? null : SqlRows.one(jdbc.sql("SELECT status::text AS status,"
+                + " \"partnerId\", \"amountResidual\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(documentId, org()));
+        if (doc == null || !"posted".equals(doc.get("status")) || !partnerId.equals(doc.get("partnerId"))) {
+            return List.of();
+        }
+        BigDecimal open = SqlRows.dec(doc, "amountResidual").min(amount);
+        return open.signum() > 0 ? List.of(new AllocationInput(documentId, null, open)) : List.of();
     }
 
     @Transactional(readOnly = true)

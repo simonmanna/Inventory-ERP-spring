@@ -159,7 +159,17 @@ public abstract class ApiTestSupport {
     private static final java.util.regex.Pattern KEY_REQUIRED = java.util.regex.Pattern.compile(
             "^/(inventory/(direct-stock/(in|out)|counts/[^/]+/submit|transfers/[^/]+/(receive|approve|dispatch)"
                     + "|(waste|adjustments)/[^/]+/approve)|warehouse/pick-orders/[^/]+/ship"
-                    + "|procurement/goods-receipts/adhoc|(sales|crm)/quotations/[^/]+/convert)(\\?.*)?$");
+                    + "|procurement/goods-receipts/adhoc|(sales|crm)/quotations/[^/]+/convert"
+                    // sales readiness R2: invoice, credit-note, deposit, sales money, cash-sale, delivery, return routes
+                    + "|invoices(/[^/]+/(post|cancel))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
+                    + "|customer-deposits(/[^/]+/(classify|apply|refund|void|applications/[^/]+/reverse))?"
+                    + "|payments/[^/]+/allocations|payments/mobile-money"
+                    + "|sales/(orders/[^/]+/(confirm|approve|invoices|deposits|apply-deposits|deliveries"
+                    + "|milestones/[^/]+/invoice)|change-requests/[^/]+/approve|invoices/(batch|[^/]+/write-off)"
+                    + "|credit-notes(/[^/]+/(allocate|refund))?"
+                    + "|cash-sales/[^/]+/(confirm|approve-and-invoice|generate-invoice|cancel-invoice|void)"
+                    + "|deliveries/[^/]+/(fail|return|approve|issue|pod-correction|confirm|customer-weight|cancel)"
+                    + "|returns/[^/]+/(receive|inspect|close)))(\\?.*)?$");
 
     /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
     protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";

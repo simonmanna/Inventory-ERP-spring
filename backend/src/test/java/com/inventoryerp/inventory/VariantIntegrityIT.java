@@ -157,6 +157,8 @@ class VariantIntegrityIT extends ApiTestSupport {
                 List.of(Map.of("productId", p, "variantId", red, "quantity", 1, "unitPrice", 100),
                         Map.of("productId", p, "variantId", blue, "quantity", 1, "unitPrice", 100)))).get("id")
                 .asString();
+        // Sales readiness INV-2: only a posted invoice can be credited.
+        ok(200, "POST", "/invoices/" + invoice + "/post", null);
         Res cn = as("POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today, "reversedDocumentId",
                 invoice, "lines", List.of(Map.of("productId", p, "quantity", 1, "unitPrice", 100))));
         assertThat(cn.status()).as(cn.raw().body()).isEqualTo(400);

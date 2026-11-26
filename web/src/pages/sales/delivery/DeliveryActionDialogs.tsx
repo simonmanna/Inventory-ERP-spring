@@ -1,14 +1,17 @@
 import { useRef, useState } from 'react';
+import { idempotentPost } from '@/lib/idempotent-request';
 import { AlertTriangle, Camera, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { SignaturePad, type SignaturePadHandle } from '@/components/signature-pad';
+import { toast } from 'sonner';
 import { api } from '@/lib/api';
+import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
-import { idem, readDataUrl, useDeliveryAction, type SalesDelivery } from '@/features/sales/delivery-api';
+import { readDataUrl, useDeliveryAction, type SalesDelivery } from '@/features/sales/delivery-api';
 import { Labeled } from './DeliveryEditorDialog';
 import { REASON_OPTIONS, fromLocalInput, n, qty, toLocalInput } from './delivery-ui';
 import { CustomerWeightFields, emptyWeightForm, uploadWeightEvidence, weightBody, type WeightForm } from './CustomerWeight';
@@ -54,7 +57,7 @@ export function ConfirmDeliveryDialog({ delivery, onClose }: { delivery: SalesDe
   if (weighOpen) problems.push(...cw.problems);
 
   const confirm = useDeliveryAction(async () => {
-    await api.post(`/sales/deliveries/${delivery.id}/confirm`, {
+    await idempotentPost(`/sales/deliveries/${delivery.id}/confirm`, {
       receiverName: receiver.trim(), receiverPhone: phone.trim() || undefined, receivedAt: fromLocalInput(received) ?? undefined,
       arrivedAt: fromLocalInput(arrived) ?? undefined, notes: remarks.trim() || undefined, signature: pad.current?.dataUrl() ?? undefined,
       lines: rows.map(({ l, x }) => ({
@@ -62,9 +65,14 @@ export function ConfirmDeliveryDialog({ delivery, onClose }: { delivery: SalesDe
         reason: x.reason || undefined, notes: x.notes || undefined,
       })),
       customerWeight: weighOpen && cw.body ? cw.body : undefined,
-    }, idem());
-    if (weighOpen && cw.body) await uploadWeightEvidence(delivery.id, weight);
-    for (const p of photos) await api.post(`/sales/deliveries/${delivery.id}/photos`, { dataUrl: p.dataUrl, caption: p.name });
+    });
+    // The delivery is confirmed at this point: an attachment that fails must not make the user confirm it again.
+    try {
+      if (weighOpen && cw.body) await uploadWeightEvidence(delivery.id, weight);
+      for (const p of photos) await api.post(`/sales/deliveries/${delivery.id}/photos`, { dataUrl: p.dataUrl, caption: p.name });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, tx('Delivery confirmed, but a photo or weight evidence could not be uploaded. Add it from the delivery.')));
+    }
   }, tx('Delivery confirmed'));
 
   return (
@@ -198,7 +206,7 @@ export function ReasonDialog({ delivery, kind, onClose }: { delivery: SalesDeliv
   const run = useDeliveryAction(async () => {
     const path = `/sales/deliveries/${delivery.id}/${kind}`;
     if (kind === 'cancel') await api.post(path, { reason: reason.trim() });
-    else await api.post(path, { reason: reason.trim(), reasonCode: code }, idem());
+    else await idempotentPost(path, { reason: reason.trim(), reasonCode: code });
   }, copy.ok);
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>

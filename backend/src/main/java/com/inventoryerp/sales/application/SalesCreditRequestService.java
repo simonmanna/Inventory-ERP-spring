@@ -123,12 +123,24 @@ public class SalesCreditRequestService {
         }
         decide(r, "approved", comment);
         String orderId = str(r.get("orderId"));
-        Map<String, Object> o = db.row("SELECT number, status, \"onHold\", \"holdKind\" FROM \"SalesOrder\" WHERE id = ?", orderId);
+        Map<String, Object> o = db.row("SELECT number, status, \"onHold\", \"holdKind\", \"deletedAt\" FROM \"SalesOrder\""
+                + " WHERE id = ? AND \"organizationId\" = ? FOR UPDATE", orderId, org());
+        if (o == null || o.get("deletedAt") != null || java.util.Set.of("cancelled", "done").contains(o.get("status"))) {
+            throw ApiException.badRequest("This order is closed");
+        }
         if (Boolean.TRUE.equals(o.get("onHold")) && !"manual".equals(o.get("holdKind"))) {
             orders.getObject().release(orderId);
-        } else if (java.util.Set.of("draft", "pending_approval").contains(o.get("status"))) {
+        } else if ("draft".equals(o.get("status"))) {
             credit.override(str(r.get("partnerId")), "sales_order", orderId, str(o.get("number")), comment);
-            orders.getObject().confirmAfterCredit(orderId);
+            // Sales readiness R3 (P1-1): confirm through the full checks. When they refuse (no lines, short stock, or
+            // the order needs commercial approval and goes to pending_approval) the credit approval still stands and
+            // covers the order's next confirm; the requester is told why it is still a draft.
+            Map<String, Object> confirmed = orders.getObject().confirmAfterCredit(orderId);
+            if (confirmed.get("confirmError") != null) {
+                alerts.send(str(r.get("requestedById")), "sales_credit_decision", "Order " + o.get("number")
+                        + " is still a draft", "Credit approved, but the order could not be confirmed: "
+                        + confirmed.get("confirmError"), Obj.of("entityType", "sales_order", "entityId", orderId));
+            }
         }
         // The decision's exposure includes the order it just let through.
         db.update("UPDATE \"SalesCreditRequest\" SET \"exposureAtDecision\" = ? WHERE id = ?", dec(credit.exposure(str(r.get("partnerId")))

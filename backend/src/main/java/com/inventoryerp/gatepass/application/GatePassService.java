@@ -379,6 +379,10 @@ public class GatePassService {
         return detail(p);
     }
 
+    /** Sales sources whose goods must be issued from stock before they pass the gate (R4d, DEL-5). */
+    private static final java.util.Set<String> ISSUE_FIRST = java.util.Set.of("delivery", "sales_order", "invoice",
+            "cash_sale");
+
     private Map<String, Object> detail(Map<String, Object> p) {
         Map<String, Object> out = withState(p);
         out.remove("verifyCode");
@@ -408,6 +412,9 @@ public class GatePassService {
             problems.add("source_missing");
         } else if (src.cancelled()) {
             problems.add("source_cancelled");
+        } else if (!src.goodsIssued() && ISSUE_FIRST.contains(s(p.get("sourceType")))) {
+            // Sales readiness R4d (DEL-5): sold goods leave only after the stock issue (and its cost) is booked.
+            problems.add("goods_not_issued");
         }
         out.put("problems", problems);
         out.put("canLetOut", problems.isEmpty());
@@ -487,6 +494,10 @@ public class GatePassService {
             }
             if (problems.contains("source_cancelled") || problems.contains("source_missing")) {
                 throw ApiException.badRequest("The source document was cancelled; the goods may not leave");
+            }
+            if (problems.contains("goods_not_issued")) {
+                throw ApiException.badRequest("The goods on this pass have not been issued from stock yet (dispatch the"
+                        + " delivery, confirm the sale or post the invoice first); they may not leave");
             }
             String code = in == null ? null : trim(in.verifyCode());
             if (code != null && !code.equalsIgnoreCase(s(p.get("verifyCode")))) {

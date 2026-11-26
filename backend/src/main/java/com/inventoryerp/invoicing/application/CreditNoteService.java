@@ -13,6 +13,7 @@ import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Grouped;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.HeaderInput;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.LineInput;
+import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
@@ -77,6 +78,8 @@ public class CreditNoteService {
         this.posLocation = posLocation;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // Sales readiness R2 (P1-4): the approval request it writes is reused on retry, so its commit must not keep the key.
+        this.newTx.setName(BusinessOutcome.RETRY_SAFE_TX);
     }
 
     private static String org() {
@@ -161,6 +164,24 @@ public class CreditNoteService {
                 .optional().orElse("").toUpperCase(java.util.Locale.ROOT);
     }
 
+    /**
+     * Sales readiness R2b (INV-4): a credit note credits only a posted (or paid) customer invoice of its own customer.
+     * Before this it could credit another customer's invoice or a draft, posting a revenue reversal and open credit that
+     * could then be refunded.
+     */
+    private static void assertCreditable(Map<String, Object> invoice, String partnerId) {
+        if (invoice == null || !"sales_invoice".equals(invoice.get("documentType"))) {
+            throw ApiException.badRequest("The credited document must be a customer invoice");
+        }
+        if (!String.valueOf(invoice.get("partnerId")).equals(partnerId)) {
+            throw ApiException.badRequest("Invoice " + invoice.get("documentNumber") + " belongs to another customer");
+        }
+        if (!List.of("posted", "paid").contains(String.valueOf(invoice.get("status")))) {
+            throw ApiException.badRequest("Invoice " + invoice.get("documentNumber") + " is " + invoice.get("status")
+                    + "; only a posted invoice can be credited");
+        }
+    }
+
     /** Create a draft credit note. */
     @Transactional
     public Map<String, Object> create(CreditNoteInput dto) {
@@ -170,8 +191,12 @@ public class CreditNoteService {
         // A credit note against an invoice is in that invoice's currency and rate; another currency would settle the
         // invoice by the raw number (review 2026-11-15, P-7), so it is refused.
         Map<String, Object> reversed = dto.reversedDocumentId() == null ? null
-                : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\" FROM \"Document\" WHERE id = ? AND"
+                : SqlRows.one(jdbc.sql("SELECT \"currencyId\", \"exchangeRate\", \"documentType\"::text AS \"documentType\","
+                        + " \"partnerId\", status::text AS status, \"documentNumber\" FROM \"Document\" WHERE id = ? AND"
                         + " \"organizationId\" = ?").params(dto.reversedDocumentId(), org()));
+        if (dto.reversedDocumentId() != null) {
+            assertCreditable(reversed, dto.partnerId());
+        }
         if (reversed != null && dto.currencyId() != null
                 && !currencyCode(dto.currencyId()).equals(currencyCode(reversed.get("currencyId")))) {
             throw ApiException.badRequest("A credit note must be in the credited invoice's currency ("
@@ -497,12 +522,14 @@ public class CreditNoteService {
         // and a credit note never posts against an invoice that was cancelled meanwhile.
         String credited = (String) cn.get("reversedDocumentId");
         if (credited != null) {
-            String invoiceStatus = jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
-                    + " FOR UPDATE").params(credited, org()).query(String.class).optional().orElse(null);
-            if ("cancelled".equals(invoiceStatus)) {
+            Map<String, Object> invoice = SqlRows.one(jdbc.sql("SELECT \"documentType\"::text AS \"documentType\","
+                    + " \"partnerId\", status::text AS status, \"documentNumber\" FROM \"Document\" WHERE id = ? AND"
+                    + " \"organizationId\" = ? FOR UPDATE").params(credited, org()));
+            if (invoice != null && "cancelled".equals(invoice.get("status"))) {
                 throw ApiException.badRequest("The credited invoice is cancelled; its stock and revenue were already"
                         + " reversed");
             }
+            assertCreditable(invoice, (String) cn.get("partnerId"));
         }
         String status = jdbc.sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(id, org()).query(String.class).optional().orElse(String.valueOf(cn.get("status")));
@@ -591,7 +618,7 @@ public class CreditNoteService {
         payload.put("organizationId", org());
         payload.put("documentId", id);
         payload.put("documentNumber", cn.get("documentNumber"));
-        events.publish("creditnote.issued", payload);
+        events.publishOnCommit("creditnote.issued", payload);
         Map<String, Object> out = builder.document(id);
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
