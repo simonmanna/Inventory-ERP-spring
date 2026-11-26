@@ -706,7 +706,7 @@ class CashSaleIT extends ApiTestSupport {
                 + " \"organizationId\" = ? AND \"referenceType\" = 'cash_sale' AND \"referenceId\" = ? AND"
                 + " \"quantityChange\" < 0").params(demoOrg, id).query().singleRow();
         BigDecimal before = onHand(goods, location);
-        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", c, "issueDate", LocalDate.now().toString(),
+        String cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", c, "issueDate", LocalDate.now(java.time.ZoneId.of("Africa/Kampala")).toString(),
                 "reversedDocumentId", invoiceId, "lines", List.of(Map.of("productId", goods, "quantity", 2,
                         "unitPrice", 35_000, "taxId", vat)))).get("id").asString();
         Res posted = as("POST", "/credit-notes/" + cn + "/post", null);
@@ -1035,5 +1035,117 @@ class CashSaleIT extends ApiTestSupport {
         jdbc.sql("UPDATE \"PlmItem\" SET \"lifecycleState\" = 'obsolete' WHERE id = ?").param(item).update();
         ok(200, "PATCH", "/sales/cash-sales/" + id, Map.of("lines", List.of(Map.of("productId", released, "quantity",
                 2, "unitPrice", 35_000, "taxId", vat))));
+    }
+
+    // ------------------------------------------------------------------ CS-5 (sales readiness R5)
+
+    String liability(String name) {
+        String adminId = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = 'admin@demo.test'")
+                .param(demoOrg).query(String.class).single();
+        String[] id = new String[1];
+        TenantContext.run(TenantStore.user(demoOrg, adminId), () -> new TransactionTemplate(txm).executeWithoutResult(
+                s -> id[0] = accounts.ensureByCode("22" + num(), name + " " + sfx, "current_liability", null)));
+        return id[0];
+    }
+
+    String tax(String name, int rate, String accountId) {
+        String id = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Tax\" (id, \"organizationId\", name, code, rate, \"accountId\", \"updatedAt\") VALUES"
+                + " (?, ?, ?, ?, ?, ?, now())").params(id, demoOrg, name + " " + sfx, name.substring(0, 2) + num(),
+                        rate, accountId).update();
+        return id;
+    }
+
+    @Test
+    @DisplayName("T5: several tax categories — VAT credited per tax account once; the invoice reclassifies, no second VAT")
+    void severalTaxCategories() {
+        String vatAccount = liability("Output VAT");
+        String exciseAccount = liability("Excise duty");
+        String vat18 = tax("VAT18", 18, vatAccount);
+        String excise10 = tax("EX10", 10, exciseAccount);
+        String tiles = product("Tiles " + sfx, 10_000, 6_000);
+        String sand = product("Sand " + sfx, 20_000, 12_000);
+        stock(tiles, location, 100, 6_000);
+        stock(sand, location, 100, 12_000);
+        String c = partner("Multi-tax buyer " + sfx);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("branchId", branch);
+        body.put("partnerId", c);
+        body.put("customerName", "Multi-tax buyer");
+        body.put("lines", List.of(
+                Map.of("productId", goods, "quantity", 2, "unitPrice", 35_000, "taxId", vat18),
+                Map.of("productId", tiles, "quantity", 5, "unitPrice", 10_000, "taxId", excise10),
+                Map.of("productId", sand, "quantity", 1, "unitPrice", 20_000)));
+        String id = ok(201, "POST", "/sales/cash-sales", body).get("id").asString();
+        JsonNode d = ok(200, "GET", "/sales/cash-sales/" + id, null);
+        assertThat(d.get("subtotal").asDouble()).isEqualTo(140_000);
+        assertThat(d.get("taxTotal").asDouble()).isEqualTo(17_600);
+        assertThat(d.get("grandTotal").asDouble()).isEqualTo(157_600);
+        verify(id, pay(id, "cash", null, 157_600, null));
+        money("/sales/cash-sales/" + id + "/confirm", null, 200);
+        // P3 accrual: each tax account carries its own tax, revenue the net
+        assertThat(balance(vatAccount)).isEqualByComparingTo("-12600");
+        assertThat(balance(exciseAccount)).isEqualByComparingTo("-5000");
+        assertThat(revenueOf(id)).isEqualByComparingTo("140000");
+        assertThat(unbilled(c)).isEqualByComparingTo("157600");
+        ok(200, "POST", "/sales/cash-sales/" + id + "/submit", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/start-review", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/approve", null);
+        String invoiceId = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200).get("currentInvoiceId")
+                .asString();
+        JsonNode inv = ok(200, "GET", "/invoices/" + invoiceId, null);
+        assertThat(inv.get("totalAmount").asDouble()).isEqualTo(157_600);
+        assertThat(inv.get("amountResidual").asDouble()).isZero();
+        // the invoice only reclassified: tax accounts, revenue unchanged; unbilled, deposit and AR back to 0
+        assertThat(balance(vatAccount)).isEqualByComparingTo("-12600");
+        assertThat(balance(exciseAccount)).isEqualByComparingTo("-5000");
+        assertThat(revenueOf(id)).isEqualByComparingTo("140000");
+        assertThat(unbilled(c)).isEqualByComparingTo("0");
+        assertThat(partnerBalance("customer_deposit", c)).isEqualByComparingTo("0");
+        assertThat(partnerBalance("accounts_receivable", c)).isEqualByComparingTo("0");
+        ledger.receivableTiesOut(c);
+        ledger.trialBalanceZero();
+    }
+
+    BigDecimal depositSubledger(String partner) {
+        return jdbc.sql("SELECT COALESCE(sum(amount - \"appliedAmount\" - \"refundedAmount\"), 0) FROM"
+                + " \"CustomerDeposit\" WHERE \"partnerId\" = ? AND status = 'open'").param(partner)
+                .query(BigDecimal.class).single();
+    }
+
+    @Test
+    @DisplayName("T31: partial deposit apply + refund — deposit subledger = GL, invoice residual right, over-refund refused")
+    void partialDepositApplyAndRefund() {
+        String c = partner("Advance payer " + sfx);
+        String dep = money("/customer-deposits", Map.of("partnerId", c, "amount", 500_000, "paymentMethod", "cash"), 200)
+                .get("id").asString();
+        assertThat(partnerBalance("customer_deposit", c)).isEqualByComparingTo("-500000");
+        String invoice = ok(200, "POST", "/invoices", Map.of("partnerId", c, "issueDate", LocalDate.now(java.time.ZoneId.of("Africa/Kampala")).toString(),
+                "lines", List.of(Map.of("description", "Site works", "quantity", 1, "unitPrice", 300_000)))).get("id")
+                .asString();
+        money("/invoices/" + invoice + "/post", null, 200);
+        JsonNode applied = money("/customer-deposits/" + dep + "/apply", Map.of("documentId", invoice, "amount", 200_000),
+                200);
+        assertThat(applied.get("status").asString()).isEqualTo("open");
+        assertThat(ok(200, "GET", "/invoices/" + invoice, null).get("amountResidual").asDouble()).isEqualTo(100_000);
+        JsonNode refunded = money("/customer-deposits/" + dep + "/refund", Map.of("amount", 100_000, "paymentMethod",
+                "cash", "reason", "Over-paid"), 200);
+        assertThat(refunded.get("available").asDouble()).isEqualTo(200_000);
+        assertThat(depositSubledger(c)).isEqualByComparingTo("200000");
+        assertThat(partnerBalance("customer_deposit", c).negate()).isEqualByComparingTo(depositSubledger(c));
+        // more than is left is refused, and nothing moves
+        assertThat(call("POST", "/customer-deposits/" + dep + "/refund", Map.of("amount", 200_001, "paymentMethod",
+                "cash"), key()).status()).isEqualTo(400);
+        assertThat(call("POST", "/customer-deposits/" + dep + "/apply", Map.of("documentId", invoice, "amount", 100_001),
+                key()).status()).isEqualTo(400);
+        assertThat(depositSubledger(c)).isEqualByComparingTo("200000");
+        assertThat(partnerBalance("customer_deposit", c).negate()).isEqualByComparingTo("200000");
+        // the rest settles the invoice exactly
+        money("/customer-deposits/" + dep + "/apply", Map.of("documentId", invoice, "amount", 100_000), 200);
+        assertThat(ok(200, "GET", "/invoices/" + invoice, null).get("amountResidual").asDouble()).isZero();
+        assertThat(partnerBalance("customer_deposit", c).negate()).isEqualByComparingTo(depositSubledger(c));
+        assertThat(depositSubledger(c)).isEqualByComparingTo("100000");
+        ledger.receivableTiesOut(c);
+        ledger.trialBalanceZero();
     }
 }
