@@ -104,6 +104,10 @@ once its source is cancelled.
 
 ## Deviations
 
+- Sales readiness DEL-11 (2026-11-26, owner to approve): an issued pass whose live lines exceed the current source line
+  quantities (the order was changed or closed short after issue) shows the problem `source_quantity_changed`; gate-out
+  answers 400 "The quantities of the source changed after this pass was issued; void it and issue a new pass".
+
 Post-parity extension (owner request 2026-11-23); see ADR-S085. The delivery modules' existing routes and responses
 are unchanged. At gate-out, the cash sale delivery method is set only when it was empty: pickup for a person or
 courier, delivery for a driver.

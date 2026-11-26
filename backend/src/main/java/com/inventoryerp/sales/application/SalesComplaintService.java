@@ -59,7 +59,8 @@ public class SalesComplaintService {
         String partnerId = str(in.get("partnerId"));
         String orderId = blank(str(in.get("orderId"))) ? null : str(in.get("orderId"));
         if (orderId != null) {
-            Map<String, Object> o = db.row("SELECT \"partnerId\" FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?",
+            Map<String, Object> o = db.row("SELECT \"partnerId\" FROM \"SalesOrder\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?",
                     orderId, org());
             if (o == null) {
                 throw ApiException.notFound("Sales order not found");
@@ -90,7 +91,7 @@ public class SalesComplaintService {
                 category, description, user());
         audit.record(AuditInput.of("CustomerComplaint", id, "create", null, Obj.of("number", number, "category",
                 category)));
-        return db.row("SELECT * FROM \"CustomerComplaint\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"CustomerComplaint\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     @Transactional
@@ -106,17 +107,21 @@ public class SalesComplaintService {
                 throw ApiException.badRequest("status must be one of: closed, investigating, open, resolved");
             }
             db.update("UPDATE \"CustomerComplaint\" SET status = ?, \"resolvedAt\" = CASE WHEN ? IN ('resolved', 'closed')"
-                    + " THEN COALESCE(\"resolvedAt\", now()) ELSE NULL END WHERE id = ?", s, s, id);
+                    + " THEN COALESCE(\"resolvedAt\", now()) ELSE NULL END WHERE id = ?"
+                            + " AND \"organizationId\" = ?", s, s, id, org());
         }
         if (in.containsKey("resolution")) {
-            db.update("UPDATE \"CustomerComplaint\" SET resolution = ? WHERE id = ?", str(in.get("resolution")), id);
+            db.update("UPDATE \"CustomerComplaint\" SET resolution = ? WHERE id = ?"
+                    + " AND \"organizationId\" = ?", str(in.get("resolution")), id, org());
         }
         if (in.containsKey("assignedToId")) {
-            db.update("UPDATE \"CustomerComplaint\" SET \"assignedToId\" = ? WHERE id = ?", str(in.get("assignedToId")), id);
+            db.update("UPDATE \"CustomerComplaint\" SET \"assignedToId\" = ? WHERE id = ?"
+                    + " AND \"organizationId\" = ?", str(in.get("assignedToId")), id, org());
         }
-        db.update("UPDATE \"CustomerComplaint\" SET \"updatedAt\" = now() WHERE id = ?", id);
+        db.update("UPDATE \"CustomerComplaint\" SET \"updatedAt\" = now() WHERE id = ?"
+                + " AND \"organizationId\" = ?", id, org());
         audit.record(AuditInput.of("CustomerComplaint", id, "update", c, in));
-        return db.row("SELECT * FROM \"CustomerComplaint\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"CustomerComplaint\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     /** Approved fleet discrepancy on a sales-order delivery → quantity complaint (idempotent per discrepancy). */
@@ -162,6 +167,6 @@ public class SalesComplaintService {
                 str(in.get("fileId")), SalesDb.date(str(in.get("issuedAt"))), user());
         audit.record(AuditInput.of("SalesQualityCertificate", id, "create", null, Obj.of("certificateNumber",
                 in.get("certificateNumber"))));
-        return db.row("SELECT * FROM \"SalesQualityCertificate\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"SalesQualityCertificate\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 }

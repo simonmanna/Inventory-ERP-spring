@@ -42,8 +42,11 @@ public class SalesDeliveryController {
 
     @GetMapping("/deliveries")
     @RequirePermissions(Permissions.SALES__DELIVERY_READ)
-    public List<Map<String, Object>> list(@RequestParam Map<String, String> q) {
-        return deliveries.list(q);
+    public List<Map<String, Object>> list(@RequestParam Map<String, String> q,
+            jakarta.servlet.http.HttpServletResponse response) {
+        List<Map<String, Object>> rows = deliveries.list(q);
+        response.setHeader("X-Total-Count", Long.toString(deliveries.count(q)));
+        return rows;
     }
 
     @GetMapping("/deliveries/reconciliation")
@@ -72,8 +75,9 @@ public class SalesDeliveryController {
 
     @GetMapping("/deliveries/{id}/note")
     @RequirePermissions(Permissions.SALES__DELIVERY_READ)
-    public ResponseEntity<byte[]> note(@PathVariable String id) {
-        FleetDeliveryNoteService.Pdf pdf = deliveries.note(id);
+    public ResponseEntity<byte[]> note(@PathVariable String id,
+            @org.springframework.web.bind.annotation.RequestParam(defaultValue = "false") boolean print) {
+        FleetDeliveryNoteService.Pdf pdf = deliveries.note(id, print);
         return ResponseEntity.ok().header(HttpHeaders.CONTENT_TYPE, "application/pdf")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + pdf.filename() + "\"").body(pdf.content());
     }

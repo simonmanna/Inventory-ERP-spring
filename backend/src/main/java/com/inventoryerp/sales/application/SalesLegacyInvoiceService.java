@@ -185,7 +185,8 @@ public class SalesLegacyInvoiceService {
             // A re-submission replaces the pending request: the approver decides the matches as they now stand.
             withdrawPending(existing, "Review re-submitted with new matches");
             db.update("UPDATE \"SalesLegacyInvoiceReview\" SET matches = ?::jsonb, notes = ?, \"reviewedById\" = ?,"
-                    + " \"reviewedAt\" = now(), \"updatedAt\" = now() WHERE id = ?", json, notes, user(), id);
+                    + " \"reviewedAt\" = now(), \"updatedAt\" = now() WHERE id = ?"
+                            + " AND \"organizationId\" = ?", json, notes, user(), id, org());
         }
         ensureWorkflow();
         Map<String, Object> request = approvals.requestApproval(APPROVAL_ENTITY, id, Obj.of("order", o.get("number"),
@@ -198,7 +199,7 @@ public class SalesLegacyInvoiceService {
                     + " it on in Approvals to submit this review");
         }
         db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'submitted', \"approvalRequestId\" = ?, \"updatedAt\" ="
-                + " now() WHERE id = ?", request.get("id"), id);
+                + " now() WHERE id = ? AND \"organizationId\" = ?", request.get("id"), id, org());
         audit.record(AuditInput.of("SalesLegacyInvoiceReview", id, existing == null ? "create" : "update",
                 existing, Obj.of("order", o.get("number"), "document", g.get("documentNumber"), "matches", matches,
                         "approvalRequestId", request.get("id"))));
@@ -277,7 +278,7 @@ public class SalesLegacyInvoiceService {
         }
         if (!approved) {
             db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'open', notes = COALESCE(?, notes), \"updatedAt\" ="
-                    + " now() WHERE id = ?", comment, reviewId);
+                    + " now() WHERE id = ? AND \"organizationId\" = ?", comment, reviewId, org());
             audit.recordInTx(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "reject", Obj.of("status", "submitted"),
                     Obj.of("status", "open", "approvalRequestId", requestId, "comment", comment)));
             return;
@@ -297,7 +298,8 @@ public class SalesLegacyInvoiceService {
                     r.get("documentId"), e.getValue(), docLine.get(e.getKey()), reviewId);
         }
         db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'reconciled', \"approvedById\" = ?, \"approvedAt\" ="
-                + " now(), notes = COALESCE(?, notes), \"updatedAt\" = now() WHERE id = ?", deciderId, comment, reviewId);
+                + " now(), notes = COALESCE(?, notes), \"updatedAt\" = now() WHERE id = ?"
+                        + " AND \"organizationId\" = ?", deciderId, comment, reviewId, org());
         billing.recomputeInvoiced(orderId);
         audit.recordInTx(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "approve", Obj.of("status", "submitted"),
                 Obj.of("status", "reconciled", "links", perLine.size(), "approvalRequestId", requestId)));
@@ -331,14 +333,16 @@ public class SalesLegacyInvoiceService {
         if (!"exception".equals(r.get("status"))) {
             throw ApiException.conflict("Only an exception can be reopened");
         }
-        db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'open', \"updatedAt\" = now() WHERE id = ?", reviewId);
+        db.update("UPDATE \"SalesLegacyInvoiceReview\" SET status = 'open', \"updatedAt\" = now() WHERE id = ?"
+                + " AND \"organizationId\" = ?", reviewId, org());
         audit.record(AuditInput.of("SalesLegacyInvoiceReview", reviewId, "update", Obj.of("status", "exception"),
                 Obj.of("status", "open")));
         return review(str(r.get("orderId")), str(r.get("documentId")));
     }
 
     private Map<String, Object> lockReview(String id) {
-        Map<String, Object> r = db.row("SELECT * FROM \"SalesLegacyInvoiceReview\" WHERE id = ? AND \"organizationId\" = ?"
+        Map<String, Object> r = db.row("SELECT * FROM \"SalesLegacyInvoiceReview\" WHERE id = ?"
+                + " AND \"organizationId\" = ?"
                 + " FOR UPDATE", id, org());
         if (r == null) {
             throw ApiException.notFound("Legacy invoice review not found");

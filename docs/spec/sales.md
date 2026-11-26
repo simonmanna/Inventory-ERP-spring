@@ -325,6 +325,38 @@ No parity routes are involved. Behaviour changes of the 2026-11-26 readiness fix
 - Business dates (issue, deposit, planned delivery, numbering year) use the organisation's business zone.
 - The backorder and reconcile jobs run one transaction per order.
 
+Behaviour changes of the 2026-11-26 R6/R7 round (owner decisions 2026-11-26 for DEL-9 and INV-11; the rest owner to
+approve):
+
+- **SO-10** Order approval needs the new permission `sales:order:approve` (V678 grants it to every role holding
+  `sales:quotation:approve`). Approve and reject decide the kernel approval request; a multi-step policy keeps the order
+  pending until its last step.
+- **DEL-9a** Damaged and short quantities at delivery move their issue cost out of cost of goods sold into a
+  "Delivery losses" expense account (setting `deliveryLossAccountId`, else 5190 created on first use; switch
+  `deliveryLossPosting`, default on). A proof-of-delivery correction posts only the difference
+  (`FleetLoadLine.lossValue`, V680). No carrier claims.
+- **DEL-9b** Goods the customer rejects (proof of delivery, or a whole-load return for customer_rejected /
+  wrong_product / damaged) go into a quarantine location (setting `rejectedQuarantineLocationId`, else the virtual
+  location SALES-QUARANTINE; switch `rejectedToQuarantine`, default on), not back into saleable stock. A failed attempt
+  (site closed, etc.) still returns to the yard.
+- **DEL-8** Issuing a delivery refuses stock that is firmly reserved for another order (400 "Only X of P is free at this
+  location; Y is reserved for other orders").
+- **DEL-10** What can be returned is the accepted quantity for delivered goods (not rejected, damaged or short).
+- **DEL-11** An issued gate pass whose source quantities fell below the pass is flagged `source_quantity_changed` and
+  cannot gate out.
+- **DEL-12** `GET /sales/deliveries/:id/note` views without counting a print; `?print=true` counts. One live delivery
+  order per sales order is enforced under an advisory lock.
+- **SO-9** Duplicating an order keeps variant, source location, tolerance, discount amount, dimensions and a future
+  promised date. **SO-13** The order list total is in base currency (`total`) with a `byCurrency` breakdown; credit
+  checks convert foreign-currency orders to base.
+- **INV-12** Dunning works per customer and currency, net of open credit notes and unallocated receipts; fees and holds
+  apply once per customer per run; emails go after commit (`DunningEntry.currencyCode`, V679).
+- **X-7** `GET /sales/deliveries` pages on the server (`limit`, default 500, max 1000; `offset`; `search`) and returns
+  the filter's total in `X-Total-Count`; reconciliation is scoped to open orders and orders done in the last 90 days
+  unless `orderId` or `all=true` is given (`limit`/`offset` too). The backorder report shows at most 1000 lines and the
+  backorder job takes 500 orders per run. Index V682.
+- **X-6** Reads and writes by id in sales, invoicing and fleet services also filter by the organisation.
+
 ## Central pricing engine (ADR-S022)
 
 `SalesPricingEngine` prices every channel (sales directly; POS orders, invoices, manual delivery orders and CRM through

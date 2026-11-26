@@ -93,8 +93,9 @@ public class SalesMilestoneService {
             throw ApiException.badRequest("This milestone is already invoiced");
         }
         Map<String, Object> doc = billing.createInvoice(orderId, Obj.of("mode", "down_payment", "amount", m.get("amount")));
-        db.update("UPDATE \"SalesOrderMilestone\" SET status = 'invoiced', \"documentId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?",
-                doc.get("id"), milestoneId);
+        db.update("UPDATE \"SalesOrderMilestone\" SET status = 'invoiced', \"documentId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?",
+                doc.get("id"), milestoneId, org());
         return doc;
     }
 }

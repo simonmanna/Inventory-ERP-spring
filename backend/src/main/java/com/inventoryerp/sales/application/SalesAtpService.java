@@ -318,8 +318,9 @@ public class SalesAtpService {
         boolean atRisk = shortage.signum() > 0 && (unpegged.signum() > 0 || lastPeg == null
                 || promised != null && lastPeg.isAfter(promised));
         db.update("UPDATE \"SalesOrderLine\" SET \"qtyReserved\" = ?, \"reservedLocationId\" = ?, \"promiseAtRisk\" = ?"
-                + " WHERE id = ?", reservable.divide(factor, 6, RoundingMode.HALF_UP), reservable.signum() > 0 ? location
-                        : null, atRisk, lineId);
+                + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", reservable.divide(factor, 6, RoundingMode.HALF_UP), reservable.signum() > 0 ? location
+                        : null, atRisk, lineId, org());
         return new BigDecimal[] {reservable.divide(factor, 6, RoundingMode.HALF_UP), shortage.divide(factor, 6,
                 RoundingMode.HALF_UP)};
     }
@@ -374,8 +375,9 @@ public class SalesAtpService {
             throw ApiException.badRequest("This warehouse has only " + a.get("availableNow") + " available");
         }
         releaseLine(lineId);
-        db.update("UPDATE \"SalesOrderLine\" SET \"sourceLocationId\" = ?, \"reservedLocationId\" = NULL WHERE id = ?",
-                locationId, lineId);
+        db.update("UPDATE \"SalesOrderLine\" SET \"sourceLocationId\" = ?, \"reservedLocationId\" = NULL WHERE id = ?"
+                + " AND \"organizationId\" = ?",
+                locationId, lineId, org());
         return SalesOrderService.OPEN.contains(o.get("status")) ? reserveOrder(orderId) : Obj.of("orderId", orderId);
     }
 
@@ -385,7 +387,7 @@ public class SalesAtpService {
         reservations.release(SOURCE, lineId);
         db.update("DELETE FROM \"SalesSupplyPeg\" WHERE \"orderLineId\" = ?", lineId);
         db.update("UPDATE \"SalesOrderLine\" SET \"qtyReserved\" = 0, \"reservedLocationId\" = NULL, \"promiseAtRisk\" ="
-                + " false WHERE id = ?", lineId);
+                + " false WHERE id = ? AND \"organizationId\" = ?", lineId, org());
     }
 
     /** Release every line of an order (cancel / done). */
@@ -423,7 +425,7 @@ public class SalesAtpService {
                   LEFT JOIN "Partner" p ON p.id = o."partnerId"
                  WHERE o."organizationId" = ? AND o.status IN ('confirmed', 'in_fulfilment') AND o."deletedAt" IS NULL
                    AND pr."trackInventory" AND l.quantity - l."qtyCancelled" - l."qtyDelivered" - l."qtyReserved" > 0
-                 ORDER BY o.priority DESC, o."confirmedAt\"""", org());
+                 ORDER BY o.priority DESC, o."confirmedAt", l."sortOrder" LIMIT 1000""", org());
     }
 
     /** Backorder job body: retry reservations of orders with unreserved stock lines. Returns orders re-planned. */
@@ -433,7 +435,8 @@ public class SalesAtpService {
                   JOIN "Product" pr ON pr.id = l."productId"
                  WHERE o."organizationId" = ? AND o.status IN ('confirmed', 'in_fulfilment') AND o."deletedAt" IS NULL
                    AND pr."trackInventory" AND l.quantity - l."qtyCancelled" - l."qtyDelivered" - l."qtyReserved" > 0
-                 ORDER BY o.priority DESC, o."confirmedAt\"""", org());
+                 ORDER BY o.priority DESC, o."confirmedAt" LIMIT 500""", org());
+        // Sales readiness X-7: at most 500 orders per run (highest priority first); the next run takes the rest.
         // Sales readiness R5 (SO-5): one transaction per order, so the stock-cell locks of one order are released before
         // the next, and a failing order does not roll back (or hold up) the others.
         int done = 0;

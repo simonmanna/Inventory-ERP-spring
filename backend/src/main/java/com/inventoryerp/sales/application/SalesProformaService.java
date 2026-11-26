@@ -98,7 +98,8 @@ public class SalesProformaService {
     private Map<String, Object> extra(String id) {
         return db.row("SELECT (data->>'advancePercent')::numeric AS \"advancePercent\", (data->>'advanceAmount')::numeric AS"
                 + " \"advanceAmount\", data->>'bankDetails' AS \"bankDetails\", data->>'mobileDetails' AS \"mobileDetails\","
-                + " data->>'sourceOrderId' AS \"sourceOrderId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?", id, org());
+                + " data->>'sourceOrderId' AS \"sourceOrderId\" FROM \"Document\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?", id, org());
     }
 
     /** Proforma from a sales order: its lines, prices, currency, rate and branch. */
@@ -138,7 +139,8 @@ public class SalesProformaService {
     @Transactional
     public void applyTerms(String id, Map<String, Object> in, String orderId) {
         Map<String, Object> s = settings.settings();
-        BigDecimal total = dec(db.row("SELECT \"totalAmount\" AS t FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?",
+        BigDecimal total = dec(db.row("SELECT \"totalAmount\" AS t FROM \"Document\" WHERE id = ?"
+                + " AND \"organizationId\" = ?",
                 id, org()).get("t"));
         BigDecimal percent = in.get("advancePercent") != null ? dec(in.get("advancePercent"))
                 : dec(s.get("proformaAdvancePercent"));
@@ -159,7 +161,8 @@ public class SalesProformaService {
     @Transactional(readOnly = true)
     public byte[] pdf(String id) {
         Map<String, Object> d = get(id);
-        Map<String, Object> p = db.row("SELECT name FROM \"Partner\" WHERE id = ?", d.get("partnerId"));
+        Map<String, Object> p = db.row("SELECT name FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", d.get("partnerId"), org());
         List<Map<String, Object>> lines = db.rows("SELECT description, quantity, \"unitPrice\", \"discountPercent\", total FROM"
                 + " \"DocumentLine\" WHERE \"documentId\" = ?", id);
         Map<String, Object> cur = d.get("currencyId") == null ? null : db.row("SELECT code FROM \"Currency\" WHERE id = ?",
@@ -181,7 +184,8 @@ public class SalesProformaService {
     @Transactional
     public Map<String, Object> email(String id, String to) {
         Map<String, Object> d = get(id);
-        Map<String, Object> p = db.row("SELECT name, email FROM \"Partner\" WHERE id = ?", d.get("partnerId"));
+        Map<String, Object> p = db.row("SELECT name, email FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", d.get("partnerId"), org());
         String address = !blank(to) ? to.trim() : p == null ? null : str(p.get("email"));
         if (blank(address)) {
             throw ApiException.badRequest("Customer has no email on file. Add one in Partners or pass \"to\".");

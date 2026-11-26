@@ -497,7 +497,7 @@ public class FleetDiscrepancyService {
         if (price.signum() <= 0) {
             return null;
         }
-        String trip = db.jdbc().sql("SELECT code FROM \"FleetLoad\" WHERE id = ?").param(x.get("loadId"))
+        String trip = db.jdbc().sql("SELECT code FROM \"FleetLoad\" WHERE id = ? AND \"organizationId\" = ?").params(x.get("loadId"), FleetDb.org())
                 .query(String.class).single();
         String description = "Delivery " + kindLabel((String) x.get("kind")) + " " + x.get("code") + " · "
                 + line.get("name") + " · trip " + trip;

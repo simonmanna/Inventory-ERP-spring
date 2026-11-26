@@ -83,7 +83,8 @@ public class SalesCreditRequestService {
         Map<String, Object> row = db.insert("SalesCreditRequest", Obj.of("orderId", o.get("id"), "partnerId", partner, "amount", o.get("total"),
                 "exposureAtRequest", e.get("exposure"), "limitAtRequest", e.get("effectiveLimit"), "reason", reason, "requestedById", user()));
         audit.record(AuditInput.of("SalesCreditRequest", str(row.get("id")), "create", null, Obj.of("order", o.get("number"), "reason", reason)));
-        Map<String, Object> p = db.row("SELECT \"creditControllerId\", name FROM \"Partner\" WHERE id = ?", partner);
+        Map<String, Object> p = db.row("SELECT \"creditControllerId\", name FROM \"Partner\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", partner, org());
         if (p != null) {
             alerts.send(str(p.get("creditControllerId")), "sales_credit_request", "Credit request for " + p.get("name"),
                     "Order " + o.get("number") + ": " + reason, Obj.of("entityType", "sales_order", "entityId", o.get("id")));
@@ -108,7 +109,8 @@ public class SalesCreditRequestService {
     private void decide(Map<String, Object> r, String status, String comment) {
         Map<String, Object> e = credit.exposure(str(r.get("partnerId")));
         db.update("UPDATE \"SalesCreditRequest\" SET status = ?, \"decidedById\" = ?, \"decidedAt\" = " + NOW + ", \"decisionComment\" = ?,"
-                + " \"exposureAtDecision\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?", status, user(), comment, dec(e.get("exposure")), r.get("id"));
+                + " \"exposureAtDecision\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", status, user(), comment, dec(e.get("exposure")), r.get("id"), org());
         audit.record(AuditInput.of("SalesCreditRequest", str(r.get("id")), "approved".equals(status) ? "approve" : "reject", null, Obj.of("comment",
                 comment)));
         alerts.send(str(r.get("requestedById")), "sales_credit_decision", "Credit request " + status, comment == null ? "" : comment,
@@ -143,9 +145,10 @@ public class SalesCreditRequestService {
             }
         }
         // The decision's exposure includes the order it just let through.
-        db.update("UPDATE \"SalesCreditRequest\" SET \"exposureAtDecision\" = ? WHERE id = ?", dec(credit.exposure(str(r.get("partnerId")))
-                .get("exposure")), id);
-        return db.row("SELECT * FROM \"SalesCreditRequest\" WHERE id = ?", id);
+        db.update("UPDATE \"SalesCreditRequest\" SET \"exposureAtDecision\" = ? WHERE id = ?"
+                + " AND \"organizationId\" = ?", dec(credit.exposure(str(r.get("partnerId")))
+                .get("exposure")), id, org());
+        return db.row("SELECT * FROM \"SalesCreditRequest\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     @Transactional
@@ -155,7 +158,7 @@ public class SalesCreditRequestService {
             throw ApiException.badRequest("comment should not be empty");
         }
         decide(r, "rejected", comment);
-        return db.row("SELECT * FROM \"SalesCreditRequest\" WHERE id = ?", id);
+        return db.row("SELECT * FROM \"SalesCreditRequest\" WHERE id = ? AND \"organizationId\" = ?", id, org());
     }
 
     /** An approved request still covering this much of the order. */

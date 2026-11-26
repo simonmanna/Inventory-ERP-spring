@@ -62,30 +62,33 @@ public class CashSaleFiscalService {
     Map<String, Object> request(Map<String, Object> css, String operation, String invoiceId, Map<String, Object> payload,
             String reason) {
         String id = str(css.get("id"));
-        Map<String, Object> profile = db.row("SELECT \"fiscalProvider\" FROM \"BranchSalesProfile\" WHERE id = ?",
-                css.get("profileId"));
+        Map<String, Object> profile = db.row("SELECT \"fiscalProvider\" FROM \"BranchSalesProfile\" WHERE id = ?"
+                + " AND \"organizationId\" = ?",
+                css.get("profileId"), org());
         String provider = profile == null ? "none" : str(profile.get("fiscalProvider"));
         long n = db.count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"submissionId\" = ? AND operation = ?",
                 List.of(id, operation));
         Map<String, Object> doc = db.insert("FiscalDocument", Obj.of("submissionId", id, "invoiceId", invoiceId,
                 "provider", provider, "operation", operation, "requestRef", "css:" + id + ":" + operation + ":" + (n + 1),
                 "requestPayload", null, "reason", reason, "userId", user()));
-        db.update("UPDATE \"FiscalDocument\" SET \"requestPayload\" = ?::jsonb WHERE id = ?", EntityJson.toJson(
-                payload == null ? Map.of() : payload), doc.get("id"));
+        db.update("UPDATE \"FiscalDocument\" SET \"requestPayload\" = ?::jsonb WHERE id = ?"
+                + " AND \"organizationId\" = ?", EntityJson.toJson(
+                payload == null ? Map.of() : payload), doc.get("id"), org());
         String status = switch (operation) {
             case "issue" -> "pending";
             case "cancel" -> "cancellation_pending";
             default -> null;
         };
         if (status != null) {
-            db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?",
-                    status, id);
+            db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                    + " AND \"organizationId\" = ?",
+                    status, id, org());
         }
         timeline(id, "fiscal_" + operation + "_requested", reason);
         if ("none".equals(provider)) {
             run(str(doc.get("id")));
         }
-        return db.row("SELECT * FROM \"FiscalDocument\" WHERE id = ?", doc.get("id"));
+        return db.row("SELECT * FROM \"FiscalDocument\" WHERE id = ? AND \"organizationId\" = ?", doc.get("id"), org());
     }
 
     /**
@@ -116,8 +119,9 @@ public class CashSaleFiscalService {
                     }
                     processOpen(submissionId);
                 });
-                if ("cancelled".equals(str(db.row("SELECT \"fiscalStatus\" FROM \"SalesSubmission\" WHERE id = ?",
-                        submissionId).get("fiscalStatus")))) {
+                if ("cancelled".equals(str(db.row("SELECT \"fiscalStatus\" FROM \"SalesSubmission\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?",
+                        submissionId, org()).get("fiscalStatus")))) {
                     return;
                 }
                 throw ApiException.conflict("Fiscal cancellation is pending; the reversal runs once it succeeds");
@@ -128,7 +132,8 @@ public class CashSaleFiscalService {
         }
         newTx.executeWithoutResult(s -> request(css, "cancel", str(css.get("currentInvoiceId")), Obj.of("reason",
                 reason), reason));
-        String after = str(db.row("SELECT \"fiscalStatus\" FROM \"SalesSubmission\" WHERE id = ?", submissionId)
+        String after = str(db.row("SELECT \"fiscalStatus\" FROM \"SalesSubmission\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", submissionId, org())
                 .get("fiscalStatus"));
         if (!"cancelled".equals(after)) {
             throw ApiException.conflict("Fiscal cancellation requested; the reversal runs once it succeeds");
@@ -190,8 +195,9 @@ public class CashSaleFiscalService {
         }
         String ref = str(d.get("requestRef"));
         int attempts = ((Number) d.get("attempts")).intValue() + 1;
-        db.update("UPDATE \"FiscalDocument\" SET attempts = ?, \"updatedAt\" = " + NOW + " WHERE id = ?", attempts,
-                fiscalId);
+        db.update("UPDATE \"FiscalDocument\" SET attempts = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?", attempts,
+                fiscalId, org());
         FiscalDocumentPort.Result result;
         try {
             if ("unknown".equals(d.get("status"))) {
@@ -203,7 +209,7 @@ public class CashSaleFiscalService {
             }
         } catch (FiscalDocumentPort.Timeout e) {
             db.update("UPDATE \"FiscalDocument\" SET status = 'unknown', \"lastError\" = ?, \"updatedAt\" = " + NOW
-                    + " WHERE id = ?", e.getMessage(), fiscalId);
+                    + " WHERE id = ? AND \"organizationId\" = ?", e.getMessage(), fiscalId, org());
             return;
         } catch (RuntimeException e) {
             retryOrFail(d, attempts, e.getMessage());
@@ -214,9 +220,10 @@ public class CashSaleFiscalService {
             return;
         }
         db.update("UPDATE \"FiscalDocument\" SET status = 'succeeded', \"externalRef\" = ?, \"fiscalNumber\" = ?,"
-                + " \"responsePayload\" = ?::jsonb, \"lastError\" = NULL, \"updatedAt\" = " + NOW + " WHERE id = ?",
+                + " \"responsePayload\" = ?::jsonb, \"lastError\" = NULL, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?",
                 result.externalRef(), result.fiscalNumber(), EntityJson.toJson(result.response() == null ? Map.of()
-                        : result.response()), fiscalId);
+                        : result.response()), fiscalId, org());
         succeeded(d);
     }
 
@@ -240,17 +247,18 @@ public class CashSaleFiscalService {
             fail(d, error);
             return;
         }
-        db.update("UPDATE \"FiscalDocument\" SET \"lastError\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?", error,
-                d.get("id"));
+        db.update("UPDATE \"FiscalDocument\" SET \"lastError\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?", error,
+                d.get("id"), org());
     }
 
     private void fail(Map<String, Object> d, String error) {
         db.update("UPDATE \"FiscalDocument\" SET status = 'failed', \"lastError\" = ?, \"updatedAt\" = " + NOW
-                + " WHERE id = ?", error, d.get("id"));
+                + " WHERE id = ? AND \"organizationId\" = ?", error, d.get("id"), org());
         String sub = str(d.get("submissionId"));
         if ("issue".equals(d.get("operation"))) {
             db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = 'failed', \"updatedAt\" = " + NOW
-                    + " WHERE id = ?", sub);
+                    + " WHERE id = ? AND \"organizationId\" = ?", sub, org());
         }
         // A failed cancellation keeps the submission in cancellation_pending: nothing is reversed internally.
         timeline(sub, "fiscal_" + d.get("operation") + "_failed", error);
@@ -260,11 +268,12 @@ public class CashSaleFiscalService {
         String sub = str(d.get("submissionId"));
         switch (str(d.get("operation"))) {
             case "issue" -> db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = 'issued', \"updatedAt\" = " + NOW
-                    + " WHERE id = ?", sub);
+                    + " WHERE id = ? AND \"organizationId\" = ?", sub, org());
             case "cancel" -> db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = 'cancelled', \"updatedAt\" = "
-                    + NOW + " WHERE id = ?", sub);
+                    + NOW + " WHERE id = ? AND \"organizationId\" = ?", sub, org());
             case "correct" -> {
-                Map<String, Object> css = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?", sub);
+                Map<String, Object> css = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?"
+                        + " AND \"organizationId\" = ?", sub, org());
                 Map<String, Object> changes = payload(d);
                 Map<String, Object> patch = new LinkedHashMap<>();
                 for (String k : IDENTITY) {
@@ -284,8 +293,9 @@ public class CashSaleFiscalService {
                         params.add(v);
                     });
                     params.add(sub);
-                    db.update("UPDATE \"SalesSubmission\" SET " + set + ", \"updatedAt\" = " + NOW + " WHERE id = ?",
-                            params.toArray());
+                    params.add(org());
+                    db.update("UPDATE \"SalesSubmission\" SET " + set + ", \"updatedAt\" = " + NOW + " WHERE id = ?"
+                            + " AND \"organizationId\" = ?", params.toArray());
                 }
             }
             default -> {

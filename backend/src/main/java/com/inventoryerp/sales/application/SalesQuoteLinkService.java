@@ -144,9 +144,11 @@ public class SalesQuoteLinkService {
     /** The quotation as the customer sees it; counts the view and tells the owner the first time. */
     public Map<String, Object> view(String token) {
         return withLink(token, l -> {
-            Map<String, Object> link = db.row("SELECT \"viewCount\" FROM \"SalesQuoteLink\" WHERE id = ?", l.id());
+            Map<String, Object> link = db.row("SELECT \"viewCount\" FROM \"SalesQuoteLink\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", l.id(), org());
             db.update("UPDATE \"SalesQuoteLink\" SET \"viewCount\" = \"viewCount\" + 1, \"firstViewedAt\" ="
-                    + " COALESCE(\"firstViewedAt\", " + NOW + "), \"lastViewedAt\" = " + NOW + " WHERE id = ?", l.id());
+                    + " COALESCE(\"firstViewedAt\", " + NOW + "), \"lastViewedAt\" = " + NOW + " WHERE id = ?"
+                            + " AND \"organizationId\" = ?", l.id(), org());
             Map<String, Object> out = publicView(l);
             if (((Number) link.get("viewCount")).intValue() == 0) {
                 notifyOwner(l.quotationId(), "Customer opened quotation " + out.get("number"),
@@ -283,8 +285,9 @@ public class SalesQuoteLinkService {
             Map<String, Object> terms) {
         db.update("UPDATE \"SalesQuoteLink\" SET decision = ?, \"decidedAt\" = " + NOW + ", \"signerName\" = ?,"
                 + " \"signerNote\" = ?, \"signerIp\" = ?, \"signerUserAgent\" = ?, \"decidedRevision\" = ?,"
-                + " \"decisionSnapshot\" = ?::jsonb WHERE id = ?", decision, signer, note, client.ip(), client.userAgent(),
-                l.revision(), SalesDb.toJson(terms), l.id());
+                + " \"decisionSnapshot\" = ?::jsonb WHERE id = ?"
+                        + " AND \"organizationId\" = ?", decision, signer, note, client.ip(), client.userAgent(),
+                l.revision(), SalesDb.toJson(terms), l.id(), org());
         audit.record(AuditInput.of("SalesQuotation", l.quotationId(), "update", null, Obj.of("via", "quote_link",
                 "decision", decision, "signerName", signer, "revision", l.revision(), "total", terms.get("total"),
                 "signerIp", client.ip())));
@@ -295,7 +298,7 @@ public class SalesQuoteLinkService {
                 ? "Note: " : "Reason: ") + note;
         notifyOwner(l.quotationId(), title, body, "sales.quote_link." + decision);
         Map<String, Object> q = db.row("SELECT \"dealId\", \"partnerId\", COALESCE(\"ownerId\", \"createdById\") AS"
-                + " owner FROM \"SalesQuotation\" WHERE id = ?", l.quotationId());
+                + " owner FROM \"SalesQuotation\" WHERE id = ? AND \"organizationId\" = ?", l.quotationId(), org());
         QuotationOpportunityPort port = opportunities.getIfAvailable();
         if (port != null) {
             port.quotationAnsweredOnline(str(q.get("dealId")), str(q.get("partnerId")), title, body, str(q.get("owner")));
@@ -305,7 +308,7 @@ public class SalesQuoteLinkService {
 
     private void notifyOwner(String quotationId, String title, String body, String kind) {
         Map<String, Object> q = db.row("SELECT COALESCE(\"ownerId\", \"createdById\") AS owner FROM \"SalesQuotation\""
-                + " WHERE id = ?", quotationId);
+                + " WHERE id = ? AND \"organizationId\" = ?", quotationId, org());
         if (q == null || q.get("owner") == null) {
             return;
         }
@@ -343,7 +346,8 @@ public class SalesQuoteLinkService {
         // where to pay it (sales settings bank / mobile money details).
         out.remove("convertedId");
         if ("converted".equals(out.get("status")) && "proforma".equals(out.get("convertedType"))) {
-            Map<String, Object> qrow = db.row("SELECT \"convertedId\" FROM \"SalesQuotation\" WHERE id = ?", l.quotationId());
+            Map<String, Object> qrow = db.row("SELECT \"convertedId\" FROM \"SalesQuotation\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", l.quotationId(), org());
             Map<String, Object> pf = qrow == null ? null : db.row("SELECT \"documentNumber\" AS number, \"totalAmount\" AS"
                     + " total, (data->>'advanceAmount')::numeric AS \"advanceAmount\", data->>'bankDetails' AS"
                     + " \"bankDetails\", data->>'mobileDetails' AS \"mobileDetails\", \"dueDate\" FROM \"Document\" WHERE id = ?"

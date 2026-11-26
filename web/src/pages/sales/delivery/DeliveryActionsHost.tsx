@@ -54,7 +54,7 @@ export function DeliveryActionDialogs({ order, lines, plan, action, onAction, on
  * Dispatch: issues the planned quantities. Serial-tracked lines name one serial number per unit (R4d, DEL-2), one per
  * line of the text box; they are recorded on the delivery and issued from stock with the goods.
  */
-function DispatchDialog({ delivery, onClose }: { delivery: SalesDelivery; onClose: () => void }) {
+export function DispatchDialog({ delivery, onClose }: { delivery: SalesDelivery; onClose: () => void }) {
   const { data } = useDelivery(delivery.id);
   const serialLines = (data?.lines ?? []).filter((l) => l.serialTracking);
   const [serials, setSerials] = useState<Record<string, string>>({});

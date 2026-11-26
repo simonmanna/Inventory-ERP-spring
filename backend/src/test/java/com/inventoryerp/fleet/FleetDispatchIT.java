@@ -575,7 +575,7 @@ class FleetDispatchIT extends ApiTestSupport {
                 key(approverToken)).body();
         assertThat(approved.get("status").asString()).isEqualTo("approved");
         String cn = approved.get("creditNoteId").asString();
-        assertThat(approved.get("creditNoteNumber").asString()).startsWith("CN-");
+        assertThat(approved.get("creditNoteNumber").asString()).startsWith("DRAFT-CN-");
         assertThat(dec(approved.get("creditAmount"))).isEqualByComparingTo("60000");
         Map<String, Object> cnRow = jdbc.sql("SELECT status::text AS status, \"reversedDocumentId\", \"partnerId\" FROM"
                 + " \"Document\" WHERE id = ?").param(cn).query().singleRow();

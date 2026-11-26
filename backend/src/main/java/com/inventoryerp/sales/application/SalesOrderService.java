@@ -159,8 +159,14 @@ public class SalesOrderService {
         int pageSize = Math.min(200, Math.max(1, SalesDb.parseInt(p.get("pageSize"), 50)));
         List<Map<String, Object>> rows = db.rows(SELECT + where + " ORDER BY o.\"createdAt\" DESC OFFSET "
                 + (long) (page - 1) * pageSize + " LIMIT " + pageSize, params);
-        Map<String, Object> totals = db.row("SELECT count(*) AS count, COALESCE(sum(o.total), 0) AS total FROM"
-                + " \"SalesOrder\" o LEFT JOIN \"Partner\" p ON p.id = o.\"partnerId\"" + where, params.toArray());
+        // Sales readiness SO-13: amounts of different currencies are never added; `total` is in the base currency
+        // (each order at its rate) and `byCurrency` gives the per-currency sums.
+        Map<String, Object> totals = db.row("SELECT count(*) AS count, COALESCE(sum(o.total * COALESCE(o.\"exchangeRate\","
+                + " 1)), 0) AS total FROM \"SalesOrder\" o LEFT JOIN \"Partner\" p ON p.id = o.\"partnerId\"" + where,
+                params.toArray());
+        totals.put("byCurrency", db.rows("SELECT o.\"currencyCode\", count(*) AS count, COALESCE(sum(o.total), 0) AS total"
+                + " FROM \"SalesOrder\" o LEFT JOIN \"Partner\" p ON p.id = o.\"partnerId\"" + where + " GROUP BY"
+                + " o.\"currencyCode\" ORDER BY o.\"currencyCode\"", params.toArray()));
         long total = ((Number) totals.get("count")).longValue();
         return Obj.of("data", rows, "meta", Obj.of("page", page, "pageSize", pageSize, "total", total, "totalPages",
                 Math.max(1, (long) Math.ceil((double) total / pageSize))), "totals", totals);
@@ -436,10 +442,25 @@ public class SalesOrderService {
             in.put(k, o.get(k));
         }
         List<Map<String, Object>> lines = new ArrayList<>();
+        LocalDate today = LocalDate.now(BusinessZone.get());
         for (Map<String, Object> l : lines(id)) {
-            lines.add(Obj.of("productId", l.get("productId"), "description", l.get("description"), "quantity",
-                    l.get("quantity"), "uomId", l.get("uomId"), "unitPrice", l.get("unitPrice"), "discountPercent",
-                    l.get("discountPercent"), "taxId", l.get("taxId"), "taxInclusive", l.get("taxInclusive")));
+            Map<String, Object> copy = Obj.of("productId", l.get("productId"), "description", l.get("description"),
+                    "quantity", l.get("quantity"), "uomId", l.get("uomId"), "unitPrice", l.get("unitPrice"),
+                    "discountPercent", l.get("discountPercent"), "taxId", l.get("taxId"), "taxInclusive",
+                    l.get("taxInclusive"));
+            // Sales readiness SO-9: the copy keeps every line attribute that decides what is sold and from where
+            // (variant, source location, tolerance, size); a promised date already past is not carried over.
+            for (String k : List.of("variantId", "sourceLocationId", "tolerancePct", "discountAmount", "pieces", "length",
+                    "width", "height")) {
+                if (l.get(k) != null) {
+                    copy.put(k, l.get(k));
+                }
+            }
+            LocalDate promised = l.get("promisedDate") == null ? null : SalesDb.date(str(l.get("promisedDate")));
+            if (promised != null && !promised.isBefore(today)) {
+                copy.put("promisedDate", promised.toString());
+            }
+            lines.add(copy);
         }
         in.put("lines", lines);
         return create(in);
@@ -592,7 +613,8 @@ public class SalesOrderService {
 
     /** SG-6: spread the header discount over the lines. The line keeps its own discount for later edits. */
     private void applyOrderDiscount(String orderId, List<Map<String, Object>> rows) {
-        Map<String, Object> h = db.row("SELECT \"orderDiscountPercent\" AS p, \"orderDiscountAmount\" AS a FROM \"SalesOrder\" WHERE id = ?", orderId);
+        Map<String, Object> h = db.row("SELECT \"orderDiscountPercent\" AS p, \"orderDiscountAmount\" AS a FROM \"SalesOrder\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", orderId, org());
         BigDecimal net = BigDecimal.ZERO;
         for (Map<String, Object> m : rows) {
             net = net.add(SalesDiscounts.net(dec(m.get("quantity")), dec(m.get("unitPrice")), dec(m.get("discountPercent"))));
@@ -879,8 +901,32 @@ public class SalesOrderService {
         if (user() != null && user().equals(o.get("createdById")) && !TenantContext.has(Permissions.SALES__CONFIGURE)) {
             throw ApiException.forbidden("You cannot approve your own order");
         }
+        // Sales readiness SO-10: the order's approvals-engine request is decided through the engine (its steps,
+        // limits and segregation of duties apply), so the inbox item resolves; a multi-step request that still waits
+        // for another approver leaves the order pending.
+        if (decideEngineRequest(o, "approved", comment)) {
+            audit.record(AuditInput.of("SalesOrder", id, "approve_step", null, Obj.of("comment", comment)));
+            return get(id);
+        }
         audit.record(AuditInput.of("SalesOrder", id, "approve", null, Obj.of("comment", comment)));
         return finishConfirm(id);
+    }
+
+    /**
+     * Decide the order's pending approvals-engine request, if it has one. Returns true when the request still waits for
+     * another decision (the order stays pending approval).
+     */
+    private boolean decideEngineRequest(Map<String, Object> o, String status, String comment) {
+        String reqId = str(o.get("approvalRequestId"));
+        if (blank(reqId)) {
+            return false;
+        }
+        Map<String, Object> req = approvals.findOne(reqId);
+        if (req == null || !"pending".equalsIgnoreCase(String.valueOf(req.get("status")))) {
+            return false;
+        }
+        Map<String, Object> decided = approvals.decide(reqId, status, comment);
+        return "approved".equals(status) && "pending".equalsIgnoreCase(String.valueOf(decided.get("status")));
     }
 
     /** Reject a pending order: back to draft with the reason. */
@@ -890,6 +936,7 @@ public class SalesOrderService {
         if (!"pending_approval".equals(o.get("status"))) {
             throw ApiException.badRequest("Order is not awaiting approval");
         }
+        decideEngineRequest(o, "rejected", blank(reason) ? "no reason given" : reason);
         db.patch("SalesOrder", id, Obj.of("status", "draft", "approvalReasons", List.of("Rejected: " + (blank(reason)
                 ? "no reason given" : reason)), "approvalRequestId", null, "version", ((Number) o.get("version"))
                 .intValue() + 1), true);
@@ -934,7 +981,7 @@ public class SalesOrderService {
         boolean cash = "cash".equals(o.get("paymentMode")) && Boolean.TRUE.equals(policy0.get("cashBypassesCredit"));
         CreditService.Decision c = cash ? new CreditService.Decision(null, "pass", List.of(), Map.of())
                 : credit.check("order_confirm", str(o.get("partnerId")), "sales_order", id, str(o.get("number")),
-                        dec(o.get("total")), str(o.get("branchId")));
+                        inBase(o, dec(o.get("total"))), str(o.get("branchId")));
         String reason = String.join("; ", c.reasons());
         // SG-8: a hold on the customer always stops the order; going over the limit follows the organization's policy.
         boolean overLimit = !c.passed() && !"blocked".equals(c.result());
@@ -1119,7 +1166,7 @@ public class SalesOrderService {
             throw ApiException.badRequest("Nothing left to close on this line");
         }
         db.update("UPDATE \"SalesOrderLine\" SET \"qtyCancelled\" = ?, \"closedShortAt\" = " + NOW + ","
-                + " \"closeShortReason\" = ? WHERE id = ?", cancel, reason, lineId);
+                + " \"closeShortReason\" = ? WHERE id = ? AND \"organizationId\" = ?", cancel, reason, lineId, org());
         db.patch("SalesOrder", id, Obj.of("version", ((Number) o.get("version")).intValue() + 1), true);
         audit.record(AuditInput.of("SalesOrder", id, "update", null, Obj.of("lineId", lineId, "closedShort", cancel,
                 "reason", reason)));
@@ -1181,8 +1228,15 @@ public class SalesOrderService {
 
     // ------------------------------------------------------------------ helpers
 
+    /** An order-currency amount in the base currency (credit limits are in base; SO-13). */
+    static BigDecimal inBase(Map<String, Object> order, BigDecimal amount) {
+        BigDecimal rate = order.get("exchangeRate") == null ? BigDecimal.ONE : dec(order.get("exchangeRate"));
+        return amount.multiply(rate.signum() > 0 ? rate : BigDecimal.ONE).setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
     void publish(String event, String id, Map<String, Object> extra) {
-        Map<String, Object> o = db.row("SELECT number, \"partnerId\", total FROM \"SalesOrder\" WHERE id = ?", id);
+        Map<String, Object> o = db.row("SELECT number, \"partnerId\", total FROM \"SalesOrder\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", id, org());
         Map<String, Object> payload = Obj.of("v", 1, "organizationId", org(), "orderId", id, "number", o.get("number"),
                 "partnerId", o.get("partnerId"), "total", o.get("total"));
         payload.putAll(extra);
@@ -1201,7 +1255,8 @@ public class SalesOrderService {
         if (branchId == null || !"branch".equals(settings.settings().get("numberingScope"))) {
             return null;
         }
-        Map<String, Object> b = db.row("SELECT code FROM \"Branch\" WHERE id = ? AND \"organizationId\" = ?", branchId, org());
+        Map<String, Object> b = db.row("SELECT code FROM \"Branch\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", branchId, org());
         return b == null ? null : str(b.get("code"));
     }
 

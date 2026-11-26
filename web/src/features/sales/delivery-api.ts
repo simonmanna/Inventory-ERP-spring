@@ -230,7 +230,7 @@ export function useDeliveryAction<T = unknown>(fn: (v: T) => Promise<unknown>, o
 /** Download (or open for printing) the PDF delivery note of a dispatched delivery. */
 export async function openDeliveryNote(d: Pick<SalesDelivery, 'id' | 'code' | 'deliveryNoteNumber'>, mode: 'download' | 'print') {
   try {
-    const r = await api.get(`/sales/deliveries/${d.id}/note`, { responseType: 'blob' });
+    const r = await api.get(`/sales/deliveries/${d.id}/note${mode === 'print' ? '?print=true' : ''}`, { responseType: 'blob' });
     const url = URL.createObjectURL(r.data as Blob);
     if (mode === 'print') {
       const w = window.open(url, '_blank');

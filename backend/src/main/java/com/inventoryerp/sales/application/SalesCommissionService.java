@@ -125,10 +125,12 @@ public class SalesCommissionService {
         String tiers = in.containsKey("tiers") ? validTiers(in.get("tiers")) : null;
         String splits = in.containsKey("splits") ? validSplits(in.get("splits")) : null;
         if (in.containsKey("tiers")) {
-            db.update("UPDATE \"SalesCommissionRule\" SET tiers = ?::jsonb WHERE id = ?", tiers, row.get("id"));
+            db.update("UPDATE \"SalesCommissionRule\" SET tiers = ?::jsonb WHERE id = ?"
+                    + " AND \"organizationId\" = ?", tiers, row.get("id"), org());
         }
         if (in.containsKey("splits")) {
-            db.update("UPDATE \"SalesCommissionRule\" SET splits = ?::jsonb WHERE id = ?", splits, row.get("id"));
+            db.update("UPDATE \"SalesCommissionRule\" SET splits = ?::jsonb WHERE id = ?"
+                    + " AND \"organizationId\" = ?", splits, row.get("id"), org());
         }
         audit.record(AuditInput.of("SalesCommissionRule", str(row.get("id")), id == null ? "create" : "update", null,
                 Obj.of("fields", d.keySet())));
@@ -443,9 +445,10 @@ public class SalesCommissionService {
                 out.add(existing);
                 continue;
             }
-            db.update("UPDATE \"CommissionStatement\" SET lines = ?::jsonb, \"carriedFromIds\" = ?::text[] WHERE id = ?", SalesDb.toJson(mine),
-                    carriedFrom.toArray(String[]::new), id);
-            out.add(db.row("SELECT * FROM \"CommissionStatement\" WHERE id = ?", id));
+            db.update("UPDATE \"CommissionStatement\" SET lines = ?::jsonb, \"carriedFromIds\" = ?::text[] WHERE id = ?"
+                    + " AND \"organizationId\" = ?", SalesDb.toJson(mine),
+                    carriedFrom.toArray(String[]::new), id, org());
+            out.add(db.row("SELECT * FROM \"CommissionStatement\" WHERE id = ? AND \"organizationId\" = ?", id, org()));
         }
         return out;
     }
@@ -506,7 +509,8 @@ public class SalesCommissionService {
             throw ApiException.badRequest("An adjustment needs an amount and a reason");
         }
         db.insert("CommissionAdjustment", Obj.of("statementId", id, "amount", amount, "reason", reason, "createdById", user()));
-        db.update("UPDATE \"CommissionStatement\" SET total = total + ?, \"adjustmentTotal\" = \"adjustmentTotal\" + ? WHERE id = ?", amount, amount, id);
+        db.update("UPDATE \"CommissionStatement\" SET total = total + ?, \"adjustmentTotal\" = \"adjustmentTotal\" + ? WHERE id = ?"
+                + " AND \"organizationId\" = ?", amount, amount, id, org());
         audit.record(AuditInput.of("CommissionStatement", id, "update", null, Obj.of("adjustment", amount, "reason", reason)));
         return statement(id);
     }
@@ -529,12 +533,14 @@ public class SalesCommissionService {
         if (blank(resolution)) {
             throw ApiException.badRequest("resolution should not be empty");
         }
-        Map<String, Object> d = db.row("SELECT \"statementId\" FROM \"CommissionDispute\" WHERE id = ? AND \"organizationId\" = ?", disputeId, org());
+        Map<String, Object> d = db.row("SELECT \"statementId\" FROM \"CommissionDispute\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", disputeId, org());
         if (d == null) {
             throw ApiException.notFound("Dispute not found");
         }
-        db.update("UPDATE \"CommissionDispute\" SET status = 'resolved', resolution = ?, \"resolvedById\" = ?, \"resolvedAt\" = now() WHERE id = ?", resolution, user(),
-                disputeId);
+        db.update("UPDATE \"CommissionDispute\" SET status = 'resolved', resolution = ?, \"resolvedById\" = ?, \"resolvedAt\" = now() WHERE id = ?"
+                + " AND \"organizationId\" = ?", resolution, user(),
+                disputeId, org());
         return statement(str(d.get("statementId")));
     }
 
@@ -551,8 +557,9 @@ public class SalesCommissionService {
         if (dec(s.get("total")).signum() <= 0) {
             throw ApiException.badRequest("This statement has nothing to pay");
         }
-        db.update("UPDATE \"CommissionStatement\" SET status = 'paid', \"paidAt\" = now(), \"paidById\" = ?, \"paymentReference\" = ? WHERE id = ?", user(),
-                str(in.get("reference")), id);
+        db.update("UPDATE \"CommissionStatement\" SET status = 'paid', \"paidAt\" = now(), \"paidById\" = ?, \"paymentReference\" = ? WHERE id = ?"
+                + " AND \"organizationId\" = ?", user(),
+                str(in.get("reference")), id, org());
         audit.record(AuditInput.of("CommissionStatement", id, "update", null, Obj.of("status", "paid")));
         return statement(id);
     }

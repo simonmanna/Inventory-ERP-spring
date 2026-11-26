@@ -548,7 +548,7 @@ public class FleetDispatchService {
         if (factor.signum() <= 0 || factor.compareTo(BigDecimal.ONE) == 0) {
             return null;
         }
-        String baseUom = db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ?").param(l.get("productId"))
+        String baseUom = db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?").params(l.get("productId"), FleetDb.org())
                 .query(String.class).optional().orElse(null);
         if (baseUom == null) {
             return null;
@@ -637,6 +637,11 @@ public class FleetDispatchService {
                         + " (" + JsNumbers.dec(x.subtract(unmatched)) + ")");
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), Obj.of("deliveredQty", c.deliveredQty()));
+            BigDecimal dispatchedQ = LoadLineQuantityService.dec(l, "dispatchedQty");
+            BigDecimal damagedQ = LoadLineQuantityService.dec(l, "damagedQty");
+            BigDecimal shortNow = dispatchedQ.subtract(c.deliveredQty()).subtract(LoadLineQuantityService.dec(l,
+                    "returnedQty")).subtract(damagedQ).max(BigDecimal.ZERO);
+            syncDeliveryLoss(k.order(), l, damagedQ.add(shortNow), dispatchedQ, id, code);
             adjustOrderLine((String) l.get("deliveryOrderLineId"), null, null, x, null);
             history.record(l, "pod_corrected", "delivered", before, c.deliveredQty(), why, fileIds, "trip", id);
             quantities.refresh((String) l.get("id"));
@@ -933,7 +938,7 @@ public class FleetDispatchService {
                 throw ApiException.badRequest("Trip " + t.get("code") + " carries several products; weigh it in t or kg");
             }
             Map<String, Object> l = lines.getFirst();
-            String code = db.jdbc().sql("SELECT code FROM \"UnitOfMeasure\" WHERE id = ?").param(l.get("uomId"))
+            String code = db.jdbc().sql("SELECT code FROM \"UnitOfMeasure\" WHERE id = ? AND \"organizationId\" = ?").params(l.get("uomId"), FleetDb.org())
                     .query(String.class).optional().orElse(null);
             if (uom != null && !uom.equals(l.get("uomId")) && !uom.equalsIgnoreCase(code)) {
                 throw ApiException.badRequest("Unit " + uom + " is neither t, kg nor the line unit of trip "
@@ -1105,6 +1110,8 @@ public class FleetDispatchService {
         BigDecimal tonnes = BigDecimal.ZERO;
         boolean knownT = false;
         BigDecimal total = BigDecimal.ZERO;
+        DeliverySourcePort issuePort = moveStock && order.get("sourceType") != null
+                ? orders.sourcePort((String) order.get("sourceType"), (String) order.get("sourceId")) : null;
         // Audit S-2: issue in the engine's lock order.
         for (Map<String, Object> l : StockMove.inLockOrder(lines(id), r -> (String) r.get("productId"), this::variantOf)) {
             BigDecimal qty = l.get("loadedQty") != null ? SqlRows.dec(l, "loadedQty") : SqlRows.dec(l, "plannedQty");
@@ -1113,6 +1120,16 @@ public class FleetDispatchService {
                 saleable.assertSaleable((String) l.get("productId"));
             }
             if (qty.signum() > 0 && moveStock && tracked((String) l.get("productId"))) {
+                if (issuePort != null) {
+                    // Sales readiness DEL-8: never issue stock firmly reserved for another order.
+                    String sourceLine = db.jdbc().sql("SELECT \"sourceLineId\" FROM \"FleetDeliveryOrderLine\" WHERE id = ?"
+                            + " AND \"organizationId\" = ?").params(l.get("deliveryOrderLineId"), FleetDb.org())
+                            .query(String.class).optional().orElse(null);
+                    BigDecimal factor = l.get("uomFactor") == null || SqlRows.dec(l, "uomFactor").signum() <= 0
+                            ? BigDecimal.ONE : SqlRows.dec(l, "uomFactor");
+                    issuePort.assertIssuable(sourceLine, (String) l.get("productId"), variantOf(l),
+                            (String) t.get("locationId"), qty.multiply(factor));
+                }
                 String batch = (String) l.get("batchNumber");
                 StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)
                         .variant(variantOf(l)).uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor")).batch(batch)
@@ -1234,7 +1251,7 @@ public class FleetDispatchService {
             Map<String, Object> data = Obj.of("deliveredQty", delivered, "returnedQty", returned, "damagedQty", damaged);
             if (returned.signum() > 0) {
                 String ledger = putBack(t, order, l, returned, "Returned at delivery of trip " + code,
-                        returnedSerials(l, p.returnedSerialNumbers(), returned, dispatched));
+                        returnedSerials(l, p.returnedSerialNumbers(), returned, dispatched), rejectLocation(order, t));
                 data.put("returnLedgerCode", ledger);
                 diffs.add(new Diff(l, "returned", p.reason(), dispatched, delivered, returned, p.notes()));
             }
@@ -1246,6 +1263,7 @@ public class FleetDispatchService {
                         shortQty, p.notes()));
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), data);
+            syncDeliveryLoss(order, l, damaged.add(shortQty.max(BigDecimal.ZERO)), dispatched, id, code);
             history.record(l, "pod_recorded", "delivered", BigDecimal.ZERO, delivered, p.reason(), null, "trip", id);
             if (returned.signum() > 0) {
                 history.record(l, "returned", "returned", BigDecimal.ZERO, returned, p.reason(), null, "trip", id);
@@ -1481,7 +1499,8 @@ public class FleetDispatchService {
             Map<String, Object> data = Obj.of("deliveredQty", BigDecimal.ZERO, "returnedQty", qty);
             if (qty.signum() > 0) {
                 data.put("returnLedgerCode", putBack(t, order, l, qty, "Load returned: trip " + code,
-                        serials((String) l.get("id"))));
+                        serials((String) l.get("id")), REJECTION_CODES.contains(in.reasonCode()) ? rejectLocation(order, t)
+                                : (String) t.get("locationId")));
             }
             db.update(FleetLoadLine.class, (String) l.get("id"), data);
             if (qty.signum() > 0) {
@@ -1511,12 +1530,25 @@ public class FleetDispatchService {
     /** Count a delivery-note print (the PDF says COPY from the second print on). Returns the print number. */
     @Transactional
     public int countDeliveryNotePrint(String id) {
-        Map<String, Object> t = require(id, true);
+        return deliveryNotePrint(id, true);
+    }
+
+    /**
+     * The copy number of a delivery note: counted (and stored) for a print; for a view (sales readiness DEL-12) the
+     * last printed copy number, at least 1, without counting.
+     */
+    @Transactional
+    public int deliveryNotePrint(String id, boolean count) {
+        Map<String, Object> t = require(id, count);
         if (t.get("deliveryNoteNumber") == null) {
             throw ApiException.badRequest("The delivery note of trip " + t.get("code") + " is printed once it is"
                     + " dispatched");
         }
-        int n = ((Number) t.get("deliveryNotePrints")).intValue() + 1;
+        int printed = ((Number) t.get("deliveryNotePrints")).intValue();
+        if (!count) {
+            return Math.max(printed, 1);
+        }
+        int n = printed + 1;
         db.update(FleetLoad.class, id, Obj.of("deliveryNotePrints", n));
         return n;
     }
@@ -1629,6 +1661,11 @@ public class FleetDispatchService {
     /** Receive returned goods back into the trip's yard at the issue cost (current cost in stock mode invoiced). */
     private String putBack(Map<String, Object> t, Map<String, Object> order, Map<String, Object> l, BigDecimal qty,
             String notes, List<String> serials) {
+        return putBack(t, order, l, qty, notes, serials, (String) t.get("locationId"));
+    }
+
+    private String putBack(Map<String, Object> t, Map<String, Object> order, Map<String, Object> l, BigDecimal qty,
+            String notes, List<String> serials, String location) {
         if (!tracked((String) l.get("productId"))) {
             return null;
         }
@@ -1636,7 +1673,7 @@ public class FleetDispatchService {
         if ("dispatch".equals(order.get("stockMode")) && !issuedHere) {
             return null;
         }
-        StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)
+        StockMove m = StockMove.of((String) l.get("productId"), location, qty)
                 .variant(variantOf(l)).uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor"))
                 .batch((String) l.get("batchNumber")).source(STOCK_SOURCE + "_return", (String) t.get("id")).reference((String) t.get("code")).notes(notes);
         if (issuedHere && l.get("unitCost") != null) {
@@ -1646,6 +1683,57 @@ public class FleetDispatchService {
             m.serials(serials);
         }
         return stock.receiveReturn(m).ledgerCode();
+    }
+
+    /** Return reasons that mean the customer rejected the goods (they go to quarantine, DEL-9b). */
+    private static final java.util.Set<String> REJECTION_CODES = java.util.Set.of("customer_rejected", "wrong_product",
+            "damaged");
+
+    /** Where rejected goods of this trip come back: the source's choice (sales: quarantine), else the trip location. */
+    private String rejectLocation(Map<String, Object> order, Map<String, Object> t) {
+        String here = (String) t.get("locationId");
+        DeliverySourcePort port = order.get("sourceType") == null ? null
+                : orders.sourcePort((String) order.get("sourceType"), (String) order.get("sourceId"));
+        return port == null ? here : port.rejectedGoodsLocation(here);
+    }
+
+    /**
+     * Sales readiness DEL-9a: book the cost of what was damaged or is missing at delivery out of cost of goods sold
+     * into the source's loss account, pro rata of the line's issue value; only the change against what this line
+     * already booked is posted (a corrected proof of delivery reverses part of it).
+     */
+    private void syncDeliveryLoss(Map<String, Object> order, Map<String, Object> l, BigDecimal lossQty,
+            BigDecimal dispatched, String tripId, String code) {
+        if (stockPosting == null || l.get("stockLedgerCode") == null || l.get("stockValue") == null
+                || dispatched.signum() <= 0) {
+            return;
+        }
+        DeliverySourcePort port = order.get("sourceType") == null ? null
+                : orders.sourcePort((String) order.get("sourceType"), (String) order.get("sourceId"));
+        String account = port == null ? null : port.deliveryLossAccount();
+        if (account == null) {
+            return;
+        }
+        String lineId = (String) l.get("id");
+        BigDecimal booked = db.jdbc().sql("SELECT \"lossValue\" FROM \"FleetLoadLine\" WHERE id = ? AND \"organizationId\""
+                + " = ?").params(lineId, FleetDb.org()).query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
+        BigDecimal target = SqlRows.dec(l, "stockValue").multiply(lossQty.min(dispatched))
+                .divide(dispatched, 2, RoundingMode.HALF_UP);
+        BigDecimal diff = target.subtract(booked);
+        if (diff.signum() == 0) {
+            return;
+        }
+        stockPosting.postDeliveryLoss((String) l.get("productId"), diff, Instant.now(), "fleet_trip", tripId,
+                "delivery-loss:" + lineId + ":" + target.toPlainString(), account, "Delivery loss · trip " + code);
+        db.jdbc().sql("UPDATE \"FleetLoadLine\" SET \"lossValue\" = ? WHERE id = ? AND \"organizationId\" = ?")
+                .params(target, lineId, FleetDb.org()).update();
+    }
+
+    private com.inventoryerp.inventory.application.StockPostingService stockPosting;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setStockPosting(com.inventoryerp.inventory.application.StockPostingService stockPosting) {
+        this.stockPosting = stockPosting;
     }
 
     private void assertAssigned(Map<String, Object> t) {

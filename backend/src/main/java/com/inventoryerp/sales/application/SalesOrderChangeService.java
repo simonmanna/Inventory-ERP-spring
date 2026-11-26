@@ -154,7 +154,7 @@ public class SalesOrderChangeService {
         BigDecimal delta = dec(after.get("total")).subtract(dec(before.get("total")));
         if (delta.signum() > 0) {
             CreditService.Decision c = credit.check("amendment", str(o.get("partnerId")), "sales_order", orderId,
-                    str(o.get("number")), delta, str(o.get("branchId")));
+                    str(o.get("number")), SalesOrderService.inBase(o, delta), str(o.get("branchId")));
             if (!c.passed()) {
                 db.patch("SalesOrder", orderId, Obj.of("onHold", true, "holdReason", String.join("; ", c.reasons()),
                         "holdKind", "blocked".equals(c.result()) ? "customer" : "credit"), true);
@@ -222,6 +222,15 @@ public class SalesOrderChangeService {
         if (header.containsKey("deliveryMethod") && !Set.of("delivery", "collect").contains(str(header.get(
                 "deliveryMethod")))) {
             throw ApiException.badRequest("deliveryMethod must be one of: collect, delivery");
+        }
+        // Sales readiness SO-12: a changed reference must belong to the organisation (approval re-plans reservations at
+        // a new location).
+        for (String[] ref : new String[][] {{"locationId", "InventoryLocation", "Location not found"}, {"siteId",
+                "FleetCustomerSite", "Customer site not found"}, {"paymentTermId", "PaymentTerm",
+                        "Payment term not found"}}) {
+            if (!blank(str(header.get(ref[0]))) && !db.exists(ref[1], str(header.get(ref[0])))) {
+                throw ApiException.notFound(ref[2]);
+            }
         }
         List<Map<String, Object>> lineChanges = changes.get("lines") instanceof List<?> l ? (List<Map<String, Object>>) l
                 : List.of();
@@ -362,18 +371,19 @@ public class SalesOrderChangeService {
                 Object cost = productChange ? orders.costOf(p.productId(), str(m.get("variantId"))) : l.get("costSnapshot");
                 db.update("UPDATE \"SalesOrderLine\" SET \"productId\" = ?, \"variantId\" = ?, description = ?, quantity = ?,"
                         + " \"uomId\" = ?, \"uomFactor\" = ?, \"costSnapshot\" = ?, \"unitPrice\" = ?, \"discountPercent\" = ?,"
-                        + " \"priceSource\" = ?, \"lineSubtotal\" = ?, \"lineTax\" = ?, \"lineTotal\" = ? WHERE id = ?",
+                        + " \"priceSource\" = ?, \"lineSubtotal\" = ?, \"lineTax\" = ?, \"lineTotal\" = ? WHERE id = ?"
+                                + " AND \"organizationId\" = ?",
                         p.productId(), m.get("variantId"), p.description(), qty, p.uomId(), factor, cost, p.unitPrice(),
-                        p.discountPercent(), m.get("priceSource"), p.subtotal(), p.taxAmount(), p.total(), l.get("id"));
+                        p.discountPercent(), m.get("priceSource"), p.subtotal(), p.taxAmount(), p.total(), l.get("id"), org());
                 if (qty.compareTo(dec(l.get("quantity"))) != 0) {
                     // ADR-S066: a changed quantity no longer matches the typed size
                     db.update("UPDATE \"SalesOrderLine\" SET pieces = NULL, length = NULL, width = NULL, height = NULL"
-                            + " WHERE id = ?", l.get("id"));
+                            + " WHERE id = ? AND \"organizationId\" = ?", l.get("id"), org());
                 }
             }
             if (c.containsKey("promisedDate")) {
-                db.update("UPDATE \"SalesOrderLine\" SET \"promisedDate\" = ? WHERE id = ?",
-                        SalesDb.date(str(c.get("promisedDate"))), l.get("id"));
+                db.update("UPDATE \"SalesOrderLine\" SET \"promisedDate\" = ? WHERE id = ? AND \"organizationId\" = ?",
+                        SalesDb.date(str(c.get("promisedDate"))), l.get("id"), org());
             }
         }
         List<Map<String, Object>> add = changes.get("addLines") instanceof List<?> l ? (List<Map<String, Object>>) l
@@ -425,7 +435,8 @@ public class SalesOrderChangeService {
     }
 
     private Map<String, Object> snapshot(String orderId) {
-        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ?", orderId);
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", orderId, org());
         o.put("lines", db.rows("SELECT * FROM \"SalesOrderLine\" WHERE \"orderId\" = ? ORDER BY \"sortOrder\"", orderId));
         return o;
     }
