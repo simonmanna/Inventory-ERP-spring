@@ -363,8 +363,9 @@ public class SalesHandoverService {
             h = db.patch("SalesHandover", str(h.get("id")), data, true);
         }
         if (nowDelivered) {
-            db.update("UPDATE \"SalesHandover\" SET \"deliveredAt\" = " + NOW + ", \"deliveredById\" = ? WHERE id = ?",
-                    user(), h.get("id"));
+            db.update("UPDATE \"SalesHandover\" SET \"deliveredAt\" = " + NOW + ", \"deliveredById\" = ? WHERE id = ?"
+                    + " AND \"organizationId\" = ?",
+                    user(), h.get("id"), org());
         }
         if (SALES_ORDER.equals(type) && (changed.containsKey("method") || changed.containsKey("address"))) {
             db.update("UPDATE \"SalesOrder\" SET \"deliveryMethod\" = ?, \"deliveryAddress\" = ?, \"updatedAt\" = " + NOW

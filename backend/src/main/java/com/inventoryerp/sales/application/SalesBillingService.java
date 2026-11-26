@@ -157,7 +157,8 @@ public class SalesBillingService {
         }
         BigDecimal above = dec(s.get("requireTaxNumberAbove"));
         if (above.signum() > 0 && dec(o.get("total")).compareTo(above) > 0) {
-            Map<String, Object> p = db.row("SELECT \"taxNumber\" FROM \"Partner\" WHERE id = ?", o.get("partnerId"));
+            Map<String, Object> p = db.row("SELECT \"taxNumber\" FROM \"Partner\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", o.get("partnerId"), org());
             if (p == null || blank(str(p.get("taxNumber")))) {
                 throw ApiException.badRequest("This customer needs a tax number for an invoice of this size");
             }
@@ -279,7 +280,7 @@ public class SalesBillingService {
 
     private Map<String, Object> create(Map<String, Object> o, String issue, List<LineInput> lines, String notes) {
         Map<String, Object> site = o.get("siteId") == null ? null : db.row("SELECT name, address, city, \"projectId\""
-                + " FROM \"FleetCustomerSite\" WHERE id = ?", o.get("siteId"));
+                + " FROM \"FleetCustomerSite\" WHERE id = ? AND \"organizationId\" = ?", o.get("siteId"), org());
         String address = site != null ? String.join(", ", java.util.stream.Stream.of(site.get("name"), site.get(
                 "address"), site.get("city")).filter(x -> x != null).map(Object::toString).toList())
                 : str(o.get("deliveryAddress"));
@@ -598,7 +599,8 @@ public class SalesBillingService {
             if (invCurrency != null && !invCurrency.equalsIgnoreCase(str(d.get("currency")))) {
                 continue;
             }
-            Map<String, Object> doc = db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?", documentId);
+            Map<String, Object> doc = db.row("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?"
+                    + " AND \"organizationId\" = ?", documentId, org());
             BigDecimal residual = doc == null ? BigDecimal.ZERO : dec(doc.get("amountResidual"));
             if (residual.signum() <= 0) {
                 break;

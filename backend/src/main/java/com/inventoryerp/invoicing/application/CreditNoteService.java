@@ -64,6 +64,13 @@ public class CreditNoteService {
     private final PosStockLocation posLocation;
     private final TransactionTemplate newTx;
     private final DocumentFxRates fxRates;
+    private com.inventoryerp.accounting.application.JournalService journals;
+
+    /** Sales journals (INV-13); optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setJournals(com.inventoryerp.accounting.application.JournalService journals) {
+        this.journals = journals;
+    }
 
     public CreditNoteService(JdbcClient jdbc, EventBus events, PostingService posting, DocumentBuilderService builder,
             StockService stock, ApprovalsService approvals, PosStockLocation posLocation, PlatformTransactionManager txm,
@@ -522,6 +529,10 @@ public class CreditNoteService {
         // and a credit note never posts against an invoice that was cancelled meanwhile.
         String credited = (String) cn.get("reversedDocumentId");
         if (credited != null) {
+            // Sales readiness INV-14: both rows in id order, the order allocate and reverse use, so a post racing an
+            // allocation of the same pair cannot deadlock.
+            jdbc.sql("SELECT id FROM \"Document\" WHERE id IN (?, ?) AND \"organizationId\" = ? ORDER BY id FOR UPDATE")
+                    .params(credited, id, org()).query().listOfRows();
             Map<String, Object> invoice = SqlRows.one(jdbc.sql("SELECT \"documentType\"::text AS \"documentType\","
                     + " \"partnerId\", status::text AS status, \"documentNumber\" FROM \"Document\" WHERE id = ? AND"
                     + " \"organizationId\" = ? FOR UPDATE").params(credited, org()));
@@ -536,6 +547,8 @@ public class CreditNoteService {
         if ("posted".equals(status) || "paid".equals(status)) {
             throw ApiException.badRequest("Credit note is already posted");
         }
+        // Sales readiness INV-11: the legal number is taken now, in this transaction (gap-free).
+        cn.put("documentNumber", builder.numberAtPost(id));
         if ("cancelled".equals(status)) {
             throw ApiException.badRequest("Credit note is cancelled");
         }
@@ -551,7 +564,13 @@ public class CreditNoteService {
         post.add(new Line(g.counterAccount(), null, JsNumbers.dec(total), partnerId,
                 "Credit note " + cn.get("documentNumber"), null, null, null));
         Instant issueDate = (Instant) cn.get("issueDate");
-        Map<String, Object> entry = posting.post(new PostingRequest("SALES", issueDate, "Credit note " + cn.get("documentNumber"),
+        // Sales readiness INV-13: a credit note posts to the sales journal of the invoice it credits (else the org's
+        // default sales journal), not a hard-coded "SALES" code.
+        String creditedJournal = cn.get("reversedDocumentId") == null ? null : jdbc.sql("SELECT \"invoicingJournalId\""
+                + " FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(cn.get("reversedDocumentId"), org())
+                .query(String.class).optional().orElse(null);
+        String journalCode = journals == null ? "SALES" : journals.resolveSalesJournal(creditedJournal).getCode();
+        Map<String, Object> entry = posting.post(new PostingRequest(journalCode, issueDate, "Credit note " + cn.get("documentNumber"),
                 (String) cn.get("currencyId"), Money.dec(cn.get("exchangeRate")), "credit_note", id, null, null, null,
                 null, null, post));
         jdbc.sql("UPDATE \"Document\" SET status = 'posted', \"postedAt\" = " + NOW + ", \"postedBy\" = ?,"
@@ -733,7 +752,7 @@ public class CreditNoteService {
             jdbc.sql("UPDATE \"Document\" SET \"amountResidual\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\", status ="
                             + " ?::\"DocumentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
                     .params(residual, paymentStatus, invStatus, inv.get("id")).update();
-            jdbc.sql("DELETE FROM \"CreditAllocation\" WHERE id = ?").param(a.get("id")).update();
+            jdbc.sql("DELETE FROM \"CreditAllocation\" WHERE id = ? AND \"organizationId\" = ?").params(a.get("id"), org()).update();
             unwound.add(Obj.of("kind", "credit_allocation", "creditAllocationId", a.get("id"), "documentId",
                     a.get("documentId"), "documentNumber", a.get("documentNumber"), "amount", JsNumbers.dec(amount),
                     "allocatedAt", a.get("createdAt") == null ? null : String.valueOf(a.get("createdAt"))));
@@ -824,7 +843,7 @@ public class CreditNoteService {
                 }
                 stock.issue(m);
             } catch (ApiException e) {
-                String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(r.get("productId"))
+                String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?").params(r.get("productId"), org())
                         .query(String.class).optional().orElse(String.valueOf(r.get("productId")));
                 throw ApiException.badRequest("Cannot reverse credit note " + number + ": the " + JsNumbers.dec(qty)
                         + " of " + name + " it restocked cannot be taken back (" + e.getMessage() + ")");

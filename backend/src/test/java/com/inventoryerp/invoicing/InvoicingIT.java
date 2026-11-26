@@ -70,7 +70,8 @@ class InvoicingIT extends ApiTestSupport {
     void invoices() {
         JsonNode draft = invoice(2, 50);
         String id = draft.get("id").asString();
-        assertThat(draft.get("documentNumber").asString()).startsWith("INV-" + LocalDate.now().getYear() + "-");
+        // INV-11: a draft carries a temporary reference; the legal number is taken at post.
+        assertThat(draft.get("documentNumber").asString()).startsWith("DRAFT-INV-");
         assertThat(draft.get("totalAmount").asString()).isEqualTo("100");
         assertThat(draft.get("lines")).hasSize(1);
         assertThat(draft.get("partner").get("id").asString()).isEqualTo(customer);
@@ -93,6 +94,7 @@ class InvoicingIT extends ApiTestSupport {
         assertThat(edited.get("totalAmount").asString()).isEqualTo("150");
 
         JsonNode posted = ok(200, "POST", "/invoices/" + id + "/post", null);
+        assertThat(posted.get("documentNumber").asString()).startsWith("INV-" + LocalDate.now().getYear() + "-");
         assertThat(posted.get("status").asString()).isEqualTo("posted");
         assertThat(posted.get("journalEntryId").isNull()).isFalse();
         assertThat(posted.get("amountResidual").asString()).isEqualTo("150");
@@ -165,8 +167,9 @@ class InvoicingIT extends ApiTestSupport {
         ok(200, "POST", "/invoices/" + inv + "/post", null);
         JsonNode cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
                 "reversedDocumentId", inv, "lines", List.of(Map.of("productId", service, "quantity", 1, "unitPrice", 40))));
-        assertThat(cn.get("documentNumber").asString()).startsWith("CN-");
+        assertThat(cn.get("documentNumber").asString()).startsWith("DRAFT-CN-");
         JsonNode posted = ok(200, "POST", "/credit-notes/" + cn.get("id").asString() + "/post", null);
+        assertThat(posted.get("documentNumber").asString()).startsWith("CN-");
         assertThat(posted.get("status").asString()).isEqualTo("posted");
         assertThat(posted.get("amountResidual").asString()).isEqualTo("0");
         assertThat(ok(200, "GET", "/invoices/" + inv, null).get("amountResidual").asString()).isEqualTo("60");

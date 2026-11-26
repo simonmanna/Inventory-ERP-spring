@@ -149,6 +149,22 @@ public class GatePassService {
         return w;
     }
 
+    /** True when the live passes of the source now carry more of one of this pass's lines than the source holds. */
+    private boolean exceedsSource(Map<String, Object> p, GatePassSources.Source src) {
+        Map<String, BigDecimal> used = usedBySourceLine(s(p.get("sourceType")), s(p.get("sourceId")));
+        Map<String, BigDecimal> current = new HashMap<>();
+        src.lines().forEach(l -> current.put(l.id(), l.quantity()));
+        for (Map<String, Object> l : rows("SELECT \"sourceLineId\" FROM \"GatePassLine\" WHERE \"gatePassId\" = ? AND"
+                + " \"organizationId\" = ?", p.get("id"), org())) {
+            String line = s(l.get("sourceLineId"));
+            BigDecimal now = current.getOrDefault(line, BigDecimal.ZERO);
+            if (used.getOrDefault(line, BigDecimal.ZERO).compareTo(now) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private Map<String, BigDecimal> usedBySourceLine(String type, String id) {
         Map<String, BigDecimal> out = new HashMap<>();
         for (Map<String, Object> r : rows("SELECT l.\"sourceLineId\", sum(l.quantity) AS q FROM \"GatePassLine\" l JOIN"
@@ -416,6 +432,10 @@ public class GatePassService {
             // Sales readiness R4d (DEL-5): sold goods leave only after the stock issue (and its cost) is booked.
             problems.add("goods_not_issued");
         }
+        if (src != null && !src.cancelled() && "issued".equals(p.get("status")) && exceedsSource(p, src)) {
+            // Sales readiness DEL-11: the source was re-planned, re-weighed or partly returned since the pass was issued.
+            problems.add("source_quantity_changed");
+        }
         out.put("problems", problems);
         out.put("canLetOut", problems.isEmpty());
         out.put("liveWarnings", src == null ? List.of() : warnings(src));
@@ -494,6 +514,10 @@ public class GatePassService {
             }
             if (problems.contains("source_cancelled") || problems.contains("source_missing")) {
                 throw ApiException.badRequest("The source document was cancelled; the goods may not leave");
+            }
+            if (problems.contains("source_quantity_changed")) {
+                throw ApiException.badRequest("The quantities of the source changed after this pass was issued; void it"
+                        + " and issue a new pass");
             }
             if (problems.contains("goods_not_issued")) {
                 throw ApiException.badRequest("The goods on this pass have not been issued from stock yet (dispatch the"

@@ -44,7 +44,14 @@ public class FleetDeliveryNoteService {
     @Transactional
     @SuppressWarnings("unchecked")
     public Pdf render(String tripId) {
-        int print = trips.countDeliveryNotePrint(tripId);
+        return render(tripId, true);
+    }
+
+    /** The delivery note; {@code count} = a print (numbered copy), otherwise a view that is not counted (DEL-12). */
+    @Transactional
+    @SuppressWarnings("unchecked")
+    public Pdf render(String tripId, boolean count) {
+        int print = trips.deliveryNotePrint(tripId, count);
         Map<String, Object> t = trips.get(tripId);
         Map<String, Object> o = (Map<String, Object>) t.get("deliveryOrder");
         Map<String, Object> site = o == null ? null : (Map<String, Object>) o.get("site");

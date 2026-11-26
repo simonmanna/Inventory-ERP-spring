@@ -168,9 +168,14 @@ public class SalesReturnService {
         return get(id);
     }
 
-    /** Delivered (dispatched, else billable) minus quantities on other open / done returns. */
+    /**
+     * What the customer actually holds, minus quantities on other open / done returns. Sales readiness DEL-10: for goods
+     * that went out on deliveries that is the accepted quantity (not what is in transit, damaged, short or rejected);
+     * otherwise what was delivered or invoiced (net of credits).
+     */
     private BigDecimal returnable(Map<String, Object> ol) {
-        BigDecimal delivered = dec(ol.get("qtyDispatched")).max(dec(ol.get("qtyBillable")));
+        BigDecimal delivered = dec(ol.get("qtyDispatched")).signum() > 0 ? dec(ol.get("qtyAccepted"))
+                : dec(ol.get("qtyDelivered")).max(dec(ol.get("qtyInvoiced")).subtract(dec(ol.get("qtyCredited"))));
         BigDecimal claimed = dec(db.row("SELECT COALESCE(sum(l.quantity), 0) AS q FROM \"SalesReturnLine\" l JOIN"
                 + " \"SalesReturn\" r ON r.id = l.\"returnId\" WHERE l.\"orderLineId\" = ? AND r.status NOT IN ('rejected',"
                 + " 'cancelled')", ol.get("id")).get("q"));
@@ -181,7 +186,7 @@ public class SalesReturnService {
     public Map<String, Object> approve(String id) {
         Map<String, Object> r = lock(id, "requested");
         db.update("UPDATE \"SalesReturn\" SET status = 'approved', \"approvedById\" = ?, \"approvedAt\" = now(),"
-                + " \"updatedAt\" = now() WHERE id = ?", user(), id);
+                + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?", user(), id, org());
         audit.record(AuditInput.of("SalesReturn", id, "approve", null, Obj.of("number", r.get("number"))));
         return get(id);
     }
@@ -247,10 +252,11 @@ public class SalesReturnService {
                     stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
                 }
             }
-            db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?", qty, issueCost, l.get("id"));
+            db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?"
+                    + " AND \"organizationId\" = ?", qty, issueCost, l.get("id"), org());
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'received', \"receiveLocationId\" = ?, \"receivedAt\" = now(),"
-                + " \"updatedAt\" = now() WHERE id = ?", location, id);
+                + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?", location, id, org());
         returnedProjection(str(r.get("orderId")));
         events.publishOnCommit(DomainEvents.SALES_RETURN_RECEIVED, Obj.of("v", 1, "organizationId", org(), "returnId", id,
                 "number", r.get("number"), "orderId", r.get("orderId")));
@@ -341,8 +347,9 @@ public class SalesReturnService {
                         .notes("Scrapped return " + r.get("number")));
             }
             db.update("UPDATE \"SalesReturnLine\" SET disposition = ?, \"dispositionLocationId\" = ?, \"inspectionNotes\" = ?,"
-                    + " \"rejectedQty\" = ?, \"rejectReason\" = ? WHERE id = ?", disposition, Set.of("quarantine", "damaged").contains(disposition)
-                    ? target : from, str(g.get("notes")), rejected, str(g.get("rejectReason")), l.get("id"));
+                    + " \"rejectedQty\" = ?, \"rejectReason\" = ? WHERE id = ?"
+                            + " AND \"organizationId\" = ?", disposition, Set.of("quarantine", "damaged").contains(disposition)
+                    ? target : from, str(g.get("notes")), rejected, str(g.get("rejectReason")), l.get("id"), org());
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'inspected', \"inspectedAt\" = now(), \"updatedAt\" = now() WHERE"
                 + " id = ?", id);
@@ -367,7 +374,8 @@ public class SalesReturnService {
             throw ApiException.badRequest("outcome must be one of: credit_note, none, refund, replacement");
         }
         String orderId = str(r.get("orderId"));
-        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ?", orderId);
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ?"
+                + " AND \"organizationId\" = ?", orderId, org());
         List<LineInput> cnLines = new ArrayList<>();
         List<Map<String, Object>> cnLinks = new ArrayList<>();
         String invoiceId = null;
@@ -403,7 +411,8 @@ public class SalesReturnService {
                             + " d.status::text IN ('posted', 'paid') ORDER BY d.\"createdAt\" DESC LIMIT 1", l.get("lineId"));
                     invoiceId = inv == null ? null : str(inv.get("documentId"));
                 }
-                db.update("UPDATE \"SalesReturnLine\" SET \"creditQty\" = ? WHERE id = ?", credit, l.get("returnLineId"));
+                db.update("UPDATE \"SalesReturnLine\" SET \"creditQty\" = ? WHERE id = ?"
+                        + " AND \"organizationId\" = ?", credit, l.get("returnLineId"), org());
             }
             if (uninvoiced.signum() > 0) {
                 // not invoiced yet: the returned quantity is no longer billable (recorded decision)
@@ -413,7 +422,8 @@ public class SalesReturnService {
                         + " basis, quantity, \"previousQty\", reason, \"decidedById\") VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?)",
                         SalesDb.newId(), org(), orderId, l.get("lineId"), after, before, "Returned on " + r.get("number"),
                         user());
-                db.update("UPDATE \"SalesOrderLine\" SET \"qtyBillable\" = ? WHERE id = ?", after, l.get("lineId"));
+                db.update("UPDATE \"SalesOrderLine\" SET \"qtyBillable\" = ? WHERE id = ?"
+                        + " AND \"organizationId\" = ?", after, l.get("lineId"), org());
             }
         }
         String creditNoteId = null;
@@ -450,15 +460,17 @@ public class SalesReturnService {
             replacementId = str(rep.get("id"));
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'closed', outcome = ?, \"creditNoteId\" = ?, \"refundPaymentId\" = ?,"
-                + " \"replacementOrderId\" = ?, \"closedAt\" = now(), \"updatedAt\" = now() WHERE id = ?", outcome,
-                creditNoteId, refundId, replacementId, id);
+                + " \"replacementOrderId\" = ?, \"closedAt\" = now(), \"updatedAt\" = now() WHERE id = ?"
+                        + " AND \"organizationId\" = ?", outcome,
+                creditNoteId, refundId, replacementId, id, org());
         db.update("UPDATE \"SalesOrderLine\" l SET \"qtyCredited\" = COALESCE((SELECT sum(k.quantity) FROM"
                 + " \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id = k.\"documentId\" WHERE k.\"orderLineId\" = l.id AND"
                 + " k.kind = 'credit_note' AND d.status::text IN ('posted', 'paid')), 0) WHERE l.\"orderId\" = ?", orderId);
         if (r.get("complaintId") != null) {
             db.update("UPDATE \"CustomerComplaint\" SET status = 'resolved', resolution = ?, \"resolvedAt\" = now(),"
-                    + " \"updatedAt\" = now() WHERE id = ?", "Return " + r.get("number") + " closed: " + outcome,
-                    r.get("complaintId"));
+                    + " \"updatedAt\" = now() WHERE id = ?"
+                            + " AND \"organizationId\" = ?", "Return " + r.get("number") + " closed: " + outcome,
+                    r.get("complaintId"), org());
         }
         orders.refreshStatus(orderId);
         events.publishOnCommit(DomainEvents.SALES_RETURN_CLOSED, Obj.of("v", 1, "organizationId", org(), "returnId", id, "number",
@@ -477,7 +489,8 @@ public class SalesReturnService {
         if (!Set.of("requested", "approved").contains(r.get("status"))) {
             throw ApiException.badRequest("Only a return not yet received can be cancelled");
         }
-        db.update("UPDATE \"SalesReturn\" SET status = 'cancelled', \"updatedAt\" = now() WHERE id = ?", id);
+        db.update("UPDATE \"SalesReturn\" SET status = 'cancelled', \"updatedAt\" = now() WHERE id = ?"
+                + " AND \"organizationId\" = ?", id, org());
         audit.record(AuditInput.of("SalesReturn", id, "cancel"));
         return get(id);
     }

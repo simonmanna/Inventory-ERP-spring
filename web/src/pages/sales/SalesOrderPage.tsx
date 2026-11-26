@@ -21,6 +21,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import { apiErrorMessage } from '@/lib/api-error';
 import { date, money } from '@/lib/format';
+import { useAsk } from '@/components/ask-dialog';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import { useProductOptions, useTaxOptions } from '@/features/crm/suite-api';
@@ -29,7 +30,7 @@ import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components
 import { defaultUnitId, unitPrice as priceForUnit, unitPriceUnknown, withVariantPrices } from '@/features/products/units';
 import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
 import {
-  salesApi, useChangeRequests, useOrderRevisions, useSalesMutation, useSalesOrder, type ChangeRequest, type SalesOrderLine,
+  salesApi, useChangeRequests, useOrderRevisions, useSalesMutation, useSalesOrder, type ChangeRequest, type SalesOrder, type SalesOrderLine,
 } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
@@ -168,9 +169,23 @@ export function SalesOrderPage() {
       onError: (e) => toast.error(apiErrorMessage(e, tx('Could not save'))),
     });
   };
+  const { ask, dialog: askDialog } = useAsk();
   const run = (a: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject', body?: Record<string, unknown>) =>
     action.mutate({ id: o!.id, action: a, body }, {
-      onSuccess: (r) => { if (a === 'duplicate') navigate(`/sales/orders/${r.id}`); else toast.success(r.status === 'pending_approval' ? tx('Sent for approval') : a === 'confirm' && r.onHold ? tx('Confirmed — on hold: ') + (r.holdReason ?? '') : tx('Done')); },
+      onSuccess: (r) => {
+        if (a === 'duplicate') { navigate(`/sales/orders/${r.id}`); return; }
+        const res = r as SalesOrder & { creditRequest?: unknown };
+        // X-8: a confirm over the credit limit opens a credit request and leaves the order a draft; say so.
+        if (a === 'confirm' && res.creditRequest) toast.info(tx('Over the credit limit: a credit request was sent for approval. The order stays a draft until it is approved.'));
+        else if (res.status === 'pending_approval') toast.success(tx('Sent for approval'));
+        else if (a === 'confirm' && res.onHold) toast.warning(tx('Confirmed — on hold: ') + (res.holdReason ?? ''));
+        else toast.success(a === 'confirm' ? tx('Order confirmed') : a === 'approve' ? tx('Order approved') : a === 'reject' ? tx('Order rejected') : a === 'release' ? tx('Order released') : tx('Done'));
+        const warn = a === 'confirm' ? res.stockWarnings ?? [] : [];
+        if (warn.length) {
+          const name = (lineId: string) => res.lines?.find((l) => l.id === lineId)?.description ?? lineId;
+          toast.warning(tx('Not enough stock today for:') + ' ' + warn.map((w) => `${name(w.lineId)} (${tx('short')} ${w.shortage})`).join(', '), { duration: 10000 });
+        }
+      },
       onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))),
     });
 
@@ -189,20 +204,21 @@ export function SalesOrderPage() {
   const menu: MenuItem[] = [];
   if (o) {
     if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
-    if ((status === 'draft' || (o.onHold && o.holdKind !== 'manual')) && has(P.orderWrite)) menu.push({ key: 'credit', label: tx('Ask for credit approval'), icon: <FileSignature className={ico} />, onSelect: () => { const reason = prompt(tx('Why should this order be allowed over the limit?')); if (reason) api.post(`/sales/orders/${o.id}/credit-request`, { reason }).then(() => toast.success(tx('Credit request sent'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
+    if ((status === 'draft' || (o.onHold && o.holdKind !== 'manual')) && has(P.orderWrite)) menu.push({ key: 'credit', label: tx('Ask for credit approval'), icon: <FileSignature className={ico} />, onSelect: async () => { const reason = await ask({ title: tx('Ask for credit approval'), label: tx('Why should this order be allowed over the limit?'), confirmLabel: tx('Send request') }); if (reason) api.post(`/sales/orders/${o.id}/credit-request`, { reason }).then(() => toast.success(tx('Credit request sent'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
     if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
     if (status !== 'cancelled' && has(PERMISSIONS.project.manage)) menu.push({ key: 'project', label: tx('Create project'), icon: <FolderKanban className={ico} />, onSelect: () => setDialog('project') });
     if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'proforma', label: tx('Create proforma'), icon: <FileText className={ico} />, onSelect: () => { api.post(`/sales/orders/${o.id}/proforma`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }).then((r) => navigate(`/sales/proformas/${r.data.id}`)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not create the proforma')))); } });
-    if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'recurring', label: tx('Repeat this order'), icon: <History className={ico} />, onSelect: () => { const frequency = prompt(tx('How often? weekly, monthly, quarterly or yearly'), 'monthly'); if (frequency) api.post(`/sales/orders/${o.id}/recurring`, { frequency }).then(() => toast.success(tx('A draft copy will be created when due'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
+    if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'recurring', label: tx('Repeat this order'), icon: <History className={ico} />, onSelect: async () => { const frequency = await ask({ title: tx('Repeat this order'), label: tx('How often?'), input: 'select', defaultValue: 'monthly', options: [['weekly', tx('Weekly')], ['monthly', tx('Monthly')], ['quarterly', tx('Quarterly')], ['yearly', tx('Yearly')]], confirmLabel: tx('Repeat') }); if (frequency) api.post(`/sales/orders/${o.id}/recurring`, { frequency }).then(() => toast.success(tx('A draft copy will be created when due'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (has(P.orderWrite)) menu.push({ key: 'duplicate', label: tx('Duplicate'), icon: <Copy className={ico} />, onSelect: () => run('duplicate') });
     if (!['cancelled', 'done'].includes(status) && has(P.orderCancel)) menu.push({ key: 'cancel', label: tx('Cancel order'), icon: <XCircle className={ico} />, danger: true, onSelect: () => { setReason(''); setDialog('cancel'); } });
-    if (status === 'draft' && has(P.orderWrite)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: () => { if (confirm(tx('Delete this draft?'))) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
+    if (status === 'draft' && has(P.orderWrite)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: async () => { if (await ask({ title: tx('Delete this draft?'), description: tx('The draft order and its lines are removed. This cannot be undone.'), confirmLabel: tx('Delete'), destructive: true }) !== null) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
   }
 
   return (
     <div className="space-y-4">
+      {askDialog}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm">
           <Link to="/sales/orders" className="font-medium text-primary hover:underline">{tx('Sales Orders')}</Link>
@@ -218,9 +234,9 @@ export function SalesOrderPage() {
         <div data-tour="sales.order.actions" className="flex flex-wrap items-center gap-2">
           {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
           {o?.status === 'draft' && has(P.orderConfirm) && <Button data-tour="sales.order.confirm" variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
-          {o?.status === 'pending_approval' && has(P.quotationApprove) && <>
+          {o?.status === 'pending_approval' && has(P.orderApprove) && <>
             <Button onClick={() => run('approve', {})}>{tx('Approve')}</Button>
-            <Button variant="destructive" onClick={() => { const r = prompt(tx('Reason')); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
+            <Button variant="destructive" onClick={async () => { const r = await ask({ title: `${tx('Reject')} ${o.number}?`, label: tx('Reason'), confirmLabel: tx('Reject'), destructive: true }); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
           </>}
           {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
           {menu.length > 0 && (

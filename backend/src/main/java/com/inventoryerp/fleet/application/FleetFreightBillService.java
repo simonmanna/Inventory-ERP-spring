@@ -349,8 +349,8 @@ public class FleetFreightBillService {
         }
         String clearing = freightClearingAccount();
         String expense = freightExpenseAccount();
-        String partnerName = db.jdbc().sql("SELECT name FROM \"Partner\" WHERE id = ?").param(
-                b.get("transporterPartnerId")).query(String.class).optional().orElse("");
+        String partnerName = db.jdbc().sql("SELECT name FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?").params(
+                b.get("transporterPartnerId"), FleetDb.org()).query(String.class).optional().orElse("");
         String label = "Freight " + code + " · " + partnerName + " " + in.supplierReference().trim();
         Map<String, Object> bill = vendorBills.create(new VendorBillService.BillInput(
                 (String) b.get("transporterPartnerId"), in.supplierInvoiceDate().toString(),

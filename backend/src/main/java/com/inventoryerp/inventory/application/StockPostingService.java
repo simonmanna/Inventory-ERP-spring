@@ -131,6 +131,42 @@ public class StockPostingService {
         return resolution;
     }
 
+    /**
+     * Delivery loss (sales readiness DEL-9a, owner decision 2026-11-26): the cost of goods that left on a delivery but
+     * were damaged or are missing at the customer moves out of cost of goods sold into a loss account: Dr
+     * {@code lossAccountId} / Cr the cost-of-sales account the issue debited (its posting rule, else the COGS mapping).
+     * Idempotent per {@code postingKey}.
+     */
+    public void postDeliveryLoss(String productId, BigDecimal value, Instant date, String sourceType, String sourceId,
+            String postingKey, String lossAccountId, String description) {
+        if (value == null || value.signum() == 0 || lossAccountId == null) {
+            return;
+        }
+        String cogs = null;
+        List<Line> issue = resolveLines("STOCK_OUT", productId, value);
+        if (issue != null) {
+            for (Line l : issue) {
+                if (l.debit() != null && Money.dec(l.debit()).signum() > 0) {
+                    cogs = l.accountId();
+                    break;
+                }
+            }
+        }
+        if (cogs == null) {
+            cogs = determination.mapped("cogs");
+        }
+        String name = productName(productId);
+        String v = JsNumbers.dec(value.abs());
+        // A negative value reverses part of an earlier loss (a corrected proof of delivery found the goods).
+        List<Line> lines = stamp(value.signum() > 0
+                ? List.of(Line.debit(lossAccountId, v, "Delivery loss · " + name),
+                        Line.credit(cogs, v, "COGS → delivery loss · " + name))
+                : List.of(Line.debit(cogs, v, "Delivery loss reversed · " + name),
+                        Line.credit(lossAccountId, v, "Delivery loss reversed · " + name)), productId, null);
+        post("INV", date, description != null ? description : "Delivery loss " + name, sourceType, sourceId, postingKey,
+                lines);
+    }
+
     /** Return restock: Dr Stock Valuation / Cr COGS. */
     public void postReturnRestock(String productId, BigDecimal totalValue, Instant date, String sourceType,
             String sourceId, String description) {

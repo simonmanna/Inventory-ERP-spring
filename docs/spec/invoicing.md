@@ -58,6 +58,18 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Sales invoices and credit notes are numbered when posted** (sales readiness INV-11, owner decision 2026-11-26).
+  Nest numbers a document when the draft is created (`INV-<year>-` / `CN-<year>-` from a PostgreSQL sequence, which
+  leaves gaps when drafts are deleted or a post rolls back). Drafts now carry a temporary reference
+  `DRAFT-INV-xxxxxxxx` / `DRAFT-CN-xxxxxxxx`; the legal number is taken in the posting transaction from a gap-free
+  counter (`GaplessCounter`, V681, seeded from the highest number already issued), with the year of the issue date.
+  The generic document engine uses the same counter for these two types. Vendor bills and proformas are unchanged.
+- **Other INV fixes of the R6/R7 round:** a cash-sale invoice cancel goes through the invoice cancel (approval and
+  separation of duties apply, INV-17); posting locks the invoice and then the customer before the credit check (INV-9);
+  the invoice stock issue and vendor-bill receipt prefer the warehouse of the document's branch (INV-10); a credit note
+  posts to the sales journal of the invoice it credits (INV-13) and locks both documents in id order (INV-14). The
+  invoice list merges back-office and POS rows on (id, createdAt) and loads only the page (X-7, index V682).
+
 - **Money routes require an Idempotency-Key; settlement is validated** (sales readiness R2/R2b, 2026-11-26, owner to
   approve).
   - Invoice post/cancel, credit-note create/post/allocate/reverse, customer-deposit apply/refund/void, payment

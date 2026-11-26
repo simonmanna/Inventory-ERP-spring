@@ -566,6 +566,45 @@ public class DocumentBuilderService {
         return new Multi(r, breakdown, head, inclusive);
     }
 
+    /** Draft reference prefix of sales invoices and credit notes before they are posted (INV-11). */
+    public static final String DRAFT_PREFIX = "DRAFT-";
+    private static final java.util.Set<String> GAPLESS_TYPES = java.util.Set.of("sales_invoice", "credit_note");
+
+    private com.inventoryerp.kernel.sequence.GaplessSequenceService gapless;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setGapless(com.inventoryerp.kernel.sequence.GaplessSequenceService gapless) {
+        this.gapless = gapless;
+    }
+
+    /**
+     * Sales readiness INV-11: give a draft sales invoice or credit note its legal number when it is posted, from the
+     * gap-free counter of its type and issue year, in the posting transaction (a rolled-back post leaves no gap).
+     * Returns the document's number (unchanged when it already has a legal one).
+     */
+    public String numberAtPost(String id) {
+        Map<String, Object> d = SqlRows.one(jdbc.sql("SELECT \"documentNumber\", \"documentType\"::text AS type,"
+                + " \"issueDate\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org()));
+        if (d == null) {
+            return null;
+        }
+        String current = (String) d.get("documentNumber");
+        if (current == null || !current.startsWith(DRAFT_PREFIX) || gapless == null) {
+            return current;
+        }
+        Object issue = d.get("issueDate");
+        // issueDate holds the calendar date at midnight UTC, so its UTC year is the date's own year.
+        int year = issue == null ? java.time.LocalDate.now(com.inventoryerp.kernel.common.BusinessZone.get()).getYear()
+                : (issue instanceof java.time.Instant i ? i : EntityPatch.toInstant(String.valueOf(issue)))
+                        .atOffset(ZoneOffset.UTC).getYear();
+        boolean credit = "credit_note".equals(d.get("type"));
+        String number = gapless.next((credit ? "creditnote:" : "invoice:") + year, (credit ? "CN-" : "INV-") + year + "-",
+                6);
+        jdbc.sql("UPDATE \"Document\" SET \"documentNumber\" = ?, \"updatedAt\" = now() WHERE id = ? AND \"organizationId\""
+                + " = ?").params(number, id, org()).update();
+        return number;
+    }
+
     /** Create a draft document (numbered per type and issue year) with its lines; returns it with lines + partner. */
     /** Refuses a line whose product is switched off for sale (ADR-S060). */
     public void assertSaleable(List<LineInput> lines) {
@@ -639,8 +678,12 @@ public class DocumentBuilderService {
                 prefix = "INV-" + year + "-";
             }
         }
-        String number = sequence.next(key, prefix, 6);
         String id = UUID.randomUUID().toString();
+        // Sales readiness INV-11 (owner decision 2026-11-26): a sales invoice or credit note is a draft reference until
+        // it is posted; the legal, gap-free number is taken then ({@link #numberAtPost}).
+        String number = GAPLESS_TYPES.contains(documentType)
+                ? DRAFT_PREFIX + ("credit_note".equals(documentType) ? "CN-" : "INV-") + id.substring(0, 8).toUpperCase()
+                : sequence.next(key, prefix, 6);
         jdbc.sql("INSERT INTO \"Document\" (id, \"organizationId\", \"documentNumber\", \"documentType\", \"documentTypeId\","
                         + " \"partnerId\", \"currencyId\", \"exchangeRate\", \"issueDate\", \"dueDate\", \"paymentTermId\","
                         + " \"paymentTermName\", \"paymentMode\", \"fiscalPositionId\", \"fiscalPositionName\","
@@ -972,6 +1015,6 @@ public class DocumentBuilderService {
             return null;
         }
         return SqlRows.one(com.inventoryerp.core.domain.Partner.class,
-                jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ?").param(partnerId));
+                jdbc.sql("SELECT * FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?").params(partnerId, org()));
     }
 }

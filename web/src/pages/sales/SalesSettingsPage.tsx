@@ -49,6 +49,10 @@ const GROUPS: Array<[string, Array<[string, string, Kind]>]> = [
     ['numberingScope', 'Order numbers run per', ['organization', 'branch']],
     ['salesReturnsAccountId', 'Sales Returns account ID (empty = reverse revenue)', 'text'],
     ['badDebtAccountId', 'Bad debt account ID, for write-offs', 'text'],
+    ['deliveryLossPosting', 'Book damaged or missing goods at delivery as a delivery loss (not cost of goods sold)', 'bool'],
+    ['deliveryLossAccountId', 'Delivery losses account ID (empty = 5190 Delivery Losses)', 'text'],
+    ['rejectedToQuarantine', 'Goods the customer rejects go to quarantine, not back to saleable stock', 'bool'],
+    ['rejectedQuarantineLocationId', 'Quarantine location ID (empty = SALES-QUARANTINE)', 'text'],
   ]],
   ['Accounting policies (accountant sign-off)', [
     ['depositTaxPoint', 'VAT on order advances is due at', ['delivery', 'receipt']],

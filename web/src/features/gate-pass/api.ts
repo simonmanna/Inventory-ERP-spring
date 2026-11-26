@@ -35,6 +35,7 @@ export const PROBLEM_LABELS: Record<string, string> = {
   source_cancelled: tx('The source document was cancelled — the goods may not leave'),
   source_missing: tx('The source document no longer exists'),
   goods_not_issued: tx('The goods have not been issued from stock yet — dispatch the delivery first'),
+  source_quantity_changed: tx('The source quantities changed after this pass was issued — void it and issue a new one'),
 };
 
 export const BEARER_LABELS: Record<BearerType, string> = {

@@ -103,5 +103,20 @@ gate-out blocked until goods are issued; DEL-6 handover refused for stocked good
 closed-short-to-done; SO-8 reservation trigger respected; SO-11 stale save 409; SO-12 header tenancy; X-5 business-zone
 dates; SO-5 jobs per order; invoice post confirm dialog and error toasts.
 
-Still open: SO-10 (kernel approval request resolution), X-6 (a full org-predicate sweep), concurrency ITs, R6 accountant
-decisions, R7 performance (pagination, N+1) and the rehearsal.
+R6/R7 round (2026-11-26, owner decisions on DEL-9, INV-11 and down payments):
+
+| ID | Fix |
+|---|---|
+| SO-10 | `sales:order:approve` (V678); approve/reject decide the kernel approval request (multi-step aware). |
+| SO-9 / SO-13 | Duplicate keeps variant, location, tolerance, dimensions, future promise; base-currency list totals and credit checks. |
+| INV-9 / INV-10 / INV-13 / INV-14 / INV-17 | Post locks; branch warehouse; credit-note journal + locks; cash-sale cancel through invoice cancel. |
+| INV-11 | Legal number at post from a gap-free counter (V681); drafts `DRAFT-…`. |
+| INV-12 | Dunning per customer and currency, net of credits and unallocated receipts; after-commit email (V679). |
+| DEL-8 | Issue refuses stock reserved for other orders. |
+| DEL-9 | Delivery losses out of COGS (5190 or configured); rejected goods to quarantine (V680). |
+| DEL-10 / DEL-11 / DEL-12 | Returnable = accepted; stale gate pass blocked; note view not counted; one live delivery order. |
+| X-6 | Org predicate added to 125 by-id statements in sales, invoicing and fleet. |
+| X-7 | Invoice list batched; delivery list server-paged with `X-Total-Count`; reconciliation scoped; backorders capped (V682). |
+| R5 | Concurrency ITs: double issue, double receipt (plus the existing concurrent-planning IT). |
+
+Down payments keep the current model (owner decision). Rehearsal on a restored live copy: see the PR.

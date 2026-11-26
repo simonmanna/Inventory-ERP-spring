@@ -675,6 +675,7 @@
     "quotationRead": "sales:quotation:read",
     "quotationWrite": "sales:quotation:write",
     "quotationApprove": "sales:quotation:approve",
+    "orderApprove": "sales:order:approve",
     "quotationSend": "sales:quotation:send",
     "quotationConvert": "sales:quotation:convert",
     "orderRead": "sales:order:read",

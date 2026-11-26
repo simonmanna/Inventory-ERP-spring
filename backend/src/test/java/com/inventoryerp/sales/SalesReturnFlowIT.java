@@ -168,8 +168,10 @@ class SalesReturnFlowIT extends ApiTestSupport {
     @DisplayName("a write-off lowers the receivable and debits the bad debt account, once, up to the open balance")
     void writeOff() {
         String inv = soldAndInvoiced(3)[1];
-        String badDebt = jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND code LIKE '6%' AND \"isPostable\" AND \"deletedAt\" IS NULL ORDER BY code LIMIT 1")
-                .param(demoOrg).query(String.class).single();
+        // A postable operating-expense account (by category, not by code: the DEMO chart has no 6xxx account).
+        String badDebt = jdbc.sql("SELECT a.id FROM \"Account\" a JOIN \"AccountCategory\" c ON c.id = a.\"categoryId\""
+                + " WHERE a.\"organizationId\" = ? AND c.key = 'operating_expense' AND a.\"isPostable\" AND a.\"isActive\""
+                + " AND a.\"deletedAt\" IS NULL ORDER BY a.code LIMIT 1").param(demoOrg).query(String.class).single();
         Map<String, String> h = new LinkedHashMap<>();
         h.put("Authorization", "Bearer " + adminToken);
         h.put("Idempotency-Key", UUID.randomUUID().toString());

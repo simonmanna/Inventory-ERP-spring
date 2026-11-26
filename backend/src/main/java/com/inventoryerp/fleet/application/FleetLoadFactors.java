@@ -107,7 +107,7 @@ public class FleetLoadFactors {
         if (uomId == null) {
             return LoadPlanner.MIN_STEP;
         }
-        BigDecimal r = db.jdbc().sql("SELECT \"roundingPrecision\" FROM \"UnitOfMeasure\" WHERE id = ?").param(uomId)
+        BigDecimal r = db.jdbc().sql("SELECT \"roundingPrecision\" FROM \"UnitOfMeasure\" WHERE id = ? AND \"organizationId\" = ?").params(uomId, FleetDb.org())
                 .query(BigDecimal.class).optional().orElse(null);
         return r != null && r.compareTo(BigDecimal.ONE) >= 0 ? BigDecimal.ONE : LoadPlanner.MIN_STEP;
     }

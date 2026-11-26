@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { useAuthStore } from '@/stores/auth.store';
 import { apiErrorMessage } from '@/lib/api-error';
 import { tx } from '@/lib/i18n/tx';
+import { useAsk } from '@/components/ask-dialog';
 import { useCategoryOptions, useProductOptions } from '@/features/crm/suite-api';
 import { pricingApi, usePricelist, useSalesMutation, type PriceCompute, type PricelistItem, type PricelistType } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
@@ -49,6 +50,7 @@ export function PricelistPage() {
   const delItem = useSalesMutation(pricingApi.deleteItem);
   const assign = useSalesMutation(pricingApi.assign);
   const del = useSalesMutation(pricingApi.deletePricelist);
+  const { ask, dialog } = useAsk();
 
   useEffect(() => { if (p) { setName(p.name); setType(p.type); setCurrency(p.currencyCode ?? ''); setIsDefault(p.isDefault); setIsActive(p.isActive); } }, [p]);
   if (isLoading || !p) return <Skeleton className="h-96 w-full" />;
@@ -56,6 +58,7 @@ export function PricelistPage() {
 
   return (
     <div className="space-y-4">
+      {dialog}
       <div className="text-sm"><Link to="/sales/pricelists" className="font-medium text-primary hover:underline">{tx('Pricelists')}</Link><span className="mx-1.5 text-muted-foreground">/</span><span className="font-semibold">{p.code}</span></div>
       <div className="grid gap-3 rounded-xl border bg-card p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-5">
         <Field label={tx('Name')} className="lg:col-span-2"><Input disabled={!canManage} value={name} onChange={(e) => setName(e.target.value)} /></Field>
@@ -71,7 +74,7 @@ export function PricelistPage() {
         </div>
         {canManage && <div className="flex gap-2 lg:col-span-5">
           <Button onClick={() => save.mutate({ id: p.id, name, type, currencyCode: currency || null, isDefault, isActive }, { onSuccess: () => toast.success(tx('Saved')), onError: err })}>{tx('Save')}</Button>
-          <Button variant="ghost" className="text-destructive" onClick={() => { if (confirm(tx('Delete this pricelist?'))) del.mutate(p.id, { onSuccess: () => navigate('/sales/pricelists'), onError: err }); }}><Trash2 className="h-4 w-4" /></Button>
+          <Button variant="ghost" className="text-destructive" onClick={async () => { if (await ask({ title: tx('Delete this pricelist?'), description: tx('Customers and categories using it fall back to the default prices.'), confirmLabel: tx('Delete'), destructive: true }) !== null) del.mutate(p.id, { onSuccess: () => navigate('/sales/pricelists'), onError: err }); }}><Trash2 className="h-4 w-4" /></Button>
         </div>}
       </div>
 

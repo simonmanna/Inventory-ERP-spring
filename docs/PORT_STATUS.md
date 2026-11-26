@@ -2148,3 +2148,10 @@ Not verified yet: the tours driven by hand in a browser.
   Electric 1–4, capability rules), summary / Pareto / SPC routes (47 routes), Statistics page. Tests:
   `SpcCalculatorTest` (NIST e-Handbook reference data), `QualityControlStatsIT`.
 
+
+## Sales readiness R6/R7 (2026-11-26)
+
+- [x] SO-9, SO-10 (`sales:order:approve`, V678), SO-13 base-currency totals
+- [x] INV-9, INV-10, INV-11 (number at post, gap-free, V681), INV-12 (per-currency dunning, V679), INV-13, INV-14, INV-17
+- [x] DEL-8 reservations at issue, DEL-9 delivery losses + quarantine (V680), DEL-10, DEL-11, DEL-12
+- [x] X-6 org predicate sweep, X-7 list performance (V682), R5 concurrency ITs. Tests: `SalesReadinessR6IT`.

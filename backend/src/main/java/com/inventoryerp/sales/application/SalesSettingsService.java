@@ -135,7 +135,7 @@ public class SalesSettingsService {
         for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
                 "monthlyStatements", "allowAlternativeWarehouse", "notifyOnHold", "notifyOnShortage",
                 "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax", "cashBypassesCredit",
-                "quoteLineImages")) {
+                "quoteLineImages", "deliveryLossPosting", "rejectedToQuarantine")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));
@@ -165,7 +165,16 @@ public class SalesSettingsService {
                 params.add(str(in.get(k)));
             }
         }
-        for (String k : List.of("salesReturnsAccountId", "badDebtAccountId")) {
+        if (in.containsKey("rejectedQuarantineLocationId")) {
+            String v = SalesDb.blank(str(in.get("rejectedQuarantineLocationId"))) ? null
+                    : str(in.get("rejectedQuarantineLocationId"));
+            if (v != null && !db.exists("InventoryLocation", v)) {
+                throw ApiException.badRequest("rejectedQuarantineLocationId is not a location of this organization");
+            }
+            sets.add("\"rejectedQuarantineLocationId\" = ?");
+            params.add(v);
+        }
+        for (String k : List.of("salesReturnsAccountId", "badDebtAccountId", "deliveryLossAccountId")) {
             if (in.containsKey(k)) {
                 String v = SalesDb.blank(str(in.get(k))) ? null : str(in.get(k));
                 if (v != null && !db.exists("Account", v)) {

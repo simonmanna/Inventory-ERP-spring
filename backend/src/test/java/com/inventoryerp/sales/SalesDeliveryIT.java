@@ -114,7 +114,7 @@ class SalesDeliveryIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("damaged and rejected quantities are recorded, rejected goes back to stock, damaged needs no second entry")
+    @DisplayName("damaged and rejected quantities are recorded, rejected goes to quarantine, damaged needs no second entry")
     void damagedRejected() {
         JsonNode o = confirmed(10);
         String so = o.get("id").asString();
@@ -126,7 +126,8 @@ class SalesDeliveryIT extends ApiTestSupport {
                 "loadLineId", d.get("lines").get(0).get("id").asString(), "deliveredQty", 7, "damagedQty", 1, "rejectedQty", 2))));
         assertThat(done.get("damagedQty").asDouble()).isEqualTo(1);
         assertThat(done.get("rejectedQty").asDouble()).isEqualTo(2);
-        assertThat(stockNow()).as("10 out, 2 rejected back").isEqualByComparingTo(before.subtract(new BigDecimal("8")));
+        // DEL-9b: rejected goods go to quarantine, not back to the yard.
+        assertThat(stockNow()).as("10 out, nothing back to the yard").isEqualByComparingTo(before.subtract(new BigDecimal("10")));
         JsonNode failed = ok(200, "GET", "/sales/deliveries?failed=true&orderId=" + so, null);
         assertThat(failed.size()).isEqualTo(1);
         money("/sales/deliveries/" + id + "/photos", Map.of("dataUrl", PNG, "caption", "one"));

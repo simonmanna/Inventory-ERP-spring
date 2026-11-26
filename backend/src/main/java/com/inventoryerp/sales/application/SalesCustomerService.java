@@ -212,7 +212,8 @@ public class SalesCustomerService {
             throw ApiException.badRequest("Finish or cancel this customer's open orders, quotations and draft invoices first");
         }
         db.update("UPDATE \"Partner\" SET \"mergedIntoPartnerId\" = ?, \"mergedAt\" = " + NOW + ", \"mergedById\" = ?, \"mergeReason\""
-                + " = ?, status = 'inactive', \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", intoId, user(),
+                + " = ?, status = 'inactive', \"updatedAt\" = " + NOW + " WHERE id = ?"
+                        + " AND \"organizationId\" = ?", intoId, user(),
                 reason, id, org());
         audit.record(AuditInput.of("Partner", id, "update", null, Obj.of("mergedInto", intoId, "reason", reason)));
         return profile(intoId);

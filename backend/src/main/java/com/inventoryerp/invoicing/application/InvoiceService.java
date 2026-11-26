@@ -204,55 +204,85 @@ public class InvoiceService {
             iw.append(" AND \"settlementStatus\"::text = ?");
             ip.add(f.settlementStatus());
         }
+        // Sales readiness X-7: merge the two sources on (id, createdAt) only, then load the page's rows and their
+        // partners / line counts in batches (no per-row queries, no full rows beyond the page).
         int take = page * pageSize;
-        List<Map<String, Object>> merged = new ArrayList<>();
-        for (Map<String, Object> d : SqlRows.list(com.inventoryerp.documents.domain.Document.class,
-                jdbc.sql("SELECT * FROM \"Document\" WHERE" + dw + " ORDER BY \"createdAt\" DESC LIMIT " + take).params(dp))) {
-            d.put("partner", builder.partner(d.get("partnerId")));
-            d.put("_count", Obj.of("lines", count("DocumentLine", "documentId", d.get("id"))));
-            d.put("source", "manual");
-            String payment = paymentView(d);
-            d.put("paymentStatus", payment);
-            d.put("settlementStatus", settlementView(payment));
-            merged.add(d);
-        }
-        List<Map<String, Object>> invs = SqlRows.list(Invoice.class, jdbc.sql("SELECT * FROM \"Invoice\" WHERE" + iw
-                + " ORDER BY \"createdAt\" DESC LIMIT " + take).params(ip));
-        Map<String, String> names = new HashMap<>();
-        LinkedHashSet<String> pids = new LinkedHashSet<>();
-        invs.forEach(i -> pids.add((String) i.get("partnerId")));
-        if (!pids.isEmpty()) {
-            for (Map<String, Object> p : jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id IN (:ids)"
-                    + " AND \"organizationId\" = :org AND \"deletedAt\" IS NULL").param("ids", List.copyOf(pids))
-                    .param("org", org()).query().listOfRows()) {
-                names.put((String) p.get("id"), (String) p.get("name"));
+        List<Object[]> heads = new ArrayList<>();
+        jdbc.sql("SELECT id, \"createdAt\" FROM \"Document\" WHERE" + dw + " ORDER BY \"createdAt\" DESC LIMIT " + take)
+                .params(dp).query((rs, n) -> new Object[] {rs.getString(1), rs.getTimestamp(2).toInstant(), "d"}).list()
+                .forEach(heads::add);
+        jdbc.sql("SELECT id, \"createdAt\" FROM \"Invoice\" WHERE" + iw + " ORDER BY \"createdAt\" DESC LIMIT " + take)
+                .params(ip).query((rs, n) -> new Object[] {rs.getString(1), rs.getTimestamp(2).toInstant(), "i"}).list()
+                .forEach(heads::add);
+        heads.sort(Comparator.comparing((Object[] h) -> (Instant) h[1]).reversed());
+        int start = Math.min(heads.size(), (page - 1) * pageSize);
+        List<Object[]> slice = heads.subList(start, Math.min(heads.size(), start + pageSize));
+        List<String> docIds = slice.stream().filter(h -> "d".equals(h[2])).map(h -> (String) h[0]).toList();
+        List<String> invIds = slice.stream().filter(h -> "i".equals(h[2])).map(h -> (String) h[0]).toList();
+        Map<String, Map<String, Object>> rows = new HashMap<>();
+        if (!docIds.isEmpty()) {
+            List<Map<String, Object>> docs = SqlRows.list(com.inventoryerp.documents.domain.Document.class,
+                    jdbc.sql("SELECT * FROM \"Document\" WHERE \"organizationId\" = :org AND id IN (:ids)")
+                            .param("org", org()).param("ids", docIds));
+            Map<String, Long> counts = groupCount("DocumentLine", "documentId", docIds);
+            Map<String, Map<String, Object>> partners = new HashMap<>();
+            List<String> pidList = docs.stream().map(d -> (String) d.get("partnerId")).filter(java.util.Objects::nonNull)
+                    .distinct().toList();
+            if (!pidList.isEmpty()) {
+                for (Map<String, Object> p : SqlRows.list(com.inventoryerp.core.domain.Partner.class,
+                        jdbc.sql("SELECT * FROM \"Partner\" WHERE id IN (:ids)").param("ids", pidList))) {
+                    partners.put((String) p.get("id"), p);
+                }
+            }
+            for (Map<String, Object> d : docs) {
+                d.put("partner", d.get("partnerId") == null ? null : partners.get((String) d.get("partnerId")));
+                d.put("_count", Obj.of("lines", counts.getOrDefault((String) d.get("id"), 0L)));
+                d.put("source", "manual");
+                String payment = paymentView(d);
+                d.put("paymentStatus", payment);
+                d.put("settlementStatus", settlementView(payment));
+                rows.put((String) d.get("id"), d);
             }
         }
-        for (Map<String, Object> i : invs) {
-            long items = count("InvoiceItem", "invoiceId", i.get("id"));
-            i.put("documentNumber", i.get("invoiceNumber"));
-            i.put("documentType", "sales_invoice");
-            i.put("source", "pos");
-            i.put("partner", Obj.of("id", i.get("partnerId"), "name",
-                    names.getOrDefault((String) i.get("partnerId"), "Walk-in")));
-            i.put("_count", Obj.of("lines", items));
-            merged.add(i);
+        if (!invIds.isEmpty()) {
+            List<Map<String, Object>> invs = SqlRows.list(Invoice.class, jdbc.sql("SELECT * FROM \"Invoice\" WHERE"
+                    + " \"organizationId\" = :org AND id IN (:ids)").param("org", org()).param("ids", invIds));
+            Map<String, Long> counts = groupCount("InvoiceItem", "invoiceId", invIds);
+            Map<String, String> names = new HashMap<>();
+            LinkedHashSet<String> pids = new LinkedHashSet<>();
+            invs.forEach(i -> {
+                if (i.get("partnerId") != null) {
+                    pids.add((String) i.get("partnerId"));
+                }
+            });
+            if (!pids.isEmpty()) {
+                for (Map<String, Object> p : jdbc.sql("SELECT id, name FROM \"Partner\" WHERE id IN (:ids)"
+                        + " AND \"organizationId\" = :org AND \"deletedAt\" IS NULL").param("ids", List.copyOf(pids))
+                        .param("org", org()).query().listOfRows()) {
+                    names.put((String) p.get("id"), (String) p.get("name"));
+                }
+            }
+            for (Map<String, Object> i : invs) {
+                i.put("documentNumber", i.get("invoiceNumber"));
+                i.put("documentType", "sales_invoice");
+                i.put("source", "pos");
+                i.put("partner", Obj.of("id", i.get("partnerId"), "name",
+                        names.getOrDefault((String) i.get("partnerId"), "Walk-in")));
+                i.put("_count", Obj.of("lines", counts.getOrDefault((String) i.get("id"), 0L)));
+                rows.put((String) i.get("id"), i);
+            }
         }
-        merged.sort(Comparator.comparing((Map<String, Object> m) -> (Instant) m.get("createdAt")).reversed());
-        if (notBlank(f.paymentStatus())) {
-            merged = merged.stream().filter(m -> f.paymentStatus().equals(String.valueOf(m.get("paymentStatus")))).toList();
-        }
-        if (notBlank(f.settlementStatus())) {
-            merged = merged.stream().filter(m -> f.settlementStatus().equals(String.valueOf(m.get("settlementStatus"))))
-                    .toList();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object[] h : slice) {
+            Map<String, Object> r = rows.get((String) h[0]);
+            if (r != null) {
+                out.add(r);
+            }
         }
         // The rows above stop at page * pageSize, so the real total has to be counted.
         long total = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE" + dw).params(dp).query(Long.class).single()
                 + jdbc.sql("SELECT count(*) FROM \"Invoice\" WHERE" + iw).params(ip).query(Long.class).single();
-        int fetched = merged.size();
-        int start = Math.min(fetched, (page - 1) * pageSize);
-        return PageResult.of(new ArrayList<>(merged.subList(start, Math.min(fetched, start + pageSize))), page, pageSize,
-                total);
+        return PageResult.of(out, page, pageSize, total);
     }
 
     /** The list's payment status of a back-office document, in the POS invoice vocabulary the screen shows. */
@@ -294,6 +324,16 @@ public class InvoiceService {
             case "partially_paid" -> "partially_settled";
             default -> "unsettled";
         };
+    }
+
+    private Map<String, Long> groupCount(String table, String fk, List<String> ids) {
+        Map<String, Long> out = new HashMap<>();
+        jdbc.sql("SELECT \"" + fk + "\", count(*) FROM \"" + table + "\" WHERE \"" + fk + "\" IN (:ids) GROUP BY \"" + fk
+                + "\"").param("ids", ids).query((rs, n) -> {
+                    out.put(rs.getString(1), rs.getLong(2));
+                    return null;
+                }).list();
+        return out;
     }
 
     private long count(String table, String fk, Object id) {
@@ -650,6 +690,10 @@ public class InvoiceService {
                 postGuards.orderedStream().forEach(g -> g.beforePost(id));
             }
         }
+        if ("draft".equals(String.valueOf(doc.get("status")))) {
+            // Sales readiness INV-11: the legal number is taken now, in this transaction (gap-free).
+            doc.put("documentNumber", builder.numberAtPost(id));
+        }
         workflow.transition("invoice", id, "post", null, doc);
         snapshots.record("invoice", id);
         publish("invoice.posted", doc);
@@ -675,6 +719,12 @@ public class InvoiceService {
             boolean fromSalesOrder = "sales_order".equals(jdbc.sql("SELECT \"sourceType\" FROM \"Document\" WHERE id = ?"
                     + " AND \"organizationId\" = ?").params(id, org()).query(String.class).optional().orElse(null));
             if (!delivered && !fromSalesOrder) {
+                // Sales readiness INV-9: serialise credit checks of one customer (the POS CreditStatus lock), so two
+                // posts at once cannot both fit under the same remaining limit. The invoice is locked first.
+                jdbc.sql("SELECT id FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(id, org())
+                        .query().listOfRows();
+                jdbc.sql("SELECT id FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                        .params(doc.get("partnerId"), org()).query().listOfRows();
                 Object mode = doc.get("paymentMode");
                 credit.assertCanSell("invoice_post", (String) doc.get("partnerId"), Money.dec(doc.get("totalAmount")),
                         "invoice", id, mode == null ? null : String.valueOf(mode), (String) doc.get("branchId"));
@@ -841,7 +891,7 @@ public class InvoiceService {
     /** Payments (deposit applications included) and posted debit notes block a cancel; each is named with its action. */
     private void assertNothingSettled(String id, String number) {
         List<Map<String, Object>> paid = reversals.appliedPayments(id);
-        BigDecimal amountPaid = jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ?").param(id)
+        BigDecimal amountPaid = jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(id, org())
                 .query(BigDecimal.class).optional().orElse(BigDecimal.ZERO);
         List<String> notes = reversals.postedDebitNotes(id);
         List<String> problems = new ArrayList<>();

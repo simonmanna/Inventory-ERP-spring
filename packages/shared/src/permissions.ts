@@ -787,6 +787,8 @@ export const PERMISSIONS = {
     quotationRead: 'sales:quotation:read',
     quotationWrite: 'sales:quotation:write',
     quotationApprove: 'sales:quotation:approve',
+    /// Approve or reject a sales order waiting for commercial approval (SO-10; was quotationApprove).
+    orderApprove: 'sales:order:approve',
     quotationSend: 'sales:quotation:send',
     quotationConvert: 'sales:quotation:convert',
     orderRead: 'sales:order:read',
