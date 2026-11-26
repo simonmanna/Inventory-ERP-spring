@@ -1226,7 +1226,7 @@ public class SalesQuotationService {
                 "discountPercent", 10, "total", 22500)));
         return SalesQuotationPdf.render(new SalesQuotationPdf.Quote(new SalesQuotationPdf.Company(head.name(),
                 head.lines(), head.logo()), "QT-SAMPLE", List.of(new SalesQuotationPdf.Fact("Customer",
-                        "Sample Customer Ltd"), new SalesQuotationPdf.Fact("Date", java.time.LocalDate.now().toString())),
+                        "Sample Customer Ltd"), new SalesQuotationPdf.Fact("Date", java.time.LocalDate.now(BusinessZone.get()).toString())),
                 lines, orgCurrency(), List.of(new SalesDocumentPdf.Total("Untaxed", new BigDecimal("122500")),
                         new SalesDocumentPdf.Total("Tax", BigDecimal.ZERO), new SalesDocumentPdf.Total("Total",
                                 new BigDecimal("122500"))), "Sample notes.", "Sample terms.", false), l);

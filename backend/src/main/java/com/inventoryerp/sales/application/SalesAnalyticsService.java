@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -75,9 +76,9 @@ public class SalesAnalyticsService {
     @Transactional(readOnly = true)
     public Map<String, Object> dashboard() {
         access.assertAllBranches();
-        LocalDate first = LocalDate.now().withDayOfMonth(1);
+        LocalDate first = LocalDate.now(BusinessZone.get()).withDayOfMonth(1);
         LocalDate from12 = first.minusMonths(11);
-        List<Map<String, Object>> lines = revenue.invoiced(from12, LocalDate.now());
+        List<Map<String, Object>> lines = revenue.invoiced(from12, LocalDate.now(BusinessZone.get()));
         Map<String, BigDecimal[]> byMonth = new LinkedHashMap<>();
         for (int i = 0; i < 12; i++) {
             byMonth.put(from12.plusMonths(i).toString().substring(0, 7), new BigDecimal[] {BigDecimal.ZERO,
@@ -148,7 +149,7 @@ public class SalesAnalyticsService {
             throw ApiException.badRequest("groupBy must be one of: " + String.join(", ", new java.util.TreeSet<>(
                     DIMENSIONS)));
         }
-        LocalDate to = date(toRaw, LocalDate.now());
+        LocalDate to = date(toRaw, LocalDate.now(BusinessZone.get()));
         LocalDate from = date(fromRaw, to.withDayOfMonth(1).minusMonths(2));
         List<Map<String, Object>> lines = revenue.invoiced(from, to);
         Function<Map<String, Object>, String> key = switch (dim) {
@@ -213,7 +214,7 @@ public class SalesAnalyticsService {
     public Map<String, Object> profitability(String fromRaw, String toRaw) {
         access.assertAllBranches();
         access.assertCost();
-        LocalDate to = date(toRaw, LocalDate.now());
+        LocalDate to = date(toRaw, LocalDate.now(BusinessZone.get()));
         LocalDate from = date(fromRaw, to.withDayOfMonth(1).minusMonths(2));
         Map<String, BigDecimal[]> acc = new LinkedHashMap<>();
         for (Map<String, Object> l : revenue.invoiced(from, to)) {
@@ -271,7 +272,7 @@ public class SalesAnalyticsService {
     public Map<String, Object> forecast(int monthsRaw) {
         access.assertAllBranches();
         int months = Math.max(1, Math.min(12, monthsRaw));
-        LocalDate first = LocalDate.now().withDayOfMonth(1);
+        LocalDate first = LocalDate.now(BusinessZone.get()).withDayOfMonth(1);
         BigDecimal history = sum(revenue.invoiced(first.minusMonths(3), first.minusDays(1)), "revenue");
         BigDecimal runRate = history.divide(BigDecimal.valueOf(3), 2, RoundingMode.HALF_UP);
         List<LocalDate> buckets = new ArrayList<>();

@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
@@ -464,7 +465,7 @@ public class CashSaleService {
         d.put("branchId", branchId);
         d.put("profileId", profile.get("id"));
         d.put("locationId", profile.get("locationId"));
-        LocalDate saleDate = (LocalDate) d.getOrDefault("saleDate", LocalDate.now());
+        LocalDate saleDate = (LocalDate) d.getOrDefault("saleDate", LocalDate.now(BusinessZone.get()));
         d.put("saleDate", saleDate);
         d.put("number", nextNumber(branchId, str(profile.get("numberPrefix")), saleDate.getYear()));
         d.put("currencyCode", orgCurrency());
@@ -545,7 +546,7 @@ public class CashSaleService {
         }
         if (in.containsKey("saleDate")) {
             LocalDate date = SalesDb.date(str(in.get("saleDate")));
-            if (date != null && date.isAfter(LocalDate.now())) {
+            if (date != null && date.isAfter(LocalDate.now(BusinessZone.get()))) {
                 throw ApiException.badRequest("saleDate must not be in the future");
             }
             if (date != null) {
@@ -919,8 +920,8 @@ public class CashSaleService {
             throw ApiException.badRequest("Branch sales profile is not valid: " + String.join("; ", problems));
         }
         String number = str(s.get("number"));
-        LocalDate saleDate = s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now();
-        Instant postDate = saleDate.equals(LocalDate.now()) ? Instant.now() : saleDate.atStartOfDay().toInstant(ZoneOffset.UTC);
+        LocalDate saleDate = s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now(BusinessZone.get());
+        Instant postDate = saleDate.equals(LocalDate.now(BusinessZone.get())) ? Instant.now() : saleDate.atStartOfDay().toInstant(ZoneOffset.UTC);
         // P1 — stock leaves the showroom at handover (S-2: in the engine's lock order)
         for (Map<String, Object> l : StockMove.inLockOrder(lines)) {
             if (!Boolean.TRUE.equals(l.get("trackInventory"))) {
@@ -1137,7 +1138,7 @@ public class CashSaleService {
     /** Delivery date printed on the sale's invoice: the scheduled date, else the sale date. */
     private static LocalDate invoiceDeliveryDate(Map<String, Object> s) {
         Object d = s.get("deliveryScheduledDate") != null ? s.get("deliveryScheduledDate") : s.get("saleDate");
-        return d == null ? LocalDate.now() : d instanceof LocalDate ld ? ld : LocalDate.parse(d.toString().substring(0, 10));
+        return d == null ? LocalDate.now(BusinessZone.get()) : d instanceof LocalDate ld ? ld : LocalDate.parse(d.toString().substring(0, 10));
     }
 
     /** Non-financial corrections while returned (audited one row per changed field). */
@@ -1305,7 +1306,7 @@ public class CashSaleService {
                     Boolean.TRUE.equals(l.get("taxInclusive")), str(l.get("uomId")), null,
                     ProductSizingService.Sizing.stored(l), l.get("uomFactor") == null ? null : dec(l.get("uomFactor"))));
         }
-        String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now()).toString();
+        String issue = (s.get("saleDate") instanceof LocalDate d ? d : LocalDate.now(BusinessZone.get())).toString();
         Map<String, Object> doc = invoices.createForCashSale(new InvoiceInput(str(s.get("partnerId")), issue, issue, null,
                 "cash", null, null, str(s.get("salespersonId")), invoiceDeliveryDate(s).toString(),
                 invoiceDeliveryAddress(s), null, null, number,

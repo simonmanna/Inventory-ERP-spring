@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.time.LocalDate;
 import java.util.List;
@@ -38,11 +39,11 @@ public class SalesAgreementJob {
         List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"SalesAgreement\" WHERE status = 'active'"
                 + " UNION SELECT DISTINCT \"organizationId\" FROM \"RebateProgram\" WHERE status = 'active'")
                 .query(String.class).list();
-        LocalDate yesterday = LocalDate.now().minusDays(1);
+        LocalDate yesterday = LocalDate.now(BusinessZone.get()).minusDays(1);
         for (String orgId : orgs) {
             try {
                 TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
-                    agreements.expireDue(LocalDate.now());
+                    agreements.expireDue(LocalDate.now(BusinessZone.get()));
                     rebates.accrue(yesterday);
                 });
             } catch (RuntimeException e) {

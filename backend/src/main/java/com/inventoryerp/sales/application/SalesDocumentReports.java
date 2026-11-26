@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
@@ -1034,7 +1035,7 @@ class SalesDocumentReports implements SalesReportSet {
 
     Report opportunityForecast(Filter f) {
         List<Map<String, Object>> rows = deals(f, " AND dl.status = 'open'");
-        LocalDate first = LocalDate.now().withDayOfMonth(1);
+        LocalDate first = LocalDate.now(BusinessZone.get()).withDayOfMonth(1);
         Map<String, Map<String, Object>> g = new LinkedHashMap<>();
         g.put("overdue", Obj.of("label", "Overdue / no date", "deals", 0, "amount", 0, "weighted", 0));
         for (String k : Bucket.MONTH.keys(first, first.plusMonths(11))) {

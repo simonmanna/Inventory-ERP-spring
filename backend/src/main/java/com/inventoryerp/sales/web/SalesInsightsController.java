@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.web;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.licensing.LicenseFeatures;
 import com.inventoryerp.kernel.licensing.RequiresFeature;
 import com.inventoryerp.kernel.security.Permissions;
@@ -84,7 +85,7 @@ public final class SalesInsightsController {
         @GetMapping("/analytics/kpis")
         @RequirePermissions(Permissions.SALES__REPORT_READ)
         public Map<String, Object> kpis(@RequestParam(required = false) String from, @RequestParam(required = false) String to) {
-            java.time.LocalDate end = to == null || to.isBlank() ? java.time.LocalDate.now() : java.time.LocalDate.parse(to);
+            java.time.LocalDate end = to == null || to.isBlank() ? java.time.LocalDate.now(BusinessZone.get()) : java.time.LocalDate.parse(to);
             return targets.kpis(from == null || from.isBlank() ? end.withDayOfMonth(1) : java.time.LocalDate.parse(from), end);
         }
 

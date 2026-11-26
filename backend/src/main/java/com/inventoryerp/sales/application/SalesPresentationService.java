@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -97,7 +98,7 @@ public class SalesPresentationService {
     @Transactional(readOnly = true)
     public Map<String, Object> snapshot(String fromRaw, String toRaw) {
         access.assertAllBranches();
-        LocalDate to = blank(toRaw) ? LocalDate.now() : SalesDb.date(toRaw);
+        LocalDate to = blank(toRaw) ? LocalDate.now(BusinessZone.get()) : SalesDb.date(toRaw);
         LocalDate from = blank(fromRaw) ? to.minusDays(6) : SalesDb.date(fromRaw);
         if (from.isAfter(to)) {
             throw ApiException.badRequest("from must not be after to");

@@ -367,6 +367,61 @@ class GatePassIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("DEL-11: a pass whose source quantity shrank after issue is blocked at the gate until voided and reissued")
+    void staleGatePass() {
+        String sale = cashSale(5, true);
+        String id = ok(201, "POST", "/gate-passes", issueBody("cash_sale", sale)).get("id").asString();
+        assertThat(ok(200, "GET", "/gate-passes/" + id, null).get("canLetOut").asBoolean()).isTrue();
+        // the source now holds 3 (forced in SQL so the gate check is proved on its own)
+        jdbc.sql("UPDATE \"SalesSubmissionLine\" SET quantity = 3 WHERE \"submissionId\" = ?").param(sale).update();
+        JsonNode p = ok(200, "GET", "/gate-passes/" + id, null);
+        assertThat(p.get("canLetOut").asBoolean()).isFalse();
+        assertThat(p.get("problems").valueStream().map(JsonNode::asString)).contains("source_quantity_changed");
+        Res blocked = as("POST", "/gate-passes/" + id + "/gate-out", Map.of("plate", "UAX123B"));
+        assertThat(blocked.status()).as(blocked.raw().body()).isEqualTo(400);
+        assertThat(blocked.body().get("message").asString()).isEqualTo("The quantities of the source changed after this"
+                + " pass was issued; void it and issue a new pass");
+        assertThat(ok(200, "GET", "/gate-passes/" + id, null).get("state").asString()).isEqualTo("issued");
+
+        ok(200, "POST", "/gate-passes/" + id + "/void", Map.of("reason", "re-weighed"));
+        JsonNode fresh = ok(201, "POST", "/gate-passes", issueBody("cash_sale", sale));
+        assertThat(fresh.get("lines").get(0).get("quantity").asDouble()).isEqualTo(3);
+        JsonNode out = ok(200, "POST", "/gate-passes/" + fresh.get("id").asString() + "/gate-out", Map.of("plate", "UAX123B"));
+        assertThat(out.get("state").asString()).isEqualTo("used");
+    }
+
+    @Test
+    @DisplayName("concurrency: the same pass at two gates at once — exactly one gate-out, one event, one dispatch")
+    void concurrentGateOut() throws Exception {
+        String sale = cashSale(3, true);
+        String id = ok(201, "POST", "/gate-passes", issueBody("cash_sale", sale)).get("id").asString();
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(4);
+        try {
+            List<java.util.concurrent.Future<Integer>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return as("POST", "/gate-passes/" + id + "/gate-out", Map.of("plate", "UAX123B")).status();
+                }));
+            }
+            start.countDown();
+            List<Integer> statuses = new java.util.ArrayList<>();
+            for (var f : results) {
+                statuses.add(f.get());
+            }
+            assertThat(statuses).containsOnly(200, 409);
+            assertThat(statuses.stream().filter(st -> st == 200).count()).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(jdbc.sql("SELECT count(*) FROM \"GatePassEvent\" WHERE \"gatePassId\" = ? AND type = 'gate_out'")
+                .param(id).query(Long.class).single()).isEqualTo(1);
+        assertThat(ok(200, "GET", "/sales/cash-sales/" + sale, null).get("deliveryStatus").asString())
+                .isEqualTo("dispatched");
+    }
+
+    @Test
     @DisplayName("authorization: every gate pass route refuses a user without the permission")
     void authorization() {
         assertThat(assertAuthorizationMatrix(GatePassController.class)).isEqualTo(9);

@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -149,7 +150,7 @@ public class SalesAtpService {
         // free supply: open supply minus quantities pegged to other lines
         List<Map<String, Object>> supply = new ArrayList<>();
         BigDecimal cumulative = totalFree;
-        LocalDate earliest = cumulative.compareTo(need) >= 0 ? LocalDate.now() : null;
+        LocalDate earliest = cumulative.compareTo(need) >= 0 ? LocalDate.now(BusinessZone.get()) : null;
         for (SupplyProvider p : suppliers) {
             for (SupplyProvider.Supply s : p.supply(productId)) {
                 BigDecimal pegged = dec(db.row("SELECT COALESCE(sum(quantity), 0) AS q FROM \"SalesSupplyPeg\" WHERE"

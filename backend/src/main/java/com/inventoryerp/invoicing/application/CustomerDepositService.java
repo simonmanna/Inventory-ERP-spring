@@ -715,9 +715,49 @@ public class CustomerDepositService {
         return d;
     }
 
+    /** Every deposit matching the filters, oldest first (internal callers: an order's open deposits). */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> list(String partnerId, String salesOrderId, String status) {
         List<Object> params = new ArrayList<>(List.of(org()));
+        String where = depositWhere(partnerId, salesOrderId, status, params);
+        return SqlRows.list(jdbc.sql(DEPOSIT_SELECT + where + " ORDER BY d.\"receivedDate\", d.\"createdAt\"").params(params));
+    }
+
+    /** Largest page {@code GET /customer-deposits} returns. */
+    public static final int MAX_PAGE = 1000;
+
+    /** Default page of {@code GET /customer-deposits} without {@code limit}. */
+    public static final int DEFAULT_PAGE = 500;
+
+    /** One page of the deposit list, newest first (by order: oldest first), plus the total for {@code X-Total-Count}. */
+    public record Page(List<Map<String, Object>> rows, long total) {}
+
+    /**
+     * The deposit list screen: server-paged, because every cash-sale payment adds a deposit row. Filtered by order it
+     * keeps the oldest-first order the order screens use.
+     */
+    @Transactional(readOnly = true)
+    public Page page(String partnerId, String salesOrderId, String status, Integer limit, Integer offset) {
+        int size = limit == null ? DEFAULT_PAGE : Math.min(MAX_PAGE, Math.max(1, limit));
+        int skip = offset == null ? 0 : Math.max(0, offset);
+        List<Object> params = new ArrayList<>(List.of(org()));
+        String where = depositWhere(partnerId, salesOrderId, status, params);
+        String order = salesOrderId != null ? " ORDER BY d.\"receivedDate\", d.\"createdAt\""
+                : " ORDER BY d.\"receivedDate\" DESC, d.\"createdAt\" DESC";
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(DEPOSIT_SELECT + where + order + " LIMIT " + size
+                + " OFFSET " + skip).params(params));
+        Long total = jdbc.sql("SELECT count(*) FROM \"Organization\" o, \"CustomerDeposit\" d" + where).params(params)
+                .query(Long.class).single();
+        return new Page(rows, total == null ? 0 : total);
+    }
+
+    private static final String DEPOSIT_SELECT = "SELECT d.*, p.name AS \"partnerName\", d.amount - d.\"appliedAmount\" -"
+            + " d.\"refundedAmount\" AS available, round((d.amount - d.\"appliedAmount\" - d.\"refundedAmount\") *"
+            + " d.\"exchangeRate\", 6) AS \"availableBase\", round(d.amount * d.\"exchangeRate\", 6)"
+            + " AS \"baseAmount\", coalesce(d.\"currencyCode\", o.\"currencyCode\") AS currency FROM"
+            + " \"Organization\" o, \"CustomerDeposit\" d LEFT JOIN \"Partner\" p ON p.id = d.\"partnerId\"";
+
+    private String depositWhere(String partnerId, String salesOrderId, String status, List<Object> params) {
         StringBuilder where = new StringBuilder(" WHERE d.\"organizationId\" = ? AND o.id = d.\"organizationId\"");
         if (partnerId != null) {
             where.append(" AND d.\"partnerId\" = ?");
@@ -731,12 +771,7 @@ public class CustomerDepositService {
             where.append(" AND d.status = ?");
             params.add(status);
         }
-        return SqlRows.list(jdbc.sql("SELECT d.*, p.name AS \"partnerName\", d.amount - d.\"appliedAmount\" -"
-                + " d.\"refundedAmount\" AS available, round((d.amount - d.\"appliedAmount\" - d.\"refundedAmount\") *"
-                + " d.\"exchangeRate\", 6) AS \"availableBase\", round(d.amount * d.\"exchangeRate\", 6)"
-                + " AS \"baseAmount\", coalesce(d.\"currencyCode\", o.\"currencyCode\") AS currency FROM"
-                + " \"Organization\" o, \"CustomerDeposit\" d LEFT JOIN \"Partner\" p ON p.id ="
-                + " d.\"partnerId\"" + where + " ORDER BY d.\"receivedDate\", d.\"createdAt\"").params(params));
+        return where.toString();
     }
 
     /** A rendered deposit receipt. */

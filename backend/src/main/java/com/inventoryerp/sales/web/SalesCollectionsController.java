@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.web;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.sales.application.SalesCollectionsService;
@@ -117,7 +118,7 @@ public class SalesCollectionsController {
     @RequirePermissions(Permissions.SALES__COLLECTIONS_MANAGE)
     public Map<String, Object> settle(@RequestBody(required = false) Map<String, Object> b) {
         LocalDate asOf = date(b, "asOf");
-        return Map.of("settled", svc.expirePromises(asOf == null ? LocalDate.now() : asOf));
+        return Map.of("settled", svc.expirePromises(asOf == null ? LocalDate.now(BusinessZone.get()) : asOf));
     }
 
     @PostMapping("/statements")

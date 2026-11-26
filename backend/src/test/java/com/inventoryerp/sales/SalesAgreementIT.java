@@ -43,6 +43,11 @@ class SalesAgreementIT extends ApiTestSupport {
         return id;
     }
 
+    long creditNotes(String partner) {
+        return jdbc.sql("SELECT count(*) FROM \"Document\" WHERE \"partnerId\" = ? AND \"documentType\" = 'credit_note'")
+                .param(partner).query(Long.class).single();
+    }
+
     Map<String, String> money() {
         Map<String, String> h = new LinkedHashMap<>();
         h.put("Authorization", "Bearer " + adminToken);
@@ -146,9 +151,21 @@ class SalesAgreementIT extends ApiTestSupport {
         assertThat(ledger.balance("rebate_accrual", c)).isEqualByComparingTo(new BigDecimal("-18400"));
         ledger.entriesBalanced("rebate_accrual", accId);
 
-        JsonNode settled = call("POST", "/sales/rebates/accruals/" + accId + "/settle", null, money()).body();
+        // settlement issues a credit note: a money route that refuses a request without an Idempotency-Key
+        Res noKey = call("POST", "/sales/rebates/accruals/" + accId + "/settle", null,
+                Map.of("Authorization", "Bearer " + adminToken, NO_IDEMPOTENCY_KEY, "1"));
+        assertThat(noKey.status()).as(noKey.raw().body()).isEqualTo(400);
+        assertThat(jdbc.sql("SELECT status FROM \"RebateAccrual\" WHERE id = ?").param(accId).query(String.class)
+                .single()).isEqualTo("accrued");
+        long notesBefore = creditNotes(c);
+        Map<String, String> settleKey = money();
+        JsonNode settled = call("POST", "/sales/rebates/accruals/" + accId + "/settle", null, settleKey).body();
         assertThat(settled.get("status").asString()).isEqualTo("settled");
         String cn = settled.get("creditNoteId").asString();
+        // a retry with the same key replays the settlement: same credit note, no second one
+        JsonNode replay = call("POST", "/sales/rebates/accruals/" + accId + "/settle", null, settleKey).body();
+        assertThat(replay.get("creditNoteId").asString()).isEqualTo(cn);
+        assertThat(creditNotes(c)).isEqualTo(notesBefore + 1);
         assertThat(ok(200, "GET", "/credit-notes/" + cn, null).get("totalAmount").asDouble()).isEqualTo(18400);
         assertThat(ledger.balance("rebate_accrual", c)).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(ledger.balance("sales_rebates", c)).isEqualByComparingTo(new BigDecimal("18400"));

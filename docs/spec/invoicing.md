@@ -165,6 +165,13 @@ SG-0 stabilization (2026-11-06), pending owner approval:
   back.`) instead of restocking at the POS location at today's cost. Fleet trip returns (`fleet_trip_return`) are not yet linked to the trip rows, so they are
   not netted. Tests `InventoryReturnsIdentityIT`, `CashSaleIT.creditNoteOnCashSaleInvoiceRestocksAtTheSaleIssue`.
 
+- **`GET /customer-deposits` is server-paged** (sales re-review X-7b, 2026-11-26, awaiting owner approval). The list
+  returned every deposit oldest first; every cash-sale payment adds one. It now takes `limit` (default 500, max 1000) and
+  `offset`, sorts newest first (oldest first when filtered by `salesOrderId`) and sends the total in `X-Total-Count`.
+  The response is still a plain array.
+- **`POST /sales/rebates/accruals/{id}/settle` requires an `Idempotency-Key`** (X-1b, awaiting owner approval): it
+  issues a credit note, like the other money routes of R2.
+
 ## Extensions beyond Nest (ADR-S005)
 
 These are additive routes the owner asked for. Nest has no counterpart.

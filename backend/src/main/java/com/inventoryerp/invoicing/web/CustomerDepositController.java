@@ -53,8 +53,12 @@ public class CustomerDepositController {
     @GetMapping("/customer-deposits")
     @RequirePermissions(Permissions.PAYMENT__READ)
     public List<Map<String, Object>> list(@RequestParam(required = false) String partnerId,
-            @RequestParam(required = false) String salesOrderId, @RequestParam(required = false) String status) {
-        return deposits.list(partnerId, salesOrderId, status);
+            @RequestParam(required = false) String salesOrderId, @RequestParam(required = false) String status,
+            @RequestParam(required = false) Integer limit, @RequestParam(required = false) Integer offset,
+            jakarta.servlet.http.HttpServletResponse response) {
+        CustomerDepositService.Page page = deposits.page(partnerId, salesOrderId, status, limit, offset);
+        response.setHeader("X-Total-Count", Long.toString(page.total()));
+        return page.rows();
     }
 
     @GetMapping("/customer-deposits/{id}")

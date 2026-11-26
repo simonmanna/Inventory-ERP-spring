@@ -1150,6 +1150,34 @@ class CashSaleIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("P1-6: the sale date is the business day (APP_TIMEZONE), not the server's UTC day")
+    void businessDay() {
+        // a zone whose calendar day differs from UTC's right now: UTC+14 after 12:00 UTC, UTC-12 before
+        boolean late = java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC).getHour() >= 12;
+        java.time.ZoneId zone = java.time.ZoneId.of(late ? "Etc/GMT-14" : "Etc/GMT+12");
+        LocalDate utcToday = LocalDate.now(java.time.ZoneOffset.UTC);
+        LocalDate businessToday = LocalDate.now(zone);
+        assertThat(businessToday).isNotEqualTo(utcToday);
+        new com.inventoryerp.kernel.common.BusinessZone(zone.getId());
+        try {
+            String id = draft(null, 1);
+            assertThat(ok(200, "GET", "/sales/cash-sales/" + id, null).get("saleDate").asString())
+                    .startsWith(businessToday.toString());
+            Map<String, Object> body = new LinkedHashMap<>(Map.of("branchId", branch, "customerName", "Night shift",
+                    "lines", List.of(Map.of("productId", goods, "quantity", 1, "unitPrice", 35_000, "taxId", vat))));
+            body.put("saleDate", businessToday.toString());
+            Res today = as("POST", "/sales/cash-sales", body);
+            assertThat(today.status()).as("business today is not in the future: " + today.raw().body()).isEqualTo(201);
+            body.put("saleDate", businessToday.plusDays(1).toString());
+            Res tomorrow = as("POST", "/sales/cash-sales", body);
+            assertThat(tomorrow.status()).isEqualTo(400);
+            assertThat(tomorrow.body().get("message").asString()).isEqualTo("saleDate must not be in the future");
+        } finally {
+            new com.inventoryerp.kernel.common.BusinessZone("UTC");
+        }
+    }
+
+    @Test
     @DisplayName("R6 Q7: showroom tax point 'at_invoice' — VAT held at confirm, moved to output VAT by the invoice; void undoes it")
     void showroomVatAtInvoice() {
         String vatAccount = liability("Output VAT showroom");

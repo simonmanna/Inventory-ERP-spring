@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
@@ -44,7 +45,7 @@ public class SalesRecurringOrderService {
         if (f == null || !FREQUENCIES.contains(f)) {
             throw ApiException.badRequest("frequency must be one of: monthly, quarterly, weekly, yearly");
         }
-        LocalDate next = in.get("nextRunDate") == null ? advance(LocalDate.now(), f) : SalesDb.date(str(in.get("nextRunDate")));
+        LocalDate next = in.get("nextRunDate") == null ? advance(LocalDate.now(BusinessZone.get()), f) : SalesDb.date(str(in.get("nextRunDate")));
         return db.insert("SalesRecurringOrder", Obj.of("sourceOrderId", orderId, "frequency", f, "nextRunDate", next, "endDate",
                 SalesDb.date(str(in.get("endDate"))), "createdById", user()));
     }

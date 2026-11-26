@@ -69,7 +69,7 @@ public class IdempotencyService {
                     + "|invoices/(batch|[^/]+/write-off)|credit-notes(/[^/]+/(allocate|refund))?"
                     + "|cash-sales/[^/]+/(approve-and-invoice|generate-invoice|cancel-invoice|void)"
                     + "|deliveries/[^/]+/(issue|confirm|fail|return|cancel|pod-correction)"
-                    + "|returns/[^/]+/receive))$");
+                    + "|returns/[^/]+/receive|rebates/accruals/[^/]+/settle))$");
 
     private static final Pattern RECOVERABLE_SALE = Pattern.compile("/pos/(checkout|tabs/[^/]+/settle|orders/[^/]+/settle)$");
     private static final Pattern PIN_STRIPPED = Pattern.compile("/cash-sessions/|/pos/shift/handover$");
