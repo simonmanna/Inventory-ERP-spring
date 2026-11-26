@@ -123,18 +123,20 @@ export function IntelligenceOverview({ vision, canEvidence, insights, engineLabe
 
   return (
     <div ref={rootRef} className={cn('space-y-4', full && 'overflow-y-auto bg-background p-6')}>
-      {/* Header strip */}
+      {/* Header strip. The page header already names the page, so the title shows only in full screen. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/30">
-            <BrainCircuit className="h-6 w-6" />
+        {full && (
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-600/30">
+              <BrainCircuit className="h-6 w-6" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold tracking-tight">{tx('AI Operations Intelligence')}</h2>
+              <p className="text-sm text-muted-foreground">{tx('Real-time monitoring & alerts')}</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-xl font-bold tracking-tight">{tx('AI Operations Intelligence')}</h2>
-            <p className="text-sm text-muted-foreground">{tx('Real-time monitoring & alerts')}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+        )}
+        <div className="ml-auto flex items-center gap-2">
           <span className={cn('inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold',
             live ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
               : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300')}>

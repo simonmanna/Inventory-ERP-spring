@@ -6,7 +6,7 @@
 | Nest source | none, new module |
 | Design | [ADR-S077](../adr/ADR-S077-loss-prevention.md), [LP0 brief](../phases/LP0-exception-intelligence.md), [LP1 brief](../phases/LP1-camera-platform.md), [LP2 brief](../phases/LP2-cashier-vision.md), [LP3 brief](../phases/LP3-bar-intelligence.md), [LP4 brief](../phases/LP4-restaurant-cafe.md), [LP5 brief](../phases/LP5-retail-checkout.md), [LP6a brief](../phases/LP6a-camera-free-metrics.md), [LP6b brief](../phases/LP6b-camera-metrics.md), [LP7 brief](../phases/LP7-activity-research.md) |
 | Routes | 83, under `/loss-prevention`: 27 from LP0, 38 from LP1, 5 from LP3, 7 from LP6a, 3 from LP6b, 3 from LP7 |
-| Feature flag | `ENABLE_LOSS_PREVENTION` → `app.modules.lossprevention`; `VITE_ENABLE_LOSS_PREVENTION` shows the menu entry |
+| Feature flag | `ENABLE_LOSS_PREVENTION` → `app.modules.lossprevention`; `VITE_ENABLE_LOSS_PREVENTION` shows its tabs on the **AI Operations Intelligence** page (`/ai-operations`, shared with alerts; `/loss-prevention` redirects there) |
 | Module name | `loss-prevention` (`@RequiresModule`); licence features `lossPrevention`, for cameras `lpVision`, for operations metrics `lpInsights` |
 | Java package | `com.inventoryerp.lossprevention` |
 | Migrations | `V560` ledger, `V561` rules, settings, windows, runs, findings, `V562` cases, `V572` camera platform (agents, cameras, zones, commands, heartbeats, evidence, access trail), `V573` the `cashier_vision` engine, `V574` operations metric summaries, `V575` pour meters and the `bar_pour`, `kitchen_flow`, `service_vision` engines, `V576` the `retail_vision` engine, `scan_area` and `queue` zones, the `table` link, activity reviews, `V589` still images as evidence (origin `frame`, `sourceEvidenceId`, `frameOffsetMs`) |

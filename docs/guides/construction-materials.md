@@ -166,7 +166,7 @@ file import at `/accounts/bank-import`, not a live connection.
 
 ## Manager
 
-Screens: Dashboards Overview (`/analytics`) and its pages, Alerts & Exceptions (`/alerts`), Approvals (`/approvals`),
+Screens: Dashboards Overview (`/analytics`) and its pages, AI Operations Intelligence (`/ai-operations`: alerts & exceptions plus loss prevention), Approvals (`/approvals`),
 Fleet Reports (`/fleet/reports`), Branch Performance (`/reports/branches`), BI Exports (`/reports/bi-exports`).
 
 1. Start at `/analytics`. Open the page for an area: `/analytics/quarry`, `/analytics/aggregates`, `/analytics/blocks`,
