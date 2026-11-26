@@ -11,7 +11,7 @@ Status: **CS-0 design frozen (2026-11-04)**. This is a Spring-native extension w
 - EFRIS fiscal-document timing (`fiscalTrigger`);
 - the walk-in partner policy.
 
-Until then, the defaults below ship and the fiscal trigger stays unset.
+Until then, the defaults below ship and the fiscal trigger stays unset. The decisions are recorded in the "Sales Accounting Go-Live Sign-off" table in `sales-postings.md` (rows 7–9).
 
 ## 1. Flow
 

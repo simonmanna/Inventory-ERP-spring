@@ -39,6 +39,29 @@ Tax treatment (VAT tax point on advances, deliveries) must be confirmed for Ugan
 | `inventory_quarantine` | asset | **new** | returned stock under inspection (or location-based valuation) |
 | `stock_writeoff` | expense | **new** | scrapped returns |
 
+## Sales Accounting Go-Live Sign-off
+
+Reviewer condition B2 (2026-11-24): developers do not decide accounting policy. For each question the accountant
+records the decision; the code ships the **current behaviour** below until a decision says otherwise. Where a
+question is not yet a setting, the "Configurable" column says so; making it one is follow-up work (R6b), with the
+current behaviour as its default so nothing changes until the accountant chooses. Any decision that differs from
+the current behaviour is its own PR, linked in "Implementation ref", with its test in "Test evidence".
+
+| # | Question | Current behaviour (shipped default) | Configurable today | Decision | Approved treatment | Approver | Date | Implementation ref | Test evidence |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | VAT on advances (tax point) | Plain deposits carry no VAT; VAT arises on the final invoice. A down-payment *invoice* carries the order's first tax when `depositTaxPoint = receipt` | Partly: `SalesSettings.depositTaxPoint` (`delivery` / `receipt`) affects down-payment invoices only | pending | | | | | `SalesBillingIT.downPaymentInvoice` |
+| 2 | Deposit application across invoices | Manual by default; `oldest_first` applies open deposits when an order invoice posts. No pro-rata | Yes: `depositApplication` (`manual` / `oldest_first`) | pending | | | | | `SalesBillingIT`, `SalesLifecycleIntegrityIT.fullLifecycle` |
+| 3 | Returns: contra-income or reduce revenue | `salesReturnsAccountId` set → returns post there; blank → they reduce the line's revenue account | Yes: `salesReturnsAccountId` | pending | | | | | `SalesReturnFlowIT` |
+| 4 | Contractor revenue recognition | Revenue is recognised at invoice posting. The stored `revenueRecognition` setting is **not read by any posting** | No (setting exists but has no effect) | pending | | | | | — |
+| 5 | Weighbridge excess over ordered | Absorbed: excess is reported beside the line, never billed (`billableQty` = accepted) | No | pending | | | | | `SalesWeighbridgeIT`, `SalesQuantityBucketsIT` |
+| 6 | Rebate VAT | Rebate settlement credit notes carry no VAT; accruals are gross | No | pending | | | | | none (no rebate IT exists) |
+| 7 | Showroom VAT tax point | Output VAT is credited when the cash sale is confirmed (accrual P3); the invoice reclassifies only | No | pending | | | | | `CashSaleIT` T1/T4, T5 |
+| 8 | EFRIS fiscal trigger | Unset: no fiscal document is requested | Yes, per branch profile: `fiscalTrigger` (`at_confirm` / `at_invoice` / unset) | pending | | | | | `CashSaleIT` T24–T26 |
+| 9 | Walk-in customer policy | Sales without a partner post to the profile's `walkInPartnerId`; a TIN is required above `requireTaxNumberAbove` (0 = never) | Yes: branch profile `walkInPartnerId`, `SalesSettings.requireTaxNumberAbove` | pending | | | | | `CashSaleIT` T11/T12 |
+
+Go-live needs every row with a decision, an approver and a date. `docs/spec/cash-sales.md` (production gate) points
+here for rows 7–9.
+
 ## 3. Policy matrix (fulfilment and recognition)
 
 | # | Physical movement | Ownership transfer | COGS | Revenue | Valid |
