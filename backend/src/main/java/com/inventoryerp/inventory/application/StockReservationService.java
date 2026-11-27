@@ -143,26 +143,12 @@ public class StockReservationService {
         jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
                         + " AND \"locationId\" = ? FOR UPDATE")
                 .params(org, productId, variantKey, locationId).query().listOfRows();
-        BigDecimal reserved = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockReservation\" WHERE"
-                + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND status ="
-                + " 'active' AND \"sourceType\" = ?").params(org, productId, variantKey, locationId, SALES_ORDER_LINE)
-                .query(BigDecimal.class).single();
-        if (reserved.signum() <= 0) {
-            return;
-        }
         BigDecimal onHand = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
                 + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ?").params(org, productId,
                         variantKey, locationId).query(BigDecimal.class).single();
-        BigDecimal free = onHand.subtract(reserved).max(BigDecimal.ZERO);
-        if (baseQuantity.compareTo(free) > 0) {
-            String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(productId).query(String.class)
-                    .optional().orElse(productId);
-            String location = jdbc.sql("SELECT name FROM \"InventoryLocation\" WHERE id = ?").param(locationId)
-                    .query(String.class).optional().orElse(locationId);
-            throw ApiException.badRequest("Only " + JsNumbers.dec(free) + " of " + name + " is free in " + location
-                    + "; " + JsNumbers.dec(reserved) + " is reserved for sales orders. Release or deliver those"
-                    + " reservations first.");
-        }
+        // IPR 1d: one implementation with the engine's own guard (StockMove.honourReservations).
+        StockService.requireFreeOfSalesReservations(jdbc, org, productId, null, variantKey, locationId, baseQuantity,
+                onHand, null);
     }
 
     /**

@@ -149,6 +149,12 @@ public final class SettingRegistry {
                 "Largest absolute difference (base currency) between stock valuation and the inventory GL balance that"
                         + " the daily check accepts.",
                 1, null, false, ORG_ONLY);
+        // IPR S13: goods in transit kept in their own GL account (opt-in; needs the stock_in_transit mapping).
+        def("inventory.transitGlSeparation", "inventory", "bool", "Separate Goods In Transit In The GL",
+                "When on, stock at transit locations is valued in the Stock In Transit account: a transfer through"
+                        + " transit moves its value there on dispatch and back on receipt, and transit losses credit it."
+                        + " Turn on only while no stock is in transit.",
+                false, null, false, ORG_ONLY);
         // IPR S3: a transit receipt that writes off more than this needs a reason and an approval.
         def("inventory.transitLossApprovalThreshold", "inventory", "number", "Transit Loss Approval Threshold",
                 "Largest value (base currency, at the transit location's cost) of damaged and short goods that a"

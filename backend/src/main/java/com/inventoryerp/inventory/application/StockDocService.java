@@ -1162,9 +1162,9 @@ public class StockDocService {
                         .reference(reference + " short on arrival").requireAvailable(true).skipGl()
                         .people(null, lossApprover),
                         str(item, "id")));
-                stockPosting.postAdjustment(str(item, "productId"), BigDecimal.ONE.negate(), res.totalValue(),
-                        Instant.now(), "stock_transfer_loss", code, "Transit shortage · " + item.get("productName")
-                                + " · " + JsNumbers.dec(shortQty) + " · " + reference);
+                stockPosting.postAdjustmentAt(str(item, "productId"), transitLocId, BigDecimal.ONE.negate(),
+                        res.totalValue(), Instant.now(), "stock_transfer_loss", code, "Transit shortage · "
+                                + item.get("productName") + " · " + JsNumbers.dec(shortQty) + " · " + reference, false);
             }
             jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyReceived\" = \"qtyReceived\" + ?, \"qtyDamaged\" ="
                             + " \"qtyDamaged\" + ?, \"qtyShort\" = \"qtyShort\" + ?, \"qtyTransferred\" ="

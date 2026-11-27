@@ -96,7 +96,9 @@ public class InventoryController {
             @OneOf({"FEFO", "FIFO", "MANUAL", "SERIAL"}) String distStrategy,
             String batchNumber,
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String expiryDate,
-            @Size(max = 2000, message = NOTES) String notes) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            // IPR C-3 / GL-6 (D3, additive): why a stock-in line is taken in at an explicit cost of 0.
+            @Size(max = 500, message = "must be shorter than or equal to 500 characters") String zeroCostReason) {}
 
     /** {@code DirectStockInDto} / {@code DirectStockOutDto}. */
     public record DirectStockRequest(
@@ -289,7 +291,8 @@ public class InventoryController {
     private static DirectStockService.Request direct(DirectStockRequest dto) {
         return new DirectStockService.Request(dto.locationId(), dto.responsibleById(), dto.approvedById(),
                 dto.approverPin(), dto.items().stream().map(i -> new DirectStockService.Line(i.productId(), i.variantId(),
-                        i.quantity(), i.unitCost(), i.batchNumber(), i.expiryDate(), i.distStrategy(), i.notes())).toList(),
+                        i.quantity(), i.unitCost(), i.batchNumber(), i.expiryDate(), i.distStrategy(), i.notes(),
+                        i.zeroCostReason())).toList(),
                 dto.notes());
     }
 

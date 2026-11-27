@@ -253,7 +253,24 @@ public class StockService {
         if (item != null && dec(item, "runningAverageCost").signum() > 0) {
             return dec(item, "runningAverageCost");
         }
-        if (item != null) {
+        return lastReceiptOrCostPrice(product, item != null, productId, variantId, locationId);
+    }
+
+    /**
+     * IPR C-3 / GL-6 (D3): {@link #resolveCurrentCost} for a quant already locked (its average read under the lock);
+     * {@code product} carries the variant's cost.
+     */
+    private BigDecimal currentCost(LockedQuant quant, Map<String, Object> product, String productId, String variantId,
+            String locationId) {
+        if (!quant.created() && quant.average() != null && quant.average().signum() > 0) {
+            return quant.average();
+        }
+        return lastReceiptOrCostPrice(product, !quant.created(), productId, variantId, locationId);
+    }
+
+    private BigDecimal lastReceiptOrCostPrice(Map<String, Object> product, boolean quantExists, String productId,
+            String variantId, String locationId) {
+        if (quantExists) {
             List<BigDecimal> last = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
                             + " AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ?"
                             + " AND type = 'receipt' AND \"quantityChange\" > 0 ORDER BY \"createdAt\" DESC LIMIT 1")
@@ -317,8 +334,11 @@ public class StockService {
         if ("FIFO".equals(costing) && !batchTracking) {
             throw ApiException.badRequest("FIFO costing requires batchTracking=true on the product");
         }
+        // IPR C-3 / GL-6 (owner decision D3): a receipt without a unit cost enters at the current cost (resolved under
+        // the quant lock below), never at 0. An explicit 0 is the caller's (gated at the manual entry points).
+        boolean blankCost = dto.unitCost == null;
         BigDecimal[] base = toBaseQtyCost(product, dto.uomId, dto.uomFactor, dto.quantity,
-                dto.unitCost != null ? dto.unitCost : Money.ZERO);
+                blankCost ? Money.ZERO : dto.unitCost);
         BigDecimal qty = base[0];
         BigDecimal actualUnitCost = base[1];
         // ADR-S008: a standard-governed product enters stock at its standard; the difference is PPV (below). Hardening
@@ -356,6 +376,12 @@ public class StockService {
         // Average and quantity are read under the quant lock (advisory + row), so a concurrent issue cannot change
         // the quantity this average is computed from.
         LockedQuant quant = lockQuant(org, dto.productId, variantId, dto.locationId, Money.ZERO);
+        if (blankCost) {
+            actualUnitCost = currentCost(quant, product, dto.productId, variantId, dto.locationId);
+            if (standardUnit == null) {
+                unitCost = actualUnitCost;
+            }
+        }
         String ledgerCode = seq.next("stock_move", "STK/", 6);
         BigDecimal qtyBefore = quant.quantity();
         Resolution cost = costResolver.resolveReceiptCost(
@@ -1101,10 +1127,30 @@ public class StockService {
         }
         String ledgerCode = seq.next("stock_move", "STK/", 6);
         String moveType = delta.signum() > 0 ? "adjustment_in" : "adjustment_out";
-        BigDecimal unitCost = stockItem != null && dec(stockItem, "runningAverageCost").signum() > 0
-                ? dec(stockItem, "runningAverageCost") : dec(product, "costPrice");
-        jdbc.sql("UPDATE \"StockItem\" SET quantity = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
-                .params(counted, quant.id(), org).update();
+        BigDecimal avg = stockItem != null ? dec(stockItem, "runningAverageCost") : Money.ZERO;
+        BigDecimal unitCost = avg.signum() > 0 ? avg : dec(product, "costPrice");
+        BigDecimal newAverage = null;
+        if ("AVCO".equals(str(product, "costingMethod"))) {
+            // IPR C-3 / GL-6 (D3): an AVCO quant is valued at its own average (no cost-price fallback), so a count
+            // loss leaves at that average (as an issue does) and a gain onto a quant without an average enters at
+            // the current cost and gives the quant its average; valuation = ledger = GL.
+            if (delta.signum() < 0) {
+                unitCost = avg.max(Money.ZERO);
+            } else if (avg.signum() <= 0) {
+                unitCost = currentCost(quant, product, dto.productId, variantId, dto.locationId);
+                if (currentQty.signum() >= 0 && counted.signum() > 0) {
+                    newAverage = Money.div(currentQty.multiply(avg.max(Money.ZERO)).add(delta.multiply(unitCost)),
+                            counted);
+                }
+            }
+        }
+        if (newAverage != null) {
+            jdbc.sql("UPDATE \"StockItem\" SET quantity = ?, \"runningAverageCost\" = ?, \"updatedAt\" = " + NOW
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(counted, newAverage, quant.id(), org).update();
+        } else {
+            jdbc.sql("UPDATE \"StockItem\" SET quantity = ?, \"updatedAt\" = " + NOW
+                    + " WHERE id = ? AND \"organizationId\" = ?").params(counted, quant.id(), org).update();
+        }
         String sourceType = dto.sourceType != null ? dto.sourceType : "stock_adjust";
         String sourceId = dto.sourceId != null ? dto.sourceId : ledgerCode;
         insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, null, null, moveType, currentQty, delta,
@@ -1113,7 +1159,7 @@ public class StockService {
                 deltaMode ? trace(dto, product, deltaIn, dto.deltaQuantity)
                         : trace(dto, product, counted, dto.countedQuantity), eff.at());
         // ADR-S088 closed-period traceability: the journal memo names the ledger code.
-        stockPosting.postAdjustment(dto.productId, delta, unitCost, date, sourceType, sourceId,
+        stockPosting.postAdjustmentAt(dto.productId, dto.locationId, delta, unitCost, date, sourceType, sourceId,
                 "Stock adjustment · " + str(product, "name") + " · " + ledgerCode, dto.openingBalance);
         sweepAvcoResidue(org, product, dto.productId, variantId, dto.locationId, counted, sourceType, sourceId,
                 ledgerCode, date);
@@ -1202,9 +1248,9 @@ public class StockService {
         }
         BigDecimal absQty = delta.abs();
         if (totalValue.signum() > 0) {
-            stockPosting.postAdjustment(dto.productId, delta, Money.div(totalValue, absQty), date, sourceType,
-                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name")
-                            + " · " + ledgerCode, dto.openingBalance);
+            stockPosting.postAdjustmentAt(dto.productId, dto.locationId, delta, Money.div(totalValue, absQty), date,
+                    sourceType, dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · "
+                            + str(product, "name") + " · " + ledgerCode, dto.openingBalance);
         }
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
@@ -1757,6 +1803,17 @@ public class StockService {
             k.skipLateCountCheck = true;
             k.lotId = str(r, "batchId");
             k.openingBalance = "opening".equals(line.get("countType"));
+            // IPR E1: a refusal thrown out of a proxied @Transactional bean (the posting) marks this whole
+            // transaction rollback-only, which the savepoint below cannot undo — the late movement itself would then
+            // fail at commit. The posting is checked first, without throwing; a correction that cannot post is left
+            // listed on the count. The savepoint still catches the engine's own refusals (thrown in this class).
+            String problem = stockPosting.adjustmentPostingProblem(str(r, "productId"), change.negate(),
+                    k.openingBalance);
+            if (problem != null) {
+                log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
+                        line.get("countCode"), problem);
+                continue;
+            }
             jdbc.sql("SAVEPOINT late_count_correction").update();
             try {
                 adjust(k);
@@ -2207,11 +2264,23 @@ public class StockService {
         if (!refusable) {
             return;
         }
-        List<Object> params = new ArrayList<>(List.of(org, dto.productId, variantKey, locationId));
+        requireFreeOfSalesReservations(jdbc, org, dto.productId, productName, variantKey, locationId, qty, onHand,
+                dto.reservationHolderIds);
+    }
+
+    /**
+     * IPR E-1a / F5, the one implementation (engine issues and transfers, and
+     * {@link StockReservationService#assertNotReservedForSalesOrders}): refuse taking {@code qty} base units from a cell
+     * holding {@code onHand} when it would eat into active {@code sales_order_line} reservations other than those of
+     * {@code holderIds}. The caller holds the cell lock (L4/L5). {@code productName} null = read on refusal.
+     */
+    static void requireFreeOfSalesReservations(JdbcClient jdbc, String org, String productId, String productName,
+            String variantKey, String locationId, BigDecimal qty, BigDecimal onHand, List<String> holderIds) {
+        List<Object> params = new ArrayList<>(List.of(org, productId, variantKey, locationId));
         String holders = "";
-        if (dto.reservationHolderIds != null && !dto.reservationHolderIds.isEmpty()) {
+        if (holderIds != null && !holderIds.isEmpty()) {
             holders = " AND \"sourceId\" <> ALL(?::text[])";
-            params.add(dto.reservationHolderIds.toArray(String[]::new));
+            params.add(holderIds.toArray(String[]::new));
         }
         BigDecimal reserved = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockReservation\" WHERE"
                         + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND"
@@ -2222,10 +2291,13 @@ public class StockService {
         }
         BigDecimal free = onHand.subtract(reserved).max(BigDecimal.ZERO);
         if (qty.compareTo(free) > 0) {
-            Map<String, Object> loc = lookups.location(locationId);
-            throw ApiException.badRequest("Only " + JsNumbers.dec(free) + " of " + productName + " is free in "
-                    + (loc == null ? locationId : loc.get("name")) + "; " + JsNumbers.dec(reserved)
-                    + " is reserved for sales orders. Release or deliver those reservations first.");
+            String name = productName != null ? productName : jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?")
+                    .param(productId).query(String.class).optional().orElse(productId);
+            String location = jdbc.sql("SELECT name FROM \"InventoryLocation\" WHERE id = ?").param(locationId)
+                    .query(String.class).optional().orElse(locationId);
+            throw ApiException.badRequest("Only " + JsNumbers.dec(free) + " of " + name + " is free in " + location
+                    + "; " + JsNumbers.dec(reserved) + " is reserved for sales orders. Release or deliver those"
+                    + " reservations first.");
         }
     }
 
