@@ -3,10 +3,13 @@ package com.inventoryerp.accounting.application;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.notifications.NotificationsService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.EntityJson;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,7 +24,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Daily inventory-to-GL tie-out check of one organisation (the {@code GET /reports/inventory/gl-tieout} computation):
  * when the stock valuation and the inventory control account(s) differ by more than {@code inventory.glTieOut.tolerance}
  * it opens one {@code InventoryException} of kind {@code gl_tieout_variance} (Posting Monitor) and sends an in-app
- * alert. While such an exception is open no second one is raised; resolving it re-arms the check.
+ * alert to every user holding {@code report:accounting} (the tie-out report's permission; once per user per day).
+ * While such an exception is open no second one is raised; resolving it re-arms the check.
  */
 @Service
 public class InventoryTieOutMonitor {
@@ -99,13 +103,15 @@ public class InventoryTieOutMonitor {
         });
         if (Boolean.TRUE.equals(raised)) {
             try {
-                notifications.send(new NotificationsService.SendInput(orgId, null, "in_app", "inventory",
+                notifications.sendToPermission(orgId, Permissions.REPORT__ACCOUNTING, "inventory",
                         "Inventory does not tie to the GL", "Stock valuation and the inventory control account differ by "
                                 + result.get("variance") + " (tolerance " + JsNumbers.toJsString(tolerance)
                                 + "). Review the inventory GL tie-out report; the variance is listed in the Posting"
                                 + " Monitor.",
                         Obj.of("kind", KIND, "variance", result.get("variance"), "subledgerValue",
-                                result.get("subledgerValue"), "glBalance", result.get("glBalance"))));
+                                result.get("subledgerValue"), "glBalance", result.get("glBalance"), "href",
+                                "/inventory-gl-tieout"),
+                        KIND + ":" + LocalDate.now(ZoneOffset.UTC));
             } catch (RuntimeException e) {
                 log.error("[gl-tieout] failed to send the variance alert: {}", e.toString());
             }

@@ -2,9 +2,12 @@ package com.inventoryerp.kernel.notifications;
 
 import com.inventoryerp.shared.web.EntityJson;
 import java.util.Base64;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,6 +32,9 @@ import org.springframework.web.util.HtmlUtils;
 public class NotificationsService {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationsService.class);
+
+    /** At most this many users receive one {@link #sendToPermission} call (the alerts module's cap). */
+    public static final int MAX_PERMISSION_RECIPIENTS = 200;
 
     /** One message to send. {@code channel}: in_app | email | sms | push. */
     public record SendInput(String organizationId, String userId, String channel, String category, String title,
@@ -139,6 +145,62 @@ public class NotificationsService {
             out.put("delivered", false);
         }
         return out;
+    }
+
+    /**
+     * One in-app notification to every active, non-deleted user of {@code organizationId} whose roles hold
+     * {@code permission} (at most {@link #MAX_PERMISSION_RECIPIENTS}, ordered by user id). System monitors use it: a
+     * row without a user reaches no inbox. With a {@code dedupeKey} a user who already holds an in-app notification
+     * carrying that key ({@code payload.dedupeKey}) is skipped, so a caller that puts the finding and the day into the
+     * key alerts each person once per finding per day. One failed recipient never stops the others. Returns the
+     * number of notifications written. The caller sets the tenant scope (or runs unscoped as the outbox worker).
+     */
+    public int sendToPermission(String organizationId, String permission, String category, String title, String body,
+            Map<String, Object> payload, String dedupeKey) {
+        List<String> users = permissionHolders(organizationId, permission);
+        if (users.isEmpty()) {
+            log.warn("No active user of org {} holds {}: notification \"{}\" reached nobody", organizationId,
+                    permission, title);
+            return 0;
+        }
+        Set<String> already = dedupeKey == null ? Set.of() : new HashSet<>(jdbc.sql("""
+                        SELECT "userId" FROM "Notification" WHERE "organizationId" = :org AND "userId" IN (:users)
+                          AND channel = 'in_app' AND payload->>'dedupeKey' = :key""")
+                .param("org", organizationId)
+                .param("users", users)
+                .param("key", dedupeKey)
+                .query(String.class)
+                .list());
+        Map<String, Object> p = new LinkedHashMap<>(payload == null ? Map.of() : payload);
+        if (dedupeKey != null) {
+            p.put("dedupeKey", dedupeKey);
+        }
+        int sent = 0;
+        for (String user : users) {
+            if (already.contains(user)) {
+                continue;
+            }
+            try {
+                send(new SendInput(organizationId, user, "in_app", category, title, body, p));
+                sent++;
+            } catch (RuntimeException e) {
+                log.warn("Notification \"{}\" to user {} not written: {}", title, user, e.toString());
+            }
+        }
+        return sent;
+    }
+
+    /** Active, non-deleted users of the org whose roles hold {@code permission} (capped, ordered by id). */
+    List<String> permissionHolders(String organizationId, String permission) {
+        return jdbc.sql("""
+                        SELECT DISTINCT u.id FROM "User" u JOIN "_UserRoles" ur ON ur."B" = u.id
+                          JOIN "Role" r ON r.id = ur."A"
+                        WHERE u."organizationId" = ? AND u."isActive" AND u."deletedAt" IS NULL
+                          AND ? = ANY(r.permissions)
+                        ORDER BY u.id LIMIT ?""")
+                .params(organizationId, permission, MAX_PERMISSION_RECIPIENTS)
+                .query(String.class)
+                .list();
     }
 
     private void sendEmail(SendInput input) throws Exception {

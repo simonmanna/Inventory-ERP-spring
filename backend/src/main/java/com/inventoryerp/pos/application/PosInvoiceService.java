@@ -40,6 +40,7 @@ import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.notifications.NotificationsService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
@@ -2384,12 +2385,15 @@ public class PosInvoiceService {
             }
             long open = jdbc.sql("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status = 'open'")
                     .param(orgId).query(Long.class).single();
-            notifications.send(new NotificationsService.SendInput(orgId, null, "in_app", "inventory",
+            // IPR T08: one bell per Posting Monitor user (pos:reports); a row without a user reached no inbox.
+            notifications.sendToPermission(orgId, Permissions.POS__REPORTS, "inventory",
                     "Stock posting needs review", reason + (ctx.invoiceNumber() != null ? " on " + ctx.invoiceNumber() : "")
                             + ". On-hand is behind actual sales until this is resolved — " + open
                             + " open exception(s) in the Posting Monitor.",
                     Obj.of("kind", "stock_posting_failed", "invoiceId", ctx.invoiceId(), "invoiceNumber", ctx.invoiceNumber(),
-                            "orderId", ctx.orderId(), "lines", lines, "openExceptions", open)));
+                            "orderId", ctx.orderId(), "lines", lines, "openExceptions", open, "href",
+                            "/inventory/posting-monitor"),
+                    "stock_posting_failed:" + Instant.now().getEpochSecond() / 3600);
         } catch (RuntimeException e) {
             log.error("[stock] failed to raise a posting-failure alert: {}", e.toString());
         }
