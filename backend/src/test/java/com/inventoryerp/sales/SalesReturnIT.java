@@ -109,6 +109,56 @@ class SalesReturnIT extends ApiTestSupport {
         ledger.receivableTiesOut(customer);
     }
 
+    @Test
+    @DisplayName("IPR review 1 N2: goods issued by their invoice (no fleet load code) come back against that issue;"
+            + " a line with no issue at all is flagged for manual review")
+    void returnAgainstInvoiceIssue() throws Exception {
+        String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", yard, "lines", List.of(
+                Map.of("productId", blocks, "quantity", 3)))).get("id").asString();
+        ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 3, \"qtyDelivered\" = 3, \"qtyAccepted\" = 3,"
+                + " \"qtyBillable\" = 3 WHERE \"orderId\" = ?").param(so).update();
+        String inv = money("/sales/orders/" + so + "/invoices", Map.of()).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        drainOutboxFully();
+        Map<String, Object> link = jdbc.sql("SELECT \"documentId\", \"documentLineId\" FROM \"SalesInvoiceLink\" WHERE"
+                + " \"orderLineId\" = ? AND kind = 'regular'").param(lineId(so)).query().singleRow();
+        assertThat(link.get("documentLineId")).isNotNull();
+        // The goods left on the invoice's own issue (a collection of undelivered goods, or an invoice posted before
+        // sales orders marked their invoices as delivered by fleet): a sales_invoice row naming the invoice line.
+        String adminId = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = 'admin@demo.test'")
+                .param(demoOrg).query(String.class).single();
+        TenantContext.run(TenantStore.user(demoOrg, adminId), () -> new TransactionTemplate(txm).executeWithoutResult(
+                s -> stock.issue(StockMove.of(blocks, yard, new BigDecimal("3")).source("sales_invoice",
+                        (String) link.get("documentId")).sourceLine((String) link.get("documentLineId")))));
+        BigDecimal before = onHand(yard);
+        String id = rma(so, 2, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id + "/approve", null);
+        money("/sales/returns/" + id + "/receive", Map.of());
+        assertThat(onHand(yard)).as("2 of the 3 issued come back").isEqualByComparingTo(before.add(new BigDecimal("2")));
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_return' AND"
+                + " \"referenceId\" = ? AND \"reversesLedgerId\" IS NOT NULL").param(id).query(Long.class).single())
+                .as("linked to the invoice issue").isPositive();
+
+        // A line whose goods have no recorded issue at all: received, nothing restocked, flagged for review.
+        String so2 = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", yard, "lines",
+                List.of(Map.of("productId", blocks, "quantity", 2)))).get("id").asString();
+        ok(200, "POST", "/sales/orders/" + so2 + "/confirm", null);
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 2, \"qtyDelivered\" = 2, \"qtyAccepted\" = 2,"
+                + " \"qtyBillable\" = 2 WHERE \"orderId\" = ?").param(so2).update();
+        String inv2 = money("/sales/orders/" + so2 + "/invoices", Map.of()).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv2 + "/post", null);
+        drainOutboxFully();
+        String id2 = rma(so2, 2, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id2 + "/approve", null);
+        BigDecimal before2 = onHand(yard);
+        money("/sales/returns/" + id2 + "/receive", Map.of());
+        assertThat(onHand(yard)).isEqualByComparingTo(before2);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryException\" WHERE kind = 'sales_return_unmatched' AND"
+                + " status = 'open' AND payload->>'returnId' = ?").param(id2).query(Long.class).single())
+                .as("manual review flag").isEqualTo(1);
+    }
+
     BigDecimal onHand(String location) {
         return jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
                 .params(blocks, location).query(BigDecimal.class).single();
