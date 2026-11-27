@@ -236,9 +236,14 @@ public class StockReservationService {
                         : variantId, locationId).update();
     }
 
-    /** {@code POST /inventory/reservations/release}: {@link #release} limited to the caller's locations. */
+    /**
+     * {@code POST /inventory/reservations/release}: {@link #release} limited to the caller's locations. IPR review 1
+     * (finding 8): manual reservations only, like reserve and consume; a document's reservations follow the document
+     * (its flows release them through {@link #release}).
+     */
     @Transactional
     public Map<String, Object> releaseForUser(String sourceType, String sourceId) {
+        assertManual(sourceType, "release");
         return Obj.of("released", close(sourceType, sourceId, "released", "releasedAt", scope.current()));
     }
 
@@ -253,7 +258,7 @@ public class StockReservationService {
     private static void assertManual(String sourceType, String action) {
         if (!MANUAL_SOURCE.equals(sourceType)) {
             throw ApiException.badRequest("Only manual reservations can be " + ("reserve".equals(action)
-                    ? "created" : "consumed") + " here (sourceType must be \"manual\"); a document's reservations"
+                    ? "created" : "release".equals(action) ? "released" : "consumed") + " here (sourceType must be \"manual\"); a document's reservations"
                     + " follow the document");
         }
     }
