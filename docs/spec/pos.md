@@ -227,6 +227,17 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
     returns require an identified stock return; …". Lines sold before R4 (issue rows without a source line) keep the
     old proportional restock.
 
+17. **Refund restock shares (IPR review blocker + 1d pre-R4 cap; awaiting owner approval).** A linked refund restock
+    returns `issued × refunded / line quantity` of each product, capped by what is still returnable; it returns
+    everything still returnable only when every earlier refund of the line was a restock. Before, a `waste` /
+    `no_return` refund counted in `refundedQty` but restocked nothing, so a later restock refund brought back phantom
+    units. The proportional path for lines sold before R4 is capped by what the sale still has out (issue rows net of
+    linked returns and of unlinked refunds, voids and cancels of the sale).
+
+18. **Stock timing change no longer loses a sale (IPR X-8).** When an order closes billed and has no stock-posting job
+    (billed under `at_payment` or an order-level timing, closed under `at_invoice`), the close enqueues its one job
+    (`postingTrigger = timing_catch_up`). Not for `manual` or the fulfilment timings.
+
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
 - **Rental POS mode** (owner-approved): `PATCH /pos/settings` accepts `posMode` = `rental` in addition to Nest's

@@ -1126,8 +1126,14 @@ public class SyncPushService {
                 List<DirectStockService.Line> items = new ArrayList<>();
                 for (Object o : PosSql.list(payload.get("items"))) {
                     Map<String, Object> it = PosSql.map(o);
+                    // IPR C-3 / GL-6 (D3): a device cannot give the reason and permission an explicit 0 needs, so
+                    // an offline stock-in at 0 is taken as no cost given (the current cost), never refused.
+                    BigDecimal unitCost = decimal(it.get("unitCost"));
+                    if (unitCost != null && unitCost.signum() == 0) {
+                        unitCost = null;
+                    }
                     items.add(new DirectStockService.Line(str(it.get("productId")), str(it.get("variantId")),
-                            decimal(it.get("quantity")), decimal(it.get("unitCost")), str(it.get("batchNumber")),
+                            decimal(it.get("quantity")), unitCost, str(it.get("batchNumber")),
                             str(it.get("expiryDate")), str(it.get("distStrategy")), str(it.get("notes"))));
                 }
                 DirectStockService.Request req = new DirectStockService.Request(str(payload.get("locationId")),

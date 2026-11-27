@@ -382,6 +382,10 @@ public class ProductionService {
         if (qcGate != null) {
             qcGate.sync(qcDoc(order, null, null));
         }
+        // IPR N-1: the reservation is one row per (order, stock cell) and a re-reserve sets its quantity, so two
+        // material lines of the same product and variant reserved one after the other kept only the last line. The
+        // lines are summed per cell first and each cell is reserved once, in product / variant order.
+        java.util.TreeMap<String, Object[]> cells = new java.util.TreeMap<>();
         for (Map<String, Object> m : materials(order)) {
             try {
                 // Review M-3: reservations count base units (the stock they hold back); the material line is in its
@@ -390,14 +394,25 @@ public class ProductionService {
                 String productId = str(m, "productId");
                 BigDecimal base = newTx.execute(s -> uom.toBase(dec(m, "qtyPlanned"), str(m, "uomId"), productId,
                         productUnit(productId), true));
+                String variantId = str(m, "variantId");
+                Object[] cell = cells.computeIfAbsent(productId + "|" + (variantId == null ? "" : variantId),
+                        k -> new Object[] {productId, variantId, BigDecimal.ZERO});
+                cell[2] = ((BigDecimal) cell[2]).add(base);
+            } catch (RuntimeException e) {
+                log.warn("reserve failed for {} / {}: {}", order.get("orderCode"), m.get("productId"), e.getMessage());
+            }
+        }
+        for (Object[] cell : cells.values()) {
+            try {
                 // The reservation itself joins this transaction under a savepoint: it takes the quant's advisory lock
                 // (hardening R5b), which this transaction may already hold from a stock move earlier in it (the demo
                 // seeds confirm orders after receiving their materials); a separate transaction would wait for it
                 // forever. reserveSoft does not mark this transaction rollback-only, so a failure stays soft.
-                Savepoints.run(db.jdbc(), () -> reservations.reserveSoft(new Reserve(productId, str(m, "variantId"),
-                        str(order, "locationId"), base, SOURCE, id, str(order, "orderCode"))));
+                Savepoints.run(db.jdbc(), () -> reservations.reserveSoft(new Reserve((String) cell[0],
+                        (String) cell[1], str(order, "locationId"), (BigDecimal) cell[2], SOURCE, id,
+                        str(order, "orderCode"))));
             } catch (RuntimeException e) {
-                log.warn("reserve failed for {} / {}: {}", order.get("orderCode"), m.get("productId"), e.getMessage());
+                log.warn("reserve failed for {} / {}: {}", order.get("orderCode"), cell[0], e.getMessage());
             }
         }
         return withLines(db.update(ProductionOrder.class, id, Obj.of("status", "confirmed", "updatedBy",
@@ -471,7 +486,15 @@ public class ProductionService {
                     .uom(substitute != null ? null : str(line, "uomId")).moveType("production_consume")
                     .strategy(line.get("distStrategy") != null ? str(line, "distStrategy") : "FEFO")
                     .batch(batchNumber).date(date).source(SOURCE, code).notes(code)
-                    .requireAvailable(materialsMustBeOnHand());
+                    .requireAvailable(materialsMustBeOnHand())
+                    // IPR 1d (SW-4, E-1a): the material line on its ledger row; stock reserved for sales orders is
+                    // not consumed.
+                    .sourceLine(str(line, "id")).honourReservations(null);
+            if ("rework".equals(order.get("orderKind"))) {
+                // IPR wave 3 (new defect, X-3 × rework): a rework order consumes the held units from QC quarantine;
+                // that is the quality flow taking them back, not a consumption the hold must refuse.
+                move.quarantineFlow();
+            }
             Issued res = stock.issue(move);
             materialCost = materialCost.add(res.totalValue());
             Map<String, Object> upd = new LinkedHashMap<>();
@@ -633,15 +656,16 @@ public class ProductionService {
             pool = pool.subtract(value);
             byproductCredit = byproductCredit.add(value);
         }
-        if (pool.signum() < 0) {
-            // Integrity fix 2026-11-24: orders created before the 100 % cap.
-            throw ApiException.badRequest("By-products of " + code + " take more than the order's cost ("
-                    + JsNumbers.dec(byproductCredit) + " of " + JsNumbers.dec(materialCost.add(overhead))
-                    + "); correct their cost allocation %.");
-        }
         // IPR X-9: the main output's partial receipts took their value out of WIP already; the last receipt takes
         // the rest (and, at standard, the variances settle the whole order).
         pool = pool.subtract(partials.wipCredit());
+        if (pool.signum() < 0) {
+            // Integrity fix 2026-11-24: orders created before the 100 % cap. IPR review (wave 3): checked after the
+            // partial receipts too, so by-products and partials together never take more than the order's cost.
+            throw ApiException.badRequest("By-products of " + code + " take more than the order's cost ("
+                    + JsNumbers.dec(byproductCredit.add(partials.wipCredit())) + " of "
+                    + JsNumbers.dec(materialCost.add(overhead)) + "); correct their cost allocation %.");
+        }
 
         // 1b) Review 2026-11-17 (rework costing): an abnormal rework — a defect that is not part of the normal process —
         // brings the units back at the cost they already carried; the extra material and conversion it took is a loss
@@ -822,7 +846,9 @@ public class ProductionService {
         }
         BigDecimal byproductPct = BigDecimal.ZERO;
         for (Map<String, Object> bp : outputs) {
-            if ("byproduct".equals(bp.get("kind")) && dec(bp, "qtyExpected").signum() > 0) {
+            // IPR review (wave 3): every by-product with a cost share, also one expected at 0 (it can still be
+            // produced at completion and take its %), so the partials never take the by-products' part of the pool.
+            if ("byproduct".equals(bp.get("kind")) && dec(bp, "costAllocationPct").signum() > 0) {
                 byproductPct = byproductPct.add(dec(bp, "costAllocationPct"));
             }
         }
@@ -846,11 +872,21 @@ public class ProductionService {
                 : str(order, "locationId");
         String batch = dto.batchNumber() != null ? dto.batchNumber() : str(order, "batchNumber");
 
-        stockPosting.postOverheadAbsorption(overheadShare, date, SOURCE, code, "Overhead (partial output) · " + code);
+        if (dto.date() != null) {
+            // IPR review (wave 3): a backdated partial output follows the stock back-dating limit.
+            stock.assertWithinBackdateLimit(date, "Partial output");
+        }
+        // IPR review (wave 3): the share is absorbed like the completion's (rated work-centre credits first).
+        absorbOverhead(id, code, overheadShare, date);
         StockMove move = StockMove.of(str(order, "outputProductId"), locationId, qtyBase)
                 .variant(str(order, "outputVariantId")).unitCost(unitCost).moveType("production_output").batch(batch)
                 .expiry(dto.expiryDate() != null ? dto.expiryDate() : iso(order.get("expiryDate")))
                 .source(SOURCE, code);
+        String outputRowId = java.util.UUID.randomUUID().toString();
+        move.sourceLine(outputRowId); // IPR 1d (SW-4): the partial output row on its ledger row
+        if (dto.date() != null) {
+            move.date(date).effectiveAt(date); // IPR review: the stock row carries the output's date, as the GL does
+        }
         move.mfgDate = iso(order.get("mfgDate"));
         Received res = stock.receive(move);
         if (stockValue.signum() > 0) {
@@ -858,7 +894,7 @@ public class ProductionService {
                     "Partial output · " + code);
         }
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put("id", java.util.UUID.randomUUID().toString());
+        row.put("id", outputRowId);
         row.put("organizationId", MfgDb.org());
         row.put("orderId", id);
         row.put("productId", order.get("outputProductId"));
@@ -1081,6 +1117,12 @@ public class ProductionService {
         List<Map<String, Object>> partialRows = partialRows(id);
         BigDecimal partialBase = partialRows.stream().map(r -> dec(r, "quantityBase")).reduce(BigDecimal.ZERO,
                 BigDecimal::add);
+        if (mainOut == null || ledgerQty(str(mainOut, "ledgerCode"), true) == null
+                && !(mainOut.get("qtyProduced") != null && dec(mainOut, "qtyProduced").signum() > 0)) {
+            // IPR review (wave 3): without an output line the produced base comes from producedQty, which already
+            // counts the partial receipts.
+            fgBase = fgBase.subtract(partialBase).max(BigDecimal.ZERO);
+        }
         if (fgQty == null || fgQty.compareTo(fgBase.add(partialBase)) < 0) {
             throw ApiException.badRequest(
                     "Cannot reverse: finished goods are no longer fully in stock (sold or moved).");
@@ -1115,10 +1157,16 @@ public class ProductionService {
         // Audit S-4 (deviation from Nest): the GL credits stock with the value the engine issued (the ledger's), WIP
         // gets the output's value back, the difference is a stock adjustment gain / loss.
         // Hardening R5b (P2-2): the produced lot goes back first (then other lots, FEFO, for any part of it that left).
+        // IPR SW-4: each issue names the receipt row it undoes (reversesLedgerId) and its output line.
         BigDecimal fgIssued = stock.issue(StockMove.of(str(order, "outputProductId"), fgLocationId, fgBase)
                 .variant(str(order, "outputVariantId")).skipGl().source("production_reversal", code)
                 .prefer(producedLots(code, str(order, "outputProductId"), str(order, "outputVariantId"), fgLocationId),
-                        null)).totalValue();
+                        null)
+                .reverses(outputRow(mainOut == null ? null : str(mainOut, "ledgerCode"), code,
+                        str(order, "outputProductId"), str(order, "outputVariantId"),
+                        partialRows.stream().map(r -> str(r, "ledgerCode")).filter(java.util.Objects::nonNull)
+                                .toList()))
+                .sourceLine(mainOut == null ? null : str(mainOut, "id"))).totalValue();
         stockPosting.postProductionReversal(str(order, "outputProductId"), fgIssued, fgValue, date,
                 "production_reversal", code, "Production reversal · " + code);
         // 1a) IPR X-9: each partial receipt out again, its WIP credit back into WIP.
@@ -1126,7 +1174,8 @@ public class ProductionService {
             String partialLoc = held ? fgLocationId : str(pr, "locationId");
             BigDecimal issued = stock.issue(StockMove.of(str(pr, "productId"), partialLoc, dec(pr, "quantityBase"))
                     .variant(str(pr, "variantId")).skipGl().source("production_reversal", code)
-                    .prefer(producedLots(code, str(pr, "productId"), str(pr, "variantId"), partialLoc), null))
+                    .prefer(producedLots(code, str(pr, "productId"), str(pr, "variantId"), partialLoc), null)
+                    .reverses(outputRow(str(pr, "ledgerCode"), null, null, null, List.of())).sourceLine(str(pr, "id")))
                     .totalValue();
             stockPosting.postProductionReversal(str(pr, "productId"), issued, dec(pr, "wipCredit"), date,
                     "production_reversal", code, "Production reversal (partial output) · " + code);
@@ -1135,7 +1184,8 @@ public class ProductionService {
         for (Map<String, Object> bp : byproducts) {
             BigDecimal bpIssued = stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
                     .variant(str(bp, "variantId")).skipGl().source("production_reversal", code)
-                    .prefer(producedLots(code, str(bp, "productId"), str(bp, "variantId"), fgLocationId), null))
+                    .prefer(producedLots(code, str(bp, "productId"), str(bp, "variantId"), fgLocationId), null)
+                    .reverses(outputRow(str(bp, "ledgerCode"), null, null, null, List.of())).sourceLine(str(bp, "id")))
                     .totalValue();
             BigDecimal bpValue = bp.get("totalCost") == null ? BigDecimal.ZERO : dec(bp, "totalCost");
             stockPosting.postProductionReversal(str(bp, "productId"), bpIssued, bpValue, date, "production_reversal",
@@ -1248,6 +1298,34 @@ public class ProductionService {
         return left.min(inLots);
     }
 
+    /**
+     * IPR SW-4: the inflow ledger row a production receipt wrote (by its ledger code), which its reversal names
+     * ({@code reversesLedgerId}); without a code (an order completed before outputs kept it), the order's only
+     * {@code production_output} row of that product and variant (partial receipts' codes excluded), when there is
+     * exactly one. Null = not linked.
+     */
+    private String outputRow(String ledgerCode, String orderCode, String productId, String variantId,
+            List<String> excludedCodes) {
+        if (ledgerCode != null) {
+            String id = db.jdbc().sql("SELECT id FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                    + " \"ledgerCode\" = ? AND \"quantityChange\" > 0 AND \"valuationComponent\" IS NULL ORDER BY seq"
+                    + " LIMIT 1").params(MfgDb.org(), ledgerCode).query(String.class).optional().orElse(null);
+            if (id != null || orderCode == null) {
+                return id;
+            }
+        }
+        if (orderCode == null) {
+            return null;
+        }
+        List<String> rows = db.jdbc().sql("SELECT id FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceType\" = ? AND \"referenceId\" = ? AND type = 'production_output' AND \"productId\" = ?"
+                + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"quantityChange\" > 0 AND \"valuationComponent\" IS NULL"
+                + " AND \"ledgerCode\" <> ALL(?::text[])")
+                .params(MfgDb.org(), SOURCE, orderCode, productId, variantId, excludedCodes.toArray(String[]::new))
+                .query(String.class).list();
+        return rows.size() == 1 ? rows.getFirst() : null;
+    }
+
     private List<String> producedLots(String orderCode, String productId, String variantId, String locationId) {
         List<Map<String, Object>> produced = db.jdbc().sql("SELECT b.id, b.\"locationId\", b.\"batchNumber\" FROM"
                         + " \"InventoryLedger\" l JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" WHERE l.\"organizationId\" = ?"
@@ -1286,11 +1364,23 @@ public class ProductionService {
                 + " r.\"organizationId\" = a.\"organizationId\" AND r.\"workCenterId\" = a.\"workCenterId\""
                 + " WHERE a.\"organizationId\" = ? AND a.\"orderId\" = ? AND a.\"stageId\" IS NULL"
                 + " AND r.\"creditAccountId\" IS NOT NULL GROUP BY 1 ORDER BY 1").params(MfgDb.org(), orderId));
+        // IPR review (wave 3): partial outputs absorb their overhead share here too, so each rated account is credited
+        // at most its rated amount over all of the order's (unreversed) rated journals.
+        Map<String, BigDecimal> credited = new HashMap<>();
+        for (Map<String, Object> c : SqlRows.list(db.jdbc().sql("SELECT l.\"accountId\" AS account, coalesce(sum(l.credit),"
+                + " 0) AS amount FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE"
+                + " e.\"organizationId\" = ? AND e.\"sourceType\" = ? AND e.\"sourceId\" = ? AND e.description = ? AND"
+                + " e.status = 'posted' AND e.\"reversalOfId\" IS NULL AND NOT EXISTS (SELECT 1 FROM \"JournalEntry\" r"
+                + " WHERE r.\"reversalOfId\" = e.id AND r.status = 'posted') AND l.credit > 0 GROUP BY 1")
+                .params(MfgDb.org(), SOURCE, code, RATED_OVERHEAD + code))) {
+            credited.put(str(c, "account"), dec(c, "amount"));
+        }
         BigDecimal ratedTotal = BigDecimal.ZERO;
         List<com.inventoryerp.accounting.application.PostingRequest.Line> credits = new ArrayList<>();
         String label = RATED_OVERHEAD + code;
         for (Map<String, Object> r : rated) {
-            BigDecimal amount = dec(r, "amount").min(overhead.subtract(ratedTotal));
+            BigDecimal amount = dec(r, "amount").subtract(credited.getOrDefault(str(r, "account"), BigDecimal.ZERO))
+                    .min(overhead.subtract(ratedTotal));
             if (amount.signum() <= 0) {
                 continue;
             }
@@ -1314,15 +1404,18 @@ public class ProductionService {
         if (overhead.signum() <= 0) {
             return;
         }
-        String je = db.jdbc().sql("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"sourceType\" = ?"
-                + " AND \"sourceId\" = ? AND description = ? AND status = 'posted' AND \"reversalOfId\" IS NULL"
-                + " ORDER BY \"createdAt\" DESC LIMIT 1").params(MfgDb.org(), SOURCE, code, RATED_OVERHEAD + code)
-                .query(String.class).optional().orElse(null);
+        // IPR review (wave 3): every rated journal of the order (completion and partial outputs), not only the latest.
+        List<String> entries = db.jdbc().sql("SELECT e.id FROM \"JournalEntry\" e WHERE e.\"organizationId\" = ? AND"
+                + " e.\"sourceType\" = ? AND e.\"sourceId\" = ? AND e.description = ? AND e.status = 'posted' AND"
+                + " e.\"reversalOfId\" IS NULL AND NOT EXISTS (SELECT 1 FROM \"JournalEntry\" r WHERE r.\"reversalOfId\" ="
+                + " e.id AND r.status = 'posted') ORDER BY e.\"createdAt\", e.id")
+                .params(MfgDb.org(), SOURCE, code, RATED_OVERHEAD + code).query(String.class).list();
         BigDecimal rated = BigDecimal.ZERO;
-        if (je != null) {
+        for (String je : entries) {
             // Integrity fix 2026-11-24 (MR-10): tenancy predicate.
-            rated = db.jdbc().sql("SELECT coalesce(sum(debit), 0) FROM \"JournalLine\" WHERE \"journalEntryId\" = ?"
-                    + " AND \"organizationId\" = ?").params(je, MfgDb.org()).query(BigDecimal.class).single();
+            rated = rated.add(db.jdbc().sql("SELECT coalesce(sum(debit), 0) FROM \"JournalLine\" WHERE"
+                    + " \"journalEntryId\" = ? AND \"organizationId\" = ?").params(je, MfgDb.org())
+                    .query(BigDecimal.class).single());
             posting.reverse(je, date, "Overhead absorption reversed · " + code);
         }
         stockPosting.postOverheadAbsorptionReversal(overhead.subtract(rated).max(BigDecimal.ZERO), date,
@@ -1417,7 +1510,9 @@ public class ProductionService {
             BigDecimal unitCost, String batchNumber, String expiryDate, String mfgDate, String orderCode, Instant date,
             String lineId, BigDecimal totalValue) {
         StockMove move = StockMove.of(productId, locationId, quantityBase).variant(variantId).unitCost(unitCost)
-                .moveType("production_output").batch(batchNumber).expiry(expiryDate).source(SOURCE, orderCode);
+                .moveType("production_output").batch(batchNumber).expiry(expiryDate).source(SOURCE, orderCode)
+                .sourceLine(lineId) // IPR 1d (SW-4): the output line on its ledger row
+                .date(date); // IPR review: the receipt is dated like its journal (the consumption already is)
         move.mfgDate = mfgDate;
         Received res = stock.receive(move);
         if (totalValue.signum() > 0) {

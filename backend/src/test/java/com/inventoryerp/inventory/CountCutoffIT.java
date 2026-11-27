@@ -428,4 +428,39 @@ class CountCutoffIT extends InventoryAuditSupport {
         assertIntegrityGreen();
         assertGlTieOut();
     }
+
+    @Test
+    @DisplayName("E1: a late correction whose journal cannot post is left listed; the late movement itself still applies")
+    void unpostableCorrectionKeepsTheMovement() {
+        String p = sellable("CC-E1");
+        receive(p, 10, 5);
+        Instant movedAt = Instant.now();
+        pause();
+        JsonNode session = start(main, "spot", List.of(p), false);
+        save(session, p, 7);
+        submit(session);
+        // The product's count gains post to an account that accepts no postings (a group account).
+        String group = asOrg(() -> jdbc.sql("SELECT id FROM \"Account\" WHERE \"organizationId\" = ? AND NOT"
+                + " \"isPostable\" ORDER BY code LIMIT 1").param(org).query(String.class).single());
+        asOrgRun(() -> {
+            jdbc.sql("INSERT INTO \"InventoryPostingRule\" (id, \"organizationId\", \"movementType\", \"lineIndex\","
+                    + " \"debitOrCredit\", \"accountSource\", \"accountMappingKey\", \"productId\", \"updatedAt\") VALUES"
+                    + " (?, ?, 'ADJUSTMENT_GAIN', 0, 'debit', 'account_mapping', 'stock_valuation', ?, now())")
+                    .params(java.util.UUID.randomUUID().toString(), org, p).update();
+            jdbc.sql("INSERT INTO \"InventoryPostingRule\" (id, \"organizationId\", \"movementType\", \"lineIndex\","
+                    + " \"debitOrCredit\", \"accountSource\", \"literalAccountId\", \"productId\", \"updatedAt\") VALUES"
+                    + " (?, ?, 'ADJUSTMENT_GAIN', 1, 'credit', 'literal', ?, ?, now())")
+                    .params(java.util.UUID.randomUUID().toString(), org, group, p).update();
+        });
+        JsonNode out = push(op("stock.out", Map.of("locationId", main, "responsibleById", auditUserId, "approvedById",
+                auditUserId, "approverPin", managerPin, "items", List.of(Map.of("productId", p, "quantity", 3))),
+                movedAt));
+        assertThat(out.get("status").asString()).as("the late stock-out applies: " + out).isEqualTo("applied");
+        assertThat(onHand(p, main)).as("no correction: 7 counted − 3").isEqualByComparingTo("4");
+        assertThat(asOrg(() -> count("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"productId\" = ? AND \"referenceType\" = ?", org, p, LATE))).isZero();
+        asOrgRun(() -> jdbc.sql("DELETE FROM \"InventoryPostingRule\" WHERE \"organizationId\" = ? AND \"productId\" = ?")
+                .params(org, p).update());
+        assertGlTieOut();
+    }
 }

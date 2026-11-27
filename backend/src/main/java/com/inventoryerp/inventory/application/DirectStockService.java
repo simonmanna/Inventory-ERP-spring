@@ -9,6 +9,7 @@ import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
@@ -31,7 +32,14 @@ public class DirectStockService {
 
     /** One direct-stock line. */
     public record Line(String productId, String variantId, BigDecimal quantity, BigDecimal unitCost,
-            String batchNumber, String expiryDate, String distStrategy, String notes) {}
+            String batchNumber, String expiryDate, String distStrategy, String notes, String zeroCostReason) {
+
+        /** A line without a zero-cost reason (stock-outs, offline sync). */
+        public Line(String productId, String variantId, BigDecimal quantity, BigDecimal unitCost, String batchNumber,
+                String expiryDate, String distStrategy, String notes) {
+            this(productId, variantId, quantity, unitCost, batchNumber, expiryDate, distStrategy, notes, null);
+        }
+    }
 
     /** Request body common to in and out. */
     public record Request(String locationId, String responsibleById, String approvedById, String approverPin,
@@ -120,6 +128,7 @@ public class DirectStockService {
                 throw ApiException.badRequest("Unit cost of \"" + prod.get("name") + "\" cannot be negative; enter 0 or"
                         + " more");
             }
+            assertZeroCostAllowed(item, prod);
         }
         String code = seq.next("direct_stock_in", "DSI-", 5);
         BigDecimal total = Money.ZERO;
@@ -130,9 +139,14 @@ public class DirectStockService {
                 .thenComparing(l -> l.variantId() == null ? "" : l.variantId()));
         Map<Line, Map<String, Object>> byLine = new java.util.IdentityHashMap<>();
         for (Line item : ordered) {
+            String notes = item.notes() != null ? item.notes() : dto.notes();
+            if (zeroCost(item, products.get(item.productId()))) {
+                notes = (notes == null || notes.isBlank() ? "" : notes + " · ") + "Zero cost: "
+                        + item.zeroCostReason().trim();
+            }
             StockMove m = StockMove.of(item.productId(), dto.locationId(), item.quantity()).variant(item.variantId())
                     .unitCost(item.unitCost()).batch(item.batchNumber()).expiry(item.expiryDate())
-                    .source("direct_stock_in", code).notes(item.notes() != null ? item.notes() : dto.notes())
+                    .source("direct_stock_in", code).notes(notes)
                     .people(dto.responsibleById(), dto.approvedById()).manual(); // IPR X-3
             Received res = stock.receiveForDocument(m,
                     StockService.GlReceiptContext.stockGain("direct_stock_in", code, Instant.now()));
@@ -145,6 +159,32 @@ public class DirectStockService {
         dto.items().forEach(item -> results.add(byLine.get(item)));
         return Obj.of("code", code, "type", "IN", "locationId", dto.locationId(), "totalValue", JsNumbers.js(total),
                 "items", results, "notes", dto.notes(), "timestamp", Instant.now());
+    }
+
+    /** IPR C-3 / GL-6: an explicit 0 cost on a product valued at its receipts (not STANDARD). */
+    private static boolean zeroCost(Line item, Map<String, Object> prod) {
+        return item.unitCost() != null && item.unitCost().signum() == 0 && prod != null
+                && !"STANDARD".equals(String.valueOf(prod.get("costingMethod")));
+    }
+
+    /**
+     * IPR C-3 / GL-6 (owner decision D3): a blank unit cost enters at the current cost (the engine resolves it); an
+     * explicit 0 takes stock in at no value, so it needs a reason (kept on the ledger row) and
+     * {@code inventory_valuation:manage}.
+     */
+    private static void assertZeroCostAllowed(Line item, Map<String, Object> prod) {
+        if (!zeroCost(item, prod)) {
+            return;
+        }
+        if (item.zeroCostReason() == null || item.zeroCostReason().isBlank()) {
+            throw ApiException.badRequest("Unit cost of \"" + prod.get("name") + "\" is 0: give a reason"
+                    + " (zeroCostReason) to receive it at no cost, or leave the cost blank to use the current cost");
+        }
+        if (!TenantContext.permissions().contains(Permissions.INVENTORY_VALUATION__MANAGE)) {
+            throw ApiException.forbidden("Receiving \"" + prod.get("name") + "\" at no cost needs the "
+                    + Permissions.INVENTORY_VALUATION__MANAGE + " permission; leave the cost blank to use the current"
+                    + " cost");
+        }
     }
 
     /** Direct stock-out: a plain issue, refused when short unless negative stock is allowed. */
@@ -186,7 +226,8 @@ public class DirectStockService {
         LinkedHashSet<String> ids = new LinkedHashSet<>();
         items.forEach(i -> ids.add(i.productId()));
         Map<String, Map<String, Object>> out = new java.util.HashMap<>();
-        for (Map<String, Object> p : jdbc.sql("SELECT id, name, \"batchTracking\", \"expiryTracking\" FROM \"Product\""
+        for (Map<String, Object> p : jdbc.sql("SELECT id, name, \"batchTracking\", \"expiryTracking\","
+                        + " \"costingMethod\"::text AS \"costingMethod\" FROM \"Product\""
                         + " WHERE id IN (:ids) AND \"organizationId\" = :org AND \"deletedAt\" IS NULL")
                 .param("ids", List.copyOf(ids)).param("org", TenantContext.organizationId()).query().listOfRows()) {
             out.put((String) p.get("id"), p);

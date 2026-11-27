@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
 import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -996,7 +997,17 @@ public class InventoryIntegrityService {
                     "No inventory control account is mapped");
         }
         Map<String, BigDecimal> productValue = new HashMap<>();
+        // IPR S13 (opt-in): the value of stock at transit locations sits in the goods-in-transit account.
+        String transitAccount = valuation.transitAccountId();
+        Set<String> transitLocations = transitAccount == null ? Set.of() : new HashSet<>(jdbc.sql("SELECT id FROM"
+                + " \"InventoryLocation\" WHERE \"organizationId\" = ? AND type::text = 'transit'").param(org)
+                .query(String.class).list());
+        Map<String, BigDecimal> transitValue = new LinkedHashMap<>();
         for (Map<String, Object> q : valuation.currentValueByQuant(null)) {
+            if (transitLocations.contains((String) q.get("location_id"))) {
+                transitValue.merge(transitAccount, SqlRows.dec(q, "value"), BigDecimal::add);
+                continue;
+            }
             productValue.merge((String) q.get("product_id"), SqlRows.dec(q, "value"), BigDecimal::add);
         }
         Map<String, String> mapped = new HashMap<>();
@@ -1017,6 +1028,7 @@ public class InventoryIntegrityService {
         }
         Map<String, BigDecimal> byAccount = new LinkedHashMap<>();
         componentByAccountKey.forEach((a, v) -> byAccount.merge(a, v, BigDecimal::add));
+        transitValue.forEach((a, v) -> byAccount.merge(a, v, BigDecimal::add));
         List<String> ids = productValue.entrySet().stream().filter(e -> e.getValue()
                 .subtract(componentByProduct.getOrDefault(e.getKey(), BigDecimal.ZERO)).signum() != 0)
                 .map(Map.Entry::getKey).toList();

@@ -135,6 +135,21 @@ class ShopFloorIT extends MfgTestSupport {
         return new BigDecimal(n.asString());
     }
 
+    /**
+     * IPR X-3: QC quarantine takes no manual stock-in, so one unit of {@code productId} (cost 10) goes on hold there by
+     * an immediate transfer from the bakery.
+     */
+    private void holdInQuarantine(String quarantine, String productId) {
+        stockIn(bakery, productId, 1, 10);
+        String trf = ok(200, "POST", "/inventory/transfers", Map.of("fromLocationId", bakery, "toLocationId",
+                quarantine, "mode", "immediate", "responsibleById", adminId, "approvedById", adminId, "items",
+                List.of(Map.of("productId", productId, "qtyRequested", 1)))).get("id").asString();
+        Map<String, String> h = new java.util.LinkedHashMap<>();
+        h.put("Authorization", "Bearer " + adminToken);
+        h.put("Idempotency-Key", java.util.UUID.randomUUID().toString());
+        assertThat(call("POST", "/inventory/transfers/" + trf + "/approve", Map.of(), h).status()).isIn(200, 201);
+    }
+
     @Test
     @DisplayName("review 2026-11-17: an abnormal rework expenses its extra cost; the units keep what they carried")
     void abnormalRework() {
@@ -151,7 +166,7 @@ class ShopFloorIT extends MfgTestSupport {
                 "abnormal", "materials", List.of(Map.of("productId", flour, "quantity", 1))));
         assertThat(rework.get("reworkTreatment").asString()).isEqualTo("abnormal");
         String rid = rework.get("id").asString();
-        stockIn(rework.get("locationId").asString(), flour, 1, 10);
+        holdInQuarantine(rework.get("locationId").asString(), flour);
         String lossAccount = mapped("stock_adjustment_expense");
         BigDecimal wip0 = balance(wipAccount);
         BigDecimal loss0 = balance(lossAccount);
@@ -178,7 +193,7 @@ class ShopFloorIT extends MfgTestSupport {
                 List.of(Map.of("productId", flour, "quantity", 1))));
         assertThat(normal.get("reworkTreatment").asString()).isEqualTo("normal");
         String nid = normal.get("id").asString();
-        stockIn(normal.get("locationId").asString(), flour, 1, 10);
+        holdInQuarantine(normal.get("locationId").asString(), flour);
         ok(201, "POST", "/manufacturing/production-orders/" + nid + "/confirm", null);
         ok(201, "POST", "/manufacturing/production-orders/" + nid + "/start", Map.of());
         JsonNode kept = ok(201, "POST", "/manufacturing/production-orders/" + nid + "/complete", Map.of("qtyProduced",

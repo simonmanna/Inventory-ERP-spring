@@ -483,7 +483,8 @@ public class FleetDeliveryOrderService {
             Map<String, Object> product = product(u.productId());
             String uomId = u.uomId() != null ? u.uomId() : (String) product.get("uomId");
             lines.add(new Line(u.productId(), u.variantId(), u.description(), uomId, u.uomFactor(),
-                    u.quantity().setScale(3, RoundingMode.HALF_UP), u.lineId(), u.unitPrice(), u.discountPercent(),
+                    // IPR review: never above the undelivered quantity (the goods service states it exactly).
+                    u.quantity().setScale(3, RoundingMode.DOWN), u.lineId(), u.unitPrice(), u.discountPercent(),
                     u.taxId(), null, null));
         }
         if (lines.isEmpty()) {

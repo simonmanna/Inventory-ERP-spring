@@ -251,7 +251,12 @@ public class MaterialLedgerService {
             throw ApiException.badRequest("The run no longer follows the last posted run; recompute it");
         }
         compute(id, from, (LocalDate) r.get("periodTo"));
-        String stock = determination.mapped("stock_valuation");
+        // IPR wave 3 (material-ledger GL defect): the run's value rows are CM-1 price-difference components
+        // (valueRows → recordValueOnly "price_difference"), which the integrity checks tie to the adjunct account
+        // (1396, gl_tieout_by_account) and leave out of the per-product stock-account check. The journal posted them to
+        // stock valuation, so both checks failed after every run; it now posts to the adjunct, like every other
+        // price-difference component. Runs posted before keep their journals (R1; their reversal mirrors them).
+        String stock = lineage.priceDifferenceAccount();
         String reval = accounts.ensureByCode("5965", "Material Ledger Revaluation", "cost_of_goods_sold",
                 "material_ledger_revaluation");
         List<PostingRequest.Line> lines = new ArrayList<>();

@@ -451,7 +451,10 @@ class InventoryEngineGapsIT extends ApiTestSupport {
         assertThat(negative.body().get("message").asString())
                 .isEqualTo("Unit cost of \"" + name(p) + "\" cannot be negative; enter 0 or more");
         assertThat(onHand(p, loc)).isEqualByComparingTo("0");
-        stockIn(loc, List.of(line(p, 3, 0)));
+        // IPR C-3 / GL-6 (owner decision D3): an explicit 0 needs a reason.
+        Map<String, Object> free = line(p, 3, 0);
+        free.put("zeroCostReason", "Free sample");
+        stockIn(loc, List.of(free));
         assertThat(onHand(p, loc)).isEqualByComparingTo("3");
     }
 

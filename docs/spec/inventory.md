@@ -560,6 +560,49 @@ P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same
     branch transfer, …), for issues and for the source quant of transfers. Its value-only row and `COGS_CORRECTION`
     journal are the only posting of that residue; callers' journals carry the issue row's value only.
 
+67. **Receipt cost policy (IPR C-3 / GL-6, owner decision D3; awaiting owner approval).** A receipt with no unit
+    cost takes the quant's current cost (its average when positive, else the last positive receipt cost at the
+    location, else the cost price) instead of 0 / the cost price. An explicit 0 on a direct stock-in needs
+    `zeroCostReason` (400 `Unit cost of "<name>" is 0: give a reason (zeroCostReason) …`) and
+    `inventory_valuation:manage` (403); the reason goes on the ledger notes. Offline `stock.in` / `stock.out` items with
+    unit cost 0 are read as blank (a device cannot give a reason). Goods receipts without a PO line cost and PO receipts
+    without a price receive at current cost. AVCO quants are valued at their own average only (no cost-price fallback
+    when the average is 0); a count gain on an AVCO quant with no average is valued at current cost and sets the
+    average. The web stock-in form has no reason input yet (follow-up).
+
+68. **Waste / expiry accounts and goods in transit (IPR S13; awaiting owner approval).** New optional account mappings
+    `stock_waste_expense` and `stock_expiry_expense` (registry, not required): a `WASTE` / `EXPIRY_WRITE_OFF` issue
+    without a posting rule debits them when mapped, else `stock_adjustment_expense` as before. New setting
+    `inventory.transitGlSeparation` (bool, default off, organisation only): when on and `stock_in_transit` is mapped,
+    stock-account lines of moves at a `transit` location post to Stock In Transit — a transfer without transfer posting
+    rules into a transit location posts Dr transit / Cr stock (and the reverse out of it), transit losses and shortages
+    credit it — and `inventoryAccountIds` / `gl_tieout_by_account` count transit quants in that account. Turn it on only
+    with no stock in transit (no reclassification is posted). Limits: an AVCO residue sweep or a reversal cost
+    difference at a transit location still posts to the stock account; price-difference components of a transit quant
+    stay on the adjunct.
+
+69. **Plain AVCO quants valued at ledger value within rounding (IPR E-1).** The average is stored at 6 dp, so a
+    non-terminating unit cost (1,000,000 / 300,000) left qty × average short of the ledger and GL (999,999.90) while the
+    stock was on hand. `currentValueByQuant` now values a plain AVCO quant (no lots, no serials, quantity > 0) at its
+    ledger value when that differs from qty × average by less than 1.00 (the R5b residue-sweep limit); a larger gap is
+    no rounding and stays visible in `valuation_vs_subledger`. At zero the residue sweep (66) clears what is left.
+
+70. **Late count correction that cannot post (IPR E1).** `correctLateCountRows` checks the correction's journal first
+    (posting rule or mappings, accounts that accept postings) without throwing; when it cannot post, the correction is
+    skipped and logged and stays listed on the count, and the late movement applies. Before, a refusal thrown by the
+    posting bean marked the whole transaction rollback-only and the late movement itself failed at commit. Residual: a
+    refusal raised later inside `PostingService.checkLines` (period, dimensions, cost-centre rules) still fails the move.
+
+71. **One sales-order reservation guard (IPR 1d).** `StockReservationService.assertNotReservedForSalesOrders` and the
+    engine's `honourReservations` share `StockService.requireFreeOfSalesReservations` (same message). Production
+    consumption (`honourReservations(null)`) and sales-order deliveries by fleet (`honourReservations([its line])`) are
+    now checked inside the engine's cell lock: production can no longer consume stock reserved for sales orders.
+
+72. **Bill cancel issues its receipt back (IPR 1d F6).** Cancelling an auto-received vendor bill issues its receipt
+    rows back through `issueBackReceipt` (pinned lots, linked `reversesLedgerId`, journal at the receipt's cost plus
+    the PPV difference); it is refused when the goods are no longer on hand (`Bill <n> cannot be cancelled: …`), where
+    before it issued whatever FIFO / average picked. GRN, PO receive and bill auto-receive rows carry `sourceLineId`.
+
 ### Negative stock policy (as built; R5a evidence for gate G3)
 
 - `inventory.allowNegativeStock` (`SettingRegistry`) defaults to **on**: every issue may take a quant below zero

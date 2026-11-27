@@ -4,7 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
+import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockReversalService;
+import com.inventoryerp.inventory.application.StockReversalService.IssueSource;
+import com.inventoryerp.inventory.application.StockReversalService.ReturnFromSource;
+import com.inventoryerp.inventory.application.StockReversalService.ReturnLine;
 import com.inventoryerp.pos.application.PosInvoiceService;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -27,6 +33,9 @@ class IprPosRefundRestockIT extends InventoryAuditSupport {
 
     @Autowired
     PosInvoiceService billing;
+
+    @Autowired
+    StockReversalService reversals;
 
     String pin;
     String sessionId;
@@ -141,6 +150,109 @@ class IprPosRefundRestockIT extends InventoryAuditSupport {
         assertThat(out.stream().filter(r -> r.value() != null && r.value() == 200).count()).as(out.toString())
                 .isEqualTo(1);
         assertThat(onHand(p, main)).as("restocked once").isEqualByComparingTo("5");
+        assertIntegrityGreen(true, "feature_risk", "negative_quants");
+        assertGlTieOut();
+    }
+
+    // ------------------------------------------------------------------ IPR wave 3 (E3)
+
+    String openOrder(String product, int qty) {
+        return okA(201, "POST", "/pos/orders", Map.of("orderType", "takeaway", "guestCount", 1, "cashSessionId",
+                sessionId, "lines", List.of(new LinkedHashMap<>(Map.of("productId", product, "description", "Item",
+                        "quantity", qty, "unitPrice", 100))))).get("id").asString();
+    }
+
+    @Test
+    @DisplayName("X-8: billed under at_payment, timing switched to at_invoice, then paid — the sale still issues once")
+    void timingChangeStillIssues() throws Exception {
+        String p = product("X8-TIME", Map.of("salesPrice", 100, "costPrice", 5));
+        receive(p, main, 10, 5, null);
+        orgSetting("inventory.stockPostingTiming", "\"at_payment\"");
+        try {
+            String orderId = openOrder(p, 3);
+            Res billed = keyedRes("POST", "/pos/orders/" + orderId + "/invoice", Map.of("cashSessionId", sessionId));
+            assertThat(billed.status()).as(billed.raw().body()).isIn(200, 201);
+            String invoiceId = asOrg(() -> jdbc.sql("SELECT \"invoiceId\" FROM \"Order\" WHERE id = ?").param(orderId)
+                    .query(String.class).single());
+            String jobs = "SELECT count(*) FROM \"StockPostingJob\" WHERE \"organizationId\" = ? AND \"orderId\" = ?";
+            assertThat(asOrg(() -> count(jobs, org, orderId))).as("at_payment: no job at billing").isZero();
+            orgSetting("inventory.stockPostingTiming", "\"at_invoice\"");
+            keyed(200, "POST", "/pos/invoices/" + invoiceId + "/payments", Map.of("cashSessionId", sessionId,
+                    "tenders", List.of(Map.of("method", "cash", "amount", 300))));
+            long deadline = System.currentTimeMillis() + 20_000;
+            while (asOrg(() -> count(jobs, org, orderId)) == 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(250);
+            }
+            assertThat(asOrg(() -> count(jobs, org, orderId))).as("the closed sale got its one job").isEqualTo(1);
+            String job = asOrg(() -> jdbc.sql("SELECT id FROM \"StockPostingJob\" WHERE \"organizationId\" = ? AND"
+                    + " \"orderId\" = ?").params(org, orderId).query(String.class).single());
+            TenantContext.run(TenantStore.user(org, auditUserId), () -> billing.processStockPostingJob(job));
+            assertThat(onHand(p, main)).isEqualByComparingTo("7");
+            assertIntegrityGreen(true, "feature_risk", "negative_quants");
+            assertGlTieOut();
+        } finally {
+            orgSetting("inventory.stockPostingTiming", "\"at_fulfillment_complete\"");
+        }
+    }
+
+    @Test
+    @DisplayName("1d pre-R4: a proportional refund restock is capped by what the sale still has out (net of a void)")
+    void preR4RestockCapped() {
+        // Its own organisation: the pre-R4 path writes unlinked refund rows, which unlinked_restocks reports for an
+        // organisation that also has linked ones (the other tests of this class).
+        AuditOrg o = newOrg();
+        String[] saved = {org, auditToken, auditUserId, main, pin, sessionId};
+        org = o.id();
+        auditToken = o.token();
+        auditUserId = o.userId();
+        main = o.main();
+        till();
+        String p = product(o, "R4-CAP", Map.of("salesPrice", 100, "costPrice", 5));
+        receive(p, main, 10, 5, null);
+        orgSetting("inventory.stockPostingTiming", "\"manual\"");
+        try {
+            String orderId = openOrder(p, 2);
+            // A line issued before R4 (no source line), 3 units, of which a void brought 1 back, linked.
+            StockMove.Issued out = issue(p, main, 3, m -> m.source("pos_order", orderId));
+            asOrgRun(() -> reversals.returnFromSource(new ReturnFromSource(IssueSource.ledgerCodes(List.of(
+                    out.ledgerCode())), List.of(ReturnLine.of(p, null, BigDecimal.ONE)), "pos_order_void", orderId,
+                    null, null, null, null, true, "return_in")));
+            assertThat(onHand(p, main)).isEqualByComparingTo("8");
+            String invoiceId = settle(orderId, 200);
+            keyed(200, "POST", "/pos/invoices/" + invoiceId + "/refund", refundBody(invoiceId, 2));
+            assertThat(onHand(p, main)).as("2 still out come back, not 3 × 2 / 2").isEqualByComparingTo("10");
+            assertIntegrityGreen(true, "feature_risk", "negative_quants");
+            assertGlTieOut();
+        } finally {
+            org = saved[0];
+            auditToken = saved[1];
+            auditUserId = saved[2];
+            main = saved[3];
+            pin = saved[4];
+            sessionId = saved[5];
+        }
+    }
+
+    Map<String, Object> refundAs(String invoiceId, int qty, String disposition) {
+        Map<String, Object> body = new LinkedHashMap<>(refundBody(invoiceId, qty));
+        body.put("stockDisposition", disposition);
+        return body;
+    }
+
+    @Test
+    @DisplayName("review BLOCKER: refunds after a no_return refund restock only their share of what was issued")
+    void noReturnThenRestockDoesNotOverRestock() {
+        String p = product("RV-NORET", Map.of("salesPrice", 100, "costPrice", 5));
+        receive(p, main, 20, 5, null);
+        String orderId = issuedOrder(p, 10);
+        assertThat(onHand(p, main)).isEqualByComparingTo("10");
+        String invoiceId = settle(orderId, 1000);
+        keyed(200, "POST", "/pos/invoices/" + invoiceId + "/refund", refundAs(invoiceId, 4, "no_return"));
+        assertThat(onHand(p, main)).as("no_return restocks nothing").isEqualByComparingTo("10");
+        keyed(200, "POST", "/pos/invoices/" + invoiceId + "/refund", refundAs(invoiceId, 3, "restock"));
+        assertThat(onHand(p, main)).as("3 of 10 issued, not 10 × 3 / 6").isEqualByComparingTo("13");
+        keyed(200, "POST", "/pos/invoices/" + invoiceId + "/refund", refundAs(invoiceId, 3, "restock"));
+        assertThat(onHand(p, main)).as("the last 3, not everything still returnable").isEqualByComparingTo("16");
         assertIntegrityGreen(true, "feature_risk", "negative_quants");
         assertGlTieOut();
     }

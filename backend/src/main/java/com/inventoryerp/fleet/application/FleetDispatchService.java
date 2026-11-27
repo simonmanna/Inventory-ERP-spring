@@ -1121,6 +1121,7 @@ public class FleetDispatchService {
                 saleable.assertSaleable((String) l.get("productId"));
             }
             if (qty.signum() > 0 && moveStock && tracked((String) l.get("productId"))) {
+                String soLine = null;
                 if (issuePort != null) {
                     // Sales readiness DEL-8: never issue stock firmly reserved for another order.
                     String sourceLine = db.jdbc().sql("SELECT \"sourceLineId\" FROM \"FleetDeliveryOrderLine\" WHERE id = ?"
@@ -1130,6 +1131,7 @@ public class FleetDispatchService {
                             ? BigDecimal.ONE : SqlRows.dec(l, "uomFactor");
                     issuePort.assertIssuable(sourceLine, (String) l.get("productId"), variantOf(l),
                             (String) t.get("locationId"), qty.multiply(factor));
+                    soLine = sourceLine;
                 } else if (reservations != null) {
                     // IPR F5: a delivery that is not a sales order's own (manual, invoice, POS order) leaves the stock
                     // reserved for sales orders alone.
@@ -1144,6 +1146,11 @@ public class FleetDispatchService {
                         .moveType("issue").source(STOCK_SOURCE, id).reference(code).date(now)
                         .notes("Delivery " + order.get("code") + " · trip " + code)
                         .baseQuantity(cumulativeBase(l, qty));
+                if (issuePort != null) {
+                    // IPR 1d (E-1a): the engine re-checks, under its own cell lock, that the issue leaves the stock
+                    // other sales-order lines reserve (this line's own reservation is the holder).
+                    m.honourReservations(soLine == null ? null : List.of(soLine));
+                }
                 if (batch != null) {
                     m.strategy("MANUAL");
                 }
