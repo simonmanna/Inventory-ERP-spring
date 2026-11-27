@@ -205,13 +205,12 @@ public class SalesAtpService {
 
     // ------------------------------------------------------------------ reservations
 
-    /** Reserve / re-plan every open stock line of an order (idempotent; called on confirm, change, close short). */
-    @Transactional
     /**
      * Sales readiness R4 (SO-8): re-plan an order's reservations after it changed (close short, amendment, fulfilment
      * rebuild) only where reservations are in use: the organisation reserves on confirmation, or this order was
      * reserved by hand. An organisation that opted out ({@code reservationTrigger = none}) gets none by itself.
      */
+    @Transactional
     public void followOrder(String orderId) {
         // No settings row yet = the column default, 'confirm'.
         boolean auto = db.count("SELECT count(*) FROM \"SalesSettings\" WHERE \"organizationId\" = ? AND"
@@ -224,9 +223,16 @@ public class SalesAtpService {
         }
     }
 
+    /**
+     * Reserve / re-plan every open stock line of an order. IPR M-27: one transaction (the route called it with none, so
+     * each cell lock and reservation committed on its own and two concurrent calls could both reserve the same free
+     * stock), with the sales order locked first (L1), then each line's cell (L3 → L4 → L5) in the engine's line order,
+     * then the reservation rows (L6).
+     */
+    @Transactional
     public Map<String, Object> reserveOrder(String orderId) {
-        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", orderId,
-                org());
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                orderId, org());
         if (o == null) {
             throw ApiException.notFound("Sales order not found");
         }
