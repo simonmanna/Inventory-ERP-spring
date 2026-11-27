@@ -73,11 +73,16 @@ public class InventoryIntegrityService {
     public static final String QUALITY_HOLD_UNQUARANTINED = "quality_hold_unquarantined";
     public static final String PERIOD_SHIFTED = "period_shifted";
     public static final String FEATURE_RISK = "feature_risk";
+    /**
+     * IPR GL-11 / R4: per manufacturing cost object, GL WIP (base currency) = its sub-ledger on the basis of
+     * docs/spec/manufacturing-wip-reconciliation.md. Report-only until the owner promotes it to a value check.
+     */
+    public static final String WIP_TIEOUT = "wip_tieout";
 
     /** Every report-only check, in report order. */
     public static final List<String> REPORT_ONLY_CHECKS = List.of(NEGATIVE_QUANTS, ISSUED_SERIAL_LOCATED, OVER_RETURNED,
             UNLINKED_RESTOCKS, GL_TIEOUT_BY_ACCOUNT, STOCK_POSTING_JOBS, TRANSIT_AGE, INVOICE_UNDELIVERED,
-            DELIVERY_RETURN_OVERLAP, QUALITY_HOLD_UNQUARANTINED, PERIOD_SHIFTED, FEATURE_RISK);
+            DELIVERY_RETURN_OVERLAP, QUALITY_HOLD_UNQUARANTINED, PERIOD_SHIFTED, FEATURE_RISK, WIP_TIEOUT);
 
     /**
      * Report-only checks that only inform: always ok (so the monitor never raises them), their rows show the scale of a
@@ -249,6 +254,15 @@ public class InventoryIntegrityService {
                 checks, reportOnly.stream().allMatch(IntegrityCheck::ok), reportOnly);
     }
 
+    /**
+     * IPR GL-3 / GL-10: only the checks on stock value ({@link #VALUE_CHECKS}), organisation level, run now. The period
+     * close and the resolution of a value finding re-run these instead of trusting an earlier finding.
+     */
+    @Transactional(readOnly = true)
+    public List<IntegrityCheck> valueChecks() {
+        return List.of(valuationVsSubledger(null), valuationVsGl(null), valuationVsGlByProduct(null));
+    }
+
     /** IPR Phase 0: the report-only checks, in {@link #REPORT_ONLY_CHECKS} order. */
     private List<IntegrityCheck> reportOnly(String loc) {
         List<IntegrityCheck> checks = new ArrayList<>();
@@ -264,6 +278,7 @@ public class InventoryIntegrityService {
         checks.add(qualityHoldUnquarantined(loc));
         checks.add(periodShifted(loc));
         checks.add(featureRisk(loc));
+        checks.add(wipTieOut(loc));
         return checks;
     }
 
@@ -494,7 +509,8 @@ public class InventoryIntegrityService {
         long unattributedLines = 0;
         boolean anyStamped = false;
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("""
-                WITH gl AS (SELECT e."sourceId" AS sid, jl.dimensions ->> :key AS pid, jl.debit - jl.credit AS amt
+                WITH gl AS (SELECT e."sourceId" AS sid, jl.dimensions ->> :key AS pid,
+                                   jl."baseDebit" - jl."baseCredit" AS amt
                               FROM "JournalLine" jl JOIN "JournalEntry" e ON e.id = jl."journalEntryId"
                              WHERE e."organizationId" = :org AND e.status::text <> 'draft'
                                AND jl."accountId" IN (:accts) AND e."createdAt" >= CAST(:cut AS timestamp)),
@@ -1161,6 +1177,27 @@ public class InventoryIntegrityService {
                  ORDER BY 1, p.name""".formatted(locI), params(loc, QTY_TOLERANCE));
         return check(DELIVERY_RETURN_OVERLAP, "per delivery group and product: put-backs + linked returns ≤ quantity"
                 + " the trips issued", QTY_TOLERANCE, f, null);
+    }
+
+    private WipTieOutProvider wip;
+
+    /** IPR GL-11: the manufacturing module's WIP tie-out (absent without it). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setWipTieOut(WipTieOutProvider wip) {
+        this.wip = wip;
+    }
+
+    /** IPR GL-11 / R4: the WIP tie-out per cost object (organisation level; manufacturing implements it). */
+    private IntegrityCheck wipTieOut(String loc) {
+        String invariant = "per production order / process / late cost: GL WIP (base currency) = its sub-ledger";
+        if (loc != null) {
+            return orgLevelSkipped(WIP_TIEOUT, invariant, VALUE_TOLERANCE);
+        }
+        if (wip == null) {
+            return new IntegrityCheck(WIP_TIEOUT, true, true, invariant, VALUE_TOLERANCE, 0, false, List.of(),
+                    "Manufacturing is not part of this build");
+        }
+        return wip.wipTieOut();
     }
 
     /** Quality-module lots on hold (stock under quality control) whose stock was never moved to quarantine. */

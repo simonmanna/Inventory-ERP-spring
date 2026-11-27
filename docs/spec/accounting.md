@@ -70,6 +70,18 @@ report snapshot cron (`snapshot-cron.worker.ts`).
 
 ## Deviations
 
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
+[2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md); policy table
+[inventory-accounting-policy](inventory-accounting-policy.md)):
+
+- **GL-10: live value checks at period close.** `POST /fiscal-periods/:id/close` re-runs the inventory value checks
+  (`valuation_vs_subledger`; with `inventory.glTieOut.enabled` also `valuation_vs_gl`, `valuation_vs_gl_by_product`)
+  and refuses while one fails: 400 "Cannot close '<period>': the inventory value check(s) <key> (<n> row(s); <note>)
+  fail now. Correct the stock value or the GL, then close." Switch: organisation setting
+  `inventory.closeGate.liveValueChecks` (default on). Open value findings block whatever their raise date (the
+  `createdAt ≥ period start` filter is gone, also from the `inventory_integrity_value` checklist item).
+- **GL-1 / GL-5:** the inventory GL tie-out reads base-currency amounts (see inventory.md).
+
 FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; A–G on main, FX-3..FX-8 built):
 
 - Posting refuses when the company has no functional currency (no USD fallback). `PATCH /organizations/me/settings`

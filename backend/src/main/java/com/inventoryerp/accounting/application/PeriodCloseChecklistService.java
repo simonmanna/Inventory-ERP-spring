@@ -145,12 +145,12 @@ public class PeriodCloseChecklistService {
                 count(PeriodCloseService.OPEN_SALE_LINE_EXCEPTIONS, org, InventoryTieOutMonitor.KIND,
                         InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX, startAt, endAt, startAt, endAt)));
         // Hardening R0: the daily inventory integrity check parks a failing value check (valuation vs stock ledger or
-        // GL) as an open exception of its own kind; like the close gate, it blocks while open (raised since the
-        // period started). Quantity findings stay in the Posting Monitor and are not a close item.
+        // GL) as an open exception of its own kind; like the close gate, it blocks while open, whatever the date it
+        // was raised (IPR GL-10). Quantity findings stay in the Posting Monitor and are not a close item.
         checks.add(check("inventory_integrity_value", "Stock value integrity checks pass (no open valuation finding)",
                 true, count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status::text"
-                        + " = 'open' AND kind = ANY(?::text[]) AND \"createdAt\" >= ?", org,
-                        InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new), startAt)));
+                        + " = 'open' AND kind = ANY(?::text[])", org,
+                        InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new))));
         // The daily inventory / GL tie-out check (deviation 20 of docs/spec/inventory.md) parks a variance as an open
         // InventoryException of its own kind. A reconciliation finding, so advisory like the bank and landed-cost
         // ones: raised since the period started (the run after the last day lands in the next period) and still open.

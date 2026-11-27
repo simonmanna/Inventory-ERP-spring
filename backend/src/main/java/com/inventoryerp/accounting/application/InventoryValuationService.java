@@ -363,7 +363,7 @@ public class InventoryValuationService {
         List<Map<String, Object>> accounts = SqlRows.list(jdbc.sql("SELECT id, code, name FROM \"Account\" WHERE id IN (:ids)")
                 .param("ids", accountIds));
         List<Map<String, Object>> glBySource = SqlRows.list(jdbc.sql("SELECT e.\"sourceType\" AS source,"
-                        + " SUM(jl.\"debit\" - jl.\"credit\") AS amount FROM \"JournalLine\" jl"
+                        + " SUM(jl.\"baseDebit\" - jl.\"baseCredit\") AS amount FROM \"JournalLine\" jl"
                         + " JOIN \"JournalEntry\" e ON e.id = jl.\"journalEntryId\""
                         + " WHERE e.\"organizationId\" = :org AND e.status <> 'draft' AND e.\"postingDate\" <= :date"
                         + " AND jl.\"accountId\" IN (:accts) GROUP BY e.\"sourceType\"")

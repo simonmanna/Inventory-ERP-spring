@@ -52,6 +52,14 @@ public class PeriodCloseService {
         this.accounts = accounts;
     }
 
+    private InventoryValueChecks valueChecks;
+
+    /** IPR GL-10: the live inventory value checks (absent when the inventory module is not on the classpath). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setValueChecks(InventoryValueChecks valueChecks) {
+        this.valueChecks = valueChecks;
+    }
+
     private Period lockPeriod(String periodId, String organizationId) {
         jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(periodId, organizationId).query(String.class).list();
@@ -187,12 +195,23 @@ public class PeriodCloseService {
                     + " Resolve them in the Posting Monitor before closing.");
         }
 
-        // Hardening R0: an open integrity finding on stock value (valuation vs stock ledger, valuation vs GL) raised
-        // since the period started means the period's stock value is not final, so the period cannot close.
+        // Hardening R0: an open integrity finding on stock value (valuation vs stock ledger, valuation vs GL) means the
+        // period's stock value is not final, so the period cannot close. IPR GL-10 (deviation): whatever the date the
+        // finding was raised (one raised before the period started counted for nothing), and the value checks are
+        // re-run now, so a variance no daily run has raised yet holds the close too.
         long valueFindings = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
-                        + " AND status::text = 'open' AND kind = ANY(?::text[]) AND \"createdAt\" >= ?",
-                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new),
-                period.startDate());
+                        + " AND status::text = 'open' AND kind = ANY(?::text[])",
+                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new));
+        if (valueChecks != null) {
+            List<InventoryValueChecks.Failure> failing = valueChecks.failing();
+            if (!failing.isEmpty()) {
+                List<String> what = new ArrayList<>();
+                failing.forEach(f -> what.add(f.key() + " (" + f.failures() + " row(s)"
+                        + (f.note() != null ? "; " + f.note() : "") + ")"));
+                throw ApiException.badRequest("Cannot close '" + period.name() + "': the inventory value check(s) "
+                        + String.join(", ", what) + " fail now. Correct the stock value or the GL, then close.");
+            }
+        }
         if (valueFindings > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + valueFindings
                     + " open inventory integrity finding(s) on stock value (valuation vs stock ledger or GL)."

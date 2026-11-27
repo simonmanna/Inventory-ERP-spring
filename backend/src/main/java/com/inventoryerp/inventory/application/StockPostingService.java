@@ -789,18 +789,32 @@ public class StockPostingService {
         }
     }
 
+    /**
+     * The AccountMapping default of an issue whose movement type has no posting rule. IPR GL-4 (deviation from Nest,
+     * which sent every type other than the four write-off types to COGS): a return to supplier credits stock against
+     * GRNI and a production consumption against WIP, the same accounts as their default rules and as
+     * {@link #postReturnToSupplier} / {@link #postProductionConsume}; a movement type with no known default fails
+     * closed instead of silently landing in COGS.
+     */
     private List<Line> fallbackLinesIssue(String movementType, BigDecimal totalValue, String productName) {
         String v = JsNumbers.dec(totalValue);
-        if (movementType != null
-                && List.of("WASTE", "EXPIRY_WRITE_OFF", "INTERNAL_CONSUMPTION", "PROMO_SAMPLE").contains(movementType)) {
-            String sv = determination.mapped("stock_valuation");
-            String expense = determination.mapped("stock_adjustment_expense");
-            return List.of(Line.debit(expense, v, movementType + " · " + productName),
-                    Line.credit(sv, v, movementType + " · " + productName));
-        }
-        String cogs = determination.mapped("cogs");
+        String mt = movementType == null ? "STOCK_OUT" : movementType;
         String sv = determination.mapped("stock_valuation");
-        return List.of(Line.debit(cogs, v, "COGS · " + productName), Line.credit(sv, v, "Stock issue · " + productName));
+        return switch (mt) {
+            case "WASTE", "EXPIRY_WRITE_OFF", "INTERNAL_CONSUMPTION", "PROMO_SAMPLE" -> {
+                String expense = determination.mapped("stock_adjustment_expense");
+                yield List.of(Line.debit(expense, v, mt + " · " + productName),
+                        Line.credit(sv, v, mt + " · " + productName));
+            }
+            case "RETURN_TO_SUPPLIER" -> List.of(Line.debit(determination.mapped("grni_accrued"), v,
+                    "Return to supplier · " + productName), Line.credit(sv, v, "Return to supplier · " + productName));
+            case "PRODUCTION_CONSUME" -> List.of(Line.debit(wipOr(sv), v, "Production consume · " + productName),
+                    Line.credit(sv, v, "Production consume · " + productName));
+            case "STOCK_OUT" -> List.of(Line.debit(determination.mapped("cogs"), v, "COGS · " + productName),
+                    Line.credit(sv, v, "Stock issue · " + productName));
+            default -> throw ApiException.badRequest("No posting rule or default account is configured for stock"
+                    + " movements of type " + mt + "; add a posting rule for it under Inventory > Posting rules");
+        };
     }
 
     private void simple(String movementType, String productId, BigDecimal totalValue, Instant date, String sourceType,

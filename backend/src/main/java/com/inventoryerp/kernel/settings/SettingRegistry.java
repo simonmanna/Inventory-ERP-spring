@@ -139,6 +139,12 @@ public final class SettingRegistry {
                         + " tie-out report does); a variance above the tolerance raises an inventory exception in the"
                         + " Posting Monitor and an in-app alert.",
                 true, null, false, ORG_ONLY);
+        // IPR GL-10 (owner sign-off item): the period close re-runs the inventory value checks live.
+        def("inventory.closeGate.liveValueChecks", "inventory", "bool", "Period Close Re-runs Inventory Value Checks",
+                "When on, closing a fiscal period re-runs the inventory checks on stock value (valuation vs stock"
+                        + " ledger, and vs the GL while the daily tie-out is on) and refuses the close while one fails,"
+                        + " whenever the finding was raised.",
+                true, null, false, ORG_ONLY);
         def("inventory.glTieOut.tolerance", "inventory", "number", "Inventory–GL Tie-out Tolerance",
                 "Largest absolute difference (base currency) between stock valuation and the inventory GL balance that"
                         + " the daily check accepts.",
