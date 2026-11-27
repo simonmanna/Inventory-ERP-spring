@@ -79,7 +79,7 @@ class InventoryIntegrityIT extends InventoryAuditSupport {
                 List.of(Map.of("itemId", itemId, "received", 2))));
         assertThat(partial.get("status").asString()).isEqualTo("partially_received");
         okAs(o, 201, "POST", "/inventory/reservations", Map.of("productId", plain, "locationId", o.main(), "quantity",
-                2, "sourceType", "order", "sourceId", "SO-" + UUID.randomUUID()));
+                2, "sourceType", "manual", "sourceId", "SO-" + UUID.randomUUID()));
         String transitLoc = jdbc.sql("SELECT \"transitLocId\" FROM \"StockTransfer\" WHERE id = ?").param(transferId)
                 .query(String.class).single();
         return new Scenario(o, plain, lot, serial, moving, transferId, itemId, transitLoc);

@@ -38,6 +38,13 @@ public class StockReservationService {
     public record Reserve(String productId, String variantId, String locationId, BigDecimal quantity,
             String sourceType, String sourceId, String reason) {}
 
+    /**
+     * IPR C-5 / S-7 / S14: the only source type the manual routes may reserve or consume. Document reservations
+     * (sales orders, invoices, production) belong to their documents; a manual reserve under their source type could
+     * overwrite a document line's reservation (one row per source line and cell).
+     */
+    public static final String MANUAL_SOURCE = "manual";
+
     /** The most rows {@code GET /inventory/reservations} returns when it is not keyed by one source. */
     static final int LIST_MAX = 200;
 
@@ -120,6 +127,7 @@ public class StockReservationService {
      */
     @Transactional
     public Map<String, Object> reserveForUser(Reserve dto) {
+        assertManual(dto.sourceType(), "reserve");
         if (lookups.product(dto.productId()) == null) {
             throw ApiException.notFound("Product not found");
         }
@@ -175,7 +183,17 @@ public class StockReservationService {
     /** {@code POST /inventory/reservations/consume}: {@link #consume} limited to the caller's locations. */
     @Transactional
     public Map<String, Object> consumeForUser(String sourceType, String sourceId) {
+        assertManual(sourceType, "consume");
         return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt", scope.current()));
+    }
+
+    /** IPR C-5: refuse a manual-route action on a document's reservation. */
+    private static void assertManual(String sourceType, String action) {
+        if (!MANUAL_SOURCE.equals(sourceType)) {
+            throw ApiException.badRequest("Only manual reservations can be " + ("reserve".equals(action)
+                    ? "created" : "consumed") + " here (sourceType must be \"manual\"); a document's reservations"
+                    + " follow the document");
+        }
     }
 
     private int close(String sourceType, String sourceId, String status, String stamp) {
