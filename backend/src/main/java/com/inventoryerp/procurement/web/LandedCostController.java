@@ -1,28 +1,13 @@
 package com.inventoryerp.procurement.web;
 
-import com.inventoryerp.shared.validation.ArrayMinSize;
-import static com.inventoryerp.procurement.web.ProcurementDtos.ARR;
-import static com.inventoryerp.procurement.web.ProcurementDtos.DATE_MSG;
-import static com.inventoryerp.procurement.web.ProcurementDtos.ISO_DATE;
-import static com.inventoryerp.procurement.web.ProcurementDtos.MIN1;
-import static com.inventoryerp.procurement.web.ProcurementDtos.NOT_EMPTY;
-import static com.inventoryerp.procurement.web.ProcurementDtos.POSITIVE;
 
 import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.procurement.application.LandedCostService;
-import com.inventoryerp.procurement.application.LandedCostService.ChargeInput;
-import com.inventoryerp.procurement.application.LandedCostService.CreateInput;
 import com.inventoryerp.procurement.application.LandedCostVoucherService;
-import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Pattern;
-import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,22 +22,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/procurement/landed-costs")
 public class LandedCostController {
-
-    /** {@code LandedCostChargeDto}. */
-    public record LandedCostChargeRequest(
-            @NotNull(message = "must be one of the following values: freight, duty, insurance, handling, other")
-            @OneOf({"freight", "duty", "insurance", "handling", "other"}) String kind,
-            String description,
-            @NotNull(message = POSITIVE) @Positive(message = POSITIVE) BigDecimal amount) {}
-
-    /** {@code CreateLandedCostDto}. */
-    public record CreateLandedCostRequest(
-            @NotNull(message = "must be a string") @NotEmpty(message = NOT_EMPTY) String goodsReceiptId,
-            @NotNull(message = "must be a string") @NotEmpty(message = NOT_EMPTY) String creditAccountId,
-            @OneOf({"value", "quantity", "equal"}) String allocationMethod,
-            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String date,
-            String notes,
-            @NotNull(message = ARR) @ArrayMinSize(1) List<@Valid LandedCostChargeRequest> charges) {}
 
     private final LandedCostService landedCosts;
     private final LandedCostVoucherService vouchers;
@@ -74,15 +43,18 @@ public class LandedCostController {
         return landedCosts.get(id);
     }
 
+    /**
+     * Purchase readiness B4 (owner-approved 2026-11-27): retired — always 400, pointing to landed cost vouchers. The
+     * body is not read.
+     */
     @PostMapping
     @Idempotent
     @RequirePermissions(Permissions.PROCUREMENT__GOODS_RECEIPT__CREATE)
-    public Map<String, Object> create(@Valid @RequestBody CreateLandedCostRequest dto) {
-        return landedCosts.create(new CreateInput(dto.goodsReceiptId(), dto.creditAccountId(), dto.allocationMethod(),
-                dto.date(), dto.notes(), dto.charges().stream().map(c -> new ChargeInput(c.kind(), c.description(),
-                        c.amount())).toList()));
+    public Map<String, Object> create(@RequestBody(required = false) Map<String, Object> ignored) {
+        return landedCosts.create(null);
     }
 
+    /** Purchase readiness B4: retired — always 400 (a draft can still be cancelled). */
     @PostMapping("/{id}/post")
     @Idempotent
     @RequirePermissions(Permissions.PROCUREMENT__GOODS_RECEIPT__POST)

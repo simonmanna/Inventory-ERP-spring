@@ -6,18 +6,14 @@ import com.inventoryerp.BooksGuard;
 import com.inventoryerp.inventory.application.CostLineageService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
+import com.inventoryerp.procurement.application.LandedCostService;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
-import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,10 +32,10 @@ import tools.jackson.databind.JsonNode;
 class LandedCostGapsIT extends LandedCostFixtures {
 
     @Autowired
-    DataSource dataSource;
+    CostLineageService lineage;
 
     @Autowired
-    CostLineageService lineage;
+    LandedCostService legacyCosts;
 
     // ------------------------------------------------------------------ helpers
 
@@ -110,10 +106,11 @@ class LandedCostGapsIT extends LandedCostFixtures {
                 "receivedAt", Instant.now().toString(), "lines", List.of(line))).get("id").asString();
     }
 
+    /** A posted legacy landed cost (purchase readiness B4: the routes are retired; history built with the engine). */
     String legacy(String grn, int amount) {
-        return ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "freight", "amount", amount))))
-                .get("id").asString();
+        return asAdmin(() -> (String) legacyCosts.postHistorical(new LandedCostService.CreateInput(grn,
+                mapped("accounts_payable"), null, null, null, List.of(new LandedCostService.ChargeInput("freight", null,
+                        BigDecimal.valueOf(amount))))).get("id"));
     }
 
     String credit(String voucherId, int amount) {
@@ -194,6 +191,11 @@ class LandedCostGapsIT extends LandedCostFixtures {
                 "vendorBillId", bill, "creditAccountId", mapped("accounts_payable"))));
         assertThat(otherCredit.status()).as(otherCredit.raw().body()).isEqualTo(400);
         assertThat(otherCredit.raw().body()).contains("a linked supplier bill is cleared through landed cost clearing");
+        // Purchase readiness audit 2026-11-27: the linked bill must be the charge supplier's (already enforced at save).
+        Res otherSupplier = createVoucher(List.of(grn), List.of(charge("kind", "duty", "amount", 100, "billMode", "link",
+                "vendorBillId", bill, "supplierId", forwarder)));
+        assertThat(otherSupplier.status()).as(otherSupplier.raw().body()).isEqualTo(400);
+        assertThat(otherSupplier.raw().body()).contains("belongs to another supplier than charge");
 
         String base = jdbc.sql("SELECT upper(coalesce(\"currencyCode\", '')) FROM \"Organization\" WHERE id = ?")
                 .param(demoOrg).query(String.class).single();
@@ -329,45 +331,8 @@ class LandedCostGapsIT extends LandedCostFixtures {
         }
     }
 
-    // ------------------------------------------------------------------ F6 legacy post vs receipt reversal
-
-    @Test
-    @DisplayName("h05-F6: a legacy post waits while a receipt reversal holds the receipt, then finds its draft cancelled")
-    void legacyPostWaitsForReceiptReversal() throws Exception {
-        String grn = receive(product("AVCO", false, 0), 10, 50);
-        String lc = legacy(grn, 100);
-        try (Connection c = dataSource.getConnection()) {
-            c.setAutoCommit(false);
-            try {
-                // What GoodsReceiptsService.reverse does first: lock the receipt row.
-                try (PreparedStatement ps = c.prepareStatement("SELECT id FROM \"GoodsReceiptNote\" WHERE id = ? FOR"
-                        + " UPDATE")) {
-                    ps.setString(1, grn);
-                    ps.executeQuery().close();
-                }
-                CompletableFuture<Res> posting = CompletableFuture.supplyAsync(() -> call("POST",
-                        "/procurement/landed-costs/" + lc + "/post", null, key()));
-                Thread.sleep(1500);
-                assertThat(posting.isDone()).as("the legacy post waits for the receipt lock").isFalse();
-                // ... then cancels the receipt's draft landed costs and commits.
-                try (PreparedStatement ps = c.prepareStatement("UPDATE \"LandedCost\" SET status = 'cancelled' WHERE"
-                        + " \"goodsReceiptId\" = ? AND status = 'draft'")) {
-                    ps.setString(1, grn);
-                    assertThat(ps.executeUpdate()).isEqualTo(1);
-                }
-                c.commit();
-                Res r = posting.get(60, TimeUnit.SECONDS);
-                assertThat(r.status()).as(r.raw().body()).isEqualTo(409);
-                assertThat(r.raw().body()).contains("Landed cost is not a draft");
-            } finally {
-                c.rollback();
-                c.setAutoCommit(true);
-            }
-        }
-        assertThat(voucherStatus(lc)).isEqualTo("cancelled");
-        assertThat(jdbc.sql("SELECT \"journalEntryId\" FROM \"LandedCost\" WHERE id = ?").param(lc).query(String.class)
-                .optional().orElse(null)).isNull();
-    }
+    // F6 (legacy post vs receipt reversal) retired with the legacy post route (purchase readiness B4, 2026-11-27):
+    // PurchaseReadinessReturnsIT asserts the refusal.
 
     // ------------------------------------------------------------------ F7 STANDARD reversal after a release
 
@@ -599,8 +564,6 @@ class LandedCostGapsIT extends LandedCostFixtures {
     void legacyReversalWithReason() {
         String grn = receive(product("AVCO", false, 0), 10, 50);
         String lc = legacy(grn, 100);
-        Res posted = call("POST", "/procurement/landed-costs/" + lc + "/post", null, key());
-        assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
         Res tooLong = call("POST", "/procurement/landed-costs/" + lc + "/reverse", Map.of("reason", "x".repeat(501)),
                 key());
         assertThat(tooLong.status()).as(tooLong.raw().body()).isEqualTo(400);

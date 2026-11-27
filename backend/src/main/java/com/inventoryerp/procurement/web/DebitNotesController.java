@@ -98,8 +98,9 @@ public class DebitNotesController {
                         l.taxId(), l.notes(), l.uomId(), l.variantId())).toList()));
     }
 
+    /** Purchase readiness (2026-11-27): a stock- and money-moving post requires an Idempotency-Key. */
     @PatchMapping("/{id}/post")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.DEBIT_NOTE__POST)
     public Map<String, Object> post(@PathVariable String id) {
         return svc.post(id);
@@ -118,7 +119,7 @@ public class DebitNotesController {
 
     /** Posted debit-note document reversal; see {@link DebitNotesService#reverse}. */
     @PatchMapping("/{id}/reverse")
-    @Idempotent
+    @Idempotent(required = true)
     @RequirePermissions(Permissions.DEBIT_NOTE__REVERSE)
     public Map<String, Object> reverse(@PathVariable String id,
             @Valid @RequestBody(required = false) ReverseDebitNoteRequest dto) {

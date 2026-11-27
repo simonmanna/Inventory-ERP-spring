@@ -268,7 +268,7 @@ export default function GoodsReceiptDetailPage() {
 
           {posted && (
             <TabsContent value="landed" className="mt-0 space-y-4 p-5">
-              <LandedCostPanel goodsReceiptId={grn.id} canCreate={has('goods_receipt:create')} canPost={has('goods_receipt:post')} canCancel={has('goods_receipt:cancel')} />
+              <LandedCostPanel goodsReceiptId={grn.id} canCreate={has('landed_cost:create')} canCancel={has('goods_receipt:cancel')} />
             </TabsContent>
           )}
         </Tabs>

@@ -706,3 +706,53 @@ Tests: `PlanningIT`. Web:
 - Vendor bills, including subcontract valuation bills (`withholdingTaxId` on the valuation request), can withhold tax
   at posting. See [invoicing.md](invoicing.md) and
   [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+
+## Purchase readiness fixes (owner-approved 2026-11-27) — stream "returns"
+
+**B4 — legacy per-receipt landed cost retired.** `POST /procurement/landed-costs` and `POST
+/procurement/landed-costs/:id/post` always answer 400. Messages (verbatim):
+- create: "Per-receipt landed costs are retired: enter freight, duty and other charges as a landed cost voucher for
+  this goods receipt (Procurement > Landed Costs, POST /procurement/landed-cost-vouchers) — it splits the cost between
+  stock still on hand and goods already sold, and records the supplier invoice, approval, tax and currency"
+- post: "Posting a per-receipt landed cost is retired: cancel this draft and enter its charges as a landed cost voucher
+  (Procurement > Landed Costs, POST /procurement/landed-cost-vouchers)"
+
+Why: its AVCO path capitalised the landed cost of goods already sold into stock (`onHand = min(quant, receipt qty)`),
+the credit account could be anything, and it had no supplier invoice / duplicate check, approval, tax or currency.
+`GET` (list, one), `/:id/cancel` (drafts) and `/:id/reverse` (posted entries, through the voucher engine) keep working.
+The goods-receipt screen's Landed costs tab lists the vouchers covering the receipt plus older per-receipt entries and
+opens "New landed cost voucher" prefilled with the receipt (`/procurement/landed-cost-vouchers/new?goodsReceiptId=`).
+`LandedCostService.postHistorical` keeps the old engine only for tests of historical entries (not routed).
+
+**H3 — return to vendor against a bill is limited.** On post, under a lock on the bill, per product (+variant) in base
+units: returned ≤ billed on that bill − earlier posted (not reversed) returns against it, and — when the bill was
+matched to receipts — ≤ what claims (verified, or settled as stock adjustment) and bill-less returns left of those
+receipt lines. A product not on the bill is refused at create and post. The stock issue requires available stock.
+- "Supplier bill {no} does not bill {item}; a return against a bill can only send back goods that bill billed"
+- "Only {n} of {item} can still be returned against supplier bill {no}: it billed {b}, earlier returns against it took
+  {e}[ and supplier claims or returns without a bill already cover {c} of the received goods]; this return asks for {q}"
+- "The referenced supplier bill is no longer posted; the return cannot be credited against it"
+
+**MEDIUM #5 — return naming no bill.** It must be fully covered by the supplier's open, unbilled posted receipt
+quantity (less verified/settled claim quantity); otherwise 400:
+- billed goods exist: "Only {n} of {item} are open on unbilled receipts from this supplier (this return asks for {q});
+  the rest is already billed — name the supplier bill ({bills}) on the return so that bill is credited"
+- otherwise: "Only {n} of {item} received from this supplier are still open to return; this return asks for {q}"
+
+**H4 — claim and return cannot credit the same goods twice.** `SupplierReturnLedger` computes per receipt line the
+quantity returned (bill-less returns via `DebitNoteReceiptMatch`, plus the least share of returns against a bill that
+matched the line). Claim quantity lines (add and settlement re-check) deduct it; returns deduct verified / settled
+stock-adjustment claim quantities. The claim value cap deducts returns: on a bill the posted return notes' net
+subtotal, on a receipt / order the returned quantity at the receipt (order) price. Message suffixes: "(… of …; returns to
+the supplier already credited {v})", "({r} already returned to the supplier)", "than the {n} received less the {r}
+already returned to the supplier". **Choice (claims without a document):** a claim credits AP at settlement, so a claim
+naming no bill, receipt or order is refused at accept (price / other claims; quantity claims get their receipt from
+their lines) and at settle: "Claim {no} names no supplier bill, goods receipt or purchase order; a claim credits the
+supplier only against the document it is about, which caps the amount — raise the claim on that document".
+
+**Also:** the audit's "linked bill supplier ≠ charge supplier" point was already enforced when a voucher is saved
+("Vendor bill {no} belongs to another supplier than charge {c}"); a regression assertion was added. `PATCH /procurement/debit-notes/:id/post`
+and `/reverse` now require an `Idempotency-Key` (the web always sends one).
+
+**Not changed:** a return does not reduce the PO line's `receivedQuantity` (replacement goods are received on a new
+receipt / order line); left for a separate decision.

@@ -108,12 +108,15 @@ public class SupplierClaimService {
     private final TransactionTemplate tx;
     private final com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod;
     private final DocumentFxRates fx;
+    private final SupplierReturnLedger ledger;
 
     public SupplierClaimService(JdbcClient jdbc, SequenceService seq, AuditService audit, EventBus events,
             PostingService posting, AccountDeterminationService determination, StockService stock,
             StockPostingService stockPosting, PlatformTransactionManager txm,
-            com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod, DocumentFxRates fx) {
+            com.inventoryerp.kernel.approvals.SegregationOfDutiesService sod, DocumentFxRates fx,
+            SupplierReturnLedger ledger) {
         this.jdbc = jdbc;
+        this.ledger = ledger;
         this.sod = sod;
         this.fx = fx;
         this.seq = seq;
@@ -188,6 +191,11 @@ public class SupplierClaimService {
         if (c != null) {
             sod.assertSeparated(com.inventoryerp.kernel.approvals.SegregationOfDutiesService.SUPPLIER_CLAIM_SETTLEMENT,
                     "SupplierClaim", id, java.util.Arrays.asList((String) c.get("createdBy")));
+            // Purchase readiness H4 (2026-11-27): a claim credits the supplier's payable at settlement, so it must
+            // name what it claims against; a quantity claim may still get its receipt from its quantity lines.
+            if (!QUANTITY_TYPES.contains(String.valueOf(c.get("type")))) {
+                assertHasDocument(c);
+            }
             assertWithinDocument(c, agreedAmount != null ? agreedAmount : Money.dec(c.get("amount")));
         }
         return transition(id, List.of("open", "submitted"), "accepted", ", \"decidedAt\" = " + NOW
@@ -204,22 +212,27 @@ public class SupplierClaimService {
         BigDecimal value;
         String column;
         Object documentId;
+        // Purchase readiness H4 (2026-11-27): what returns to the supplier already credited on the same document is
+        // not open to claims either (a return against the bill; goods returned from the receipt / order's receipts).
+        BigDecimal returned;
         if (c.get("vendorBillId") != null) {
             value = sum(billBasis((String) c.get("vendorBillId")));
             column = "vendorBillId";
             documentId = c.get("vendorBillId");
+            returned = Money.dec(jdbc.sql("SELECT COALESCE(sum(subtotal), 0) FROM \"DebitNote\" WHERE"
+                    + " \"organizationId\" = ? AND \"documentId\" = ? AND direction = 'inbound' AND reason ="
+                    + " 'returned_goods' AND status = 'posted' AND \"deletedAt\" IS NULL")
+                    .params(orgId, documentId).query(BigDecimal.class).single());
         } else if (c.get("goodsReceiptId") != null) {
-            // The order price converted to the receipt line's unit (a line received in pieces of a box order).
-            value = Money.dec(jdbc.sql("SELECT COALESCE(SUM(gl.quantity * CASE WHEN pl.id IS NULL THEN gl.\"unitCost\""
-                    + " WHEN COALESCE(pl.\"uomFactor\", 0) > 0 AND COALESCE(gl.\"uomFactor\", 0) > 0 THEN"
-                    + " pl.\"unitPrice\" * gl.\"uomFactor\" / pl.\"uomFactor\" ELSE pl.\"unitPrice\" END), 0) FROM"
-                    + " \"GoodsReceiptLine\" gl LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id = gl.\"purchaseOrderLineId\""
-                    + " WHERE gl.\"goodsReceiptId\" = ? AND gl.\"organizationId\" = ?")
-                    .params(c.get("goodsReceiptId"), orgId).query(BigDecimal.class).single());
+            List<Map<String, Object>> rows = receiptValueLines("gl.\"goodsReceiptId\" = ?", c.get("goodsReceiptId"));
+            value = receiptValue(rows, false);
+            returned = receiptValue(rows, true);
             column = "goodsReceiptId";
             documentId = c.get("goodsReceiptId");
         } else if (c.get("purchaseOrderId") != null) {
             value = sum(orderBasis((String) c.get("purchaseOrderId")));
+            returned = receiptValue(receiptValueLines("g.\"purchaseOrderId\" = ? AND g.status::text = 'posted'",
+                    c.get("purchaseOrderId")), true);
             column = "purchaseOrderId";
             documentId = c.get("purchaseOrderId");
         } else {
@@ -229,12 +242,45 @@ public class SupplierClaimService {
                         + " COALESCE(\"settledAmount\", amount) ELSE amount END), 0) FROM \"SupplierClaim\" WHERE \"organizationId\" = ? AND \"" + column
                         + "\" = ? AND id <> ? AND status IN ('accepted', 'settled')")
                 .params(orgId, documentId, c.get("id")).query(BigDecimal.class).single());
-        BigDecimal open = Money.round(value.subtract(taken).max(Money.ZERO));
+        BigDecimal open = Money.round(value.subtract(taken).subtract(returned).max(Money.ZERO));
         if (Money.round(amount).compareTo(open) > 0) {
             throw ApiException.badRequest("Claim " + c.get("claimNumber") + " for " + JsNumbers.dec(Money.round(amount))
                     + " exceeds what the claimed document leaves open to claims (" + JsNumbers.dec(open) + " of "
-                    + JsNumbers.dec(Money.round(value)) + "); agree a lower amount");
+                    + JsNumbers.dec(Money.round(value))
+                    + (returned.signum() > 0 ? "; returns to the supplier already credited "
+                            + JsNumbers.dec(Money.round(returned)) : "") + "); agree a lower amount");
         }
+    }
+
+    /** Purchase readiness H4: a claim must name the supplier bill, goods receipt or purchase order it is about. */
+    private static void assertHasDocument(Map<String, Object> c) {
+        if (c.get("vendorBillId") == null && c.get("goodsReceiptId") == null && c.get("purchaseOrderId") == null) {
+            throw ApiException.badRequest("Claim " + c.get("claimNumber") + " names no supplier bill, goods receipt or"
+                    + " purchase order; a claim credits the supplier only against the document it is about, which caps"
+                    + " the amount — raise the claim on that document");
+        }
+    }
+
+    /** Receipt lines in scope with their unit value: the order price in the receipt line's unit, else the receipt cost. */
+    private List<Map<String, Object>> receiptValueLines(String where, Object param) {
+        return SqlRows.list(jdbc.sql("SELECT gl.id, gl.quantity, CASE WHEN pl.id IS NULL THEN gl.\"unitCost\""
+                + " WHEN COALESCE(pl.\"uomFactor\", 0) > 0 AND COALESCE(gl.\"uomFactor\", 0) > 0 THEN"
+                + " pl.\"unitPrice\" * gl.\"uomFactor\" / pl.\"uomFactor\" ELSE pl.\"unitPrice\" END AS price FROM"
+                + " \"GoodsReceiptLine\" gl JOIN \"GoodsReceiptNote\" g ON g.id = gl.\"goodsReceiptId\" LEFT JOIN"
+                + " \"PurchaseOrderLine\" pl ON pl.id = gl.\"purchaseOrderLineId\" WHERE " + where
+                + " AND gl.\"organizationId\" = ?").params(param, org()));
+    }
+
+    /** Received value of the lines, or (returned) the value of what returns to the supplier took from them. */
+    private BigDecimal receiptValue(List<Map<String, Object>> rows, boolean returned) {
+        BigDecimal total = Money.ZERO;
+        for (Map<String, Object> r : rows) {
+            BigDecimal qty = returned ? ledger.returnedFrom((String) r.get("id")) : Money.dec(r.get("quantity"));
+            if (qty.signum() > 0) {
+                total = total.add(qty.multiply(Money.dec(r.get("price"))));
+            }
+        }
+        return total;
     }
 
     private static BigDecimal sum(List<Basis> basis) {
@@ -315,11 +361,15 @@ public class SupplierClaimService {
                         + " stock adjustment cannot value it");
             }
             BigDecimal received = Money.dec(gl.get("quantity"));
-            BigDecimal left = received.subtract(claimedQuantity((String) gl.get("id")));
+            // Purchase readiness H4 (2026-11-27): quantity already returned to the supplier (a debit note against
+            // the receipt or against a bill that billed it) cannot be claimed again.
+            BigDecimal returned = ledger.returnedFrom((String) gl.get("id"));
+            BigDecimal left = received.subtract(claimedQuantity((String) gl.get("id"))).subtract(returned);
             if (qty.compareTo(left) > 0) {
                 throw ApiException.badRequest("Only " + JsNumbers.dec(left.max(BigDecimal.ZERO)) + " of "
                         + JsNumbers.dec(received) + " received on " + gl.get("receiptNumber") + " are still unclaimed for "
-                        + gl.get("description") + "; requested " + JsNumbers.dec(qty));
+                        + gl.get("description") + (returned.signum() > 0 ? " (" + JsNumbers.dec(returned)
+                                + " already returned to the supplier)" : "") + "; requested " + JsNumbers.dec(qty));
             }
             String lineId = UUID.randomUUID().toString();
             jdbc.sql("INSERT INTO \"SupplierClaimLine\" (id, \"organizationId\", \"claimId\", \"goodsReceiptId\","
@@ -414,7 +464,8 @@ public class SupplierClaimService {
                 + " LIMIT 200").params(org(), param))) {
             r.put("quantity", JsNumbers.dec(Money.dec(r.get("quantity"))));
             r.put("unitCost", JsNumbers.dec(Money.dec(r.get("unitCost"))));
-            r.put("claimable", JsNumbers.dec(Money.dec(r.get("claimable")).max(BigDecimal.ZERO)));
+            r.put("claimable", JsNumbers.dec(Money.dec(r.get("claimable"))
+                    .subtract(ledger.returnedFrom((String) r.get("goodsReceiptLineId"))).max(BigDecimal.ZERO)));
             out.add(r);
         }
         return out;
@@ -495,6 +546,7 @@ public class SupplierClaimService {
                 jdbc.sql("SELECT id FROM \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                         .params(c.get("purchaseOrderId"), orgId).query().listOfRows();
             }
+            assertHasDocument(c);
             assertWithinDocument(c, amount);
             Doc doc = document(c, bill);
             boolean hasLines = jdbc.sql("SELECT count(*) FROM \"SupplierClaimLine\" WHERE \"claimId\" = ? AND"
@@ -805,9 +857,12 @@ public class SupplierClaimService {
                         + l.get("receiptStatus") + ")");
             }
             BigDecimal received = Money.dec(l.get("receivedQuantity"));
-            if (claimedQuantity((String) l.get("goodsReceiptLineId")).compareTo(received) > 0) {
+            BigDecimal returned = ledger.returnedFrom((String) l.get("goodsReceiptLineId"));
+            if (claimedQuantity((String) l.get("goodsReceiptLineId")).add(returned).compareTo(received) > 0) {
                 throw ApiException.badRequest("Claims cover more of " + l.get("description") + " on "
-                        + l.get("receiptNumber") + " than the " + JsNumbers.dec(received) + " received");
+                        + l.get("receiptNumber") + " than the " + JsNumbers.dec(received) + " received"
+                        + (returned.signum() > 0 ? " less the " + JsNumbers.dec(returned) + " already returned to the"
+                                + " supplier" : ""));
             }
             value = value.add(Money.round(Money.dec(l.get("quantity")).multiply(Money.dec(l.get("unitCost")))));
         }

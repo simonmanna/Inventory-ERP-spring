@@ -171,6 +171,10 @@ public abstract class ApiTestSupport {
                     + "|deliveries/[^/]+/(fail|return|approve|issue|pod-correction|confirm|customer-weight|cancel)"
                     + "|returns/[^/]+/(receive|inspect|close)|rebates/accruals/[^/]+/settle))(\\?.*)?$");
 
+    /** PATCH routes that refuse a request without an Idempotency-Key (purchase readiness: debit-note post / reverse). */
+    private static final java.util.regex.Pattern PATCH_KEY_REQUIRED = java.util.regex.Pattern.compile(
+            "^/procurement/debit-notes/[^/]+/(post|reverse)(\\?.*)?$");
+
     /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
     protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";
 
@@ -183,7 +187,8 @@ public abstract class ApiTestSupport {
                     b.header(k, v);
                 }
             });
-            if (!suppress && "POST".equals(method) && KEY_REQUIRED.matcher(path).matches()
+            if (!suppress && ("POST".equals(method) && KEY_REQUIRED.matcher(path).matches()
+                    || "PATCH".equals(method) && PATCH_KEY_REQUIRED.matcher(path).matches())
                     && headers.keySet().stream().noneMatch("Idempotency-Key"::equalsIgnoreCase)) {
                 b.header("Idempotency-Key", UUID.randomUUID().toString());
             }

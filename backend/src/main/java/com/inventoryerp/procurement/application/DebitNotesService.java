@@ -85,12 +85,14 @@ public class DebitNotesService {
     private final TransactionTemplate tx;
     private final ProductVariantService variants;
     private final CurrencyService currencies;
+    private final SupplierReturnLedger ledger;
 
     public DebitNotesService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, PostingService posting, AccountDeterminationService determination,
             StockService stock, PlatformTransactionManager txm, UomConversionService units,
-            ProductVariantService variants, CurrencyService currencies) {
+            ProductVariantService variants, CurrencyService currencies, SupplierReturnLedger ledger) {
         this.jdbc = jdbc;
+        this.ledger = ledger;
         this.currencies = currencies;
         this.variants = variants;
         this.units = units;
@@ -159,6 +161,16 @@ public class DebitNotesService {
         for (LineInput ln : input.lines()) {
             variants.assertOwn(ln.productId(), ln.variantId());
         }
+        // Purchase readiness H3 (2026-11-27): a return against a bill can only send back goods that bill billed.
+        if (documentId != null && !outboundNote && "inbound".equals(input.direction())
+                && "returned_goods".equals(input.reason())) {
+            for (LineInput ln : input.lines()) {
+                if (ln.productId() != null && !ln.productId().isBlank() && ledger.billedBase(documentId,
+                        ln.productId(), blankToNull(ln.variantId())).signum() <= 0) {
+                    throw ApiException.badRequest(notOnBill(documentId, ln.description()));
+                }
+            }
+        }
         // Returned quantities are in the line unit (default: the product's purchase unit), frozen with its factor.
         List<LineUnit> lineUnits = new ArrayList<>();
         for (LineInput ln : input.lines()) {
@@ -211,6 +223,85 @@ public class DebitNotesService {
         events.publish("debit_note.created", Obj.of("organizationId", orgId, "noteId", note.get("id"), "noteNumber",
                 noteNumber, "direction", input.direction()));
         return note;
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
+    private String notOnBill(String billId, String description) {
+        String number = jdbc.sql("SELECT \"documentNumber\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(billId, org()).query(String.class).optional().orElse(billId);
+        return "Supplier bill " + number + " does not bill " + description + "; a return against a bill can only send"
+                + " back goods that bill billed";
+    }
+
+    /**
+     * Purchase readiness H3 (2026-11-27): under a lock on the bill, each returned product (and variant) is limited to
+     * what the bill billed less earlier posted returns against it, and — when the bill was matched to receipts — less
+     * what supplier claims and bill-less returns already took of those received goods. Quantities compare in base
+     * units; messages speak the note line's unit.
+     */
+    @SuppressWarnings("unchecked")
+    private void assertBillReturnable(Map<String, Object> note, String billId, String orgId) {
+        Map<String, Object> bill = SqlRows.one(jdbc.sql("SELECT id, \"documentNumber\", status::text AS status FROM"
+                + " \"Document\" WHERE id = ? AND \"organizationId\" = ? AND \"documentType\"::text = 'vendor_bill'"
+                + " FOR UPDATE").params(billId, orgId));
+        if (bill == null || !("posted".equals(bill.get("status")) || "paid".equals(bill.get("status")))) {
+            throw ApiException.badRequest("The referenced supplier bill is no longer posted; the return cannot be"
+                    + " credited against it");
+        }
+        String number = (String) bill.get("documentNumber");
+        Map<String, BigDecimal[]> wanted = new java.util.LinkedHashMap<>();
+        Map<String, Map<String, Object>> firstLine = new java.util.HashMap<>();
+        for (Map<String, Object> ln : (List<Map<String, Object>>) note.get("lines")) {
+            String productId = (String) ln.get("productId");
+            if (productId == null) {
+                continue;
+            }
+            String key = productId + "|" + (ln.get("variantId") == null ? "" : ln.get("variantId"));
+            BigDecimal factor = ledger.factor(productId, (String) ln.get("uomId"), ln.get("uomFactor"));
+            BigDecimal[] acc = wanted.computeIfAbsent(key, k -> new BigDecimal[] {Money.ZERO});
+            acc[0] = acc[0].add(Money.dec(ln.get("quantity")).multiply(factor));
+            firstLine.putIfAbsent(key, new java.util.HashMap<>(Map.of("line", ln, "factor", factor)));
+        }
+        for (Map.Entry<String, BigDecimal[]> e : wanted.entrySet()) {
+            Map<String, Object> ln = (Map<String, Object>) firstLine.get(e.getKey()).get("line");
+            BigDecimal factor = (BigDecimal) firstLine.get(e.getKey()).get("factor");
+            String productId = (String) ln.get("productId");
+            String variantId = (String) ln.get("variantId");
+            BigDecimal billed = ledger.billedBase(billId, productId, variantId);
+            if (billed.signum() <= 0) {
+                throw ApiException.badRequest(notOnBill(billId, String.valueOf(ln.get("description"))));
+            }
+            BigDecimal earlier = ledger.returnedOnBillBase(billId, productId, variantId, (String) note.get("id"));
+            List<SupplierReturnLedger.PoolLine> pool = ledger.pool(billId, productId, variantId, true);
+            BigDecimal limit = billed;
+            BigDecimal heldElsewhere = Money.ZERO;
+            if (!pool.isEmpty()) {
+                BigDecimal matched = Money.ZERO;
+                for (SupplierReturnLedger.PoolLine p : pool) {
+                    matched = matched.add(p.matched().multiply(p.line().factor()));
+                }
+                BigDecimal capacity = ledger.capacityBase(pool);
+                heldElsewhere = matched.subtract(capacity).max(Money.ZERO);
+                limit = Money.min(billed, capacity);
+            }
+            BigDecimal free = limit.subtract(earlier).max(Money.ZERO);
+            BigDecimal want = e.getValue()[0];
+            if (SupplierReturnLedger.q(want).compareTo(SupplierReturnLedger.q(free)) > 0) {
+                throw ApiException.badRequest("Only " + inUnit(free, factor) + " of " + ln.get("description")
+                        + " can still be returned against supplier bill " + number + ": it billed "
+                        + inUnit(billed, factor) + ", earlier returns against it took " + inUnit(earlier, factor)
+                        + (heldElsewhere.signum() > 0 ? " and supplier claims or returns without a bill already cover "
+                                + inUnit(heldElsewhere, factor) + " of the received goods" : "")
+                        + "; this return asks for " + inUnit(want, factor));
+            }
+        }
+    }
+
+    private static String inUnit(BigDecimal base, BigDecimal factor) {
+        return JsNumbers.dec(SupplierReturnLedger.q(Money.div(base, factor)));
     }
 
     /**
@@ -518,6 +609,9 @@ public class DebitNotesService {
         String foreignCurrency = rate.compareTo(BigDecimal.ONE) == 0 ? null : (String) note.get("currencyCode");
         Map<String, Object> updated = tx.execute(st -> {
             Map<String, Object> claimed = markPosted(id, orgId);
+            if (documentId != null) {
+                assertBillReturnable(note, documentId, orgId);
+            }
             Map<String, Object> chosen = chosenReturnLocation(note, orgId);
             String apAccount = determination.payableAccount(partnerCol(note, "payableAccountId"));
             String stockValAccount = determination.mapped("stock_valuation");
@@ -573,7 +667,7 @@ public class DebitNotesService {
                             .variant((String) ln.get("variantId"))
                             .uom((String) ln.get("uomId"), ln.get("uomFactor") == null ? null
                                     : Money.dec(ln.get("uomFactor")))
-                            .moveType("return_to_supplier").skipGl().source("debit_note", id)
+                            .moveType("return_to_supplier").skipGl().requireAvailable(true).source("debit_note", id)
                             .reference((String) note.get("noteNumber"));
                     Issued issueRes = stock.issue(move);
                     BigDecimal cost = issueRes == null ? Money.ZERO : Money.dec(issueRes.totalValue());
@@ -671,7 +765,10 @@ public class DebitNotesService {
         BigDecimal noteFactor = ln.get("uomFactor") != null && Money.dec(ln.get("uomFactor")).signum() > 0
                 ? Money.dec(ln.get("uomFactor")) : units.factorToBase(productId, (String) ln.get("uomId"));
         List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT l.id, l.quantity, l.\"billedQuantity\","
-                        + " l.\"unitCost\", l.\"uomFactor\", l.\"uomId\", r.\"purchaseOrderId\", r.\"warehouseId\" FROM"
+                        + " l.\"unitCost\", l.\"uomFactor\", l.\"uomId\", r.\"purchaseOrderId\", r.\"warehouseId\","
+                        + " (SELECT COALESCE(sum(b.quantity), 0) FROM \"VendorBillReceiptMatch\" b WHERE"
+                        + " b.\"goodsReceiptLineId\" = l.id AND b.\"organizationId\" = l.\"organizationId\") AS"
+                        + " \"billMatched\" FROM"
                         + " \"GoodsReceiptLine\" l JOIN \"GoodsReceiptNote\" r ON r.id = l.\"goodsReceiptId\" WHERE"
                         + " l.\"organizationId\" = ? AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ?"
                         + " AND r.\"organizationId\" = ? AND r.status = 'posted' AND r.\"partnerId\" = ?"
@@ -687,12 +784,22 @@ public class DebitNotesService {
                     .map(l -> (String) l.get("id")).toArray(String[]::new), orgId).query(String.class).list());
             open = open.stream().filter(l -> posted.contains((String) l.get("id"))).toList();
         }
+        // Purchase readiness H4 (2026-11-27): verified / settled claim quantities on a receipt line are not open to a
+        // return either (a claim on an order receipt does not move billedQuantity).
+        List<String> openIds = open.stream().map(l -> (String) l.get("id")).toList();
+        Map<String, BigDecimal> claimedQty = ledger.reservedByClaims(openIds);
+        Map<String, BigDecimal> returnedQty = ledger.returnedByMatch(openIds);
         List<Consumed> out = new ArrayList<>();
         for (Map<String, Object> l : open) {
             if (remaining.signum() <= 0) {
                 break;
             }
-            BigDecimal openQty = Money.dec(l.get("quantity")).subtract(Money.dec(l.get("billedQuantity")));
+            String lineId = (String) l.get("id");
+            BigDecimal physical = Money.dec(l.get("quantity")).subtract(Money.dec(l.get("billMatched")))
+                    .subtract(returnedQty.getOrDefault(lineId, Money.ZERO))
+                    .subtract(claimedQty.getOrDefault(lineId, Money.ZERO));
+            BigDecimal openQty = Money.min(Money.dec(l.get("quantity")).subtract(Money.dec(l.get("billedQuantity"))),
+                    physical);
             if (openQty.signum() <= 0) {
                 continue;
             }
@@ -714,7 +821,35 @@ public class DebitNotesService {
                     Money.dec(l.get("unitCost")), (String) l.get("warehouseId")));
             remaining = remaining.subtract(take);
         }
+        if (SupplierReturnLedger.q(remaining).signum() > 0) {
+            refuseUnopenedReturn(note, ln, Money.dec(ln.get("quantity")).subtract(remaining), orgId);
+        }
         return out;
+    }
+
+    /**
+     * Purchase readiness MEDIUM #5 (2026-11-27): a return that names no bill can send back only goods still open on
+     * the supplier's unbilled receipts. Billed goods must be returned against their bill (so the bill is credited, not
+     * left with an unapplied debit); goods never received from the supplier cannot be returned to it.
+     */
+    private void refuseUnopenedReturn(Map<String, Object> note, Map<String, Object> ln, BigDecimal taken,
+            String orgId) {
+        List<String> bills = jdbc.sql("SELECT DISTINCT d.\"documentNumber\" FROM \"DocumentLine\" dl JOIN \"Document\""
+                + " d ON d.id = dl.\"documentId\" WHERE d.\"organizationId\" = ? AND d.\"partnerId\" = ? AND"
+                + " d.\"documentType\"::text = 'vendor_bill' AND d.status::text IN ('posted', 'paid') AND"
+                + " dl.\"productId\" = ? AND dl.\"variantId\" IS NOT DISTINCT FROM ? ORDER BY 1 LIMIT 5")
+                .params(orgId, note.get("partnerId"), ln.get("productId"), ln.get("variantId")).query(String.class)
+                .list();
+        String asked = JsNumbers.dec(SupplierReturnLedger.q(Money.dec(ln.get("quantity"))));
+        if (!bills.isEmpty()) {
+            throw ApiException.badRequest("Only " + JsNumbers.dec(SupplierReturnLedger.q(taken)) + " of "
+                    + ln.get("description") + " are open on unbilled receipts from this supplier (this return asks for "
+                    + asked + "); the rest is already billed — name the supplier bill (" + String.join(", ", bills)
+                    + ") on the return so that bill is credited");
+        }
+        throw ApiException.badRequest("Only " + JsNumbers.dec(SupplierReturnLedger.q(taken)) + " of "
+                + ln.get("description") + " received from this supplier are still open to return; this return asks for "
+                + asked);
     }
 
     /**
