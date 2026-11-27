@@ -5,10 +5,13 @@ import com.inventoryerp.inventory.application.InventoryIntegrityService.Integrit
 import com.inventoryerp.inventory.application.InventoryIntegrityService.IntegrityReport;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.notifications.NotificationsService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.EntityJson;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +27,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * Daily inventory integrity check of one organisation (hardening R0; the pattern of {@link InventoryTieOutMonitor}):
  * runs every check of {@link InventoryIntegrityService} over all locations and opens one {@code InventoryException}
  * of kind {@code integrity_<check>} per failing check (Posting Monitor), with the failure count and the first rows in
- * its payload, plus one in-app alert. While an exception of a kind is open no second one of that kind is raised;
- * resolving it re-arms the check. It lists findings and never corrects anything. The value kinds
+ * its payload, plus one in-app alert to every user holding {@code inventory_valuation:read} (the integrity report's
+ * permission; once per user per set of kinds per day). While an exception of a kind is open no second one of that
+ * kind is raised; resolving it re-arms the check. It lists findings and never corrects anything. The value kinds
  * ({@link InventoryTieOutMonitor#INTEGRITY_VALUE_KINDS}) hold the period close; the quantity kinds do not. The
  * valuation-vs-GL kind is not raised while {@code inventory.glTieOut.enabled} is off.
  */
@@ -78,11 +82,12 @@ public class InventoryIntegrityMonitor {
         }
         if (!raised.isEmpty()) {
             try {
-                notifications.send(new NotificationsService.SendInput(orgId, null, "in_app", "inventory",
+                notifications.sendToPermission(orgId, Permissions.INVENTORY_VALUATION__READ, "inventory",
                         "Inventory integrity check failed", "The daily inventory integrity check found "
                                 + String.join(", ", raised) + ". The findings are listed in the Posting Monitor;"
                                 + " the inventory integrity report shows every row. Nothing was corrected.",
-                        Obj.of("kind", "inventory_integrity", "kinds", raised)));
+                        Obj.of("kind", "inventory_integrity", "kinds", raised),
+                        "inventory_integrity:" + LocalDate.now(ZoneOffset.UTC) + ":" + String.join(",", raised));
             } catch (RuntimeException e) {
                 log.error("[inventory-integrity] failed to send the alert: {}", e.toString());
             }
