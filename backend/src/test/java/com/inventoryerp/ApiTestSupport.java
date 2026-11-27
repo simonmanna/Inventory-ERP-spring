@@ -161,7 +161,7 @@ public abstract class ApiTestSupport {
                     + "|(waste|adjustments)/[^/]+/approve)|warehouse/pick-orders/[^/]+/ship"
                     + "|procurement/goods-receipts/adhoc|(sales|crm)/quotations/[^/]+/convert"
                     // sales readiness R2: invoice, credit-note, deposit, sales money, cash-sale, delivery, return routes
-                    + "|invoices(/[^/]+/(post|cancel))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
+                    + "|invoices(/[^/]+/(post|cancel|issue-undelivered))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
                     + "|customer-deposits(/[^/]+/(classify|apply|refund|void|applications/[^/]+/reverse))?"
                     + "|payments/[^/]+/allocations|payments/mobile-money"
                     + "|sales/(orders/[^/]+/(confirm|approve|invoices|deposits|apply-deposits|deliveries"

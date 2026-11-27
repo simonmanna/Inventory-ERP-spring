@@ -4,6 +4,7 @@ import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.DATE_MSG;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.ISO_DATE;
 
+import com.inventoryerp.invoicing.application.InvoiceGoodsService;
 import com.inventoryerp.invoicing.application.InvoiceService;
 import com.inventoryerp.invoicing.application.InvoiceService.InvoiceInput;
 import com.inventoryerp.invoicing.application.InvoiceService.ListFilter;
@@ -65,9 +66,11 @@ public class InvoiceController {
     }
 
     private final InvoiceService invoices;
+    private final InvoiceGoodsService goods;
 
-    public InvoiceController(InvoiceService invoices) {
+    public InvoiceController(InvoiceService invoices, InvoiceGoodsService goods) {
         this.invoices = invoices;
+        this.goods = goods;
     }
 
     @GetMapping
@@ -127,5 +130,22 @@ public class InvoiceController {
     public Map<String, Object> cancel(@PathVariable String id,
             @Valid @RequestBody(required = false) ReversalRequest dto) {
         return invoices.cancel(id, dto == null ? null : dto.reason());
+    }
+
+    /** {@code POST /invoices/:id/issue-undelivered} body: the location the customer collects from (optional). */
+    public record IssueUndeliveredRequest(String locationId) {}
+
+    /**
+     * IPR F1 (owner decision D4): a posted invoice awaiting delivery (its delivery order was cancelled or closed short)
+     * issues its undelivered goods for a customer collection; see {@link InvoiceGoodsService#issueUndelivered}. A new
+     * route (no Nest counterpart): 200 with the invoice, like the other invoice money routes.
+     */
+    @PostMapping("/{id}/issue-undelivered")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.INVOICE__POST)
+    public Map<String, Object> issueUndelivered(@PathVariable String id,
+            @Valid @RequestBody(required = false) IssueUndeliveredRequest dto) {
+        goods.issueUndelivered(id, dto == null ? null : dto.locationId());
+        return invoices.findOne(id);
     }
 }
