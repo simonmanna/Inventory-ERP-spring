@@ -178,11 +178,16 @@ public class FleetWorkOrderCostService {
         BigDecimal unitCost = SqlRows.dec(part, "unitCost");
         String productId = (String) part.get("productId");
         // IPR SW-3: the part comes back against its issue row (lot, serial, cost; reversesLedgerId), never more than
-        // that issue still holds; the journal carries the value the rows brought back.
+        // that issue still holds; the journal carries the value the rows brought back. IPR review 1 (N3): a legacy
+        // line without its issue code returns against the work order's own issue rows of that part (capped by what
+        // they still have out, and by the line's remaining quantity above); none at all is a 400, never a 500.
+        String issueCode = (String) part.get("stockLedgerCode");
+        com.inventoryerp.inventory.application.StockReversalService.IssueSource source = issueCode != null
+                ? com.inventoryerp.inventory.application.StockReversalService.IssueSource.ledgerCodes(List.of(issueCode))
+                : com.inventoryerp.inventory.application.StockReversalService.IssueSource.of(SOURCE, code);
         List<com.inventoryerp.inventory.application.StockReversalService.ReturnedRow> back = stockReturns
                 .returnFromSource(new com.inventoryerp.inventory.application.StockReversalService.ReturnFromSource(
-                        com.inventoryerp.inventory.application.StockReversalService.IssueSource.ledgerCodes(
-                                List.of((String) part.get("stockLedgerCode"))),
+                        source,
                         List.of(com.inventoryerp.inventory.application.StockReversalService.ReturnLine.of(productId,
                                 (String) part.get("variantId"), in.quantity())),
                         SOURCE, code, code, "Unused part returned from work order " + code, null,
