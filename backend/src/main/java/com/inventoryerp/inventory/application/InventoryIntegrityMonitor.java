@@ -31,7 +31,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * permission; once per user per set of kinds per day). While an exception of a kind is open no second one of that
  * kind is raised; resolving it re-arms the check. It lists findings and never corrects anything. The value kinds
  * ({@link InventoryTieOutMonitor#INTEGRITY_VALUE_KINDS}) hold the period close; the quantity kinds do not. The
- * valuation-vs-GL kind is not raised while {@code inventory.glTieOut.enabled} is off.
+ * valuation-vs-GL kind is not raised while {@code inventory.glTieOut.enabled} is off. The report-only checks (IPR
+ * Phase 0, {@link InventoryIntegrityService#REPORT_ONLY_CHECKS}) are raised the same way and never hold a close.
  */
 @Service
 public class InventoryIntegrityMonitor {
@@ -80,23 +81,39 @@ public class InventoryIntegrityMonitor {
                 raised.add(kind(c.key()));
             }
         }
-        if (!raised.isEmpty()) {
+        // IPR Phase 0: report-only checks raise integrity_<key> findings too. They are never value kinds, so the
+        // period close and its checklist (which skip every other integrity_ kind) ignore them.
+        List<String> reportOnlyRaised = new ArrayList<>();
+        for (IntegrityCheck c : report.failingReportOnly()) {
+            if (InventoryIntegrityService.GL_TIEOUT_BY_ACCOUNT.equals(c.key()) && !tieOutEnabled) {
+                continue;
+            }
+            if (Boolean.TRUE.equals(tx.execute(st -> raise(orgId, c)))) {
+                reportOnlyRaised.add(kind(c.key()));
+            }
+        }
+        if (!raised.isEmpty() || !reportOnlyRaised.isEmpty()) {
+            List<String> all = new ArrayList<>(raised);
+            all.addAll(reportOnlyRaised);
             try {
                 notifications.sendToPermission(orgId, Permissions.INVENTORY_VALUATION__READ, "inventory",
                         "Inventory integrity check failed", "The daily inventory integrity check found "
-                                + String.join(", ", raised) + ". The findings are listed in the Posting Monitor;"
+                                + String.join(", ", all) + ". The findings are listed in the Posting Monitor;"
                                 + " the inventory integrity report shows every row. Nothing was corrected.",
-                        Obj.of("kind", "inventory_integrity", "kinds", raised),
-                        "inventory_integrity:" + LocalDate.now(ZoneOffset.UTC) + ":" + String.join(",", raised));
+                        Obj.of("kind", "inventory_integrity", "kinds", raised, "reportOnlyKinds", reportOnlyRaised),
+                        "inventory_integrity:" + LocalDate.now(ZoneOffset.UTC) + ":" + String.join(",", all));
             } catch (RuntimeException e) {
                 log.error("[inventory-integrity] failed to send the alert: {}", e.toString());
             }
         }
-        return new Result(report, raised);
+        return new Result(report, raised, reportOnlyRaised);
     }
 
-    /** The report of one run and the exception kinds it raised. */
-    public record Result(IntegrityReport report, List<String> raised) {}
+    /**
+     * The report of one run and the exception kinds it raised: {@code raised} for the checks of the report,
+     * {@code reportOnlyRaised} for its report-only checks (IPR Phase 0).
+     */
+    public record Result(IntegrityReport report, List<String> raised, List<String> reportOnlyRaised) {}
 
     private boolean raise(String orgId, IntegrityCheck c) {
         String kind = kind(c.key());

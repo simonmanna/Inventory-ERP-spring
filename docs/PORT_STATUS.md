@@ -2111,6 +2111,10 @@ Not verified yet: the tours driven by hand in a browser.
   (`integrity_*` exceptions; value kinds hold the period close), read-only data checks
   `docs/audits/2026-11-22-inventory-data-checks.sql` — `InventoryIntegrityIT`, `PeriodCloseChecklistIT`;
   [review](audits/2026-11-22-inventory-review.md)
+- [x] IPR Phase 0 (2026-11-27): 12 report-only integrity checks (`reportOnlyChecks`, never block a close),
+  `GET /api/v1/inventory/reports/feature-usage` (`inventory_valuation:read`) + daily `integrity_feature_risk`,
+  [feature-risk map](spec/inventory-feature-risk-map.md), read-only `docs/audits/2026-11-27-inventory-data-checks.sql`,
+  ledger append-only source scan — `InventoryIntegrityP0IT`, `InventoryLedgerImmutabilityTest`
 
 ## Inventory hardening R1 (corruption blockers, gate G1; owner-approved 2026-11-23)
 

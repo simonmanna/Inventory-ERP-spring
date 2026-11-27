@@ -176,17 +176,7 @@ class InventoryEngineHardeningIT extends InventoryAuditSupport {
         return login(orgCode, email, "Reader@12345");
     }
 
-    /** G1 / G2 evidence: every check of the organisation's integrity report passes. */
-    void assertIntegrityGreen() {
-        JsonNode report = okA(200, "GET", "/inventory/reports/integrity", null);
-        List<String> failing = new ArrayList<>();
-        for (JsonNode c : report.get("checks")) {
-            if (!c.get("ok").asBoolean()) {
-                failing.add(c.get("key").asString() + " " + c.get("rows"));
-            }
-        }
-        assertThat(failing).as("integrity checks").isEmpty();
-    }
+    // assertIntegrityGreen() moved to InventoryAuditSupport (IPR T04).
 
     /** A count session over one product at main: {@code counts} maps a line predicate (by lot id) to its count. */
     JsonNode startCount(String productId) {
