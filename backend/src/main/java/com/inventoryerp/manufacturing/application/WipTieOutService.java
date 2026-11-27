@@ -30,7 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  * the organisation's active {@code PRODUCTION_CONSUME} (debit) / {@code PRODUCTION_OUTPUT} (credit) rules resolve to
  * (WIP-4; IPR GL-11 refinement: resolved as the postings resolve them, so a rule that takes its account from a product
  * category or product field contributes the accounts of the categories / products it covers — stock accounts excepted),
- * in base currency ({@code baseDebit − baseCredit}). A {@code reversal} entry counts for the entry it reverses.
+ * in base currency ({@code baseDebit − baseCredit}). A {@code reversal} entry counts for the entry it reverses. IPR
+ * review 2 (R2-3): a rule account of a known non-asset type counts only for the lines a cost object explains.
  *
  * <p><b>Attribution</b> (WIP spec §5.2): single-stage order — sourceType {@code production_order},
  * {@code production_order_cancel}, {@code production_reversal}, {@code production_variance} with sourceId = its code;
@@ -46,7 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
  * period's closing WIP for a process without an open period; late costs and the rest = Σ open late-cost shares in WIP
  * (lineage line or release, target {@code wip}, adjustment not reversed, no posted cost adjustment run line; any order
  * state — after IPR WIP-3 the run also takes the shares of cancelled and reversed orders). Quarry extraction never posts
- * to WIP; a WIP line of a {@code quarry_extraction*} entry is a failure of its own. Tolerance 0.01 per object.
+ * to WIP; a WIP line of a {@code quarry_extraction*} entry is a failure of its own, reported once (IPR review 2 R2-2).
+ * Tolerance 0.01 per object.
  */
 @Service
 public class WipTieOutService implements WipTieOutProvider {
@@ -79,9 +81,14 @@ public class WipTieOutService implements WipTieOutProvider {
         }
     }
 
-    /** The whole tie-out: every object, the GL WIP total and the accounts read. */
+    /**
+     * The whole tie-out: every object, the GL WIP total and the accounts read. {@code expensedAccounts}: rule accounts
+     * that are not of asset type (IPR review 2 R2-3); {@code expensedOther}: Σ their lines no cost object explains,
+     * left out of the totals.
+     */
     public record Result(boolean wipMapped, List<String> accounts, List<WipObject> objects, BigDecimal glTotal,
-            BigDecimal expectedTotal, BigDecimal quarryWipLines) {
+            BigDecimal expectedTotal, BigDecimal quarryWipLines, List<String> expensedAccounts,
+            BigDecimal expensedOther) {
 
         public List<WipObject> failing() {
             return objects.stream().filter(o -> !o.ok()).toList();
@@ -111,20 +118,34 @@ public class WipTieOutService implements WipTieOutProvider {
                    AND "inventoryAccountOverrideId" IS NOT NULL""").param("org", org).query(String.class).list());
         List<WipObject> objects = new ArrayList<>();
         if (accounts.isEmpty()) {
-            return new Result(false, List.of(), objects, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+            return new Result(false, List.of(), objects, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, List.of(),
+                    BigDecimal.ZERO);
         }
         List<String> accountList = List.copyOf(accounts);
+        // IPR review 2 (R2-3): a rule account whose type is known and is not an asset (a rule that expenses consumption
+        // or output directly) is not WIP. Its lines still count when a cost object explains them, so an order's
+        // consumption ties as before; its other lines are left out and reported. The mapped wip account always counts.
+        List<String> expensed = db.jdbc().sql("""
+                SELECT a.id FROM "Account" a LEFT JOIN "AccountCategory" c ON c.id = a."categoryId"
+                 WHERE a."organizationId" = :org AND a.id IN (:accts)
+                   AND COALESCE(a."reportSection"::text, c."reportSection"::text) IS NOT NULL
+                   AND COALESCE(a."reportSection"::text, c."reportSection"::text)
+                       NOT IN ('current_assets', 'non_current_assets')""")
+                .param("org", org).param("accts", accountList).query(String.class).list().stream()
+                .filter(a -> !a.equals(wip)).toList();
 
         // ---- the WIP lines, one row per (entry, source) with its base amount
         List<Map<String, Object>> lines = SqlRows.list(db.jdbc().sql("""
                 SELECT e.id AS je, COALESCE(o."sourceType", e."sourceType") AS st,
                        COALESCE(o."sourceId", e."sourceId") AS sid, COALESCE(o."postingKey", e."postingKey") AS pk,
-                       COALESCE(o.id, e.id) AS root, SUM(jl."baseDebit" - jl."baseCredit") AS amt
+                       COALESCE(o.id, e.id) AS root, jl."accountId" IN (:expensed) AS expensed,
+                       SUM(jl."baseDebit" - jl."baseCredit") AS amt
                   FROM "JournalLine" jl JOIN "JournalEntry" e ON e.id = jl."journalEntryId"
                   LEFT JOIN "JournalEntry" o ON o.id = e."reversalOfId" AND e."sourceType" = 'reversal'
                  WHERE e."organizationId" = :org AND e.status::text IN ('posted', 'reversed')
                    AND jl."accountId" IN (:accts)
-                 GROUP BY 1, 2, 3, 4, 5""").param("org", org).param("accts", accountList));
+                 GROUP BY 1, 2, 3, 4, 5, 6""").param("org", org).param("accts", accountList)
+                .param("expensed", expensed.isEmpty() ? List.of("") : expensed));
 
         // ---- cost objects
         Map<String, Map<String, Object>> orderByCode = new HashMap<>();
@@ -160,9 +181,9 @@ public class WipTieOutService implements WipTieOutProvider {
         BigDecimal glOther = BigDecimal.ZERO;
         BigDecimal glTotal = BigDecimal.ZERO;
         BigDecimal quarry = BigDecimal.ZERO;
+        BigDecimal expensedOther = BigDecimal.ZERO;
         for (Map<String, Object> l : lines) {
             BigDecimal amt = dec(l, "amt");
-            glTotal = glTotal.add(amt);
             String st = str(l, "st") == null ? "" : str(l, "st");
             String sid = str(l, "sid");
             String pk = str(l, "pk");
@@ -181,12 +202,18 @@ public class WipTieOutService implements WipTieOutProvider {
                 glByOrder.merge(orderId, amt, BigDecimal::add);
             } else if ("process_costing".equals(st) || processJes.contains(str(l, "root")) || processVariance) {
                 glProcess = glProcess.add(amt);
+            } else if (st.startsWith("quarry_extraction")) {
+                // IPR review 2 (R2-2): reported once, as its own object (it was also added to late cost and other).
+                quarry = quarry.add(amt.abs());
+            } else if (Boolean.TRUE.equals(l.get("expensed"))) {
+                // IPR review 2 (R2-3): a line on a non-asset rule account that no cost object explains is an
+                // ordinary expense posting, not WIP; reported in the note, out of the totals.
+                expensedOther = expensedOther.add(amt);
+                continue;
             } else {
-                if (st.startsWith("quarry_extraction")) {
-                    quarry = quarry.add(amt.abs());
-                }
                 glOther = glOther.add(amt);
             }
+            glTotal = glTotal.add(amt);
         }
 
         // ---- open late-cost shares in WIP, per order reference (WIP spec §5.3)
@@ -261,7 +288,8 @@ public class WipTieOutService implements WipTieOutProvider {
                     BigDecimal.ZERO));
         }
         objects.sort(Comparator.comparing((WipObject w) -> w.difference().abs()).reversed());
-        return new Result(wip != null, accountList, objects, glTotal, expectedTotal, quarry);
+        return new Result(wip != null, accountList, objects, glTotal, expectedTotal, quarry, expensed,
+                expensedOther);
     }
 
     @Override
@@ -298,7 +326,10 @@ public class WipTieOutService implements WipTieOutProvider {
             rows.add(row);
         }
         String note = "GL WIP " + JsNumbers.dec(r.glTotal()) + ", expected " + JsNumbers.dec(r.expectedTotal()) + " over "
-                + r.objects().size() + " cost object(s); accounts " + r.accounts().size();
+                + r.objects().size() + " cost object(s); accounts " + r.accounts().size()
+                + (r.expensedAccounts().isEmpty() ? "" : "; " + r.expensedAccounts().size() + " non-asset rule"
+                        + " account(s) (consumption or output expensed directly): their lines no cost object explains ("
+                        + JsNumbers.dec(r.expensedOther()) + ") are not WIP and are left out");
         return new IntegrityCheck(InventoryIntegrityService.WIP_TIEOUT, failing.isEmpty(), false, invariant, TOLERANCE,
                 failing.size(), failing.size() > rows.size(), rows, note);
     }
