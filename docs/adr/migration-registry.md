@@ -100,5 +100,6 @@ accepts Phase 0. Each IPR migration must leave the trigger `inventory_ledger_app
 `pg_trigger` (R1).
 
 | V720–V721 | IPR Phase 1c/1d stream E2 (serial/lot, restock links), allocated after V700–V719 filled | as needed | Reserved |
+| V722 | IPR review 1 stream R1 (finding 5: opening-import separation of duties) | `V722__opening_stock_import_preview.sql`: new table `OpeningStockImportPreview` (who previewed which `previewToken`; index `(organizationId, previewToken)`), RLS `tenant_isolation`. New table only; no existing row changed; ledger trigger untouched | Written on `fix/ipr-review1` |
 
-A stream outside IPR that needs a migration takes the next free number **above V721** and records it here.
+A stream outside IPR that needs a migration takes the next free number **above V722** and records it here.
