@@ -54,6 +54,18 @@ class SalesCreditPolicyIT extends ApiTestSupport {
         return call("POST", "/sales/orders", b, clerkToken).body();
     }
 
+    /** Runs a read in a DEMO tenant transaction, so row-level security lets it see DEMO's rows. */
+    <T> T inDemo(java.util.function.Supplier<T> read) {
+        Object[] out = new Object[1];
+        com.inventoryerp.kernel.tenancy.TenantContext.run(
+                com.inventoryerp.kernel.tenancy.TenantContext.TenantStore.organization(demoOrg),
+                () -> new org.springframework.transaction.support.TransactionTemplate(txm)
+                        .executeWithoutResult(st -> out[0] = read.get()));
+        @SuppressWarnings("unchecked")
+        T t = (T) out[0];
+        return t;
+    }
+
     Res confirm(String id) {
         return call("POST", "/sales/orders/" + id + "/confirm", null, Map.of("Authorization", "Bearer " + clerkToken, "Idempotency-Key",
                 UUID.randomUUID().toString()));
@@ -135,11 +147,12 @@ class SalesCreditPolicyIT extends ApiTestSupport {
         JsonNode o = ok(200, "GET", "/sales/orders/" + id, null);
         assertThat(o.get("status").asString()).isEqualTo("confirmed");
         assertThat(o.get("onHold").asBoolean()).isFalse();
-        assertThat(jdbc.sql("SELECT count(*) FROM \"SalesCreditRequest\" WHERE \"orderId\" = ? AND status = 'approved'")
-                .param(id).query(Long.class).single()).isEqualTo(1);
+        // SalesCreditRequest has row-level security: read it as the organization (CI connects as the non-owner role)
+        assertThat(inDemo(() -> jdbc.sql("SELECT count(*) FROM \"SalesCreditRequest\" WHERE \"orderId\" = ? AND status ="
+                + " 'approved'").param(id).query(Long.class).single())).isEqualTo(1);
         // the order counts once in the customer's exposure
-        assertThat(jdbc.sql("SELECT \"exposureAtDecision\" FROM \"SalesCreditRequest\" WHERE id = ?").param(rid)
-                .query(java.math.BigDecimal.class).single()).isEqualByComparingTo("20000000");
+        assertThat(inDemo(() -> jdbc.sql("SELECT \"exposureAtDecision\" FROM \"SalesCreditRequest\" WHERE id = ?")
+                .param(rid).query(java.math.BigDecimal.class).single())).isEqualByComparingTo("20000000");
     }
 
     @Test
