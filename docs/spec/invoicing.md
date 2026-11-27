@@ -58,6 +58,31 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **IPR Phase 1a (2026-11-27, owner decision D4; owner sign-off required).**
+  - **Awaiting delivery.** When the delivery order that carried a sales invoice's goods is cancelled or closed short
+    with goods undelivered, the invoice's `data.stockIssuedBy` mark is replaced by `data.stockAwaitingDelivery`.
+    Posting still issues nothing. The behaviour table (delivery order state × invoice state → stock effect) is in
+    `fleet.md`, "IPR Phase 1a".
+  - **New route `POST /invoices/:id/issue-undelivered`** (no Nest counterpart). It needs `invoice:post` and an
+    `Idempotency-Key` (`@Idempotent(required = true)`), and answers 200 with the invoice, like `/post` and
+    `/cancel`. The optional body is `{ "locationId" }`; without it the stock comes from the invoice's last delivery
+    order's location, else the branch warehouse. It issues the undelivered quantity per line as `sales_invoice` rows.
+    The undelivered quantity is invoiced − posted credit notes − net issued (all issue rows of the invoice, net of
+    linked returns, plus legacy unlinked put-backs).
+  - **Refusals of the new route** (plain English):
+    - 400 when the invoice is not posted/paid ("... only a posted invoice can issue its undelivered goods");
+    - 400 when it is not awaiting ("Invoice X is not awaiting delivery; ...");
+    - 409 while a delivery order of the invoice is open;
+    - 400 when nothing is undelivered.
+    Lock order: invoice row (L1) → stock cells (L3–L6) → journal (L7).
+  - **Credit-note restock source.** The restock now returns against every issue of the credited invoice at once:
+    `sales_invoice`, `cash_sale`, and the `fleet_trip` rows of its delivery orders. Before, it used only one kind,
+    chosen from the mark. The issue loop of the invoice post moved to `InvoiceGoodsService.issueStock` unchanged; F5
+    adds a refusal when the stock is reserved for sales orders.
+  - **M-29.** Vendor bill cancel takes the supplier lock and locks the bill's `VendorBillAutoReceipt` rows before it
+    reads whether a goods receipt absorbed them. A cancel racing an absorbing receipt waits for it and is then
+    refused with the existing "cannot be cancelled ... matched by goods receipt" message.
+
 - **Sales invoices and credit notes are numbered when posted** (sales readiness INV-11, owner decision 2026-11-26).
   Nest numbers a document when the draft is created (`INV-<year>-` / `CN-<year>-` from a PostgreSQL sequence, which
   leaves gaps when drafts are deleted or a post rolls back). Drafts now carry a temporary reference
