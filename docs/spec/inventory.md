@@ -66,6 +66,24 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
+[2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md)):
+
+- **GL-4: posting fallbacks.** Without a matching posting rule, an issue of type `RETURN_TO_SUPPLIER` debits GRNI
+  (`grni_accrued`) and `PRODUCTION_CONSUME` debits WIP (`wip`, else stock valuation) instead of COGS; a movement type
+  with no known default fails closed (400 "No posting rule or default account is configured for stock movements of
+  type <T>; add a posting rule for it under Inventory > Posting rules"). Nest fell back to COGS for every type.
+- **GL-4: system posting rules.** `DELETE /inventory/posting-rules/:id` refuses an organisation-wide rule that matches
+  a system default (movement type, line, side): 400 "This is a system default posting rule for <T> and cannot be
+  deleted. Change its account instead, or use Restore defaults." Product and category rules delete as before.
+- **GL-1 / GL-5: base currency.** `GET /reports/inventory/gl-tieout` and the integrity checks `valuation_vs_gl` /
+  `valuation_vs_gl_by_product` sum `baseDebit − baseCredit` (Nest summed the transaction-currency `debit − credit`).
+- **GL-11: `wip_tieout` report-only integrity check** (new key at the end of `reportOnlyChecks`): GL WIP per cost
+  object against the WIP sub-ledger (docs/spec/manufacturing-wip-reconciliation.md). Report-only until the owner
+  promotes it to a value check.
+- **GL-10: setting `inventory.closeGate.liveValueChecks`** (organisation, default on): the period close runs the
+  inventory value checks live (see accounting.md).
+
 Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
 [audit](../audits/2026-11-17-inventory-procurement-readiness.md)):
 

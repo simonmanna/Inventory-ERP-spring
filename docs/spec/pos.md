@@ -83,6 +83,14 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Deviations
 
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**):
+
+- **GL-3: closing an integrity finding.** `POST /pos/posting-monitor/exceptions/:id/resolve` on a finding of kind
+  `integrity_*` also needs `inventory_valuation:manage` (403 "Closing an inventory integrity finding needs the
+  inventory_valuation:manage permission"); for a value finding (`valuation_vs_subledger`, `valuation_vs_gl`,
+  `valuation_vs_gl_by_product`) it re-runs the value checks and refuses while one fails (400 "The integrity check
+  <key> still fails (<n> row(s); <note>). Correct the cause, then close the finding."). Other kinds unchanged.
+
 Approved by the owner 2026-11-23 (inventory hardening R4, workflow integrity, release gate G1;
 [review](../audits/2026-11-22-inventory-review.md) P1-11, P1-12):
 

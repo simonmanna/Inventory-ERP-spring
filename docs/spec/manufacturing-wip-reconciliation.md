@@ -1,7 +1,9 @@
 # Manufacturing WIP reconciliation
 
-- Status: **Proposed (IPR Phase 0, task T02b).** The check is built in Phase 2 (T25, GL-11, Gate G2). Nothing here
-  changes a posting.
+- Status: **Built (IPR Phase 2, stream C, branch `fix/ipr-2`)** as the report-only integrity check `wip_tieout`
+  (`manufacturing/application/WipTieOutService.java`, SPI `inventory/application/WipTieOutProvider.java`); the
+  `GET /manufacturing/reports/wip-reconciliation` report uses the same basis (WIP-6). Promotion to a value check
+  (holding the period close) is an owner decision. Changes to §5.3 from Phase 2 are marked "(Phase 2)".
 - Requirement: IPR plan rev 3, R4 (WIP valuation rules) and GL-11. The plan's basis table was "to be confirmed in
   Phase 0". This spec replaces it with what the code actually posts; §4 lists where the plan was wrong.
 - Method: static trace of `origin/main` 0e670f12. Every row below was read in code. Paths are relative to
@@ -164,7 +166,7 @@ promotes it.
 | Cost object state | Expected GL WIP | Tolerance |
 |---|---|---|
 | Single-stage `draft` / `confirmed` | 0 | 0.01 |
-| Single-stage `in_progress` | `materialCost` (overhead is not yet in WIP) + open late-cost shares | 0.01 |
+| Single-stage `in_progress` | `materialCost` (overhead is not yet in WIP) + Σ partial `overheadAbsorbed` − Σ partial `wipCredit` (Phase 2, X-9) + open late-cost shares | 0.01 |
 | Single-stage `qc_hold`, `completed`, `closed` | 0 + open late-cost shares not yet run | 0.01 |
 | Single-stage `cancelled` (before or after start), reversed | 0 | 0.01 |
 | Multi-stage order, any open state | Σ over its stages of `StageExecutionService.wip(stage)` + open late-cost shares | 0.01 |
@@ -176,8 +178,11 @@ promotes it.
 
 Open late-cost share = `CostValueAdjustmentLine.amount − clearedAmount` with `target = 'wip'`, adjustment not
 reversed, and no posted `CostAdjustmentRunLine` (the same predicate as `CostAdjustmentService.pending`,
-`:81-97`, but for every order status). A reversed or cancelled order with an open share is a finding (WIP-3), not a
-reconciling item.
+`:81-97`, but for every order status). (Phase 2) The release rows (`CostValueAdjustmentRelease`, target `wip`) count
+the same way. After the WIP-3 fix the cost adjustment run also takes the shares of `cancelled` (cancelled or
+reversed) orders, so an open share of such an order is a reconciling item until the next run, not a finding. The
+built check reports late-cost shares and every WIP line it cannot attribute as one object, `late_cost_and_other`
+(expected = Σ open shares), because a lineage share's `targetRef` is not reliably the order (open point below).
 
 ### 5.4 SQL sketch (single-stage orders)
 
@@ -257,6 +262,7 @@ stages closed is recorded as a cost component but never posted (no WIP imbalance
 
 ## 7. Tests (Phase 2, T25)
 
-`ManufacturingLifecycleIT` (MfgTestSupport) runs each R4 scenario and asserts after every step: integrity green, GL
+`ManufacturingLifecycleIT` (built in Phase 2 on an isolated organisation, `InventoryAuditSupport`, with the
+MfgTestSupport fixture patterns; DEMO's shared GL cannot be asserted green) runs each R4 scenario and asserts after every step: integrity green, GL
 tie-out green, and this check green with the expected balance of §5.3. Regression ITs for WIP-1, WIP-2 and WIP-3
 must be red on `origin/main` first.

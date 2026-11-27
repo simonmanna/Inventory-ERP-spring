@@ -127,6 +127,34 @@ Behaviour notes:
 
 ## Deviations
 
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
+[2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md)):
+
+- **GL-2: standard-costed by-products.** A by-product whose product is costed at STANDARD is received (stock and GL)
+  at its standard; the difference to its share of the order's cost goes to the production variance account
+  (`StandardCostService.postStageVariance`, source `production_order`). The order's pool is still reduced by the
+  share. Reversing the order reverses those variance entries too. Nest posted the share to stock while the engine
+  valued the receipt at standard, so GL and stock ledger drifted.
+- **X-9: partial output of a simple order** — new route `POST /manufacturing/production-orders/:id/partial-output`
+  (`production_order:complete`, Idempotency-Key required; body `quantity`, `batchNumber?`, `expiryDate?`, `date?`,
+  `notes?`; answers the order with `partialOutputs`). Each receipt absorbs `overhead × qty / expected` into WIP and
+  credits WIP with `(materials + overhead) × (1 − by-product %) × qty / expected`; rows in
+  `ProductionPartialOutput` (V702). Limits (minimum safe version): only in progress, single-stage, non-QC,
+  non-abnormal-rework orders whose output is not costed at STANDARD (its variances settle once, at completion);
+  the partials must stay below the expected quantity; by-products come at
+  completion. Complete takes the rest of the pool, absorbs the rest of the overhead and needs a quantity > 0 when
+  partials exist; `producedQty` includes the partials. Cancel is refused when partials exist ("Order <code> has
+  partial outputs in stock and cannot be cancelled; complete it, then reverse it if it must be undone."); the
+  reversal takes every partial receipt back.
+- **WIP-3: late cost of cancelled and reversed orders.** The cost adjustment run also takes the open WIP shares of
+  orders in status `cancelled`, and sends them to the materials the cancel or reversal received back (on hand →
+  adjunct, sold → cost of sales; none → cost of sales). They stayed in WIP for ever before.
+- **WIP-6: `GET /manufacturing/reports/wip-reconciliation`** uses the WIP tie-out basis: base currency, posted
+  entries, a single-stage order in progress carries its materials (overhead only at completion) less its partial
+  outputs, QC hold = 0, multi-stage = Σ stage WIP, plus process costing and open late-cost shares. Same keys, plus
+  `processCostingWip`, `pendingLateCost`, `failingObjects`; `balanced` also needs every cost object to tie.
+  `GET /manufacturing/reports/stage-wip` reads the GL in base currency over posted entries.
+
 Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-S006 is additive):
 
 | # | Route | Nest | Spring |
