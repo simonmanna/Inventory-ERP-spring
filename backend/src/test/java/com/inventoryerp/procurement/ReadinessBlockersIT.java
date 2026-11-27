@@ -214,7 +214,8 @@ class ReadinessBlockersIT extends ApiTestSupport {
         Res over = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 600, "method",
                 "bank"));
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 600 exceeds remaining balance of 500");
-        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(new BigDecimal(pay.get("amount").asString())).isEqualByComparingTo("500");
         assertThat(supplierAp(supplier)).isEqualByComparingTo("0");
     }
@@ -237,7 +238,8 @@ class ReadinessBlockersIT extends ApiTestSupport {
         assertThat(over.status()).isEqualTo(400);
         // Gap fix h03-F4: the return now also takes the 4 off the receipt, so the order itself has 60 left.
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 100 exceeds remaining balance of 60");
-        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(new BigDecimal(pay.get("amount").asString())).isEqualByComparingTo("60");
         assertThat(supplierAp(supplier)).isEqualByComparingTo("0");
         Res more = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
@@ -262,7 +264,8 @@ class ReadinessBlockersIT extends ApiTestSupport {
         Res over = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 71, "method",
                 "bank"));
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 71 exceeds remaining balance of 70");
-        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(new BigDecimal(pay.get("amount").asString())).isEqualByComparingTo("70");
         assertThat(supplierAp(supplier)).isEqualByComparingTo("0");
     }

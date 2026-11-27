@@ -213,7 +213,7 @@ class InvoicingIT extends ApiTestSupport {
                 1000, "paymentMethod", "bank"), key());
         assertThat(overpay.body().get("message").asString()).startsWith("Payment amount 1000 exceeds supplier outstanding");
         JsonNode pay = money("/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today, "amount", 60,
-                "paymentMethod", "bank", "withholdingAmount", 6, "allocations", List.of(Map.of("documentId", id,
+                "paymentMethod", "cheque", "withholdingAmount", 6, "allocations", List.of(Map.of("documentId", id,
                         "amount", 60))));
         assertThat(pay.get("paymentNumber").asString()).startsWith("PV-");
         assertThat(pay.get("withholdingAmount").asString()).isEqualTo("6");

@@ -141,6 +141,17 @@ public class SupplierController {
                 dto.accountName(), dto.accountNumber(), dto.swiftCode(), dto.currencyCode(), dto.isDefault()));
     }
 
+    /**
+     * Purchase readiness H7: the supplier's verified bank accounts (masked), for the payment screens' account picker.
+     * Readable by whoever may read suppliers or record a supplier / PO payment.
+     */
+    @GetMapping("/{partnerId}/bank-accounts/verified")
+    @RequirePermissions(value = {Permissions.SUPPLIER__READ, Permissions.PAYMENT__CREATE,
+            Permissions.PROCUREMENT__PURCHASE_ORDER__PAY}, anyOf = true)
+    public List<Map<String, Object>> verifiedBankAccounts(@PathVariable String partnerId) {
+        return suppliers.verifiedBankAccounts(partnerId);
+    }
+
     @PostMapping("/bank-accounts/{id}/verify")
     @RequirePermissions(Permissions.SUPPLIER__VERIFY_BANK)
     public Map<String, Object> verifyBankAccount(@PathVariable String id) {

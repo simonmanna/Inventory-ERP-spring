@@ -128,7 +128,8 @@ class PoBillApplicationIT extends ApiTestSupport {
         String item = product();
         String poId = po(supplier, item, 10, 50);
         receive(poId, item, 4); // voucher: AP 200
-        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 120, "method", "bank"));
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 120, "method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(aging(supplier)).isEqualByComparingTo("80");
         assertThat(ledger(supplier)).isEqualByComparingTo("80");
 
@@ -172,7 +173,8 @@ class PoBillApplicationIT extends ApiTestSupport {
         String item = product();
         String poId = po(supplier, item, 2, 75);
         receive(poId, item, 2);
-        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank", "supplierBankAccountId",
+                poSupplierBankAccount(poId)));
         assertThat(ledger(supplier)).isEqualByComparingTo("0");
         JsonNode posted = post(bill(supplier, item, 2, 75));
         assertThat(new BigDecimal(posted.get("amountResidual").asString())).isEqualByComparingTo("0");

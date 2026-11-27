@@ -98,7 +98,8 @@ class DocumentReversalIT extends AccountingFixtures {
 
     JsonNode supplierPayment(Books b, String supplier, String billId, int amount) {
         Res r = moneyAs(b, "POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today(), "amount",
-                amount, "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", billId, "amount", amount))));
+                amount, "paymentMethod", "cheque", "allocations", List.of(Map.of("documentId", billId, "amount",
+                        amount))));
         assertThat(r.status()).as(r.raw().body()).isLessThan(300);
         return r.body();
     }

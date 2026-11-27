@@ -39,6 +39,12 @@ export function ApAgingPage() {
       className: 'text-right',
       render: (r: ApAgingPartner) => money(r.buckets[b.key]),
     })),
+    {
+      key: 'unapplied',
+      header: tx('Unapplied payments'),
+      className: 'text-right',
+      render: (r) => (Number(r.unapplied ?? 0) !== 0 ? money(-Number(r.unapplied)) : money(0)),
+    },
     { key: 'total', header: tx('Outstanding'), className: 'text-right font-medium', render: (r) => money(r.total) },
   ];
 
@@ -46,7 +52,7 @@ export function ApAgingPage() {
     <div className="space-y-4">
       <ListPageHeader
         title={tx('Accounts Payable')}
-        description={tx('Outstanding supplier balances by age (derived from posted vendor bills).')}
+        description={tx('Outstanding supplier balances by age in base currency: posted bills and received goods not yet billed, less payments not yet allocated to a bill.')}
         icon={Clock}
         actions={
           <div className="flex items-center gap-2">

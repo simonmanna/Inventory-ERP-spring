@@ -130,7 +130,8 @@ class SharedFxIT extends ApiTestSupport {
 
     Res pay(String path, String partner, String docId, int amount, int rate) {
         return call("POST", path, Map.of("partnerId", partner, "paymentDate", today, "amount", amount,
-                "paymentMethod", "bank", "currencyCode", CUR, "exchangeRate", rate, "allocations",
+                "paymentMethod", path.startsWith("/supplier-payments") ? "cheque" : "bank", "currencyCode", CUR,
+                "exchangeRate", rate, "allocations",
                 List.of(Map.of("documentId", docId, "amount", amount))), key());
     }
 

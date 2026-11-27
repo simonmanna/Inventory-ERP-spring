@@ -706,3 +706,51 @@ Tests: `PlanningIT`. Web:
 - Vendor bills, including subcontract valuation bills (`withholdingTaxId` on the valuation request), can withhold tax
   at posting. See [invoicing.md](invoicing.md) and
   [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+
+## Purchase readiness fixes (owner-approved 2026-11-27) — supplier payments (stream "pay")
+
+Fixes from the read-only purchase-flow audit of origin/main. V690 adds `ApprovalRequest.consumedAt/consumedRef`,
+`Payment.supplierBankAccountId` and `PurchasePayment.supplierBankAccountId`. One component,
+`invoicing.application.SupplierPaymentControls`, now runs on both `POST /supplier-payments` and
+`POST /procurement/purchase-orders/:id/pay`.
+
+- **B1 — overpayment cap counts unallocated payments.** `POST /supplier-payments` without `allowOverpayment` is capped
+  at the finance audit A5 tie-out measure (`accounting.application.ApOpenItemsSql`): open vendor bills at their
+  carrying rate less the supplier's posted, non-void, unallocated supplier payments at their payment rate. A foreign
+  payment is capped at the open bills in its currency less the unallocated payments in that currency, reduced (at the
+  payment's rate) by any excess of unallocated payments in other currencies over those currencies' bills. A functional
+  payment no longer adds foreign bills' residuals unconverted. Bills on payment hold are left out. Payments to one
+  supplier are serialised on the `Partner` row (`FOR NO KEY UPDATE`, the lock the PO pay route takes after its PO
+  lock). Message: `Payment amount X exceeds supplier outstanding balance Y (open bills less payments not yet allocated
+  to a bill). Overpayments require allowOverpayment=true.`
+- **B2 — AP aging ties to the GL.** `GET /reports/ap/aging` (live and the nightly snapshot) is in base currency: bills
+  at their carrying rate, receipt-voucher payables (stocked lines only — `trackInventory` and not a service, the PO pay
+  route's measure) at the receipts' rate, less unallocated supplier payments. New fields: `unapplied` (top level and per
+  partner); `total` = Σ buckets − unapplied. The report-library AP open items (`reporting.OpenItems`) use the same
+  receipt-voucher measure, so `ap.reconciliation` / the tie-out agree.
+- **H5 — PO pay passes the supplier payment controls**: the ADR-S074 guards, the supplier status check, the verified
+  bank account rule and the `supplier_payment` approval on the payment amount in the functional currency
+  (`Vendor payment requires approval. Request ID: …`, 403, as on `/supplier-payments`).
+- **H6 — an approval authorises one payment.** An approved `supplier_payment` request covers exactly one payment of at
+  most the approved amount; the payment consumes it in its own transaction (`consumedRef` = `Payment:<id>` or
+  `PurchasePayment:<id>`). A second payment needs a new approval. Two concurrent payments cannot share one: the loser
+  gets 409 `Approval request <id> has already been used for another payment. Request a new approval for this
+  payment.` The web flow is unchanged (refused → approver approves → retry).
+- **H7 — supplier status and bank accounts gate payments.** (a) A supplier whose profile is `suspended` or
+  `blacklisted` is refused on both routes: `Supplier <name> is suspended (<reason>); payments to a suspended or
+  blacklisted supplier are refused`. Inactive partners are not blocked (their open debts can still be settled).
+  (b) Both routes take an optional `supplierBankAccountId`; it must belong to the supplier (`The supplier bank account
+  does not belong to this supplier`) and be verified (`The supplier bank account is pending verification; only a
+  verified bank account can receive a payment`); it is stored on the payment. (c) New org setting
+  `procurement.supplierBankVerification` (`off` | `block`, **default `block`**): a `bank` method supplier payment —
+  and a PO payment, whose method defaults to `bank` — must name a verified account: `A bank transfer to a supplier must
+  name one of the supplier's verified bank accounts (supplierBankAccountId). Register the account on the supplier and
+  have someone else verify it first.` Cheque, cash and mobile money are not affected. New route
+  `GET /procurement/suppliers/:partnerId/bank-accounts/verified` (`supplier:read` or `payment:create` or
+  `purchase_order:pay`) feeds the account picker on the supplier payment form and the PO pay page. The GQDEMO seed
+  registers a verified demo account for the supplier it pays by bank.
+- **M — payment hold**: a bill on payment hold (`PUT /vendor-bills/:id/payment-schedule {onHold: true}`) takes no
+  allocation (payment or advance allocation): `Bill <number> is on payment hold; release the hold in the payment
+  schedule before paying it`.
+- **M — drawer accounts**: a supplier payment outside a register shift cannot credit a register's drawer account
+  (`A supplier payment cannot use the drawer account of register <code>. …`), as treasury and expenses already refuse.

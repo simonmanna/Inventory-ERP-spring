@@ -249,7 +249,7 @@ class ControlAccountRoutesIT extends AccountingFixtures {
         refused(moneyAs(b, "POST", "/payments", Map.of("partnerId", customer, "paymentDate", today(), "amount", 10,
                 "paymentMethod", "bank", "accountId", ap)), AP_REFUSAL);
         refused(moneyAs(b, "POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today(),
-                "amount", 10, "paymentMethod", "bank", "accountId", ap, "allowOverpayment", true)), AP_REFUSAL);
+                "amount", 10, "paymentMethod", "cheque", "accountId", ap, "allowOverpayment", true)), AP_REFUSAL);
         assertThat(jdbc.sql("SELECT count(*) FROM \"Payment\" WHERE \"organizationId\" = ?").param(b.org())
                 .query(Long.class).single()).isZero();
     }
@@ -309,7 +309,7 @@ class ControlAccountRoutesIT extends AccountingFixtures {
         String supplier = partner(b, false);
         String bill = postedBill(b, supplier, 200)[0];
         Res paid = moneyAs(b, "POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today(),
-                "amount", 150, "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", bill, "amount",
+                "amount", 150, "paymentMethod", "cheque", "allocations", List.of(Map.of("documentId", bill, "amount",
                         150))));
         assertThat(paid.status()).as(paid.raw().body()).isEqualTo(200);
         assertThat(residual(bill)).isEqualByComparingTo("50");

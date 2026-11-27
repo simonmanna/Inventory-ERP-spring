@@ -159,12 +159,12 @@ class Acc71TaxIT extends AccountingFixtures {
 
         // A supplier payment may not withhold again on a bill that withheld at posting.
         Res twice = moneyAs(b, "POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", day,
-                "amount", 1120, "paymentMethod", "bank", "withholdingAmount", 60, "allocations",
+                "amount", 1120, "paymentMethod", "cheque", "withholdingAmount", 60, "allocations",
                 List.of(Map.of("documentId", bill, "amount", 1120))));
         assertThat(twice.status()).as(twice.raw().body()).isEqualTo(400);
         assertThat(twice.body().get("message").asString()).contains("already withheld");
         JsonNode pay = moneyAs(b, "POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", day,
-                "amount", 1120, "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", bill,
+                "amount", 1120, "paymentMethod", "cheque", "allocations", List.of(Map.of("documentId", bill,
                         "amount", 1120)))).body();
         assertThat(pay.get("id")).isNotNull();
         JsonNode paid = okAs(b, 200, "GET", "/vendor-bills/" + bill, null);

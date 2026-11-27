@@ -62,6 +62,13 @@ public class ApprovalRequest {
     @Column(name = "decidedAt")
     private Instant decidedAt;
 
+    /** Purchase readiness H7/H6 (V690): when a single-use approval was used up, and by what. */
+    @Column(name = "consumedAt")
+    private Instant consumedAt;
+
+    @Column(name = "consumedRef")
+    private String consumedRef;
+
     @Column(name = "createdById")
     private String createdById;
 
@@ -176,6 +183,22 @@ public class ApprovalRequest {
 
     public void setDecidedAt(Instant decidedAt) {
         this.decidedAt = decidedAt;
+    }
+
+    public Instant getConsumedAt() {
+        return consumedAt;
+    }
+
+    public void setConsumedAt(Instant consumedAt) {
+        this.consumedAt = consumedAt;
+    }
+
+    public String getConsumedRef() {
+        return consumedRef;
+    }
+
+    public void setConsumedRef(String consumedRef) {
+        this.consumedRef = consumedRef;
     }
 
     public String getCreatedById() {

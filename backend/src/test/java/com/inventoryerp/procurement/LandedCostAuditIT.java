@@ -223,7 +223,7 @@ class LandedCostAuditIT extends LandedCostFixtures {
         assertThat(balance(code("2155")).subtract(s.balances().get("clearing"))).isEqualByComparingTo("0");
         String bill = posted.get("charges").get(0).get("vendorBillId").asString();
         Res pay = call("POST", "/supplier-payments", Map.of("partnerId", forwarder, "paymentDate",
-                java.time.LocalDate.now().toString(), "amount", 200, "paymentMethod", "bank", "allocations",
+                java.time.LocalDate.now().toString(), "amount", 200, "paymentMethod", "cheque", "allocations",
                 List.of(Map.of("documentId", bill, "amount", 200))), key());
         assertThat(pay.status()).as(pay.raw().body()).isIn(200, 201);
         assertThat(jdbc.sql("SELECT \"amountPaid\" FROM \"Document\" WHERE id = ?").param(bill)
@@ -322,7 +322,7 @@ class LandedCostAuditIT extends LandedCostFixtures {
         String bill = posted.get("charges").get(0).get("vendorBillId").asString();
         Res pay = call("POST", "/supplier-payments", Map.of("partnerId", forwarder, "paymentDate",
                 java.time.LocalDate.now().toString(),
-                "amount", 100, "currencyCode", "USD", "exchangeRate", 3750, "paymentMethod", "bank", "allocations",
+                "amount", 100, "currencyCode", "USD", "exchangeRate", 3750, "paymentMethod", "cheque", "allocations",
                 List.of(Map.of("documentId", bill, "amount", 100))), key());
         assertThat(pay.status()).as(pay.raw().body()).isIn(200, 201);
         assertThat(balance(mapped("fx_loss")).add(balance(mapped("fx_gain"))).subtract(fx0))
