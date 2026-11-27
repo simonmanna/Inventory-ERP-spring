@@ -313,7 +313,7 @@ class StockConcurrencyIT extends ApiTestSupport {
         for (int i = 1; i <= 4; i++) {
             int q = i;
             tasks.add(() -> as("POST", "/inventory/reservations", Map.of("productId", p, "locationId", loc, "quantity", q,
-                    "sourceType", "order", "sourceId", src)).status());
+                    "sourceType", "manual", "sourceId", src)).status());
         }
         assertThat(parallel(tasks)).allMatch(s -> s == 201);
         long active = jdbc.sql("SELECT count(*) FROM \"StockReservation\" WHERE \"organizationId\" = ? AND \"sourceId\" = ?"

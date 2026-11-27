@@ -538,4 +538,17 @@ public abstract class ApiTestSupport {
         assertThat(failures).isEmpty();
         return checked;
     }
+
+    /**
+     * IPR S2 (P15-6): a bootstrapped organisation starts with the stock adjustment, stock write-off and inventory
+     * valuation pairs on. A fixture whose one administrator makes and clears documents switches them off.
+     */
+    protected void inventorySodPairsOff(String token) {
+        for (String pair : List.of(com.inventoryerp.kernel.approvals.SegregationOfDutiesService.STOCK_ADJUSTMENT,
+                com.inventoryerp.kernel.approvals.SegregationOfDutiesService.STOCK_WRITE_OFF,
+                com.inventoryerp.kernel.approvals.SegregationOfDutiesService.INVENTORY_VALUATION)) {
+            Res r = call("PUT", "/approval-controls/sod-rules/" + pair, Map.of("isActive", false), token);
+            assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        }
+    }
 }

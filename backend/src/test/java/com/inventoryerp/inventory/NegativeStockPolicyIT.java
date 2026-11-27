@@ -240,7 +240,7 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         receive(p, 5, 4);
         String so = "SO-" + sfx();
         okA(201, "POST", "/inventory/reservations", Map.of("productId", p, "locationId", main, "quantity", 4,
-                "sourceType", "order", "sourceId", so));
+                "sourceType", "manual", "sourceId", so));
         String id = transitTransfer(p, 3);
         JsonNode dispatched = okA(200, "POST", "/inventory/transfers/" + id + "/dispatch", null);
         assertThat(dispatched.get("status").asString()).isEqualTo("in_transit");
@@ -263,7 +263,7 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         assertThat(refused.status()).isEqualTo(400);
         assertThat(refused.body().get("message").asString()).startsWith("Insufficient stock at source");
         assertThat(onHand(p, main)).isEqualByComparingTo("2");
-        okA(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", so));
+        okA(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "manual", "sourceId", so));
         assertIntegrityGreen("reservation released");
     }
 

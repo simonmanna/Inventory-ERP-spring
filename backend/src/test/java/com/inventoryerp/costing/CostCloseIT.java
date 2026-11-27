@@ -65,6 +65,7 @@ class CostCloseIT extends ApiTestSupport {
         assertThat(boot.status()).as(boot.raw().body()).isEqualTo(201);
         String org = boot.body().get("organization").get("id").asString();
         String token = login(code, "owner@" + code + ".test", "Owner@12345");
+        inventorySodPairsOff(token);
         String role = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\") VALUES"
                 + " (?, ?, 'Closer', false, ?, now())").params(role, org, Permissions.ALL.stream().filter(p ->
@@ -218,6 +219,7 @@ class CostCloseIT extends ApiTestSupport {
         assertThat(boot.status()).as(boot.raw().body()).isEqualTo(201);
         String org = boot.body().get("organization").get("id").asString();
         String token = login(code, "owner@" + code + ".test", "Owner@12345");
+        inventorySodPairsOff(token);
         Res loc = call("POST", "/inventory/locations", Map.of("code", "WH-1", "name", "Main", "type", "warehouse"),
                 token);
         assertThat(loc.status()).as(loc.raw().body()).isEqualTo(201);
