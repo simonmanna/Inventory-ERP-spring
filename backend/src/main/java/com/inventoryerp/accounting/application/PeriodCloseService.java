@@ -124,6 +124,8 @@ public class PeriodCloseService {
             + " LEFT JOIN \"Invoice\" i ON i.id = x.\"invoiceId\" AND i.\"organizationId\" = x.\"organizationId\""
             + " WHERE x.\"organizationId\" = ? AND x.status::text = 'open' AND x.kind IS DISTINCT FROM ?"
             + " AND NOT starts_with(COALESCE(x.kind, ''), ?)"
+            // ADR-S088 / IPR review 1: the device-time flags are report-only and never hold a close.
+            + " AND COALESCE(x.kind, '') NOT IN ('offline_clock_skew', 'offline_late_sync')"
             + " AND (COALESCE(i.\"issueDate\", x.\"createdAt\") BETWEEN ? AND ? OR x.\"createdAt\" BETWEEN ? AND ?)";
 
     /**

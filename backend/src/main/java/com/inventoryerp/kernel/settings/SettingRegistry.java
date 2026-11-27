@@ -161,8 +161,9 @@ public final class SettingRegistry {
                         + " server receive time and flagged clockSkew for review. It is never refused.",
                 5, null, false, ORG_ONLY);
         def("inventory.maxBackdateDays", "inventory", "number", "Furthest Back-office Backdating (Days)",
-                "A back-office goods receipt dated more than this many days in the past is refused. Offline device"
-                        + " work is exempt: an older op is accepted and flagged lateSync.",
+                "A back-office goods receipt dated more than this many days in the past is refused. Times sent by a"
+                        + " till or device (offline sync ops, POS sales and payments, cash sessions, cash drawer) are"
+                        + " exempt: an older one is accepted and flagged lateSync for review, never refused.",
                 7, null, false, ORG_ONLY);
         def("inventory.defaultBatchTracking", "inventory", "bool", "Default Batch Tracking (new products)", null,
                 false, null, false, ORG_ONLY);
