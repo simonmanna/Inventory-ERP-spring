@@ -50,7 +50,7 @@ recurring task generation (check service).
 
 ## Deviations
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 1. `dueDate` (create / update) accepts a bare `YYYY-MM-DD` and stores UTC midnight; Prisma rejects anything
    but a full ISO date-time (500).

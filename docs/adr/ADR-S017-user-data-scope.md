@@ -1,6 +1,6 @@
 # ADR-S017: User data scope by branch and location
 
-- Status: proposed (2026-10-30). Built, **not compiled or run**.
+- Status: accepted (owner-approved 2026-11-27; proposed 2026-10-30). Built, **not compiled or run**.
 - Related: BR-1, `V62__location_branch_user_scope.sql`, `docs/spec/core.md`
 
 ## Context

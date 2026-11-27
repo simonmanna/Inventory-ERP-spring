@@ -1,6 +1,6 @@
 # ADR-S020: Analytics dashboards
 
-- Status: proposed (2026-10-31). Built, **not compiled or run**.
+- Status: accepted (owner-approved 2026-11-27; proposed 2026-10-31). Built, **not compiled or run**.
 - Related: Track C Phase 5, requirements §10 and §2.7, `V100__analytics.sql`, `docs/spec/analytics-kpis.md`,
   ADR-S017 (user data scope)
 

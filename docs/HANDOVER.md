@@ -35,7 +35,7 @@ Totals and per-route ticks: `docs/PORT_STATUS.md` (879/1118). Per-module status,
    walkthrough was done.
 3. **JaCoCo ≥ 80 %** on `application` packages not reached: 74 % overall, 57–92 % per package. The build gate is a
    ratchet (`coverage.application.min` in `backend/gradle.properties`, 0.55) — raise it as coverage grows.
-4. **Deviations awaiting owner approval**: inventory `lowStock` filter, task date-only `dueDate`, DMS A4 PDF
+4. **Deviations (owner-approved 2026-11-27)**: inventory `lowStock` filter, task date-only `dueDate`, DMS A4 PDF
    via OpenPDF (see each spec's "Deviations"). Procurement has none, but lists Nest bugs kept on purpose
    (PO search → 500, inbound non-RTV debit note never balances) — the owner may want those fixed after parity.
 5. Deferred Jest suites: sync-driven ones ported in P6 (`SyncIT`, `SyncInventoryReplayIT`); still open: the procurement / transfer / preflight days of the Lakeview simulations (the POS

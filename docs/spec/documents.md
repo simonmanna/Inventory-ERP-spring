@@ -57,7 +57,7 @@ document lifecycle events.
 
 ## Deviations
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 1. **A4 PDF rendering** (`GET /:id/preview?format=a4`, `POST /:id/print`): Nest drives the system Chrome
    (`--print-to-pdf`); Java renders the substituted HTML's text with OpenPDF. `content`

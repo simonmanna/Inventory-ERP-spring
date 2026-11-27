@@ -138,7 +138,7 @@ review, `cash.varianceApprovalThreshold` setting, approver-PIN lockout through `
 error, per-branch close lock and open-order check, handover carries open orders. Details: `docs/spec/pos.md`
 "Post-parity hardening".
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 0. **Accounting day = organisation-local calendar day** (ADR-S070). Nest buckets the ledger by UTC day: period
    control, entry-number year and every ledger report compare `postingDate` against UTC day bounds. Here

@@ -103,7 +103,7 @@ an invalid / expired / foreign `X-Pos-User` token answers 401 `X-Pos-Session: re
 bearer identity (PIN screens excepted); `POST /users/:id/unlock` clears PIN counters; the outbox claim sets
 `status = 'claimed'`. Details: `docs/spec/pos.md` "Post-parity hardening".
 
-Bug fixes where the Nest code could never work (pending owner approval):
+Bug fixes where the Nest code could never work (owner-approved 2026-11-27):
 
 1. **MFA login / enrollment lookups** - Nest looked the pending `IdempotencyRecord` up with
    `organizationId: ''`, so `mfa-login` always answered `MFA token invalid or expired` and `mfa/verify`
@@ -125,7 +125,7 @@ Bug fixes where the Nest code could never work (pending owner approval):
    gauges keep their names (JVM heap/non-heap instead of Node RSS); `erp_node_info` becomes `erp_jvm_info`,
    followed by the Micrometer Prometheus registry (JVM, HTTP, Hikari). Actuator web endpoints are not exposed.
 
-SG-0 stabilization (2026-11-06), pending owner approval:
+SG-0 stabilization (2026-11-06), owner-approved 2026-11-27:
 
 - **Global search is scoped.** Nest returned every type to any signed-in user. `GET /search` now returns only types the
   caller has read permission for, applies the caller's branch scope, and honours own-orders-only for sales orders. It
@@ -157,7 +157,7 @@ Status: built, not compiled, not run. Tests in `ApprovalControlsIT`.
 
 ### Configurable rules and approval hub (ADR-S061)
 
-Status: built and compiled; `ApprovalConditionsTest` run; `ApprovalRulesIT` written, not yet run (needs Docker). Extension, no Nest counterpart, pending owner approval.
+Status: built and compiled; `ApprovalConditionsTest` run; `ApprovalRulesIT` written, not yet run (needs Docker). Extension, no Nest counterpart, owner-approved 2026-11-27.
 
 - **Rule conditions**: `ApprovalWorkflow.conditions` is an AND/OR tree (`ApprovalConditions`) on snapshot fields; `precedence` orders rules before specificity; `priority` is stamped on requests (snapshot `priority` wins).
 - **Stage conditions and assignees**: `ApprovalStep.conditions` skips a stage when false; `approverScope` `user` / `role` with `approverUserIds` / `approverRoleIds`. Named scopes drop the requester and fall back to the stage permissions when nobody else resolves.

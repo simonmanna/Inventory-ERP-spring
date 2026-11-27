@@ -111,7 +111,7 @@ Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
   purchase price and purchase unit; a customer (outbound) note to the sales price and sales unit. Supplier notes used
   to default to the sales price.
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 0. **Landed cost LC-1 (ADR-S053, V292; extension).** Vouchers and accruals distribute a charge over the receipt's
    lineage and follow the goods through transfers; returned goods follow `costing.landedCost.returnPolicy`; credit

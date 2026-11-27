@@ -1,6 +1,6 @@
 # ADR-S070 — The accounting day is the organisation-local calendar day
 
-- Status: proposed (built 2026-11-10, branch `phase/acc-tz`), deviation from Nest pending owner approval
+- Status: accepted (owner-approved 2026-11-27); built 2026-11-10, deviation from Nest
 - Code: `accounting/application/AccountingDay.java` (the one helper), `FiscalPeriodControl`, `PostingService`
 - Spec: [docs/spec/accounting.md § Deviations](../spec/accounting.md)
 

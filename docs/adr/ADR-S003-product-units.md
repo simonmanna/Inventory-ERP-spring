@@ -1,6 +1,6 @@
 # ADR-S003: Per-product units of measure and unit snapshots on transaction lines
 
-- Status: proposed (2026-10-26) — deliberate deviation from the NestJS reference, needs owner approval
+- Status: accepted (owner-approved 2026-11-27) — deliberate deviation from the NestJS reference (proposed 2026-10-26)
 - Related: ADR-S001 (frozen wire contract), `V5__product_units.sql`, `docs/spec/core.md` "Deviations"
 
 ## Context

@@ -83,7 +83,7 @@ Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
   - Those forms called `GET /users`, which needs `user:read`.
   - Test `ReadinessBlockersIT`.
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 1. **`GET /inventory/items?lowStock=true`**: Nest passes a `Prisma.sql` fragment as a `where` field value,
    which Prisma rejects at runtime (500). Java applies the intended filter

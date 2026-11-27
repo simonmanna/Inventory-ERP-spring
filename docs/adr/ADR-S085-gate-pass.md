@@ -1,6 +1,6 @@
 # ADR-S085 — Gate pass (gate-out document beside every delivery)
 
-- Status: proposed (2026-11-23). Owner request of 2026-11-23; the owner reviews it when merging.
+- Status: accepted (owner-approved 2026-11-27; proposed 2026-11-23). Owner request of 2026-11-23; the owner reviews it when merging.
 - Extension: no NestJS counterpart. These are new routes in a new module (`com.inventoryerp.gatepass`); no existing
   route or response changed.
 - Migration: `V621__gate_pass.sql` (`GatePass`, `GatePassLine`, `GatePassEvent`, four `gate_pass:*` permissions).
