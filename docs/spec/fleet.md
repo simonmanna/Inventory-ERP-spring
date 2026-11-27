@@ -1604,3 +1604,16 @@ reservations) is short. The same guard runs for invoice auto-issue, `issue-undel
   ..."). Before, it restocked them a second time.
 - F5 refusal at dispatch: "Only X of P is free in L; Y is reserved for sales orders. Release or deliver those
   reservations first."
+- **IPR residual (stream H, owner sign-off required): `from-invoice` on an invoice whose stock issue belongs to
+  another document is refused.** An invoice of a sales order is marked by the order (`data.stockIssuedBy` = the order
+  number): its goods leave through the order's deliveries, which may already have issued them. A delivery-order
+  invoice is marked by that delivery order. `POST /fleet/delivery-orders/from-invoice` used to create a delivery
+  order anyway — stock mode `invoiced` for a posted invoice, so the goods were delivered without ever leaving stock,
+  or `dispatch` for a draft, which overwrote the mark and issued the goods a second time. Now it answers 409:
+  - sales-order invoice: "Invoice <n> bills sales order <SO>, whose deliveries issue its goods. Create the delivery
+    order from the sales order.";
+  - any other marked invoice: "Invoice <n>'s goods leave stock through <mark>; deliver them there.".
+  A cash-sale invoice (its goods left stock at the sale's handover) still gets a delivery order, now in stock mode
+  `invoiced` for a draft too, and keeps the cash sale's mark. An invoice awaiting delivery (D4) is unchanged.
+  Lock levels: invoice `Document` FOR UPDATE (L1), then reads only.
+
