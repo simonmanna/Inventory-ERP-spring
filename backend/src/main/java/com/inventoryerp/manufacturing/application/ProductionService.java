@@ -545,6 +545,15 @@ public class ProductionService {
         String code = str(order, "orderCode");
         BigDecimal materialCost = dec(order, "materialCost");
         BigDecimal overhead = dec(order, "overheadCost");
+        // IPR X-9: what the partial outputs already took out of WIP, the overhead they absorbed and their quantity.
+        Partials partials = partials(id);
+        if (partials.count() > 0 && (dto.qtyProduced() == null || dto.qtyProduced().signum() <= 0)) {
+            throw ApiException.badRequest("Order " + code + " has partial outputs; record the last quantity produced"
+                    + " (more than 0) to complete it.");
+        }
+        if (partials.count() > 0 && dto.uomId() != null && !dto.uomId().equals(str(order, "uomId"))) {
+            throw ApiException.badRequest("Order " + code + " has partial outputs; complete it in the order's unit.");
+        }
 
         // Zero-yield batch: materials are in WIP and gone — expense it (Dr Stock Adj Expense / Cr WIP).
         if (dto.qtyProduced() == null || dto.qtyProduced().signum() <= 0) {
@@ -580,8 +589,9 @@ public class ProductionService {
         BigDecimal pool = materialCost.add(overhead);
         BigDecimal byproductCredit = BigDecimal.ZERO;
 
-        // Absorb overhead into WIP so the output credit (which includes it) still nets WIP to zero.
-        absorbOverhead(id, code, overhead, date);
+        // Absorb overhead into WIP so the output credit (which includes it) still nets WIP to zero. IPR X-9: the
+        // partial outputs absorbed their share already.
+        absorbOverhead(id, code, overhead.subtract(partials.overheadAbsorbed()).max(BigDecimal.ZERO), date);
 
         List<Map<String, Object>> outputs = outputs(order);
         Map<String, Object> mainLine = outputs.stream().filter(o -> "output".equals(o.get("kind"))).findFirst()
@@ -601,11 +611,24 @@ public class ProductionService {
             Map<String, Object> bpProduct = getProduct(str(bp, "productId"));
             BigDecimal qtyBase = uom.toBase(qtyProduced, str(bp, "uomId"), str(bpProduct, "id"),
                     str(bpProduct, "uomId"), true);
-            BigDecimal unitCost = qtyBase.signum() > 0 ? Money.div(value, qtyBase) : BigDecimal.ZERO;
+            // IPR GL-2 (deviation from Nest): a standard-governed by-product is received at its standard (the stock
+            // engine values it there), so the GL debits stock at the standard and the difference to its share of the
+            // pool goes to the yield variance against WIP — as a multi-stage output does
+            // (StageExecutionService.receive). WIP is still credited with the full share.
+            BigDecimal bpStandard = standardCosted(str(bp, "productId"))
+                    ? standards.governingStandard(str(bp, "productId")).orElse(null) : null;
+            BigDecimal stockValue = bpStandard != null
+                    ? bpStandard.multiply(qtyBase).setScale(6, java.math.RoundingMode.HALF_UP) : value;
+            BigDecimal unitCost = bpStandard != null ? bpStandard
+                    : qtyBase.signum() > 0 ? Money.div(value, qtyBase) : BigDecimal.ZERO;
             receiveOutput(str(bp, "productId"), str(bp, "variantId"), receiveLocationId, qtyBase, unitCost,
                     ov != null && ov.batchNumber() != null ? ov.batchNumber() : str(order, "batchNumber"),
                     ov != null && ov.expiryDate() != null ? ov.expiryDate() : iso(order.get("expiryDate")),
-                    iso(order.get("mfgDate")), code, date, str(bp, "id"), value);
+                    iso(order.get("mfgDate")), code, date, str(bp, "id"), stockValue);
+            if (bpStandard != null && value.subtract(stockValue).signum() != 0) {
+                standards.postStageVariance(id, code, str(bp, "productId"), value.subtract(stockValue), qtyBase,
+                        stockValue, stockPosting.wipAccount(), date, SOURCE, code, "By-product at standard · " + code);
+            }
             pool = pool.subtract(value);
             byproductCredit = byproductCredit.add(value);
         }
@@ -615,6 +638,9 @@ public class ProductionService {
                     + JsNumbers.dec(byproductCredit) + " of " + JsNumbers.dec(materialCost.add(overhead))
                     + "); correct their cost allocation %.");
         }
+        // IPR X-9: the main output's partial receipts took their value out of WIP already; the last receipt takes
+        // the rest (and, at standard, the variances settle the whole order).
+        pool = pool.subtract(partials.wipCredit());
 
         // 1b) Review 2026-11-17 (rework costing): an abnormal rework — a defect that is not part of the normal process —
         // brings the units back at the cost they already carried; the extra material and conversion it took is a loss
@@ -662,13 +688,14 @@ public class ProductionService {
         // Review N3: expected and produced compared in base units (outputUnitCost is per base unit).
         BigDecimal expectedBase = uom.toBase(expectedQty, mainLine != null && mainLine.get("uomId") != null
                 ? str(mainLine, "uomId") : str(order, "uomId"), str(outProduct, "id"), str(outProduct, "uomId"), true);
-        BigDecimal yieldVariance = BomService.mul(expectedBase.subtract(qtyProducedBase), outputUnitCost);
+        BigDecimal yieldVariance = BomService.mul(expectedBase.subtract(qtyProducedBase.add(partials.quantityBase())),
+                outputUnitCost);
         BigDecimal totalCost = materialCost.add(overhead);
         boolean qc = Boolean.TRUE.equals(order.get("qcRequired"));
 
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", qc ? "qc_hold" : "completed");
-        data.put("producedQty", dto.qtyProduced());
+        data.put("producedQty", dto.qtyProduced().add(partials.quantity()));
         data.put("scrapQty", dto.scrapQty() != null ? dto.scrapQty() : order.get("scrapQty"));
         data.put("byproductCredit", byproductCredit);
         data.put("totalCost", totalCost);
@@ -715,6 +742,151 @@ public class ProductionService {
             throw ApiException.badRequest("Approval required before writing off the loss on " + order.get("orderCode")
                     + ". Pending request " + outcome.approvalRequestId() + ".");
         }
+    }
+
+    // ================================================================== partial output (IPR X-9)
+
+    /** Σ of an order's partial outputs. */
+    record Partials(long count, BigDecimal quantity, BigDecimal quantityBase, BigDecimal wipCredit,
+            BigDecimal overheadAbsorbed) {}
+
+    private Partials partials(String orderId) {
+        Map<String, Object> r = SqlRows.one(db.jdbc().sql("SELECT count(*) AS n, coalesce(sum(quantity), 0) AS q,"
+                + " coalesce(sum(\"quantityBase\"), 0) AS qb, coalesce(sum(\"wipCredit\"), 0) AS w,"
+                + " coalesce(sum(\"overheadAbsorbed\"), 0) AS oh FROM \"ProductionPartialOutput\" WHERE"
+                + " \"organizationId\" = ? AND \"orderId\" = ?").params(MfgDb.org(), orderId));
+        return new Partials(((Number) r.get("n")).longValue(), dec(r, "q"), dec(r, "qb"), dec(r, "w"), dec(r, "oh"));
+    }
+
+    /** IPR GL-2 / X-9: the product is costed at STANDARD ({@link #getProduct} does not read the costing method). */
+    private boolean standardCosted(String productId) {
+        return db.jdbc().sql("SELECT count(*) FROM \"Product\" WHERE id = ? AND \"organizationId\" = ? AND"
+                + " \"costingMethod\"::text = 'STANDARD'").params(productId, MfgDb.org()).query(Long.class).single() > 0;
+    }
+
+    private List<Map<String, Object>> partialRows(String orderId) {
+        return SqlRows.list(db.jdbc().sql("SELECT * FROM \"ProductionPartialOutput\" WHERE \"organizationId\" = ?"
+                + " AND \"orderId\" = ? ORDER BY \"createdAt\", id").params(MfgDb.org(), orderId));
+    }
+
+    /**
+     * IPR X-9 (promoted P2; new behaviour, no Nest counterpart): receive part of a simple order's main output while it
+     * is in progress. On the WIP basis of docs/spec/manufacturing-wip-reconciliation.md: the receipt absorbs its share of
+     * the order's overhead into WIP ({@code overhead × qty / expected}) and credits WIP with its share of the main
+     * output's pool ({@code (materials + overhead) × (1 − by-product %) × qty / expected}). The order stays in
+     * progress; Complete records the last quantity, takes the rest of the pool and absorbs the rest of the overhead.
+     * Minimum safe version: refused for QC-required orders, abnormal rework orders, multi-stage orders and outputs costed
+     * at STANDARD (their variances settle once, at completion), and when the
+     * partials would reach the expected quantity; by-products come at completion; an order with partials cannot be
+     * cancelled (complete, then reverse — the reversal takes the partial receipts back too). Lock levels: L1 order row
+     * ({@link #lock}), then the engine's receipt locks (L3–L6), then the journals (L7).
+     */
+    @Transactional
+    public Map<String, Object> recordPartialOutput(String id, MfgCommands.PartialOutput dto) {
+        Map<String, Object> pre = getOrThrow(id, false, true);
+        refuseIfMultiStage(pre, false);
+        lock(id);
+        Map<String, Object> order = getOrNull(id, false, true);
+        if (order == null) {
+            throw ApiException.notFound("Order not found");
+        }
+        String code = str(order, "orderCode");
+        if (!"in_progress".equals(order.get("status")) || order.get("postedAt") != null) {
+            throw ApiException.badRequest("Order " + code + " is not in progress (status " + order.get("status")
+                    + "); a partial output can only be recorded while it is in progress.");
+        }
+        if (Boolean.TRUE.equals(order.get("qcRequired"))) {
+            throw ApiException.badRequest("Order " + code + " needs quality control on its output; record the whole"
+                    + " output with Complete.");
+        }
+        if ("rework".equals(order.get("orderKind")) && "abnormal".equals(order.get("reworkTreatment"))) {
+            throw ApiException.badRequest("An abnormal rework order records its output with Complete.");
+        }
+        Map<String, Object> outProduct = getProduct(str(order, "outputProductId"));
+        BigDecimal qtyBase = uom.toBase(dto.quantity(), str(order, "uomId"), str(outProduct, "id"),
+                str(outProduct, "uomId"), true);
+        if (qtyBase.signum() <= 0) {
+            throw ApiException.badRequest("Produced quantity resolves to 0 in base units.");
+        }
+        List<Map<String, Object>> outputs = outputs(order);
+        Map<String, Object> mainLine = outputs.stream().filter(o -> "output".equals(o.get("kind"))).findFirst()
+                .orElse(null);
+        BigDecimal expectedQty = mainLine != null ? dec(mainLine, "qtyExpected") : dec(order, "plannedQty");
+        BigDecimal expectedBase = uom.toBase(expectedQty, mainLine != null && mainLine.get("uomId") != null
+                ? str(mainLine, "uomId") : str(order, "uomId"), str(outProduct, "id"), str(outProduct, "uomId"), true);
+        Partials before = partials(id);
+        if (expectedBase.signum() <= 0 || before.quantityBase().add(qtyBase).compareTo(expectedBase) >= 0) {
+            throw ApiException.badRequest("Partial outputs of " + code + " would reach its expected quantity ("
+                    + JsNumbers.dec(expectedQty) + "); record the last quantity with Complete.");
+        }
+        BigDecimal byproductPct = BigDecimal.ZERO;
+        for (Map<String, Object> bp : outputs) {
+            if ("byproduct".equals(bp.get("kind")) && dec(bp, "qtyExpected").signum() > 0) {
+                byproductPct = byproductPct.add(dec(bp, "costAllocationPct"));
+            }
+        }
+        BigDecimal share = qtyBase.divide(expectedBase, 12, java.math.RoundingMode.HALF_UP);
+        BigDecimal materialCost = dec(order, "materialCost");
+        BigDecimal overhead = dec(order, "overheadCost");
+        BigDecimal overheadShare = overhead.multiply(share).setScale(6, java.math.RoundingMode.HALF_UP)
+                .min(overhead.subtract(before.overheadAbsorbed()).max(BigDecimal.ZERO));
+        BigDecimal mainShare = BigDecimal.ONE.subtract(Money.div(byproductPct, HUNDRED)).max(BigDecimal.ZERO);
+        BigDecimal poolShare = materialCost.add(overhead).multiply(mainShare).multiply(share)
+                .setScale(6, java.math.RoundingMode.HALF_UP);
+        if (standardCosted(str(order, "outputProductId"))) {
+            // Minimum safe version: the standard-cost variances of an order are settled once, at completion.
+            throw ApiException.badRequest("The output of " + code + " is costed at standard; record the whole output"
+                    + " with Complete.");
+        }
+        BigDecimal stockValue = poolShare;
+        BigDecimal unitCost = Money.div(poolShare, qtyBase);
+        Instant date = dto.date() != null ? EntityPatch.toInstant(dto.date()) : Instant.now();
+        String locationId = order.get("outputLocationId") != null ? str(order, "outputLocationId")
+                : str(order, "locationId");
+        String batch = dto.batchNumber() != null ? dto.batchNumber() : str(order, "batchNumber");
+
+        stockPosting.postOverheadAbsorption(overheadShare, date, SOURCE, code, "Overhead (partial output) · " + code);
+        StockMove move = StockMove.of(str(order, "outputProductId"), locationId, qtyBase)
+                .variant(str(order, "outputVariantId")).unitCost(unitCost).moveType("production_output").batch(batch)
+                .expiry(dto.expiryDate() != null ? dto.expiryDate() : iso(order.get("expiryDate")))
+                .source(SOURCE, code);
+        move.mfgDate = iso(order.get("mfgDate"));
+        Received res = stock.receive(move);
+        if (stockValue.signum() > 0) {
+            stockPosting.postProductionOutput(str(order, "outputProductId"), stockValue, date, SOURCE, code,
+                    "Partial output · " + code);
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", java.util.UUID.randomUUID().toString());
+        row.put("organizationId", MfgDb.org());
+        row.put("orderId", id);
+        row.put("productId", order.get("outputProductId"));
+        row.put("variantId", order.get("outputVariantId"));
+        row.put("locationId", locationId);
+        row.put("quantity", dto.quantity());
+        row.put("uomId", order.get("uomId"));
+        row.put("quantityBase", qtyBase);
+        row.put("unitCost", unitCost);
+        row.put("stockValue", stockValue);
+        row.put("wipCredit", stockValue);
+        row.put("overheadAbsorbed", overheadShare);
+        row.put("batchNumber", batch);
+        row.put("ledgerCode", res.ledgerCode());
+        row.put("notes", dto.notes());
+        row.put("createdBy", TenantContext.userId());
+        db.jdbc().sql("INSERT INTO \"ProductionPartialOutput\" (id, \"organizationId\", \"orderId\", \"productId\","
+                + " \"variantId\", \"locationId\", quantity, \"uomId\", \"quantityBase\", \"unitCost\", \"stockValue\","
+                + " \"wipCredit\", \"overheadAbsorbed\", \"batchNumber\", \"ledgerCode\", \"postedAt\", notes,"
+                + " \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, " + MfgDb.NOW + ", ?, ?)")
+                .params(row.get("id"), row.get("organizationId"), id, row.get("productId"), row.get("variantId"),
+                        locationId, dto.quantity(), row.get("uomId"), qtyBase, unitCost, stockValue, stockValue,
+                        overheadShare, batch, res.ledgerCode(), dto.notes(), row.get("createdBy"))
+                .update();
+        audit.recordInTx(AuditInput.of("ProductionOrder", id, "receive", null, Obj.of("orderCode", code,
+                "partialOutput", JsNumbers.dec(dto.quantity()), "unitCost", JsNumbers.dec(unitCost))));
+        Map<String, Object> out = withLines(getOrThrow(id, true, true), true, true);
+        out.put("partialOutputs", partialRows(id));
+        return out;
     }
 
     // ================================================================== QC
@@ -846,6 +1018,11 @@ public class ProductionService {
             throw ApiException.badRequest("Order already completed.");
         }
         String code = str(order, "orderCode");
+        if (partials(id).count() > 0) {
+            // IPR X-9: part of the output is already in stock; cancelling would return all materials and strand it.
+            throw ApiException.badRequest("Order " + code + " has partial outputs in stock and cannot be cancelled;"
+                    + " complete it, then reverse it if it must be undone.");
+        }
         returnMaterials(order, "production_order_cancel", date, "Production cancel · " + code);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "cancelled");
@@ -899,7 +1076,11 @@ public class ProductionService {
         BigDecimal fgBase = producedBase(pre, mainOut);
         BigDecimal fgQty = producedOnHand(str(pre, "orderCode"), str(pre, "outputProductId"),
                 str(pre, "outputVariantId"), fgLocationId);
-        if (fgQty == null || fgQty.compareTo(fgBase) < 0) {
+        // IPR X-9: the partial receipts are produced goods of the order too.
+        List<Map<String, Object>> partialRows = partialRows(id);
+        BigDecimal partialBase = partialRows.stream().map(r -> dec(r, "quantityBase")).reduce(BigDecimal.ZERO,
+                BigDecimal::add);
+        if (fgQty == null || fgQty.compareTo(fgBase.add(partialBase)) < 0) {
             throw ApiException.badRequest(
                     "Cannot reverse: finished goods are no longer fully in stock (sold or moved).");
         }
@@ -939,6 +1120,16 @@ public class ProductionService {
                         null)).totalValue();
         stockPosting.postProductionReversal(str(order, "outputProductId"), fgIssued, fgValue, date,
                 "production_reversal", code, "Production reversal · " + code);
+        // 1a) IPR X-9: each partial receipt out again, its WIP credit back into WIP.
+        for (Map<String, Object> pr : partialRows) {
+            String partialLoc = held ? fgLocationId : str(pr, "locationId");
+            BigDecimal issued = stock.issue(StockMove.of(str(pr, "productId"), partialLoc, dec(pr, "quantityBase"))
+                    .variant(str(pr, "variantId")).skipGl().source("production_reversal", code)
+                    .prefer(producedLots(code, str(pr, "productId"), str(pr, "variantId"), partialLoc), null))
+                    .totalValue();
+            stockPosting.postProductionReversal(str(pr, "productId"), issued, dec(pr, "wipCredit"), date,
+                    "production_reversal", code, "Production reversal (partial output) · " + code);
+        }
         // 1b) By-products out, their value back into WIP (Dr WIP / Cr Stock Valuation).
         for (Map<String, Object> bp : byproducts) {
             BigDecimal bpIssued = stock.issue(StockMove.of(str(bp, "productId"), fgLocationId, dec(bp, "qtyBase"))
@@ -967,8 +1158,18 @@ public class ProductionService {
         // 3) ADR-S008: standard-cost variances of the order are reversed with it.
         String varianceJe = db.jdbc().sql("SELECT \"varianceJournalEntryId\" FROM \"ProductionOrder\" WHERE id = ?")
                 .param(id).query(String.class).optional().orElse(null);
+        // IPR GL-2: the by-product standard variances (one entry per standard-governed by-product) go with it. Read
+        // before any reversal writes its offsetting variance rows.
+        List<String> byproductVarianceJes = db.jdbc().sql("SELECT DISTINCT v.\"journalEntryId\" FROM"
+                + " \"StandardCostVariance\" v JOIN \"JournalEntry\" e ON e.id = v.\"journalEntryId\" WHERE"
+                + " v.\"organizationId\" = ? AND v.\"sourceType\" = 'production_order' AND v.\"sourceId\" = ? AND"
+                + " v.\"journalEntryId\" IS DISTINCT FROM ? AND e.\"reversalOfId\" IS NULL AND e.status = 'posted'")
+                .params(MfgDb.org(), id, varianceJe).query(String.class).list();
         if (varianceJe != null) {
             standards.reverseJournal(varianceJe, "Reversal of production variances · " + code);
+        }
+        for (String je : byproductVarianceJes) {
+            standards.reverseJournal(je, "Reversal of by-product variance · " + code);
         }
 
         Map<String, Object> data = new LinkedHashMap<>();
