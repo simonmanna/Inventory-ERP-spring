@@ -610,3 +610,30 @@ never a correction. `integrity_valuation_vs_gl` is not raised while `inventory.g
 (`integrity_valuation_vs_subledger`, `integrity_valuation_vs_gl`) hold the period close and are the blocking checklist
 item `inventory_integrity_value`; the quantity kinds never hold a close. Test: `InventoryIntegrityIT`,
 `PeriodCloseChecklistIT`.
+
+### Report-only checks (IPR Phase 0, 2026-11-27)
+
+Additive field on the same response: `reportOnlyOk` and `reportOnlyChecks` (same item shape). `ok` and `checks` are
+unchanged: report-only checks never make `ok` false. The monitor raises a failing one as `integrity_<key>` (alert payload
+`reportOnlyKinds`); none is in `InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS`, so none can hold a period close.
+`unlinked_restocks` and `period_shifted` are informational (always `ok`; rows show the scale).
+Organisation-level checks are skipped under a location filter.
+
+| key | flags |
+|---|---|
+| `negative_quants` | `StockItem.quantity` < 0 |
+| `issued_serial_located` | serial `issued` whose latest outflow row was reversed by ≥ 1 unit net (serial issue does not clear `locationId`) |
+| `over_returned` | a ledger row reversed (net, via `reversesLedgerId`) by more than its own quantity |
+| `unlinked_restocks` | informational: undo / restock rows without `reversesLedgerId`, per source type |
+| `gl_tieout_by_account` | per inventory account: valuation (by costing method) vs Σ `baseDebit − baseCredit` (organisation level) |
+| `stock_posting_jobs` | `StockPostingJob` failed, or pending / processing over 6 h (organisation level) |
+| `transit_age` | transit transfer open over 7 days |
+| `invoice_undelivered` | F1: posted invoice whose delivery orders are all cancelled / closed and invoiced − credited > delivered |
+| `delivery_return_overlap` | F3: fleet put-back + linked returns > quantity the trips issued, per delivery group and product |
+| `quality_hold_unquarantined` | quality lot on hold still in a non-quarantine location |
+| `period_shifted` | informational: movements whose journal falls in another fiscal period than the movement (org time zone) |
+| `feature_risk` | P2 findings promoted by feature use (organisation level), see [feature-risk map](inventory-feature-risk-map.md) |
+
+`GET /inventory/reports/feature-usage` (`inventory_valuation:read`, refused for branch-restricted users): features in
+use with bounded counts and the promoted P2s. Read-only data checks for a restored copy:
+`docs/audits/2026-11-27-inventory-data-checks.sql`. Tests: `InventoryIntegrityP0IT`, `InventoryLedgerImmutabilityTest`.

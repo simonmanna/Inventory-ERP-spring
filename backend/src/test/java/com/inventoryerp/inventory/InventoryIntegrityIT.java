@@ -364,9 +364,13 @@ class InventoryIntegrityIT extends InventoryAuditSupport {
         assertThat(ledgerSumOf(s, s.plain())).isEqualByComparingTo("8");
     }
 
+    /** Open exception kinds, without the report-only integrity kinds (IPR Phase 0; feature_risk is raised for every org). */
     List<String> openKinds(Scenario s) {
         return jdbc.sql("SELECT kind FROM \"InventoryException\" WHERE \"organizationId\" = ? AND status = 'open'")
-                .param(s.org().id()).query(String.class).list();
+                .param(s.org().id()).query(String.class).list().stream()
+                .filter(k -> InventoryIntegrityService.REPORT_ONLY_CHECKS.stream().noneMatch(c -> k.equals(
+                        InventoryIntegrityMonitor.kind(c))))
+                .toList();
     }
 
     BigDecimal ledgerSumOf(Scenario s, String productId) {
