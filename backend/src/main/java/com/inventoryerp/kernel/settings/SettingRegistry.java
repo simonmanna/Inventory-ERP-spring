@@ -149,6 +149,15 @@ public final class SettingRegistry {
                         + " transfer receipt may write off without a reason and an approval. 0 = every loss with a value"
                         + " needs them.",
                 0, null, true, ALL_LEVELS);
+        // ---- IPR Phase 1b (ADR-S088): stock movement time limits (owner decision P15-6 defaults) ----
+        def("inventory.maxFutureEffectiveMinutes", "inventory", "number", "Furthest Movement Time Ahead (Minutes)",
+                "A movement or offline op stamped more than this many minutes after the server time is stored at the"
+                        + " server receive time and flagged clockSkew for review. It is never refused.",
+                5, null, false, ORG_ONLY);
+        def("inventory.maxBackdateDays", "inventory", "number", "Furthest Back-office Backdating (Days)",
+                "A back-office goods receipt dated more than this many days in the past is refused. Offline device"
+                        + " work is exempt: an older op is accepted and flagged lateSync.",
+                7, null, false, ORG_ONLY);
         def("inventory.defaultBatchTracking", "inventory", "bool", "Default Batch Tracking (new products)", null,
                 false, null, false, ORG_ONLY);
         def("inventory.defaultExpiryTracking", "inventory", "bool", "Default Expiry Tracking (new products)", null,

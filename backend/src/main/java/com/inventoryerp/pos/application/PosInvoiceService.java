@@ -93,9 +93,14 @@ public class PosInvoiceService {
      * Drain context. {@code stockDate}: the sale's date for the stock moves and their COGS (null = now);
      * {@code stockDateNote}: ledger note when that date had to move out of a closed period.
      */
-    record Ctx(String invoiceId, String invoiceNumber, String orderId, Instant stockDate, String stockDateNote) {
+    /**
+     * {@code stockDate}: the posting date of the sale's stock moves (clamped to an open date); {@code saleAt}: when the
+     * sale happened, unclamped (ADR-S088 effective time).
+     */
+    record Ctx(String invoiceId, String invoiceNumber, String orderId, Instant stockDate, String stockDateNote,
+            Instant saleAt) {
         Ctx(String invoiceId, String invoiceNumber, String orderId) {
-            this(invoiceId, invoiceNumber, orderId, null, null);
+            this(invoiceId, invoiceNumber, orderId, null, null, null);
         }
     }
 
@@ -1909,7 +1914,7 @@ public class PosInvoiceService {
         if (note != null) {
             log.warn("[stock] {} on {}", note, ctx.invoiceNumber());
         }
-        return new Ctx(ctx.invoiceId(), ctx.invoiceNumber(), ctx.orderId(), date, note);
+        return new Ctx(ctx.invoiceId(), ctx.invoiceNumber(), ctx.orderId(), date, note, sale);
     }
 
     private static Instant utc(java.sql.Timestamp t) {
@@ -1923,6 +1928,8 @@ public class PosInvoiceService {
     /** Date a drain move at the sale (see {@link #datedForStock}). */
     private static void dated(StockMove mv, Ctx ctx) {
         mv.date = ctx.stockDate();
+        // ADR-S088: the goods left at the sale (checkout / device occurredAt), even when the posting date moved.
+        mv.effectiveAt = ctx.saleAt();
         if (ctx.stockDateNote() != null) {
             mv.notes = mv.notes == null ? ctx.stockDateNote() : mv.notes + " · " + ctx.stockDateNote();
         }

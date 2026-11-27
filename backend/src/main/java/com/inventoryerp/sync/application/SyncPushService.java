@@ -774,8 +774,25 @@ public class SyncPushService {
         return v instanceof Map<?, ?> m ? (Map<String, Object>) m : null;
     }
 
-    private Map<String, Object> runOp(Device device, Op op, Map<String, String> clientIdMap) {
-        OccurredAt.resolve(op.occurredAt());
+    /**
+     * IPR SW-7 / ADR-S088 (owner decision P15-1): the op's device time is accepted and flagged, never refused — a time
+     * too far ahead is replaced by the server receive time ({@code clockSkew}), an old one is kept ({@code lateSync}).
+     * Both raise a report-only discrepancy row. The op then runs with its (clamped) device time bound as the effective
+     * time of every stock move it makes (IPR M-1). Duplicate protection by op id is unchanged.
+     */
+    private Map<String, Object> runOp(Device device, Op received, Map<String, String> clientIdMap) {
+        OccurredAt.Resolved occ = OccurredAt.resolveFlagged(received.occurredAt());
+        Op op = occ != null && occ.clockSkew() ? new Op(received.opId(), received.deviceSeq(), received.type(),
+                received.actorUserId(), com.inventoryerp.kernel.web.JsonConfig.toJsIso(occ.at()), received.payload(),
+                received.originChain(), received.supersedesOpId()) : received;
+        if (occ != null && occ.flagged()) {
+            stockOps.flagTime(stockCtx(device, received), occ);
+        }
+        return com.inventoryerp.kernel.common.EffectiveTime.offline(occ == null ? null : occ.at(),
+                () -> runOpBody(device, op, clientIdMap));
+    }
+
+    private Map<String, Object> runOpBody(Device device, Op op, Map<String, String> clientIdMap) {
         Map<String, Object> payload = resolveRefsDurable(device, op.payload() == null ? Map.of() : op.payload(),
                 clientIdMap);
         String occurredAt = op.occurredAt();
@@ -1556,18 +1573,18 @@ public class SyncPushService {
                     + " cancel it in the back office, then retry", 409);
         }
         List<InventoryCountService.DraftLine> draft = new ArrayList<>();
+        java.time.Instant at = OccurredAt.resolve(occurredAt);
         for (Map<String, Object> l : lines) {
             String reason = l.get("reason") instanceof String r && !r.trim().isEmpty() ? r.trim()
                     : payload.get("reason") instanceof String pr && !pr.trim().isEmpty() ? pr.trim() : "Device count";
             // ADR-S083 S4 (deviation, owner-approved): the variance is counted − on-hand when the device counted.
-            // The session compares with today's on-hand, so movements posted after the count carry the figure forward.
+            // IPR X-1c (ADR-S088): the line's cut-off is the device time, so the count carries forward exactly the
+            // movements that happened after it (by effective time), and a sale made before it but synced later is a
+            // late transaction of this count (count spec section 4), not a second loss.
             BigDecimal counted = PosSql.dec(l.get("countedQty"));
-            if (counted != null) {
-                counted = counted.add(stockOps.movedSince(str(payload.get("locationId")), str(l.get("productId")),
-                        PosSql.truthy(l.get("variantId")) ? str(l.get("variantId")) : null, occurredAt));
-            }
-            draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByCell.get(countCell(l.get("productId"),
-                    l.get("variantId"))).get("id")), counted, reason));
+            String lineId = String.valueOf(lineByCell.get(countCell(l.get("productId"), l.get("variantId"))).get("id"));
+            draft.add(at == null ? new InventoryCountService.DraftLine(lineId, counted, reason)
+                    : InventoryCountService.DraftLine.countedAt(lineId, counted, reason, at));
         }
         String sessionId = String.valueOf(session.get("id"));
         counts.saveDraft(sessionId, draft, null, null);

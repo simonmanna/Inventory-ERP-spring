@@ -56,6 +56,10 @@ public class SyncStockService {
     public static final String NEGATIVE = "offline_negative_stock";
     public static final String HELD = "offline_held_posting";
     public static final String AWAITING = "offline_awaiting_dispatch";
+    /** IPR SW-7 (ADR-S088): an op stamped ahead of the server; stored at the receive time. Report-only. */
+    public static final String CLOCK_SKEW = "offline_clock_skew";
+    /** IPR SW-7 (ADR-S088): an op older than {@code inventory.maxBackdateDays}; accepted as sent. Report-only. */
+    public static final String LATE_SYNC = "offline_late_sync";
 
     /** Transfer statuses before dispatch: a receipt waits. */
     private static final Set<String> NOT_DISPATCHED = Set.of("draft", "pending", "approved");
@@ -226,9 +230,13 @@ public class SyncStockService {
             Map<String, Object> ctx = json(row.get("payload"));
             Map<String, Object> receipt = PosSql.map(ctx.get("receipt"));
             String actor = str(ctx.get("actorUserId"));
+            // IPR M-1 (ADR-S088): the receipt happened when the device recorded it, not when the dispatch synced.
+            Instant receivedAt = str(ctx.get("occurredAt")) == null ? null
+                    : com.inventoryerp.kernel.common.OccurredAt.resolve(str(ctx.get("occurredAt")));
             try {
                 Boolean done = TenantContext.run(TenantContext.TenantStore.user(org, actor),
-                        () -> tx.execute(st -> applyOne(org, transferId, exceptionId, receipt)));
+                        () -> com.inventoryerp.kernel.common.EffectiveTime.offline(receivedAt,
+                                () -> tx.execute(st -> applyOne(org, transferId, exceptionId, receipt))));
                 if (Boolean.TRUE.equals(done)) {
                     applied++;
                 }
@@ -241,6 +249,27 @@ public class SyncStockService {
             }
         }
         return applied;
+    }
+
+    /**
+     * IPR SW-7 (ADR-S088, owner decision P15-1): record a flagged device time (never refused) in the discrepancy
+     * report: {@code offline_clock_skew} (stored at the receive time) or {@code offline_late_sync} (kept as sent).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public void flagTime(OpContext c, com.inventoryerp.kernel.common.OccurredAt.Resolved occ) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("deviceTime", occ.device() == null ? null : occ.device().toString());
+        extra.put("storedTime", occ.at() == null ? null : occ.at().toString());
+        if (occ.clockSkew()) {
+            exception(CLOCK_SKEW, null, null, null, "Device clock ahead of the server",
+                    "The op was stamped " + occ.device() + ", ahead of the server; it was recorded at the receive time "
+                            + occ.at() + ". Check the device clock.", context(c, c.opType(), null, null, extra));
+        }
+        if (occ.lateSync()) {
+            exception(LATE_SYNC, null, null, null, "Old offline work synced late",
+                    "The op happened at " + occ.device() + " and reached the server late; it was accepted as of that"
+                            + " time.", context(c, c.opType(), null, null, extra));
+        }
     }
 
     /** Test hook (R1): runs after a waiting receipt is posted, before its row is resolved (crash simulation). */
@@ -378,9 +407,9 @@ public class SyncStockService {
     // ------------------------------------------------------------------------------------------------------- counting
 
     /**
-     * S4 counts: what moved at the location after the device counted. The count is compared with today's on-hand,
-     * so the counted figure is carried forward by those movements — the variance is counted − on-hand at
-     * {@code occurredAt}.
+     * S4 counts: what moved at the location after the device counted (IPR X-1c: by effective time, ADR-S088, so a
+     * sale made before the count but synced after it is not carried forward). The device count itself now sets the
+     * line's cut-off to the device time instead (count spec section 1); this stays for other readers.
      */
     public BigDecimal movedSince(String locationId, String productId, String variantId, String occurredAt) {
         if (occurredAt == null || locationId == null || productId == null) {
@@ -389,7 +418,7 @@ public class SyncStockService {
         Instant at = EntityPatch.toInstant(occurredAt);
         return jdbc.sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
                         + " AND \"locationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?"
-                        + " AND \"createdAt\" > ?")
+                        + " AND COALESCE(\"effectiveAt\", \"createdAt\") > ?")
                 .params(org(), locationId, productId, variantId, SqlRows.ts(at)).query(BigDecimal.class).single();
     }
 
