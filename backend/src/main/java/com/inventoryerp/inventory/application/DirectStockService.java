@@ -2,6 +2,7 @@ package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.inventory.application.StockMove.Issued;
 import com.inventoryerp.inventory.application.StockMove.Received;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -43,10 +44,13 @@ public class DirectStockService {
     private final SettingResolverService settings;
     private final StaffAttribution staff;
     private final LocationScope scope;
+    private final SegregationOfDutiesService sod;
 
     public DirectStockService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq, StockService stock,
-            SettingResolverService settings, StaffAttribution staff, LocationScope scope) {
+            SettingResolverService settings, StaffAttribution staff, LocationScope scope,
+            SegregationOfDutiesService sod) {
         this.scope = scope;
+        this.sod = sod;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
@@ -55,13 +59,24 @@ public class DirectStockService {
         this.staff = staff;
     }
 
-    private void assertAttribution(Request dto, boolean approvalNeeded) {
+    /**
+     * Attribution and approval proof. IPR S-4: under the separation-of-duties pair of the move ({@code
+     * stock_adjustment} for a stock-in, {@code stock_write_off} for a stock-out) the person posting cannot name
+     * themselves as approver, even with the approver permission.
+     */
+    private void assertAttribution(Request dto, boolean approvalNeeded, String pairKey, String kind) {
         String org = TenantContext.organizationId();
         staff.assertActiveStaff(org, StaffAttribution.people(dto.responsibleById(), dto.approvedById()));
         if (!approvalNeeded) {
             return;
         }
-        staff.assertDirectStockApproval(org, TenantContext.userId(), TenantContext.permissions(), dto.approvedById(),
+        String actor = TenantContext.userId();
+        if (actor != null && actor.equals(dto.approvedById()) && sod.enforced(pairKey)) {
+            sod.recordBlocked(pairKey, kind, dto.locationId(), actor, List.of(actor));
+            throw ApiException.forbidden("Separation of duties: you cannot approve your own direct stock movement;"
+                    + " name another approver and enter their PIN");
+        }
+        staff.assertDirectStockApproval(org, actor, TenantContext.permissions(), dto.approvedById(),
                 dto.approverPin());
     }
 
@@ -85,7 +100,7 @@ public class DirectStockService {
         lookups.requireLocation(dto.locationId());
         boolean approvalNeeded = settings.resolveBool("inventory.stockInApprovalNeeded",
                 new SettingContext(null, null, dto.locationId()));
-        assertAttribution(dto, approvalNeeded);
+        assertAttribution(dto, approvalNeeded, SegregationOfDutiesService.STOCK_ADJUSTMENT, "DirectStockIn");
         Map<String, Map<String, Object>> products = products(dto.items());
         for (Line item : dto.items()) {
             Map<String, Object> prod = products.get(item.productId());
@@ -138,7 +153,7 @@ public class DirectStockService {
         lookups.requireLocation(dto.locationId());
         SettingContext ctx = new SettingContext(null, null, dto.locationId());
         boolean approvalNeeded = settings.resolveBool("inventory.stockOutApprovalNeeded", ctx);
-        assertAttribution(dto, approvalNeeded);
+        assertAttribution(dto, approvalNeeded, SegregationOfDutiesService.STOCK_WRITE_OFF, "DirectStockOut");
         Map<String, Map<String, Object>> products = products(dto.items());
         for (Line item : dto.items()) {
             if (!products.containsKey(item.productId())) {
