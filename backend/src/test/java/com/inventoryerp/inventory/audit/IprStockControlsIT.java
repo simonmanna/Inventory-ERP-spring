@@ -324,7 +324,7 @@ class IprStockControlsIT extends InventoryAuditSupport {
     // ------------------------------------------------------------------ C-5
 
     @Test
-    @DisplayName("C-5: the manual routes reserve and consume only manual sources; release stays open")
+    @DisplayName("C-5: the manual routes reserve, consume and release only manual sources")
     void manualReservationsOnly() {
         String p = product("IPR-C5");
         okA(200, "POST", "/inventory/direct-stock/in", direct(main, List.of(item(p, 10, 1))));
@@ -339,8 +339,10 @@ class IprStockControlsIT extends InventoryAuditSupport {
         assertThat(consume.status()).as(consume.raw().body()).isEqualTo(400);
         assertThat(okA(201, "POST", "/inventory/reservations/consume", Map.of("sourceType", "manual", "sourceId", src))
                 .get("consumed").asInt()).isEqualTo(1);
-        assertThat(okA(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", src))
-                .get("released").asInt()).isZero();
+        // IPR review 1 (finding 8): release is manual-only too; a document's reservations follow the document.
+        Res release = api("POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", src));
+        assertThat(release.status()).as(release.raw().body()).isEqualTo(400);
+        assertThat(release.body().get("message").asString()).startsWith("Only manual reservations can be released here");
         assertIntegrityGreen();
     }
 

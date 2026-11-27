@@ -338,6 +338,29 @@ class FleetMaintenanceIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("IPR review 1 N3: a legacy part line without its issue code returns against the work order's issue"
+            + " (capped), never a 500")
+    void legacyPartLineReturns() {
+        String v = vehicle(5100);
+        String wo = workOrder(v, "corrective");
+        String part = product(new BigDecimal("10"), new BigDecimal("25"));
+        JsonNode issued = line(money("/fleet/work-orders/" + wo + "/parts", Map.of("productId", part, "locationId",
+                store, "quantity", 3)), "part", 0);
+        String lineId = issued.get("id").asString();
+        // A line written before the issue code was recorded (legacy data): the code is unknown.
+        jdbc.sql("UPDATE \"FleetWorkOrderLine\" SET \"stockLedgerCode\" = NULL WHERE id = ?").param(lineId).update();
+        assertThat(onHand(part)).isEqualByComparingTo("7");
+        JsonNode returned = money("/fleet/work-orders/" + wo + "/lines/" + lineId + "/return", Map.of("quantity", 2));
+        assertThat(onHand(part)).isEqualByComparingTo("9");
+        assertThat(new BigDecimal(line(returned, "part_return", 0).get("amount").asString()))
+                .isEqualByComparingTo("-50");
+        Res more = call("POST", "/fleet/work-orders/" + wo + "/lines/" + lineId + "/return", Map.of("quantity", 2),
+                key(UUID.randomUUID().toString()));
+        assertThat(more.status()).as(more.raw().body()).isEqualTo(400);
+        assertThat(onHand(part)).isEqualByComparingTo("9");
+    }
+
+    @Test
     @DisplayName("concurrency: two work orders issue the same last units — exactly one gets them")
     void concurrentPartIssue() throws Exception {
         String part = product(new BigDecimal("5"), new BigDecimal("40"));

@@ -747,9 +747,22 @@ public class InventoryReportsService {
                 "consumedValue", js(consumed, 2), "lostValue", js(lost, 2),
                 "lossRatePct", consumed.signum() > 0
                         ? js(lost.multiply(HUNDRED).divide(consumed.add(lost), 10, RoundingMode.HALF_UP), 1) : null);
+        List<Map<String, Object>> topConsumed = top(perProduct, meta, 0, 3);
+        List<Map<String, Object>> topLost = top(perProduct, meta, 1, 4);
+        List<Map<String, Object>> topReceived = top(perProduct, meta, 2, -1);
+        if (!seesCost()) {
+            // IPR review 1 (finding 4, S-2): values and the loss rate (a ratio of values) need inventory_valuation:read;
+            // quantities and movement counts stay visible under inventory:read.
+            hideCost(summary, "valueIn", "valueOut", "valueAdjusted", "consumedValue", "lostValue", "lossRatePct");
+            byType.forEach(t -> hideCost(t, "value"));
+            trend.forEach(t -> hideCost(t, "valueIn", "valueOut", "valueAdjusted"));
+            for (List<Map<String, Object>> list : List.of(topConsumed, topLost, topReceived)) {
+                list.forEach(t -> hideCost(t, "value"));
+            }
+        }
         return Obj.of("range", Obj.of("start", localIso(effStart), "end", localIso(effEnd)), "summary", summary,
-                "byType", byType, "trend", trend, "topConsumed", top(perProduct, meta, 0, 3),
-                "topLost", top(perProduct, meta, 1, 4), "topReceived", top(perProduct, meta, 2, -1));
+                "byType", byType, "trend", trend, "topConsumed", topConsumed, "topLost", topLost, "topReceived",
+                topReceived);
     }
 
     /** Σ of the rendered (2 dp) {@code value} of the rows whose {@code key} equals {@code match}. */

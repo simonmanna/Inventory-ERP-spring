@@ -30,6 +30,22 @@ public final class OccurredAt {
     static final Duration DEFAULT_MAX_AGE = Duration.ofDays(7);
     static final Duration DEFAULT_FUTURE_SKEW = Duration.ofMinutes(5);
 
+    /** IPR SW-7: discrepancy kind of a time stored at the receive time because it was too far ahead. */
+    public static final String CLOCK_SKEW_KIND = "offline_clock_skew";
+    /** IPR SW-7: discrepancy kind of a time accepted although older than the late-sync age. */
+    public static final String LATE_SYNC_KIND = "offline_late_sync";
+
+    /**
+     * Where a flagged time of an online route is recorded (IPR review 1, finding 1). Installed at start-up by the
+     * module that owns the discrepancy report; {@code source} names the route (for example {@code pos.sale}).
+     */
+    @FunctionalInterface
+    public interface FlagRecorder {
+        void record(String source, Resolved resolved);
+    }
+
+    private static volatile FlagRecorder recorder;
+
     private static volatile Supplier<Duration> futureLimit = () -> DEFAULT_FUTURE_SKEW;
     private static volatile Supplier<Duration> lateLimit = () -> DEFAULT_MAX_AGE;
 
@@ -75,6 +91,32 @@ public final class OccurredAt {
     public static Instant resolve(String value) {
         Resolved r = resolveFlagged(value);
         return r == null ? null : r.at();
+    }
+
+    /** Install the recorder of flagged online times (null removes it). */
+    public static void recorder(FlagRecorder r) {
+        recorder = r;
+    }
+
+    /**
+     * {@link #resolve} for an online route that also receives the web client's offline-queue replays (POS sale and
+     * payment, cash session, cash drawer): the time is accepted as {@link #resolve} does, and a flagged one
+     * ({@code clockSkew} / {@code lateSync}) is recorded in the discrepancy report as the sync path does. Inside an
+     * offline sync op ({@link EffectiveTime} bound offline) nothing is recorded: the sync push recorded the op's flag.
+     */
+    public static Instant resolveRecorded(String value, String source) {
+        Resolved r = resolveFlagged(value);
+        if (r == null) {
+            return null;
+        }
+        if (r.flagged()) {
+            EffectiveTime.Context ctx = EffectiveTime.current();
+            FlagRecorder rec = recorder;
+            if (rec != null && (ctx == null || !ctx.offline())) {
+                rec.record(source, r);
+            }
+        }
+        return r.at();
     }
 
     /** {@link #resolve} with the flags; null when the client sent nothing. */

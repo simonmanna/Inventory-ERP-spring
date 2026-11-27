@@ -8,11 +8,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { api } from '@/lib/api';
 import { useIdempotencyKey } from '@/lib/idempotency';
 import { apiMessage, notify } from '@/lib/notify';
+import { apiErrorMessage } from '@/lib/api-error';
 import { dateTime, money } from '@/lib/format';
 import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 import {
-  errorsByRow, OPENING_STOCK_TEMPLATE, parseOpeningStockCsv, runStatusLabel, type OpeningStockRow,
+  errorsByRow, OPENING_STOCK_TEMPLATE, parseOpeningStockCsv, runsListState, runStatusLabel, type OpeningStockRow,
 } from '@/features/inventory/opening-stock-csv';
 
 /** IPR R5 / ADR-S090: opening-stock CSV import — preview, approve, run status, batch retry, reconciliation. */
@@ -278,6 +279,13 @@ export function OpeningStockImportPage() {
       <Card>
         <CardContent className="space-y-2 pt-4">
           <h2 className="font-medium">{tx('Import runs')}</h2>
+          {runsListState(runs) === 'error' ? (
+            <p role="alert" className="text-sm text-destructive">{apiErrorMessage(runs.error, tx('Could not load the import runs.'))}</p>
+          ) : runsListState(runs) === 'loading' ? (
+            <p className="text-sm text-muted-foreground">{tx('Loading…')}</p>
+          ) : runsListState(runs) === 'empty' ? (
+            <p className="text-sm text-muted-foreground">{tx('No import runs yet.')}</p>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -299,6 +307,7 @@ export function OpeningStockImportPage() {
               ))}
             </TableBody>
           </Table>
+          )}
         </CardContent>
       </Card>
 

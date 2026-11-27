@@ -509,6 +509,18 @@ public class SyncPushService {
         if (entry == null) {
             throw http("Unsupported sync op type: " + op.type(), 400);
         }
+        if ("stock.count".equals(op.type())) {
+            // IPR review 1 (N1, count spec section 5): the sale stock postings of the counted location are drained
+            // before the op's transaction opens (each job commits on its own; claimed, so safe to repeat), never on a
+            // second connection inside it. Its commits do not anchor the op's ledger row.
+            Object loc = op.payload() == null ? null : op.payload().get("locationId");
+            if (loc instanceof String locationId && !locationId.isBlank()) {
+                ledger.outside(() -> {
+                    counts.drainSales(locationId);
+                    return null;
+                });
+            }
+        }
         Map<String, Object> out = entry.boundary() == SyncOpCatalog.Boundary.OP_TRANSACTION
                 ? opTx.execute(st -> {
                     Map<String, Object> r = runOp(device, op, clientIdMap);
@@ -786,7 +798,12 @@ public class SyncPushService {
                 received.actorUserId(), com.inventoryerp.kernel.web.JsonConfig.toJsIso(occ.at()), received.payload(),
                 received.originChain(), received.supersedesOpId()) : received;
         if (occ != null && occ.flagged()) {
-            stockOps.flagTime(stockCtx(device, received), occ);
+            // IPR review 1: report-only, so its commit never anchors the op's ledger row (a service op that then
+            // fails must stay retryable).
+            ledger.outside(() -> {
+                stockOps.flagTime(stockCtx(device, received), occ);
+                return null;
+            });
         }
         return com.inventoryerp.kernel.common.EffectiveTime.offline(occ == null ? null : occ.at(),
                 () -> runOpBody(device, op, clientIdMap));
@@ -1130,7 +1147,8 @@ public class SyncPushService {
             }
             // Audit S-5: opening the count, entering the figures and submitting are one transaction, so a refused
             // count leaves no open count behind.
-            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(payload, op.occurredAt())));
+            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(stockCtx(device, op), payload,
+                    op.occurredAt())));
             // ADR-S083 O4 (S4): warehouse work recorded offline.
             case "transfer.dispatch" -> m.putAll(stockOps.dispatch(stockCtx(device, op), payload));
             case "transfer.receive" -> m.putAll(stockOps.receive(stockCtx(device, op), payload));
@@ -1534,7 +1552,8 @@ public class SyncPushService {
                 op.occurredAt());
     }
 
-    private Map<String, Object> applyStockCount(Map<String, Object> payload, String occurredAt) {
+    private Map<String, Object> applyStockCount(SyncStockService.OpContext ctx, Map<String, Object> payload,
+            String occurredAt) {
         List<Map<String, Object>> lines = new ArrayList<>();
         if (payload.get("lines") instanceof List<?> l) {
             l.forEach(o -> lines.add(PosSql.map(o)));
@@ -1544,6 +1563,15 @@ public class SyncPushService {
         }
         LinkedHashSet<String> productIds = new LinkedHashSet<>();
         lines.forEach(l -> productIds.add(String.valueOf(l.get("productId"))));
+        // IPR review 1 (N5): another type of count is open on the location (S4: one open draft per location). The
+        // device's count is a physical fact, so the op is applied and held for staff (report row with the counted
+        // lines), never failed and never a second draft.
+        Map<String, Object> blocking = counts.blockingDraft(str(payload.get("locationId")), "spot");
+        if (blocking != null) {
+            String exceptionId = stockOps.holdCount(ctx, str(payload.get("locationId")), lines,
+                    String.valueOf(blocking.get("countCode")), String.valueOf(blocking.get("countType")));
+            return mapOf("id", exceptionId, "held", true, "mapping", mapOf("countHeldId", exceptionId));
+        }
         Map<String, Object> session = counts.start(str(payload.get("locationId")), "spot", str(payload.get("notes")), null,
                 null, new ArrayList<>(productIds), null);
         // Phase I2 (audit V-4): a device counts a product's total, or one variant of a product with variants (the

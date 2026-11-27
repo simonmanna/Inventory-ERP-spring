@@ -62,13 +62,15 @@ public class TenantBindingDataSource extends DelegatingDataSource implements Aut
     }
 
     /**
-     * Unwrapping to {@link DataSource} answers the pool itself, so Spring Boot can derive the Flyway data source and
-     * read the pool's metrics through this wrapper.
+     * IPR review 1 (finding 6): unwrapping to {@link DataSource} (or to this class) answers this wrapper, never the raw
+     * pool, whose connections would keep the previous borrower's {@code app.org_id}. Only pool-specific types (the
+     * Hikari pool and its MXBeans, for metrics) reach the pool. Spring Boot still finds the pool for the derived Flyway
+     * data source through {@link #getTargetDataSource()} (this class is a {@code DelegatingDataSource}).
      */
     @Override
     @SuppressWarnings("unchecked")
     public <T> T unwrap(Class<T> iface) throws SQLException {
-        if (iface == TenantBindingDataSource.class) {
+        if (iface.isInstance(this)) {
             return (T) this;
         }
         DataSource target = obtainTargetDataSource();
@@ -80,7 +82,10 @@ public class TenantBindingDataSource extends DelegatingDataSource implements Aut
 
     @Override
     public boolean isWrapperFor(Class<?> iface) throws SQLException {
+        if (iface.isInstance(this)) {
+            return true;
+        }
         DataSource target = obtainTargetDataSource();
-        return iface == TenantBindingDataSource.class || iface.isInstance(target) || target.isWrapperFor(iface);
+        return iface.isInstance(target) || target.isWrapperFor(iface);
     }
 }

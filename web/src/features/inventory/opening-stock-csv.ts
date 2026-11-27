@@ -129,3 +129,12 @@ export function runStatusLabel(status: string): { label: string; tone: 'ok' | 'w
     default: return { label: 'Posting', tone: 'info' };
   }
 }
+
+/** What the import-runs list shows (IPR review 1): a load error is never shown as an empty list. */
+export type RunsListState = 'loading' | 'error' | 'empty' | 'rows';
+
+export function runsListState(q: { isLoading: boolean; isError: boolean; data: unknown[] | undefined }): RunsListState {
+  if (q.isError) return 'error';
+  if (q.isLoading) return 'loading';
+  return (q.data ?? []).length === 0 ? 'empty' : 'rows';
+}

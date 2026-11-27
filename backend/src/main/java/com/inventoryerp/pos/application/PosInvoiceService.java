@@ -484,7 +484,7 @@ public class PosInvoiceService {
         pricing.assertAuthority(fullLineInputs, discountInput);
         List<Map<String, Object>> lineInputs = PricingPolicy.discountedLines(fullLineInputs, discountInput);
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
-        Instant occurredAt = OccurredAt.resolve((String) dto.get("occurredAt"));
+        Instant occurredAt = OccurredAt.resolveRecorded((String) dto.get("occurredAt"), "pos.invoice");
 
         Map<String, Object> invoice = tx.execute(st -> {
             String cashSessionId = order.get("cashSessionId") != null ? (String) order.get("cashSessionId")
@@ -895,7 +895,7 @@ public class PosInvoiceService {
                     throw ApiException.badRequest("Cash handed over is invalid for these tenders");
                 }
             }
-            Instant occurredAt = OccurredAt.resolve((String) dto.get("occurredAt"));
+            Instant occurredAt = OccurredAt.resolveRecorded((String) dto.get("occurredAt"), "pos.payment");
             String paymentDate = JsonConfig.toJsIso(occurredAt != null ? occurredAt : Instant.now());
             boolean shared = sharedDrawer();
             String lastPaymentId = null;

@@ -362,6 +362,15 @@ Same as Nest, kept on purpose:
 - `GET /pos/posting-monitor/jobs?status=` / `/exceptions?status=` with an unknown status → 500 (Prisma enum/where error).
 - Business timestamps Nest sets with `new Date()` use the database clock (`clock_timestamp()`), as in every module.
 
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Device-time flags are recorded on the online routes (finding 1, ADR-S088 / P15-1).** The POS sale, settle,
+  invoice, payment and cash-drawer routes accept an `occurredAt` that is too old or too far ahead as before, and now
+  record the flag as the sync path does: an `InventoryException` of kind `offline_late_sync` (kept as sent) or
+  `offline_clock_skew` (stored at the receive time) with `payload.channel = online`, once per request and time.
+  Report-only: these two kinds no longer hold a period close (they never were unposted sale lines).
+
 ## Status
 
 P5: 219/219 routes in 30 controllers (`pos.web`). Services (`pos.application`): settings/lookup, kitchen stations,

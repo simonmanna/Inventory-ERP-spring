@@ -7,6 +7,7 @@ import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
 import com.inventoryerp.inventory.application.StockMove.Received;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
@@ -130,6 +131,13 @@ public class OpeningStockImportService {
     private final SequenceService seq;
     private final AuditService audit;
     private final ApprovalsService approvals;
+    private SegregationOfDutiesService sod;
+
+    /** IPR review 1 (finding 5): the separation of duties of the import (setter: keeps the constructor). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setSod(SegregationOfDutiesService sod) {
+        this.sod = sod;
+    }
     private final JsonMapper mapper;
     private final TransactionTemplate tx;
     private final TransactionTemplate readTx;
@@ -180,7 +188,24 @@ public class OpeningStockImportService {
     /** Validate the rows and show the batches and their journals; no writes. */
     public Map<String, Object> preview(List<Row> rows) {
         Validation v = validateFile(rows);
-        return previewView(v);
+        Map<String, Object> view = previewView(v);
+        Object token = view.get("previewToken");
+        if (token != null) {
+            // IPR review 1 (finding 5): who previewed this journal, so the inventory valuation pair can keep them from
+            // also approving its import.
+            String user = TenantContext.userId();
+            tx.executeWithoutResult(s -> jdbc.sql("INSERT INTO \"OpeningStockImportPreview\" (id, \"organizationId\","
+                            + " \"previewToken\", \"previewedById\") VALUES (?, ?, ?, ?)")
+                    .params(UUID.randomUUID().toString(), org(), token, user).update());
+        }
+        return view;
+    }
+
+    /** IPR review 1 (finding 5): everyone who previewed the journal of {@code previewToken} (its makers). */
+    private List<String> previewers(String previewToken) {
+        return read(() -> jdbc.sql("SELECT DISTINCT \"previewedById\" FROM \"OpeningStockImportPreview\" WHERE"
+                + " \"organizationId\" = ? AND \"previewToken\" = ? AND \"previewedById\" IS NOT NULL")
+                .params(org(), previewToken).query(String.class).list());
     }
 
     private Validation validateFile(List<Row> rows) {
@@ -900,12 +925,23 @@ public class OpeningStockImportService {
             throw ApiException.conflict(STALE);
         }
         BigDecimal total = v.batches().stream().map(Batch::total).reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<String> makers = previewers(previewToken);
         Map<String, Object> approval = tx.execute(s -> approvals.checkOrRequestApproval(APPROVAL_TYPE, previewToken,
                 Obj.of("amount", total.doubleValue(), "totalValue", JsNumbers.dec(total), "rowCount", rows.size(),
-                        "batchCount", v.batches().size())));
+                        "batchCount", v.batches().size(), "makerIds", String.join(",", makers))));
         if (approval != null && Boolean.TRUE.equals(approval.get("needsApproval"))) {
             throw ApiException.forbidden("Opening stock import requires approval. Request ID: "
                     + approval.get("requestId") + ".");
+        }
+        if (approval == null) {
+            // IPR review 1 (finding 5): with no approval workflow the caller's approve: true is the only approval, so
+            // under the inventory valuation pair whoever previewed the journal cannot also import it. Nothing changes
+            // while the pair is off (one person may preview and import).
+            read(() -> {
+                sod.assertSeparated(SegregationOfDutiesService.INVENTORY_VALUATION, "OpeningStockImportRun",
+                        previewToken, makers);
+                return null;
+            });
         }
         String approvalRequestId = approval == null ? null : (String) approval.get("requestId");
         String runId = createRun(v, hash, previewToken, total, fileName, notes, approvalRequestId);
