@@ -338,6 +338,10 @@ first: big inputs, fuel / condition buttons, damage chips, camera capture), Driv
 
 ## Deviations
 
+- **IPR wave 3 (stream E3; owner sign-off required).** A sales-order delivery's issue is checked by the engine
+  against other sales-order reservations under its cell lock (`honourReservations([its line])`); a delivery order from
+  an awaiting invoice takes the undelivered quantity rounded down (never above what is undelivered).
+
 None from any parity contract (new module). Autonomous decisions are listed in `docs/DECISIONS_FOR_OWNER.md`
 (1.1 and 1.2 rows). Against the ADR-S009 §3 table names: the planned `FleetDriverLicence` is folded into `FleetDriver`
 (one current licence per profile; changes are audited), `FleetCheckout` also stores check-in, and the planned

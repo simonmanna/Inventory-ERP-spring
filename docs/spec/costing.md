@@ -152,6 +152,12 @@ Additions to existing screens:
 
 Checked with `pnpm web:typecheck`, lint and the i18n check. Not exercised in a browser.
 
+## IPR wave 3 (stream E3): material-ledger GL account
+
+- A material-ledger run's journal posts to the price-difference adjunct (1396, `inventory_price_difference`) instead
+  of stock valuation, matching its value rows (`price_difference` components), so `valuation_vs_gl_by_product` and
+  `gl_tieout_by_account` hold after a run. Runs posted before keep their journals (their reversal mirrors them).
+
 ## IPR M-23 (2026-11-27, evidence `docs/audits/ipr-evidence/4-golive-p2.md`)
 
 A material-ledger run is posted, reversed or deleted once: `MaterialLedgerService` locks the run row (`FOR UPDATE`,

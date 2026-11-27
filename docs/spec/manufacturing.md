@@ -127,6 +127,16 @@ Behaviour notes:
 
 ## Deviations
 
+IPR wave 3, stream E3 (branch `fix/ipr-w3`, **pending owner sign-off**; evidence
+[w3-engine-closeout](../audits/ipr-evidence/w3-engine-closeout.md)):
+
+- **N-1: one reservation per stock cell at confirm.** Material lines of the same product and variant are summed before
+  reserving (the reservation upsert sets the quantity, so the last line used to win).
+- **SW-4: linked production rows.** Consumption rows carry their material line (`sourceLineId`) and do not consume stock
+  reserved for sales orders; output and partial-output rows carry their line; the reversal's issues of the main
+  output, partial outputs and by-products name the receipt row they undo (`reversesLedgerId`, when the order kept its
+  ledger code or has a single output row of that product).
+
 IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
 [2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md)):
 

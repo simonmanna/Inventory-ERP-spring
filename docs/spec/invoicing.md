@@ -58,6 +58,13 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **IPR wave 3 (stream E3; owner sign-off required).**
+  - **Bill cancel issues back its receipt** (`issueBackReceipt`, linked rows, journal at the receipt's cost); refused
+    when the goods are no longer on hand (inventory.md deviation 72).
+  - **Undelivered lines never overstate base units.** An undelivered quantity that the line unit cannot state exactly at
+    3 decimals (2 base units in packs of 3) is given in base units (no unit, factor 1, unit price per base unit); an
+    exact one keeps its unit, rounded down. Base quantities use the engine's `returnBaseQuantity`.
+
 - **IPR Phase 1a (2026-11-27, owner decision D4; owner sign-off required).**
   - **Awaiting delivery.** When the delivery order that carried a sales invoice's goods is cancelled or closed short
     with goods undelivered, the invoice's `data.stockIssuedBy` mark is replaced by `data.stockAwaitingDelivery`.
