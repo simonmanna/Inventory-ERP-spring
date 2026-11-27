@@ -16,9 +16,11 @@ import com.inventoryerp.inventory.application.StockMove.Transferred;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.BusinessZone;
+import com.inventoryerp.kernel.common.EffectiveTime;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.common.OccurredAt;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
@@ -276,6 +278,8 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
+        assertNotFrozen(org, dto, dto.locationId);
+        Eff eff = effective(dto);
         requireVariant(product, dto.variantId, dto.locationId,
                 "return_in".equals(dto.moveType) ? VariantRule.EXISTING : VariantRule.INBOUND);
         product = withVariantCost(product, dto.variantId);
@@ -445,7 +449,8 @@ public class StockService {
                 cost.totalValue(),
                 glCtx != null && glCtx.sourceType() != null ? glCtx.sourceType() : dto.sourceType,
                 glCtx != null && glCtx.sourceId() != null ? glCtx.sourceId() : dto.sourceId,
-                dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
+                joinNotes(dto.notes, eff.note(glCtx != null && glCtx.date() != null ? glCtx.date() : dto.date)),
+                dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity), eff.at());
 
         if (glCtx != null) {
             if ("stock_gain".equals(glCtx.kind())) {
@@ -482,6 +487,7 @@ public class StockService {
             payload.put("newRunningAverage", JsNumbers.dec(newAverage));
         }
         events.publishOnCommit("stock.received", payload);
+        correctLateCountRows(org, ledgerCode, dto, eff);
         audit.recordInTx(AuditInput.of("StockItem", str(stockItem, "id"), "receive", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
                         "unitCost", JsNumbers.dec(unitCost), "ledgerCode", ledgerCode)));
@@ -630,6 +636,8 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
+        assertNotFrozen(org, dto, dto.locationId);
+        Eff eff = effective(dto);
         requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
         product = withVariantCost(product, dto.variantId);
         String productName = str(product, "name");
@@ -663,7 +671,7 @@ public class StockService {
                     + requestedSerials);
         }
         boolean allowNegative = settings.resolveBool("inventory.allowNegativeStock", ctx);
-        String ledgerNotes = joinNotes(dto.notes, dto.reference);
+        String ledgerNotes = joinNotes(dto.notes, dto.reference, eff.note(dto.date));
 
         // A-025 + the engine lock order: advisory then row lock; every quantity below is read under it.
         Map<String, Object> stockItem = lockQuant(org, dto.productId, variantId, dto.locationId,
@@ -716,7 +724,7 @@ public class StockService {
         boolean carriedCost = !serialTracking && !usesLayers && dto.carriedUnitCost != null
                 && "AVCO".equals(str(product, "costingMethod"));
         IssueCtx ic = new IssueCtx(org, ledgerCode, dto, variantId, moveType, stockItemId,
-                trace(dto, product, qty, dto.quantity));
+                trace(dto, product, qty, dto.quantity), eff.at());
 
         if (serialTracking) {
             List<String> requested = dto.serialNumbers == null ? List.of() : dto.serialNumbers;
@@ -890,6 +898,7 @@ public class StockService {
         payload.put("uomId", ic.trace.docUomId());
         payload.put("uomFactor", ic.trace.factor() == null ? null : JsNumbers.dec(ic.trace.factor()));
         events.publishOnCommit("stock.issued", payload);
+        correctLateCountRows(org, ledgerCode, dto, eff);
         audit.recordInTx(AuditInput.of("StockItem", stockItemId, "issue", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "quantity", JsNumbers.js(dto.quantity),
                         "unitCost", JsNumbers.dec(unitCost), "totalValue", JsNumbers.dec(totalValue), "ledgerCode",
@@ -928,9 +937,10 @@ public class StockService {
         final String moveType;
         final String stockItemId;
         final Trace trace;
+        final Instant effectiveAt;
 
         IssueCtx(String org, String ledgerCode, StockMove dto, String variantId, String moveType, String stockItemId,
-                Trace trace) {
+                Trace trace, Instant effectiveAt) {
             this.org = org;
             this.ledgerCode = ledgerCode;
             this.dto = dto;
@@ -938,13 +948,14 @@ public class StockService {
             this.moveType = moveType;
             this.stockItemId = stockItemId;
             this.trace = trace;
+            this.effectiveAt = effectiveAt;
         }
 
         void row(String batchId, String serialId, BigDecimal before, BigDecimal change, BigDecimal after,
                 BigDecimal unitCost, BigDecimal totalValue, String notes) {
             insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, batchId, serialId, moveType, before,
                     change, after, unitCost, totalValue, dto.sourceType, dto.sourceId, notes, dto.responsibleById,
-                    dto.approvedById, trace);
+                    dto.approvedById, trace, effectiveAt);
         }
     }
 
@@ -995,7 +1006,9 @@ public class StockService {
     @Transactional
     public Adjusted adjust(StockMove dto) {
         String org = TenantContext.organizationId();
-        assertStockPeriodOpen(Instant.now());
+        // IPR SW-6: the period check and every journal use the move's date (now when it has none).
+        Instant date = dto.date != null ? dto.date : Instant.now();
+        assertStockPeriodOpen(date);
         holdCostingShared(org, dto.productId);
         Map<String, Object> product = lookups.product(dto.productId);
         if (product == null) {
@@ -1004,6 +1017,8 @@ public class StockService {
         if (lookups.location(dto.locationId) == null) {
             throw ApiException.notFound("Location not found");
         }
+        assertNotFrozen(org, dto, dto.locationId);
+        Eff eff = effective(dto);
         requireVariant(product, dto.variantId, dto.locationId, VariantRule.EXISTING);
         product = withVariantCost(product, dto.variantId);
         // Phase I1b (audit U-3): stock documents count in the base unit (ADR-S003); a caller that names a unit gets its
@@ -1034,7 +1049,7 @@ public class StockService {
         }
         if (bool(product, "batchTracking") || bool(product, "serialTracking")
                 || "FIFO".equals(str(product, "costingMethod"))) {
-            return adjustLayered(dto, product, currentQty, counted, delta, stockItem);
+            return adjustLayered(dto, product, currentQty, counted, delta, stockItem, date);
         }
         String ledgerCode = seq.next("stock_move", "STK/", 6);
         String moveType = delta.signum() > 0 ? "adjustment_in" : "adjustment_out";
@@ -1045,13 +1060,15 @@ public class StockService {
         String sourceType = dto.sourceType != null ? dto.sourceType : "stock_adjust";
         String sourceId = dto.sourceId != null ? dto.sourceId : ledgerCode;
         insertLedger(org, ledgerCode, dto.productId, variantId, dto.locationId, null, null, moveType, currentQty, delta,
-                counted, unitCost, unitCost.multiply(delta.abs()), sourceType, sourceId, dto.notes,
-                dto.responsibleById, dto.approvedById, deltaMode ? trace(dto, product, deltaIn, dto.deltaQuantity)
-                        : trace(dto, product, counted, dto.countedQuantity));
-        stockPosting.postAdjustment(dto.productId, delta, unitCost, Instant.now(), sourceType, sourceId,
-                "Stock adjustment · " + str(product, "name"), dto.openingBalance);
+                counted, unitCost, unitCost.multiply(delta.abs()), sourceType, sourceId,
+                joinNotes(dto.notes, eff.note(dto.date)), dto.responsibleById, dto.approvedById,
+                deltaMode ? trace(dto, product, deltaIn, dto.deltaQuantity)
+                        : trace(dto, product, counted, dto.countedQuantity), eff.at());
+        // ADR-S088 closed-period traceability: the journal memo names the ledger code.
+        stockPosting.postAdjustment(dto.productId, delta, unitCost, date, sourceType, sourceId,
+                "Stock adjustment · " + str(product, "name") + " · " + ledgerCode, dto.openingBalance);
         sweepAvcoResidue(org, product, dto.productId, variantId, dto.locationId, counted, sourceType, sourceId,
-                ledgerCode, Instant.now());
+                ledgerCode, date);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -1060,6 +1077,7 @@ public class StockService {
         payload.put("quantity", JsNumbers.dec(counted));
         payload.put("delta", JsNumbers.dec(delta));
         events.publishOnCommit("stock.adjusted", payload);
+        correctLateCountRows(org, ledgerCode, dto, eff);
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
                         JsNumbers.js(counted), "previousQuantity", JsNumbers.js(currentQty), "ledgerCode",
@@ -1069,7 +1087,7 @@ public class StockService {
 
     /** Batch / serial / FIFO variance: moves the identified layers, then posts the variance at their value. */
     private Adjusted adjustLayered(StockMove dto, Map<String, Object> product, BigDecimal currentQty, BigDecimal counted,
-            BigDecimal delta, Map<String, Object> stockItem) {
+            BigDecimal delta, Map<String, Object> stockItem, Instant date) {
         String sourceType = dto.sourceType != null ? dto.sourceType : "stock_adjust";
         String ledgerCode;
         BigDecimal totalValue;
@@ -1078,6 +1096,7 @@ public class StockService {
                     .source(sourceType, dto.sourceId).notes(dto.notes).serials(dto.serialNumbers).batch(dto.batchNumber)
                     .people(dto.responsibleById, dto.approvedById).moveType("adjustment_out")
                     .strategy(dto.batchNumber != null ? "MANUAL" : null).skipGl();
+            carryCountFields(dto, m, date);
             if (dto.lotId != null) {
                 // Hardening R5b (P2-2): the counted lot itself goes first (a same-number lot never absorbs it).
                 m.prefer(List.of(dto.lotId), null);
@@ -1124,6 +1143,7 @@ public class StockService {
                             : lot != null ? str(lot, "batchNumber")
                             : "ADJ-" + LocalDate.now(ZoneOffset.UTC).toString().replace("-", "")) : null)
                     .expiry(batchTracking ? expiry : null);
+            carryCountFields(dto, m, date);
             if (dto.lotId != null && lot != null && dto.lotId.equals(str(lot, "id"))) {
                 // Hardening R5b (P2-2): the gain goes back into the counted lot row.
                 m.returnBatchId = dto.lotId;
@@ -1134,9 +1154,9 @@ public class StockService {
         }
         BigDecimal absQty = delta.abs();
         if (totalValue.signum() > 0) {
-            stockPosting.postAdjustment(dto.productId, delta, Money.div(totalValue, absQty), Instant.now(), sourceType,
-                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name"),
-                    dto.openingBalance);
+            stockPosting.postAdjustment(dto.productId, delta, Money.div(totalValue, absQty), date, sourceType,
+                    dto.sourceId != null ? dto.sourceId : ledgerCode, "Stock adjustment · " + str(product, "name")
+                            + " · " + ledgerCode, dto.openingBalance);
         }
         audit.recordInTx(AuditInput.of("StockItem", stockItem != null ? str(stockItem, "id") : "new", "adjust", null,
                 Obj.of("productId", dto.productId, "locationId", dto.locationId, "countedQuantity",
@@ -1152,7 +1172,9 @@ public class StockService {
     @Transactional
     public Transferred transfer(StockMove dto) {
         String org = TenantContext.organizationId();
-        assertStockPeriodOpen(Instant.now());
+        // IPR SW-6: the period check and every journal use the move's date (now when it has none).
+        Instant date = dto.date != null ? dto.date : Instant.now();
+        assertStockPeriodOpen(date);
         if (dto.fromLocationId.equals(dto.toLocationId)) {
             throw ApiException.badRequest("Source and destination locations must be different");
         }
@@ -1183,6 +1205,9 @@ public class StockService {
         if (lookups.stockItem(dto.productId, variantId, dto.fromLocationId) == null) {
             throw ApiException.badRequest("No stock found at source location");
         }
+        assertNotFrozen(org, dto, dto.fromLocationId, dto.toLocationId);
+        Eff eff = effective(dto);
+        String rowNotes = joinNotes(dto.notes, eff.note(dto.date));
         // Both quants up front in location order (the engine lock order), so A→B and B→A cannot deadlock.
         LockedQuant from;
         LockedQuant to;
@@ -1368,30 +1393,33 @@ public class StockService {
         BigDecimal newToQty = dec(toItem, "quantity");
         String outRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.fromLocationId, null, null,
                 "transfer_out", fromBefore, qty.negate(), newFromQty, carriedUnit, carriedValue, dto.sourceType,
-                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
+                dto.sourceId, rowNotes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity),
+                eff.at());
         String inRow = insertLedger(org, ledgerCode, dto.productId, variantId, dto.toLocationId, null, null,
                 "transfer_in", newToQty.subtract(qty), qty, newToQty, carriedUnit, carriedValue, dto.sourceType,
-                dto.sourceId, dto.notes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity));
+                dto.sourceId, rowNotes, dto.responsibleById, dto.approvedById, trace(dto, product, qty, dto.quantity),
+                eff.at());
         // LC-1 (ADR-S053): the units of the out row are the units of the in row — landed cost follows them.
         jdbc.sql("INSERT INTO \"InventoryTransferLineage\" (id, \"organizationId\", \"transferId\","
                         + " \"sourceLedgerId\", \"destinationLedgerId\", quantity) VALUES (?, ?, ?, ?, ?, ?)")
                 .params(UUID.randomUUID().toString(), org, dto.sourceId, outRow, inRow, qty).update();
         if (carriedValue.signum() > 0 && !dto.skipGlPosting) {
-            stockPosting.postTransfer(dto.productId, carriedValue, dto.fromLocationId, dto.toLocationId, Instant.now(),
+            stockPosting.postTransfer(dto.productId, carriedValue, dto.fromLocationId, dto.toLocationId, date,
                     dto.sourceType != null ? dto.sourceType : "stock_transfer",
                     dto.sourceId != null ? dto.sourceId : ledgerCode,
-                    "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(qty));
+                    "Stock transfer · " + str(product, "name") + " · " + JsNumbers.dec(qty) + " · " + ledgerCode);
         }
         postCostCorrection(org, dto.productId, variantId, dto.toLocationId, newToQty, str(product, "name"),
                 serialAvg != null ? serialAvg.correction()
                         : batchTracking ? layerCorrection
-                        : destCost.costCorrection(), Instant.now(), dto.sourceType != null ? dto.sourceType : "stock_transfer",
+                        : destCost.costCorrection(), date, dto.sourceType != null ? dto.sourceType : "stock_transfer",
                 dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode);
         if (!dto.skipGlPosting) {
             sweepAvcoResidue(org, product, dto.productId, variantId, dto.fromLocationId, newFromQty,
                     dto.sourceType != null ? dto.sourceType : "stock_transfer",
-                    dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode, Instant.now());
+                    dto.sourceId != null ? dto.sourceId : ledgerCode, ledgerCode, date);
         }
+        correctLateCountRows(org, ledgerCode, dto, eff);
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org);
         payload.put("productId", dto.productId);
@@ -1403,6 +1431,278 @@ public class StockService {
                 Obj.of("productId", dto.productId, "fromLocationId", dto.fromLocationId, "toLocationId",
                         dto.toLocationId, "quantity", JsNumbers.js(qty), "ledgerCode", ledgerCode)));
         return new Transferred(ledgerCode, qty, dto.fromLocationId, dto.toLocationId, layers, carriedUnit);
+    }
+
+    // ================================================================== effective time, freeze, late counts (IPR 1b)
+
+    /** Reference type of a late count correction (count spec section 4). */
+    public static final String LATE_COUNT_CORRECTION = "inventory_count_late_correction";
+
+    /**
+     * ADR-S088: the effective time a move writes ({@code at}; null = server NOW) and the clock-skew note when the
+     * requested time was too far ahead.
+     */
+    record Eff(Instant at, String skew) {
+
+        /**
+         * The ledger note of the move: the clock-skew flag, and "occurred &lt;effective&gt;, posted &lt;date&gt;" when
+         * the posting date is another day than the effective time (closed period moved, or a late sync).
+         */
+        String note(Instant postingDate) {
+            String shifted = at != null && postingDate != null && !day(at).equals(day(postingDate))
+                    ? "occurred " + com.inventoryerp.kernel.web.JsonConfig.toJsIso(at) + ", posted " + day(postingDate)
+                    : null;
+            return joinNotes(skew, shifted);
+        }
+    }
+
+    /**
+     * The business time of {@code dto}: its own {@link StockMove#effectiveAt}, else the offline op time bound in
+     * {@link EffectiveTime}, else none (server NOW). A time later than now + {@code inventory.maxFutureEffectiveMinutes}
+     * is recorded at the receive time and flagged {@code clockSkew} (never refused).
+     */
+    Eff effective(StockMove dto) {
+        Instant raw = dto.effectiveAt;
+        if (raw == null) {
+            EffectiveTime.Context c = EffectiveTime.current();
+            raw = c == null ? null : c.at();
+        }
+        if (raw == null) {
+            return new Eff(null, null);
+        }
+        if (raw.isAfter(Instant.now().plus(OccurredAt.futureLimit()))) {
+            return new Eff(null, "clockSkew: movement time " + com.inventoryerp.kernel.web.JsonConfig.toJsIso(raw)
+                    + " was ahead of the server; recorded at the receive time");
+        }
+        return new Eff(raw, null);
+    }
+
+    /** Copy the count / effective-time fields of a layered adjustment onto the issue or receipt it delegates to. */
+    private static void carryCountFields(StockMove from, StockMove to, Instant date) {
+        to.effectiveAt = from.effectiveAt;
+        to.countSessionId = from.countSessionId;
+        to.skipLateCountCheck = from.skipLateCountCheck;
+        to.sourceLineId = from.sourceLineId;
+        to.reversesLedgerId = from.reversesLedgerId;
+        to.date = date;
+    }
+
+    /** Lock key of a location freeze (lock level L3b). */
+    static String freezeLockKey(String org, String locationId) {
+        return "freeze:" + org + ":" + locationId;
+    }
+
+    /**
+     * IPR 1b (count spec section 6): take the location freeze lock exclusively (L3b), before a count session with a
+     * freeze starts. Waits for every move in flight at the location; the holder takes no lower lock.
+     */
+    @Transactional
+    public void lockFreezeExclusive(String locationId) {
+        // Polled with the try form: a waiting exclusive request would queue every new shared request behind it, and a
+        // move that already holds a quant lock (L4) and then asks for the shared freeze key (a count or beverage
+        // submit) could close a cycle. The try form never queues; the count start gives up after FREEZE_WAIT.
+        String key = freezeLockKey(TenantContext.organizationId(), locationId);
+        long deadline = System.nanoTime() + FREEZE_WAIT.toNanos();
+        while (!Boolean.TRUE.equals(jdbc.sql("SELECT pg_try_advisory_xact_lock(hashtext(?)::bigint)").param(key)
+                .query(Boolean.class).single())) {
+            if (System.nanoTime() > deadline) {
+                throw ApiException.conflict("Stock is moving at this location right now; start the frozen count again"
+                        + " in a moment");
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw ApiException.conflict("Stock is moving at this location right now; start the frozen count again"
+                        + " in a moment");
+            }
+        }
+    }
+
+    /** How long a frozen count start waits for the moves in flight at its location. */
+    static final java.time.Duration FREEZE_WAIT = java.time.Duration.ofSeconds(10);
+
+    /**
+     * IPR 1b (count spec section 6): a server-side manual move at a location frozen by a draft count is refused (409),
+     * except the session's own posting, sales (POS jobs, sync sale ops, refunds), late count corrections and offline
+     * device work (a device cannot see the freeze; the count reconciliation handles it). Lock level L3b: the shared
+     * freeze key of each location (sorted), after the costing locks (L3) and before the quant locks (L4).
+     */
+    private void assertNotFrozen(String org, StockMove dto, String... locationIds) {
+        if (freezeExempt(dto)) {
+            return;
+        }
+        java.util.TreeSet<String> sorted = new java.util.TreeSet<>();
+        for (String l : locationIds) {
+            if (l != null) {
+                sorted.add(l);
+            }
+        }
+        for (String loc : sorted) {
+            jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint)").param(freezeLockKey(org, loc))
+                    .query().listOfRows();
+            Map<String, Object> frozen = SqlRows.one(jdbc.sql("SELECT s.id, s.\"countCode\", l.name FROM"
+                            + " \"InventoryCountSession\" s JOIN \"InventoryLocation\" l ON l.id = s.\"locationId\""
+                            + " WHERE s.\"organizationId\" = ? AND s.\"locationId\" = ? AND s.status = 'draft'"
+                            + " AND s.\"freezeLocation\" = true AND s.\"deletedAt\" IS NULL LIMIT 1")
+                    .params(org, loc));
+            if (frozen != null && !str(frozen, "id").equals(dto.countSessionId)) {
+                throw ApiException.conflict("Location " + frozen.get("name") + " is frozen for count "
+                        + frozen.get("countCode") + "; submit or cancel the count before moving stock there");
+            }
+        }
+    }
+
+    /**
+     * Sale-side sources a count freeze never blocks (P15-2): back-office sales, deliveries and returns, besides the POS
+     * sources of {@link #isSaleDrain}. The count reconciles them like any movement after its cut-off.
+     */
+    private static final java.util.Set<String> SALE_SOURCES = java.util.Set.of("cash_sale", "sales_invoice",
+            "sales_order", "sales_order_line", "invoice", "delivery_order", "sales_delivery", "sales_return",
+            "credit_note", "credit_note_cancel");
+
+    private static boolean freezeExempt(StockMove dto) {
+        // A count's own posting (countSessionId) is exempt: with one draft per location (S4) the only freeze at its
+        // location is its own, and it already holds the quant locks (L4), so it must not ask for L3b after them.
+        if (isSaleDrain(dto) || LATE_COUNT_CORRECTION.equals(dto.sourceType) || dto.countSessionId != null
+                || (dto.sourceType != null && SALE_SOURCES.contains(dto.sourceType))) {
+            return true;
+        }
+        EffectiveTime.Context c = EffectiveTime.current();
+        return c != null && c.offline();
+    }
+
+    /**
+     * IPR 1b (count spec section 4, case C): a movement that happened before a count's cut-off but reached the ledger
+     * after that count was submitted (an offline sale synced late) keeps its own effect (issue and COGS); the engine
+     * then posts a linked count correction of the opposite quantity against the first submitted count of the cell
+     * whose cut-off is after the movement ({@code reversesLedgerId} = the count's variance row, {@code sourceLineId} =
+     * the count line, reference {@code inventory_count_late_correction} / the late row). Net effect: stock equals the
+     * counted figure, the count loss is reclassified, both pieces of evidence stay. Runs in the late row's
+     * transaction, under the locks the move already holds (L3, L4, L5): no new lock level. Exactly once per (count
+     * line, late row): checked here and by the V701 unique index.
+     *
+     * <p>Not corrected (listed on the count's late transactions for a person): serial-tracked cells (P15-2), rows
+     * without an explicit past effective time (clock-skew flagged rows are recorded at receive time), reversals and
+     * corrections themselves, counts submitted before V700, and a late receipt of a lot-tracked or FIFO cell (its
+     * correction could span several lots). A correction the engine refuses (for example an expiry-tracked cell with
+     * no lot) is rolled back to a savepoint and left listed: the late movement itself always posts.
+     */
+    private void correctLateCountRows(String org, String ledgerCode, StockMove dto, Eff eff) {
+        if (eff.at() == null || dto.skipLateCountCheck || dto.countSessionId != null || dto.reversesLedgerId != null
+                || LATE_COUNT_CORRECTION.equals(dto.sourceType)) {
+            return;
+        }
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT l.id, l.\"productId\", l.\"variantId\","
+                        + " l.\"locationId\", l.\"batchId\", l.\"quantityChange\", l.seq, l.\"ledgerCode\","
+                        + " l.\"referenceType\", COALESCE(l.\"effectiveAt\", l.\"createdAt\") AS eff, p.\"serialTracking\","
+                        + " p.\"batchTracking\", p.\"costingMethod\"::text AS costing FROM \"InventoryLedger\" l"
+                        + " JOIN \"Product\" p ON p.id = l.\"productId\" WHERE l.\"organizationId\" = ?"
+                        + " AND l.\"ledgerCode\" = ? AND l.\"quantityChange\" <> 0 ORDER BY l.seq")
+                .params(org, ledgerCode));
+        for (Map<String, Object> r : rows) {
+            if (bool(r, "serialTracking")) {
+                continue;
+            }
+            BigDecimal change = dec(r, "quantityChange");
+            boolean layered = bool(r, "batchTracking") || "FIFO".equals(r.get("costing"));
+            if (layered && change.signum() > 0) {
+                continue;
+            }
+            Map<String, Object> line = SqlRows.one(jdbc.sql("SELECT l.id, COALESCE(l.\"countedAt\", s.\"startedAt\") AS cutoff,"
+                            + " s.id AS \"sessionId\", s.\"countCode\", s.\"countType\"::text AS \"countType\""
+                            + " FROM \"InventoryCountLine\" l JOIN \"InventoryCountSession\" s ON s.id = l.\"sessionId\""
+                            + " WHERE s.\"organizationId\" = ? AND s.status = 'submitted' AND s.\"deletedAt\" IS NULL"
+                            + " AND s.\"locationId\" = ? AND l.\"productId\" = ? AND l.\"variantId\" IS NOT DISTINCT FROM ?"
+                            + " AND l.\"countedQty\" IS NOT NULL AND l.\"measuredSeq\" IS NOT NULL AND l.\"measuredSeq\" < ?"
+                            + " AND COALESCE(l.\"countedAt\", s.\"startedAt\") > ?"
+                            + " AND (l.\"lotLine\" = false OR l.\"batchId\" IS NOT DISTINCT FROM ?)"
+                            + " ORDER BY s.\"submittedAt\", s.id LIMIT 1")
+                    .params(org, r.get("locationId"), r.get("productId"), r.get("variantId"),
+                            ((Number) r.get("seq")).longValue(), SqlRows.ts((Instant) r.get("eff")), r.get("batchId")));
+            if (line == null) {
+                continue;
+            }
+            boolean done = !jdbc.sql("SELECT 1 FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\""
+                            + " = ? AND \"sourceLineId\" = ? AND \"referenceId\" = ? LIMIT 1")
+                    .params(org, LATE_COUNT_CORRECTION, line.get("id"), r.get("id")).query().listOfRows().isEmpty();
+            if (done) {
+                continue;
+            }
+            String varianceRow = jdbc.sql("SELECT id FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                            + " \"sourceLineId\" = ? AND \"referenceType\" = 'stock_adjustment' AND \"quantityChange\" <> 0"
+                            + " ORDER BY seq LIMIT 1")
+                    .params(org, line.get("id")).query(String.class).optional().orElse(null);
+            Instant cutoff = (Instant) line.get("cutoff");
+            StockMove k = StockMove.of(str(r, "productId"), str(r, "locationId"), null).variant(str(r, "variantId"))
+                    .source(LATE_COUNT_CORRECTION, str(r, "id")).sourceLine(str(line, "id")).reverses(varianceRow)
+                    .people(dto.responsibleById, dto.approvedById)
+                    .notes("Late " + (r.get("referenceType") != null ? r.get("referenceType") + " " : "")
+                            + r.get("ledgerCode") + " of " + com.inventoryerp.kernel.web.JsonConfig.toJsIso((Instant) r.get("eff"))
+                            + " was before count " + line.get("countCode") + " ("
+                            + com.inventoryerp.kernel.web.JsonConfig.toJsIso(cutoff) + ")");
+            k.deltaQuantity = change.negate();
+            k.effectiveAt = cutoff;
+            k.skipLateCountCheck = true;
+            k.lotId = str(r, "batchId");
+            k.openingBalance = "opening".equals(line.get("countType"));
+            jdbc.sql("SAVEPOINT late_count_correction").update();
+            try {
+                adjust(k);
+                jdbc.sql("RELEASE SAVEPOINT late_count_correction").update();
+            } catch (RuntimeException e) {
+                jdbc.sql("ROLLBACK TO SAVEPOINT late_count_correction").update();
+                log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
+                        line.get("countCode"), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * ADR-S088: the effective time of a back-office document date. A timestamp with a time of day is used as given
+     * (later rows of today: now). A date without a time (midnight UTC) means "some time that day": the end of that day
+     * when it is a past day, now when it is today or later. Null = now.
+     */
+    public static Instant documentEffectiveAt(Instant docDate) {
+        if (docDate == null) {
+            return null;
+        }
+        Instant now = Instant.now();
+        if (docDate.isAfter(now)) {
+            return null;
+        }
+        java.time.LocalDateTime wall = docDate.atOffset(ZoneOffset.UTC).toLocalDateTime();
+        if (!wall.toLocalTime().equals(java.time.LocalTime.MIDNIGHT)) {
+            return docDate;
+        }
+        LocalDate d = wall.toLocalDate();
+        return d.isBefore(now.atOffset(ZoneOffset.UTC).toLocalDate())
+                ? d.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).minusMillis(1) : null;
+    }
+
+    /**
+     * ADR-S088 limit 2: a back-office document dated more than {@code inventory.maxBackdateDays} days before today is
+     * refused (400). Offline device work is exempt (it may have been offline for longer; it is flagged lateSync
+     * instead). 0 = no limit.
+     */
+    @Transactional(readOnly = true)
+    public void assertWithinBackdateLimit(Instant docDate, String documentLabel) {
+        if (docDate == null) {
+            return;
+        }
+        EffectiveTime.Context c = EffectiveTime.current();
+        if (c != null && c.offline()) {
+            return;
+        }
+        Number configured = settings.resolveNumber("inventory.maxBackdateDays", SettingContext.EMPTY);
+        long days = configured == null ? 7 : configured.longValue();
+        if (days <= 0) {
+            return;
+        }
+        LocalDate oldest = LocalDate.now(ZoneOffset.UTC).minusDays(days);
+        if (docDate.atOffset(ZoneOffset.UTC).toLocalDate().isBefore(oldest)) {
+            throw ApiException.badRequest(documentLabel + " date is more than " + days + " days in the past");
+        }
     }
 
     // ================================================================== helpers
@@ -1641,7 +1941,7 @@ public class StockService {
         }
         insertLedger(org, seq.next("stock_move", "STK/", 6), productId, variantId, locationId, null, null,
                 "cost_adjustment", balance, Money.ZERO, balance, Money.ZERO, rounded.negate(), sourceType,
-                sourceId, "Negative-stock cost correction (" + ledgerCode + ")", null, null, null);
+                sourceId, "Negative-stock cost correction (" + ledgerCode + ")", null, null, null, null);
         stockPosting.postNegativeStockCostCorrection(productId, rounded, date, sourceType, sourceId,
                 "Negative-stock cost correction · " + productName, COST_CORRECTION_KEY + org + ":" + ledgerCode);
     }
@@ -1731,7 +2031,7 @@ public class StockService {
         String code = seq.next("stock_move", "STK/", 6);
         insertLedger(org, code, productId, variantId, locationId, null, null, "cost_adjustment", Money.ZERO, Money.ZERO,
                 Money.ZERO, Money.ZERO, residue.negate(), sourceType, sourceId,
-                "AVCO rounding residue at zero stock (" + ledgerCode + ")", null, null, null);
+                "AVCO rounding residue at zero stock (" + ledgerCode + ")", null, null, null, null);
         stockPosting.postNegativeStockCostCorrection(productId, residue, date, sourceType, sourceId,
                 "AVCO rounding residue · " + str(product, "name"), COST_CORRECTION_KEY + org + ":residue:" + code);
     }
@@ -1746,7 +2046,7 @@ public class StockService {
     private String insertLedger(String org, String ledgerCode, String productId, String variantId, String locationId,
             String batchId, String serialId, String type, BigDecimal qtyBefore, BigDecimal change, BigDecimal after,
             BigDecimal unitCost, BigDecimal totalValue, String referenceType, String referenceId, String notes,
-            String responsibleById, String approvedById, Trace trace) {
+            String responsibleById, String approvedById, Trace trace, Instant effectiveAt) {
         String id = UUID.randomUUID().toString();
         BigDecimal factor = trace == null ? null : trace.factor();
         BigDecimal docQty = factor == null || factor.signum() == 0 ? null
@@ -1755,14 +2055,15 @@ public class StockService {
                         + " \"locationId\", \"batchId\", \"serialId\", type, \"qtyBefore\", \"quantityChange\","
                         + " \"balanceAfter\", \"unitCost\", \"totalValue\", \"referenceType\", \"referenceId\", notes,"
                         + " \"performedBy\", \"responsibleById\", \"approvedById\", \"docUomId\", \"uomFactor\","
-                        + " \"docQuantity\", \"sourceLineId\", \"reversesLedgerId\", \"createdAt\") VALUES (?, ?, ?, ?,"
-                        + " ?, ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                        + NOW + ")")
+                        + " \"docQuantity\", \"sourceLineId\", \"reversesLedgerId\", \"createdAt\", \"effectiveAt\")"
+                        + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::\"StockMoveType\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                        + " ?, ?, " + NOW + ", COALESCE(?::timestamp(3), " + NOW + "))")
                 .params(id, org, ledgerCode, productId, variantId, locationId, batchId,
                         serialId, type, qtyBefore, change, after, unitCost, totalValue, referenceType, referenceId,
                         notes, TenantContext.userId(), responsibleById, approvedById,
                         trace == null ? null : trace.docUomId(), factor, docQty,
-                        trace == null ? null : trace.sourceLineId(), trace == null ? null : trace.reversesLedgerId())
+                        trace == null ? null : trace.sourceLineId(), trace == null ? null : trace.reversesLedgerId(),
+                        SqlRows.ts(effectiveAt))
                 .update();
         return id;
     }

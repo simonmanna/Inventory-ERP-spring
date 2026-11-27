@@ -536,6 +536,10 @@ public class GoodsReceiptsService {
 
             Instant date = grn.get("receivedAt") != null ? (Instant) grn.get("receivedAt")
                     : Instant.now().truncatedTo(ChronoUnit.MILLIS);
+            // ADR-S088 limit 2 (IPR 1b): a back-office receipt is not backdated past inventory.maxBackdateDays
+            // (offline device receipts are exempt); the closed-period rule stays the engine's period check.
+            stock.assertWithinBackdateLimit(date, "Goods receipt");
+            Instant effectiveAt = StockService.documentEffectiveAt(date);
             BigDecimal receiptNet = Money.ZERO;
             BigDecimal receiptTax = Money.ZERO;
             // P0-5: a PO-backed receipt is priced in the PO currency; stock / GRNI / AP carry the functional value.
@@ -576,7 +580,7 @@ public class GoodsReceiptsService {
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor")))
                         .batch((String) ln.get("batchNumber"))
                         .expiry(ln.get("expiryDate") == null ? null : ln.get("expiryDate").toString())
-                        .reference("GRN " + grn.get("receiptNumber"));
+                        .reference("GRN " + grn.get("receiptNumber")).effectiveAt(effectiveAt);
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", id, date));
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 receiptNet = receiptNet.add(lineNet);

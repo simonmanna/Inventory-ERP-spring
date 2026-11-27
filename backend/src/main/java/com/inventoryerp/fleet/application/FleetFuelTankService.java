@@ -226,10 +226,14 @@ public class FleetFuelTankService {
                         tank.get("locationId")).query(BigDecimal.class).single();
     }
 
-    /** Book litres of the tank location as of {@code at} (inventory ledger up to then). */
+    /**
+     * Book litres of the tank location as of {@code at} (inventory ledger up to then). IPR M-30 (ADR-S088): by when the
+     * fuel moved (effective time), so a fuel log entered after the dip but fuelled before it is in the book once.
+     */
     BigDecimal levelAt(Map<String, Object> tank, Instant at) {
         return db.jdbc().sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
-                + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ? AND \"createdAt\" <= ?")
+                + " \"organizationId\" = ? AND \"productId\" = ? AND \"locationId\" = ?"
+                + " AND COALESCE(\"effectiveAt\", \"createdAt\") <= ?")
                 .params(FleetDb.org(), tank.get("productId"), tank.get("locationId"), SqlRows.ts(at))
                 .query(BigDecimal.class).single();
     }

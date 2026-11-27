@@ -101,7 +101,7 @@ public class FleetFuelPostingService {
         if ("tank".equals(log.get("source"))) {
             StockMove m = StockMove.of((String) tank.get("productId"), (String) tank.get("locationId"), litres)
                     .source(STOCK_SOURCE, id).reference(code).notes(label).moveType("internal_use").date(at).skipGl()
-                    .requireAvailable(true);
+                    .requireAvailable(true).effectiveAt(at); // IPR M-30: the fuel left the tank when it was fuelled
             m.responsibleById = TenantContext.userId();
             Issued issued = stock.issue(m);
             BigDecimal value = issued.totalValue();

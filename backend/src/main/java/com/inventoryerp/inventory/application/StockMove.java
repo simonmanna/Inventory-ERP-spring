@@ -70,8 +70,25 @@ public final class StockMove {
     public String distStrategy;
     public String responsibleById;
     public String approvedById;
-    /** Issue only: movement date (period check + GL date); now when null. */
+    /**
+     * Movement posting date (period check + GL date); now when null. Honoured by issue, return restock, adjust and
+     * transfer (IPR SW-6: adjust and transfer used to post at now).
+     */
     public Instant date;
+    /**
+     * ADR-S088: when the goods physically moved (business time), recorded on every ledger row as {@code effectiveAt}.
+     * Null = the offline op time bound in {@code EffectiveTime}, else server now. A value later than now + {@code
+     * inventory.maxFutureEffectiveMinutes} is stored as now and flagged {@code clockSkew}. Never re-sorts the ledger:
+     * it only decides which side of a count cut-off and which period a movement falls on.
+     */
+    public Instant effectiveAt;
+    /**
+     * IPR 1b (count spec): the count session whose variance this move posts. Its own posting is exempt from that
+     * session's freeze, and a count variance never triggers a late count correction.
+     */
+    public String countSessionId;
+    /** IPR 1b: never look for a late count correction for this move (corrections and count variances themselves). */
+    public boolean skipLateCountCheck;
     /** Issue only: quantity-only (the caller posts the balanced entry itself). */
     public boolean skipGlPosting;
     /** Issue only: refuse when pickable on-hand is short, regardless of the negative-stock setting. */
@@ -231,6 +248,12 @@ public final class StockMove {
 
     public StockMove date(Instant v) {
         this.date = v;
+        return this;
+    }
+
+    /** ADR-S088: the business time of the move (see {@link #effectiveAt}). */
+    public StockMove effectiveAt(Instant v) {
+        this.effectiveAt = v;
         return this;
     }
 
