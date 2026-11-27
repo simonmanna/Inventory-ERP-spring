@@ -104,7 +104,7 @@ once its source is cancelled.
 
 ## Deviations
 
-- Sales readiness DEL-11 (2026-11-26, owner to approve): an issued pass whose live lines exceed the current source line
+- Sales readiness DEL-11 (2026-11-26, owner-approved 2026-11-27): an issued pass whose live lines exceed the current source line
   quantities (the order was changed or closed short after issue) shows the problem `source_quantity_changed`; gate-out
   answers 400 "The quantities of the source changed after this pass was issued; void it and issue a new pass".
 
@@ -112,7 +112,7 @@ Post-parity extension (owner request 2026-11-23); see ADR-S085. The delivery mod
 are unchanged. At gate-out, the cash sale delivery method is set only when it was empty: pickup for a person or
 courier, delivery for a driver.
 
-Sales readiness R4d (2026-11-26, owner to approve): a pass for a delivery, sales order, invoice or cash sale whose goods
+Sales readiness R4d (2026-11-26, owner-approved 2026-11-27): a pass for a delivery, sales order, invoice or cash sale whose goods
 have not been issued from stock shows the problem `goods_not_issued`, and gate-out answers 400 "The goods on this pass
 have not been issued from stock yet (dispatch the delivery, confirm the sale or post the invoice first); they may not
 leave". A delivery that is cancelled or returned counts as cancelled; a sales order counts as issued once it is fully

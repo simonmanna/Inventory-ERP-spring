@@ -88,7 +88,7 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   - The mock mobile-money gateway is off unless `app.payments.allow-test-gateway=true` (tests, demo).
   - Invoicing events (posted, cancelled, paid, credit note) are published after commit only.
 
-- **Generated invoices are not editable; drafts can be discarded** (sales readiness R1, 2026-11-24, owner to approve).
+- **Generated invoices are not editable; drafts can be discarded** (sales readiness R1, 2026-11-24, owner-approved 2026-11-27).
   - `PATCH /invoices/:id` locks the document first and answers 400 "This invoice was generated from sales order X;
     cancel the draft and invoice it again" for a draft whose `sourceType` is `sales_order` or `cash_sale`. The UPDATE
     only applies to a draft (`status = 'draft'`).
@@ -124,7 +124,7 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
     `Bill line <product>: <qty> not received yet — post the goods receipt first (Purchasing settings: a supplier bill
     needs a goods receipt)`.
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 1. **Line units (ADR-S003, V5).** Invoice, vendor-bill and credit-note lines accept `uomId` and snapshot
    `uomId` + `uomFactor` (default: the sales unit; bills: the purchase unit). Posting an invoice issues
@@ -145,7 +145,7 @@ Same as Nest, kept on purpose:
   services write them through Prisma; approval gates that Nest runs outside `$transaction` run in
   `REQUIRES_NEW` so a refused request survives.
 
-SG-0 stabilization (2026-11-06), pending owner approval:
+SG-0 stabilization (2026-11-06), owner-approved 2026-11-27:
 
 - **Failed restock fails the credit note.** Nest logged a failed restock and posted anyway, so the books could credit
   goods that never came back. `POST /credit-notes/{id}/post` now answers 400 and posts nothing. Goods that are not
@@ -165,11 +165,11 @@ SG-0 stabilization (2026-11-06), pending owner approval:
   back.`) instead of restocking at the POS location at today's cost. Fleet trip returns (`fleet_trip_return`) are not yet linked to the trip rows, so they are
   not netted. Tests `InventoryReturnsIdentityIT`, `CashSaleIT.creditNoteOnCashSaleInvoiceRestocksAtTheSaleIssue`.
 
-- **`GET /customer-deposits` is server-paged** (sales re-review X-7b, 2026-11-26, awaiting owner approval). The list
+- **`GET /customer-deposits` is server-paged** (sales re-review X-7b, 2026-11-26, owner-approved 2026-11-27). The list
   returned every deposit oldest first; every cash-sale payment adds one. It now takes `limit` (default 500, max 1000) and
   `offset`, sorts newest first (oldest first when filtered by `salesOrderId`) and sends the total in `X-Total-Count`.
   The response is still a plain array.
-- **`POST /sales/rebates/accruals/{id}/settle` requires an `Idempotency-Key`** (X-1b, awaiting owner approval): it
+- **`POST /sales/rebates/accruals/{id}/settle` requires an `Idempotency-Key`** (X-1b, owner-approved 2026-11-27): it
   issues a credit note, like the other money routes of R2.
 
 ## Extensions beyond Nest (ADR-S005)

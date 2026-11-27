@@ -318,7 +318,7 @@ not head office has invoiced them; drafts, cancelled and voided sales never coun
 The Report Library (`reporting/catalogue.json`) links summary and daily under Multi-Branch & Consolidation, tenders
 and register under Cash & Banking. Tested in `CashSaleIT.branchCashSalesReports` and `SalesReportCenterIT`.
 
-## Deviations (owner to confirm)
+## Deviations (owner-approved 2026-11-27)
 
 1. **Base currency only.**
    - Cash sales are recorded in the organization currency; another `currencyCode` returns 400.
