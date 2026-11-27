@@ -5,6 +5,7 @@ import static com.inventoryerp.kernel.crud.SqlRows.str;
 
 import com.inventoryerp.inventory.application.InventoryIntegrityService;
 import com.inventoryerp.inventory.application.InventoryIntegrityService.IntegrityCheck;
+import com.inventoryerp.inventory.application.InventoryPostingRuleService;
 import com.inventoryerp.inventory.application.WipTieOutProvider;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.crud.SqlRows;
@@ -26,7 +27,9 @@ import org.springframework.transaction.annotation.Transactional;
  * (WIP spec). Read-only.
  *
  * <p><b>WIP lines</b>: lines of posted or reversed journal entries on the mapped {@code wip} account and on the accounts
- * the organisation's active {@code PRODUCTION_CONSUME} (debit) / {@code PRODUCTION_OUTPUT} (credit) rules name (WIP-4),
+ * the organisation's active {@code PRODUCTION_CONSUME} (debit) / {@code PRODUCTION_OUTPUT} (credit) rules resolve to
+ * (WIP-4; IPR GL-11 refinement: resolved as the postings resolve them, so a rule that takes its account from a product
+ * category or product field contributes the accounts of the categories / products it covers — stock accounts excepted),
  * in base currency ({@code baseDebit − baseCredit}). A {@code reversal} entry counts for the entry it reverses.
  *
  * <p><b>Attribution</b> (WIP spec §5.2): single-stage order — sourceType {@code production_order},
@@ -56,9 +59,11 @@ public class WipTieOutService implements WipTieOutProvider {
     private static final Set<String> OPEN_STAGED = Set.of("confirmed", "in_progress", "qc_hold");
 
     private final MfgDb db;
+    private final InventoryPostingRuleService rules;
 
-    public WipTieOutService(MfgDb db) {
+    public WipTieOutService(MfgDb db, InventoryPostingRuleService rules) {
         this.db = db;
+        this.rules = rules;
     }
 
     /** One cost object of the tie-out. */
@@ -92,16 +97,18 @@ public class WipTieOutService implements WipTieOutProvider {
         if (wip != null) {
             accounts.add(wip);
         }
-        accounts.addAll(db.jdbc().sql("""
-                SELECT COALESCE(r."literalAccountId", m."accountId") FROM "InventoryPostingRule" r
-                  LEFT JOIN "AccountMapping" m ON m."organizationId" = r."organizationId"
-                       AND m.key = r."accountMappingKey" AND m."deletedAt" IS NULL
-                 WHERE r."organizationId" = ? AND r."isActive" = true
-                   AND ((r."movementType"::text = 'PRODUCTION_CONSUME' AND r."debitOrCredit" = 'debit')
-                     OR (r."movementType"::text = 'PRODUCTION_OUTPUT' AND r."debitOrCredit" = 'credit'))
-                   AND r."accountSource" IN ('account_mapping', 'literal')
-                   AND COALESCE(r."literalAccountId", m."accountId") IS NOT NULL""").param(org).query(String.class)
-                .list());
+        // IPR GL-11: the rule accounts resolved as the postings resolve them, category / product field rules included.
+        accounts.addAll(rules.ruleAccounts("PRODUCTION_CONSUME", "debit"));
+        accounts.addAll(rules.ruleAccounts("PRODUCTION_OUTPUT", "credit"));
+        // A rule that resolves to a stock account (a field rule falling back to stock valuation) is a misconfiguration
+        // the stock tie-outs report; counting every stock movement as WIP would only hide it.
+        accounts.removeAll(db.jdbc().sql("""
+                SELECT "accountId" FROM "AccountMapping" WHERE "organizationId" = :org AND key = 'stock_valuation'
+                   AND "deletedAt" IS NULL AND "accountId" IS NOT NULL
+                UNION SELECT "inventoryAccountId" FROM "ProductCategory" WHERE "organizationId" = :org
+                   AND "inventoryAccountId" IS NOT NULL
+                UNION SELECT "inventoryAccountOverrideId" FROM "Product" WHERE "organizationId" = :org
+                   AND "inventoryAccountOverrideId" IS NOT NULL""").param("org", org).query(String.class).list());
         List<WipObject> objects = new ArrayList<>();
         if (accounts.isEmpty()) {
             return new Result(false, List.of(), objects, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
@@ -160,16 +167,19 @@ public class WipTieOutService implements WipTieOutProvider {
             String sid = str(l, "sid");
             String pk = str(l, "pk");
             String orderId = null;
-            if (ORDER_SOURCES.contains(st) && sid != null && orderByCode.containsKey(sid)) {
+            // IPR WIP-7: a process-costing variance entry carries the process code as its sourceId (the same for every
+            // period); it is attributed by its posting key first, so a process whose code equals a production order's
+            // code never lands its variance on that order.
+            boolean processVariance = "production_variance".equals(st) && pk != null && pk.startsWith(variancePrefix)
+                    && periods.contains(pk.substring(variancePrefix.length()));
+            if (!processVariance && ORDER_SOURCES.contains(st) && sid != null && orderByCode.containsKey(sid)) {
                 orderId = str(orderByCode.get(sid), "id");
             } else if (STAGE_SOURCES.contains(st) && sid != null && stageRefToOrder.containsKey(sid)) {
                 orderId = stageRefToOrder.get(sid);
             }
             if (orderId != null) {
                 glByOrder.merge(orderId, amt, BigDecimal::add);
-            } else if ("process_costing".equals(st) || processJes.contains(str(l, "root"))
-                    || ("production_variance".equals(st) && pk != null && pk.startsWith(variancePrefix)
-                            && periods.contains(pk.substring(variancePrefix.length())))) {
+            } else if ("process_costing".equals(st) || processJes.contains(str(l, "root")) || processVariance) {
                 glProcess = glProcess.add(amt);
             } else {
                 if (st.startsWith("quarry_extraction")) {

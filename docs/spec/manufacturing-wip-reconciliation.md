@@ -256,6 +256,12 @@ unattributed WIP lines.
 | WIP-7 | P2 | Process-costing variance JEs carry sourceId = process code (same for every period), not `code:periodId`; a `process_costing` filter misses their WIP leg | `ProcessCostingService.java:435`; `StandardCostService.java:263` | Select by `postingKey` instead (§5.2) |
 | WIP-8 | P2 | Legacy reversal rounding: an output row without `totalCost` is reversed at `outputUnitCost` (6 dp) × qty | `ProductionService.java:927-928` | Pool 1,000,000, qty 300,000: 3.333333 × 300,000 = 999,999.90, WIP residual 0.10. New orders store `totalCost`, so only old rows |
 
+Status after IPR stream H (2026-11-27, [12-residuals](../audits/ipr-evidence/12-residuals.md)): WIP-7 — the tie-out
+selects process variance entries by posting key and now does so before the `sourceId` match (a process code equal to an
+order code no longer misattributes); WIP-8 — the reversal of a legacy completion uses the value of the order's output
+receipts in the stock ledger. WIP-4 — the tie-out also resolves `category_field` / `product_field` rules (GL-11
+refinement).
+
 Open points (not determined in the trace): whether every writer of `CostValueAdjustmentLine.targetRef`
 (`LineageFollower`) stores the order id or code for stage orders; multi-stage work-order labour completed after all
 stages closed is recorded as a cost component but never posted (no WIP imbalance, cost never absorbed).

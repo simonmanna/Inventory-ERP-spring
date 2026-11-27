@@ -60,6 +60,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -1106,7 +1107,7 @@ public class ProductionService {
         Instant date = Instant.now();
         // The value the receipt credited out of WIP (outputUnitCost × qty can drift by rounding when it is a quotient).
         BigDecimal fgValue = mainOut != null && mainOut.get("totalCost") != null && dec(mainOut, "totalCost").signum() > 0
-                ? dec(mainOut, "totalCost") : BomService.mul(dec(pre, "outputUnitCost"), fgBase);
+                ? dec(mainOut, "totalCost") : legacyOutputValue(pre, fgBase, partialRows.isEmpty());
 
         Map<String, Object> order = pre;
         String code = str(order, "orderCode");
@@ -1181,6 +1182,30 @@ public class ProductionService {
         audit.recordInTx(AuditInput.of("ProductionOrder", id, "cancel", null, Obj.of("orderCode", code, "reversed",
                 JsNumbers.dec(fgValue))));
         return updated;
+    }
+
+    /**
+     * IPR WIP-8: the value a legacy completion (a main output row without {@code totalCost}) took out of WIP for its
+     * finished goods. {@code outputUnitCost} is stored at 6 dp, so {@code outputUnitCost × qty} drifts from the pool the
+     * completion credited when the unit cost is a quotient (pool 1,000,000 over 300,000 units: 3.333333 × 300,000 =
+     * 999,999.90, leaving 0.10 in WIP after the reversal). The order's own output receipts in the stock ledger carry the
+     * value the engine received, which is the pool to the ledger's 6 dp; that value is used when it exists (and the
+     * order has no partial outputs, whose receipts would mix in), else the old product.
+     */
+    private BigDecimal legacyOutputValue(Map<String, Object> order, BigDecimal fgBase, boolean noPartials) {
+        BigDecimal fallback = BomService.mul(dec(order, "outputUnitCost"), fgBase);
+        if (!noPartials) {
+            return fallback;
+        }
+        Map<String, Object> r = SqlRows.one(db.jdbc().sql("SELECT sum(\"quantityChange\") AS q, sum(\"totalValue\") AS v"
+                + " FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"referenceType\" = ? AND \"referenceId\" = ?"
+                + " AND \"productId\" = ? AND COALESCE(\"variantId\", '') = ? AND type = 'production_output' AND"
+                + " \"quantityChange\" > 0").params(MfgDb.org(), SOURCE, str(order, "orderCode"),
+                        str(order, "outputProductId"), Objects.toString(order.get("outputVariantId"), "")));
+        if (r == null || r.get("q") == null || dec(r, "q").compareTo(fgBase) != 0 || dec(r, "v").signum() <= 0) {
+            return fallback;
+        }
+        return dec(r, "v");
     }
 
     /**
@@ -1600,8 +1625,13 @@ public class ProductionService {
         }
     }
 
+    /**
+     * The product (existence check, organisation scope, not deleted) with the columns manufacturing reads from it. IPR
+     * D-3: it used to select {@code id} and {@code uomId} only, so a caller reading another column (the costing method,
+     * found while building GL-2) silently got null. Every column of the row is returned now.
+     */
     Map<String, Object> getProduct(String id) {
-        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT id, \"uomId\" FROM \"Product\" WHERE id = ? AND "
+        Map<String, Object> p = SqlRows.one(db.jdbc().sql("SELECT * FROM \"Product\" WHERE id = ? AND "
                 + MfgDb.scope(Product.class, null) + " LIMIT 1").params(id, MfgDb.org()));
         if (p == null) {
             throw ApiException.notFound("Product " + id + " not found");
