@@ -109,6 +109,18 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   before the count but synced after it twice. The variance posted is the same for in-order work. A spot count on a
   location that already has an open count of another type now fails with 409 (one draft per location).
 
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Device count held behind another open count (review 2, N5).** A `stock.count` op on a location where a back-office
+  count of another type is open no longer fails with 409: the op is applied, nothing is posted, no second draft is
+  opened, and an `offline_held_posting` exception keeps the counted lines (`payload.lines`, `blockingCountCode`) for
+  staff. The result is `{id, held: true, mapping: {countHeldId}}`.
+- **Drain before the op transaction (review 2, N1).** The sale stock postings of the counted location are drained
+  before the `stock.count` op transaction opens (outside the ledger anchor), not inside it.
+- **Time flags never anchor the ledger row.** The `offline_clock_skew` / `offline_late_sync` row of an op is written
+  outside the op's ledger anchoring, so a service op that then fails stays retryable.
+
 ## Extensions (ADR-S083 O0, owner-approved 2026-11-20)
 
 Spring-only, additive. Every Nest route and member is unchanged. Full rules are in
