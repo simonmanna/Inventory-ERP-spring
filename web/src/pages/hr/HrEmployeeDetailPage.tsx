@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronRight } from 'lucide-react';
-import { useHrEmployee, type HrEmployee } from '@/features/hr/api';
+import { useHrEmployee } from '@/features/hr/api';
 import {
   useHrAccess,
   usePosActivity,
@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HrAccessPanel } from './HrAccessPanel';
 import { HrLifecycleActions } from './HrLifecycleActions';
+import { EmployeeSalesTeamsCard } from './EmployeeSalesTeamsCard';
 import { tx } from '@/lib/i18n/tx';
 
 const fmt = (n: number | string | null | undefined) =>
@@ -243,32 +244,7 @@ export function HrEmployeeDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">{tx('Sales teams')}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {e.salesTeams?.length ? (
-                <ul className="space-y-2">
-                  {e.salesTeams.map((t: NonNullable<HrEmployee['salesTeams']>[number]) => (
-                    <li key={t.id} className="flex items-center justify-between gap-2 text-sm">
-                      <span className={t.isActive ? '' : 'text-muted-foreground line-through'}>
-                        {t.name}
-                        {(t.departmentName || t.branchName) && (
-                          <span className="ml-1 text-xs text-muted-foreground">{[t.departmentName, t.branchName].filter(Boolean).join(' · ')}</span>
-                        )}
-                      </span>
-                      <Badge variant={t.role === 'leader' ? 'default' : 'secondary'}>{t.role === 'leader' ? tx('Leader') : tx('Member')}</Badge>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  {e.userId ? tx('Not on any sales team. Teams are set up in CRM → Settings → Sales teams.') : tx('Link a user account (Access tab) before adding this employee to a sales team.')}
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <EmployeeSalesTeamsCard e={e} />
 
           <Card>
             <CardHeader>

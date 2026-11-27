@@ -143,4 +143,48 @@ class CrmTeamsHrIT extends ApiTestSupport {
     void authorization() {
         assertThat(call("GET", "/crm/config/team-candidates", null, weakToken()).status()).isEqualTo(403);
     }
+
+    @Test
+    @DisplayName("from HR: an hr:employee user lists teams, adds a member or leader atomically, removes them;"
+            + " non-employees refused")
+    void membershipFromHr() {
+        String id = ok(201, "POST", "/crm/config/teams", Map.of("name", "HR side " + sfx)).get("id").asString();
+        String hr = tokenHolding("hr:employee");
+        Res options = call("GET", "/crm/config/team-options", null, hr);
+        assertThat(options.status()).isEqualTo(200);
+        assertThat(options.body().valueStream().map(t -> t.get("id").asString())).contains(id);
+
+        String path = "/crm/config/teams/" + id + "/members";
+        assertThat(call("POST", path, Map.of("userId", salesUser), hr).status()).isEqualTo(200);
+        assertThat(call("POST", path, Map.of("userId", salesUser), hr).status()).as("idempotent").isEqualTo(200);
+        assertThat(team(id).get("memberIds").valueStream().map(JsonNode::asString)).containsExactly(salesUser);
+
+        String lead = createUser(demoOrg, "hrlead-" + sfx + "@demo.test", "Lead@12345", null);
+        employee("Hank", lead);
+        assertThat(call("POST", path, Map.of("userId", lead, "role", "leader"), hr).status()).isEqualTo(200);
+        assertThat(team(id).get("leaderId").asString()).isEqualTo(lead);
+        JsonNode opt = call("GET", "/crm/config/team-options", null, hr).body().valueStream()
+                .filter(t -> t.get("id").asString().equals(id)).findFirst().orElseThrow();
+        assertThat(opt.get("memberCount").asInt()).isEqualTo(1);
+        assertThat(opt.get("leaderName").asString()).isNotBlank();
+
+        String plainUser = createUser(demoOrg, "hrplain-" + sfx + "@demo.test", "Plain@1234", null);
+        Res refused = call("POST", path, Map.of("userId", plainUser), hr);
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString())
+                .isEqualTo("Sales team members must be active HR employees linked to a user account");
+        assertThat(call("POST", path, Map.of("userId", salesUser, "role", "boss"), hr).status()).isEqualTo(400);
+        assertThat(call("POST", "/crm/config/teams/" + UUID.randomUUID() + "/members", Map.of("userId", salesUser), hr)
+                .status()).isEqualTo(404);
+
+        assertThat(call("DELETE", path + "/" + lead, null, hr).status()).isEqualTo(200);
+        assertThat(call("DELETE", path + "/" + salesUser, null, hr).status()).isEqualTo(200);
+        JsonNode after = team(id);
+        assertThat(after.get("leaderId").isNull()).isTrue();
+        assertThat(after.get("memberIds").size()).isZero();
+
+        String weak = weakToken();
+        assertThat(call("GET", "/crm/config/team-options", null, weak).status()).isEqualTo(403);
+        assertThat(call("POST", path, Map.of("userId", salesUser), weak).status()).isEqualTo(403);
+    }
 }
