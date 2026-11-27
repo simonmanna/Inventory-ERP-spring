@@ -97,6 +97,7 @@ public class IncomingInspectionService {
     /** Save line results, notes and evidence files on a pending inspection. */
     public Map<String, Object> record(String id, List<LineResult> lines, String notes, List<String> fileIds) {
         tx.executeWithoutResult(st -> {
+            lockLiveReceipt(id);
             Map<String, Object> insp = lockPending(id);
             Map<String, Map<String, Object>> byId = lines(id);
             for (LineResult r : lines == null ? List.<LineResult>of() : lines) {
@@ -133,6 +134,9 @@ public class IncomingInspectionService {
      */
     public Map<String, Object> complete(String id) {
         tx.executeWithoutResult(st -> {
+            // Purchase readiness H9b (2026-11-27): the receipt first (the reversal's lock order), so a reversal and a
+            // completion cannot both commit; a reversed receipt's inspection is refused.
+            lockLiveReceipt(id);
             Map<String, Object> insp = lockPending(id);
             jdbc.sql("UPDATE \"IncomingInspectionLine\" SET \"acceptedQuantity\" = \"receivedQuantity\", result = 'pass'"
                     + " WHERE \"inspectionId\" = ? AND result IS NULL").param(id).update();
@@ -295,6 +299,24 @@ public class IncomingInspectionService {
             + " c.\"claimNumber\" FROM \"IncomingInspection\" i LEFT JOIN \"GoodsReceiptNote\" g ON g.id = i.\"goodsReceiptId\""
             + " LEFT JOIN \"PurchaseOrder\" o ON o.id = i.\"purchaseOrderId\" LEFT JOIN \"Partner\" p ON p.id = i.\"partnerId\""
             + " LEFT JOIN \"SupplierClaim\" c ON c.id = i.\"claimId\"";
+
+    /**
+     * H9b: locks the inspection's receipt and refuses a reversed one: {@code 400 "Goods receipt GRN-… was reversed:
+     * its inspection cannot be recorded or completed; cancel the inspection instead"}.
+     */
+    private void lockLiveReceipt(String inspectionId) {
+        String grnId = jdbc.sql("SELECT \"goodsReceiptId\" FROM \"IncomingInspection\" WHERE id = ? AND"
+                + " \"organizationId\" = ?").params(inspectionId, org()).query(String.class).optional().orElse(null);
+        if (grnId == null) {
+            return; // lockPending answers 404
+        }
+        Map<String, Object> grn = SqlRows.one(jdbc.sql("SELECT \"receiptNumber\", status::text AS status, \"reversedAt\""
+                + " FROM \"GoodsReceiptNote\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(grnId, org()));
+        if (grn != null && ("reversed".equals(grn.get("status")) || grn.get("reversedAt") != null)) {
+            throw ApiException.badRequest("Goods receipt " + grn.get("receiptNumber") + " was reversed: its inspection"
+                    + " cannot be recorded or completed; cancel the inspection instead");
+        }
+    }
 
     private Map<String, Object> lockPending(String id) {
         Map<String, Object> i = SqlRows.one(jdbc.sql("SELECT * FROM \"IncomingInspection\" WHERE id = ? AND"

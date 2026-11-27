@@ -21,6 +21,7 @@ import com.inventoryerp.procurement.application.PurchaseOrdersService.ReceiveLin
 import com.inventoryerp.procurement.application.PurchaseOrdersService.UpdateInput;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -53,6 +54,9 @@ public class PurchaseOrdersController {
             String unitOfMeasureId,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal unitPrice,
             String taxId,
+            // Purchase readiness H10b (2026-11-27): a percentage; with taxId it must match the tax master.
+            @DecimalMin(value = "0", message = "taxRate must not be less than 0")
+            @DecimalMax(value = "100", message = "taxRate must not be greater than 100")
             BigDecimal taxRate,
             String notes,
             // ADR-S058: product variant (required for a product with variants).

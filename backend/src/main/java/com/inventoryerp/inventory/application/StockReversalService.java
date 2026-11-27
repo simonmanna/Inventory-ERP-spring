@@ -40,9 +40,22 @@ public class StockReversalService {
     private record Spec(String table, String codeField, String label, String entity, String ledgerReferenceType,
             List<String> journalSourceTypes) {}
 
-    /** Parameters of {@link #reverseLedgerSource}. */
+    /**
+     * Parameters of {@link #reverseLedgerSource}. {@code shortfallLabel} non-null (purchase readiness H9a, 2026-11-27):
+     * every inflow being taken back must still be on hand (and not reserved) at its location, in its lot / serial
+     * units, whatever {@code inventory.allowNegativeStock} says; a shortfall is refused with
+     * {@code "<shortfallLabel>: only N of M units of <product> are still in <location>. <shortfallAdvice>"}.
+     */
     public record LedgerSource(String referenceType, String referenceId, String reversalSourceType,
-            String reversalSourceId, List<String> journalSourceTypes, String notes, String legacyNotesPrefix) {}
+            String reversalSourceId, List<String> journalSourceTypes, String notes, String legacyNotesPrefix,
+            String shortfallLabel, String shortfallAdvice) {
+
+        public LedgerSource(String referenceType, String referenceId, String reversalSourceType,
+                String reversalSourceId, List<String> journalSourceTypes, String notes, String legacyNotesPrefix) {
+            this(referenceType, referenceId, reversalSourceType, reversalSourceId, journalSourceTypes, notes,
+                    legacyNotesPrefix, null, null);
+        }
+    }
 
     /**
      * The original issue of a return (R1): ledger rows of {@code referenceType} under any of {@code referenceIds}, or
@@ -385,6 +398,14 @@ public class StockReversalService {
         String user = TenantContext.userId();
         // Inverse moves in the engine's lock order (product, variant, location; then the original order).
         List<Map<String, Object>> inLockOrder = new ArrayList<>(rows);
+        // H9a: what each cell gives back in total, and what this reversal already took from it.
+        boolean strictOnHand = p.shortfallLabel() != null;
+        Map<String, BigDecimal> toTakeBack = new LinkedHashMap<>();
+        Map<String, BigDecimal> takenBack = new LinkedHashMap<>();
+        if (strictOnHand) {
+            rows.stream().filter(r -> dec(r, "quantityChange").signum() > 0)
+                    .forEach(r -> toTakeBack.merge(cellKey(r), dec(r, "quantityChange"), BigDecimal::add));
+        }
         inLockOrder.sort(java.util.Comparator.comparing((Map<String, Object> r) -> str(r, "productId"))
                 .thenComparing(r -> r.get("variantId") == null ? "" : str(r, "variantId"))
                 .thenComparing(r -> str(r, "locationId")));
@@ -414,8 +435,32 @@ public class StockReversalService {
                         .source(p.reversalSourceType(), p.reversalSourceId()).notes(p.notes())
                         .people(str(r, "responsibleById"), user).serials(serials).batch(batchNumber)
                         .moveType("reversal_out").strategy(batchNumber != null ? "MANUAL" : null).skipGl()
-                        .reverses(str(r, "id"));
-                Issued res = stock.issue(m);
+                        .reverses(str(r, "id")).requireAvailable(strictOnHand);
+                Issued res;
+                if (strictOnHand) {
+                    String key = cellKey(r);
+                    try {
+                        res = stock.issue(m);
+                    } catch (ApiException e) {
+                        String msg = e.getMessage() == null ? "" : e.getMessage();
+                        if (!msg.startsWith("Insufficient stock") && !msg.startsWith("Serial number(s) not available")) {
+                            throw e;
+                        }
+                        // The quant locks are still held by this transaction: the figures below are current.
+                        throw shortfall(p, r, batchNumber, takenBack.getOrDefault(key, Money.ZERO),
+                                toTakeBack.getOrDefault(key, qty), Money.ZERO);
+                    }
+                    takenBack.merge(key, qty, BigDecimal::add);
+                    BigDecimal reserved = activeReservations(org, r);
+                    if (reserved.signum() > 0) {
+                        BigDecimal left = cellOnHand(org, r);
+                        if (left.compareTo(reserved) < 0) {
+                            throw shortfall(p, r, null, takenBack.get(key), toTakeBack.getOrDefault(key, qty), reserved);
+                        }
+                    }
+                } else {
+                    res = stock.issue(m);
+                }
                 moved.merge(str(r, "productId"), res.totalValue(), BigDecimal::add);
             }
         }
@@ -455,6 +500,63 @@ public class StockReversalService {
             }
         }
         return Obj.of("rows", rows.size(), "journals", journals.size());
+    }
+
+    private static String cellKey(Map<String, Object> r) {
+        return str(r, "productId") + "|" + (r.get("variantId") == null ? "" : str(r, "variantId")) + "|"
+                + str(r, "locationId");
+    }
+
+    private BigDecimal cellOnHand(String org, Map<String, Object> r) {
+        return jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ? AND"
+                        + " \"productId\" = ? AND \"variantKey\" = COALESCE(?, '') AND \"locationId\" = ?")
+                .params(org, str(r, "productId"), str(r, "variantId"), str(r, "locationId")).query(BigDecimal.class)
+                .single();
+    }
+
+    private BigDecimal activeReservations(String org, Map<String, Object> r) {
+        return jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockReservation\" WHERE \"organizationId\" = ? AND"
+                        + " \"productId\" = ? AND \"variantKey\" = COALESCE(?, '') AND \"locationId\" = ? AND"
+                        + " status = 'active'")
+                .params(org, str(r, "productId"), str(r, "variantId"), str(r, "locationId")).query(BigDecimal.class)
+                .single();
+    }
+
+    /**
+     * H9a: the refusal of a strict reversal. N = what is still in the cell now (in the row's lot when it has one) plus
+     * what this reversal already took from it ({@code taken}), less what is {@code reserved} there.
+     */
+    private ApiException shortfall(LedgerSource p, Map<String, Object> r, String batchNumber, BigDecimal taken,
+            BigDecimal total, BigDecimal reserved) {
+        String org = org();
+        BigDecimal here = cellOnHand(org, r);
+        if (batchNumber != null) {
+            here = here.min(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"InventoryBatch\" WHERE"
+                            + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND"
+                            + " \"locationId\" = ? AND \"batchNumber\" = ? AND quantity > 0 AND \"isActive\" = true")
+                    .params(org, str(r, "productId"), str(r, "variantId"), str(r, "locationId"), batchNumber)
+                    .query(BigDecimal.class).single());
+        }
+        if (r.get("serialId") != null) {
+            here = jdbc.sql("SELECT count(*) FROM \"InventorySerial\" WHERE id = ? AND \"organizationId\" = ? AND"
+                            + " \"locationId\" = ? AND status = 'in_stock'")
+                    .params(str(r, "serialId"), org, str(r, "locationId")).query(Long.class).single() > 0
+                    ? BigDecimal.ONE : Money.ZERO;
+        }
+        BigDecimal n = here.add(taken).subtract(reserved).min(total).max(Money.ZERO);
+        String product = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(str(r, "productId"))
+                .query(String.class).optional().orElse(str(r, "productId"));
+        String variant = r.get("variantId") == null ? null : jdbc.sql("SELECT name FROM \"ProductVariant\" WHERE id = ?")
+                .param(str(r, "variantId")).query(String.class).optional().orElse(null);
+        String location = jdbc.sql("SELECT name FROM \"InventoryLocation\" WHERE id = ?").param(str(r, "locationId"))
+                .query(String.class).optional().orElse(str(r, "locationId"));
+        String what = product + (variant == null || variant.isBlank() ? "" : " (" + variant + ")")
+                + (batchNumber == null ? "" : ", lot " + batchNumber)
+                + (r.get("_serialNumber") == null ? "" : ", serial " + str(r, "_serialNumber"));
+        String held = reserved.signum() > 0 ? " (" + JsNumbers.dec(reserved) + " of what is there is reserved)" : "";
+        return ApiException.badRequest(p.shortfallLabel() + ": only " + JsNumbers.dec(n) + " of " + JsNumbers.dec(total)
+                + " units of " + what + " are still in " + location + held + "."
+                + (p.shortfallAdvice() == null ? "" : " " + p.shortfallAdvice()));
     }
 
     /**

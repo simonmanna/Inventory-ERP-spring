@@ -14,6 +14,8 @@ import com.inventoryerp.procurement.application.PurchaseRequestsService;
 import com.inventoryerp.procurement.application.PurchaseRequestsService.CreateInput;
 import com.inventoryerp.procurement.application.PurchaseRequestsService.LineInput;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import java.math.BigDecimal;
@@ -40,8 +42,14 @@ public class PurchaseRequestsController {
     public record PRLineRequest(
             String productId,
             @NotNull(message = STR) String description,
-            @NotNull(message = NUM) BigDecimal quantity,
+            // Purchase readiness H10a (2026-11-27): a positive quantity and a non-negative price (bounded to the column).
+            @NotNull(message = NUM)
+            @DecimalMin(value = "0", inclusive = false, message = "quantity must be greater than 0")
+            @Digits(integer = 14, fraction = 6, message = "quantity must have at most 14 digits and 6 decimals")
+            BigDecimal quantity,
             String unitOfMeasureId,
+            @DecimalMin(value = "0", message = "estimatedUnitPrice must not be negative")
+            @Digits(integer = 14, fraction = 6, message = "estimatedUnitPrice must have at most 14 digits and 6 decimals")
             BigDecimal estimatedUnitPrice,
             String notes,
             // ADR-PROCUREMENT-001 (additive): when / where / for whom the line is needed, and a suggested supplier.

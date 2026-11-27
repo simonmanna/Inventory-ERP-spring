@@ -111,6 +111,17 @@ public class PurchaseRequestsService {
         if (input.lines() == null || input.lines().isEmpty()) {
             throw ApiException.badRequest("At least one line is required");
         }
+        // Purchase readiness H10a (2026-11-27): every path (the route, replenishment, imports) gets the same line rules
+        // as the route DTO, so a negative or zero line cannot lower a request's value below its budget / approval band.
+        for (LineInput ln : input.lines()) {
+            String what = ln.description() == null || ln.description().isBlank() ? "A line" : "Line \"" + ln.description() + "\"";
+            if (ln.quantity() == null || ln.quantity().signum() <= 0) {
+                throw ApiException.badRequest(what + ": quantity must be greater than 0");
+            }
+            if (ln.estimatedUnitPrice() != null && ln.estimatedUnitPrice().signum() < 0) {
+                throw ApiException.badRequest(what + ": estimatedUnitPrice must not be negative");
+            }
+        }
         // ADR-S086: the PLM lifecycle policy may refuse buying a product (obsolete, being phased out).
         lifecycleGuard.ifAvailable(g -> g.requireAllowed(ProductLifecycleGuard.PURCHASE,
                 input.lines().stream().map(LineInput::productId).toList()));

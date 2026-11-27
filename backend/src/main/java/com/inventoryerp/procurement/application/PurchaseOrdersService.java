@@ -187,11 +187,12 @@ public class PurchaseOrdersService {
     // ── Step 1: Register Purchase ──────────────────────────────────────────
 
     /** Register a PO: draft pending approval when a purchase_order workflow applies, else active. */
-    public Map<String, Object> create(CreateInput dto) {
+    public Map<String, Object> create(CreateInput input) {
         String orgId = org();
-        if (dto.lines() == null || dto.lines().isEmpty()) {
+        if (input.lines() == null || input.lines().isEmpty()) {
             throw ApiException.badRequest("At least one line required");
         }
+        CreateInput dto = withCheckedLines(input, orgId);
         // ADR-S086: the PLM lifecycle policy may refuse buying a product (obsolete, being phased out).
         lifecycleGuard.ifAvailable(g -> g.requireAllowed(ProductLifecycleGuard.PURCHASE,
                 dto.lines().stream().map(LineInput::productId).toList()));
@@ -1563,6 +1564,54 @@ public class PurchaseOrdersService {
         return defined("amount", JsNumbers.js(amount), "partnerId", po.get("partnerId"), "orderNumber",
                 po.get("orderNumber"), "createdBy", po.get("createdBy"), "branchId", po.get("branchId"),
                 "departmentId", department);
+    }
+
+    /**
+     * Purchase readiness H10b (2026-11-27): the line rules of every order-creating path (the route, RFQ awards, agreement
+     * releases, requisition conversion, the portal), not only the route DTO. A quantity above 0, a price of 0 or more, a
+     * tax rate between 0 and 100. A line naming a tax takes the Tax master's rate: a different client rate is refused;
+     * an omitted rate is the master's (an inclusive or withholding tax adds no input VAT on an order line, so its
+     * omitted rate stays 0).
+     */
+    private CreateInput withCheckedLines(CreateInput dto, String orgId) {
+        Map<String, Map<String, Object>> taxes = new HashMap<>();
+        List<LineInput> lines = new ArrayList<>();
+        for (LineInput ln : dto.lines()) {
+            String what = ln.description() == null || ln.description().isBlank() ? "A line"
+                    : "Line \"" + ln.description() + "\"";
+            if (ln.quantity() == null || ln.quantity().signum() <= 0) {
+                throw ApiException.badRequest(what + ": quantity must be greater than 0");
+            }
+            if (ln.unitPrice() == null || ln.unitPrice().signum() < 0) {
+                throw ApiException.badRequest(what + ": unitPrice must not be negative");
+            }
+            BigDecimal rate = ln.taxRate();
+            if (rate != null && (rate.signum() < 0 || rate.compareTo(BigDecimal.valueOf(100)) > 0)) {
+                throw ApiException.badRequest(what + ": taxRate must be between 0 and 100");
+            }
+            if (ln.taxId() != null && !ln.taxId().isBlank()) {
+                Map<String, Object> tax = taxes.computeIfAbsent(ln.taxId(), t -> SqlRows.one(jdbc.sql("SELECT name, rate,"
+                        + " \"isInclusive\", type::text AS type FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(t, orgId)));
+                if (tax == null) {
+                    throw ApiException.notFound("Tax not found");
+                }
+                BigDecimal master = Money.dec(tax.get("rate"));
+                if (rate != null && rate.compareTo(master) != 0) {
+                    throw ApiException.badRequest(what + ": tax rate " + JsNumbers.dec(rate) + "% does not match tax "
+                            + tax.get("name") + " (" + JsNumbers.dec(master) + "%); leave the rate empty to use the"
+                            + " tax's rate");
+                }
+                if (rate == null && !Boolean.TRUE.equals(tax.get("isInclusive")) && !"withholding".equals(tax.get("type"))) {
+                    rate = master;
+                }
+            }
+            lines.add(new LineInput(ln.productId(), ln.description(), ln.quantity(), ln.unitOfMeasureId(), ln.unitPrice(),
+                    ln.taxId(), rate, ln.notes(), ln.variantId()));
+        }
+        return new CreateInput(dto.partnerId(), dto.branchId(), dto.description(), dto.expectedDeliveryDate(),
+                dto.currencyCode(), dto.exchangeRate(), dto.paymentType(), dto.notes(), dto.terms(), dto.warehouseId(),
+                dto.requestId(), lines, dto.departmentId());
     }
 
     /** Re-state an order's budget commitments after another service changed its quantities (GRN reverse). */
