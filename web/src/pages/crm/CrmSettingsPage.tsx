@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { AlertTriangle, GripVertical, Pencil, Plus, Settings2, Trash2, Trophy, X } from 'lucide-react';
+import { GripVertical, Pencil, Plus, Settings2, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,12 +13,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { ListPageHeader } from '@/components/list';
 import { OptionalSelect } from '@/pages/fleet/fleet-ui';
 import { apiErrorMessage } from '@/lib/api-error';
-import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { cn } from '@/lib/utils';
 import {
-  COLORS, crmApi, useCrmLookups, useCrmMutation, useTeamCandidates, type Color, type CrmSettings, type Stage, type Team,
-  type TeamEmployee,
+  COLORS, crmApi, useCrmLookups, useCrmMutation, type Color, type CrmSettings, type Stage, type Team,
 } from '@/features/crm/suite-api';
 import { Field, colorOf } from './crm-ui';
 import { LeadFormsTab } from './lead-forms';
@@ -26,7 +24,7 @@ import { EmailTemplatesTab } from './email-templates';
 
 const onErr = (m: string) => (e: unknown) => toast.error(apiErrorMessage(e, m));
 
-/** CRM configuration: pipeline stages (drag to reorder), sales teams, tags, sources, lost reasons, policies. */
+/** CRM configuration: pipeline stages (drag to reorder), tags, sources, lost reasons, policies. Sales teams have their own page. */
 export function CrmSettingsPage() {
   const { data: lk, isLoading } = useCrmLookups();
   if (isLoading || !lk) return <Skeleton className="h-96 w-full" />;
@@ -36,7 +34,6 @@ export function CrmSettingsPage() {
       <Tabs defaultValue="stages">
         <TabsList className="flex-wrap">
           <TabsTrigger value="stages">{tx('Stages')}</TabsTrigger>
-          <TabsTrigger value="teams">{tx('Sales teams')}</TabsTrigger>
           <TabsTrigger value="tags">{tx('Tags')}</TabsTrigger>
           <TabsTrigger value="sources">{tx('Sources')}</TabsTrigger>
           <TabsTrigger value="lost">{tx('Lost reasons')}</TabsTrigger>
@@ -46,7 +43,6 @@ export function CrmSettingsPage() {
           <TabsTrigger value="settings">{tx('Policies')}</TabsTrigger>
         </TabsList>
         <TabsContent value="stages"><StagesTab stages={lk.stages} teams={lk.teams} /></TabsContent>
-        <TabsContent value="teams"><TeamsTab teams={lk.teams} users={lk.users} /></TabsContent>
         <TabsContent value="tags"><LookupTab kind="tags" rows={lk.tags.map((t) => ({ ...t, isActive: true }))} withColor /></TabsContent>
         <TabsContent value="sources"><LookupTab kind="sources" rows={lk.sources} /></TabsContent>
         <TabsContent value="lost"><LookupTab kind="lost-reasons" rows={lk.lostReasons} /></TabsContent>
@@ -59,7 +55,7 @@ export function CrmSettingsPage() {
   );
 }
 
-function ColorPicker({ value, onChange }: { value: Color; onChange: (c: Color) => void }) {
+export function ColorPicker({ value, onChange }: { value: Color; onChange: (c: Color) => void }) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {COLORS.map((c) => (
@@ -192,108 +188,6 @@ function StageDialog({ stage, teams, onClose }: { stage: Partial<Stage>; teams: 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
           <Button disabled={!s.name || save.isPending} onClick={() => save.mutate(undefined, { onSuccess: () => { toast.success(tx('Saved')); onClose(); }, onError: onErr(tx('Could not save')) })}>{tx('Save')}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ------------------------------------------------------------------ teams
-
-function TeamsTab({ teams, users }: { teams: Team[]; users: Array<{ id: string; name: string }> }) {
-  const [editing, setEditing] = useState<Partial<Team> | null>(null);
-  const del = useCrmMutation(crmApi.deleteTeam);
-  const name = (id: string | null) => users.find((u) => u.id === id)?.name ?? '—';
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{tx('Team leaders and members are HR employees with a login. Add people in HR first, then link their user account.')}</p>
-        <Button onClick={() => setEditing({ color: 'sky', isActive: true, memberIds: [], monthlyTarget: 0 })}><Plus className="mr-1 h-4 w-4" />{tx('Add team')}</Button>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {teams.map((t) => (
-          <div key={t.id} className={cn('rounded-xl border bg-card p-4 shadow-sm', !t.isActive && 'opacity-60')}>
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 font-semibold"><span className={cn('h-3 w-3 rounded-full', colorOf(t.color).dot)} />{t.name}</p>
-              <div><Button size="sm" variant="ghost" onClick={() => setEditing(t)}><Pencil className="h-4 w-4" /></Button>
-                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => confirm(tx('Delete this team?')) && del.mutate(t.id, { onError: onErr(tx('Could not delete')) })}><Trash2 className="h-4 w-4" /></Button></div>
-            </div>
-            <p className="mt-1 text-sm text-muted-foreground">{tx('Leader')}: {t.leader?.name ?? name(t.leaderId)}</p>
-            {(t.departmentName || t.branchName) && (
-              <p className="text-sm text-muted-foreground">{[t.departmentName, t.branchName].filter(Boolean).join(' · ')}</p>
-            )}
-            <p className="text-sm text-muted-foreground">{t.memberIds.length} {tx('members')} · {tx('Target')} {money(t.monthlyTarget)}/{tx('month')}</p>
-            {!!t.notEligibleCount && (
-              <p className="mt-1 flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
-                <AlertTriangle className="h-3.5 w-3.5" />{t.notEligibleCount} {tx('not active HR employees — review the team')}
-              </p>
-            )}
-          </div>
-        ))}
-        {teams.length === 0 && <p className="text-sm text-muted-foreground">{tx('No sales teams yet.')}</p>}
-      </div>
-      {editing && <TeamDialog team={editing} onClose={() => setEditing(null)} />}
-    </div>
-  );
-}
-
-function TeamDialog({ team, onClose }: { team: Partial<Team>; onClose: () => void }) {
-  const [t, setT] = useState(team);
-  const save = useCrmMutation(crmApi.saveTeam);
-  const cand = useTeamCandidates();
-  const employees = cand.data?.employees ?? [];
-  const label = (e: TeamEmployee) => `${e.name} (${e.employeeCode})${e.positionName ? ' · ' + e.positionName : ''}`;
-  // People already on the team who are not (or no longer) active HR employees: kept until removed, never re-addable.
-  const legacyMembers = (team.members ?? []).filter((m) => !m.eligible && (t.memberIds ?? []).includes(m.userId));
-  const shown = employees.filter((e) => !t.departmentId || e.departmentId === t.departmentId || (t.memberIds ?? []).includes(e.userId));
-  const leaderOptions = [
-    ...employees.map((e) => ({ value: e.userId, label: label(e) })),
-    ...(team.leader && !team.leader.eligible ? [{ value: team.leader.userId, label: `${team.leader.name} — ${tx('not an active HR employee')}` }] : []),
-  ];
-  const toggle = (userId: string) => {
-    const on = (t.memberIds ?? []).includes(userId);
-    setT({ ...t, memberIds: on ? t.memberIds!.filter((x) => x !== userId) : [...(t.memberIds ?? []), userId] });
-  };
-  return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader><DialogTitle>{t.id ? tx('Edit team') : tx('New team')}</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <Field label={tx('Name')}><Input value={t.name ?? ''} onChange={(e) => setT({ ...t, name: e.target.value })} /></Field>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label={tx('HR department')}><OptionalSelect value={t.departmentId ?? ''} onChange={(v) => setT({ ...t, departmentId: v || null })} options={(cand.data?.departments ?? []).map((d) => ({ value: d.id, label: d.name }))} placeholder={tx('None')} noneLabel={tx('None')} /></Field>
-            <Field label={tx('Branch')}><OptionalSelect value={t.branchId ?? ''} onChange={(v) => setT({ ...t, branchId: v || null })} options={(cand.data?.branches ?? []).map((b) => ({ value: b.id, label: b.name }))} placeholder={tx('None')} noneLabel={tx('None')} /></Field>
-          </div>
-          <Field label={tx('Leader')}><OptionalSelect value={t.leaderId ?? ''} onChange={(v) => setT({ ...t, leaderId: v || null })} options={leaderOptions} placeholder={tx('None')} noneLabel={tx('None')} /></Field>
-          <Field label={tx('Members')}>
-            {cand.isLoading ? <Skeleton className="h-16 w-full" /> : (
-              <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
-                {legacyMembers.map((m) => (
-                  <button key={m.userId} type="button" onClick={() => toggle(m.userId)} title={tx('Not an active HR employee. Once removed, they cannot be added back until HR links them.')}
-                    className="flex items-center gap-1 rounded-full border border-amber-500 bg-amber-500/10 px-2.5 py-0.5 text-xs text-amber-700 dark:text-amber-400">
-                    <AlertTriangle className="h-3 w-3" />{m.name}<X className="h-3 w-3" />
-                  </button>
-                ))}
-                {shown.map((e) => {
-                  const on = (t.memberIds ?? []).includes(e.userId);
-                  return <button key={e.employeeId} type="button" onClick={() => toggle(e.userId)} title={[e.departmentName, e.branchName].filter(Boolean).join(' · ')}
-                    className={cn('rounded-full border px-2.5 py-0.5 text-xs', on ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-muted')}>{label(e)}</button>;
-                })}
-                {shown.length === 0 && legacyMembers.length === 0 && (
-                  <p className="text-xs text-muted-foreground">{tx('No active HR employees with a login yet.')}</p>
-                )}
-              </div>
-            )}
-            {t.departmentId && <p className="mt-1 text-xs text-muted-foreground">{tx('Showing employees of the selected department.')}</p>}
-          </Field>
-          <Field label={tx('Monthly target')}><Input type="number" min={0} value={t.monthlyTarget ?? 0} onChange={(e) => setT({ ...t, monthlyTarget: Number(e.target.value) })} /></Field>
-          <Field label={tx('Colour')}><ColorPicker value={(t.color ?? 'sky') as Color} onChange={(c) => setT({ ...t, color: c })} /></Field>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={t.isActive ?? true} onChange={(e) => setT({ ...t, isActive: e.target.checked })} />{tx('Active')}</label>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{tx('Cancel')}</Button>
-          <Button disabled={!t.name || save.isPending} onClick={() => save.mutate({ id: t.id, name: t.name, leaderId: t.leaderId ?? null, memberIds: t.memberIds ?? [], monthlyTarget: t.monthlyTarget ?? 0, color: t.color, isActive: t.isActive ?? true, departmentId: t.departmentId ?? null, branchId: t.branchId ?? null },
-            { onSuccess: () => { toast.success(tx('Saved')); onClose(); }, onError: onErr(tx('Could not save')) })}>{tx('Save')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
