@@ -613,6 +613,29 @@ Evidence: `docs/audits/ipr-evidence/4-golive-p2.md`.
   fixed in the programme are never promoted (`P2Rule.fixed(...)`, `docs/spec/inventory-feature-risk-map.md`).
 - **Go-live checklist:** `docs/OPERATIONS.md` §8c.
 
+### IPR Phase 4: opening-stock import (2026-11-27, awaiting owner approval)
+
+Evidence: [4-opening-stock.md](../audits/ipr-evidence/4-opening-stock.md); design: ADR-S090. New routes only, no Nest
+counterpart (an extension, labelled as such); nothing existing changes.
+
+- **New routes** under `/inventory/opening-stock`: `POST preview` (`inventory_valuation:manage`), `POST import` and
+  `POST runs/{id}/batches/{batchId}/retry` (`inventory_valuation:post`, Idempotency-Key required, answer 200),
+  `GET runs`, `GET runs/{id}`, `GET runs/{id}/batches/{batchId}`, `GET runs/{id}/reconciliation`
+  (`inventory_valuation:read`). Inventory route matrix 146 → 153.
+- **Only for empty locations.** A row whose location has any ledger row (other than an earlier batch of the same run)
+  or an open count is a row error; the import of a file with any row error is 400.
+- **Posting:** `StockService.receive` per row (ledger type `opening_balance`, reference `opening_stock_import` / batch
+  id), then one journal per batch Dr the product's stock account (STOCK_IN rule, else `stock_valuation`) / Cr the
+  `retained_earnings` mapping. The opening count takes its inventory side from the ADJUSTMENT_GAIN rule; with the
+  default rules both are `stock_valuation`.
+- **Refusals (new messages):** 409 "Preview is stale — preview and approve again"; 409 "This file was already imported
+  (run OSI-…)"; 409 "Batch n of run OSI-… is already posted"; 400 "Approve the previewed opening-stock journal
+  (approve: true) to import it"; 403 "Opening stock import requires approval. Request ID: …" (only when an
+  `opening_stock_import` approval workflow is configured).
+- **Choices for owner sign-off:** zero unit cost refused; a STANDARD product enters at its standard (a different file
+  cost is refused); posting dated now; approval by the poster unless a workflow is configured; at most 20,000 rows per
+  file and 2,000 per batch.
+
 ## Status
 
 P3a: 69/69 routes. Tests: `InventoryIT` (locations, items, ledger, document flows incl. approve + reverse, transit,

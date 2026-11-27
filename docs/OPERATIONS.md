@@ -430,7 +430,7 @@ Inventory (`/settings`, key in brackets); defaults are those of `SettingRegistry
 | 4 | Separation of duties | New organisations are created with the `stock_adjustment`, `stock_write_off` and `inventory_valuation` pairs **active** (P15-6, `docs/spec/kernel.md` S2). Existing organisations are unchanged: switching them on is an owner decision. With a pair on, the maker cannot clear their own document; make sure every location has at least two people holding the checker permissions | Settings → Approval controls → SoD rules | owner |
 | 5 | Thresholds | `inventory.transitLossApprovalThreshold` (default 0: every transit loss with a value needs a reason, an approver and a PIN), `inventory.stockInApprovalNeeded` / `stockOutApprovalNeeded` (default on), the approval limits and workflows for stock-outs, waste and count submission, and the time limits `inventory.maxFutureEffectiveMinutes` (5) and `inventory.maxBackdateDays` (7) of ADR-S088 | Settings; Approval controls | owner + operations |
 | 6 | Tolerances | `inventory.glTieOut.enabled` (on) and `inventory.glTieOut.tolerance` (default 1, base currency; set the go-live value, 0.01 is the release-gate value), the stock reconciliation tolerance (`GET /inventory/reports/reconciliation?tolerance=`) and the landed-cost re-approval tolerances (`costing.landedCost.reapprovalTolerancePct` / `Amount`) | Settings | finance |
-| 7 | Opening stock | Load it with the **opening-stock import** (IPR R5, wave 3: CSV upload, preview with the exact journal, approval bound to the preview token, one atomic batch per location). Only into locations with no ledger history. Never type opening stock as a count (owner decision D5: an `opening` count posts to retained earnings) or as direct stock-in | Opening-stock import (wave 3; screen and route land with it) | finance |
+| 7 | Opening stock | Load it with the **opening-stock import** (IPR R5, §8d: CSV upload, preview with the exact journal, approval bound to the preview token, one atomic batch per location). Only into locations with no ledger history. Never type opening stock as a count (owner decision D5: an `opening` count posts to retained earnings) or as direct stock-in | Opening-stock import (wave 3; screen and route land with it) | finance |
 | 8 | First integrity run | After the opening import: Inventory → Reporting → **Integrity & Reconciliation** (`/inventory/integrity`). Every integrity check passing, GL tie-out within tolerance, the opening-import reconciliation equal (Σ ledger value = journal = valuation delta). Report-only checks are read and explained (`feature_risk` lists the open P2s, row 10) | `/inventory/integrity` | finance |
 | 9 | Alert recipients | The daily monitors alert every active user holding the permission: integrity and Posting Monitor `inventory_valuation:read` and `pos:reports`, GL tie-out and ledger integrity `report:accounting`, approvals the approver roles. Name at least one person per permission in this organisation and confirm one test alert reached them (`alerts.yml` for Prometheus: `InventoryIntegrityFindingsOpen`, `InventoryIntegrityValueFindingsOpen`, `StockPostingJobsFailed`) | Roles and permissions; Grafana | operations |
 | 10 | Feature-usage re-check (**mandatory release step**) | Before go-live **and before every release**: open the feature table on `/inventory/integrity` (or `GET /inventory/reports/feature-usage`) for every organisation. Every P2 listed under "Open P2s on features in use" is a go-live blocker for that organisation (R6, gate G6) until it is fixed or the owner accepts it in writing. The daily job raises `integrity_feature_risk` when an organisation starts using such a feature | `/inventory/integrity`; `docs/spec/inventory-feature-risk-map.md` | integrator + owner |
@@ -438,3 +438,25 @@ Inventory (`/settings`, key in brackets); defaults are those of `SettingRegistry
 
 Every failing check on the page links to its Posting Monitor findings (`/inventory/posting-monitor?kind=integrity_<check>`).
 The page is read-only; it never corrects data. Fixes go through documents or an owner-approved repair (§8a).
+
+### 8d. Opening-stock import (IPR R5, ADR-S090)
+
+The go-live step that loads opening stock into **empty** locations (no ledger row, no open count). Web: Inventory →
+Configuration → *Opening stock import* (`/inventory/opening-stock`); API: `/api/v1/inventory/opening-stock/*`.
+
+1. Set costing method, lot / expiry / serial flags, variants, cost prices and STANDARD costs first: any change after
+   the preview makes the import 409 "Preview is stale — preview and approve again".
+2. Check the account mapping `retained_earnings` (opening equity) and that today's fiscal period is open.
+3. Download the CSV template (product, variant, location, quantity, unit_cost, lot, expiry, serials; quantities in the
+   base unit; serials separated by `|`), fill it, upload it and **Preview** (`inventory_valuation:manage`). Fix every
+   row error; check the journal (Dr stock / Cr opening equity) and the total.
+4. **Approve and import** (`inventory_valuation:post`). Each batch (at most 2,000 rows of one location) posts on its
+   own. For maker-checker, configure an approval workflow for entity type `opening_stock_import` (the approval is bound
+   to the preview token).
+5. If the run is *partial* or *failed*, open it, read the batch error, fix the cause and **Retry** the batch (a stale
+   batch shows its journal as it would post now; approve it again). The same file cannot be imported twice.
+6. The run's **Reconciliation** must say *Reconciled* (stock ledger = journal = valuation change = previewed value).
+   Then run the integrity report (`GET /inventory/reports/integrity`) and the GL tie-out
+   (`GET /reports/inventory/gl-tieout`): both green before the first sale.
+
+Wrong opening stock is corrected with a count or adjustment; there is no reversal of an import.

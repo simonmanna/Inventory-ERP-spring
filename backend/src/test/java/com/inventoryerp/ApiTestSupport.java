@@ -157,7 +157,7 @@ public abstract class ApiTestSupport {
      * Test calls get a fresh key automatically unless they pass one, or pass {@link #NO_IDEMPOTENCY_KEY} to send none.
      */
     private static final java.util.regex.Pattern KEY_REQUIRED = java.util.regex.Pattern.compile(
-            "^/(inventory/(direct-stock/(in|out)|counts/[^/]+/submit|transfers/[^/]+/(receive|approve|dispatch)"
+            "^/(inventory/(direct-stock/(in|out)|opening-stock/(import|runs/[^/]+/batches/[^/]+/retry)|counts/[^/]+/submit|transfers/[^/]+/(receive|approve|dispatch)"
                     + "|(waste|adjustments)/[^/]+/approve)|warehouse/pick-orders/[^/]+/ship"
                     + "|procurement/goods-receipts/adhoc|(sales|crm)/quotations/[^/]+/convert"
                     // sales readiness R2: invoice, credit-note, deposit, sales money, cash-sale, delivery, return routes
