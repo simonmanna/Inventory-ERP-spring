@@ -191,39 +191,39 @@ class InventoryBranchScopeIT extends ApiTestSupport {
         String p = product();
         String source = "SO-" + suffix();
         refused(asA("POST", "/inventory/reservations", Map.of("productId", p, "locationId", locB, "quantity", 1,
-                "sourceType", "order", "sourceId", source)));
+                "sourceType", "manual", "sourceId", source)));
         Res noProduct = asA("POST", "/inventory/reservations", Map.of("productId", UUID.randomUUID().toString(),
-                "locationId", locA, "quantity", 1, "sourceType", "order", "sourceId", source));
+                "locationId", locA, "quantity", 1, "sourceType", "manual", "sourceId", source));
         assertThat(noProduct.status()).isEqualTo(404);
         assertThat(noProduct.body().get("message").asString()).isEqualTo("Product not found");
         Res noLocation = asA("POST", "/inventory/reservations", Map.of("productId", p, "locationId",
-                UUID.randomUUID().toString(), "quantity", 1, "sourceType", "order", "sourceId", source));
+                UUID.randomUUID().toString(), "quantity", 1, "sourceType", "manual", "sourceId", source));
         assertThat(noLocation.status()).isEqualTo(404);
         assertThat(noLocation.body().get("message").asString()).isEqualTo("Location not found");
 
         ok(201, "POST", "/inventory/reservations", Map.of("productId", p, "locationId", locB, "quantity", 5,
-                "sourceType", "order", "sourceId", source));
+                "sourceType", "manual", "sourceId", source));
         Res mine = asA("POST", "/inventory/reservations", Map.of("productId", p, "locationId", locA, "quantity", 2,
-                "sourceType", "order", "sourceId", source));
+                "sourceType", "manual", "sourceId", source));
         assertThat(mine.status()).as(mine.raw().body()).isEqualTo(201);
 
-        JsonNode seen = asA("GET", "/inventory/reservations?sourceType=order&sourceId=" + source, null).body();
+        JsonNode seen = asA("GET", "/inventory/reservations?sourceType=manual&sourceId=" + source, null).body();
         assertThat(seen).hasSize(1);
         assertThat(seen.get(0).get("locationId").asString()).isEqualTo(locA);
-        assertThat(ok(200, "GET", "/inventory/reservations?sourceType=order&sourceId=" + source, null)).hasSize(2);
+        assertThat(ok(200, "GET", "/inventory/reservations?sourceType=manual&sourceId=" + source, null)).hasSize(2);
 
         JsonNode overview = asA("GET", "/inventory/reservations/overview?productId=" + p, null).body();
         assertThat(overview.get("data")).hasSize(1);
         overview.get("data").forEach(r -> assertThat(r.get("locationId").asString()).isEqualTo(locA));
         refused(asA("GET", "/inventory/reservations/overview?locationId=" + locB, null));
 
-        Res released = asA("POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", source));
+        Res released = asA("POST", "/inventory/reservations/release", Map.of("sourceType", "manual", "sourceId", source));
         assertThat(released.body().get("released").asInt()).isEqualTo(1);
         assertThat(jdbc.sql("SELECT status::text FROM \"StockReservation\" WHERE \"sourceId\" = ? AND \"locationId\" = ?")
                 .params(source, locB).query(String.class).single()).isEqualTo("active");
-        Res consumed = asA("POST", "/inventory/reservations/consume", Map.of("sourceType", "order", "sourceId", source));
+        Res consumed = asA("POST", "/inventory/reservations/consume", Map.of("sourceType", "manual", "sourceId", source));
         assertThat(consumed.body().get("consumed").asInt()).isZero();
-        assertThat(ok(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", source))
+        assertThat(ok(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "manual", "sourceId", source))
                 .get("released").asInt()).isEqualTo(1);
 
         // an unkeyed list is paged: never more than 200 rows, and pageSize narrows it

@@ -493,6 +493,59 @@ Kernel fix found while porting: `SequenceService` now creates per-org sequences 
 (Nest uses the raw client). A business rollback used to drop a freshly created sequence while the in-memory
 cache still considered it present (500 on the next `nextval`).
 
+### IPR Phase 3: security and operational controls (2026-11-27, awaiting owner approval)
+
+Evidence: [3-security-controls.md](../audits/ipr-evidence/3-security-controls.md). These items differ from Nest. None
+of them changes a path, verb, permission string or response shape. Refusals are new 400/403 messages.
+
+- **S-1: branch-restricted reads cover the caller's locations.** A user restricted to two or more locations who sends
+  no `locationId` no longer gets 400 "Choose a location". The read covers all of their locations instead: stock
+  levels, item detail, ledger, every `/inventory/reports/*` read and the integrity report. A `locationId` outside the
+  access is 403 "This location is outside your data access". A restricted user with no location at all is 403
+  "Your data access has no location".
+  - The integrity report for several locations is the merge of the per-location reports: a check is ok only if it is
+    ok everywhere, and its `locationId` is null.
+  - Valuation over several locations is read org-wide and then filtered by location (`ScopedValuation`).
+  - The register (`/inventory/reports/register/{kind}`) still refuses restricted users with 403, as before.
+- **S-2: costs hidden without `inventory_valuation:read`.** The cost and value fields come back as `null`, with the
+  same keys:
+  - item list `runningAverageCost`;
+  - stock levels `averageCost` and `totalValue`;
+  - item detail: product `costPrice`, item costs, batch and ledger costs, PO line prices and `totalValue`;
+  - the register's value fields;
+  - waste and stock-out lists, detail and summary: `unitCost`, `totalCost`, `totalValue`, ledger values and journal
+    debit/credit;
+  - transfer detail.
+
+  Quantities stay. The web hides the stock-level cost columns and shows a dash, never a zero.
+- **S-4: direct stock needs a named approver.** `POST /inventory/direct-stock/in|out` without `approvedById` is 400
+  "Name the approver (approvedById) to post a direct stock movement". In Nest, a null approver plus a PIN matched any
+  active user holding that PIN.
+  - When the SoD pair is on (stock adjustment for in, stock write-off for out), self-approval is 403 "Separation of
+    duties: you cannot approve your own direct stock movement; name another approver and enter their PIN".
+- **S3: transit loss approval.** `POST /inventory/transfers/{id}/receive` takes the optional fields `lossReason`,
+  `approvedById` and `approverPin`. A damaged plus short value above the setting
+  `inventory.transitLossApprovalThreshold` (default 0, base currency, value at the transit location's cost) needs:
+  - a reason;
+  - an approval: either the engine workflow `stock_transfer_loss` (single-use, consumed with the receipt code), or a
+    named approver (self with `inventory_doc:approve`, otherwise PIN).
+
+  Under the stock write-off pair the receiver cannot approve their own loss. The receipt notes carry "Transit loss X:
+  reason". The audit row carries the loss value, reason, approver and request.
+  - An offline `transfer.receive` (sync) carries no approval. A loss above the threshold is refused, and the push is
+    held for review like any other refusal. Below the threshold it posts as before.
+- **C-5 / S-7 / S14: manual reservations only.** `POST /inventory/reservations` and `/reservations/consume` accept
+  only `sourceType: "manual"`. Any other source type is 400 "Only manual reservations can be created|consumed here
+  (sourceType must be "manual"); a document's reservations follow the document". `/release` still accepts any source
+  type, so an operator can free a stuck document reservation; that choice needs owner confirmation. The web offers
+  Consume only on active manual rows.
+- **S5: a replenishment alert re-opens.** When the transfer, purchase request or production request answering an
+  alert is cancelled, rejected or gone, the next scan sets the alert back to `open`. It refreshes the figures, sets
+  `statusReason` "Re-opened: <doc> was cancelled or rejected", and counts the alert as raised (automatic request and
+  notification again). Before, the alert stayed `requisitioned` forever and the rule never fired again.
+- **S-8 (web): CSV export** keeps plain numbers such as `-3` or `-12.50` as numbers. Text that starts like a formula
+  is still prefixed with `'`.
+
 ## Status
 
 P3a: 69/69 routes. Tests: `InventoryIT` (locations, items, ledger, document flows incl. approve + reverse, transit,

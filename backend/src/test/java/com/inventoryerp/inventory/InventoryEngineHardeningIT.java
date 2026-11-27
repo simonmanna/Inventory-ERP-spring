@@ -248,7 +248,7 @@ class InventoryEngineHardeningIT extends InventoryAuditSupport {
                 // A stock move holding the quant (advisory half), about to lock the row.
                 exec(move, "SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", quantKey(p, main));
                 reserve = CompletableFuture.supplyAsync(() -> api("POST", "/inventory/reservations", Map.of("productId",
-                        p, "locationId", main, "quantity", 2, "sourceType", "r5b_test", "sourceId", "R-" + sfx())));
+                        p, "locationId", main, "quantity", 2, "sourceType", "manual", "sourceId", "R-" + sfx())));
                 awaitLockWait(reserve);
                 // The reservation waits without holding the row, so the move can lock it.
                 exec(move, "SET LOCAL lock_timeout = '2s'");
@@ -272,7 +272,7 @@ class InventoryEngineHardeningIT extends InventoryAuditSupport {
             String second = i % 2 == 0 ? b : a;
             String src = "R-" + sfx();
             tasks.add(() -> api("POST", "/inventory/reservations", Map.of("productId", first, "locationId", main,
-                    "quantity", 1, "sourceType", "r5b_test", "sourceId", src)).status());
+                    "quantity", 1, "sourceType", "manual", "sourceId", src)).status());
             tasks.add(() -> api("POST", "/inventory/direct-stock/out", direct(main, List.of(item(second, 1, null),
                     item(first, 1, null)))).status());
         }

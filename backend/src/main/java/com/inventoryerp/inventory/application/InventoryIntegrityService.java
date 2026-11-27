@@ -174,11 +174,56 @@ public class InventoryIntegrityService {
 
     /**
      * The integrity report for the caller: {@code locationId} (optional) goes through the user's data scope like the
-     * stock reconciliation (a restricted user's blank filter becomes their one location).
+     * stock reconciliation. IPR S-1: a restricted user's blank filter covers every location of their access; with
+     * several, each location is checked and the results are merged ({@link #merge}), instead of a 400.
      */
     @Transactional(readOnly = true)
     public IntegrityReport report(String locationId) {
-        return run(scope.resolve(locationId));
+        List<String> locations = scope.readLocations(locationId);
+        if (locations == null || locations.size() == 1) {
+            return run(LocationScope.single(locations));
+        }
+        return merge(locations.stream().map(this::run).toList());
+    }
+
+    /**
+     * One report from several single-location reports, check by check: a check passes when it passes everywhere, is
+     * skipped when it is skipped everywhere, and lists the failures of every location (at most {@link #ROW_LIMIT}
+     * rows). The merged report has no single {@code locationId}.
+     */
+    static IntegrityReport merge(List<IntegrityReport> reports) {
+        IntegrityReport first = reports.getFirst();
+        List<IntegrityCheck> checks = mergeChecks(reports.stream().map(IntegrityReport::checks).toList());
+        List<IntegrityCheck> reportOnly = mergeChecks(reports.stream().map(IntegrityReport::reportOnlyChecks).toList());
+        return new IntegrityReport(first.checkedAt(), null, checks.stream().allMatch(IntegrityCheck::ok),
+                first.rowLimit(), checks, reportOnly.stream().allMatch(IntegrityCheck::ok), reportOnly);
+    }
+
+    private static List<IntegrityCheck> mergeChecks(List<List<IntegrityCheck>> perLocation) {
+        List<IntegrityCheck> out = new ArrayList<>();
+        for (int i = 0; i < perLocation.getFirst().size(); i++) {
+            int index = i;
+            List<IntegrityCheck> same = perLocation.stream().map(l -> l.get(index)).toList();
+            IntegrityCheck c = same.getFirst();
+            List<Map<String, Object>> rows = new ArrayList<>();
+            long failures = 0;
+            boolean truncated = false;
+            for (IntegrityCheck s : same) {
+                failures += s.failures();
+                truncated |= s.truncated();
+                for (Map<String, Object> r : s.rows()) {
+                    if (rows.size() < ROW_LIMIT) {
+                        rows.add(r);
+                    } else {
+                        truncated = true;
+                    }
+                }
+            }
+            out.add(new IntegrityCheck(c.key(), same.stream().allMatch(IntegrityCheck::ok),
+                    same.stream().allMatch(IntegrityCheck::skipped), c.invariant(), c.tolerance(), failures, truncated,
+                    rows, c.note()));
+        }
+        return out;
     }
 
     /**
