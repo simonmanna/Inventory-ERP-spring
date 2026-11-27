@@ -263,6 +263,27 @@ public class InventoryIntegrityService {
         return List.of(valuationVsSubledger(null), valuationVsGl(null), valuationVsGlByProduct(null));
     }
 
+    /**
+     * IPR review 2 (R2-1): the checks on stock value as of {@code asOf} (a period end; {@code null} = now, as
+     * {@link #valueChecks()}). {@code valuation_vs_gl}: the stock value from the stock ledger (rows dated by their
+     * journal, as the historical valuation report) against the GL with {@code postingDate <= asOf};
+     * {@code valuation_vs_gl_by_product}: GL lines and ledger rows dated up to {@code asOf}. {@code valuation_vs_subledger}
+     * compares the current quants with the ledger and has no history: it runs while {@code asOf} is not in the past and
+     * is skipped (with a note) for a past {@code asOf}.
+     */
+    @Transactional(readOnly = true)
+    public List<IntegrityCheck> valueChecks(Instant asOf) {
+        if (asOf == null) {
+            return valueChecks();
+        }
+        IntegrityCheck subledger = asOf.isBefore(Instant.now().minus(Duration.ofMinutes(1)))
+                ? new IntegrityCheck(VALUATION_VS_SUBLEDGER, true, true, "per product: current valuation (by costing"
+                        + " method) = Σ signed InventoryLedger.totalValue", VALUE_TOLERANCE, 0, false, List.of(),
+                        "Current-state check (quants against the ledger): no history to run it as of " + asOf)
+                : valuationVsSubledger(null);
+        return List.of(subledger, valuationVsGl(null, asOf), valuationVsGlByProduct(null, asOf));
+    }
+
     /** IPR Phase 0: the report-only checks, in {@link #REPORT_ONLY_CHECKS} order. */
     private List<IntegrityCheck> reportOnly(String loc) {
         List<IntegrityCheck> checks = new ArrayList<>();
@@ -452,16 +473,23 @@ public class InventoryIntegrityService {
     /** The inventory-to-GL tie-out (organisation level, every inventory control account together). */
     @SuppressWarnings("unchecked")
     private IntegrityCheck valuationVsGl(String loc) {
+        return valuationVsGl(loc, null);
+    }
+
+    /** As {@link #valuationVsGl(String)}, as of {@code asOf} ({@code null} = now). */
+    @SuppressWarnings("unchecked")
+    private IntegrityCheck valuationVsGl(String loc, Instant asOf) {
         String invariant = "stock valuation = balance of the inventory control account(s) (the GL tie-out)";
         BigDecimal tolerance = tieOutTolerance();
         if (loc != null) {
             return new IntegrityCheck(VALUATION_VS_GL, true, true, invariant, tolerance, 0, false, List.of(),
                     "Organisation-level check: run the report without a location filter");
         }
-        Map<String, Object> t = valuation.glTieOut(null, tolerance.doubleValue());
+        Map<String, Object> t = valuation.glTieOut(asOf == null ? null : asOf.toString(), tolerance.doubleValue());
         boolean within = Boolean.TRUE.equals(t.get("withinTolerance"));
         String note = "variance " + t.get("variance") + " (sub-ledger " + t.get("subledgerValue") + ", GL "
-                + t.get("glBalance") + ")" + (t.get("warning") != null ? "; " + t.get("warning") : "");
+                + t.get("glBalance") + ")" + (asOf != null ? " as of " + asOf : "")
+                + (t.get("warning") != null ? "; " + t.get("warning") : "");
         List<Map<String, Object>> rows = within ? List.of() : List.of(new LinkedHashMap<>(t));
         return check(VALUATION_VS_GL, invariant, tolerance, new Found(within ? 0 : 1, rows), note);
     }
@@ -479,6 +507,26 @@ public class InventoryIntegrityService {
      * filter, and while no stamped line exists.
      */
     private IntegrityCheck valuationVsGlByProduct(String loc) {
+        return valuationVsGlByProduct(loc, null);
+    }
+
+    /**
+     * IPR review 2 (R2-1): ledger rows dated as {@code InventoryValuationService} dates them for a historical
+     * valuation — by the posting date of the stock-account journal of their ledger code or reference when that journal
+     * is on one day, else by {@code createdAt}.
+     */
+    private static final String AS_OF_JE_DATES = "je_dates AS (SELECT e.\"sourceId\" AS sid, MIN(e.\"postingDate\") AS pd,"
+            + " MAX(e.\"postingDate\") AS pd_max FROM \"JournalEntry\" e WHERE e.\"organizationId\" = :org"
+            + " AND e.status <> 'draft' AND e.\"sourceId\" IS NOT NULL AND EXISTS (SELECT 1 FROM \"JournalLine\" jl"
+            + " WHERE jl.\"journalEntryId\" = e.id AND jl.\"accountId\" IN (:dateAccts)) GROUP BY e.\"sourceId\")";
+    private static final String AS_OF_JE_JOIN = " LEFT JOIN je_dates jc ON jc.sid = l.\"ledgerCode\""
+            + " LEFT JOIN je_dates jr ON jr.sid = l.\"referenceId\"";
+    private static final String AS_OF_LEDGER_DATE = "COALESCE("
+            + "CASE WHEN date_trunc('day', jc.pd) = date_trunc('day', jc.pd_max) THEN jc.pd END,"
+            + " CASE WHEN date_trunc('day', jr.pd) = date_trunc('day', jr.pd_max) THEN jr.pd END, l.\"createdAt\")";
+
+    /** As {@link #valuationVsGlByProduct(String)}, as of {@code asOf} ({@code null} = now, no date filter). */
+    private IntegrityCheck valuationVsGlByProduct(String loc, Instant asOf) {
         String invariant = "per product since the cutover: Σ stock-account GL (debit − credit) = Σ signed"
                 + " InventoryLedger.totalValue";
         if (loc != null) {
@@ -494,7 +542,7 @@ public class InventoryIntegrityService {
         accounts.removeAll(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ?"
                 + " AND key IN ('inventory_price_difference', 'inventory_nrv_allowance')").param(org)
                 .query(String.class).list());
-        String note = "cutover " + cutover;
+        String note = "cutover " + cutover + (asOf != null ? ", as of " + asOf : "");
         if (accounts.isEmpty()) {
             return new IntegrityCheck(VALUATION_VS_GL_BY_PRODUCT, true, true, invariant, VALUE_TOLERANCE, 0, false,
                     List.of(), "No inventory control account is mapped");
@@ -504,6 +552,18 @@ public class InventoryIntegrityService {
         p.put("cut", cutover);
         p.put("accts", List.copyOf(accounts));
         p.put("key", InventoryValuationService.PRODUCT_DIMENSION);
+        String glAsOf = "";
+        String ledgerWith = "";
+        String ledgerJoin = "";
+        String ledgerAsOf = "";
+        if (asOf != null) {
+            p.put("asOf", SqlRows.ts(asOf));
+            p.put("dateAccts", valuation.inventoryAccountIds());
+            glAsOf = " AND e.\"postingDate\" <= :asOf";
+            ledgerWith = "WITH " + AS_OF_JE_DATES + " ";
+            ledgerJoin = AS_OF_JE_JOIN;
+            ledgerAsOf = " AND " + AS_OF_LEDGER_DATE + " <= :asOf";
+        }
         Map<String, BigDecimal> gl = new LinkedHashMap<>();
         BigDecimal unattributed = BigDecimal.ZERO;
         long unattributedLines = 0;
@@ -513,7 +573,7 @@ public class InventoryIntegrityService {
                                    jl."baseDebit" - jl."baseCredit" AS amt
                               FROM "JournalLine" jl JOIN "JournalEntry" e ON e.id = jl."journalEntryId"
                              WHERE e."organizationId" = :org AND e.status::text <> 'draft'
-                               AND jl."accountId" IN (:accts) AND e."createdAt" >= CAST(:cut AS timestamp)),
+                               AND jl."accountId" IN (:accts) AND e."createdAt" >= CAST(:cut AS timestamp)%s),
                      src AS (SELECT x.sid, MIN(x.pid) AS pid FROM (
                                SELECT l."referenceId" AS sid, l."productId" AS pid FROM "InventoryLedger" l
                                 WHERE l."organizationId" = :org AND l."createdAt" >= CAST(:cut AS timestamp)
@@ -526,7 +586,7 @@ public class InventoryIntegrityService {
                 SELECT COALESCE(g.pid, s.pid) AS product_id, SUM(g.amt) AS amount, COUNT(*) AS lines,
                        BOOL_OR(g.pid IS NOT NULL) AS stamped
                   FROM gl g LEFT JOIN src s ON g.pid IS NULL AND s.sid = g.sid
-                 GROUP BY 1""").params(p))) {
+                 GROUP BY 1""".formatted(glAsOf)).params(p))) {
             String pid = (String) r.get("product_id");
             if (Boolean.TRUE.equals(r.get("stamped"))) {
                 anyStamped = true;
@@ -544,11 +604,11 @@ public class InventoryIntegrityService {
         }
         Map<String, BigDecimal> ledger = new LinkedHashMap<>();
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("""
-                SELECT l."productId" AS product_id, SUM(CASE WHEN l."quantityChange" >= 0
+                %sSELECT l."productId" AS product_id, SUM(CASE WHEN l."quantityChange" >= 0
                        THEN COALESCE(l."totalValue", 0) ELSE -COALESCE(l."totalValue", 0) END) AS value
-                  FROM "InventoryLedger" l WHERE l."organizationId" = :org
-                   AND l."createdAt" >= CAST(:cut AS timestamp) AND l."valuationComponent" IS NULL
-                 GROUP BY 1""").params(p))) {
+                  FROM "InventoryLedger" l%s WHERE l."organizationId" = :org
+                   AND l."createdAt" >= CAST(:cut AS timestamp) AND l."valuationComponent" IS NULL%s
+                 GROUP BY 1""".formatted(ledgerWith, ledgerJoin, ledgerAsOf)).params(p))) {
             ledger.put((String) r.get("product_id"), SqlRows.dec(r, "value"));
         }
         Set<String> ids = new LinkedHashSet<>(ledger.keySet());

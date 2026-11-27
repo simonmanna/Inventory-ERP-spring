@@ -77,9 +77,17 @@ IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
 - **GL-10: live value checks at period close.** `POST /fiscal-periods/:id/close` re-runs the inventory value checks
   (`valuation_vs_subledger`; with `inventory.glTieOut.enabled` also `valuation_vs_gl`, `valuation_vs_gl_by_product`)
   and refuses while one fails: 400 "Cannot close '<period>': the inventory value check(s) <key> (<n> row(s); <note>)
-  fail now. Correct the stock value or the GL, then close." Switch: organisation setting
+  fail as of the period end. Correct the stock value or the GL, then close." Switch: organisation setting
   `inventory.closeGate.liveValueChecks` (default on). Open value findings block whatever their raise date (the
   `createdAt ≥ period start` filter is gone, also from the `inventory_integrity_value` checklist item).
+  **IPR review 2 (R2-1):** the checks run **as of the period end**, not today: `valuation_vs_gl` compares the
+  historical stock value from the ledger (`valuation(asOf)`, rows dated by their journal) with the GL
+  `postingDate ≤ period end`; `valuation_vs_gl_by_product` reads only GL lines and ledger rows dated up to the period
+  end; `valuation_vs_subledger` (current quants against the ledger) has no history, so it runs only while the period
+  end is not in the past and is skipped (with a note) for a past period. A finding counts only when it was raised up
+  to the period end (`createdAt ≤ period end`; close gate and checklist item). So a variance or a finding raised after
+  the period end, or a journal dated after it, no longer holds the close, and a period variance offset by a later
+  entry still does. The check is still recomputed at close time (GL-10).
 - **GL-1 / GL-5:** the inventory GL tie-out reads base-currency amounts (see inventory.md).
 
 FX-2 ([ADR-S082](../adr/ADR-S082-fx2-functional-currency-rate-policies.md), owner decisions 2026-11-20; A–G on main, FX-3..FX-8 built):

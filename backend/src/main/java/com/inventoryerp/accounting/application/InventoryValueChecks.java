@@ -1,5 +1,6 @@
 package com.inventoryerp.accounting.application;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -17,4 +18,11 @@ public interface InventoryValueChecks {
      * {@code inventory.glTieOut.enabled} is off, as the daily monitor does.
      */
     List<Failure> failing();
+
+    /**
+     * IPR review 2 (R2-1): the value checks that fail as of {@code asOf} (the end of the period being closed): the
+     * historical stock value from the stock ledger against the GL dated up to {@code asOf}. A check that has no
+     * history (current quants against the ledger) runs only while {@code asOf} is not in the past.
+     */
+    List<Failure> failing(Instant asOf);
 }
