@@ -449,7 +449,7 @@ Engine requests (not done here):
 New defects:
 
 - **Fixed (37693d24):** a rework order could not start: its consumption out of QC quarantine was refused by the X-3
-  hold (`StockService.assertGuardedLocation`, `StockService.java:2350`; caller `ProductionService` consume loop).
+  hold (`StockService.assertGuardedLocation`, `StockService.java:2337`; caller `ProductionService` consume loop).
 - **Open (test only):** `ManufacturingReadyIT.approvedChangeFreezesSetup` takes the *last* PLM stage named
   "Engineering review" (`ManufacturingReadyIT.java:259-262`); on a reused DB another change type's stage of that name
   wins and the test fails ("Stage Engineering review belongs to another change type"). Green on a fresh DB.
