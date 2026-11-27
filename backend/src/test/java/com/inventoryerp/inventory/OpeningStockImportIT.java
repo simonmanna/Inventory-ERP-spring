@@ -5,9 +5,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.inventoryerp.inventory.audit.InventoryAuditSupport;
 import com.inventoryerp.inventory.web.OpeningStockImportController;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -17,7 +14,6 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.flyway.autoconfigure.FlywayConnectionDetails;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -29,25 +25,6 @@ import tools.jackson.databind.JsonNode;
 class OpeningStockImportIT extends InventoryAuditSupport {
 
     static final String BASE = "/inventory/opening-stock";
-
-    /**
-     * Schema-owner statements (fault injection). On an external test DB ({@code IT_EXTERNAL_DB}) the owner connection
-     * details carry no URL: fall back to the application URL with the Flyway owner credentials of the environment.
-     */
-    @Override
-    protected void owner(String... statements) {
-        FlywayConnectionDetails o = ownerDetails.getIfAvailable();
-        String url = o != null && o.getJdbcUrl() != null ? o.getJdbcUrl() : System.getenv("JDBC_DATABASE_URL");
-        String user = o != null && o.getUsername() != null ? o.getUsername() : System.getenv("FLYWAY_USER");
-        String password = o != null && o.getPassword() != null ? o.getPassword() : System.getenv("FLYWAY_PASSWORD");
-        try (Connection c = DriverManager.getConnection(url, user, password); Statement st = c.createStatement()) {
-            for (String sql : statements) {
-                st.execute(sql);
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
-    }
 
     static String sfx() {
         return UUID.randomUUID().toString().substring(0, 6);
