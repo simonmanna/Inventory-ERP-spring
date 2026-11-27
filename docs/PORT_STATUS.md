@@ -1902,6 +1902,27 @@ channels per event. The actor is never told.
   - [x] Web screens (stream gW; [notes](audits/readiness-gaps/gW-web.md)).
   - [x] Six backend streams gA–gF, merged 2026-11-18 (`d7442438`, CI green).
 
+## Purchase readiness fixes (2026-11-27, owner-approved)
+
+[Audit](audits/2026-11-27-purchase-readiness.md). The behaviour changes are in
+[procurement.md](spec/procurement.md). Migrations: V690, V692 and V696.
+
+- [x] B1 supplier overpayment cap counts unallocated payments; payments to one supplier are serialised
+- [x] B2 AP aging is in base currency, nets unapplied payments and counts stocked receipts only (ties to the AP ledger)
+- [x] B3 two bill lines for the same product cannot consume one receipt quantity twice (V692 CHECK)
+- [x] B4 legacy landed-cost create/post retired; the receipt screen uses landed cost vouchers
+- [x] H1 `billWithoutReceipt` defaults to `block`; in auto-receive mode a later receipt absorbs bill-received stock
+- [x] H2 duplicate-bill check: `block_reference` by default, references normalised, concurrent posts serialised
+- [x] H3 / H4 return-to-vendor caps per bill; claims and returns deduct each other
+- [x] H5 / H6 / H7 PO pay runs the supplier-payment controls; one approval = one payment; supplier status and
+  verified bank accounts are checked (`procurement.supplierBankVerification`)
+- [x] H8 bill approval override goes through the workflow; the last editor cannot approve
+- [x] H9 receipt reversal needs the goods on hand; QC, quarantine and inspection are unwound
+- [x] H10 PR line quantity/price and PO line tax-rate validation (V696 CHECKs)
+- [x] Tests: `PurchaseReadinessPayIT`, `PurchaseReadinessBillsIT`, `PurchaseReadinessReturnsIT`,
+  `PurchaseReadinessReceiptsIT` (full build not run)
+- [ ] Read-only data checks in the audit, run on each database before deploy
+
 ## Loss prevention (ADR-S077, extension: no Nest counterpart)
 
 [Spec](spec/loss-prevention.md) · [LP0 brief](phases/LP0-exception-intelligence.md). Behind `ENABLE_LOSS_PREVENTION`.
