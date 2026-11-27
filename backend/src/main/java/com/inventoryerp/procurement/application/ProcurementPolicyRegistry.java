@@ -54,6 +54,8 @@ public final class ProcurementPolicyRegistry {
     public static final String MATCH_PRICE_TOLERANCE = "match.priceTolerancePct";
     public static final String MATCH_QTY_TOLERANCE = "match.qtyTolerancePct";
     public static final String BILL_DUPLICATE_CHECK = "bill.duplicateCheck";
+    /** {@link #BILL_DUPLICATE_CHECK} default: a same-reference duplicate is refused, a same-amount one flagged. */
+    public static final String DUPLICATE_BLOCK_REFERENCE = "block_reference";
     public static final String CHANGE_REAPPROVAL_ABOVE = "change.reapprovalAbovePct";
     public static final String RECEIVING_WEIGHBRIDGE_REQUIRED = "receiving.weighbridgeRequired";
     public static final String RECEIVING_INSPECTION_REQUIRED = "receiving.inspectionRequired";
@@ -92,10 +94,14 @@ public final class ProcurementPolicyRegistry {
         def(new Definition(MATCH_QTY_TOLERANCE, "matching", "Quantity tolerance (%)",
                 "How much more than received (or ordered, in two-way mode) may be billed before the line is held.",
                 Kind.NUMBER, F.numberNode(0), null, 0d, 100d));
+        // Purchase readiness H2 (owner-approved 2026-11-27): the same supplier invoice reference is blocked by default.
         def(new Definition(BILL_DUPLICATE_CHECK, "matching", "Duplicate bill check",
                 "Before a supplier bill is posted, look for another bill from the same supplier with the same"
-                        + " reference, or the same amount within 7 days: off, warn (posted, flagged) or block.",
-                Kind.ENUM, F.stringNode("off"), List.of("off", "warn", "block"), null, null));
+                        + " invoice reference (letters and digits only, any case), or the same amount within 7 days:"
+                        + " off; warn (posted, flagged); block_reference (default: the same reference is refused, the"
+                        + " same amount is flagged); block (both are refused).",
+                Kind.ENUM, F.stringNode(DUPLICATE_BLOCK_REFERENCE), List.of("off", "warn", DUPLICATE_BLOCK_REFERENCE,
+                        "block"), null, null));
         def(new Definition(CHANGE_REAPPROVAL_ABOVE, "change", "Re-approval for order changes above (%)",
                 "An order change that raises the order total by more than this percentage needs a second person"
                         + " (po_change:approve) before it applies. 0 = every increase; decreases never need approval.",

@@ -111,6 +111,14 @@ public class GoodsReceiptsService {
      */
     private com.inventoryerp.qualitycontrol.application.QcGate qcGate;
 
+    private com.inventoryerp.invoicing.application.BillReceiptMatcherService billMatcher;
+
+    /** Purchase readiness H1: absorbs stock a bill already auto-received; optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBillMatcher(com.inventoryerp.invoicing.application.BillReceiptMatcherService billMatcher) {
+        this.billMatcher = billMatcher;
+    }
+
     /** Quality-control gate (ADR-S087); optional for plain constructions. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setQcGate(com.inventoryerp.qualitycontrol.application.QcGate qcGate) {
@@ -512,6 +520,13 @@ public class GoodsReceiptsService {
             // P0-5: a PO-backed receipt is priced in the PO currency; stock / GRNI / AP carry the functional value.
             // FX-2 G: valued at the receipt-date rate, recorded on the receipt
             BigDecimal rate = po != null ? purchaseOrders.receiptRate(po, id, date) : BigDecimal.ONE;
+            // Purchase readiness H1: stock a posted bill of this supplier already received itself (auto-receive) is
+            // absorbed by this receipt — matched to that bill, not stocked or vouchered a second time.
+            String supplierId = updated.get("partnerId") != null ? (String) updated.get("partnerId")
+                    : po != null ? (String) po.get("partnerId") : null;
+            if (billMatcher != null) {
+                billMatcher.lockSupplier(orgId, supplierId);
+            }
             for (Map<String, Object> ln : StockMove.inLockOrder(updatedLines)) { // audit S-2: engine lock order
                 if (ln.get("productId") == null || ((String) ln.get("productId")).isEmpty()) {
                     continue;
@@ -520,13 +535,19 @@ public class GoodsReceiptsService {
                 if (product == null || !PurchaseOrdersService.stocked(product)) {
                     continue;
                 }
+                BigDecimal absorbed = billMatcher == null ? Money.ZERO
+                        : billMatcher.absorbAutoReceived(orgId, supplierId, ln);
+                BigDecimal stockQty = Money.dec(ln.get("quantity")).subtract(absorbed);
+                if (stockQty.signum() <= 0) {
+                    continue;
+                }
                 BigDecimal unitCost = Money.dec(ln.get("unitCost"));
                 Map<String, Object> poLine = orderLines == null ? null
                         : orderLines.resolve((String) ln.get("purchaseOrderLineId"), (String) ln.get("productId"));
                 // An order line is valued at its (possibly zero) order price, as the PO receive route does; a line
                 // without one falls back to the product cost when it carries no cost.
                 StockMove move = StockMove.of((String) ln.get("productId"), (String) grn.get("warehouseId"),
-                                Money.dec(ln.get("quantity"))).variant((String) ln.get("variantId"))
+                                stockQty).variant((String) ln.get("variantId"))
                         .unitCost(poLine != null || unitCost.signum() > 0 ? unitCost.multiply(rate)
                                 : Money.dec(product.get("costPrice")))
                         .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),

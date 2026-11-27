@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing;
 
+import com.inventoryerp.TestBillSettings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
@@ -30,6 +31,9 @@ import com.inventoryerp.BooksGuard;
  */
 @ExtendWith(BooksGuard.class)
 class SharedFxIT extends ApiTestSupport {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService billSettings;
 
     static final String CUR = "QXA";
     static final String NO_RATE = "QXB";
@@ -263,21 +267,23 @@ class SharedFxIT extends ApiTestSupport {
     @Test
     @DisplayName("M-5: a foreign-currency bill auto-receives its stock at the functional cost")
     void foreignBillReceivesAtFunctionalCost() {
-        String stocked = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
-                        + " \"costPrice\", \"trackInventory\", \"costingMethod\", \"updatedAt\") VALUES (?, ?, ?,"
-                        + " 'FX cement', 'stockable', 0, 0, true, 'AVCO', now())")
-                .params(stocked, demoOrg, "FXS-" + UUID.randomUUID().toString().substring(0, 6)).update();
-        Res created = call("POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "currencyId", CUR,
-                "lines", List.of(Map.of("productId", stocked, "description", "FX cement", "quantity", 2, "unitPrice",
-                        10))), adminToken);
-        assertThat(created.status()).as(created.raw().body()).isEqualTo(200);
-        String b = created.body().get("id").asString();
-        Res posted = call("POST", "/vendor-bills/" + b + "/post", Map.of("override3WM", true, "overrideApproval", true),
-                adminToken);
-        assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
-        BigDecimal unitCost = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryLedger\" WHERE \"productId\" = ? AND"
-                + " \"referenceId\" = ?").params(stocked, b).query(BigDecimal.class).single();
-        assertThat(unitCost).as("10 " + CUR + " at 3800").isEqualByComparingTo("38000");
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String stocked = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
+                            + " \"costPrice\", \"trackInventory\", \"costingMethod\", \"updatedAt\") VALUES (?, ?, ?,"
+                            + " 'FX cement', 'stockable', 0, 0, true, 'AVCO', now())")
+                    .params(stocked, demoOrg, "FXS-" + UUID.randomUUID().toString().substring(0, 6)).update();
+            Res created = call("POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "currencyId", CUR,
+                    "lines", List.of(Map.of("productId", stocked, "description", "FX cement", "quantity", 2, "unitPrice",
+                            10))), adminToken);
+            assertThat(created.status()).as(created.raw().body()).isEqualTo(200);
+            String b = created.body().get("id").asString();
+            Res posted = call("POST", "/vendor-bills/" + b + "/post", Map.of("override3WM", true, "overrideApproval", true),
+                    adminToken);
+            assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
+            BigDecimal unitCost = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryLedger\" WHERE \"productId\" = ? AND"
+                    + " \"referenceId\" = ?").params(stocked, b).query(BigDecimal.class).single();
+            assertThat(unitCost).as("10 " + CUR + " at 3800").isEqualByComparingTo("38000");
+        });
     }
 }
