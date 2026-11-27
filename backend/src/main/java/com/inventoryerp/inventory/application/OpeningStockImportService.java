@@ -1347,7 +1347,9 @@ public class OpeningStockImportService {
                         + " ANY(?)), 0) AS stock, COALESCE(SUM(l.credit) FILTER (WHERE NOT (l.\"accountId\" = ANY(?))), 0) AS"
                         + " equity, COALESCE(SUM(l.debit), 0) AS dr, COALESCE(SUM(l.credit), 0) AS cr, count(DISTINCT e.id)"
                         + " AS entries FROM \"JournalEntry\" e JOIN \"JournalLine\" l ON l.\"journalEntryId\" = e.id WHERE"
-                        + " e.\"organizationId\" = ? AND e.\"sourceType\" = ? AND e.\"sourceId\" = ?")
+                        + " e.\"organizationId\" = ? AND e.\"sourceType\" = ? AND e.\"sourceId\" = ?"
+                        // IPR review 2 (R2-5): only the posted entry is in the books (a draft citing the batch is not).
+                        + " AND e.status::text = 'posted'")
                         .params(arr(stockAccounts), arr(stockAccounts), org, REFERENCE_TYPE, id));
                 BigDecimal ledger = SqlRows.dec(led, "value");
                 BigDecimal journal = SqlRows.dec(gl, "stock");
