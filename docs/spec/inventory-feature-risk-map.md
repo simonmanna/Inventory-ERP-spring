@@ -1,8 +1,8 @@
 # Inventory feature-risk map (IPR R6)
 
-Status: Phase 0 (task T07), report-only. Source of truth in code:
+Status: Phase 0 (task T07), report-only; fixed-P2 status added in Phase 4. Source of truth in code:
 `backend/src/main/java/com/inventoryerp/inventory/application/InventoryFeatureUsageService.java`
-(`P2_FEATURES` and the feature definitions). Keep this file and that list identical.
+(`P2_FEATURES` and the feature definitions). Keep this file and that list identical (`InventoryFeatureRiskMapDocTest`).
 
 ## Why
 
@@ -14,7 +14,8 @@ organisation (gate G6 is judged per organisation).
 
 | Where | What |
 |---|---|
-| `GET /inventory/reports/feature-usage` (permission `inventory_valuation:read`, refused for branch-restricted users) | Every feature with `inUse` and a capped `count`, plus `promotedP2s` (the P2s below whose predicate holds). |
+| `GET /inventory/reports/feature-usage` (permission `inventory_valuation:read`, refused for branch-restricted users) | Every feature with `inUse` and a capped `count`, plus `promotedP2s` (the open P2s below whose predicate holds) and `fixedP2s` (the P2s fixed in the programme, with their evidence file). |
+| Web: Inventory → Reporting → Integrity & Reconciliation (`/inventory/integrity`) | The integrity checks with their rows, the GL tie-out, this feature table and the promoted / fixed P2s, with links to the Posting Monitor findings. |
 | `GET /inventory/reports/integrity` → `reportOnlyChecks[feature_risk]` | The same promoted P2s as rows. Fails while any applies. |
 | Daily integrity monitor (`InventoryIntegrityMonitor`) | Raises `InventoryException` kind `integrity_feature_risk` (one open at a time). Report-only: it is not in `INTEGRITY_VALUE_KINDS`, and the period-close gates skip every other `integrity_*` kind, so it never holds a close. |
 | Release checklist | Re-run the feature-usage report for every organisation before each release (mandatory step). |
@@ -73,48 +74,60 @@ above zero, except `multi_warehouse` (2 or more) and `large_catalogue` (more tha
 
 ## P2 → feature predicate
 
-| P2 | Finding (short) | Promoted when |
-|---|---|---|
-| X-3 | Manual moves out of QC quarantine or rental locations | `qc_checks` or `quality_lots` or `rental` |
-| X-4 | Offline sales against negative-stock refusal | `offline_devices` + `negative_stock_blocked` |
-| X-6 | POS refund restock not linked to its issue | `pos_refunds` |
-| X-7 | Rental serial units | `rental_serial_units` |
-| X-8 | POS order stock paths | `pos_orders` |
-| X-9 | Manufacturing simple orders | `manufacturing_orders` |
-| X-10 | POS kitchen voids | `pos_kitchen_voids` |
-| X-11 | Repair parts | `repair` |
-| F4 | Sales returns of variant products | `sales_returns` + `variants` |
-| F5 | Sales-order reservations | `sales_order_reservations` |
-| F6 | Vendor bills with automatic receipt | `vendor_bill_auto_receive` |
-| F7 | Debit notes across warehouses | `debit_notes` + `multi_warehouse` |
-| F8 | Serial products received through procurement | `serial_products` + `procurement_receipts` |
-| F9 | Branches with two or more warehouses | `multi_warehouse_branches` |
-| F10 | Branch-restricted users and sales returns | `branch_restricted_users` + `sales_returns` |
-| F11 | Vendor bills | `vendor_bills` |
-| C-4 | Negative stock refused | `negative_stock_blocked` |
-| C-6 | FIFO products and revaluations | `fifo_products` + `revaluations` |
-| C-8 | Tracking changes on stocked products | `serial_products` or `lot_expiry_products` (conservative: no audit trail of tracking changes is queried) |
-| C-9 | Serial products | `serial_products` |
-| S6 | Lot products and adjustments | `lot_products` + `adjustments` |
-| S8 | Stock-outs | `stock_outs` |
-| S10 | Count sessions | `count_sessions` |
-| S11 | Warehouse bins | `warehouse_bins` |
-| S12 | Count sessions | `count_sessions` |
-| S13 | Any inventory use | `inventory_in_use` |
-| S14 | Reservations | `reservations` |
-| GL-7 | AVCO with returns to supplier, claims or stage postings | `avco_products` + `rtv_claims_stage` |
-| GL-9 | Revaluations | `revaluations` |
-| S-6 | Any inventory use | `inventory_in_use` |
-| S-8 | CSV exports | `csv_exports` |
-| S-9 | Large catalogue | `large_catalogue` |
-| S-10 | Large catalogue | `large_catalogue` |
+| P2 | Finding (short) | Promoted when | Status | Evidence |
+|---|---|---|---|---|
+| X-3 | Manual moves out of QC quarantine or rental locations | `qc_checks` or `quality_lots` or `rental` | open | |
+| X-4 | Offline sales against negative-stock refusal | `offline_devices` + `negative_stock_blocked` | open | |
+| X-6 | POS refund restock not linked to its issue | `pos_refunds` | open | |
+| X-7 | Rental serial units | `rental_serial_units` | open | |
+| X-8 | POS order stock paths | `pos_orders` | open | |
+| X-9 | Manufacturing simple orders | `manufacturing_orders` | open | |
+| X-10 | POS kitchen voids | `pos_kitchen_voids` | open | |
+| X-11 | Repair parts | `repair` | open | |
+| F4 | Sales returns of variant products | `sales_returns` + `variants` | open | |
+| F5 | Sales-order reservations | `sales_order_reservations` | open | |
+| F6 | Vendor bills with automatic receipt | `vendor_bill_auto_receive` | open | |
+| F7 | Debit notes across warehouses | `debit_notes` + `multi_warehouse` | open | |
+| F8 | Serial products received through procurement | `serial_products` + `procurement_receipts` | open | |
+| F9 | Branches with two or more warehouses | `multi_warehouse_branches` | open | |
+| F10 | Branch-restricted users and sales returns | `branch_restricted_users` + `sales_returns` | open | |
+| F11 | Vendor bills | `vendor_bills` | open | |
+| C-4 | Negative stock refused | `negative_stock_blocked` | open | |
+| C-6 | FIFO products and revaluations | `fifo_products` + `revaluations` | open | |
+| C-8 | Tracking changes on stocked products | `serial_products` or `lot_expiry_products` (conservative: no audit trail of tracking changes is queried) | open | |
+| C-9 | Serial products | `serial_products` | open | |
+| S6 | Lot products and adjustments | `lot_products` + `adjustments` | open | |
+| S8 | Stock-outs | `stock_outs` | open | |
+| S10 | Count sessions | `count_sessions` | open | |
+| S11 | Warehouse bins | `warehouse_bins` | open | |
+| S12 | Count sessions | `count_sessions` | open | |
+| S13 | Any inventory use | `inventory_in_use` | open | |
+| S14 | Reservations | `reservations` | fixed | `docs/audits/ipr-evidence/3-security-controls.md` |
+| GL-7 | AVCO with returns to supplier, claims or stage postings | `avco_products` + `rtv_claims_stage` | open | |
+| GL-9 | Revaluations | `revaluations` | open | |
+| S-6 | Any inventory use | `inventory_in_use` | fixed | `docs/audits/ipr-evidence/4-golive-p2.md` |
+| S-8 | CSV exports | `csv_exports` | fixed | `docs/audits/ipr-evidence/3-security-controls.md` |
+| S-9 | Large catalogue | `large_catalogue` | open | |
+| S-10 | Large catalogue | `large_catalogue` | open | |
 
-S13, S-6 and S-8 apply to every organisation that keeps stock, so `integrity_feature_risk` is raised for every such
-organisation until those P2s are closed or the owner accepts them. This is intended: the finding is report-only.
+S13 applies to every organisation that keeps stock, so `integrity_feature_risk` is raised for every such organisation
+until S13 is fixed or the owner accepts it. This is intended: the finding is report-only. (S-6 and S-8 were in the
+same position until they were fixed in Phases 3 and 4.)
+
+**Status.** `open`: promoted when its predicate holds. `fixed`: the fix and its evidence file are on the branch, so the
+P2 is never promoted again, for any organisation. The finding is closed in the register
+(`docs/audits/2026-11-27-inventory-readiness.md`) only by the integrator, under the closure rule; a P2 the
+independent review reopens goes back to `open` here.
 
 ## Changing the map
 
-- When a P2 is fixed (closure rule in `docs/audits/2026-11-27-inventory-readiness.md`), remove its row here and in
-  `P2_FEATURES` in the same PR.
+- **When a P2 is fixed:** in `P2_FEATURES` append `.fixed(<evidence file>)` to its rule (constants `EVIDENCE_PHASE3`,
+  `EVIDENCE_PHASE4` exist; add one per evidence file), and in the table above set Status to `fixed` and Evidence to the
+  same path. Keep the row: the report lists fixed P2s under `fixedP2s` and the web page shows them.
+  `InventoryFeatureRiskMapDocTest` (plain JUnit, seconds) fails when the doc and the code disagree or the evidence
+  file is missing.
+- **Integrator, after merging the other streams:** tick each P2 whose evidence file is merged (the stream evidence files
+  are under `docs/audits/ipr-evidence/`). Candidates by stream: X-3, C-8 (engine stream E2); X-8, F11 (wave 3); X-7,
+  X-10, F4–F10, C-6, C-9, S6, S8, S10–S12, GL-9, S-9, S-10 per their streams' evidence.
 - A new feature needs a definition in `InventoryFeatureUsageService` (bounded count over indexed columns) and a row in
   the features table. `InventoryIntegrityP0IT.staticMaps` fails when a P2 names a feature that does not exist.
