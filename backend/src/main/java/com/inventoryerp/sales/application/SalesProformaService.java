@@ -101,7 +101,12 @@ public class SalesProformaService {
         Map<String, Object> extra = extra(id);
         out.putAll(extra);
         if (blank(str(out.get("bankDetails"))) || blank(str(out.get("mobileDetails")))) {
-            Map<String, Object> s = settings.settings();
+            // A plain read: settings() creates the row when missing, which a read-only transaction cannot do.
+            Map<String, Object> s = db.row("SELECT \"proformaBankDetails\", \"proformaMobileDetails\" FROM"
+                    + " \"SalesSettings\" WHERE \"organizationId\" = ?", org());
+            if (s == null) {
+                s = Map.of();
+            }
             if (blank(str(out.get("bankDetails")))) {
                 out.put("bankDetails", blank(str(s.get("proformaBankDetails"))) ? null : str(s.get("proformaBankDetails")));
             }
