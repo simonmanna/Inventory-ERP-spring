@@ -281,7 +281,11 @@ public class SalesReturnService {
                             "sales_return", id, str(r.get("number")), null, null, location, true, null));
                 }
                 // IPR F2: goods with no recorded stock issue never left stock (e.g. an invoice of an ordered-policy line
-                // that was never delivered): nothing is restocked; the return is a financial credit only.
+                // that was never delivered): nothing is restocked; the return is a financial credit only. IPR review 1
+                // (N2): the goods did come back physically, so the line is flagged for manual review, not skipped.
+                if (issueCodes.isEmpty()) {
+                    flagUnmatched(r, l, qty, location);
+                }
             }
             db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?"
                     + " AND \"organizationId\" = ?", qty, issueCost, l.get("id"), org());
@@ -295,13 +299,65 @@ public class SalesReturnService {
         return get(id);
     }
 
-    /** R1: the stock moves that issued an order line's goods (the dispatch of its delivery-order load lines). */
+    /**
+     * R1 / IPR review 1 (N2): the stock moves that issued an order line's goods. Fleet is not the only path:
+     * <ul>
+     *   <li>the dispatch of its delivery-order load lines ({@code FleetLoadLine.stockLedgerCode}), also of a delivery
+     *   made for the line's invoice (the delivery line names the invoice line);</li>
+     *   <li>a legacy load line without its code: the trip's {@code fleet_trip} issue rows of that product;</li>
+     *   <li>the line's invoice issue ({@code sales_invoice} rows naming the linked invoice line): a collection of
+     *   undelivered goods, or an invoice posted before sales orders marked their invoices as delivered by fleet.</li>
+     * </ul>
+     * A return against these rows never brings back more than they still have out ({@code returnFromSource}).
+     */
     private List<String> issueLedgerCodes(String orderLineId) {
-        return db.rows("SELECT DISTINCT ll.\"stockLedgerCode\" AS code FROM \"FleetLoadLine\" ll JOIN"
-                + " \"FleetDeliveryOrderLine\" dl ON dl.id = ll.\"deliveryOrderLineId\" WHERE dl.\"sourceLineId\" = ?"
-                + " AND"
-                + " ll.\"organizationId\" = ? AND ll.\"stockLedgerCode\" IS NOT NULL", orderLineId, org()).stream()
-                .map(x -> str(x.get("code"))).toList();
+        return db.rows("SELECT DISTINCT code FROM ("
+                + " SELECT ll.\"stockLedgerCode\" AS code FROM \"FleetLoadLine\" ll"
+                + " JOIN \"FleetDeliveryOrderLine\" dl ON dl.id = ll.\"deliveryOrderLineId\""
+                + " WHERE ll.\"organizationId\" = ? AND ll.\"stockLedgerCode\" IS NOT NULL"
+                + " AND (dl.\"sourceLineId\" = ? OR dl.\"sourceLineId\" IN (SELECT k.\"documentLineId\""
+                + " FROM \"SalesInvoiceLink\" k WHERE k.\"organizationId\" = ? AND k.\"orderLineId\" = ?"
+                + " AND k.\"documentLineId\" IS NOT NULL))"
+                + " UNION SELECT l.\"ledgerCode\" FROM \"FleetLoadLine\" ll"
+                + " JOIN \"FleetDeliveryOrderLine\" dl ON dl.id = ll.\"deliveryOrderLineId\""
+                + " JOIN \"InventoryLedger\" l ON l.\"organizationId\" = ll.\"organizationId\""
+                + " AND l.\"referenceType\" = 'fleet_trip' AND l.\"referenceId\" = ll.\"loadId\""
+                + " AND l.\"productId\" = ll.\"productId\" AND l.\"quantityChange\" < 0 AND l.\"reversesLedgerId\" IS NULL"
+                + " WHERE ll.\"organizationId\" = ? AND ll.\"stockLedgerCode\" IS NULL AND dl.\"sourceLineId\" = ?"
+                + " UNION SELECT l.\"ledgerCode\" FROM \"SalesInvoiceLink\" k"
+                + " JOIN \"InventoryLedger\" l ON l.\"organizationId\" = k.\"organizationId\""
+                + " AND l.\"referenceType\" = 'sales_invoice' AND l.\"referenceId\" = k.\"documentId\""
+                + " AND l.\"sourceLineId\" = k.\"documentLineId\" AND l.\"quantityChange\" < 0"
+                + " AND l.\"reversesLedgerId\" IS NULL"
+                + " WHERE k.\"organizationId\" = ? AND k.\"orderLineId\" = ? AND k.kind = 'regular'"
+                + ") x WHERE code IS NOT NULL", org(), orderLineId, org(), orderLineId, org(), orderLineId, org(),
+                orderLineId).stream().map(x -> str(x.get("code"))).toList();
+    }
+
+    /** IPR review 1 (N2): kind of the Posting Monitor row of a physical return with no stock issue to return against. */
+    public static final String UNMATCHED_RETURN = "sales_return_unmatched";
+
+    /**
+     * IPR review 1 (N2): goods of a return line came back physically but no stock issue of its order line is known,
+     * so nothing was restocked (never more than was issued). An open {@value #UNMATCHED_RETURN} row tells staff to
+     * check the goods and restock them by hand (a direct stock receipt) when they did leave stock.
+     */
+    private void flagUnmatched(Map<String, Object> r, Map<String, Object> l, BigDecimal qty, String location) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("returnId", r.get("id"));
+        payload.put("returnNumber", r.get("number"));
+        payload.put("returnLineId", l.get("id"));
+        payload.put("orderId", r.get("orderId"));
+        payload.put("orderLineId", l.get("orderLineId"));
+        payload.put("variantId", l.get("variantId"));
+        payload.put("receivedQty", JsNumbers.js(qty));
+        db.update("INSERT INTO \"InventoryException\" (id, \"organizationId\", \"locationId\", \"productId\","
+                + " description, quantity, kind, reason, payload, status, \"createdAt\") VALUES (?, ?, ?, ?, ?, ?, ?, ?,"
+                + " ?::jsonb, 'open', CURRENT_TIMESTAMP)", SalesDb.newId(), org(), location, l.get("productId"),
+                "Return " + r.get("number") + ": " + l.get("description") + " received without a stock issue to"
+                        + " return against", qty, UNMATCHED_RETURN, "No delivery, collection or invoice issue of this"
+                        + " order line was found, so the goods were not restocked; check them and restock by hand if"
+                        + " they left stock", com.inventoryerp.shared.web.EntityJson.toJson(payload));
     }
 
     private StockReversalService stockReturns;
