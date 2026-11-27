@@ -905,6 +905,11 @@ public class PurchaseOrdersService {
         }
         Instant date = dto.receivedAt() != null ? ProcurementSql.date(dto.receivedAt()) : nowMs();
         Map<String, Object> result = tx.execute(st -> {
+            // IPR LK-1: the supplier lock first, before any purchase-order row (the order a bill post takes: supplier →
+            // PO line → PO), so this receipt and a bill on the same order cannot deadlock. Taken again below.
+            if (billMatcher != null) {
+                billMatcher.lockSupplier(orgId, (String) po.get("partnerId"));
+            }
             // 1. GRN (draft)
             Map<String, Object> grn = insertGrnDraft(grnId, orgId, receiptNumber, po, dto, resolved);
             // 2. Advance the PO under optimistic locks (shared with the goods-receipt post).

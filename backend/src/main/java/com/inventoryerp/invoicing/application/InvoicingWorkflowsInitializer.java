@@ -334,6 +334,14 @@ public class InvoicingWorkflowsInitializer {
                 new Transition("posted", "cancelled", "cancel", "expense:cancel",
                         ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), ctx -> {
                             Map<String, Object> doc = ctx.entity();
+                            // IPR M-29: the supplier lock (the order bill post and goods-receipt post use), then the
+                            // bill's auto-receipt rows, before reading whether a receipt absorbed them: a receipt
+                            // posting at the same time either absorbed them already (refused below) or waits and then
+                            // finds the bill cancelled.
+                            matcher.lockSupplier(ctx.organizationId(), (String) doc.get("partnerId"));
+                            jdbc.sql("SELECT id FROM \"VendorBillAutoReceipt\" WHERE \"organizationId\" = ? AND"
+                                    + " \"vendorBillId\" = ? ORDER BY id FOR UPDATE").params(ctx.organizationId(),
+                                    doc.get("id")).query().listOfRows();
                             String absorbedBy = matcher.absorbingReceipt(ctx.organizationId(), (String) doc.get("id"));
                             if (absorbedBy != null) {
                                 // Purchase readiness H1: the goods are in stock through that receipt now.
