@@ -156,7 +156,7 @@ export function ProformaPage() {
       </section>
       {(p.bankDetails || p.mobileDetails || p.notes) && (
         <div className="grid gap-4 md:grid-cols-2">
-          {p.bankDetails && <section className="rounded-xl border bg-card p-4 text-sm shadow-sm"><h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Bank transfer')}</h2><p className="whitespace-pre-line">{p.bankDetails}</p></section>}
+          {p.bankDetails && <section className="rounded-xl border bg-card p-4 text-sm shadow-sm"><h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Bank details')}</h2><p className="whitespace-pre-line">{p.bankDetails}</p></section>}
           {p.mobileDetails && <section className="rounded-xl border bg-card p-4 text-sm shadow-sm"><h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Mobile money')}</h2><p className="whitespace-pre-line">{p.mobileDetails}</p></section>}
           {p.notes && <section className="rounded-xl border bg-card p-4 text-sm shadow-sm md:col-span-2"><h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{tx('Notes')}</h2><p className="whitespace-pre-line">{p.notes}</p></section>}
         </div>
