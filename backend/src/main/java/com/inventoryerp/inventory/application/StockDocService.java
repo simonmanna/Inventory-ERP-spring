@@ -270,7 +270,8 @@ public class StockDocService {
                     .variant(str(item, "variantId")).moveType(catToMove.getOrDefault(str(doc, "category"), "issue"))
                     .strategy(item.get("distStrategy") != null ? str(item, "distStrategy") : "FEFO")
                     .batch(str(item, "batchNumber")).source("stock_out", str(doc, "outCode")).notes(str(doc, "reason"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"))
+                    .manual().honourReservations(null); // IPR X-3, E-1a
             Issued res = stock.issue(m);
             total = total.add(res.totalValue());
             jdbc.sql("UPDATE \"StockOutItem\" SET \"unitCost\" = ?, \"totalCost\" = ? WHERE id = ?")
@@ -369,7 +370,8 @@ public class StockDocService {
                     .moveType(Boolean.TRUE.equals(item.get("isExpiry")) ? "expiry_write_off" : "waste")
                     .strategy(batch != null ? "MANUAL" : "FEFO").batch(batch).source("waste", str(doc, "wasteCode"))
                     .notes(str(doc, "notes"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"))
+                    .manual(); // IPR X-3 (a physical loss: sales-order reservations do not refuse it)
             Issued res = stock.issue(m);
             total = total.add(res.totalValue());
             jdbc.sql("UPDATE \"WasteItem\" SET \"unitCost\" = ?, \"totalCost\" = ? WHERE id = ?")
@@ -713,7 +715,7 @@ public class StockDocService {
             StockMove m = StockMove.of(str(item, "productId"), str(doc, "locationId"), null)
                     .variant(str(item, "variantId")).notes(doc.get("adjCode") + " · " + doc.get("reason"))
                     .batch(str(item, "batchNumber")).source("stock_adjustment", str(doc, "adjCode"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById")).manual();
             m.deltaQuantity = dec(item, "qtyActual").subtract(basis.getOrDefault(item.get("id"), dec(item, "qtySystem")));
             m.effectiveAt = offlineAt;
             stock.adjust(m);
@@ -946,7 +948,8 @@ public class StockDocService {
             StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), str(doc, "toLocId"),
                             dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                     .source("stock_transfer", str(doc, "transferCode")).notes(str(doc, "notes"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"))
+                    .manual().honourReservations(null); // IPR X-3, E-1a
             recordArrivedLayers(id, str(item, "id"), stock.transfer(m), true);
             jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyTransferred\" = ? WHERE id = ?")
                     .params(dec(item, "qtyRequested"), item.get("id")).update();
@@ -1046,7 +1049,8 @@ public class StockDocService {
                 StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), transit,
                                 dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                         .source("stock_transfer_dispatch", str(doc, "transferCode")).notes(str(doc, "notes"))
-                        .people(str(doc, "responsibleById"), str(doc, "approvedById"));
+                        .people(str(doc, "responsibleById"), str(doc, "approvedById"))
+                        .manual().honourReservations(null); // IPR X-3, E-1a
                 recordTransitLayers(id, str(item, "id"), dec(item, "qtyRequested"), stock.transfer(m));
                 jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyDispatched\" = ? WHERE id = ?")
                         .params(dec(item, "qtyRequested"), item.get("id")).update();
@@ -1143,7 +1147,8 @@ public class StockDocService {
                 recordArrivedLayers(id, str(item, "id"), stock.transfer(pinTransit(StockMove.transfer(
                         str(item, "productId"), transitLocId, str(doc, "toLocId"), received)
                         .variant(str(item, "variantId")).source("stock_transfer_receipt", code)
-                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id"))), false);
+                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user).manual(),
+                        str(item, "id"))), false);
             }
             if (damaged.signum() > 0) {
                 stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, damaged)

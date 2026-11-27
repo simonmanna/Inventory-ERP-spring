@@ -133,7 +133,7 @@ public class DirectStockService {
             StockMove m = StockMove.of(item.productId(), dto.locationId(), item.quantity()).variant(item.variantId())
                     .unitCost(item.unitCost()).batch(item.batchNumber()).expiry(item.expiryDate())
                     .source("direct_stock_in", code).notes(item.notes() != null ? item.notes() : dto.notes())
-                    .people(dto.responsibleById(), dto.approvedById());
+                    .people(dto.responsibleById(), dto.approvedById()).manual(); // IPR X-3
             Received res = stock.receiveForDocument(m,
                     StockService.GlReceiptContext.stockGain("direct_stock_in", code, Instant.now()));
             BigDecimal uc = res.unitCost() == null ? Money.ZERO : res.unitCost();
@@ -172,7 +172,7 @@ public class DirectStockService {
                     .moveType("issue").strategy(item.distStrategy() != null ? item.distStrategy() : "FEFO")
                     .batch(item.batchNumber()).source("direct_stock_out", code).requireAvailable(!allowNegative)
                     .notes(item.notes() != null ? item.notes() : dto.notes())
-                    .people(dto.responsibleById(), dto.approvedById());
+                    .people(dto.responsibleById(), dto.approvedById()).manual().honourReservations(null);
             Issued res = stock.issue(m);
             total = total.add(res.totalValue());
             results.add(Obj.of("productId", item.productId(), "quantity", JsNumbers.js(item.quantity()),
