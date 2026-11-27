@@ -627,9 +627,19 @@ public class StockDocService {
             throw ApiException.badRequest("Cannot approve a " + status + " document");
         }
         List<Map<String, Object>> items = items("StockAdjustmentItem", StockAdjustmentItem.class, "adjId", id);
+        if (!embedded) {
+            assertNoOpenCount(str(doc, "locationId"));
+        }
         if (claim("StockAdjustment", id, "approved") == 0) {
             throw ApiException.badRequest("Adjustment was posted or cancelled concurrently");
         }
+        // ADR-S088 / IPR M-1: an adjustment recorded on an offline device moved at the device time.
+        Instant offlineAt = jdbc.sql("SELECT \"occurredAt\" FROM \"StockAdjustment\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " AND \"recordedOffline\" = true").params(id, org())
+                .query((rs, n) -> {
+                    var t = rs.getTimestamp(1);
+                    return t == null ? null : t.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC);
+                }).optional().orElse(null);
         // Gaps h-00 F6: the on-hand each line's count is measured against (the snapshot, or what the drift check read
         // when forcing over drift); the line then posts qtyActual minus it as a delta on the on-hand read under the
         // quant lock, so a movement committing after that read is kept instead of overwritten.
@@ -674,6 +684,7 @@ public class StockDocService {
                     .batch(str(item, "batchNumber")).source("stock_adjustment", str(doc, "adjCode"))
                     .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
             m.deltaQuantity = dec(item, "qtyActual").subtract(basis.getOrDefault(item.get("id"), dec(item, "qtySystem")));
+            m.effectiveAt = offlineAt;
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
@@ -692,11 +703,17 @@ public class StockDocService {
      * FEFO order and a gain goes into its newest lot, as before.
      */
     public record CountVariance(String productId, String variantId, String unit, String batchNumber,
-            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId) {
+            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId,
+            String countLineId, Instant countedAt) {
 
         public CountVariance(String productId, String variantId, String unit, String batchNumber,
                 BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {
-            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, null);
+            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, null, null, null);
+        }
+
+        public CountVariance(String productId, String variantId, String unit, String batchNumber,
+                BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId) {
+            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, lotId, null, null);
         }
     }
 
@@ -719,6 +736,17 @@ public class StockDocService {
     @Transactional
     public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
             List<CountVariance> lines, boolean opening) {
+        return postCountVariances(locationId, responsibleById, notes, lines, opening, null);
+    }
+
+    /**
+     * As {@link #postCountVariances(String, String, String, List, boolean)} for count session {@code countSessionId}
+     * (IPR 1b): each variance row records its count line ({@code sourceLineId}) and the line's cut-off as its effective
+     * time, and the session's own posting is exempt from the session's location freeze.
+     */
+    @Transactional
+    public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
+            List<CountVariance> lines, boolean opening, String countSessionId) {
         lookups.requireLocation(locationId);
         Map<String, String> names = lookups.productNames(new LinkedHashSet<>(lines.stream()
                 .map(CountVariance::productId).toList()));
@@ -755,12 +783,31 @@ public class StockDocService {
             m.deltaQuantity = l.delta();
             m.openingBalance = opening;
             m.lotId = l.lotId();
+            m.sourceLineId = l.countLineId();
+            m.effectiveAt = l.countedAt();
+            m.countSessionId = countSessionId;
+            m.skipLateCountCheck = true;
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
                         + ", \"postedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(user, id).update();
         return withItems(adjustment(id));
+    }
+
+    /**
+     * IPR S4: a stock adjustment is not approved against a location while a count session is open there (draft): the
+     * count would post its own variance over the same cells.
+     */
+    private void assertNoOpenCount(String locationId) {
+        Map<String, Object> open = SqlRows.one(jdbc.sql("SELECT s.\"countCode\", l.name FROM \"InventoryCountSession\" s"
+                + " JOIN \"InventoryLocation\" l ON l.id = s.\"locationId\" WHERE s.\"organizationId\" = ?"
+                + " AND s.\"locationId\" = ? AND s.status = 'draft' AND s.\"deletedAt\" IS NULL LIMIT 1")
+                .params(org(), locationId));
+        if (open != null) {
+            throw ApiException.conflict("Location " + open.get("name") + " has an open count " + open.get("countCode")
+                    + "; submit or cancel the count before approving an adjustment there");
+        }
     }
 
     /** Discard a not-yet-posted adjustment. */

@@ -65,10 +65,23 @@ public class InventoryCountService {
      * clears it.
      */
     public record DraftLine(String lineId, BigDecimal countedQty, String reason, List<String> missingSerials,
-            List<String> foundSerials) {
+            List<String> foundSerials, Instant countedAt) {
+
+        public DraftLine(String lineId, BigDecimal countedQty, String reason, List<String> missingSerials,
+                List<String> foundSerials) {
+            this(lineId, countedQty, reason, missingSerials, foundSerials, null);
+        }
 
         public DraftLine(String lineId, BigDecimal countedQty, String reason) {
-            this(lineId, countedQty, reason, null, null);
+            this(lineId, countedQty, reason, null, null, null);
+        }
+
+        /**
+         * IPR 1b (count spec section 1): a device count line, counted at {@code countedAt} (the op's device time after
+         * the future clamp) instead of the server time of the save.
+         */
+        public static DraftLine countedAt(String lineId, BigDecimal countedQty, String reason, Instant countedAt) {
+            return new DraftLine(lineId, countedQty, reason, null, null, countedAt);
         }
     }
 
@@ -85,11 +98,14 @@ public class InventoryCountService {
     private final SegregationOfDutiesService sod;
     private final TransactionTemplate newTx;
     private final StockService stock;
+    private final org.springframework.beans.factory.ObjectProvider<SaleStockDrain> saleDrain;
 
     public InventoryCountService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq,
             StockDocService stockDoc, ApprovalsService approvals, AuditService audit, LocationScope locationScope,
-            SegregationOfDutiesService sod, PlatformTransactionManager txm, StockService stock) {
+            SegregationOfDutiesService sod, PlatformTransactionManager txm, StockService stock,
+            org.springframework.beans.factory.ObjectProvider<SaleStockDrain> saleDrain) {
         this.stock = stock;
+        this.saleDrain = saleDrain;
         this.locationScope = locationScope;
         this.sod = sod;
         this.jdbc = jdbc;
@@ -147,8 +163,85 @@ public class InventoryCountService {
         s.put("systemHidden", false);
         if ("draft".equals(str(s, "status"))) {
             annotatePostings(s);
+        } else if ("submitted".equals(str(s, "status"))) {
+            s.put("lateTransactions", lateTransactions(s));
         }
         return s;
+    }
+
+    /**
+     * IPR 1b (count spec section 4.5): ledger rows of the count's cells that happened before the submit but reached
+     * the ledger after the count was measured ({@code seq > measuredSeq}): an offline sale synced late, a device that
+     * could not see a freeze. Each says whether it was corrected (the correction's ledger code and count), needed no
+     * correction (it happened after the line's cut-off, case D), or is left for a person and why. Lines submitted
+     * before V700 (no {@code measuredSeq}) list nothing. Additive field; read-only.
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> lateTransactions(Map<String, Object> s) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        Instant submittedAt = (Instant) s.get("submittedAt");
+        if (submittedAt == null) {
+            return out;
+        }
+        for (Map<String, Object> l : (List<Map<String, Object>>) s.get("lines")) {
+            if (l.get("countedQty") == null || l.get("measuredSeq") == null) {
+                continue;
+            }
+            Instant cutoff = l.get("countedAt") != null ? (Instant) l.get("countedAt") : (Instant) s.get("startedAt");
+            boolean lotLine = Boolean.TRUE.equals(l.get("lotLine"));
+            for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT r.id, r.\"ledgerCode\", r.\"quantityChange\","
+                            + " r.\"referenceType\", r.\"referenceId\", r.\"reversesLedgerId\", r.\"createdAt\","
+                            + " COALESCE(r.\"effectiveAt\", r.\"createdAt\") AS \"effectiveAt\", r.notes,"
+                            + " p.\"serialTracking\", k.\"ledgerCode\" AS \"correctionLedgerCode\","
+                            + " ks.\"countCode\" AS \"correctedByCount\""
+                            + " FROM \"InventoryLedger\" r JOIN \"Product\" p ON p.id = r.\"productId\""
+                            + " LEFT JOIN \"InventoryLedger\" k ON k.\"organizationId\" = r.\"organizationId\""
+                            + " AND k.\"referenceType\" = ? AND k.\"referenceId\" = r.id"
+                            + " LEFT JOIN \"InventoryCountLine\" kl ON kl.id = k.\"sourceLineId\""
+                            + " LEFT JOIN \"InventoryCountSession\" ks ON ks.id = kl.\"sessionId\""
+                            + " WHERE r.\"organizationId\" = ? AND r.\"locationId\" = ? AND r.\"productId\" = ?"
+                            + " AND r.\"variantId\" IS NOT DISTINCT FROM ? AND r.seq > ? AND r.\"quantityChange\" <> 0"
+                            + " AND COALESCE(r.\"effectiveAt\", r.\"createdAt\") <= ?"
+                            + " AND COALESCE(r.\"referenceType\", '') <> ?"
+                            // the count's own variance rows (written after the measurement) are not late rows
+                            + " AND r.\"sourceLineId\" IS DISTINCT FROM ?"
+                            + " AND (? = false OR r.\"batchId\" IS NOT DISTINCT FROM ?) ORDER BY r.seq")
+                    .params(StockService.LATE_COUNT_CORRECTION, org(), s.get("locationId"), l.get("productId"),
+                            l.get("variantId"), ((Number) l.get("measuredSeq")).longValue(), SqlRows.ts(submittedAt),
+                            StockService.LATE_COUNT_CORRECTION, l.get("id"), lotLine, l.get("batchId")))) {
+                Instant eff = (Instant) r.get("effectiveAt");
+                String status;
+                if (r.get("correctionLedgerCode") != null) {
+                    status = "corrected";
+                } else if (eff.isAfter(cutoff)) {
+                    status = "after_cutoff";
+                } else if (Boolean.TRUE.equals(r.get("serialTracking"))) {
+                    status = "manual_review_serial";
+                } else if (r.get("reversesLedgerId") != null) {
+                    status = "manual_review_reversal";
+                } else if (r.get("notes") != null && String.valueOf(r.get("notes")).contains("clockSkew")) {
+                    status = "manual_review_clock_skew";
+                } else {
+                    status = "uncorrected";
+                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("lineId", l.get("id"));
+                row.put("productId", l.get("productId"));
+                row.put("productName", l.get("productName"));
+                row.put("ledgerCode", r.get("ledgerCode"));
+                row.put("quantity", JsNumbers.dec(dec(r, "quantityChange")));
+                row.put("effectiveAt", eff);
+                row.put("createdAt", r.get("createdAt"));
+                row.put("referenceType", r.get("referenceType"));
+                row.put("referenceId", r.get("referenceId"));
+                row.put("countedAt", cutoff);
+                row.put("status", status);
+                row.put("correctionLedgerCode", r.get("correctionLedgerCode"));
+                row.put("correctedByCount", r.get("correctedByCount"));
+                out.add(row);
+            }
+        }
+        return out;
     }
 
     /**
@@ -228,8 +321,16 @@ public class InventoryCountService {
     @Transactional
     public Map<String, Object> startChecked(String locationId, String countTypeIn, String notes, Boolean blind,
             List<String> scopeCategoryIds, List<String> scopeProductIds, Boolean restart) {
+        return startChecked(locationId, countTypeIn, notes, blind, scopeCategoryIds, scopeProductIds, restart, null);
+    }
+
+    /** {@link #startChecked} with the optional location freeze (IPR 1b, count spec section 6). */
+    @Transactional
+    public Map<String, Object> startChecked(String locationId, String countTypeIn, String notes, Boolean blind,
+            List<String> scopeCategoryIds, List<String> scopeProductIds, Boolean restart, Boolean freezeLocation) {
         locationScope.assertAllowed(locationId);
-        return start(locationId, countTypeIn, notes, blind, scopeCategoryIds, scopeProductIds, restart, true);
+        return start(locationId, countTypeIn, notes, blind, scopeCategoryIds, scopeProductIds, restart, true,
+                Boolean.TRUE.equals(freezeLocation));
     }
 
     /**
@@ -239,15 +340,33 @@ public class InventoryCountService {
     @Transactional
     public Map<String, Object> start(String locationId, String countTypeIn, String notes, Boolean blind,
             List<String> scopeCategoryIds, List<String> scopeProductIds, Boolean restart) {
-        return start(locationId, countTypeIn, notes, blind, scopeCategoryIds, scopeProductIds, restart, false);
+        return start(locationId, countTypeIn, notes, blind, scopeCategoryIds, scopeProductIds, restart, false, false);
     }
 
-    /** Start (or resume) a count session; {@code perLot} splits batch-tracked products into one line per open lot. */
+    /**
+     * Start (or resume) a count session; {@code perLot} splits batch-tracked products into one line per open lot.
+     *
+     * <p>IPR 1b: the default count type is {@code cycle} (S1; it was {@code opening}, whose value posts against opening
+     * equity). An {@code opening} count is only for a location with no stock history and only once (S1). One draft
+     * session per location, whatever its type (S4, V701 index): a draft of another type is refused (409). With
+     * {@code freezeLocation} the location freezes while the draft is open: the freeze lock is taken exclusively (L3b)
+     * so every move in flight at the location ends first.
+     */
     private Map<String, Object> start(String locationId, String countTypeIn, String notes, Boolean blind,
-            List<String> scopeCategoryIds, List<String> scopeProductIds, Boolean restart, boolean perLot) {
-        lookups.requireLocation(locationId);
-        String countType = countTypeIn != null ? countTypeIn : "opening";
+            List<String> scopeCategoryIds, List<String> scopeProductIds, Boolean restart, boolean perLot,
+            boolean freezeLocation) {
+        Map<String, Object> location = lookups.requireLocation(locationId);
+        String countType = countTypeIn != null ? countTypeIn : "cycle";
         Scope scope = resolveScope(countType, scopeCategoryIds, scopeProductIds);
+        if ("opening".equals(countType)) {
+            assertOpeningAllowed(locationId, location);
+        }
+        Map<String, Object> other = openDraftAnyType(locationId);
+        if (other != null && !countType.equals(str(other, "countType"))) {
+            throw ApiException.conflict("Location " + location.get("name") + " already has an open "
+                    + other.get("countType") + " count " + other.get("countCode")
+                    + "; submit or cancel it before starting another count there");
+        }
         Map<String, Object> open = openDraft(locationId, countType);
         if (open != null) {
             long counted = jdbc.sql("SELECT count(*) FROM \"InventoryCountLine\" WHERE \"sessionId\" = ?"
@@ -259,6 +378,10 @@ public class InventoryCountService {
                             + " WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL AND status = 'draft'")
                     .params(TenantContext.userId(), open.get("id"), org()).update();
         }
+        if (freezeLocation) {
+            // L3b exclusive (polled, never queued): every move in flight at the location ends before the snapshot.
+            stock.lockFreezeExclusive(locationId);
+        }
         List<Map<String, Object>> lines = buildLines(locationId, scope, perLot);
         String countCode = seq.next("inv_count", "CNT-", 5);
         String id = UUID.randomUUID().toString();
@@ -266,11 +389,12 @@ public class InventoryCountService {
             jdbc.sql("SAVEPOINT count_start").update();
             jdbc.sql("INSERT INTO \"InventoryCountSession\" (id, \"organizationId\", \"countCode\", name, \"locationId\","
                             + " \"countType\", status, blind, \"scopeCategoryIds\", \"scopeProductIds\", notes, \"startedById\","
-                            + " \"createdBy\", \"startedAt\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, ?,"
-                            + " ?::\"InventoryCountType\", 'draft', ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ", " + NOW + ")")
+                            + " \"createdBy\", \"freezeLocation\", \"startedAt\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?,"
+                            + " ?, ?, ?::\"InventoryCountType\", 'draft', ?, ?, ?, ?, ?, ?, ?, " + NOW + ", " + NOW + ", " + NOW
+                            + ")")
                     .params(id, org(), countCode, autoName(countType), locationId, countType, Boolean.TRUE.equals(blind),
                             scope.categoryIds().toArray(String[]::new), scope.productIds().toArray(String[]::new), notes,
-                            TenantContext.userId(), TenantContext.userId())
+                            TenantContext.userId(), TenantContext.userId(), freezeLocation)
                     .update();
             jdbc.sql("RELEASE SAVEPOINT count_start").update();
         } catch (DataIntegrityViolationException err) {
@@ -278,6 +402,12 @@ public class InventoryCountService {
             Map<String, Object> existing = openDraft(locationId, countType);
             if (existing != null) {
                 return get(str(existing, "id"), false);
+            }
+            Map<String, Object> raced = openDraftAnyType(locationId);
+            if (raced != null) {
+                throw ApiException.conflict("Location " + location.get("name") + " already has an open "
+                        + raced.get("countType") + " count " + raced.get("countCode")
+                        + "; submit or cancel it before starting another count there");
             }
             throw err;
         }
@@ -293,6 +423,43 @@ public class InventoryCountService {
                     .update();
         }
         return get(id, false);
+    }
+
+    /** S4: the open draft of a location, whatever its type (the oldest when legacy data has several). */
+    private Map<String, Object> openDraftAnyType(String locationId) {
+        return SqlRows.one(InventoryCountSession.class, jdbc.sql("SELECT * FROM \"InventoryCountSession\" WHERE"
+                        + " \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"locationId\" = ? AND status = 'draft'"
+                        + " ORDER BY \"startedAt\" ASC LIMIT 1")
+                .params(org(), locationId));
+    }
+
+    /**
+     * S1: an opening count values its stock against opening equity, so it is only for a location that has never held
+     * stock (no ledger row) and only once (no submitted opening count). It needs {@code inventory_valuation:manage}
+     * (the authority that approves valuation changes), checked again at submit.
+     */
+    private void assertOpeningAllowed(String locationId, Map<String, Object> location) {
+        boolean history = !jdbc.sql("SELECT 1 FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"locationId\" = ?"
+                + " LIMIT 1").params(org(), locationId).query().listOfRows().isEmpty();
+        if (history) {
+            throw ApiException.badRequest("An opening count is only for a location with no stock history; "
+                    + location.get("name") + " already has stock movements. Use a cycle or closing count.");
+        }
+        boolean done = !jdbc.sql("SELECT 1 FROM \"InventoryCountSession\" WHERE \"organizationId\" = ? AND \"locationId\" = ?"
+                + " AND \"countType\" = 'opening' AND status = 'submitted' AND \"deletedAt\" IS NULL LIMIT 1")
+                .params(org(), locationId).query().listOfRows().isEmpty();
+        if (done) {
+            throw ApiException.badRequest("Location " + location.get("name") + " already had its opening count.");
+        }
+        assertOpeningAuthority();
+    }
+
+    private static void assertOpeningAuthority() {
+        java.util.List<String> perms = TenantContext.permissions();
+        if (perms != null && !perms.contains(com.inventoryerp.kernel.security.Permissions.INVENTORY_VALUATION__MANAGE)) {
+            throw ApiException.forbidden("An opening count values stock against opening equity: it needs the"
+                    + " inventory_valuation:manage permission.");
+        }
     }
 
     private Map<String, Object> openDraft(String locationId, String countType) {
@@ -312,7 +479,7 @@ public class InventoryCountService {
             throw ApiException.notFound("Location not found");
         }
         locationScope.assertAllowed(locationId);
-        String countType = countTypeIn != null ? countTypeIn : "opening";
+        String countType = countTypeIn != null ? countTypeIn : "cycle";
         Map<String, Object> draft = openDraft(locationId, countType);
         if (draft != null) {
             return get(str(draft, "id"), false);
@@ -503,6 +670,9 @@ public class InventoryCountService {
     @Transactional
     public Map<String, Object> saveDraft(String id, List<DraftLine> lines, String name, String notes) {
         assertDraft(id);
+        // S7: lock the session row (L1), so a save never interleaves with a submit or a cancel.
+        lockSession(id);
+        assertDraft(id);
         Map<String, Map<String, Object>> existing = new HashMap<>();
         for (Map<String, Object> l : SqlRows.list(jdbc.sql("SELECT id, \"systemQty\", \"countedQty\" FROM"
                 + " \"InventoryCountLine\" WHERE \"sessionId\" = ? AND \"organizationId\" = ?").params(id, org()))) {
@@ -523,9 +693,15 @@ public class InventoryCountService {
             params.add(counted);
             params.add(variance);
             params.add(l.reason());
-            if (changed) {
-                set.append(", \"countedById\" = ?, \"countedAt\" = ").append(counted == null ? "NULL" : NOW);
-                params.add(counted == null ? null : user);
+            if (changed || l.countedAt() != null) {
+                if (counted != null && l.countedAt() != null) {
+                    set.append(", \"countedById\" = ?, \"countedAt\" = ?");
+                    params.add(user);
+                    params.add(SqlRows.ts(l.countedAt()));
+                } else {
+                    set.append(", \"countedById\" = ?, \"countedAt\" = ").append(counted == null ? "NULL" : NOW);
+                    params.add(counted == null ? null : user);
+                }
             }
             if (l.missingSerials() != null) {
                 set.append(", \"missingSerials\" = ?");
@@ -596,9 +772,12 @@ public class InventoryCountService {
             productIds.add(str(l, "productId"));
         }
         List<String> ids = List.copyOf(productIds);
+        // IPR X-1 (ADR-S088): movements are carried forward by when they happened (effective time), not when their row
+        // was written: a sale made before the count but posted after it is part of the book the count compares with.
         List<Map<String, Object>> moves = SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"batchId\","
-                        + " \"quantityChange\", \"createdAt\" FROM \"InventoryLedger\" WHERE \"organizationId\" = :org"
-                        + " AND \"locationId\" = :loc AND \"createdAt\" > :since AND \"productId\" IN (:ids)")
+                        + " \"quantityChange\", COALESCE(\"effectiveAt\", \"createdAt\") AS \"createdAt\" FROM"
+                        + " \"InventoryLedger\" WHERE \"organizationId\" = :org AND \"locationId\" = :loc"
+                        + " AND COALESCE(\"effectiveAt\", \"createdAt\") > :since AND \"productId\" IN (:ids)")
                 .param("org", org()).param("loc", locationId).param("since", SqlRows.ts(earliest)).param("ids", ids));
         Map<String, Map<String, Object>> items = new HashMap<>();
         for (Map<String, Object> si : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", quantity,"
@@ -680,7 +859,19 @@ public class InventoryCountService {
      */
     @Transactional
     public Map<String, Object> submit(String id, Boolean force, String forceReason) {
+        Map<String, Object> draft = assertDraft(id);
+        // IPR 1b (count spec section 5, D1): drain the sale stock postings of the location first, each in its own
+        // transaction and before any lock of this submit is taken (the job → invoice lock order stays as it is).
+        SaleStockDrain drain = saleDrain.getIfAvailable();
+        if (drain != null) {
+            drain.drainAt(str(draft, "locationId"));
+        }
+        // S7: the session row (L1) for the rest of the submit.
+        lockSession(id);
         Map<String, Object> head = assertDraft(id);
+        if ("opening".equals(str(head, "countType"))) {
+            assertOpeningAuthority();
+        }
         List<Map<String, Object>> lines = SqlRows.list(InventoryCountLine.class, jdbc.sql("SELECT * FROM"
                 + " \"InventoryCountLine\" WHERE \"sessionId\" = ? AND \"organizationId\" = ?").params(id, org()));
         List<Map<String, Object>> counted = lines.stream().filter(l -> l.get("countedQty") != null).toList();
@@ -701,7 +892,21 @@ public class InventoryCountService {
                     + approval.get("requestId") + ".");
         }
         stock.lockQuants(str(head, "locationId"), counted);
+        // A device's count (offline work) is never refused for a stuck posting: when that posting is finally
+        // resolved it reaches the ledger as a late row of this count and is corrected (count spec section 4).
+        com.inventoryerp.kernel.common.EffectiveTime.Context timeCtx = com.inventoryerp.kernel.common.EffectiveTime
+                .current();
+        if (drain != null && (timeCtx == null || !timeCtx.offline())) {
+            java.util.Set<String> products = new java.util.LinkedHashSet<>();
+            counted.forEach(l -> products.add(str(l, "productId")));
+            int stuck = drain.stuckAt(str(head, "locationId"), products);
+            if (stuck > 0) {
+                throw ApiException.conflict(stuck + " sale stock posting(s) at this location are not done; resolve them in"
+                        + " the Posting Monitor, then submit the count again");
+            }
+        }
         Measured locked = measure(head, counted, overwrite, forceReason);
+        recordMeasuredSeq(str(head, "locationId"), counted);
         if (gateOutcomeMayChange(approval, pre, locked)) {
             throw ApiException.conflict("Stock moved while the count was being submitted; submit it again.");
         }
@@ -743,13 +948,14 @@ public class InventoryCountService {
             List<String> serials = p.delta().signum() < 0 ? serialList(l.get("missingSerials"))
                     : serialList(l.get("foundSerials"));
             items.add(new CountVariance(str(l, "productId"), str(l, "variantId"), str(l, "unit"), str(l, "batchNumber"),
-                    p.nowQty(), p.nowQty().add(p.delta()), p.delta(), serials, str(l, "batchId")));
+                    p.nowQty(), p.nowQty().add(p.delta()), p.delta(), serials, str(l, "batchId"), str(l, "id"),
+                    p.countedAt()));
         }
         String responsible = session.get("startedById") != null && !str(session, "startedById").isEmpty()
                 ? str(session, "startedById") : user != null ? user : "";
         Map<String, Object> adj = stockDoc.postCountVariances(str(session, "locationId"), responsible,
                 session.get("countType") + " count " + session.get("countCode"), items,
-                "opening".equals(session.get("countType")));
+                "opening".equals(session.get("countType")), id);
         jdbc.sql("UPDATE \"InventoryCountSession\" SET \"adjustmentId\" = ?" + (forcedOver ? ", notes = ?" : "")
                         + ", \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(forcedOver ? List.of(adj.get("id"), appendForceNote(str(session, "notes"), stale.size(),
@@ -893,6 +1099,27 @@ public class InventoryCountService {
             values.put(forced ? "absorbedMovements" : "carriedMovements", stale);
         }
         audit.recordInTx(AuditInput.of("InventoryCountSession", id, "update", null, values));
+    }
+
+    /** S7: lock the count session row (lock level L1). */
+    private void lockSession(String id) {
+        jdbc.sql("SELECT id FROM \"InventoryCountSession\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(id, org()).query().listOfRows();
+    }
+
+    /**
+     * Count spec section 1: under the cell locks (L4), record per counted line the highest ledger seq of its cell the
+     * measurement saw. A row of the cell with a higher seq was written after the count was measured (late
+     * transactions, section 4).
+     */
+    private void recordMeasuredSeq(String locationId, List<Map<String, Object>> counted) {
+        for (Map<String, Object> l : counted) {
+            Long max = jdbc.sql("SELECT COALESCE(MAX(seq), 0) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                            + " AND \"locationId\" = ? AND \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ?")
+                    .params(org(), locationId, l.get("productId"), l.get("variantId")).query(Long.class).single();
+            jdbc.sql("UPDATE \"InventoryCountLine\" SET \"measuredSeq\" = ? WHERE id = ? AND \"organizationId\" = ?")
+                    .params(max, l.get("id"), org()).update();
+        }
     }
 
     /** Abandon a draft count without touching stock. */

@@ -792,7 +792,9 @@ public class InventoryIntegrityService {
                 WITH r AS (SELECT r.id, r."reversesLedgerId" AS oid, r."quantityChange" AS q
                              FROM "InventoryLedger" r
                             WHERE r."organizationId" = :org AND r."reversesLedgerId" IS NOT NULL
-                              AND r."quantityChange" <> 0),
+                              AND r."quantityChange" <> 0
+                              -- IPR 1b (count spec 3.1): a late count correction may exceed its variance row by design
+                              AND COALESCE(r."referenceType", '') <> 'inventory_count_late_correction'),
                      rr AS (SELECT oid, SUM(q) AS q FROM r GROUP BY oid),
                      net AS (SELECT r.oid, SUM(r.q + COALESCE(rr.q, 0)) AS back
                                FROM r LEFT JOIN rr ON rr.oid = r.id GROUP BY r.oid)
@@ -1139,7 +1141,8 @@ public class InventoryIntegrityService {
 
     /**
      * Informational (R3): ledger rows of the last {@link #PERIOD_SHIFT_LOOKBACK} whose inventory journal is dated in
-     * another period than the movement was recorded (createdAt in the organisation's zone). The journal is matched as
+     * another period than the movement happened (IPR 1b / ADR-S088: its effective time, else createdAt for rows before
+     * V700, in the organisation's zone): effective period vs posting period. The journal is matched as
      * the GL tie-out dates rows (ledger code, else reference id, when that source's entries fall on one day). A period
      * is the shortest fiscal period holding the date, else its calendar month. Grouped by source type and period pair.
      */
@@ -1155,7 +1158,8 @@ public class InventoryIntegrityService {
                                AND e."createdAt" >= CAST(:since AS timestamp) - interval '1 day'
                              GROUP BY 1),
                      x AS (SELECT l."referenceType",
-                                  ((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE :tz)::date AS moved_on,
+                                  ((COALESCE(l."effectiveAt", l."createdAt") AT TIME ZONE 'UTC') AT TIME ZONE :tz)::date
+                                      AS moved_on,
                                   COALESCE(CASE WHEN date_trunc('day', jc.pd) = date_trunc('day', jc.pd_max) THEN jc.pd END,
                                            CASE WHEN date_trunc('day', jr.pd) = date_trunc('day', jr.pd_max) THEN jr.pd END
                                   )::date AS posted_on

@@ -9,6 +9,7 @@ import com.inventoryerp.beverage.domain.BottleCountSession;
 import com.inventoryerp.inventory.application.StockDocService;
 import com.inventoryerp.inventory.application.StockDocService.DocInput;
 import com.inventoryerp.inventory.application.StockDocService.DocLine;
+import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.auth.PasswordService;
@@ -89,8 +90,11 @@ public class BeverageCountService {
     private final PasswordService password;
     private final StockDocService stockDoc;
 
+    private final StockService stock;
+
     public BeverageCountService(JdbcClient jdbc, SequenceService seq, AuditService audit, PasswordService password,
-            StockDocService stockDoc) {
+            StockDocService stockDoc, StockService stock) {
+        this.stock = stock;
         this.jdbc = jdbc;
         this.seq = seq;
         this.audit = audit;
@@ -465,11 +469,43 @@ public class BeverageCountService {
         }
 
         String adjustmentId = null;
-        if (!varianceLines.isEmpty()) {
+        // IPR X-1d (ADR-S088, count spec section 2.3): each weighed line posts against the book at the moment it was
+        // weighed — counted + movements after it (by effective time) − on-hand now — measured under the quant locks
+        // (L3/L4, after the session row L1). A shot sold between weighing and submit is no longer put back.
+        List<Map<String, Object>> postLines = new ArrayList<>();
+        Map<String, BigDecimal> actual = new HashMap<>();
+        if (!counted.isEmpty()) {
+            String loc = str(session, "locationId");
+            List<Map<String, Object>> cells = new ArrayList<>();
+            for (Map<String, Object> l : counted) {
+                Map<String, Object> cell = new HashMap<>();
+                cell.put("productId", l.get("productId"));
+                cell.put("variantId", null);
+                cells.add(cell);
+            }
+            stock.lockQuants(loc, cells);
+            for (Map<String, Object> l : counted) {
+                java.time.Instant at = l.get("countedAt") instanceof java.time.Instant t ? t
+                        : (java.time.Instant) session.get("startedAt");
+                BigDecimal after = jdbc.sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\""
+                                + " WHERE \"organizationId\" = ? AND \"locationId\" = ? AND \"productId\" = ?"
+                                + " AND \"variantId\" IS NULL AND COALESCE(\"effectiveAt\", \"createdAt\") > ?")
+                        .params(org(), loc, l.get("productId"), SqlRows.ts(at)).query(BigDecimal.class).single();
+                BigDecimal now = jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                                + " AND \"locationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ''")
+                        .params(org(), loc, l.get("productId")).query(BigDecimal.class).single();
+                BigDecimal target = dec(l, "countedMl").add(after);
+                if (target.compareTo(now) != 0) {
+                    postLines.add(l);
+                    actual.put(str(l, "id"), target);
+                }
+            }
+        }
+        if (!postLines.isEmpty()) {
             List<DocLine> items = new ArrayList<>();
-            for (Map<String, Object> l : varianceLines) {
+            for (Map<String, Object> l : postLines) {
                 items.add(new DocLine(str(l, "productId"), null, str(l, "unit"), null, null, null, null,
-                        dec(l, "countedMl"), null));
+                        actual.get(str(l, "id")), null));
             }
             String startedBy = str(session, "startedById");
             String responsible = startedBy != null && !startedBy.isEmpty() ? startedBy : user != null ? user : "";
