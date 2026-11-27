@@ -57,6 +57,14 @@ public class InvoicingWorkflowsInitializer {
         this.withholdingCertificates = withholdingCertificates;
     }
 
+    private com.inventoryerp.inventory.application.StockPostingService stockPosting;
+
+    /** IPR 1d F6 / SW-2: the posting of the journal of a bill's pinned issue-back (StockReversalService below). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockPosting(com.inventoryerp.inventory.application.StockPostingService stockPosting) {
+        this.stockPosting = stockPosting;
+    }
+
     private DocumentFxRates fxRates;
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -281,8 +289,12 @@ public class InvoicingWorkflowsInitializer {
     /**
      * Vendor-bill cancel (review 2026-11-15, P-1; purchase-side twin of B7): the stock the bill auto-received (no
      * receipt to match) goes back out as a return to supplier (Dr GRNI / Cr stock at its issue cost); a difference
-     * from the receipt cost (another layer or average picked) clears GRNI against price variance, so GRNI and stock
-     * both return to their pre-bill state. Runs once per bill.
+     * from the receipt cost clears GRNI against price variance, so GRNI and stock both return to their pre-bill state.
+     * Runs once per bill. IPR F6 / SW-2: through the engine's {@code issueBackReceipt} — each auto-receipt row is
+     * taken back from its own lot (and its own serial units), linked to it ({@code reversesLedgerId}), and only when
+     * it is still on hand (whatever the negative-stock setting): a bill whose goods were sold or moved is refused with
+     * the shortfall, never issued from other layers or below zero. Lock order: the bill (L1, workflow claim), the
+     * receipt rows (L2), then the engine (L3 → L6), then the journals (L7).
      */
     private void returnBillReceivedStock(String billId, String number, Instant issueDate) {
         String org = com.inventoryerp.kernel.tenancy.TenantContext.organizationId();
@@ -291,20 +303,45 @@ public class InvoicingWorkflowsInitializer {
         if (done > 0) {
             return;
         }
+        long receipts = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'vendor_bill'"
+                + " AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" > 0"
+                + " AND \"valuationComponent\" IS NULL").params(billId, org).query(Long.class).single();
+        if (receipts == 0) {
+            return;
+        }
         Instant date = posting.reversalDate(issueDate);
+        String notes = "Return of auto-received stock on cancellation of bill " + number;
+        List<com.inventoryerp.inventory.application.StockReversalService.IssuedBack> back = stockReturns
+                .issueBackReceipt(new com.inventoryerp.inventory.application.StockReversalService.IssueBackReceipt(
+                        "vendor_bill", billId, "vendor_bill_cancel", billId, "return_to_supplier", number, notes, date,
+                        "Bill " + number + " cannot be cancelled",
+                        "Bring the goods back to that location first, or raise a debit note for the bill instead."));
         BigDecimal received = Money.ZERO;
         BigDecimal returned = Money.ZERO;
-        for (Map<String, Object> r : SqlRows.list(jdbc.sql("SELECT \"productId\", \"variantId\", \"locationId\","
-                + " \"quantityChange\", \"unitCost\" FROM \"InventoryLedger\" WHERE \"referenceType\" = 'vendor_bill'"
-                + " AND \"referenceId\" = ? AND \"organizationId\" = ? AND \"quantityChange\" > 0 ORDER BY \"createdAt\", id")
-                .params(billId, org))) {
-            BigDecimal qty = d(r.get("quantityChange"));
-            received = received.add(qty.multiply(d(r.get("unitCost"))));
-            StockMove.Issued out = stock.issue(StockMove.of((String) r.get("productId"), (String) r.get("locationId"),
-                    qty).variant((String) r.get("variantId")).moveType("return_to_supplier")
-                    .source("vendor_bill_cancel", billId).reference(number).date(date)
-                    .notes("Return of auto-received stock on cancellation of bill " + number));
-            returned = returned.add(out.totalValue() == null ? Money.ZERO : out.totalValue());
+        Map<String, Object[]> journal = new LinkedHashMap<>(); // per product, variant, location: {row, value}
+        for (com.inventoryerp.inventory.application.StockReversalService.IssuedBack b : back) {
+            BigDecimal cost = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryLedger\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(b.reversesLedgerId(), org).query(BigDecimal.class).optional()
+                    .orElse(Money.ZERO);
+            received = received.add(b.quantity().multiply(cost == null ? Money.ZERO : cost));
+            BigDecimal value = b.totalValue() == null ? Money.ZERO : b.totalValue();
+            returned = returned.add(value);
+            Object[] acc = journal.computeIfAbsent(b.productId() + "|" + b.variantId() + "|" + b.locationId(),
+                    k -> new Object[] {b, Money.ZERO, Money.ZERO});
+            acc[1] = ((BigDecimal) acc[1]).add(value);
+            acc[2] = ((BigDecimal) acc[2]).add(b.quantity());
+        }
+        // The engine issued quantity only (skipGl): Dr GRNI / Cr stock at the layers' own cost, as its own issue
+        // posting would (movement type RETURN_TO_SUPPLIER, stamped with product and location).
+        for (Object[] acc : journal.values()) {
+            com.inventoryerp.inventory.application.StockReversalService.IssuedBack b =
+                    (com.inventoryerp.inventory.application.StockReversalService.IssuedBack) acc[0];
+            BigDecimal value = (BigDecimal) acc[1];
+            if (value.signum() > 0) {
+                stockPosting.postIssue(new com.inventoryerp.inventory.application.StockPostingService.IssuePosting(
+                        b.productId(), b.locationId(), b.variantId(), (BigDecimal) acc[2], date, "vendor_bill_cancel",
+                        billId, null, "Return to supplier · bill " + number, "RETURN_TO_SUPPLIER", value));
+            }
         }
         BigDecimal diff = received.subtract(returned).setScale(6, java.math.RoundingMode.HALF_UP);
         if (diff.abs().compareTo(new BigDecimal("0.005")) >= 0) {
@@ -616,7 +653,8 @@ public class InvoicingWorkflowsInitializer {
                     .variant((String) line.get("variantId"))
                     .uom(line.get("uomFactor") == null ? (String) product.get("purchaseUomId") : (String) line.get("uomId"),
                             line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
-                    .notes("Auto-receive for bill " + full.get("documentNumber"));
+                    .notes("Auto-receive for bill " + full.get("documentNumber"))
+                    .sourceLine((String) line.get("id")); // IPR 1d: the bill line on its ledger row (SW-5)
             stock.receiveFromBill(m, id, instant(full.get("issueDate")));
             // Purchase readiness H1: a later goods receipt of this supplier absorbs this quantity instead of adding it.
             matcher.recordAutoReceipt(ctx.organizationId(), id, (String) line.get("id"), partnerId,

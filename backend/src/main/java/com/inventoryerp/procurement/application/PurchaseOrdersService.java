@@ -952,13 +952,14 @@ public class PurchaseOrdersService {
                     continue;
                 }
                 // P0-5: a foreign-currency PO prices in its own currency; stock and GRNI carry the functional value.
-                BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate)
-                        : Money.dec(product.get("costPrice"));
+                // IPR C-3 / GL-6 (D3): a line without a price enters at the current cost (it took the cost price).
+                BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate) : null;
                 StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), stockQty).unitCost(unitCost)
                         .variant(r.variantId())
                         .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
                         .expiry(rln.expiryDate())
-                        .reference("GRN " + receiptNumber);
+                        .reference("GRN " + receiptNumber)
+                        .sourceLine((String) grnLines.get(lineIdx).get("id")); // IPR 1d: the receipt line
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", grnId, date));
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 Map<String, Object> poLine = r.resolvedLineId() == null ? null : poLines.get(r.resolvedLineId());

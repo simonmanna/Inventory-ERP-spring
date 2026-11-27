@@ -579,17 +579,18 @@ public class GoodsReceiptsService {
                 Map<String, Object> poLine = orderLines == null ? null
                         : orderLines.resolve((String) ln.get("purchaseOrderLineId"), (String) ln.get("productId"));
                 // An order line is valued at its (possibly zero) order price, as the PO receive route does; a line
-                // without one falls back to the product cost when it carries no cost.
+                // without one and without a cost enters at the current cost (IPR C-3 / GL-6, owner decision D3:
+                // location average, then last receipt, then cost price; it took the cost price).
                 StockMove move = StockMove.of((String) ln.get("productId"), (String) grn.get("warehouseId"),
                                 stockQty).variant((String) ln.get("variantId"))
-                        .unitCost(poLine != null || unitCost.signum() > 0 ? unitCost.multiply(rate)
-                                : Money.dec(product.get("costPrice")))
+                        .unitCost(poLine != null || unitCost.signum() > 0 ? unitCost.multiply(rate) : null)
                         .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), product),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor")))
                         .batch((String) ln.get("batchNumber"))
                         .expiry(ln.get("expiryDate") == null ? null : ln.get("expiryDate").toString())
-                        .reference("GRN " + grn.get("receiptNumber")).effectiveAt(effectiveAt);
+                        .reference("GRN " + grn.get("receiptNumber")).effectiveAt(effectiveAt)
+                        .sourceLine((String) ln.get("id")); // IPR 1d: the receipt line on its ledger row
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", id, date));
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 receiptNet = receiptNet.add(lineNet);

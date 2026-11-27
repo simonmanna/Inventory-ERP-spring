@@ -107,9 +107,8 @@ public class InvoiceGoodsService {
             if (from == null) {
                 throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
             }
-            BigDecimal factor = factor(productId, (String) line.get("uomId"), line.get("uomFactor"));
             reservations.assertNotReservedForSalesOrders(productId, (String) line.get("variantId"), from,
-                    qty.multiply(factor));
+                    baseQuantity(productId, qty, (String) line.get("uomId"), line.get("uomFactor")));
             StockMove m = StockMove.of(productId, from, qty).variant((String) line.get("variantId"))
                     .uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
                     .date(date).source("sales_invoice", (String) doc.get("id")).sourceLine((String) line.get("id"))
@@ -147,6 +146,15 @@ public class InvoiceGoodsService {
 
     private Map<String, Object> product(String id) {
         return SqlRows.one(jdbc.sql("SELECT * FROM \"Product\" WHERE id = ? AND \"deletedAt\" IS NULL LIMIT 1").param(id));
+    }
+
+    /**
+     * IPR E-2a: base units of a line quantity by the engine's one rule ({@link StockService#returnBaseQuantity}: the
+     * snapshot factor, else the live conversion, else the quantity); a zero snapshot counts as none.
+     */
+    private BigDecimal baseQuantity(String productId, BigDecimal qty, String uomId, Object snapshot) {
+        BigDecimal factor = snapshot != null && d(snapshot).signum() > 0 ? d(snapshot) : null;
+        return stock.returnBaseQuantity(productId, qty, uomId, factor);
     }
 
     private BigDecimal factor(String productId, String uomId, Object snapshot) {
@@ -245,7 +253,7 @@ public class InvoiceGoodsService {
                 continue;
             }
             BigDecimal factor = factor(productId, (String) l.get("uomId"), l.get("uomFactor"));
-            BigDecimal base = qty.multiply(factor);
+            BigDecimal base = baseQuantity(productId, qty, (String) l.get("uomId"), l.get("uomFactor"));
             tracked.add(new Object[] {l, factor, base});
             pool.merge(Arrays.asList(productId, (String) l.get("variantId")), base, BigDecimal::add);
         }
@@ -297,16 +305,40 @@ public class InvoiceGoodsService {
                 continue;
             }
             pool.put(key, left.subtract(base));
-            BigDecimal qty = base.divide(factor, 3, RoundingMode.HALF_UP);
+            // IPR review (unit rounding over-issue): 2 base units left in packs of 3 used to read 0.667 pack
+            // (HALF_UP), which issues 2.001. The line unit is kept only when it states the base quantity exactly;
+            // otherwise the line is given in base units (no unit, factor 1), so what is issued never exceeds what is
+            // undelivered.
+            String uomId = (String) l.get("uomId");
+            BigDecimal unitPrice = l.get("unitPrice") == null ? null : d(l.get("unitPrice"));
+            BigDecimal qty = lineQuantity(base, factor);
+            if (qty == null) {
+                uomId = null;
+                unitPrice = unitPrice == null || factor.signum() <= 0 ? unitPrice : Money.div(unitPrice, factor);
+                factor = BigDecimal.ONE;
+                qty = base.setScale(3, RoundingMode.DOWN);
+            }
             if (qty.signum() <= 0) {
                 continue;
             }
             out.add(new UndeliveredLine((String) l.get("id"), (String) l.get("productId"), (String) l.get("variantId"),
-                    (String) l.get("description"), (String) l.get("uomId"), factor, qty, base,
-                    l.get("unitPrice") == null ? null : d(l.get("unitPrice")),
+                    (String) l.get("description"), uomId, factor, qty, base, unitPrice,
                     l.get("discountPercent") == null ? null : d(l.get("discountPercent")), (String) l.get("taxId")));
         }
         return out;
+    }
+
+    /**
+     * IPR review (unit rounding over-issue): {@code base} base units in the line unit of {@code factor} base units, when
+     * that states them exactly at 3 decimals (rounded down, never above); null when it cannot (2 base units in packs of
+     * 3 = 0.666… pack): the caller then gives the line in base units.
+     */
+    static BigDecimal lineQuantity(BigDecimal base, BigDecimal factor) {
+        if (factor == null || factor.signum() <= 0) {
+            return null;
+        }
+        BigDecimal qty = base.divide(factor, 3, RoundingMode.DOWN);
+        return qty.multiply(factor).compareTo(base) == 0 ? qty : null;
     }
 
     // ------------------------------------------------------------------ issue undelivered (customer collection)
