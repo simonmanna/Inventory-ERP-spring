@@ -96,14 +96,10 @@ class MaterialLedgerRaceIT extends InventoryAuditSupport {
                 + " 'material_ledger_run' AND \"sourceId\" = ?", org, runId)).isEqualTo(1);
         assertThat(valueRows(runId, "material_ledger_run", runId)).as("value rows written once").isEqualTo(1);
         assertThat(valueSum("material_ledger_run", runId)).isEqualByComparingTo("45");
-        // Known defect (pre-existing, reported in docs/audits/ipr-evidence/4-golive-p2.md): the run debits
-        // stock_valuation stamped with the product, while valuation_vs_gl_by_product leaves the run's value-only
-        // price_difference rows out of the subledger side. The per-product gap is the delta of ONE post (45), which
-        // also proves the run did not post twice; every other check is green.
-        JsonNode report = integrityReport();
-        assertThat(failingChecks(report, "checks")).as("integrity checks after the post")
-                .allMatch(c -> c.startsWith("valuation_vs_gl_by_product"));
-        assertThat(productGap(report, bolt)).as("one post's delta").isEqualByComparingTo("-45");
+        // IPR wave 3 (E3): the run posts to the price-difference adjunct, so every check is green; the adjunct carries
+        // the delta of ONE post (45), which also proves the run did not post twice.
+        assertIntegrityGreen();
+        assertThat(balance("inventory_price_difference")).as("one post's delta").isEqualByComparingTo("45");
         assertGlTieOut();
 
         String entryId = okA(200, "GET", path, null).get("journalEntryId").asString();

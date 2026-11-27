@@ -99,7 +99,9 @@ class GraniteQuarryDemoSeedIT extends ApiTestSupport {
         BigDecimal actualCosts = balance("6310").add(balance("6320")).add(balance("6330")).add(balance("6340"))
                 .add(balance("6410")).add(balance("6420")).add(balance("5710")).add(balance("5600"));
         money(actualCosts, "27430000");
-        money(balance("1400"), "17555000");
+        // IPR C-3 / GL-6 (D3): the seeded widget stock is received with a blank cost, which is now the current cost
+        // (its cost price), so the opening inventory journal carries its 600.
+        money(balance("1400"), "17555600");
         money(balance("1420"), "0");
         money(balance("1300"), "30820000");
         money(balance("1200"), "136000000");
