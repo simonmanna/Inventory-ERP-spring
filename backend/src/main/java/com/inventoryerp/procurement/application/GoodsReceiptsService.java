@@ -244,9 +244,24 @@ public class GoodsReceiptsService {
                 Map<String, Object> poLine = poLineId == null ? null : SqlRows.one(jdbc.sql("SELECT \"unitOfMeasureId\","
                         + " \"uomFactor\", \"variantId\" FROM \"PurchaseOrderLine\" WHERE id = ? AND \"organizationId\" = ?")
                         .params(poLineId, orgId));
-                // ADR-S058: the PO line's variant wins; a free receipt line names its own.
-                String variantId = poLine != null && poLine.get("variantId") != null ? (String) poLine.get("variantId")
-                        : stringOrNull(ln.get("variantId"));
+                // Purchase readiness (2026-11-27): a product-only line of a PO receipt advances the order's only line of
+                // its product (as posting resolves it); it is stored on the line so its variant, price and input VAT
+                // come from that order line. The line keeps the unit it was counted in (M-4).
+                Map<String, Object> resolvedLine = orderLines == null ? null
+                        : orderLines.resolve(poLineId, stringOrNull(ln.get("productId")));
+                String lineId = poLineId == null && resolvedLine != null ? (String) resolvedLine.get("id") : poLineId;
+                Map<String, Object> variantSource = poLine != null ? poLine : resolvedLine;
+                // ADR-S058: the PO line's variant wins; a free receipt line names its own. Purchase readiness: a
+                // different variant than the one ordered is refused instead of silently replaced.
+                String askedVariant = stringOrNull(ln.get("variantId"));
+                if (variantSource != null && variantSource.get("variantId") != null && askedVariant != null
+                        && !askedVariant.isEmpty() && !askedVariant.equals(variantSource.get("variantId"))) {
+                    throw ApiException.badRequest("Line \"" + ln.get("description") + "\" names a different variant"
+                            + " than the purchase order line it receives; receive the ordered variant or add the other"
+                            + " variant to the order first");
+                }
+                String variantId = variantSource != null && variantSource.get("variantId") != null
+                        ? (String) variantSource.get("variantId") : askedVariant;
                 ProductVariantService.VariantRef variant = variants.resolve(stringOrNull(ln.get("productId")), variantId);
                 LineUnit unit = purchaseOrders.receiptUnit(poLine, stringOrNull(ln.get("productId")),
                         stringOrNull(ln.get("uomId")));
@@ -262,7 +277,7 @@ public class GoodsReceiptsService {
                                 + " description, quantity, \"unitCost\", \"batchNumber\", \"expiryDate\", notes, \"lineNumber\","
                                 + " \"uomId\", \"uomFactor\", \"variantId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                                 + " RETURNING *")
-                        .params(UUID.randomUUID().toString(), orgId, id, stringOrNull(ln.get("purchaseOrderLineId")),
+                        .params(UUID.randomUUID().toString(), orgId, id, lineId,
                                 stringOrNull(ln.get("productId")), requiredString(ln.get("description")),
                                 requiredDecimal(ln.get("quantity")),
                                 unitCost == null ? BigDecimal.ZERO : unitCost,
@@ -502,6 +517,12 @@ public class GoodsReceiptsService {
                         if (ordered == null) {
                             continue;
                         }
+                        if (l.get("purchaseOrderLineId") == null) {
+                            // Purchase readiness (2026-11-27): a product-only line names the order line it advanced.
+                            jdbc.sql("UPDATE \"GoodsReceiptLine\" SET \"purchaseOrderLineId\" = ? WHERE id = ? AND"
+                                    + " \"organizationId\" = ?").params(ordered.get("id"), l.get("id"), orgId).update();
+                            l.put("purchaseOrderLineId", ordered.get("id"));
+                        }
                         BigDecimal price = PurchaseOrdersService.orderPriceInLineUnit(ordered,
                                 l.get("uomFactor") == null ? null : Money.dec(l.get("uomFactor")));
                         if (price.compareTo(Money.dec(l.get("unitCost"))) != 0) {
@@ -560,8 +581,9 @@ public class GoodsReceiptsService {
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 receiptNet = receiptNet.add(lineNet);
                 if (po != null) {
-                    Map<String, Object> taxLine = ln.get("purchaseOrderLineId") == null ? null
-                            : orderLines.byId().get((String) ln.get("purchaseOrderLineId"));
+                    // Purchase readiness (2026-11-27): the order line resolved as for quantity and price, so a
+                    // product-only line of a PO receipt carries its input VAT too.
+                    Map<String, Object> taxLine = poLine;
                     BigDecimal taxRate = taxLine != null ? Money.dec(taxLine.get("taxRate")) : Money.ZERO;
                     receiptTax = receiptTax.add(Money.div(lineNet.multiply(taxRate), BigDecimal.valueOf(100)));
                 }
@@ -686,11 +708,33 @@ public class GoodsReceiptsService {
             if (claim == 0) {
                 throw ApiException.conflict("Goods receipt was reversed concurrently");
             }
+            String label = "Receipt " + grn.get("receiptNumber") + " cannot be reversed";
+            // Purchase readiness H9b (2026-11-27): quality control is unwound with the receipt — refused while a decided
+            // check holds goods in quarantine; pending post-receipt checks give their quarantined goods back to the
+            // warehouse (the stock-out below takes them from there) and pending checks are cancelled.
+            if (qcGate != null) {
+                qcGate.unwindForReversal("goods_receipt", id, label, "Goods receipt reversed: " + why);
+            }
+            // H9b: a pending incoming inspection of the receipt is cancelled (it would otherwise raise a quality claim
+            // for goods that went back, and keep holding the supplier bill).
+            for (Map<String, Object> insp : SqlRows.list(jdbc.sql("SELECT id FROM \"IncomingInspection\" WHERE"
+                    + " \"organizationId\" = ? AND \"goodsReceiptId\" = ? AND status = 'pending' ORDER BY id FOR UPDATE")
+                    .params(orgId, id))) {
+                jdbc.sql("UPDATE \"IncomingInspection\" SET status = 'cancelled', \"cancelReason\" = ?, \"cancelledBy\" = ?,"
+                                + " \"cancelledAt\" = " + NOW + ", version = version + 1, \"updatedAt\" = " + NOW
+                                + " WHERE id = ? AND \"organizationId\" = ?")
+                        .params("Goods receipt reversed: " + why, user(), insp.get("id"), orgId).update();
+                audit.recordInTx(AuditInput.of("IncomingInspection", (String) insp.get("id"), "update",
+                        Obj.of("status", "pending"), Obj.of("status", "cancelled", "reason", "goods receipt reversed")));
+            }
             boolean hasStock = grnLines.stream().anyMatch(l -> l.get("productId") != null
                     && !((String) l.get("productId")).isEmpty());
             if (hasStock) {
+                // Purchase readiness H9a (2026-11-27): only goods still on hand at the receipt location (in their lot /
+                // serial units, not reserved) can go back, whatever inventory.allowNegativeStock says.
                 reversals.reverseLedgerSource(new LedgerSource("goods_receipt", id, "goods_receipt_reversal", id,
-                        List.of("goods_receipt"), "Reversal of GRN " + grn.get("receiptNumber") + ": " + why, null));
+                        List.of("goods_receipt"), "Reversal of GRN " + grn.get("receiptNumber") + ": " + why, null,
+                        label, "Return the remaining goods to the supplier with a debit note instead."));
             }
             if (poId != null) {
                 Map<String, Object> po = SqlRows.one(jdbc.sql("SELECT id, status::text AS status FROM \"PurchaseOrder\""

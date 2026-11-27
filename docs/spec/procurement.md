@@ -845,3 +845,48 @@ and `/reverse` now require an `Idempotency-Key` (the web always sends one).
 
 **Not changed:** a return does not reduce the PO line's `receivedQuantity` (replacement goods are received on a new
 receipt / order line); left for a separate decision.
+
+## Purchase readiness fixes (owner-approved 2026-11-27)
+
+### Receipts stream (`fix/purchase-receipts`, `V696__purchase_line_value_checks.sql`)
+
+- **H9a — reversal needs the goods on hand.** `PATCH /procurement/goods-receipts/:id/reverse` takes back only what is
+  still at the receipt location, in the received lot / serial units and not reserved, whatever
+  `inventory.allowNegativeStock` says. The check runs inside the stock engine under the quant locks (engine lock
+  order), so a concurrent issue and reversal cannot both take the same units. New 400:
+  `Receipt GRN-… cannot be reversed: only N of M units of <product>[ (<variant>)][, lot L][, serial S] are still in
+  <location>[ (R of what is there is reserved)]. Return the remaining goods to the supplier with a debit note instead.`
+  (`StockReversalService.LedgerSource` gained optional `shortfallLabel` / `shortfallAdvice`; other reversals are
+  unchanged.)
+- **H9b — reversal unwinds quality control and inspection.** In the reversal transaction, before the stock-out:
+  refused while a decided quality check still holds goods in quarantine — 400 `Receipt GRN-… cannot be reversed:
+  quality check QCC-… holds N in quarantine after its decision. Return those goods to the supplier with a debit note or
+  scrap them from quarantine instead.`; a pending post-receipt check moves its quarantined quantity back to the
+  receive location (refused with `Quality check QCC-…: only N of M is left in quarantine, so the receipt cannot be
+  reversed.` when it is no longer there) and every pending generated check is cancelled (`QcGate.unwindForReversal`,
+  `QcQuarantineService.returnOnReversal`). A pending incoming inspection is cancelled (reason `Goods receipt reversed:
+  <reason>`, by the reversing user), which lifts its bill hold. Recording results on or completing the inspection of a
+  reversed receipt is refused: `Goods receipt GRN-… was reversed: its inspection cannot be recorded or completed; cancel
+  the inspection instead` (the completion now locks the receipt first, so it cannot race a reversal).
+- **H10a — purchase request line values.** `quantity` must be > 0 (`quantity must be greater than 0`),
+  `estimatedUnitPrice` ≥ 0 when given (`estimatedUnitPrice must not be negative`), both at most 14 digits and 6
+  decimals. The service repeats the check for paths without the DTO (replenishment, reorder rules):
+  `Line "<description>": quantity must be greater than 0` / `…: estimatedUnitPrice must not be negative`. A
+  zero-value request still routes through approval (a band starting at 0 matches amount 0; no change needed).
+- **H10b — purchase order line tax.** `taxRate` must be 0–100 (route and service). A line with `taxId` takes the Tax
+  master's rate: a different client rate is refused (`Line "<description>": tax rate X% does not match tax <name>
+  (Y%); leave the rate empty to use the tax's rate`); an unknown tax is 404 `Tax not found`; an omitted rate becomes
+  the master's rate. **Behaviour change:** the web PO form sends the product's `taxId` without a rate, so those lines
+  were stored at 0 % and now carry the tax's rate (e.g. VAT 18 %), raising the PO total and the receipt voucher's input
+  VAT. An inclusive or withholding tax with an omitted rate stays at 0 % on the order line. The service also refuses a
+  quantity ≤ 0 or a negative unit price on every order-creating path (RFQ award, agreement release, requisition
+  conversion, portal).
+- **Receipt line resolution.** A product-only line of a PO receipt (no `purchaseOrderLineId`) is stored with the
+  order's only line of that product (draft creation, and at posting for drafts saved earlier), so it takes the
+  order's unit, variant, price and input VAT, and the pay cap sees its tax. A receipt line naming a different variant
+  than its order line is refused: `Line "<description>" names a different variant than the purchase order line it
+  receives; receive the ordered variant or add the other variant to the order first`.
+- **DB:** `V696` adds CHECK constraints `PurchaseRequestLine` quantity > 0 and `estimatedUnitPrice` ≥ 0,
+  `PurchaseOrderLine` quantity > 0, `unitPrice` ≥ 0, `taxRate` 0–100. Added `NOT VALID` then validated when the
+  existing rows comply; on a database with old violating rows the constraint stays `NOT VALID` (new rows are still
+  checked) — fix the rows and run `ALTER TABLE … VALIDATE CONSTRAINT …`.

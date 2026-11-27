@@ -117,6 +117,33 @@ public class QcQuarantineService {
         QcCheckService.event(db, id, "released", null, null, revision, null, Obj.of("released", release, "kept", keep));
     }
 
+    /**
+     * Purchase readiness H9b: the receipt of a still-pending post-receipt check is reversed. Its quarantined quantity
+     * goes back to the receive location (strict: refused when it is no longer all in quarantine), so the reversal can
+     * take it out of stock there. Idempotent per revision.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void returnOnReversal(Map<String, Object> check, int revision) {
+        BigDecimal held = QcUtil.dec(check, "quarantinedQty");
+        String id = QcUtil.str(check, "id");
+        String ref = id + ":" + revision + ":reversal";
+        String from = QcUtil.str(check, "quarantineLocationId");
+        String to = QcUtil.str(check, "locationId");
+        if (held.signum() > 0 && from != null && to != null && !moved(ref)) {
+            BigDecimal onHand = onHand(check, from, false);
+            if (onHand.compareTo(held) < 0) {
+                throw ApiException.badRequest("Quality check " + check.get("checkNumber") + ": only "
+                        + onHand.stripTrailingZeros().toPlainString() + " of " + held.stripTrailingZeros().toPlainString()
+                        + " is left in quarantine, so the receipt cannot be reversed.");
+            }
+            transfer(check, from, to, held, ref);
+        }
+        db.update(QcCheck.class, id, Obj.of("quarantinedQty", BigDecimal.ZERO, "quarantineStatus", "completed",
+                "quarantineMoveRef", held.signum() > 0 ? ref : check.get("quarantineMoveRef")));
+        QcCheckService.event(db, id, "released", null, null, revision, "source document reversed",
+                Obj.of("released", held, "kept", BigDecimal.ZERO));
+    }
+
     // ------------------------------------------------------------------ pre-completion failure (lenient)
 
     /**

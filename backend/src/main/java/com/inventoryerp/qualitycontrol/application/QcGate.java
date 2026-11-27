@@ -140,6 +140,36 @@ public class QcGate {
         }
     }
 
+    /**
+     * Purchase readiness H9b (2026-11-27): the source document (a posted goods receipt) is being reversed, in the
+     * caller's transaction and before its stock moves. Refused while a decided check still holds stock in quarantine
+     * (the decision moved goods the reversal would not find): 400 {@code "<label>: quality check QCC-… holds N in
+     * quarantine after its decision. …"}. A pending post-receipt check gives its quarantined quantity back to the
+     * receive location, so the reversal takes it out from there; then every pending generated check is cancelled.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void unwindForReversal(String sourceType, String sourceId, String label, String reason) {
+        db.jdbc().sql("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))::text")
+                .param("qc:" + QcDb.org() + "|" + sourceType + "|" + sourceId).query(String.class).list();
+        List<Map<String, Object>> checks = db.list(QcCheck.class, " AND \"sourceType\" = ? AND \"sourceId\" = ? AND"
+                + " status <> 'cancelled' ORDER BY \"productId\" NULLS LAST, \"checkNumber\" FOR UPDATE", sourceType,
+                sourceId);
+        for (Map<String, Object> c : checks) {
+            BigDecimal held = QcUtil.dec(c, "quarantinedQty");
+            if (held.signum() > 0 && !"pending".equals(QcUtil.str(c, "quarantineStatus"))) {
+                throw ApiException.badRequest(label + ": quality check " + c.get("checkNumber") + " holds "
+                        + held.stripTrailingZeros().toPlainString() + " in quarantine after its decision. Return those"
+                        + " goods to the supplier with a debit note or scrap them from quarantine instead.");
+            }
+        }
+        for (Map<String, Object> c : checks) {
+            if ("pending".equals(QcUtil.str(c, "status")) && "pending".equals(QcUtil.str(c, "quarantineStatus"))) {
+                quarantine.returnOnReversal(c, QcUtil.integer(c, "currentRevision"));
+            }
+        }
+        cancelFor(sourceType, sourceId, List.of(), reason);
+    }
+
     // ================================================================== generation
 
     /** Applies the generator for one phase; returns the checks it created. */
