@@ -444,6 +444,42 @@ P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same
     it now also writes a value-only `cost_adjustment` ledger row (quantity 0, value = −correction, balance = the quant
     balance) with the same reference, as the AVCO residue sweep does, so Σ ledger value = valuation = GL. Reversals
     skip zero-quantity rows and keep not mirroring the journal.
+55. **Effective time and count cut-off (IPR 1b, ADR-S088, count spec; integrator decisions P15-1/P15-2, owner
+    sign-off pending).** Every new ledger row records `effectiveAt` (when the goods moved; ADR-S088 "Implementation").
+    Counts carry movements forward by `COALESCE("effectiveAt","createdAt")` instead of `createdAt`
+    (`InventoryCountService.postings`, `SyncStockService.movedSince`, `BeverageCountService.submit`, fleet tank dip
+    `levelAt`). `adjust` / `transfer` post their journals on `StockMove.date` (default now) and their memos end with
+    the ledger code (SW-6).
+56. **Count submit drains, measures and reconciles late rows (IPR 1b T11).** `POST /inventory/counts/:id/submit` first
+    processes the location's not-done POS stock-posting jobs (each in its own transactions, before any lock), then
+    locks the session row and the cells, and answers **409** "`<n>` sale stock posting(s) at this location are not
+    done; resolve them in the Posting Monitor, then submit the count again" while a job of the location that sells a
+    counted product (or a menu item) is failed or retrying; a device count (offline op) is not refused for this — the
+    stuck sale becomes a late row of the count and is corrected when it finally posts. Each counted line stores `measuredSeq`. A movement that happened before a submitted count's cut-off but
+    is written after the count was measured gets exactly one linked correction row (`referenceType`
+    `inventory_count_late_correction`, `referenceId` = the late row, `sourceLineId` = the count line,
+    `reversesLedgerId` = the count variance row; V701 unique index). Not corrected, listed for a person: serial cells
+    (P15-2), lot/FIFO receipts, reversals, clock-skewed rows, counts submitted before V700. `GET /inventory/counts/:id`
+    adds `lateTransactions` for a submitted count (additive). Spec deviations: the correction is valued at the
+    current AVCO (not the variance row's unit cost, so valuation stays = sub-ledger) and posted today (not on the count
+    date); forced lines are corrected like any other line.
+57. **Count freeze (IPR 1b).** `POST /inventory/counts/start` accepts `freezeLocation` (additive). While such a draft is
+    open, a server-side manual move at the location (direct stock, adjustment, transfer from/to, GRN, any engine move)
+    answers 409 "Location `<name>` is frozen for count `<code>`; submit or cancel the count before moving stock there".
+    Exempt: the session's own posting, sales (POS jobs: `pos*` / `menu_recipe`; back-office sales, deliveries and
+    returns: `cash_sale`, `sales_invoice`, `sales_order(_line)`, `invoice`, `delivery_order`, `sales_delivery`,
+    `sales_return`, `credit_note(_cancel)`; P15-2), late count corrections and offline device work. Lock level L3b `freeze:<org>:<location>` (shared per move, exclusive at
+    start).
+58. **Count guards (IPR 1b T12).** S4: one draft count per location, any type (V701 unique index); starting another
+    type answers 409 "Location `<name>` already has an open `<type>` count `<code>`; submit or cancel it before
+    starting another count there", and `POST /inventory/adjustments/:id/approve` answers 409 while a count is open at
+    the location. S1: the default count type is `cycle` (was `opening`; a start without type and scope now answers 400
+    "A cycle count needs a scope: pick categories or products."); an `opening` count needs
+    `inventory_valuation:manage`, a location with no ledger rows, and no earlier submitted opening count (400
+    otherwise). S7: `saveDraft` and `submit` lock the session row.
+59. **Goods receipt backdating limit (ADR-S088 limit 2, P15-6).** A goods receipt dated more than
+    `inventory.maxBackdateDays` (default 7, 0 = off) before today answers 400 "Goods receipt date is more than N days in
+    the past". Offline receipts are exempt (flagged `lateSync` instead).
 
 ### Negative stock policy (as built; R5a evidence for gate G3)
 

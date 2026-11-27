@@ -85,8 +85,8 @@ is **ADR-S088**.
 | Range | Owner / stream | Planned use | Status |
 |---|---|---|---|
 | ADR-S088 | IPR integrator | Stock movement effective time (`docs/adr/ADR-S088-stock-movement-effective-time.md`) | Proposed (Phase 0) |
-| V700 | IPR engine owner, Phase 1b (T10) | `InventoryLedger."effectiveAt"` `timestamp(3)` **nullable, no default, no backfill** (ADR-S088); `InventoryCountSession."freezeLocation"` freeze flag; `InventoryCountLine."measuredSeq"` (count spec §1) | Reserved, not written |
-| V701 | IPR engine owner, Phase 1b (T12) | Partial unique index: one draft count session per location (S4); partial unique index on late count corrections `("organizationId", "sourceLineId", "referenceId") WHERE "referenceType" = 'inventory_count_late_correction'` (count spec §4.4) | Reserved, not written |
+| V700 | IPR engine owner, Phase 1b (T10) | `InventoryLedger."effectiveAt"` `timestamp(3)` **nullable, no default, no backfill** (ADR-S088); `InventoryCountSession."freezeLocation"` freeze flag; `InventoryCountLine."measuredSeq"` (count spec §1) | **Written** (`V700__stock_effective_time.sql`, branch `fix/ipr-1b`) |
+| V701 | IPR engine owner, Phase 1b (T12) | Partial unique index: one draft count session per location (S4); partial unique index on late count corrections `("organizationId", "sourceLineId", "referenceId") WHERE "referenceType" = 'inventory_count_late_correction'` (count spec §4.4); count type default `cycle` (S1) | **Written** (`V701__count_session_guards.sql`, branch `fix/ipr-1b`) |
 | V702–V709 | IPR Phase 2 (accounting integrity: GL-2, C-3/GL-6, GL-3/GL-10, GL-4, GL-11 WIP tie-out) | as needed by the Phase 2 PRs | Reserved, not written |
 | V710–V714 | IPR Phase 3 (security and controls: SoD seeding, transit-loss approval, reservation source types) | as needed | Reserved, not written |
 | V715–V719 | IPR Phase 4 (opening-stock import: import run, batch with unique `(organizationId, importHash)`) | as needed (R5) | Reserved, not written |

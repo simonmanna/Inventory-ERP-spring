@@ -93,6 +93,21 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   `status = 'open'`), receive under the idempotency key `offline-receipt:<exceptionId>`, mark it resolved. A crash rolls
   all three back (no "applying" state is stored); a concurrent applier (sync job / dispatch sync) skips the row; a
   refusal rolls back and a new transaction marks the row held with the reason. Tests `SyncInventoryRecoveryIT`.
+- **Device time accepted and flagged, never refused (IPR 1b SW-7, ADR-S088, integrator decision P15-1; owner
+  sign-off pending).** `occurredAt` more than `inventory.maxFutureEffectiveMinutes` (5) ahead of the server is replaced
+  by the receive time and raises an `offline_clock_skew` exception; older than `inventory.maxBackdateDays` (7) is kept
+  and raises `offline_late_sync`. Both report-only, for every op type (Nest and the previous build answered 400
+  "occurredAt is in the future — check the device clock" / "occurredAt is more than 7 days old — check the device
+  clock" and dead-lettered the op). A malformed `occurredAt` is still 400. Duplicate protection by opId is unchanged.
+- **Offline stock moves at the device time (IPR 1b M-1).** Every stock move an op makes (stock.in/out, transfers,
+  waste / kitchen.void, goods receipts, the later approval of an offline adjustment, a receipt applied when its
+  dispatch arrives) records the op's (clamped) `occurredAt` as `effectiveAt`. Offline work is exempt from a count
+  freeze and from the back-office backdating limit.
+- **`stock.count` keeps the device figure (IPR 1b X-1c).** The line stores the counted quantity as counted and
+  `countedAt` = the op's (clamped) device time; the carry-forward happens when the count posts, by effective time.
+  Before, the line stored counted + movements written since `occurredAt` (by `createdAt`), which counted a sale made
+  before the count but synced after it twice. The variance posted is the same for in-order work. A spot count on a
+  location that already has an open count of another type now fails with 409 (one draft per location).
 
 ## Extensions (ADR-S083 O0, owner-approved 2026-11-20)
 
