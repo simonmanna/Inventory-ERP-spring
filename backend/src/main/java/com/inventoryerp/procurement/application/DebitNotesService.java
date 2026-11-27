@@ -614,7 +614,6 @@ public class DebitNotesService {
             }
             Map<String, Object> chosen = chosenReturnLocation(note, orgId);
             String apAccount = determination.payableAccount(partnerCol(note, "payableAccountId"));
-            String stockValAccount = determination.mapped("stock_valuation");
             List<Line> postingLines = new ArrayList<>();
             // The supplier's credit (AP part) in the note currency and in the functional one; GRNI cleared.
             BigDecimal apForeign = Money.ZERO;
@@ -672,8 +671,12 @@ public class DebitNotesService {
                     Issued issueRes = stock.issue(move);
                     BigDecimal cost = issueRes == null ? Money.ZERO : Money.dec(issueRes.totalValue());
                     if (cost.signum() > 0) {
+                        // IPR GL-8 (deviation): credit the account the product's receipts debit (its STOCK_IN rule or
+                        // inventory account override), not the organisation's stock valuation account, so the
+                        // per-account tie-out keeps following the product.
+                        String stockAccount = stockPosting.stockAccount((String) ln.get("productId"), cost);
                         postingLines.add(com.inventoryerp.inventory.application.StockPostingService.stampLine(
-                                Line.credit(stockValAccount, JsNumbers.dec(cost), null), (String) ln.get("productId"),
+                                Line.credit(stockAccount, JsNumbers.dec(cost), null), (String) ln.get("productId"),
                                 (String) location.get("id")));
                     }
                     // Return variance: supplier credit (price) plus GRNI cleared vs the stock cost removed.
@@ -896,6 +899,14 @@ public class DebitNotesService {
     }
 
     // ------------------------------------------------------------------ reversal
+
+    private com.inventoryerp.inventory.application.StockPostingService stockPosting;
+
+    /** IPR GL-8: the product's stock account for a return to vendor. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockPosting(com.inventoryerp.inventory.application.StockPostingService stockPosting) {
+        this.stockPosting = stockPosting;
+    }
 
     private com.inventoryerp.accounting.application.DocumentReversalService reversals;
 
