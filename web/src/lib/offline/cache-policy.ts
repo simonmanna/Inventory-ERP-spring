@@ -49,6 +49,8 @@ export const RULES: readonly Rule[] = [
     'communication', 'alerts', 'mobile-money', 'portal',
     // quotation email compose: the recipient lookup is read fresh when the dialog opens
     'quote-email',
+    // IPR R5 opening-stock import: run and batch status change while batches post; never shown stale
+    'opening-stock-runs', 'opening-stock-run', 'opening-stock-reconciliation',
   ]],
   ['cache-strict', [
     /report/, /^balance-sheet/, 'pnl', 'trial-balance', 'general-ledger', /^cash-flow(?!-operation-types)/, 'ap-aging', 'ar-aging',

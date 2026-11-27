@@ -210,6 +210,7 @@ const StockAdjustmentsPage = lazy(() => import('@/pages/inventory/StockAdjustmen
 const WastePage = lazy(() => import('@/pages/inventory/WastePage').then((m) => ({ default: m.WastePage })));
 const StockTransfersPage = lazy(() => import('@/pages/inventory/StockTransfersPage').then((m) => ({ default: m.StockTransfersPage })));
 const InventoryCountPage = lazy(() => import('@/pages/inventory/InventoryCountPage').then((m) => ({ default: m.InventoryCountPage })));
+const OpeningStockImportPage = lazy(() => import('@/pages/inventory/OpeningStockImportPage').then((m) => ({ default: m.OpeningStockImportPage })));
 const InventoryReportsPage = lazy(() => import('@/pages/inventory/InventoryReportsPage').then((m) => ({ default: m.InventoryReportsPage })));
 const BottleCountPage = lazy(() => import('@/pages/beverage/BottleCountPage').then((m) => ({ default: m.BottleCountPage })));
 const BeverageDashboardPage = lazy(() => import('@/pages/beverage/BeverageDashboardPage').then((m) => ({ default: m.BeverageDashboardPage })));
@@ -573,6 +574,7 @@ export function App() {
             <Route path="/inventory/transfers" element={<RequirePermission permission={PERMISSIONS.inventoryDoc.read}><StockTransfersPage /></RequirePermission>} />
             <Route path="/inventory/reports" element={<RequireReport reportId="inventory.reports"><InventoryReportsPage /></RequireReport>} />
             <Route path="/inventory/count" element={<RequirePermission permission={PERMISSIONS.inventoryCount.read}><InventoryCountPage /></RequirePermission>} />
+            <Route path="/inventory/opening-stock" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><OpeningStockImportPage /></RequirePermission>} />
             <Route path="/beverage" element={<BeverageDashboardPage />} />
             <Route path="/beverage/count" element={<BottleCountPage />} />
             {/* Rental — static segments before /rental/agreements/:id */}
