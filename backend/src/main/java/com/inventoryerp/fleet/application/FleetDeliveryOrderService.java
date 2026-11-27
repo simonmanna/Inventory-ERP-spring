@@ -404,8 +404,8 @@ public class FleetDeliveryOrderService {
     @Transactional
     public Map<String, Object> fromInvoice(FromSourceInput in) {
         Map<String, Object> head = SqlRows.one(db.jdbc().sql("SELECT id, \"documentNumber\", status::text AS status,"
-                + " \"partnerId\", \"branchId\", \"deliveryDate\", data->>'" + InvoiceGoodsService.AWAITING + "' AS"
-                + " awaiting FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? AND \"documentType\" ="
+                + " \"partnerId\", \"branchId\", \"deliveryDate\", \"sourceType\", data->>'stockIssuedBy' AS marked, data->>'"
+                + InvoiceGoodsService.AWAITING + "' AS awaiting FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? AND \"documentType\" ="
                 + " 'sales_invoice' FOR UPDATE").params(in.sourceId(), FleetDb.org()));
         if (head == null) {
             throw ApiException.notFound("Invoice not found");
@@ -419,6 +419,22 @@ public class FleetDeliveryOrderService {
             return fromInvoiceAwaiting(in, head, number);
         }
         assertNoLiveOrder("invoice", in.sourceId(), "Invoice " + number);
+        // IPR residual (stream H): an invoice whose stock issue belongs to another document. A sales-order invoice is
+        // marked by its order (the order's own deliveries issue the goods, and may already have), a delivery-order
+        // invoice by that delivery order: a delivery order from the invoice would either never issue the goods
+        // (posted: stock mode invoiced) or issue them a second time (draft: stock mode dispatch). A cash-sale invoice's
+        // goods left stock at the sale's handover: its delivery order carries them in stock mode invoiced and keeps
+        // the cash sale's mark.
+        String marked = str(head.get("marked"));
+        boolean cashSale = "cash_sale".equals(head.get("sourceType"));
+        if (marked != null && !cashSale) {
+            if ("sales_order".equals(head.get("sourceType"))) {
+                throw ApiException.conflict("Invoice " + number + " bills sales order " + marked + ", whose deliveries"
+                        + " issue its goods. Create the delivery order from the sales order.");
+            }
+            throw ApiException.conflict("Invoice " + number + "'s goods leave stock through " + marked
+                    + "; deliver them there.");
+        }
         Map<String, Object> doc = invoices.findOne(in.sourceId());
         List<Line> lines = new ArrayList<>();
         if (doc.get("lines") instanceof List<?> list) {
@@ -447,7 +463,7 @@ public class FleetDeliveryOrderService {
         LocalDate deliveryDate = head.get("deliveryDate") instanceof Instant i
                 ? i.atZone(BusinessZone.get()).toLocalDate() : null;
         Header h = header(in, str(head.get("partnerId")), str(head.get("branchId")), deliveryDate);
-        boolean draft = "draft".equals(status);
+        boolean draft = "draft".equals(status) && !cashSale;
         Map<String, Object> out = insert(h, "invoice", in.sourceId(), number, draft ? "dispatch" : "invoiced",
                 in.sourceId(), number, "document", lines);
         if (draft) {

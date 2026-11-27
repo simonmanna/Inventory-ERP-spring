@@ -79,6 +79,11 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
     `sales_invoice`, `cash_sale`, and the `fleet_trip` rows of its delivery orders. Before, it used only one kind,
     chosen from the mark. The issue loop of the invoice post moved to `InvoiceGoodsService.issueStock` unchanged; F5
     adds a refusal when the stock is reserved for sales orders.
+  - **F11 (IPR residual, stream H).** The vendor-bill auto-receipt values each line at `subtotal / quantity` as a
+    decimal (decimal.js precision, HALF_UP), end to end. Nest (and the port until now) passed the unit cost through a
+    JS number (`toNumber()`), which loses digits above about 10^10: 3 × 33,333,333,333.333333 less 10 % =
+    89,999,999,999.999999 was received at 90,000,000,000.000000. The receipt's value is now the line's subtotal to the
+    ledger's 6 dp, so the GRNI credit of the receipt matches the bill's GRNI debit.
   - **M-29.** Vendor bill cancel takes the supplier lock and locks the bill's `VendorBillAutoReceipt` rows before it
     reads whether a goods receipt absorbed them. A cancel racing an absorbing receipt waits for it and is then
     refused with the existing "cannot be cancelled ... matched by goods receipt" message.

@@ -81,6 +81,18 @@ IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
 - **GL-11: `wip_tieout` report-only integrity check** (new key at the end of `reportOnlyChecks`): GL WIP per cost
   object against the WIP sub-ledger (docs/spec/manufacturing-wip-reconciliation.md). Report-only until the owner
   promotes it to a value check.
+- **GL-11 refinement (stream H): WIP accounts of the tie-out.** `wip_tieout` reads the mapped `wip` account plus every
+  account the active `PRODUCTION_CONSUME` (debit) / `PRODUCTION_OUTPUT` (credit) rules resolve to, resolved as the
+  postings resolve them (`InventoryPostingRuleService.ruleAccounts`): a `category_field` rule per category of the
+  products it covers, a `product_field` rule per product (override, category field, mapping). Accounts that are stock
+  accounts (the `stock_valuation` mapping, a category's inventory account, a product's inventory override) are left
+  out: a rule falling back to them is a misconfiguration the stock tie-outs report.
+- **D-1 (stream H): the base seed journals its opening stock.** `InventorySeedContributor` (order 300) posts the
+  journal of the widget's opening stock (Dr stock valuation / Cr retained earnings, 600, entry `SEED-OPEN-INV-STK`,
+  posting key `seed_opening_inventory:<org>:inventory`) in the same step as the ledger row, so an organisation seeded
+  through `SeedRunner.base()` ties out. `PosSeedContributor` (order 400) journals only the opening stock it seeds
+  (`SEED-OPEN-INV`). A fully seeded new organisation therefore has two opening-stock entries instead of one. Existing
+  organisations are not touched (no auto-repair); the GQDEMO repair is an owner action (evidence 12-residuals §D-1).
 - **GL-10: setting `inventory.closeGate.liveValueChecks`** (organisation, default on): the period close runs the
   inventory value checks live (see accounting.md).
 

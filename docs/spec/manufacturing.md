@@ -155,6 +155,25 @@ IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
   `processCostingWip`, `pendingLateCost`, `failingObjects`; `balanced` also needs every cost object to tie.
   `GET /manufacturing/reports/stage-wip` reads the GL in base currency over posted entries.
 
+IPR residuals, stream H (branch `fix/ipr-12-residuals`, **pending owner sign-off**; evidence
+[12-residuals](../audits/ipr-evidence/12-residuals.md)):
+
+- **D-2: a multi-stage order's reservation follows its stages.** After every stage posting (issue, output, backflush)
+  and every stage-posting reversal of an open order, the order's `production_order` reservation on each cell it
+  reserved (or whose reservation a stage consumed) is set to Σ (planned − consumed) of its materials of that product
+  and variant, in base units; a cell with nothing left is marked `consumed`. A reversal brings the material back
+  into the reservation. Completion and cancel release what is left, as before. Nest kept the planned quantity until
+  completion, so the integrity check `reservations` showed `over_reserved` for every open multi-stage order.
+- **WIP-8: legacy reversal value.** Reversing a completed order whose main output row has no `totalCost` (completions
+  written before the output kept its value) puts back into WIP the value its output receipts carry in the stock
+  ledger (the completion's pool to 6 dp), not `outputUnitCost` (6 dp) × quantity, which left a residual in WIP
+  (pool 1,000,000 over 300,000 units: 0.10). Orders with partial outputs, or without such receipts, keep the old
+  product. Orders with `totalCost` are unchanged.
+- **WIP-7** (report only): the WIP tie-out attributes a process-costing variance entry by its posting key before its
+  `sourceId`, so a process whose code equals a production order's code no longer lands its variance on that order.
+- **D-3** (no contract change): `ProductionService.getProduct` returns every column of the product (it selected only
+  `id` and `uomId`; no caller read another column on this branch, so nothing behaved differently).
+
 Approved by the owner in ADR-S006 (package A, bug fixes; everything else in ADR-S006 is additive):
 
 | # | Route | Nest | Spring |

@@ -219,6 +219,23 @@ public class StockReservationService {
         return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt"));
     }
 
+    /**
+     * IPR D-2: mark one source's active reservation on one stock cell consumed (a multi-stage production order consumed
+     * all it planned from that cell). The cell is locked first, in the engine's order (L4 quant advisory → L5
+     * {@code StockItem}), then the reservation row (L6); a caller that just moved stock at the cell already holds both.
+     *
+     * @return how many reservation rows were consumed (0 or 1)
+     */
+    @Transactional
+    public int consumeCell(String sourceType, String sourceId, String productId, String variantId, String locationId) {
+        lockCell(productId, variantId, locationId);
+        return jdbc.sql("UPDATE \"StockReservation\" SET status = 'consumed'::\"StockReservationStatus\", \"consumedAt\" = "
+                + NOW + ", \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ?"
+                + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND status = 'active'")
+                .params(TenantContext.organizationId(), sourceType, sourceId, productId, variantId == null ? ""
+                        : variantId, locationId).update();
+    }
+
     /** {@code POST /inventory/reservations/release}: {@link #release} limited to the caller's locations. */
     @Transactional
     public Map<String, Object> releaseForUser(String sourceType, String sourceId) {

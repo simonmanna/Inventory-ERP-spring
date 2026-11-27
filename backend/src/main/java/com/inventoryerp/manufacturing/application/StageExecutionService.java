@@ -1026,6 +1026,8 @@ public class StageExecutionService implements StageCheckpointResults {
         lockOrder(str(p, "orderId"));
         reverseOne(postingId, reason);
         refresh(str(p, "orderId"));
+        // IPR D-2: the materials the reversed posting put back are needed again.
+        replanReservations(order(str(p, "orderId")));
         return view(str(p, "orderId"));
     }
 
@@ -1226,8 +1228,65 @@ public class StageExecutionService implements StageCheckpointResults {
                 && !Set.of("completed", "qc_hold").contains(String.valueOf(c.order.get("status")))) {
             // Released after the fact (not consumed): the stage legs already moved real stock.
             reservations.release(ProductionService.SOURCE, c.orderId);
+        } else {
+            replanReservations(after);
         }
         return view(c.orderId);
+    }
+
+    /**
+     * IPR D-2: an open multi-stage order's stock reservation follows what its stages still have to consume. Per stock
+     * cell of the order (its location, a material's product and variant), the reservation is set to Σ (planned −
+     * consumed) of the order's materials of that product and variant, in base units; a cell with nothing left is marked
+     * consumed. Before, the reservation stayed at the planned quantity until completion, so every open multi-stage
+     * order showed {@code over_reserved} once its stages had consumed. Only cells the order reserves, or whose
+     * reservation a stage consumed, are touched (an order whose confirm could not reserve gets none here either).
+     * Runs under the order lock (L1), after the stage's stock moves (L3–L5, which already hold the cells they moved);
+     * each cell is locked in the engine's order (L4 → L5) before its reservation row (L6), cells in lock order.
+     */
+    private void replanReservations(Map<String, Object> order) {
+        if (!Set.of("confirmed", "in_progress").contains(String.valueOf(order.get("status")))
+                || order.get("locationId") == null) {
+            return;
+        }
+        String orderId = str(order, "id");
+        String location = str(order, "locationId");
+        // Cells reserved now, or consumed by an earlier stage (a reversal can make them needed again).
+        List<Map<String, Object>> held = SqlRows.list(db.jdbc().sql("SELECT \"productId\", \"variantId\","
+                + " COALESCE(SUM(quantity) FILTER (WHERE status = 'active'), 0) AS quantity FROM \"StockReservation\""
+                + " WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ? AND \"locationId\" = ? AND"
+                + " status IN ('active', 'consumed') GROUP BY 1, 2").params(MfgDb.org(), ProductionService.SOURCE,
+                        orderId, location));
+        if (held.isEmpty()) {
+            return;
+        }
+        Map<List<String>, BigDecimal> left = new HashMap<>();
+        for (Map<String, Object> m : db.children(ProductionMaterial.class, "orderId", orderId, null)) {
+            String productId = str(m, "productId");
+            BigDecimal open = dec(m, "qtyPlanned").subtract(dec(m, "qtyConsumed")).max(BigDecimal.ZERO);
+            BigDecimal base = open.signum() == 0 ? BigDecimal.ZERO
+                    : uom.toBase(open, str(m, "uomId"), productId, productUnit(productId), true);
+            left.merge(java.util.Arrays.asList(productId, str(m, "variantId")), base, BigDecimal::add);
+        }
+        for (Map<String, Object> r : StockMove.inLockOrder(held)) {
+            String productId = str(r, "productId");
+            String variantId = str(r, "variantId");
+            BigDecimal target = left.getOrDefault(java.util.Arrays.asList(productId, variantId), BigDecimal.ZERO);
+            if (target.compareTo(dec(r, "quantity")) == 0) {
+                continue;
+            }
+            if (target.signum() > 0) {
+                reservations.reserve(new StockReservationService.Reserve(productId, variantId, location, target,
+                        ProductionService.SOURCE, orderId, str(order, "orderCode")));
+            } else {
+                reservations.consumeCell(ProductionService.SOURCE, orderId, productId, variantId, location);
+            }
+        }
+    }
+
+    private String productUnit(String productId) {
+        return db.jdbc().sql("SELECT \"uomId\" FROM \"Product\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(productId, MfgDb.org()).query(String.class).optional().orElse(null);
     }
 
     private BigDecimal issueMaterial(Ctx c, String pid, Map<String, Object> m, BigDecimal qty, String batchNumber,
