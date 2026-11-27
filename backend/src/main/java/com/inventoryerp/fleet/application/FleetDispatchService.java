@@ -20,6 +20,7 @@ import com.inventoryerp.fleet.domain.FleetProofOfDelivery;
 import com.inventoryerp.fleet.domain.FleetTransporterRate;
 import com.inventoryerp.inventory.application.PosStockLocation;
 import com.inventoryerp.inventory.application.StockMove;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.CreditControlService;
 import com.inventoryerp.kernel.audit.AuditService;
@@ -1129,6 +1130,13 @@ public class FleetDispatchService {
                             ? BigDecimal.ONE : SqlRows.dec(l, "uomFactor");
                     issuePort.assertIssuable(sourceLine, (String) l.get("productId"), variantOf(l),
                             (String) t.get("locationId"), qty.multiply(factor));
+                } else if (reservations != null) {
+                    // IPR F5: a delivery that is not a sales order's own (manual, invoice, POS order) leaves the stock
+                    // reserved for sales orders alone.
+                    BigDecimal factor = l.get("uomFactor") == null || SqlRows.dec(l, "uomFactor").signum() <= 0
+                            ? BigDecimal.ONE : SqlRows.dec(l, "uomFactor");
+                    reservations.assertNotReservedForSalesOrders((String) l.get("productId"), variantOf(l),
+                            (String) t.get("locationId"), qty.multiply(factor));
                 }
                 String batch = (String) l.get("batchNumber");
                 StockMove m = StockMove.of((String) l.get("productId"), (String) t.get("locationId"), qty)
@@ -1664,25 +1672,89 @@ public class FleetDispatchService {
         return putBack(t, order, l, qty, notes, serials, (String) t.get("locationId"));
     }
 
+    /**
+     * IPR F3: returned goods come back against the issue that took them out ({@code returnFromSource}): the trip's own
+     * issue row ({@code FleetLoadLine.stockLedgerCode}, stock mode dispatch) or, in stock mode {@code invoiced}, the
+     * invoice's issue of that invoice line ({@code sales_invoice} + {@code sourceLineId}; a cash-sale invoice: the cash
+     * sale's issue). Each put-back names the row it returns ({@code reversesLedgerId}) at its lot, serial and cost, so a
+     * later credit note, return or invoice cancel cannot restock the same units again, and a put-back after them is
+     * refused. Goods that never left stock (nothing issued for them) are not restocked. Lock order (R2): the trip lock
+     * (L1, caller) → the original issue rows (L2) → stock cells (L3–L6) → journal (L7).
+     */
     private String putBack(Map<String, Object> t, Map<String, Object> order, Map<String, Object> l, BigDecimal qty,
             String notes, List<String> serials, String location) {
         if (!tracked((String) l.get("productId"))) {
             return null;
         }
         boolean issuedHere = l.get("stockLedgerCode") != null;
-        if ("dispatch".equals(order.get("stockMode")) && !issuedHere) {
+        StockReversalService.IssueSource source;
+        String issueLine = null;
+        if (issuedHere) {
+            source = StockReversalService.IssueSource.ledgerCodes(List.of((String) l.get("stockLedgerCode")));
+        } else if ("dispatch".equals(order.get("stockMode"))) {
+            return null;
+        } else if ("document".equals(order.get("goodsInvoiceKind")) && order.get("goodsInvoiceId") != null
+                && invoiceGoods != null) {
+            source = invoiceGoods.ownIssueSource((String) order.get("goodsInvoiceId"));
+            if (source != null && "sales_invoice".equals(source.referenceType())) {
+                issueLine = db.jdbc().sql("SELECT \"sourceLineId\" FROM \"FleetDeliveryOrderLine\" WHERE id = ? AND"
+                        + " \"organizationId\" = ?").params(l.get("deliveryOrderLineId"), FleetDb.org())
+                        .query(String.class).optional().orElse(null);
+            }
+        } else if ("pos_invoice".equals(order.get("goodsInvoiceKind")) && order.get("goodsInvoiceId") != null) {
+            List<String> codes = db.jdbc().sql("SELECT DISTINCT \"ledgerCode\" FROM \"InventoryLedger\" WHERE"
+                    + " \"organizationId\" = ? AND \"quantityChange\" < 0 AND \"ledgerCode\" IS NOT NULL AND"
+                    + " ((\"referenceType\" = 'pos_invoice' AND \"referenceId\" = ?) OR (\"referenceType\" = 'pos_order'"
+                    + " AND \"referenceId\" = ?))").params(FleetDb.org(), order.get("goodsInvoiceId"),
+                    order.get("sourceId") == null ? "" : order.get("sourceId")).query(String.class).list();
+            source = codes.isEmpty() ? null : StockReversalService.IssueSource.ledgerCodes(codes);
+        } else {
+            source = null;
+        }
+        if (source == null) {
+            // Nothing was issued for these goods: they never left stock, so nothing comes back into it.
             return null;
         }
-        StockMove m = StockMove.of((String) l.get("productId"), location, qty)
-                .variant(variantOf(l)).uom((String) l.get("uomId"), SqlRows.dec(l, "uomFactor"))
-                .batch((String) l.get("batchNumber")).source(STOCK_SOURCE + "_return", (String) t.get("id")).reference((String) t.get("code")).notes(notes);
-        if (issuedHere && l.get("unitCost") != null) {
-            m.unitCost(SqlRows.dec(l, "unitCost"));
+        String productId = (String) l.get("productId");
+        List<StockReversalService.ReturnedRow> back;
+        try {
+            back = stockReturns.returnFromSource(new StockReversalService.ReturnFromSource(source,
+                    List.of(new StockReversalService.ReturnLine(productId, variantOf(l), qty, (String) l.get("uomId"),
+                            l.get("uomFactor") == null ? null : SqlRows.dec(l, "uomFactor"), issueLine,
+                            serials == null || serials.isEmpty() ? null : serials, null)),
+                    STOCK_SOURCE + "_return", (String) t.get("id"), (String) t.get("code"), notes, null, location, true,
+                    null));
+        } catch (ApiException e) {
+            boolean over = String.valueOf(e.getMessage()).startsWith("Cannot return more than was issued");
+            throw ApiException.badRequest("Cannot put back " + productName(productId) + " on trip " + t.get("code")
+                    + ": " + e.getMessage() + (over ? ". The units were already returned to stock (credit note,"
+                            + " return or invoice cancel); record them as delivered instead." : ""));
         }
-        if (serials != null && !serials.isEmpty()) {
-            m.serials(serials);
-        }
-        return stock.receiveReturn(m).ledgerCode();
+        return back.isEmpty() ? null : back.getFirst().ledgerCode();
+    }
+
+    private StockReversalService stockReturns;
+
+    /** IPR F3: put-backs are returns against the original issue. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
+    }
+
+    private com.inventoryerp.invoicing.application.InvoiceGoodsService invoiceGoods;
+
+    /** IPR F3: the invoice's own issue, for put-backs in stock mode invoiced. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setInvoiceGoods(com.inventoryerp.invoicing.application.InvoiceGoodsService invoiceGoods) {
+        this.invoiceGoods = invoiceGoods;
+    }
+
+    private com.inventoryerp.inventory.application.StockReservationService reservations;
+
+    /** IPR F5: sales-order reservations are honoured by deliveries that do not come from that sales order. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setReservations(com.inventoryerp.inventory.application.StockReservationService reservations) {
+        this.reservations = reservations;
     }
 
     /** Return reasons that mean the customer rejected the goods (they go to quarantine, DEL-9b). */

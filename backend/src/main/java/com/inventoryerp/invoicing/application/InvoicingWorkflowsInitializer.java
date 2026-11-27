@@ -101,21 +101,6 @@ public class InvoicingWorkflowsInitializer {
     }
 
     /**
-     * A lot-tracked sale ships from a warehouse that holds it (ADR-S060): the default warehouse when it has enough,
-     * otherwise the one with the oldest lot that covers the line. No such warehouse keeps the default, so the issue
-     * reports the shortage.
-     */
-    private String lotWarehouse(String org, String productId, Map<String, Object> line, String fallback) {
-        BigDecimal factor = line.get("uomFactor") == null ? BigDecimal.ONE : d(line.get("uomFactor"));
-        return jdbc.sql("SELECT b.\"locationId\" FROM \"InventoryBatch\" b JOIN \"InventoryLocation\" l ON l.id = b.\"locationId\""
-                        + " WHERE b.\"organizationId\" = ? AND b.\"productId\" = ? AND b.quantity > 0 AND b.\"isActive\" = true AND"
-                        + " l.type = 'warehouse' AND l.\"isActive\" = true AND l.\"deletedAt\" IS NULL GROUP BY b.\"locationId\""
-                        + " HAVING SUM(b.quantity) >= ? ORDER BY (b.\"locationId\" = ?) DESC, MIN(b.\"receivedAt\") LIMIT 1")
-                .params(org, productId, d(line.get("quantity")).multiply(factor), fallback).query(String.class).optional()
-                .orElse(fallback);
-    }
-
-    /**
      * The document's stock location: a warehouse of its branch when it has one (sales readiness INV-10), else the
      * organisation's oldest warehouse (Nest behaviour).
      */
@@ -169,27 +154,16 @@ public class InvoicingWorkflowsInitializer {
         Map<String, Object> doc = ctx.entity();
         String id = (String) doc.get("id");
         List<Map<String, Object>> lines = builder.lines(id, false);
-        // A delivery (fleet 1.3) issues the goods of this invoice load by load: no automatic issue here.
+        // A delivery (fleet 1.3) issues the goods of this invoice load by load: no automatic issue here. IPR F1: nor
+        // when the invoice is awaiting delivery (its delivery order was cancelled or closed short with goods left; a
+        // new delivery order or a collection issues the rest).
         boolean stockByDelivery = jdbc.sql("SELECT count(*) FROM \"Document\" WHERE id = ? AND"
-                + " data->>'stockIssuedBy' IS NOT NULL").param(id).query(Long.class).single() > 0;
-        // Audit S-2: issue in the engine's lock order (the posting groups below keep the document order).
-        for (Map<String, Object> line : stockByDelivery ? List.<Map<String, Object>>of() : StockMove.inLockOrder(lines)) {
-            String productId = (String) line.get("productId");
-            Map<String, Object> product = productId == null ? null : product(productId);
-            if (product != null && Boolean.TRUE.equals(product.get("trackInventory"))) {
-                String location = warehouse(ctx.organizationId(), doc.get("branchId"));
-                if (Boolean.TRUE.equals(product.get("batchTracking"))) {
-                    location = lotWarehouse(ctx.organizationId(), productId, line, location);
-                }
-                if (location == null) {
-                    throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
-                }
-                StockMove m = StockMove.of(productId, location, d(line.get("quantity")))
-                        .variant((String) line.get("variantId")).uom((String) line.get("uomId"), line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
-                        .date(instant(doc.get("issueDate"))).source("sales_invoice", id).sourceLine((String) line.get("id"))
-                        .notes("Auto-issue for invoice " + doc.get("documentNumber"));
-                stock.issue(m);
-            }
+                + " (data->>'stockIssuedBy' IS NOT NULL OR data->>'" + InvoiceGoodsService.AWAITING + "' IS NOT NULL)")
+                .param(id).query(Long.class).single() > 0;
+        if (!stockByDelivery) {
+            // Audit S-2: issue in the engine's lock order (the posting groups below keep the document order).
+            goods.issueStock(ctx.organizationId(), doc, lines, instant(doc.get("issueDate")),
+                    null, "Auto-issue for invoice " + doc.get("documentNumber"));
         }
         Map<String, Object> full = builder.document(id);
         Grouped g = builder.groupForPosting((String) full.get("partnerId"), lines, "sales", null);
@@ -283,6 +257,14 @@ public class InvoicingWorkflowsInitializer {
     }
 
 
+    private InvoiceGoodsService goods;
+
+    /** IPR F1: the invoice stock issue loop, shared with the collection of undelivered goods. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setGoods(InvoiceGoodsService goods) {
+        this.goods = goods;
+    }
+
     private com.inventoryerp.inventory.application.StockReversalService stockReturns;
 
     /** R1: returns are posted against their original issue (lot, expiry, serial, location and cost). */
@@ -352,6 +334,14 @@ public class InvoicingWorkflowsInitializer {
                 new Transition("posted", "cancelled", "cancel", "expense:cancel",
                         ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), ctx -> {
                             Map<String, Object> doc = ctx.entity();
+                            // IPR M-29: the supplier lock (the order bill post and goods-receipt post use), then the
+                            // bill's auto-receipt rows, before reading whether a receipt absorbed them: a receipt
+                            // posting at the same time either absorbed them already (refused below) or waits and then
+                            // finds the bill cancelled.
+                            matcher.lockSupplier(ctx.organizationId(), (String) doc.get("partnerId"));
+                            jdbc.sql("SELECT id FROM \"VendorBillAutoReceipt\" WHERE \"organizationId\" = ? AND"
+                                    + " \"vendorBillId\" = ? ORDER BY id FOR UPDATE").params(ctx.organizationId(),
+                                    doc.get("id")).query().listOfRows();
                             String absorbedBy = matcher.absorbingReceipt(ctx.organizationId(), (String) doc.get("id"));
                             if (absorbedBy != null) {
                                 // Purchase readiness H1: the goods are in stock through that receipt now.

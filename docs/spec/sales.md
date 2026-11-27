@@ -303,6 +303,22 @@ branch scope.
 
 ## Deviations
 
+- **IPR Phase 1a (2026-11-27; owner sign-off required).**
+  - **F2: restock only what left stock.** A return line with no recorded stock issue (for example an order-policy
+    line invoiced but never delivered) is a financial credit only. Receive and inspect move no stock. A line with an
+    issue is capped by what that issue still has out, net of every return already linked to it (credit-note restocks
+    included), less what returns not yet received have claimed. Over the cap, `POST /sales/returns` answers 400 with
+    the existing "more than returnable" refusal. Before, a return restocked goods that never left, at the current
+    cost.
+  - **M-27.** `POST /sales/orders/:id/reserve` runs in one transaction. It locks the sales order first, then each
+    line's cell, so two concurrent reserves cannot both take the same free stock.
+  - **LK-3.** The fulfilment rebuild, `recomputeInvoiced` and return receive/close lock the `SalesOrder` row before
+    its `SalesOrderLine` rows, the order every other sales path uses.
+  - **F5.** A cash-sale confirm, an invoice auto-issue or collection, and a fleet delivery that is not the sales
+    order's own are refused when they would take stock reserved for sales orders ("Only X of P is free in L; Y is
+    reserved for sales orders. Release or deliver those reservations first."). POS, stock documents, transfers,
+    production and quarry issues are not covered (see the IPR 1a evidence file).
+
 - **R6 accounting policy settings (2026-11-26, V683, owner to approve).** New `SalesSettings` keys, each defaulting to
   the shipped behaviour: `showroomTaxPoint` (`at_confirm` | `at_invoice`), `overOrderExcess` (`bill` | `absorb`),
   `rebateTaxId` (tax or null). `depositTaxPoint = receipt` now also refuses a plain advance on a taxed order at

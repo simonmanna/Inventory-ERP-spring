@@ -1024,7 +1024,9 @@ public class InventoryIntegrityService {
 
     /**
      * F1 detector. A posted sales invoice whose stock issue was handed to a delivery ({@code data.stockIssuedBy}; cash
-     * sales excluded) whose delivery orders are all finished (none open, planned or in progress) with at least one
+     * sales excluded), or that is awaiting delivery after its delivery order was cancelled or closed short (IPR F1,
+     * {@code data.stockAwaitingDelivery}: listed until a new delivery order or a collection issues the goods), whose
+     * delivery orders are all finished (none open, planned or in progress) with at least one
      * cancelled or closed, and, per product (base units), invoiced − credited (posted credit notes of the invoice) >
      * delivered (net {@code fleet_trip} issues − {@code fleet_trip_return} put-backs of the loads of those orders, plus
      * any {@code sales_invoice} issue of its own). The delivery orders of an invoice are found as
@@ -1042,7 +1044,8 @@ public class InventoryIntegrityService {
                                FROM "Document" d
                               WHERE d."organizationId" = :org AND d."documentType" = 'sales_invoice'
                                 AND d.status::text NOT IN ('draft', 'cancelled')
-                                AND d.data->>'stockIssuedBy' IS NOT NULL
+                                AND (d.data->>'stockIssuedBy' IS NOT NULL
+                                     OR d.data->>'stockAwaitingDelivery' IS NOT NULL)
                                 AND d."sourceType" IS DISTINCT FROM 'cash_sale'),
                      dos AS (SELECT inv.id AS iid, o.id AS oid, o.status FROM inv JOIN "FleetDeliveryOrder" o
                                  ON o."organizationId" = :org AND o."sourceType" = 'invoice' AND o."sourceId" = inv.id
@@ -1113,8 +1116,8 @@ public class InventoryIntegrityService {
 
     /**
      * F3 detector. Per delivery group (the sales order, else the invoice, else the delivery order of dispatch-mode
-     * delivery orders) and product: put-backs ({@code fleet_trip_return}, written without {@code reversesLedgerId})
-     * plus returns linked to the trips' issue rows (credit-note restock, invoice cancel, sales return; net of their own
+     * delivery orders) and product: put-backs ({@code fleet_trip_return}, written without {@code reversesLedgerId}
+     * before IPR F3; a linked put-back counts once, with the linked returns) plus returns linked to the trips' issue rows (credit-note restock, invoice cancel, sales return; net of their own
      * reversals) ≤ the quantity the trips issued.
      */
     private IntegrityCheck deliveryReturnOverlap(String loc) {
@@ -1137,6 +1140,7 @@ public class InventoryIntegrityService {
                      put_back AS (SELECT trips.grp, g."productId" AS pid, SUM(g."quantityChange") AS qty
                                     FROM trips JOIN "InventoryLedger" g ON g."organizationId" = :org
                                          AND g."referenceType" = 'fleet_trip_return' AND g."referenceId" = trips.tid
+                                         AND g."reversesLedgerId" IS NULL
                                    GROUP BY 1, 2),
                      linked AS (SELECT iss.grp, iss.pid, SUM(r."quantityChange" + COALESCE(x.q, 0)) AS qty
                                   FROM iss JOIN "InventoryLedger" r ON r."organizationId" = :org

@@ -491,6 +491,15 @@ public class GoodsReceiptsService {
 
             Map<String, Object> po = null;
             OrderLines orderLines = null;
+            // IPR LK-1: the supplier lock before any purchase-order row, the order a bill post takes (supplier → PO
+            // line → PO), so a receipt and a bill on the same order cannot deadlock. Taken again below (re-entrant).
+            if (billMatcher != null) {
+                String supplierFirst = updated.get("partnerId") != null ? (String) updated.get("partnerId")
+                        : grn.get("purchaseOrderId") == null ? null : jdbc.sql("SELECT \"partnerId\" FROM"
+                                + " \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?")
+                                .params(grn.get("purchaseOrderId"), orgId).query(String.class).optional().orElse(null);
+                billMatcher.lockSupplier(orgId, supplierFirst);
+            }
             if (grn.get("purchaseOrderId") != null) {
                 List<PurchaseOrdersService.ReceiptLine> applied = new ArrayList<>();
                 for (Map<String, Object> l : updatedLines) {

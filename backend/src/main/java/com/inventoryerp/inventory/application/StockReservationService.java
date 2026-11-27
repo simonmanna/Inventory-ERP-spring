@@ -120,6 +120,51 @@ public class StockReservationService {
                 .params(org, productId, variantId == null ? "" : variantId, locationId).query().listOfRows();
     }
 
+    /** Source type of sales-order line reservations (written by the sales module's ATP service). */
+    public static final String SALES_ORDER_LINE = "sales_order_line";
+
+    /**
+     * IPR F5: an issue of {@code baseQuantity} (base units) from one stock cell by a document that is not the sales
+     * order holding the stock (an invoice, a cash sale, a delivery order that does not come from a sales order) must
+     * leave what active sales-order reservations hold there. The cell is locked first, in the engine's order (L3 → L4 →
+     * L5), so the measure stays true until the issue in the same transaction; a reservation made meanwhile waits.
+     * Refused only when sales-order reservations exist at the cell and the issue would eat into them; without
+     * reservations the engine's own negative-stock policy decides, as before.
+     */
+    @Transactional
+    public void assertNotReservedForSalesOrders(String productId, String variantId, String locationId,
+            BigDecimal baseQuantity) {
+        if (productId == null || locationId == null || baseQuantity == null || baseQuantity.signum() <= 0) {
+            return;
+        }
+        String org = TenantContext.organizationId();
+        String variantKey = variantId == null ? "" : variantId;
+        StockService.lockCellAdvisory(jdbc, org, productId, variantId, locationId);
+        jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                        + " AND \"locationId\" = ? FOR UPDATE")
+                .params(org, productId, variantKey, locationId).query().listOfRows();
+        BigDecimal reserved = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockReservation\" WHERE"
+                + " \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND status ="
+                + " 'active' AND \"sourceType\" = ?").params(org, productId, variantKey, locationId, SALES_ORDER_LINE)
+                .query(BigDecimal.class).single();
+        if (reserved.signum() <= 0) {
+            return;
+        }
+        BigDecimal onHand = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ?").params(org, productId,
+                        variantKey, locationId).query(BigDecimal.class).single();
+        BigDecimal free = onHand.subtract(reserved).max(BigDecimal.ZERO);
+        if (baseQuantity.compareTo(free) > 0) {
+            String name = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(productId).query(String.class)
+                    .optional().orElse(productId);
+            String location = jdbc.sql("SELECT name FROM \"InventoryLocation\" WHERE id = ?").param(locationId)
+                    .query(String.class).optional().orElse(locationId);
+            throw ApiException.badRequest("Only " + JsNumbers.dec(free) + " of " + name + " is free in " + location
+                    + "; " + JsNumbers.dec(reserved) + " is reserved for sales orders. Release or deliver those"
+                    + " reservations first.");
+        }
+    }
+
     /**
      * {@code POST /inventory/reservations}: {@link #reserve} after checking that the product and location exist and
      * that the location is in the caller's scope. A source line's row is keyed by its cell, so the only row a re-reserve

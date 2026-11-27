@@ -179,7 +179,38 @@ public class SalesReturnService {
         BigDecimal claimed = dec(db.row("SELECT COALESCE(sum(l.quantity), 0) AS q FROM \"SalesReturnLine\" l JOIN"
                 + " \"SalesReturn\" r ON r.id = l.\"returnId\" WHERE l.\"orderLineId\" = ? AND r.status NOT IN ('rejected',"
                 + " 'cancelled')", ol.get("id")).get("q"));
-        return delivered.subtract(claimed).max(BigDecimal.ZERO);
+        BigDecimal open = delivered.subtract(claimed).max(BigDecimal.ZERO);
+        // IPR F2: goods that left stock on a recorded issue can come back only up to what that issue still has out
+        // (net of every return already linked to it, credit-note restocks included), less what returns not yet
+        // received have claimed. A line without any issue is a financial credit only (receive restocks nothing).
+        List<String> codes = issueLedgerCodes(str(ol.get("id")));
+        if (codes.isEmpty() || ol.get("productId") == null) {
+            return open;
+        }
+        BigDecimal outBase = BigDecimal.ZERO;
+        for (StockReversalService.Returnable x : stockReturns.returnableByProduct(
+                StockReversalService.IssueSource.ledgerCodes(codes))) {
+            if (x.productId().equals(str(ol.get("productId")))
+                    && java.util.Objects.equals(x.variantId(), str(ol.get("variantId")))) {
+                outBase = outBase.add(x.quantity());
+            }
+        }
+        BigDecimal factor = dec(ol.get("uomFactor")).signum() > 0 ? dec(ol.get("uomFactor")) : BigDecimal.ONE;
+        BigDecimal pending = dec(db.row("SELECT COALESCE(sum(l.quantity), 0) AS q FROM \"SalesReturnLine\" l JOIN"
+                + " \"SalesReturn\" r ON r.id = l.\"returnId\" WHERE l.\"orderLineId\" = ? AND r.\"physicalReturn\" AND"
+                + " r.status IN ('requested', 'approved')", ol.get("id")).get("q"));
+        BigDecimal issuedLeft = outBase.divide(factor, 3, RoundingMode.HALF_UP).subtract(pending).max(BigDecimal.ZERO);
+        return open.min(issuedLeft);
+    }
+
+    /**
+     * IPR F2: the base quantity a return line actually brought back into stock (its {@code sales_return} receipt rows);
+     * zero for a line received as a financial credit only, whose inspection then moves no stock.
+     */
+    private BigDecimal restockedBase(String returnId, String returnLineId) {
+        return dec(db.row("SELECT COALESCE(sum(\"quantityChange\"), 0) AS q FROM \"InventoryLedger\" WHERE"
+                + " \"organizationId\" = ? AND \"referenceType\" = 'sales_return' AND \"referenceId\" = ? AND"
+                + " \"sourceLineId\" = ? AND \"quantityChange\" > 0", org(), returnId, returnLineId).get("q"));
     }
 
     @Transactional
@@ -211,6 +242,11 @@ public class SalesReturnService {
     @SuppressWarnings("unchecked")
     public Map<String, Object> receive(String id, Map<String, Object> in) {
         Map<String, Object> r = lock(id, "approved");
+        // IPR LK-3: the sales order and its lines before the engine (return → order → order lines → stock), the order
+        // the fulfilment rebuild and the sales delivery routes use; the lines are updated after the restock.
+        orders.lock(str(r.get("orderId")));
+        db.rows("SELECT id FROM \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ? ORDER BY id FOR UPDATE",
+                r.get("orderId"), org());
         if (!Boolean.TRUE.equals(r.get("physicalReturn"))) {
             throw ApiException.badRequest("This return is a claim without goods; close it directly");
         }
@@ -243,14 +279,9 @@ public class SalesReturnService {
                                     str(l.get("variantId")), qty, str(l.get("uomId")), dec(l.get("uomFactor")), null,
                                     null, str(l.get("id")))),
                             "sales_return", id, str(r.get("number")), null, null, location, true, null));
-                } else {
-                    // Goods not delivered through a recorded stock issue (legacy): restock at the delivery cost if
-                    // known, else the current cost, without lot identity (as before R1).
-                    StockMove m = StockMove.of(str(l.get("productId")), location, qty).variant(str(l.get("variantId")))
-                            .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).reference(str(r.get("number")))
-                            .source("sales_return", id).sourceLine(str(l.get("id")));
-                    stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
                 }
+                // IPR F2: goods with no recorded stock issue never left stock (e.g. an invoice of an ordered-policy line
+                // that was never delivered): nothing is restocked; the return is a financial credit only.
             }
             db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?"
                     + " AND \"organizationId\" = ?", qty, issueCost, l.get("id"), org());
@@ -324,8 +355,11 @@ public class SalesReturnService {
             }
             BigDecimal qty = dec(l.get("receivedQty")).subtract(rejected);
             String target = str(g.get("locationId"));
-            boolean tracked = Boolean.TRUE.equals(l.get("trackInventory")) && qty.signum() > 0;
-            if (rejected.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
+            // IPR F2: a line received as a financial credit only (nothing restocked) moves no stock at inspection.
+            boolean stocked = Boolean.TRUE.equals(l.get("trackInventory"))
+                    && restockedBase(id, str(l.get("id"))).signum() > 0;
+            boolean tracked = stocked && qty.signum() > 0;
+            if (rejected.signum() > 0 && stocked) {
                 stock.issue(StockMove.of(str(l.get("productId")), from, rejected).variant(str(l.get("variantId")))
                         .uom(str(l.get("uomId")), dec(l.get("uomFactor"))).moveType("issue").reference(str(r.get("number")))
                         .source("sales_return", id).notes("Rejected on return " + r.get("number") + ": " + g.get("rejectReason")));
@@ -374,8 +408,9 @@ public class SalesReturnService {
             throw ApiException.badRequest("outcome must be one of: credit_note, none, refund, replacement");
         }
         String orderId = str(r.get("orderId"));
+        // IPR LK-3: the sales order before its lines (they are updated below), as every other sales path.
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ?"
-                + " AND \"organizationId\" = ?", orderId, org());
+                + " AND \"organizationId\" = ? FOR UPDATE", orderId, org());
         List<LineInput> cnLines = new ArrayList<>();
         List<Map<String, Object>> cnLinks = new ArrayList<>();
         String invoiceId = null;
