@@ -481,6 +481,55 @@ P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same
     `inventory.maxBackdateDays` (default 7, 0 = off) before today answers 400 "Goods receipt date is more than N days in
     the past". Offline receipts are exempt (flagged `lateSync` instead).
 
+60. **Serial + lot integrity (IPR 1c C-1, C-2, C-7, C-9; awaiting owner approval).** Evidence:
+    [1cd-serial-restock.md](../audits/ipr-evidence/1cd-serial-restock.md). A serial issue of a product that is also
+    lot-tracked takes the unit off the serial's own lot (it used to leave the lot untouched and draw the overflow from
+    another lot). Units issued without a serial number are drawn only from the unserialised part of the lots. A
+    transfer moves the named serials (`serialNumbers` was ignored) and their lots follow them. Giving more serial numbers
+    than units is 400 "Issuing N base unit(s) of P but M serial number(s) were given; give at most one serial number per
+    unit" (transfer: "Transferring …"); fewer serial numbers than units picks the rest from the units in stock, oldest
+    receipt first (ties by serial number). A named serial not in stock at the location is 400 "Serial number(s) not
+    available at this location: …"; a serial issued concurrently is 409 "Serial number X was issued concurrently". A
+    reversal of a serial receipt names the receipt's serials and is refused when they are no longer in stock.
+61. **Quarantine and rental locations are guarded (IPR 1c X-3; awaiting owner approval).** A manual stock document
+    (stock-out, waste, adjustment, direct in / out, transfer, transit receipt) cannot move stock into or out of
+    `QC-QUARANTINE`, `SALES-QUARANTINE` or the rental custody locations (`RENT-OUT`, `RENT-CLEAN`, `RENT-REPAIR`,
+    `RENT-DAMAGED`): 400 "<location> is managed by the quality and returns|rental flows: a manual stock document cannot
+    move stock into or out of it". A manual transfer **into** quarantine (a hold, e.g. PLM rework) stays allowed. Stock
+    in quarantine leaves only through the owning flows (quality lot / downgrade / check, production QC / stage, sales
+    return inspection, reversals, counts): a sale, issue or consumption from it is 400 "Stock in <location> is on hold:
+    it leaves only through a quality release, rejection or downgrade, or the returns inspection, never through a sale,
+    issue or consumption". Owner sign-off: PLM rework has no release flow, so stock held there by a manual transfer can
+    leave only through a quality flow; count variances at these locations are allowed; the location codes are
+    constants, not settings.
+62. **Unknown move types fail closed (IPR 1c, stream C request).** An issue that posts its own stock journal with a move
+    type outside the posting map (`issue`, `waste`, `expiry_write_off`, `return_to_supplier`, `internal_use`,
+    `promo_sample`, `production_consume`) is 400 "Stock move type "<t>" has no stock posting rule; …" instead of posting
+    as COGS. Quantity-only moves (the caller posts the journal) keep any move type.
+63. **Product setup changes wait for pending stock work (IPR 1c C-8).** A costing-method or tracking change takes the
+    product's exclusive costing lock and, besides stock on hand, is refused while stock of the product is reserved
+    (400 "The <what> of <name> cannot be changed while stock of it is reserved; release or fulfil the reservations
+    first") or a POS sale of it waits for its stock posting (400 "… while a POS sale of it is waiting for its stock
+    posting; let the stock postings finish first").
+64. **Sales-order reservations honoured by other issuers (IPR E-1a; awaiting owner approval).** Opt-in per caller
+    (`StockMove.honourReservations`): approved stock-outs, immediate and dispatched transfers, direct stock-out, project
+    issues, quarry explosive issues and fleet work-order part issues refuse to take stock reserved for sales orders: 400
+    "Only F of P is free in L; R is reserved for sales orders. Release or deliver those reservations first." A POS sale
+    is refused only where its own availability rule refuses (block stock policy, `requireAvailable`, lot block);
+    under the default policy it is never blocked. Waste, adjustments, counts and reversals do not check (physical
+    events). Production consumption and sales-order delivery are not opted in yet (other streams own those callers).
+65. **Linked restocks (IPR 1d SW-3, SW-5).** Fleet work-order part returns, quarry explosive returns and project cost
+    reversals bring stock back against the issue row (`reversesLedgerId`), with its lot, serial and cost; they refuse
+    to return more than the issue still holds ("Cannot return more than was issued"); the journals carry the returned
+    rows' value (was quantity × the stored unit cost). Quarry returns no longer open a `RET-<code>` lot. A bill receipt
+    (`receiveFromBill`) records the bill line (`sourceLineId`). `unlinked_restocks` is no longer informational: an
+    unlinked restock written after its source type's first linked row fails the check.
+
+66. **AVCO residue swept on every move (IPR GL-7).** The rounding residue of an AVCO quant that reaches zero is swept
+    also when the caller posts the move's journal itself (`skipGl`: fleet fuel / tyres, production, quality downgrade,
+    branch transfer, …), for issues and for the source quant of transfers. Its value-only row and `COGS_CORRECTION`
+    journal are the only posting of that residue; callers' journals carry the issue row's value only.
+
 ### Negative stock policy (as built; R5a evidence for gate G3)
 
 - `inventory.allowNegativeStock` (`SettingRegistry`) defaults to **on**: every issue may take a quant below zero
