@@ -109,7 +109,7 @@ Migrations `V530`–`V534`. Code markers: `Review 2026-11-17 (ACR-n)`.
 New settings:
 
 - `costing.production.requireMaterialsOnHand` (bool, default `false`).
-- `procurement.billWithoutReceipt` (`auto_receive` (default) | `block`).
+- `procurement.billWithoutReceipt` (`block` (default since 2026-11-27) | `auto_receive`).
 
 ### Deviations
 

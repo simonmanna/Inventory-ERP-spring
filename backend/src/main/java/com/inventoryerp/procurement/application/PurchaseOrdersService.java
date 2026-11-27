@@ -669,6 +669,14 @@ public class PurchaseOrdersService {
         this.qcGate = qcGate;
     }
 
+    private com.inventoryerp.invoicing.application.BillReceiptMatcherService billMatcher;
+
+    /** Purchase readiness H1: absorbs stock a bill already auto-received; optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBillMatcher(com.inventoryerp.invoicing.application.BillReceiptMatcherService billMatcher) {
+        this.billMatcher = billMatcher;
+    }
+
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> lines(Map<String, Object> grn) {
         return (List<Map<String, Object>>) grn.get("lines");
@@ -901,7 +909,15 @@ public class PurchaseOrdersService {
             BigDecimal receiptTax = Money.ZERO;
             // FX-2 G: valued at the receipt-date rate (the PO rate is a commitment value and is not rewritten)
             BigDecimal rate = receiptRate(po, grnId, date);
+            // Purchase readiness H1: stock a posted bill of this supplier already auto-received is absorbed here.
+            if (billMatcher != null) {
+                billMatcher.lockSupplier(orgId, (String) po.get("partnerId"));
+            }
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> grnLines = (List<Map<String, Object>>) grn.get("lines");
+            int lineIdx = -1;
             for (Resolved r : resolved) {
+                lineIdx++;
                 ReceiveLineInput rln = r.line();
                 if (rln.productId() == null) {
                     continue;
@@ -910,10 +926,16 @@ public class PurchaseOrdersService {
                 if (product == null || !stocked(product)) {
                     continue;
                 }
+                BigDecimal absorbed = billMatcher == null ? Money.ZERO
+                        : billMatcher.absorbAutoReceived(orgId, (String) po.get("partnerId"), grnLines.get(lineIdx));
+                BigDecimal stockQty = rln.quantity().subtract(absorbed);
+                if (stockQty.signum() <= 0) {
+                    continue;
+                }
                 // P0-5: a foreign-currency PO prices in its own currency; stock and GRNI carry the functional value.
                 BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate)
                         : Money.dec(product.get("costPrice"));
-                StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), rln.quantity()).unitCost(unitCost)
+                StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), stockQty).unitCost(unitCost)
                         .variant(r.variantId())
                         .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
                         .expiry(rln.expiryDate())

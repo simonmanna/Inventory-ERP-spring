@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing;
 
+import com.inventoryerp.TestBillSettings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
@@ -20,6 +21,9 @@ import tools.jackson.databind.JsonNode;
  * expenses lifecycle, money-route idempotency, authorization matrix and tenant isolation.
  */
 class InvoicingIT extends ApiTestSupport {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService billSettings;
 
     String customer;
     String supplier;
@@ -181,59 +185,61 @@ class InvoicingIT extends ApiTestSupport {
     @Test
     @DisplayName("vendor bills: post books AP (PURCH), receives stock; supplier payment with withholding; AP aging")
     void vendorBills() {
-        String wh = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type = 'warehouse'"
-                + " AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" LIMIT 1").param(demoOrg)
-                .query(String.class).optional().orElseGet(() -> ok(201, "POST", "/inventory/locations",
-                        Map.of("code", "WH-" + UUID.randomUUID().toString().substring(0, 6), "name", "WH",
-                                "type", "warehouse")).get("id").asString());
-        String stock = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"costPrice\","
-                        + " \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, 'Beans', 'stockable', 3, true, now())")
-                .params(stock, demoOrg, "BN-" + UUID.randomUUID().toString().substring(0, 6)).update();
-        Res future = as("POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", "2999-01-01", "lines",
-                List.of(Map.of("quantity", 1, "unitPrice", 5))));
-        assertThat(future.body().get("message").asString()).isEqualTo("Issue date cannot be in the future");
-        JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
-                List.of(Map.of("productId", stock, "quantity", 10, "unitPrice", 4),
-                        Map.of("description", "Delivery", "quantity", 1, "unitPrice", 20))));
-        assertThat(bill.get("documentNumber").asString()).startsWith("BILL-");
-        assertThat(bill.get("approvalRequestId").isNull()).isTrue();
-        String id = bill.get("id").asString();
-        JsonNode posted = ok(200, "POST", "/vendor-bills/" + id + "/post", Map.of());
-        assertThat(posted.get("status").asString()).isEqualTo("posted");
-        assertThat(posted.get("amountResidual").asString()).isEqualTo("60");
-        String journal = jdbc.sql("SELECT j.code FROM \"JournalEntry\" e JOIN \"Journal\" j ON j.id = e.\"journalId\""
-                + " WHERE e.id = ?").param(posted.get("journalEntryId").asString()).query(String.class).single();
-        assertThat(journal).isEqualTo("PURCH");
-        BigDecimal received = jdbc.sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
-                + " \"productId\" = ? AND \"referenceType\" = 'vendor_bill'").param(stock).query(BigDecimal.class).single();
-        assertThat(received).isEqualByComparingTo("10");
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String wh = jdbc.sql("SELECT id FROM \"InventoryLocation\" WHERE \"organizationId\" = ? AND type = 'warehouse'"
+                    + " AND \"isActive\" = true AND \"deletedAt\" IS NULL ORDER BY \"createdAt\" LIMIT 1").param(demoOrg)
+                    .query(String.class).optional().orElseGet(() -> ok(201, "POST", "/inventory/locations",
+                            Map.of("code", "WH-" + UUID.randomUUID().toString().substring(0, 6), "name", "WH",
+                                    "type", "warehouse")).get("id").asString());
+            String stock = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"costPrice\","
+                            + " \"trackInventory\", \"updatedAt\") VALUES (?, ?, ?, 'Beans', 'stockable', 3, true, now())")
+                    .params(stock, demoOrg, "BN-" + UUID.randomUUID().toString().substring(0, 6)).update();
+            Res future = as("POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", "2999-01-01", "lines",
+                    List.of(Map.of("quantity", 1, "unitPrice", 5))));
+            assertThat(future.body().get("message").asString()).isEqualTo("Issue date cannot be in the future");
+            JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
+                    List.of(Map.of("productId", stock, "quantity", 10, "unitPrice", 4),
+                            Map.of("description", "Delivery", "quantity", 1, "unitPrice", 20))));
+            assertThat(bill.get("documentNumber").asString()).startsWith("BILL-");
+            assertThat(bill.get("approvalRequestId").isNull()).isTrue();
+            String id = bill.get("id").asString();
+            JsonNode posted = ok(200, "POST", "/vendor-bills/" + id + "/post", Map.of());
+            assertThat(posted.get("status").asString()).isEqualTo("posted");
+            assertThat(posted.get("amountResidual").asString()).isEqualTo("60");
+            String journal = jdbc.sql("SELECT j.code FROM \"JournalEntry\" e JOIN \"Journal\" j ON j.id = e.\"journalId\""
+                    + " WHERE e.id = ?").param(posted.get("journalEntryId").asString()).query(String.class).single();
+            assertThat(journal).isEqualTo("PURCH");
+            BigDecimal received = jdbc.sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
+                    + " \"productId\" = ? AND \"referenceType\" = 'vendor_bill'").param(stock).query(BigDecimal.class).single();
+            assertThat(received).isEqualByComparingTo("10");
 
-        Res overpay = call("POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today, "amount",
-                1000, "paymentMethod", "bank"), key());
-        assertThat(overpay.body().get("message").asString()).startsWith("Payment amount 1000 exceeds supplier outstanding");
-        JsonNode pay = money("/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today, "amount", 60,
-                "paymentMethod", "bank", "withholdingAmount", 6, "allocations", List.of(Map.of("documentId", id,
-                        "amount", 60))));
-        assertThat(pay.get("paymentNumber").asString()).startsWith("PV-");
-        assertThat(pay.get("withholdingAmount").asString()).isEqualTo("6");
-        BigDecimal wht = jdbc.sql("SELECT l.credit FROM \"JournalLine\" l JOIN \"Account\" a ON a.id = l.\"accountId\""
-                + " WHERE l.\"journalEntryId\" = ? AND a.code = '2160'").param(pay.get("journalEntryId").asString())
-                .query(BigDecimal.class).single();
-        assertThat(wht).isEqualByComparingTo("6");
-        assertThat(ok(200, "GET", "/vendor-bills/" + id, null).get("status").asString()).isEqualTo("paid");
-        JsonNode ledger = ok(200, "GET", "/vendor-bills/suppliers/" + supplier + "/ledger", null);
-        // B2 (post-parity): the statement is the supplier's AP sub-ledger — bill and payment net to zero (Nest
-        // dropped the paid bill and closed at -60).
-        assertThat(ledger.get("closingBalance").asInt()).isZero();
-        assertThat(ledger.get("transactions")).hasSize(2);
-        assertThat(ledger.get("transactions").get(0).get("type").asString()).isEqualTo("bill");
-        assertThat(ledger.get("transactions").get(1).get("type").asString()).isEqualTo("payment");
-        // A suite that rebuilt report snapshots moments ago would make the aging answer from them.
-        jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ?").param(demoOrg).update();
-        assertThat(ok(200, "GET", "/reports/ap/aging", null).get("source").asString()).isEqualTo("live");
-        assertThat(ok(200, "GET", "/supplier-payments?partnerId=" + supplier, null).get("data")).hasSize(1);
-        assertThat(wh).isNotNull();
+            Res overpay = call("POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today, "amount",
+                    1000, "paymentMethod", "bank"), key());
+            assertThat(overpay.body().get("message").asString()).startsWith("Payment amount 1000 exceeds supplier outstanding");
+            JsonNode pay = money("/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today, "amount", 60,
+                    "paymentMethod", "bank", "withholdingAmount", 6, "allocations", List.of(Map.of("documentId", id,
+                            "amount", 60))));
+            assertThat(pay.get("paymentNumber").asString()).startsWith("PV-");
+            assertThat(pay.get("withholdingAmount").asString()).isEqualTo("6");
+            BigDecimal wht = jdbc.sql("SELECT l.credit FROM \"JournalLine\" l JOIN \"Account\" a ON a.id = l.\"accountId\""
+                    + " WHERE l.\"journalEntryId\" = ? AND a.code = '2160'").param(pay.get("journalEntryId").asString())
+                    .query(BigDecimal.class).single();
+            assertThat(wht).isEqualByComparingTo("6");
+            assertThat(ok(200, "GET", "/vendor-bills/" + id, null).get("status").asString()).isEqualTo("paid");
+            JsonNode ledger = ok(200, "GET", "/vendor-bills/suppliers/" + supplier + "/ledger", null);
+            // B2 (post-parity): the statement is the supplier's AP sub-ledger — bill and payment net to zero (Nest
+            // dropped the paid bill and closed at -60).
+            assertThat(ledger.get("closingBalance").asInt()).isZero();
+            assertThat(ledger.get("transactions")).hasSize(2);
+            assertThat(ledger.get("transactions").get(0).get("type").asString()).isEqualTo("bill");
+            assertThat(ledger.get("transactions").get(1).get("type").asString()).isEqualTo("payment");
+            // A suite that rebuilt report snapshots moments ago would make the aging answer from them.
+            jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ?").param(demoOrg).update();
+            assertThat(ok(200, "GET", "/reports/ap/aging", null).get("source").asString()).isEqualTo("live");
+            assertThat(ok(200, "GET", "/supplier-payments?partnerId=" + supplier, null).get("data")).hasSize(1);
+            assertThat(wh).isNotNull();
+        });
     }
 
     @Test

@@ -52,6 +52,17 @@ public class BillReceiptMatcherService {
      */
     public BillLineMatch matchLine(String organizationId, String partnerId, String productId, String variantId,
             BigDecimal quantity, BigDecimal billUomFactor) {
+        return matchLine(organizationId, partnerId, productId, variantId, quantity, billUomFactor, null);
+    }
+
+    /**
+     * Purchase readiness B3 (2026-11-27): {@code claimed} carries the receipt quantity (receipt-line units, by receipt
+     * line id) that earlier lines of the same bill already matched but have not stamped yet. It is subtracted from
+     * each receipt line's open quantity, and this line's consumptions are added to it, so two lines of one bill for the
+     * same product never consume the same open receipt quantity twice.
+     */
+    public BillLineMatch matchLine(String organizationId, String partnerId, String productId, String variantId,
+            BigDecimal quantity, BigDecimal billUomFactor, Map<String, BigDecimal> claimed) {
         BigDecimal wanted = Money.dec(quantity);
         if (wanted.signum() <= 0 || partnerId == null) {
             return new BillLineMatch(Money.ZERO, Money.ZERO, wanted, List.of(), Money.ZERO, null);
@@ -77,6 +88,9 @@ public class BillReceiptMatcherService {
                 break;
             }
             BigDecimal open = Money.dec(line.get("quantity")).subtract(Money.dec(line.get("billedQuantity")));
+            if (claimed != null) {
+                open = open.subtract(claimed.getOrDefault((String) line.get("id"), Money.ZERO));
+            }
             if (open.signum() <= 0) {
                 continue;
             }
@@ -105,6 +119,11 @@ public class BillReceiptMatcherService {
             }
             remaining = remaining.subtract(takeInBill);
         }
+        if (claimed != null) {
+            for (Consumption c : consumptions) {
+                claimed.merge(c.goodsReceiptLineId(), c.quantity(), BigDecimal::add);
+            }
+        }
         return new BillLineMatch(vouchered, accrued, remaining.signum() <= 0 ? Money.ZERO : remaining, consumptions,
                 accruedValue, locationId);
     }
@@ -131,6 +150,110 @@ public class BillReceiptMatcherService {
                             c.goodsReceiptLineId(), c.quantity(), c.vouchered())
                     .update();
         }
+    }
+
+    /**
+     * Purchase readiness H1 (2026-11-27): serialise bill posts and goods-receipt posts of one supplier, so a bill that
+     * auto-receives stock and a receipt that would absorb it never pass each other unseen. Transaction-scoped.
+     */
+    public void lockSupplier(String organizationId, String partnerId) {
+        if (partnerId == null) {
+            return;
+        }
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("bill-receipt:" + organizationId + ":"
+                + partnerId).query().listOfRows();
+    }
+
+    /**
+     * Purchase readiness H1: record what a bill line received into stock itself (auto-receive), in base units, so a
+     * later goods receipt of the same supplier, product and variant absorbs it instead of receiving it again.
+     */
+    public void recordAutoReceipt(String organizationId, String vendorBillId, String documentLineId, String partnerId,
+            String productId, String variantId, BigDecimal quantity, BigDecimal billUomFactor) {
+        if (partnerId == null || quantity == null || quantity.signum() <= 0) {
+            return;
+        }
+        BigDecimal factor = billUomFactor != null && billUomFactor.signum() > 0 ? billUomFactor
+                : legacyFactor(organizationId, productId);
+        BigDecimal base = quantity.multiply(factor).setScale(6, java.math.RoundingMode.HALF_UP);
+        if (base.signum() <= 0) {
+            return;
+        }
+        jdbc.sql("INSERT INTO \"VendorBillAutoReceipt\" (id, \"organizationId\", \"vendorBillId\", \"documentLineId\","
+                        + " \"partnerId\", \"productId\", \"variantId\", \"baseQuantity\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+                .params(UUID.randomUUID().toString(), organizationId, vendorBillId, documentLineId, partnerId, productId,
+                        variantId, base)
+                .update();
+    }
+
+    /**
+     * Purchase readiness H1: a goods-receipt line being posted absorbs what posted bills of its supplier already
+     * received into stock for the same product and variant (oldest first). The absorbed quantity is billed on the
+     * receipt line (and its PO line) and recorded as a bill-receipt match, so it is neither stocked nor vouchered a
+     * second time and later bills do not match it again. Call {@link #lockSupplier} first.
+     *
+     * @return the absorbed quantity in the receipt line's own unit (0 when nothing was auto-received)
+     */
+    public BigDecimal absorbAutoReceived(String organizationId, String partnerId, Map<String, Object> receiptLine) {
+        String productId = (String) receiptLine.get("productId");
+        BigDecimal qty = Money.dec(receiptLine.get("quantity"));
+        if (partnerId == null || productId == null || qty.signum() <= 0) {
+            return Money.ZERO;
+        }
+        List<Map<String, Object>> open = SqlRows.list(jdbc.sql("SELECT a.id, a.\"vendorBillId\", a.\"documentLineId\","
+                        + " a.\"baseQuantity\" - a.\"absorbedBaseQuantity\" AS open FROM \"VendorBillAutoReceipt\" a JOIN"
+                        + " \"Document\" d ON d.id = a.\"vendorBillId\" WHERE a.\"organizationId\" = ? AND a.\"partnerId\" = ?"
+                        + " AND a.\"productId\" = ? AND a.\"variantId\" IS NOT DISTINCT FROM ? AND a.\"absorbedBaseQuantity\""
+                        + " < a.\"baseQuantity\" AND d.status::text IN ('posted', 'paid') ORDER BY a.\"createdAt\", a.id"
+                        + " FOR UPDATE OF a")
+                .params(organizationId, partnerId, productId, receiptLine.get("variantId")));
+        if (open.isEmpty()) {
+            return Money.ZERO;
+        }
+        BigDecimal factor = receiptLine.get("uomFactor") != null && Money.dec(receiptLine.get("uomFactor")).signum() > 0
+                ? Money.dec(receiptLine.get("uomFactor"))
+                : receiptLine.get("uomId") != null ? units.factorToBase(productId, (String) receiptLine.get("uomId"))
+                        : legacyFactor(organizationId, productId);
+        BigDecimal remainingBase = qty.multiply(factor);
+        BigDecimal absorbed = Money.ZERO;
+        for (Map<String, Object> a : open) {
+            if (remainingBase.signum() <= 0) {
+                break;
+            }
+            BigDecimal takeBase = Money.min(Money.dec(a.get("open")), remainingBase);
+            if (takeBase.signum() <= 0) {
+                continue;
+            }
+            BigDecimal take = takeBase.compareTo(remainingBase) == 0 ? qty.subtract(absorbed)
+                    : Money.div(takeBase, factor).setScale(6, java.math.RoundingMode.HALF_UP);
+            jdbc.sql("UPDATE \"VendorBillAutoReceipt\" SET \"absorbedBaseQuantity\" = \"absorbedBaseQuantity\" + ? WHERE"
+                    + " id = ? AND \"organizationId\" = ?").params(takeBase, a.get("id"), organizationId).update();
+            jdbc.sql("UPDATE \"GoodsReceiptLine\" SET \"billedQuantity\" = \"billedQuantity\" + ? WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(take, receiptLine.get("id"), organizationId).update();
+            if (receiptLine.get("purchaseOrderLineId") != null) {
+                jdbc.sql("UPDATE \"PurchaseOrderLine\" SET \"billedQuantity\" = \"billedQuantity\" + ? WHERE id = ? AND"
+                        + " \"organizationId\" = ?").params(take, receiptLine.get("purchaseOrderLineId"), organizationId)
+                        .update();
+            }
+            jdbc.sql("INSERT INTO \"VendorBillReceiptMatch\" (id, \"organizationId\", \"vendorBillId\", \"documentLineId\","
+                            + " \"goodsReceiptLineId\", quantity, vouchered) VALUES (?, ?, ?, ?, ?, ?, false)")
+                    .params(UUID.randomUUID().toString(), organizationId, a.get("vendorBillId"), a.get("documentLineId"),
+                            receiptLine.get("id"), take)
+                    .update();
+            absorbed = absorbed.add(take);
+            remainingBase = remainingBase.subtract(takeBase);
+        }
+        return absorbed.min(qty);
+    }
+
+    /** Purchase readiness H1: the number of a goods receipt that absorbed stock this bill auto-received, or null. */
+    public String absorbingReceipt(String organizationId, String vendorBillId) {
+        return jdbc.sql("SELECT g.\"receiptNumber\" FROM \"VendorBillAutoReceipt\" a JOIN \"VendorBillReceiptMatch\" m ON"
+                        + " m.\"vendorBillId\" = a.\"vendorBillId\" AND m.\"documentLineId\" = a.\"documentLineId\" JOIN"
+                        + " \"GoodsReceiptLine\" l ON l.id = m.\"goodsReceiptLineId\" JOIN \"GoodsReceiptNote\" g ON g.id ="
+                        + " l.\"goodsReceiptId\" WHERE a.\"organizationId\" = ? AND a.\"vendorBillId\" = ? AND"
+                        + " a.\"absorbedBaseQuantity\" > 0 ORDER BY m.\"createdAt\" LIMIT 1")
+                .params(organizationId, vendorBillId).query(String.class).optional().orElse(null);
     }
 
     /** Give back everything a bill claimed (bill cancel). */

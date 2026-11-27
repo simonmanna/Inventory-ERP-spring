@@ -204,34 +204,36 @@ class PoBillApplicationIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("ACR-4: with bills requiring a receipt, a bill for goods not received is refused")
+    @DisplayName("ACR-4 / purchase readiness H1: bills require a receipt by default; auto_receive is opt-in")
     void billWithoutReceiptCanBeBlocked() {
         String supplier = partner();
         String item = product();
+        // default (block since 2026-11-27): a bill for goods not received is refused
+        JsonNode draft = bill(supplier, item, 3, 10);
+        Res refused = call("POST", "/vendor-bills/" + draft.get("id").asString() + "/post", Map.of("override3WM",
+                true, "overrideApproval", true), adminToken);
+        assertThat(refused.status()).isEqualTo(400);
+        assertThat(refused.body().get("message").asString()).startsWith("Bill line ").contains(
+                ": 3 not received yet — post the goods receipt first");
+        String poId = po(supplier, item, 3, 10);
+        receive(poId, item, 3);
+        assertThat(new BigDecimal(post(draft).get("amountResidual").asString())).isEqualByComparingTo("30");
+
+        // auto_receive (opt-in): the bill receives what nobody received
         String id = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Setting\" (id, \"organizationId\", key, value, \"scopeType\", \"updatedAt\") VALUES"
-                + " (?, ?, 'procurement.billWithoutReceipt', '\"block\"'::jsonb, 'organization', now())")
+                + " (?, ?, 'procurement.billWithoutReceipt', '\"auto_receive\"'::jsonb, 'organization', now())")
                 .params(id, demoOrg).update();
         settingResolver.invalidate(demoOrg);
         try {
-            JsonNode draft = bill(supplier, item, 3, 10);
-            Res refused = call("POST", "/vendor-bills/" + draft.get("id").asString() + "/post", Map.of("override3WM",
-                    true, "overrideApproval", true), adminToken);
-            assertThat(refused.status()).isEqualTo(400);
-            assertThat(refused.body().get("message").asString()).startsWith("Bill line ").contains(
-                    ": 3 not received yet — post the goods receipt first");
-            String poId = po(supplier, item, 3, 10);
-            receive(poId, item, 3);
-            assertThat(new BigDecimal(post(draft).get("amountResidual").asString())).isEqualByComparingTo("30");
+            String other = product();
+            JsonNode auto = post(bill(supplier, other, 2, 10));
+            assertThat(auto.get("status").asString()).isEqualTo("posted");
+            assertThat(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ?")
+                    .param(other).query(BigDecimal.class).single()).isEqualByComparingTo("2");
         } finally {
             jdbc.sql("DELETE FROM \"Setting\" WHERE id = ?").param(id).update();
             settingResolver.invalidate(demoOrg);
         }
-        // default (auto_receive): the bill receives what nobody received, as before
-        String other = product();
-        JsonNode auto = post(bill(supplier, other, 2, 10));
-        assertThat(auto.get("status").asString()).isEqualTo("posted");
-        assertThat(jdbc.sql("SELECT COALESCE(SUM(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ?").param(other)
-                .query(BigDecimal.class).single()).isEqualByComparingTo("2");
     }
 }

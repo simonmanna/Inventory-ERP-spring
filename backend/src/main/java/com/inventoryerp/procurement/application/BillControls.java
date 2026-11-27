@@ -54,16 +54,35 @@ public class BillControls implements VendorBillPostGuard, MatchToleranceProvider
         }
         String mode = policies.text(ProcurementPolicyRegistry.BILL_DUPLICATE_CHECK,
                 ProcurementPolicyService.PolicyContext.branch((String) bill.get("branchId")));
-        if (mode == null || "off".equals(mode)) {
+        if (mode == null) {
+            mode = ProcurementPolicyRegistry.DUPLICATE_BLOCK_REFERENCE;
+        }
+        if ("off".equals(mode)) {
             return List.of();
         }
-        List<Map<String, Object>> dups = duplicates(billId);
-        if (dups.isEmpty()) {
+        Map<String, Object> self = SqlRows.one(jdbc.sql("SELECT \"partnerId\", reference, \"sourceType\" FROM"
+                + " \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(billId, org()));
+        String norm = self == null ? null : normalizeReference((String) self.get("reference"));
+        if (norm != null && self.get("partnerId") != null) {
+            // Purchase readiness H2: two posts of the same supplier invoice serialise, so both cannot pass the check.
+            jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)").param("bill-dup:" + org() + ":"
+                    + self.get("partnerId") + ":" + norm).query().listOfRows();
+        }
+        List<Map<String, Object>> sameRef = referenceDuplicates(billId, norm);
+        List<Map<String, Object>> sameAmount = amountDuplicates(billId, sameRef);
+        if (sameRef.isEmpty() && sameAmount.isEmpty()) {
             return List.of();
         }
-        String list = String.join(", ", dups.stream().map(d -> d.get("documentNumber")
-                + (d.get("reference") == null ? "" : " (ref " + d.get("reference") + ")")).toList());
-        String message = "Possible duplicate bill: this supplier already has " + list
+        // Opening-balance bills default their reference to the batch label, so the default only flags them.
+        boolean blockRef = "block".equals(mode) || ProcurementPolicyRegistry.DUPLICATE_BLOCK_REFERENCE.equals(mode)
+                && !"opening_balance".equals(self == null ? null : self.get("sourceType"));
+        if (blockRef && !sameRef.isEmpty()) {
+            throw ApiException.conflict("Duplicate bill: this supplier already has " + describe(sameRef)
+                    + " with the same invoice reference — cancel this bill or correct its reference");
+        }
+        List<Map<String, Object>> dups = new java.util.ArrayList<>(sameRef);
+        dups.addAll(sameAmount);
+        String message = "Possible duplicate bill: this supplier already has " + describe(dups)
                 + " with the same reference, or the same amount within 7 days";
         if ("block".equals(mode)) {
             throw ApiException.conflict(message + " — cancel this bill or change the policy to post it");
@@ -73,19 +92,63 @@ public class BillControls implements VendorBillPostGuard, MatchToleranceProvider
         return List.of(message);
     }
 
+    private static String describe(List<Map<String, Object>> dups) {
+        return String.join(", ", dups.stream().map(d -> d.get("documentNumber")
+                + (d.get("reference") == null ? "" : " (ref " + d.get("reference") + ")")).toList());
+    }
+
     /**
-     * Posted bills of the same supplier that look like {@code billId}: same reference (case- and space-insensitive), or
-     * the same total with an issue date at most 7 days apart.
+     * Purchase readiness H2: the supplier invoice number as compared for duplicates — lower-case letters and digits
+     * only, so INV-001, inv 001 and INV/001 are the same invoice. Null when nothing is left.
      */
-    public List<Map<String, Object>> duplicates(String billId) {
+    public static String normalizeReference(String reference) {
+        if (reference == null) {
+            return null;
+        }
+        String norm = reference.toLowerCase(java.util.Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]", "");
+        return norm.isEmpty() ? null : norm;
+    }
+
+    /** {@link #normalizeReference} in SQL over {@code column}. */
+    private static String sqlNormalized(String column) {
+        return "lower(regexp_replace(coalesce(" + column + ", ''), '[^[:alnum:]]', '', 'g'))";
+    }
+
+    /** Landed-cost bills are paired with ordinary ones by {@code LandedCostBillGuard} (its own message), not here. */
+    private List<Map<String, Object>> referenceDuplicates(String billId, String norm) {
+        if (norm == null) {
+            return List.of();
+        }
         return SqlRows.list(jdbc.sql("SELECT o.id, o.\"documentNumber\", o.reference, o.\"issueDate\", o.\"totalAmount\""
                 + " FROM \"Document\" b JOIN \"Document\" o ON o.\"organizationId\" = b.\"organizationId\" AND"
                 + " o.\"partnerId\" = b.\"partnerId\" AND o.\"documentType\" = 'vendor_bill' AND o.id <> b.id AND"
-                + " o.status::text IN ('posted', 'paid') WHERE b.id = ? AND"
-                + " b.\"organizationId\" = ? AND ((b.reference IS NOT NULL AND btrim(b.reference) <> '' AND"
-                + " lower(regexp_replace(o.reference, '\\s', '', 'g')) = lower(regexp_replace(b.reference, '\\s', '', 'g')))"
-                + " OR (o.\"totalAmount\" = b.\"totalAmount\" AND abs(extract(epoch FROM o.\"issueDate\" - b.\"issueDate\"))"
-                + " <= 7 * 86400)) ORDER BY o.\"issueDate\" DESC LIMIT 5").params(billId, org()));
+                + " o.status::text IN ('posted', 'paid') AND coalesce(o.\"sourceType\", '') <> 'landed_cost' AND"
+                + " coalesce(b.\"sourceType\", '') <> 'landed_cost' WHERE b.id = ? AND b.\"organizationId\" = ? AND "
+                + sqlNormalized("o.reference") + " = ? ORDER BY o.\"issueDate\" DESC LIMIT 5").params(billId, org(), norm));
+    }
+
+    private List<Map<String, Object>> amountDuplicates(String billId, List<Map<String, Object>> exclude) {
+        List<Object> ids = exclude.stream().map(d -> d.get("id")).toList();
+        return SqlRows.list(jdbc.sql("SELECT o.id, o.\"documentNumber\", o.reference, o.\"issueDate\", o.\"totalAmount\""
+                + " FROM \"Document\" b JOIN \"Document\" o ON o.\"organizationId\" = b.\"organizationId\" AND"
+                + " o.\"partnerId\" = b.\"partnerId\" AND o.\"documentType\" = 'vendor_bill' AND o.id <> b.id AND"
+                + " o.status::text IN ('posted', 'paid') WHERE b.id = ? AND b.\"organizationId\" = ? AND"
+                + " o.\"totalAmount\" = b.\"totalAmount\" AND abs(extract(epoch FROM o.\"issueDate\" - b.\"issueDate\"))"
+                + " <= 7 * 86400 ORDER BY o.\"issueDate\" DESC LIMIT 5").params(billId, org())).stream()
+                .filter(d -> !ids.contains(d.get("id"))).toList();
+    }
+
+    /**
+     * Posted bills of the same supplier that look like {@code billId}: the same normalised invoice reference (letters
+     * and digits only, case-insensitive), or the same total with an issue date at most 7 days apart.
+     */
+    public List<Map<String, Object>> duplicates(String billId) {
+        String ref = jdbc.sql("SELECT reference FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(billId, org()).query(String.class).optional().orElse(null);
+        List<Map<String, Object>> sameRef = referenceDuplicates(billId, normalizeReference(ref));
+        List<Map<String, Object>> out = new java.util.ArrayList<>(sameRef);
+        out.addAll(amountDuplicates(billId, sameRef));
+        return out.size() > 5 ? out.subList(0, 5) : out;
     }
 
     @Override

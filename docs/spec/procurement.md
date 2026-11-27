@@ -706,3 +706,44 @@ Tests: `PlanningIT`. Web:
 - Vendor bills, including subcontract valuation bills (`withholdingTaxId` on the valuation request), can withhold tax
   at posting. See [invoicing.md](invoicing.md) and
   [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+
+## Purchase readiness fixes (owner-approved 2026-11-27) — stream "bills"
+
+- **B3 — one bill, two lines, same product.** Bill posting tracks the receipt quantity earlier lines of the same bill
+  already matched (`BillReceiptMatcherService.matchLine(..., claimed)`), so a receipt of 10 billed as 10 + 5 matches
+  10 once; the other 5 are unreceived and follow `procurement.billWithoutReceipt`. V692 adds
+  `GoodsReceiptLine_billed_le_received` (`billedQuantity <= quantity + 0.0001`); it is validated when existing data
+  allows, otherwise left `NOT VALID` (still enforced on new writes) with a migration notice.
+- **H1 — bill before goods.** `procurement.billWithoutReceipt` now defaults to `block` (three-way match: a bill for
+  stock items needs a goods receipt; 400 `Bill line <product>: <qty> not received yet — post the goods receipt first
+  (Purchasing settings: a supplier bill needs a goods receipt)`). Organisations without a stored value change
+  behaviour on deploy; set `auto_receive` to keep the old one. In `auto_receive` mode a bill records what it received
+  itself (`VendorBillAutoReceipt`, V692, base units). A goods receipt of the same supplier, product and variant posted
+  later (draft post or the PO receive route) absorbs that quantity first: no second stock-in, no receipt voucher (AP)
+  for it; the receipt line is billed by that bill (`VendorBillReceiptMatch`, PO line billed too). A bill whose stock
+  was absorbed cannot be cancelled: 400 `Bill <number> cannot be cancelled: the stock it received was matched by goods
+  receipt <GRN>. Raise a debit note for the bill instead.` Bill posts and goods-receipt posts of one supplier serialise
+  on an advisory lock. Bills auto-received before V692 are not tracked (no backfill).
+- **H2 — duplicate bills.** `bill.duplicateCheck` gains `block_reference`, the new default: a posted bill of the same
+  supplier with the same normalised invoice reference (lower-case letters and digits only: `INV-001` = `inv 001` =
+  `INV001`) is refused with 409 `Duplicate bill: this supplier already has <bills> with the same invoice reference —
+  cancel this bill or correct its reference`; the same amount within 7 days only warns (bill posts with `warnings`,
+  `bill.duplicate_suspected` event). `warn` and `block` keep their meaning (`block` refuses both kinds), `off` disables
+  it. An advisory lock on (organisation, supplier, normalised reference) serialises concurrent posts. The landed-cost
+  guard (`LandedCostBillGuard`, `procurement.invoiceRef.normalization`) keeps its own rule (separators removed) because
+  its normalised numbers are stored on landed-cost charges.
+- **H8 — approval override.** `overrideApproval` on bill post is now the poster's decision through the approval
+  workflow (`ApprovalsService.decide`: step order, eligible approvers, amount limits, separation of duties), committed
+  on its own. When the workflow still needs other steps: 403 `Your approval of bill <number> was recorded, but its
+  approval workflow needs further approvers (request <id>) before it can be posted`. The last editor (`updatedBy`, now
+  stamped by bill update) cannot override: 403 `You cannot approve a bill you last edited — another approver must
+  decide`; an approval given by the last editor is cancelled at post and a new request raised: 403 `This bill was
+  approved by the person who last edited it; another approver must approve it (request <id>)`. The approval content
+  hash also covers issue date, due date, reference and branch (`v2:` hashes; requests recorded with the earlier hash
+  still count while it matches). Approval snapshots carry `makerIds`.
+- **PO links.** A bill links only purchase orders of its own supplier: 400 `Purchase order <number> belongs to another
+  supplier — a bill can only be linked to purchase orders of its own supplier`.
+- **Three-way match.** Bill quantities are compared in base units (`uomFactor` of bill and PO lines; a missing factor
+  counts as 1), so a bill in boxes matches an order in pieces. A bill linked to several orders counts each bill line
+  once: the linked orders that order the product take it oldest first, each up to its ordered quantity, the last any
+  excess.

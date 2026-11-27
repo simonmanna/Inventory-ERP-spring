@@ -1,5 +1,6 @@
 package com.inventoryerp.accounting.verification;
 
+import com.inventoryerp.TestBillSettings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.accounting.support.AccountingFixtures;
@@ -17,6 +18,9 @@ import tools.jackson.databind.JsonNode;
 
 /** ACC-0 reproduction: reversal dates and invoice cancellation with stock (findings B6, B7). */
 class Acc0ReversalIT extends AccountingFixtures {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService billSettings;
 
     String product(String org, boolean stock, int price, int cost) {
         String id = UUID.randomUUID().toString();
@@ -96,53 +100,57 @@ class Acc0ReversalIT extends AccountingFixtures {
     @Test
     @DisplayName("[B7][owner:accounting][ACC-3] cancelling a stock invoice restores stock and reverses COGS")
     void cancelRestoresStock() {
-        String supplier = demoPartner("ACC0 stock supplier", true);
-        String customer = demoPartner("ACC0 stock customer", false);
-        String item = demoProduct("ACC0 cement", true, 10, 4);
-        ok(200, "POST", "/vendor-bills/" + ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate",
-                today(), "lines", List.of(Map.of("productId", item, "quantity", 10, "unitPrice", 4)))).get("id")
-                .asString() + "/post", Map.of());
-        assertThat(onHand(item)).as("received").isEqualByComparingTo("10");
-        BigDecimal valueBefore = stockValue(item);
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String supplier = demoPartner("ACC0 stock supplier", true);
+            String customer = demoPartner("ACC0 stock customer", false);
+            String item = demoProduct("ACC0 cement", true, 10, 4);
+            ok(200, "POST", "/vendor-bills/" + ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate",
+                    today(), "lines", List.of(Map.of("productId", item, "quantity", 10, "unitPrice", 4)))).get("id")
+                    .asString() + "/post", Map.of());
+            assertThat(onHand(item)).as("received").isEqualByComparingTo("10");
+            BigDecimal valueBefore = stockValue(item);
 
-        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today(), "lines",
-                List.of(Map.of("productId", item, "quantity", 3, "unitPrice", 10)))).get("id").asString();
-        ok(200, "POST", "/invoices/" + inv + "/post", null);
-        assertThat(onHand(item)).as("after sale").isEqualByComparingTo("7");
-        String cogs = mapped(demoOrg, "cogs");
-        BigDecimal cogsBooked = cogsForProduct(cogs, item, inv);
-        assertThat(cogsBooked).as("COGS booked on sale").isEqualByComparingTo("12");
+            String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today(), "lines",
+                    List.of(Map.of("productId", item, "quantity", 3, "unitPrice", 10)))).get("id").asString();
+            ok(200, "POST", "/invoices/" + inv + "/post", null);
+            assertThat(onHand(item)).as("after sale").isEqualByComparingTo("7");
+            String cogs = mapped(demoOrg, "cogs");
+            BigDecimal cogsBooked = cogsForProduct(cogs, item, inv);
+            assertThat(cogsBooked).as("COGS booked on sale").isEqualByComparingTo("12");
 
-        ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
-        org.assertj.core.api.SoftAssertions soft = new org.assertj.core.api.SoftAssertions();
-        soft.assertThat(onHand(item)).as("stock after cancel").isEqualByComparingTo("10");
-        soft.assertThat(stockValue(item)).as("stock value after cancel").isEqualByComparingTo(valueBefore);
-        soft.assertThat(cogsForProduct(cogs, item, inv)).as("COGS after cancel").isEqualByComparingTo("0");
-        // D-B7b: a repeated cancel keeps Nest's idempotent echo; what matters is that it changes nothing.
-        Res again = as("POST", "/invoices/" + inv + "/cancel", null);
-        soft.assertThat(again.status()).as("second cancel → " + again.raw().body()).isLessThan(500);
-        soft.assertThat(onHand(item)).as("stock after a repeated cancel").isEqualByComparingTo("10");
-        soft.assertThat(cogsForProduct(cogs, item, inv)).as("COGS after a repeated cancel").isEqualByComparingTo("0");
-        soft.assertAll();
+            ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
+            org.assertj.core.api.SoftAssertions soft = new org.assertj.core.api.SoftAssertions();
+            soft.assertThat(onHand(item)).as("stock after cancel").isEqualByComparingTo("10");
+            soft.assertThat(stockValue(item)).as("stock value after cancel").isEqualByComparingTo(valueBefore);
+            soft.assertThat(cogsForProduct(cogs, item, inv)).as("COGS after cancel").isEqualByComparingTo("0");
+            // D-B7b: a repeated cancel keeps Nest's idempotent echo; what matters is that it changes nothing.
+            Res again = as("POST", "/invoices/" + inv + "/cancel", null);
+            soft.assertThat(again.status()).as("second cancel → " + again.raw().body()).isLessThan(500);
+            soft.assertThat(onHand(item)).as("stock after a repeated cancel").isEqualByComparingTo("10");
+            soft.assertThat(cogsForProduct(cogs, item, inv)).as("COGS after a repeated cancel").isEqualByComparingTo("0");
+            soft.assertAll();
+        });
     }
 
     @Test
     @DisplayName("[B7][owner:accounting][ACC-3] cancel after selling more than on hand restores the issued quantity")
     void cancelAfterInsufficientStock() {
-        String supplier = demoPartner("ACC0 neg supplier", true);
-        String customer = demoPartner("ACC0 neg customer", false);
-        String item = demoProduct("ACC0 aggregate", true, 10, 4);
-        ok(200, "POST", "/vendor-bills/" + ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate",
-                today(), "lines", List.of(Map.of("productId", item, "quantity", 3, "unitPrice", 4)))).get("id")
-                .asString() + "/post", Map.of());
-        String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today(), "lines",
-                List.of(Map.of("productId", item, "quantity", 5, "unitPrice", 10)))).get("id").asString();
-        Res posted = as("POST", "/invoices/" + inv + "/post", null);
-        assertThat(posted.status()).as("over-sale post → " + posted.raw().body()).isEqualTo(200);
-        BigDecimal afterSale = onHand(item);
-        ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
-        assertThat(onHand(item)).as("stock after cancel (sold 5 of 3, on hand after sale " + afterSale + ")")
-                .isEqualByComparingTo("3");
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String supplier = demoPartner("ACC0 neg supplier", true);
+            String customer = demoPartner("ACC0 neg customer", false);
+            String item = demoProduct("ACC0 aggregate", true, 10, 4);
+            ok(200, "POST", "/vendor-bills/" + ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate",
+                    today(), "lines", List.of(Map.of("productId", item, "quantity", 3, "unitPrice", 4)))).get("id")
+                    .asString() + "/post", Map.of());
+            String inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today(), "lines",
+                    List.of(Map.of("productId", item, "quantity", 5, "unitPrice", 10)))).get("id").asString();
+            Res posted = as("POST", "/invoices/" + inv + "/post", null);
+            assertThat(posted.status()).as("over-sale post → " + posted.raw().body()).isEqualTo(200);
+            BigDecimal afterSale = onHand(item);
+            ok(200, "POST", "/invoices/" + inv + "/cancel", Map.of("reason", "Raised in error"));
+            assertThat(onHand(item)).as("stock after cancel (sold 5 of 3, on hand after sale " + afterSale + ")")
+                    .isEqualByComparingTo("3");
+        });
     }
 
     BigDecimal onHand(String productId) {

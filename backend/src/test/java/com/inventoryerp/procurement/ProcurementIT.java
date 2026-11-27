@@ -1,5 +1,6 @@
 package com.inventoryerp.procurement;
 
+import com.inventoryerp.TestBillSettings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
@@ -32,6 +33,9 @@ import tools.jackson.databind.JsonNode;
  * the {@code inv-*} audit suites; plus idempotency, authorization matrix and tenant isolation.
  */
 class ProcurementIT extends ApiTestSupport {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService billSettings;
 
     @Autowired
     StockService stock;
@@ -976,24 +980,26 @@ class ProcurementIT extends ApiTestSupport {
     @Test
     @DisplayName("audit H18: a bill priced in the purchase unit lands as base units (10 cases × 24)")
     void billInPurchaseUnit() {
-        String cat = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"UomCategory\" (id, \"organizationId\", name, \"updatedAt\") VALUES (?, ?, ?, now())")
-                .params(cat, demoOrg, "AUD-UNITS-" + suffix()).update();
-        String each = UUID.randomUUID().toString();
-        String box = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
-                + " VALUES (?, ?, ?, ?, 'Each', 1, now())").params(each, demoOrg, cat, "EA-" + suffix()).update();
-        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
-                + " VALUES (?, ?, ?, ?, 'Case of 24', 24, now())").params(box, demoOrg, cat, "CASE-" + suffix()).update();
-        jdbc.sql("UPDATE \"UomCategory\" SET \"referenceUomId\" = ? WHERE id = ?").params(each, cat).update();
-        String soda = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
-                        + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"uomId\", \"purchaseUomId\", \"salesUomId\","
-                        + " \"updatedAt\") VALUES (?, ?, ?, 'Soda', 'stockable', true, 'AVCO', 0, 0, ?, ?, ?, now())")
-                .params(soda, demoOrg, "H18-" + suffix(), each, box, each).update();
-        postBill(partner("H18"), Map.of("productId", soda, "description", "Soda (cases)", "quantity", 10, "unitPrice",
-                240));
-        assertThat(onHand(soda, null)).isEqualByComparingTo("240");
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String cat = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"UomCategory\" (id, \"organizationId\", name, \"updatedAt\") VALUES (?, ?, ?, now())")
+                    .params(cat, demoOrg, "AUD-UNITS-" + suffix()).update();
+            String each = UUID.randomUUID().toString();
+            String box = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
+                    + " VALUES (?, ?, ?, ?, 'Each', 1, now())").params(each, demoOrg, cat, "EA-" + suffix()).update();
+            jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
+                    + " VALUES (?, ?, ?, ?, 'Case of 24', 24, now())").params(box, demoOrg, cat, "CASE-" + suffix()).update();
+            jdbc.sql("UPDATE \"UomCategory\" SET \"referenceUomId\" = ? WHERE id = ?").params(each, cat).update();
+            String soda = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                            + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"uomId\", \"purchaseUomId\", \"salesUomId\","
+                            + " \"updatedAt\") VALUES (?, ?, ?, 'Soda', 'stockable', true, 'AVCO', 0, 0, ?, ?, ?, now())")
+                    .params(soda, demoOrg, "H18-" + suffix(), each, box, each).update();
+            postBill(partner("H18"), Map.of("productId", soda, "description", "Soda (cases)", "quantity", 10, "unitPrice",
+                    240));
+            assertThat(onHand(soda, null)).isEqualByComparingTo("240");
+        });
     }
 
     // ------------------------------------------------------------------ supplier-payment-withholding

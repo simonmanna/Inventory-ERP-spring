@@ -48,6 +48,34 @@ public class ThreeWayMatchService {
 
     private static final BigDecimal EPS = new BigDecimal("0.0001");
 
+    /**
+     * The base quantity of one line of a bill linked to several purchase orders that counts on {@code purchaseOrderId}:
+     * the linked orders that order the product take it in order (oldest first), each up to its ordered base quantity,
+     * the last of them any excess. When none of them orders the product, the first linked order takes it all.
+     */
+    private BigDecimal multiOrderShare(String org, String billId, String productId, String purchaseOrderId,
+            BigDecimal baseQty) {
+        List<Map<String, Object>> orders = SqlRows.list(jdbc.sql("SELECT po.id, COALESCE((SELECT SUM(l.quantity *"
+                + " COALESCE(l.\"uomFactor\", 1)) FROM \"PurchaseOrderLine\" l WHERE l.\"organizationId\" = po.\"organizationId\""
+                + " AND l.\"purchaseOrderId\" = po.id AND l.\"productId\" = ?), 0) AS ordered FROM \"VendorBillLink\" k JOIN"
+                + " \"PurchaseOrder\" po ON po.id = k.\"purchaseOrderId\" WHERE k.\"organizationId\" = ? AND"
+                + " k.\"vendorBillId\" = ? ORDER BY po.\"createdAt\", po.id").params(productId, org, billId));
+        List<Map<String, Object>> ordering = orders.stream().filter(o -> n(o.get("ordered")).signum() > 0).toList();
+        if (ordering.isEmpty()) {
+            return !orders.isEmpty() && purchaseOrderId.equals(orders.getFirst().get("id")) ? baseQty : BigDecimal.ZERO;
+        }
+        BigDecimal remaining = baseQty;
+        for (int i = 0; i < ordering.size(); i++) {
+            Map<String, Object> o = ordering.get(i);
+            BigDecimal take = i == ordering.size() - 1 ? remaining : remaining.min(n(o.get("ordered")));
+            if (purchaseOrderId.equals(o.get("id"))) {
+                return take.max(BigDecimal.ZERO);
+            }
+            remaining = remaining.subtract(take);
+        }
+        return BigDecimal.ZERO;
+    }
+
     /** Recompute every line of a PO; returns the upserted match rows. */
     @Transactional
     public List<Map<String, Object>> recomputeForOrder(String purchaseOrderId) {
@@ -77,7 +105,9 @@ public class ThreeWayMatchService {
         }
         // Bill lines (net) of the bills linked to this order.
         List<Map<String, Object>> billLines = SqlRows.list(jdbc.sql("SELECT dl.\"productId\", dl.\"variantId\", dl.quantity,"
-                + " dl.subtotal, dl.\"uomFactor\" FROM \"DocumentLine\" dl JOIN \"Document\" d ON d.id = dl.\"documentId\" WHERE"
+                + " dl.subtotal, dl.\"uomFactor\", d.id AS \"billId\", (SELECT count(*) FROM \"VendorBillLink\" k2 WHERE"
+                + " k2.\"organizationId\" = d.\"organizationId\" AND k2.\"vendorBillId\" = d.id) AS \"linkCount\""
+                + " FROM \"DocumentLine\" dl JOIN \"Document\" d ON d.id = dl.\"documentId\" WHERE"
                 + " d.\"organizationId\" = ? AND d.\"documentType\" = 'vendor_bill'"
                 + " AND (d.status IN ('posted', 'paid') OR d.id = ?::text) AND d.id IN (SELECT \"vendorBillId\" FROM"
                 + " \"VendorBillLink\" WHERE \"organizationId\" = ? AND \"purchaseOrderId\" = ?)")
@@ -92,11 +122,22 @@ public class ThreeWayMatchService {
                 unlinkedNet = unlinkedNet.add(n(bl.get("subtotal")));
                 continue;
             }
+            // Purchase readiness (2026-11-27): bill quantities are compared in base units (a bill in boxes matches an
+            // order in pieces), and a bill linked to several orders counts each line once, spread over those orders.
+            BigDecimal factor = n(bl.get("uomFactor")).signum() > 0 ? n(bl.get("uomFactor")) : BigDecimal.ONE;
+            BigDecimal baseQty = n(bl.get("quantity")).multiply(factor);
+            BigDecimal net = n(bl.get("subtotal"));
+            if (n(bl.get("linkCount")).compareTo(BigDecimal.ONE) > 0 && baseQty.signum() > 0) {
+                BigDecimal share = multiOrderShare(org, (String) bl.get("billId"), pid.toString(), purchaseOrderId,
+                        baseQty);
+                net = net.multiply(share).divide(baseQty, 6, RoundingMode.HALF_UP);
+                baseQty = share;
+            }
             BigDecimal[] acc = billedByProduct.computeIfAbsent(key(pid, bl.get("variantId")), k -> new BigDecimal[] {
                     BigDecimal.ZERO,
                     BigDecimal.ZERO});
-            acc[0] = acc[0].add(n(bl.get("quantity")));
-            acc[1] = acc[1].add(n(bl.get("subtotal")));
+            acc[0] = acc[0].add(baseQty);
+            acc[1] = acc[1].add(net);
         }
         BigDecimal productlessOrdered = BigDecimal.ZERO;
         for (Map<String, Object> l : lines) {
@@ -126,20 +167,24 @@ public class ThreeWayMatchService {
                 BigDecimal[] own = billedByProduct.get(key(pid, vid));
                 BigDecimal[] acc = own != null && own[0].signum() > 0 || vid == null ? own
                         : billedByProduct.get(key(pid, null));
+                // The order line's unit (base units per order unit): billed base quantities convert back into it.
+                BigDecimal lineFactor = n(line.get("uomFactor")).signum() > 0 ? n(line.get("uomFactor"))
+                        : BigDecimal.ONE;
                 if (acc == null || acc[0].signum() <= 0) {
                     billedQty = BigDecimal.ZERO;
                     billedAmount = BigDecimal.ZERO;
                 } else {
+                    BigDecimal orderedBase = orderedQty.multiply(lineFactor);
                     // Consume the product's billed quantity line by line, up to each line's ordered quantity; the
                     // last line of the product (of the variant, for a variant's own bill lines) takes any excess (an
                     // over-bill is a variance, not lost).
                     boolean exact = acc == own && vid != null;
                     boolean lastOfProduct = lines.stream().filter(o -> pid.equals(o.get("productId"))
                             && (!exact || vid.equals(o.get("variantId")))).reduce((a, b) -> b).orElse(line) == line;
-                    BigDecimal take = lastOfProduct ? acc[0] : acc[0].min(orderedQty);
-                    BigDecimal unit = acc[1].divide(acc[0], 6, RoundingMode.HALF_UP);
-                    billedQty = take;
-                    billedAmount = unit.multiply(take);
+                    BigDecimal take = lastOfProduct ? acc[0] : acc[0].min(orderedBase);
+                    BigDecimal unit = acc[1].divide(acc[0], 10, RoundingMode.HALF_UP);
+                    billedAmount = unit.multiply(take).setScale(6, RoundingMode.HALF_UP);
+                    billedQty = take.divide(lineFactor, 6, RoundingMode.HALF_UP);
                     acc[1] = acc[1].subtract(billedAmount);
                     acc[0] = acc[0].subtract(take);
                 }

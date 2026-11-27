@@ -231,12 +231,13 @@ public class VendorBillService {
         // Who entered the bill: the supplier-bill separation-of-duties pair needs it at posting.
         jdbc.sql("UPDATE \"Document\" SET \"createdBy\" = ? WHERE id = ? AND \"organizationId\" = ?")
                 .params(TenantContext.userId(), id, org()).update();
-        syncPoLinks(id, dto.purchaseOrderIds(), Money.dec(doc.get("totalAmount")).doubleValue());
+        syncPoLinks(id, dto.partnerId(), dto.purchaseOrderIds(), Money.dec(doc.get("totalAmount")).doubleValue());
         double amount = Money.dec(doc.get("totalAmount")).doubleValue();
         Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(amount), "partnerId", doc.get("partnerId"),
                 "documentNumber", doc.get("documentNumber"), "createdBy", TenantContext.userId());
         // Gap fix h03-F6: the request records what was submitted, so a post can tell an edit made after the decision.
         snapshot.put("contentHash", billContentHash(id));
+        snapshot.put("makerIds", makerIds(TenantContext.userId()));
         Map<String, Object> request = approvals.requestApproval("vendor_bill", id, snapshot, null);
         if (request != null) {
             audit.record(AuditInput.of("VendorBill", id, "create", null, Obj.of("documentNumber", doc.get("documentNumber"),
@@ -300,14 +301,14 @@ public class VendorBillService {
         Totals totals = builder.prepareLines(dto.effectiveLines(this::productTax), UnitRole.PURCHASE);
         jdbc.sql("UPDATE \"Document\" SET \"partnerId\" = ?, \"issueDate\" = ?, \"dueDate\" = ?, \"currencyId\" = ?,"
                         + " reference = ?, notes = ?, subtotal = ?, \"discountTotal\" = ?, \"taxAmount\" = ?,"
-                        + " \"totalAmount\" = ?, \"amountResidual\" = ?, \"withholdingAmount\" = ?, \"updatedAt\" = "
-                        + NOW + " WHERE id = ? AND \"organizationId\" = ?")
+                        + " \"totalAmount\" = ?, \"amountResidual\" = ?, \"withholdingAmount\" = ?, \"updatedBy\" = ?,"
+                        + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?")
                 .params(dto.partnerId(), ts(dto.issueDate()), ts(dto.dueDate()), dto.currencyId(), dto.reference(),
                         dto.notes(), totals.subtotal(), totals.discountTotal(), totals.taxAmount(), totals.total(),
-                        totals.residual(), totals.withholdingAmount(), id, org())
+                        totals.residual(), totals.withholdingAmount(), TenantContext.userId(), id, org())
                 .update();
         builder.insertLines(id, totals.prepared(), false);
-        syncPoLinks(id, dto.purchaseOrderIds(), totals.total().doubleValue());
+        syncPoLinks(id, dto.partnerId(), dto.purchaseOrderIds(), totals.total().doubleValue());
         Map<String, Object> out = builder.document(id);
         out.put("lines", builder.lines(id, false));
         out.put("partner", builder.partner(out.get("partnerId")));
@@ -323,7 +324,7 @@ public class VendorBillService {
                 .params(l.productId(), org()).query(String.class).optional().orElse(null);
     }
 
-    private void syncPoLinks(String vendorBillId, List<String> purchaseOrderIds, double total) {
+    private void syncPoLinks(String vendorBillId, String partnerId, List<String> purchaseOrderIds, double total) {
         if (purchaseOrderIds == null) {
             return;
         }
@@ -342,6 +343,15 @@ public class VendorBillService {
                 .param("ids", List.copyOf(ids)).param("org", org()).query(Long.class).single();
         if (found != ids.size()) {
             throw ApiException.badRequest("One or more purchase orders do not exist in this organization");
+        }
+        // Purchase readiness (2026-11-27): a bill links only purchase orders of its own supplier.
+        List<String> foreign = jdbc.sql("SELECT \"orderNumber\" FROM \"PurchaseOrder\" WHERE id IN (:ids) AND"
+                        + " \"organizationId\" = :org AND \"partnerId\" IS DISTINCT FROM :partner ORDER BY \"orderNumber\"")
+                .param("ids", List.copyOf(ids)).param("org", org()).param("partner", partnerId).query(String.class)
+                .list();
+        if (!foreign.isEmpty()) {
+            throw ApiException.badRequest("Purchase order " + String.join(", ", foreign) + " belongs to another supplier"
+                    + " — a bill can only be linked to purchase orders of its own supplier");
         }
         // ACC-3 (B12): exact decimal split at currency precision; the last link takes the remainder (Σ links = total).
         BigDecimal whole = new BigDecimal(JsNumbers.toJsString(total));
@@ -406,9 +416,21 @@ public class VendorBillService {
             if (userId != null && (userId.equals(requester) || userId.equals(doc.get("createdBy")))) {
                 throw ApiException.forbidden("You cannot approve a bill you created — another approver must decide");
             }
-            jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'approved', \"decidedAt\" = now(), \"updatedAt\" = now()"
-                    + " WHERE id = ?").param(pending).update();
-            audit.record(AuditInput.of("ApprovalRequest", pending, "approve"));
+            if (userId != null && userId.equals(doc.get("updatedBy"))) {
+                throw ApiException.forbidden("You cannot approve a bill you last edited — another approver must decide");
+            }
+            // Purchase readiness H8 (2026-11-27): the override is this user's decision on the workflow — step order,
+            // eligible approvers (named users / roles), amount bands and separation of duties all apply. It is
+            // committed on its own, so an approval of one step of several survives the refusal below.
+            newTx.executeWithoutResult(s -> approvals.decide(pending, "approved",
+                    "Approved when posting the bill (override)"));
+            String decided = jdbc.sql("SELECT status::text FROM \"ApprovalRequest\" WHERE id = ? AND"
+                    + " \"organizationId\" = ?").params(pending, org).query(String.class).optional().orElse(null);
+            if (!"approved".equals(decided)) {
+                throw ApiException.forbidden("Your approval of bill " + doc.get("documentNumber") + " was recorded, but"
+                        + " its approval workflow needs further approvers (request " + pending + ") before it can be"
+                        + " posted");
+            }
         } else {
             String refused = decidedApprovalRefusal(id, doc);
             if (refused != null) {
@@ -460,26 +482,41 @@ public class VendorBillService {
         boolean unchanged = last.get("amount") != null
                 && total.subtract(Money.dec(last.get("amount"))).abs().compareTo(new BigDecimal("0.005")) <= 0
                 && java.util.Objects.equals(last.get("partnerId"), doc.get("partnerId"))
-                && (last.get("contentHash") == null || last.get("contentHash").equals(hash));
+                && (last.get("contentHash") == null || last.get("contentHash").equals(hash)
+                        || last.get("contentHash").equals(legacyBillContentHash(id)));
         if ("approved".equals(status) && unchanged) {
-            return null;
+            Object editor = doc.get("updatedBy");
+            boolean editorApproved = editor != null && jdbc.sql("SELECT count(*) FROM \"ApprovalDecision\" WHERE"
+                    + " \"organizationId\" = ? AND \"requestId\" = ? AND \"approverId\" = ? AND status = 'approved'")
+                    .params(org(), last.get("id"), editor).query(Long.class).single() > 0;
+            if (!editorApproved) {
+                return null;
+            }
         }
+        // Purchase readiness H8: whoever last edited the bill cannot also be its approver; it needs a new decision.
+        boolean approvedByEditor = "approved".equals(status) && unchanged;
         if ("rejected".equals(status) && unchanged) {
             return "This bill's approval was rejected — change the bill and post it again to ask for a new decision";
         }
         Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(total), "partnerId", doc.get("partnerId"),
                 "documentNumber", doc.get("documentNumber"), "createdBy", doc.get("createdBy"), "contentHash", hash);
+        snapshot.put("makerIds", makerIds(doc.get("createdBy"), doc.get("updatedBy")));
         Map<String, Object> raised = newTx.execute(s -> {
             if ("approved".equals(status)) {
                 jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'cancelled', \"updatedAt\" = now() WHERE id = ? AND"
                         + " status = 'approved'").param(last.get("id")).update();
                 audit.recordInTx(AuditInput.of("ApprovalRequest", (String) last.get("id"), "cancel", null, Obj.of(
-                        "status", "cancelled", "reason", "bill changed after approval")));
+                        "status", "cancelled", "reason", approvedByEditor ? "approved by the bill's last editor"
+                                : "bill changed after approval")));
             }
             return approvals.requestApproval("vendor_bill", id, snapshot, null);
         });
         if (raised == null) {
             return null;
+        }
+        if (approvedByEditor) {
+            return "This bill was approved by the person who last edited it; another approver must approve it"
+                    + " (request " + raised.get("id") + ")";
         }
         return switch (status) {
             case "approved" -> "This bill changed after it was approved; it needs approval again (request "
@@ -491,8 +528,30 @@ public class VendorBillService {
         };
     }
 
-    /** What an approval of the bill covered: supplier, currency, totals and every line (h03-F6). */
+    /**
+     * What an approval of the bill covered: supplier, currency, totals and every line (h03-F6), and (purchase readiness
+     * H8, 2026-11-27) issue date, due date, reference and branch. Prefixed {@code v2:}; a request recorded with the
+     * earlier hash ({@link #legacyBillContentHash}) still counts while that hash matches.
+     */
     private String billContentHash(String id) {
+        String inner = legacyBillContentHash(id);
+        if (inner == null) {
+            return null;
+        }
+        String header = jdbc.sql("SELECT md5(concat_ws('|', COALESCE(\"issueDate\"::text, ''), COALESCE(\"dueDate\"::text,"
+                        + " ''), COALESCE(reference, ''), COALESCE(\"branchId\", ''))) FROM \"Document\" WHERE id = ? AND"
+                        + " \"organizationId\" = ?")
+                .params(id, org()).query(String.class).optional().orElse("");
+        return "v2:" + inner + header;
+    }
+
+    private static String makerIds(Object... ids) {
+        return String.join(",", java.util.Arrays.stream(ids).filter(java.util.Objects::nonNull).map(String::valueOf)
+                .distinct().toList());
+    }
+
+    /** The h03-F6 content hash: supplier, currency, totals and every line. */
+    private String legacyBillContentHash(String id) {
         return jdbc.sql("SELECT md5(concat_ws('|', COALESCE(d.\"partnerId\", ''), COALESCE(d.\"currencyId\", ''),"
                         + " d.\"totalAmount\"::text, COALESCE(d.\"withholdingAmount\"::text, ''), COALESCE((SELECT"
                         + " string_agg(concat_ws(':', COALESCE(l.\"productId\", ''), COALESCE(l.\"variantId\", ''),"
