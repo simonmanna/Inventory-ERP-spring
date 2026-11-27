@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Loader2, CheckCircle2, Trash2, Inbox, RefreshCw, ListChecks, UserPlus, ExternalLink, Ban } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -122,7 +122,9 @@ export function PostingMonitorPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'exceptions' | 'jobs'>('exceptions');
   const [exStatus, setExStatus] = useState<ExceptionFilter>('open');
-  const [exKind, setExKind] = useState<string>('all');
+  // `?kind=` preselects a finding kind (the inventory integrity page links each failing check here, IPR T33).
+  const [searchParams] = useSearchParams();
+  const [exKind, setExKind] = useState<string>(() => searchParams.get('kind') || 'all');
   const [jobStatus, setJobStatus] = useState<JobFilter>('failed');
   const [resolving, setResolving] = useState<{ ex: InventoryException; action: 'resolved' | 'discarded' } | null>(null);
   const [note, setNote] = useState('');
@@ -219,8 +221,8 @@ export function PostingMonitorPage() {
 
   const exRows = useMemo(() => exQ.data ?? [], [exQ.data]);
   const kindOptions = useMemo(
-    () => [...new Set([...Object.keys(KIND_LABELS), ...exRows.map((e) => e.kind)])],
-    [exRows],
+    () => [...new Set([...Object.keys(KIND_LABELS), ...exRows.map((e) => e.kind), ...(exKind === 'all' ? [] : [exKind])])],
+    [exRows, exKind],
   );
   const shownEx = exKind === 'all' ? exRows : exRows.filter((e) => e.kind === exKind);
 

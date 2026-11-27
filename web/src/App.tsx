@@ -59,6 +59,7 @@ const StockTabletPage = lazy(() => import('@/pages/warehouse/StockTabletPage').t
 const OfflineDiscrepanciesPage = lazy(() => import('@/pages/warehouse/OfflineDiscrepanciesPage').then((m) => ({ default: m.OfflineDiscrepanciesPage })));
 const SyncStatusPage = lazy(() => import('@/pages/pos/SyncStatusPage').then((m) => ({ default: m.SyncStatusPage })));
 const DeadLettersPage = lazy(() => import('@/pages/pos/DeadLettersPage').then((m) => ({ default: m.DeadLettersPage })));
+const InventoryIntegrityPage = lazy(() => import('@/pages/inventory/InventoryIntegrityPage').then((m) => ({ default: m.InventoryIntegrityPage })));
 const PostingMonitorPage = lazy(() => import('@/pages/pos/PostingMonitorPage').then((m) => ({ default: m.PostingMonitorPage })));
 const ApprovalsPage = lazy(() => import('@/pages/approvals').then((m) => ({ default: m.ApprovalsPage })));
 const ApprovalPoliciesPage = lazy(() => import('@/pages/approval-policies').then((m) => ({ default: m.ApprovalPoliciesPage })));
@@ -546,6 +547,7 @@ export function App() {
             <Route path="/costing/close" element={<RequirePermission permission={PERMISSIONS.costingClose.read}><CostClosePage /></RequirePermission>} />
             <Route path="/costing/profitability" element={<RequirePermission permission={PERMISSIONS.profitability.read}><ProfitabilityPage /></RequirePermission>} />
             <Route path="/inventory/cost-explanation" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><CostExplanationPage /></RequirePermission>} />
+            <Route path="/inventory/integrity" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><InventoryIntegrityPage /></RequirePermission>} />
             <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
             <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
             {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}
