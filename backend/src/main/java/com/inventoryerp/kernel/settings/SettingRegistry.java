@@ -111,6 +111,12 @@ public final class SettingRegistry {
         def("costing.landedCost.reapprovalToleranceAmount", "costing", "number",
                 "Landed Cost Re-approval Tolerance (amount)", "… or by more than this amount in the base currency."
                         + " Either threshold triggers re-approval; 0 = any change.", 1000, null, false, ORG_ONLY);
+        // Purchase readiness H7 (owner-approved 2026-11-27): supplier bank-account dual control gates payments.
+        def("procurement.supplierBankVerification", "purchasing", "enum", "Supplier Bank Account Verification",
+                "block = a bank-transfer supplier payment (supplier payments and PO payments) must name one of the"
+                        + " supplier's verified bank accounts (default); off = naming an account is optional (a named"
+                        + " account must still be verified and belong to the supplier).",
+                "block", List.of("off", "block"), false, ORG_ONLY);
         def("procurement.invoiceRef.normalization", "purchasing", "enum", "Supplier Invoice Number Matching",
                 "strict = upper case, trimmed, separators (space - _ / .) ignored, so AB-12 and AB12 are the same"
                         + " invoice (and so are AB-12 and A-B12); exact = upper case and trimmed only.",

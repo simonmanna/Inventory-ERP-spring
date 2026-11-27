@@ -70,7 +70,18 @@ public class PaymentService {
             String accountId, String reference, String branchId, List<AllocationInput> allocations,
             String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId,
             String currencyCode, BigDecimal exchangeRate, String withholdingTaxId,
-            String withholdingCertificateNumber) {
+            String withholdingCertificateNumber, String supplierBankAccountId) {
+
+        /** A payment without a supplier bank account (purchase readiness H7). */
+        public PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
+                String accountId, String reference, String branchId, List<AllocationInput> allocations,
+                String cashSessionId, Boolean allowOverpayment, BigDecimal withholdingAmount, String refundOfId,
+                String currencyCode, BigDecimal exchangeRate, String withholdingTaxId,
+                String withholdingCertificateNumber) {
+            this(partnerId, paymentDate, amount, paymentMethod, accountId, reference, branchId, allocations,
+                    cashSessionId, allowOverpayment, withholdingAmount, refundOfId, currencyCode, exchangeRate,
+                    withholdingTaxId, withholdingCertificateNumber, null);
+        }
 
         /** A payment without a withholding tax reference (ADR-S071). */
         public PaymentInput(String partnerId, String paymentDate, BigDecimal amount, String paymentMethod,
@@ -136,12 +147,12 @@ public class PaymentService {
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
-    /** Supplier payment guards (ADR-S074 subcontractor compliance), set by the container. */
-    private List<SupplierPaymentGuard> paymentGuards = List.of();
+    /** Supplier payment controls (guards, status, bank account, approval; purchase readiness H5–H7). */
+    private SupplierPaymentControls controls;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setPaymentGuards(List<SupplierPaymentGuard> paymentGuards) {
-        this.paymentGuards = paymentGuards;
+    @org.springframework.beans.factory.annotation.Autowired
+    void setControls(SupplierPaymentControls controls) {
+        this.controls = controls;
     }
 
     private static String org() {
@@ -265,23 +276,35 @@ public class PaymentService {
         }
     }
 
-    /** Supplier payment: Dr AP / Cr Cash|Bank (+ Cr withholding), behind the {@code supplier_payment} gate. */
+    /**
+     * Supplier payment: Dr AP / Cr Cash|Bank (+ Cr withholding), behind the supplier payment controls (purchase
+     * readiness H5–H7): ADR-S074 guards, the supplier's status, the {@code supplier_payment} approval gate on the
+     * functional amount (an approval is used up by the payment it authorised) and, in {@link #record}, the verified
+     * supplier bank account and the overpayment cap.
+     */
     @Transactional
     public Map<String, Object> createSupplierPayment(PaymentInput dto, boolean nested) {
-        if (!paymentGuards.isEmpty()) {
-            List<String> billIds = dto.allocations() == null ? List.of() : dto.allocations().stream()
-                    .map(AllocationInput::documentId).filter(d -> d != null && !d.isEmpty()).toList();
-            paymentGuards.forEach(g -> g.beforeSupplierPayment(dto.partnerId(), billIds));
+        List<String> billIds = dto.allocations() == null ? List.of() : dto.allocations().stream()
+                .map(AllocationInput::documentId).filter(d -> d != null && !d.isEmpty()).toList();
+        controls.runGuards(dto.partnerId(), billIds);
+        controls.assertPayable(dto.partnerId());
+        String approvalId = controls.requireApproval(dto.partnerId(), functionalAmount(dto), dto.paymentMethod());
+        Map<String, Object> payment = record(dto, "outbound", null, false, nested);
+        controls.consume(approvalId, "Payment:" + payment.get("id"));
+        return payment;
+    }
+
+    /** The payment amount in the functional currency (at the stated, else the policy rate), for the approval gate. */
+    private BigDecimal functionalAmount(PaymentInput dto) {
+        BigDecimal amount = Money.dec(dto.amount());
+        String base = fxRates.base();
+        String ccy = dto.currencyCode() == null || dto.currencyCode().isBlank() ? base
+                : dto.currencyCode().trim().toUpperCase();
+        if (ccy.equals(base) || amount.signum() <= 0 || dto.paymentDate() == null) {
+            return amount;
         }
-        Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(dto.amount()), "partnerId", dto.partnerId(),
-                "paymentMethod", dto.paymentMethod() != null ? dto.paymentMethod() : "cash");
-        Map<String, Object> approval = newTx.execute(s -> approvals.checkOrRequestApproval("supplier_payment",
-                dto.partnerId(), snapshot));
-        if (approval != null && Boolean.TRUE.equals(approval.get("needsApproval"))) {
-            throw ApiException.forbidden("Vendor payment requires approval. Request ID: " + approval.get("requestId")
-                    + ". Please have an authorized person approve it via the approvals endpoint.");
-        }
-        return record(dto, "outbound", null, false, nested);
+        return r6(amount.multiply(currency.resolveStated(ccy, base, dto.exchangeRate(),
+                EntityPatch.toInstant(dto.paymentDate()), "payment_out").rate()));
     }
 
     /** Customer refund: outbound against the receivable (Dr AR / Cr Cash). */
@@ -381,16 +404,20 @@ public class PaymentService {
             throw ApiException.badRequest("A foreign-currency payment settles documents only: no withholding, store"
                     + " credit, deposit, cash session, refund or POS invoice");
         }
+        String supplierBankAccountId = null;
         if ("outbound".equals(direction) && "payable".equals(counterType)) {
-            BigDecimal outstanding = jdbc.sql("SELECT COALESCE(SUM(\"amountResidual\"), 0) FROM \"Document\" WHERE"
-                            + " \"organizationId\" = ? AND \"partnerId\" = ? AND \"documentType\" = 'vendor_bill'"
-                            + " AND status IN ('posted', 'paid')"
-                            + (foreign ? " AND upper(\"currencyId\") = ?" : " AND ?::text IS NULL"))
-                    .params(org, dto.partnerId(), foreign ? payCurrency : null).query(BigDecimal.class).single();
+            // Purchase readiness B1: serialise payments to one supplier (the PO pay route takes the same row lock,
+            // after its PO lock), so two payments cannot both pass the cap below.
+            jdbc.sql("SELECT id FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ? FOR NO KEY UPDATE")
+                    .params(dto.partnerId(), org).query().listOfRows();
+            BigDecimal outstanding = supplierOutstanding(org, dto.partnerId(), foreign ? payCurrency : null,
+                    foreign ? Money.div(functionalAmount(dto), amount) : BigDecimal.ONE);
             if (amount.compareTo(outstanding) > 0 && !Boolean.TRUE.equals(dto.allowOverpayment())) {
                 throw ApiException.badRequest("Payment amount " + JsNumbers.dec(amount) + " exceeds supplier outstanding"
-                        + " balance " + JsNumbers.dec(outstanding) + ". Overpayments require allowOverpayment=true.");
+                        + " balance " + JsNumbers.dec(outstanding.max(Money.ZERO)) + " (open bills less payments not yet"
+                        + " allocated to a bill). Overpayments require allowOverpayment=true.");
             }
+            supplierBankAccountId = controls.bankAccount(dto.partnerId(), method, dto.supplierBankAccountId());
         }
         TenderAccount.Resolved resolved;
         if (DEPOSIT_METHOD.equals(method)) {
@@ -407,6 +434,11 @@ public class PaymentService {
                     foreign ? payCurrency : null);
         }
         String cashAccount = resolved.accountId();
+        if ("outbound".equals(direction) && "payable".equals(counterType) && resolved.cashSessionId() == null
+                && !DEPOSIT_METHOD.equals(method)) {
+            // Purchase readiness (M): a register's drawer is paid out only from that register's shift.
+            TreasuryGuards.assertNotDrawerAccount(jdbc, org, cashAccount, "A supplier payment");
+        }
         String sessionOwner = resolved.cashSessionId() == null ? null : jdbc.sql("SELECT \"userId\" FROM \"CashSession\""
                 + " WHERE id = ?").param(resolved.cashSessionId()).query(String.class).optional().orElse(null);
         if (resolved.cashSessionId() != null && !java.util.Objects.equals(sessionOwner, userId)
@@ -471,13 +503,15 @@ public class PaymentService {
         jdbc.sql("INSERT INTO \"Payment\" (id, \"organizationId\", \"paymentNumber\", direction, \"partnerId\","
                         + " \"paymentDate\", \"paymentMethod\", \"accountId\", \"cashSessionId\", \"refundOfId\", amount,"
                         + " \"withholdingAmount\", \"allocatedAmount\", \"unallocatedAmount\", reference, status, \"branchId\","
-                        + " \"currencyId\", \"exchangeRate\", \"rateSource\", \"fxAmount\", \"createdAt\", \"updatedAt\")"
-                        + " VALUES (?, ?, ?, ?::\"PaymentDirection\", ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'posted', ?, ?, ?, ?, ?, "
+                        + " \"currencyId\", \"exchangeRate\", \"rateSource\", \"fxAmount\", \"supplierBankAccountId\","
+                        + " \"createdAt\", \"updatedAt\")"
+                        + " VALUES (?, ?, ?, ?::\"PaymentDirection\", ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 'posted', ?, ?, ?, ?, ?, ?, "
                         + NOW + ", " + NOW + ")")
                 .params(paymentId, org, paymentNumber, direction, dto.partnerId(), ts(dto.paymentDate()), method,
                         cashAccount, dto.cashSessionId(), dto.refundOfId(), amount, withholding, amount, dto.reference(),
                         dto.branchId(), fxs == null ? null : payCurrency, fxs == null ? BigDecimal.ONE : fxs.rate().rate(),
-                        fxs == null ? null : fxs.rate().source(), fxs == null ? Money.ZERO : fxs.fx())
+                        fxs == null ? null : fxs.rate().source(), fxs == null ? Money.ZERO : fxs.fx(),
+                        supplierBankAccountId)
                 .update();
         if ("store_credit".equals(method)) {
             storeCredit(dto, direction, amount, paymentId, org, userId);
@@ -561,6 +595,7 @@ public class PaymentService {
                 throw ApiException.badRequest("Document " + alloc.documentId() + " not found");
             }
             assertSettleable(doc, direction, counterOverride, dto.partnerId());
+            assertNotOnHold(doc, org);
             if (!payCurrency.equals(fxRates.currencyOf(doc))) {
                 throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is in "
                         + fxRates.currencyOf(doc) + "; settle it with a " + fxRates.currencyOf(doc) + " payment");
@@ -733,6 +768,7 @@ public class PaymentService {
                 throw ApiException.badRequest("Document " + doc.get("documentNumber") + " is in "
                         + fxRates.currencyOf(doc) + "; this payment is in " + payCurrency);
             }
+            assertNotOnHold(doc, org);
             if (amt.compareTo(Money.dec(doc.get("amountResidual"))) > 0) {
                 throw ApiException.badRequest("Allocation to document " + doc.get("documentNumber") + " exceeds its"
                         + " residual of " + JsNumbers.dec(Money.dec(doc.get("amountResidual"))));
@@ -872,6 +908,61 @@ public class PaymentService {
                 .params(UUID.randomUUID().toString(), org, credit.get("id"), delta, after,
                         "inbound".equals(direction) ? "sale" : "refund", paymentId, userId)
                 .update();
+    }
+
+    /**
+     * Purchase readiness B1: what a supplier payment may settle without {@code allowOverpayment}, from the finance audit
+     * A5 tie-out measure ({@link com.inventoryerp.accounting.application.ApOpenItemsSql}): open bills at their carrying
+     * rate less unallocated payments at their payment rate. In the base currency ({@code currency} null): that whole
+     * measure, so a foreign bill counts at what AP carries, never its foreign amount unconverted. In a foreign currency:
+     * the open bills in it less the unallocated payments in it, further reduced (at {@code rate}, this payment's) by any
+     * excess of the supplier's unallocated payments in other currencies over their bills in those currencies. Bills on
+     * payment hold are left out.
+     */
+    BigDecimal supplierOutstanding(String org, String partnerId, String currency, BigDecimal rate) {
+        String held = " AND NOT EXISTS (SELECT 1 FROM \"SupplierPaymentSchedule\" s WHERE s.\"organizationId\" ="
+                + " b.\"organizationId\" AND s.\"documentId\" = b.id AND s.\"onHold\")";
+        String bills = "SELECT b.*, d.\"organizationId\" FROM (" + com.inventoryerp.accounting.application.ApOpenItemsSql
+                .OPEN_BILLS + ") b JOIN \"Document\" d ON d.id = b.id";
+        // per currency (null = base): open bills and unapplied payments, in that currency and in base
+        Map<String, BigDecimal[]> by = new HashMap<>();
+        jdbc.sql("SELECT b.currency, COALESCE(SUM(b.residual), 0) AS amt, COALESCE(SUM(b.base), 0) AS base FROM ("
+                + bills + ") b WHERE b.\"partnerId\" = ?" + held + " GROUP BY b.currency").params(org, partnerId)
+                .query().listOfRows().forEach(r -> {
+                    BigDecimal[] v = by.computeIfAbsent(String.valueOf(r.get("currency")), k -> zeros());
+                    v[0] = v[0].add(Money.dec(r.get("amt")));
+                    v[1] = v[1].add(Money.dec(r.get("base")));
+                });
+        jdbc.sql("SELECT u.currency, u.open, u.base FROM (" + com.inventoryerp.accounting.application.ApOpenItemsSql
+                .UNAPPLIED_SUPPLIER_PAYMENTS + ") u WHERE u.\"partnerId\" = ?").params(org, partnerId)
+                .query().listOfRows().forEach(r -> {
+                    BigDecimal[] v = by.computeIfAbsent(String.valueOf(r.get("currency")), k -> zeros());
+                    v[0] = v[0].subtract(Money.dec(r.get("open")));
+                    v[1] = v[1].subtract(Money.dec(r.get("base")));
+                });
+        if (currency == null) {
+            return by.values().stream().map(v -> v[1]).reduce(Money.ZERO, BigDecimal::add);
+        }
+        BigDecimal own = by.getOrDefault(currency, zeros())[0];
+        BigDecimal otherBase = by.entrySet().stream().filter(e -> !e.getKey().equals(currency))
+                .map(e -> e.getValue()[1]).reduce(Money.ZERO, BigDecimal::add);
+        return otherBase.signum() < 0 && rate.signum() > 0 ? own.add(Money.div(otherBase, rate)) : own;
+    }
+
+    private static BigDecimal[] zeros() {
+        return new BigDecimal[] {Money.ZERO, Money.ZERO};
+    }
+
+    /** Purchase readiness (M): a vendor bill on payment hold takes no allocation until the hold is released. */
+    private void assertNotOnHold(Map<String, Object> doc, String org) {
+        if (!"vendor_bill".equals(String.valueOf(doc.get("documentType")))) {
+            return;
+        }
+        if (jdbc.sql("SELECT count(*) FROM \"SupplierPaymentSchedule\" WHERE \"organizationId\" = ? AND"
+                + " \"documentId\" = ? AND \"onHold\"").params(org, doc.get("id")).query(Long.class).single() > 0) {
+            throw ApiException.badRequest("Bill " + doc.get("documentNumber") + " is on payment hold; release the hold"
+                    + " in the payment schedule before paying it");
+        }
     }
 
     /**

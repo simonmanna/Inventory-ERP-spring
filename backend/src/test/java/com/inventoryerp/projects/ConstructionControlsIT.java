@@ -130,7 +130,7 @@ class ConstructionControlsIT extends ApiTestSupport {
 
     Res pay(String supplier, String bill, BigDecimal amount) {
         return call("POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today.toString(),
-                "amount", amount, "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", bill, "amount",
+                "amount", amount, "paymentMethod", "cheque", "allocations", List.of(Map.of("documentId", bill, "amount",
                         amount))), key());
     }
 

@@ -105,7 +105,9 @@ public class PurchaseOrdersController {
             String cashRegisterId,
             /* FX-3: the payment-date rate for a foreign PO (else the rate table). */
             @jakarta.validation.constraints.Positive(message = "exchangeRate must be a positive number")
-            BigDecimal exchangeRate) {}
+            BigDecimal exchangeRate,
+            /* Purchase readiness H7: the supplier's verified bank account a bank transfer goes to. */
+            String supplierBankAccountId) {}
 
     /** {@code UpdatePODto}. */
     public record UpdatePORequest(
@@ -181,7 +183,7 @@ public class PurchaseOrdersController {
     @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_ORDER__PAY)
     public Map<String, Object> pay(@PathVariable String id, @Valid @RequestBody PayPORequest dto) {
         return svc.pay(id, new PayInput(dto.amount(), dto.paidAt(), dto.reference(), dto.notes(), dto.method(),
-                dto.cashRegisterId(), dto.exchangeRate()));
+                dto.cashRegisterId(), dto.exchangeRate(), dto.supplierBankAccountId()));
     }
 
     @PostMapping("/{id}/cancel")

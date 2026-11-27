@@ -98,7 +98,13 @@ public class PurchaseOrdersService {
 
     /** {@code PayPODto}. */
     public record PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
-            String cashRegisterId, BigDecimal exchangeRate) {
+            String cashRegisterId, BigDecimal exchangeRate, String supplierBankAccountId) {
+
+        /** A payment naming no supplier bank account. */
+        public PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
+                String cashRegisterId, BigDecimal exchangeRate) {
+            this(amount, paidAt, reference, notes, method, cashRegisterId, exchangeRate, null);
+        }
 
         /** A payment without a stated exchange rate. */
         public PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
@@ -145,6 +151,13 @@ public class PurchaseOrdersService {
     private final ProductVariantService variants;
     private final CurrencyService currencies;
     private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
+    private com.inventoryerp.invoicing.application.SupplierPaymentControls paymentControls;
+
+    /** Purchase readiness H5–H7: the controls a supplier payment passes on either route. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPaymentControls(com.inventoryerp.invoicing.application.SupplierPaymentControls paymentControls) {
+        this.paymentControls = paymentControls;
+    }
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
@@ -1103,6 +1116,15 @@ public class PurchaseOrdersService {
                         + " the ledger shows " + JsNumbers.dec(owed.max(Money.ZERO)) + " still owed to them (returns, credits"
                         + " or other payments have reduced it)");
             }
+            // Purchase readiness H5–H7: the controls of POST /supplier-payments apply here too — guards, the
+            // supplier's status, the verified bank account and the supplier_payment approval on the functional amount
+            // (used up by this payment).
+            String method = dto.method() != null ? dto.method() : "bank";
+            String partnerId = (String) po.get("partnerId");
+            paymentControls.runGuards(partnerId, List.of());
+            paymentControls.assertPayable(partnerId);
+            String bankAccountId = paymentControls.bankAccount(partnerId, method, dto.supplierBankAccountId());
+            String approvalId = paymentControls.requireApproval(partnerId, functionalAmount, method);
             amount[0] = payAmount;
             BigDecimal amountDec = payAmount;
             BigDecimal newTotalPaid = f.paidToDate().add(payAmount);
@@ -1114,12 +1136,17 @@ public class PurchaseOrdersService {
                             + " notes, \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, " + (paidAt != null ? "?" : NOW)
                             + ", ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                     .params(paymentParams(orgId, id, amountDec, paidAt, dto)));
+            if (bankAccountId != null) {
+                jdbc.sql("UPDATE \"PurchasePayment\" SET \"supplierBankAccountId\" = ? WHERE id = ?")
+                        .params(bankAccountId, payment.get("id")).update();
+                payment.put("supplierBankAccountId", bankAccountId);
+            }
+            paymentControls.consume(approvalId, "PurchasePayment:" + payment.get("id"));
             jdbc.sql("UPDATE \"PurchaseOrder\" SET \"totalPaid\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\","
                             + " version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
                             + " AND \"deletedAt\" IS NULL")
                     .params(newTotalPaid, newPaymentStatus, id, orgId).update();
 
-            String method = dto.method() != null ? dto.method() : "bank";
             Map<String, Object> session = "cash".equals(method) ? cashSession.findOpen(dto.cashRegisterId()) : null;
             if ("cash".equals(method) && session == null) {
                 throw ApiException.badRequest("Select an open register for this cash payment");

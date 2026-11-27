@@ -272,6 +272,8 @@ export interface CreatePaymentInput {
   cashSessionId?: string;
   allowOverpayment?: boolean;
   allocations?: { documentId: string; amount: number }[];
+  /** Purchase readiness H7: the supplier's verified bank account a bank transfer goes to (supplier payments). */
+  supplierBankAccountId?: string;
 }
 
 export function useCreatePayment() {
@@ -617,6 +619,8 @@ export interface ApAgingPartner {
   partnerId: string;
   partnerName: string;
   total: string | number;
+  /** Purchase readiness B2: supplier payments not yet allocated to a bill (total = buckets − unapplied). */
+  unapplied?: string | number;
   buckets: Record<ApAgingBucketKey, string | number>;
 }
 
@@ -624,6 +628,7 @@ export interface ApAging {
   asOf: string;
   buckets: Record<ApAgingBucketKey, ApAgingBucketTotal>;
   total: string | number;
+  unapplied?: string | number;
   partners: ApAgingPartner[];
   source: 'snapshot' | 'live';
 }

@@ -12,9 +12,10 @@ import { apiMessage, notify } from '@/lib/notify';
 import { formatMoney } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
 import { useAuthStore } from '@/stores/auth.store';
+import { SupplierBankAccountSelect } from '@/features/procurement/supplier-bank-account-select';
 
 interface PO {
-  id: string; orderNumber: string; status: string;
+  id: string; orderNumber: string; status: string; partnerId?: string;
   totalAmount: number; totalPaid: number | null;
   currencyCode: string; paymentType: string; paymentStatus: string | null;
 }
@@ -48,6 +49,7 @@ export function PurchaseOrderPayPage() {
   const [cashRegisterId, setCashRegisterId] = useState('');
   const [paidAt, setPaidAt] = useState(today());
   const [exchangeRate, setExchangeRate] = useState('');
+  const [supplierBankAccountId, setSupplierBankAccountId] = useState('');
   const baseCurrency = useAuthStore((s) => s.organization?.currencyCode ?? '');
 
   const po = useQuery<PO>({
@@ -81,6 +83,8 @@ export function PurchaseOrderPayPage() {
         reference: reference || undefined,
         method,
         cashRegisterId: method === 'cash' && cashRegisterId ? cashRegisterId : undefined,
+        // purchase readiness H7: a bank transfer names one of the supplier's verified accounts
+        supplierBankAccountId: method === 'bank' && supplierBankAccountId ? supplierBankAccountId : undefined,
         paidAt: paidAt || undefined,
         // FX-3: a foreign order is paid at the stated rate (blank = the rate table); realised FX is posted.
         exchangeRate: foreignOrder && Number(exchangeRate) > 0 ? Number(exchangeRate) : undefined,
@@ -217,6 +221,14 @@ export function PurchaseOrderPayPage() {
                 {tx('The register must have an open session; the cash is paid out of its drawer.')}
               </p>
             </div>
+          )}
+          {method === 'bank' && (
+            <SupplierBankAccountSelect
+              id="po-pay-bank-account"
+              partnerId={data.partnerId}
+              value={supplierBankAccountId}
+              onChange={setSupplierBankAccountId}
+            />
           )}
           {foreignOrder && (
             <div>

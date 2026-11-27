@@ -192,6 +192,18 @@ public class SupplierService {
                 .params(org(), partnerId));
     }
 
+    /** Purchase readiness H7: the supplier's verified bank accounts (masked; no ciphertext, no maker details). */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> verifiedBankAccounts(String partnerId) {
+        requireSupplier(partnerId);
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT id, \"partnerId\", \"bankName\", \"branchName\","
+                + " \"accountName\", \"accountNumberLast4\", \"swiftCode\", \"currencyCode\", \"isDefault\", status,"
+                + " \"verifiedAt\" FROM \"SupplierBankAccount\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND"
+                + " status = 'verified' ORDER BY \"isDefault\" DESC, \"createdAt\" DESC").params(org(), partnerId));
+        rows.forEach(r -> r.put("accountNumberMasked", "•••• " + r.get("accountNumberLast4")));
+        return rows;
+    }
+
     private List<Map<String, Object>> bankAccounts(String partnerId) {
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT id, \"partnerId\", \"bankName\", \"branchName\","
                 + " \"accountName\", \"accountNumberLast4\", \"swiftCode\", \"currencyCode\", \"isDefault\", status,"

@@ -1,6 +1,7 @@
 package com.inventoryerp.procurement;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
@@ -9,6 +10,7 @@ import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.procurement.application.ProcurementPolicyJob;
 import com.inventoryerp.procurement.web.ProcurementPolicyController;
 import com.inventoryerp.procurement.web.SupplierController;
+import com.inventoryerp.shared.web.ApiException;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -351,10 +354,22 @@ class ProcurementSupplierPolicyIT extends ApiTestSupport {
             Map<String, Object> same = TenantContext.run(TenantStore.user(demoOrg, adminId),
                     () -> approvals.checkOrRequestApproval("supplier_payment", entity, Map.of("amount", 100)));
             assertThat(same.get("needsApproval")).isEqualTo(false);
+            assertThat(same.get("requestId")).isEqualTo(first.get("requestId"));
+            // Purchase readiness H6: an approval authorises one payment. Once the payment it covered used it up, the
+            // next payment of the same amount to the same supplier needs a new decision, and it cannot be used twice.
+            consume((String) first.get("requestId"), "Payment:one");
+            Map<String, Object> again = TenantContext.run(TenantStore.user(demoOrg, adminId),
+                    () -> approvals.checkOrRequestApproval("supplier_payment", entity, Map.of("amount", 100)));
+            assertThat(again.get("needsApproval")).isEqualTo(true);
+            assertThat(again.get("requestId")).isNotEqualTo(first.get("requestId"));
+            assertThatThrownBy(() -> consume((String) first.get("requestId"), "Payment:two"))
+                    .isInstanceOf(ApiException.class).hasMessageContaining("has already been used for another payment");
+            jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'approved' WHERE id = ?").param(again.get("requestId"))
+                    .update();
             Map<String, Object> more = TenantContext.run(TenantStore.user(demoOrg, adminId),
                     () -> approvals.checkOrRequestApproval("supplier_payment", entity, Map.of("amount", 5000)));
             assertThat(more.get("needsApproval")).isEqualTo(true);
-            assertThat(more.get("requestId")).isNotEqualTo(first.get("requestId"));
+            assertThat(more.get("requestId")).isNotEqualTo(again.get("requestId"));
         } finally {
             jdbc.sql("UPDATE \"ApprovalWorkflow\" SET \"isActive\" = false WHERE id = ?").param(wf).update();
         }
@@ -395,6 +410,11 @@ class ProcurementSupplierPolicyIT extends ApiTestSupport {
         assertThat(call("GET", "/procurement/suppliers", null, otherToken).body().get("data").findValuesAsString("id"))
                 .doesNotContain(partner);
         assertThat(assertAuthorizationMatrix(SupplierController.class, ProcurementPolicyController.class))
-                .isEqualTo(25);
+                .isEqualTo(26);
+    }
+
+    private void consume(String requestId, String ref) {
+        TenantContext.run(TenantStore.user(demoOrg, adminId), (Runnable) () -> new TransactionTemplate(txm)
+                .executeWithoutResult(st -> approvals.consumeApproval(requestId, ref)));
     }
 }

@@ -415,12 +415,13 @@ class ProcurementIT extends ApiTestSupport {
         Res over = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 999, "method", "bank"));
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 999 exceeds remaining balance of 500");
         JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 200,
-                "method", "bank", "reference", "CHQ-1"));
+                "method", "bank", "reference", "CHQ-1", "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(pay.get("amount").asString()).isEqualTo("200");
         assertThat(pay.get("reference").asString()).isEqualTo("CHQ-1");
         assertThat(ok(200, "GET", "/procurement/purchase-orders/" + poId, null).get("paymentStatus").asString())
                 .isEqualTo("partial");
-        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of());
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("supplierBankAccountId",
+                poSupplierBankAccount(poId)));
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("500");
         assertThat(balance(mapped("default_bank")).subtract(bank0)).isEqualByComparingTo("-500");
         JsonNode paid = ok(200, "GET", "/procurement/purchase-orders/" + poId, null);
@@ -439,12 +440,13 @@ class ProcurementIT extends ApiTestSupport {
         // ADR-PROCUREMENT-001 P0-4: a PO only pays what its receipts vouchered, so the race order is received first.
         String race = createPo("credit", product, 1, 100, null).get("id").asString();
         receive(race, List.of(rline(product, 1, 100)));
+        String raceAccount = poSupplierBankAccount(race);
         ExecutorService pool = Executors.newFixedThreadPool(4);
         try {
             List<Future<Res>> futures = new ArrayList<>();
             for (int i = 0; i < 4; i++) {
                 futures.add(pool.submit(() -> keyed("POST", "/procurement/purchase-orders/" + race + "/pay",
-                        Map.of("method", "bank"))));
+                        Map.of("method", "bank", "supplierBankAccountId", raceAccount))));
             }
             int okCount = 0;
             for (Future<Res> f : futures) {
@@ -1007,7 +1009,7 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal bank0 = balance(mapped("default_bank"));
         BigDecimal wht0 = balance(mapped("withholding_payable"));
         JsonNode pay = money("POST", "/supplier-payments", Map.of("partnerId", sup, "paymentDate", today, "amount", 1000,
-                "paymentMethod", "bank", "withholdingAmount", 60, "allocations", List.of(Map.of("documentId",
+                "paymentMethod", "cheque", "withholdingAmount", 60, "allocations", List.of(Map.of("documentId",
                         bill.get("id").asString(), "amount", 1000))));
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("1000");
         assertThat(balance(mapped("default_bank")).subtract(bank0)).isEqualByComparingTo("-940");
@@ -1127,6 +1129,7 @@ class ProcurementIT extends ApiTestSupport {
         // 158 Source-to-Pay + 1 PROC-4 supplier performance + 14 PROC-3/5 (budgets, delegations, PR approval).
         // Accounting controls (2026-11-17): +4 supplier-claim quantity routes, +1 debit-note reversal.
         // Readiness gaps h06-F6 (2026-11-18): +1 GET /procurement/purchase-orders/{id}/payable.
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(200);
+        // Purchase readiness H7 (2026-11-27): +1 GET /procurement/suppliers/{partnerId}/bank-accounts/verified.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(201);
     }
 }

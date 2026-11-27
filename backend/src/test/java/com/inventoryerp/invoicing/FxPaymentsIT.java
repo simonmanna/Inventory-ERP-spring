@@ -111,7 +111,8 @@ class FxPaymentsIT extends ApiTestSupport {
         body.put("partnerId", partner);
         body.put("paymentDate", today);
         body.put("amount", amount);
-        body.put("paymentMethod", "bank");
+        // purchase readiness H7: a supplier bank transfer names a verified account; a cheque does not
+        body.put("paymentMethod", path.startsWith("/supplier-payments") ? "cheque" : "bank");
         body.put("accountId", usdBank);
         if (currency != null) {
             body.put("currencyCode", currency);

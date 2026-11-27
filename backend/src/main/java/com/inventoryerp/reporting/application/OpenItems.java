@@ -53,7 +53,7 @@ public class OpenItems {
      * the code ({@code USD}); a {@code Currency} id is read through the join for older rows.
      */
     static String currencyOf(String alias) {
-        return "nullif(upper(coalesce(c.code, nullif(trim(" + alias + ".\"currencyId\"), ''))), upper(org.\"currencyCode\"))";
+        return com.inventoryerp.accounting.application.ApOpenItemsSql.currencyOf(alias);
     }
 
     /**
@@ -64,14 +64,7 @@ public class OpenItems {
      * snapshot (its own pair first), else Σ base ÷ Σ transaction amount of its lines.
      */
     static String carryingRate(String alias) {
-        String entry = alias + ".\"journalEntryId\"";
-        return "(CASE WHEN " + currencyOf(alias) + " IS NULL THEN 1 WHEN coalesce(" + alias + ".\"exchangeRate\", 1) <> 1"
-                + " OR " + entry + " IS NULL THEN coalesce(" + alias + ".\"exchangeRate\", 1) ELSE coalesce((SELECT r.rate"
-                + " FROM \"JournalEntryFxRate\" r JOIN \"JournalEntry\" je ON je.id = r.\"journalEntryId\" WHERE"
-                + " r.\"journalEntryId\" = " + entry + " ORDER BY (upper(r.\"fromCode\") = upper(coalesce(je.\"currencyId\","
-                + " ''))) DESC, r.\"createdAt\" LIMIT 1), (SELECT sum(jl.\"baseDebit\" + jl.\"baseCredit\")"
-                + " / nullif(sum(jl.debit + jl.credit), 0) FROM \"JournalLine\" jl WHERE jl.\"journalEntryId\" = " + entry
-                + "), 1) END)";
+        return com.inventoryerp.accounting.application.ApOpenItemsSql.carryingRate(alias);
     }
 
     static final String INV_RESIDUAL_AT = "(i.\"totalAmount\" - coalesce((SELECT sum(pa.amount) FROM"
@@ -193,24 +186,12 @@ public class OpenItems {
         };
     }
 
-    /** Payables raised by purchase-order receipts (same measure as the AP aging); two organization parameters. */
-    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.id AS po, po.\"orderNumber\", po.\"partnerId\", p.name AS \"partnerName\", v.at AS"
-            + " \"dueDate\", v.at AS \"issueDate\", NULL::text AS currency, NULL::text AS \"branchId\","
-            + " LEAST(po.\"totalAmount\", v.amt) - v.billed - (GREATEST(COALESCE(pp.paid, 0),"
-            + " COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) AS \"amountResidual\" FROM (SELECT"
-            + " g.\"purchaseOrderId\" AS po, MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 +"
-            + " COALESCE(pl.\"taxRate\", 0) / 100)) AS amt, SUM(LEAST(l.\"billedQuantity\", l.quantity) *"
-            + " l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS billed FROM \"GoodsReceiptLine\" l JOIN"
-            + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id ="
-            + " l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ? AND g.status::text = 'posted' AND"
-            + " g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY"
-            + " g.\"purchaseOrderId\") v JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id ="
-            + " po.\"partnerId\" LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\""
-            + " WHERE \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id LEFT"
-            + " JOIN LATERAL (SELECT SUM(a.amount) AS applied FROM \"PurchaseOrderBillApplication\" a WHERE"
-            + " a.\"organizationId\" = po.\"organizationId\" AND a.\"purchaseOrderId\" = po.id AND a.\"releasedAt\" IS"
-            + " NULL) ap ON true WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - v.billed -"
-            + " (GREATEST(COALESCE(pp.paid, 0), COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) > 0.005";
+    /**
+     * Payables raised by purchase-order receipts (same measure as the AP aging, purchase readiness B2: stocked lines
+     * only, with the receipts' rate in {@code rate}); two organization parameters.
+     */
+    static final String RECEIPT_VOUCHER_PAYABLES = com.inventoryerp.accounting.application.ApOpenItemsSql
+            .RECEIPT_VOUCHER_PAYABLES;
 
     /**
      * partnerId → payments not yet allocated at the date ({@code inbound} for customers), in base currency. Finance

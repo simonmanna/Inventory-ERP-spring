@@ -54,14 +54,16 @@ public class PaymentController {
             @Positive(message = "exchangeRate must be a positive number") BigDecimal exchangeRate,
             /* ADR-S071: the withholding tax deducted and (customer side) the certificate number received. */
             String withholdingTaxId,
-            String withholdingCertificateNumber) {
+            String withholdingCertificateNumber,
+            /* Purchase readiness H7: the supplier's verified bank account a bank transfer goes to. */
+            String supplierBankAccountId) {
 
         PaymentInput toInput() {
             return new PaymentInput(partnerId, paymentDate, amount, paymentMethod, accountId, reference, branchId,
                     allocations == null ? null : allocations.stream()
                             .map(a -> new AllocationInput(a.documentId(), a.invoiceId(), a.amount())).toList(),
                     cashSessionId, allowOverpayment, withholdingAmount, null, currencyCode, exchangeRate,
-                    withholdingTaxId, withholdingCertificateNumber);
+                    withholdingTaxId, withholdingCertificateNumber, supplierBankAccountId);
         }
     }
 

@@ -436,6 +436,36 @@ public abstract class ApiTestSupport {
         return login("DEMO", email, "Some@12345");
     }
 
+    private static final Map<String, String> SUPPLIER_BANK_ACCOUNTS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile String bankVerifierToken;
+
+    /**
+     * Purchase readiness H7: a verified bank account of a DEMO supplier (registered by the admin, verified by another
+     * user, as the dual control requires), so a bank transfer to the supplier may name it. One per supplier.
+     */
+    protected String verifiedSupplierBankAccount(String partnerId) {
+        return SUPPLIER_BANK_ACCOUNTS.computeIfAbsent(partnerId, k -> {
+            Res added = as("POST", "/procurement/suppliers/" + k + "/bank-accounts", Map.of("bankName", "Test Bank",
+                    "accountName", "Supplier account", "accountNumber", "0001234567"));
+            assertThat(added.status()).as(added.raw().body()).isEqualTo(201);
+            String id = added.body().get("id").asString();
+            if (bankVerifierToken == null) {
+                bankVerifierToken = tokenHolding(Permissions.SUPPLIER__VERIFY_BANK);
+            }
+            Res verified = call("POST", "/procurement/suppliers/bank-accounts/" + id + "/verify", null,
+                    bankVerifierToken);
+            assertThat(verified.status()).as(verified.raw().body()).isIn(200, 201);
+            return id;
+        });
+    }
+
+    /** {@link #verifiedSupplierBankAccount} of a DEMO purchase order's supplier. */
+    protected String poSupplierBankAccount(String purchaseOrderId) {
+        Res po = as("GET", "/procurement/purchase-orders/" + purchaseOrderId, null);
+        assertThat(po.status()).as(po.raw().body()).isEqualTo(200);
+        return verifiedSupplierBankAccount(po.body().get("partnerId").asString());
+    }
+
     /** Every permission of the catalogue except {@code without} (and the customer-portal marker: a staff user). */
     protected static String[] everyPermissionBut(java.util.Collection<String> without) {
         return Permissions.ALL.stream()
