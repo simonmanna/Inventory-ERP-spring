@@ -113,6 +113,7 @@ public class InventoryQueryService {
                         .param("ids", idsOf(products.values(), "uomId"))), products.isEmpty());
         Map<String, Map<String, Object>> locations = locationRefs(idsOf(items, "locationId"));
         List<Map<String, Object>> data = new ArrayList<>();
+        boolean cost = CostVisibility.seesCost();
         for (Map<String, Object> r : items) {
             Map<String, Object> found = products.get(str(r, "productId"));
             Map<String, Object> p = found == null ? null : new LinkedHashMap<>(found);
@@ -124,6 +125,10 @@ public class InventoryQueryService {
             r.put("product", p);
             Map<String, Object> location = locations.get(str(r, "locationId"));
             r.put("location", location == null ? null : new LinkedHashMap<>(location));
+            if (!cost) {
+                // IPR S-2: the quant's average cost needs inventory_valuation:read.
+                CostVisibility.hideCost(r, "runningAverageCost");
+            }
             data.add(r);
         }
         return PageResult.of(data, page, size, total);
@@ -135,10 +140,11 @@ public class InventoryQueryService {
      * stay decimal, and a branch-restricted user's {@code locationBreakdown} lists only the locations they may see.
      */
     public PageResult<Map<String, Object>> listProductStockLevels(Map<String, String> query) {
-        Map<String, String> q = scope.apply(query);
+        Map<String, String> q = query;
         int page = page(q.get("page"));
         int size = pageSize(q.get("pageSize"), 25, 200);
-        String locationId = notBlank(q.get("locationId")) ? q.get("locationId") : null;
+        // IPR S-1: a restricted user's blank filter covers every location of their access (was 400 with several).
+        List<String> locs = scope.readLocations(q.get("locationId"));
         List<Object> params = new ArrayList<>(List.of(org()));
         StringBuilder where = new StringBuilder(" \"organizationId\" = ? AND \"deletedAt\" IS NULL");
         if (notBlank(q.get("search"))) {
@@ -151,35 +157,35 @@ public class InventoryQueryService {
         if (low || out) {
             // The isOut / isLow rule of mapProduct: out = no stock; low = a minimum is set and stock is at most that.
             List<Object> all = new ArrayList<>();
-            if (locationId != null) {
-                all.add(locationId);
+            if (locs != null) {
+                all.add(locs.toArray(String[]::new));
             }
             all.addAll(params);
             String stocked = "WITH p AS (SELECT \"Product\".*, (SELECT COALESCE(SUM(si.quantity), 0) FROM \"StockItem\" si"
                     + " WHERE si.\"organizationId\" = \"Product\".\"organizationId\" AND si.\"productId\" = \"Product\".id"
-                    + (locationId != null ? " AND si.\"locationId\" = ?" : "") + ") AS stock_qty FROM \"Product\" WHERE"
+                    + (locs != null ? " AND si.\"locationId\" = ANY(?::text[])" : "") + ") AS stock_qty FROM \"Product\" WHERE"
                     + where + ") ";
             String cond = out ? " WHERE stock_qty <= 0"
                     : " WHERE (stock_qty <= 0 OR (COALESCE(\"minQuantity\", 0) > 0 AND stock_qty <= \"minQuantity\"))";
             List<Map<String, Object>> rows = SqlRows.list(jdbc.sql(stocked + "SELECT * FROM p" + cond
                     + " ORDER BY name ASC LIMIT " + size + " OFFSET " + (page - 1) * size).params(all));
             long total = jdbc.sql(stocked + "SELECT count(*) FROM p" + cond).params(all).query(Long.class).single();
-            return PageResult.of(mapProducts(rows, locationId), page, size, total);
+            return PageResult.of(mapProducts(rows, locs), page, size, total);
         }
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT * FROM \"Product\" WHERE" + where
                 + " ORDER BY name ASC LIMIT " + size + " OFFSET " + (page - 1) * size).params(params));
         long total = jdbc.sql("SELECT count(*) FROM \"Product\" WHERE" + where).params(params).query(Long.class).single();
-        return PageResult.of(mapProducts(rows, locationId), page, size, total);
+        return PageResult.of(mapProducts(rows, locs), page, size, total);
     }
 
-    private Map<String, BigDecimal> loadReserved(List<String> ids, String locationId) {
+    private Map<String, BigDecimal> loadReserved(List<String> ids, List<String> locs) {
         Map<String, BigDecimal> out = new HashMap<>();
         var spec = jdbc.sql("SELECT \"productId\", SUM(quantity) AS q FROM \"StockReservation\" WHERE"
                         + " \"organizationId\" = :org AND status = 'active' AND \"productId\" IN (:ids)"
-                        + (locationId != null ? " AND \"locationId\" = :loc" : "") + " GROUP BY \"productId\"")
+                        + (locs != null ? " AND \"locationId\" IN (:locs)" : "") + " GROUP BY \"productId\"")
                 .param("org", org()).param("ids", ids);
-        if (locationId != null) {
-            spec = spec.param("loc", locationId);
+        if (locs != null) {
+            spec = spec.param("locs", locs);
         }
         for (Map<String, Object> g : spec.query().listOfRows()) {
             out.put((String) g.get("productId"), g.get("q") == null ? BigDecimal.ZERO : (BigDecimal) g.get("q"));
@@ -188,13 +194,13 @@ public class InventoryQueryService {
     }
 
     /** One page of products: stock rows, reservations, values and units read once for the whole page. */
-    private List<Map<String, Object>> mapProducts(List<Map<String, Object>> products, String locationId) {
+    private List<Map<String, Object>> mapProducts(List<Map<String, Object>> products, List<String> locs) {
         List<Map<String, Object>> data = new ArrayList<>();
         if (products.isEmpty()) {
             return data;
         }
         List<String> ids = products.stream().map(p -> str(p, "id")).toList();
-        Map<String, BigDecimal> reserved = loadReserved(ids, locationId);
+        Map<String, BigDecimal> reserved = loadReserved(ids, locs);
         Map<String, List<Map<String, Object>>> items = new HashMap<>();
         for (Map<String, Object> si : SqlRows.list(jdbc.sql("SELECT si.\"productId\", si.quantity, si.\"locationId\","
                         + " l.id AS lid, l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l"
@@ -204,7 +210,7 @@ public class InventoryQueryService {
             items.computeIfAbsent(str(si, "productId"), k -> new ArrayList<>()).add(si);
         }
         // Phase I2 (audit C-2): value by the product's costing method (lots, serials, standard), not qty × average.
-        Map<String, BigDecimal[]> values = valuation.qtyAndValueByProduct(ids, locationId);
+        Map<String, BigDecimal[]> values = ScopedValuation.byProduct(valuation, ids, locs);
         Set<String> uomIds = new HashSet<>();
         products.forEach(p -> {
             if (p.get("uomId") != null) {
@@ -219,16 +225,17 @@ public class InventoryQueryService {
             }
         }
         DataScope access = scope.current();
+        boolean cost = CostVisibility.seesCost();
         for (Map<String, Object> p : products) {
             String id = str(p, "id");
-            data.add(mapProduct(p, locationId, access, items.getOrDefault(id, List.of()), values.get(id),
+            data.add(mapProduct(p, locs, access, cost, items.getOrDefault(id, List.of()), values.get(id),
                     reserved.getOrDefault(id, BigDecimal.ZERO), p.get("uomId") == null ? null : uoms.get(str(p, "uomId"))));
         }
         return data;
     }
 
-    private static Map<String, Object> mapProduct(Map<String, Object> p, String locationId, DataScope access,
-            List<Map<String, Object>> items, BigDecimal[] qv, BigDecimal res, String uom) {
+    private static Map<String, Object> mapProduct(Map<String, Object> p, List<String> locs, DataScope access,
+            boolean cost, List<Map<String, Object>> items, BigDecimal[] qv, BigDecimal res, String uom) {
         List<Map<String, Object>> breakdown = new ArrayList<>();
         BigDecimal totalQty = BigDecimal.ZERO;
         for (Map<String, Object> si : items) {
@@ -238,7 +245,7 @@ public class InventoryQueryService {
                 breakdown.add(Obj.of("locationId", si.get("lid"), "code", si.get("code"), "name", si.get("name"),
                         "quantity", JsNumbers.js(qty)));
             }
-            if (locationId == null || locationId.equals(si.get("locationId"))) {
+            if (locs == null || locs.contains(str(si, "locationId"))) {
                 totalQty = totalQty.add(qty);
             }
         }
@@ -250,7 +257,9 @@ public class InventoryQueryService {
                 "productType", p.get("productType"),
                 "minQuantity", min != null && min.signum() != 0 ? JsNumbers.js(min) : null,
                 "batchTracking", p.get("batchTracking"), "uom", uom, "totalQuantity", JsNumbers.js(totalQty),
-                "averageCost", JsNumbers.js(avg), "totalValue", JsNumbers.js(totalCost), "locationBreakdown", breakdown,
+                // IPR S-2: cost and value need inventory_valuation:read (null otherwise; the screen hides the columns).
+                "averageCost", cost ? JsNumbers.js(avg) : null, "totalValue", cost ? JsNumbers.js(totalCost) : null,
+                "locationBreakdown", breakdown,
                 "reservedQuantity", JsNumbers.js(res), "availableQuantity", JsNumbers.js(totalQty.subtract(res)),
                 "isLow", minQty.signum() > 0 && totalQty.signum() > 0 && totalQty.compareTo(minQty) <= 0,
                 "isOut", totalQty.signum() <= 0);
@@ -258,7 +267,7 @@ public class InventoryQueryService {
 
     /** Product header, quants, batches, recent ledger, recipes and purchase lines for one product. */
     public Map<String, Object> getItemDetail(String productId, String locationFilter) {
-        String locationId = scope.resolve(locationFilter);
+        List<String> locs = scope.readLocations(locationFilter);
         Map<String, Object> product = SqlRows.one(jdbc.sql("SELECT id, code, name, sku, barcode, description,"
                         + " \"productType\", \"costingMethod\", \"minQuantity\", \"reorderQty\", \"batchTracking\","
                         + " \"trackInventory\", \"stockPolicy\", \"uomId\", \"purchaseUomId\", \"salesPrice\", \"costPrice\","
@@ -274,18 +283,17 @@ public class InventoryQueryService {
                 + " \"ProductCategory\" WHERE id = ?").param(categoryId)));
         product.put("supplier", supplierId == null ? null : SqlRows.one(jdbc.sql("SELECT id, name FROM \"Partner\""
                 + " WHERE id = ?").param(supplierId)));
-        String loc = notBlank(locationId) ? locationId : null;
         List<Object> params = new ArrayList<>(List.of(org(), productId));
         String locFilter = "";
-        if (loc != null) {
-            locFilter = " AND \"locationId\" = ?";
-            params.add(loc);
+        if (locs != null) {
+            locFilter = " AND \"locationId\" = ANY(?::text[])";
+            params.add(locs.toArray(String[]::new));
         }
         List<Map<String, Object>> items = SqlRows.list(StockItem.class, jdbc.sql("SELECT * FROM \"StockItem\" WHERE"
                 + " \"organizationId\" = ? AND \"productId\" = ?" + locFilter).params(params));
         BigDecimal onHand = Money.ZERO;
         // Phase I2 (audit C-2): value by costing method.
-        BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(productId), loc).get(productId);
+        BigDecimal[] qv = ScopedValuation.byProduct(valuation, List.of(productId), locs).get(productId);
         BigDecimal value = qv == null ? Money.ZERO : qv[1];
         // Hardening R5a: every include below is read with one query per relation (was one or two per row).
         Map<String, Map<String, Object>> itemLocations = refs("id, code, name, type::text AS type",
@@ -340,9 +348,18 @@ public class InventoryQueryService {
             }
             line.put("order", order);
         }
+        boolean cost = CostVisibility.seesCost();
+        if (!cost) {
+            // IPR S-2: costs, values and purchase prices need inventory_valuation:read (null otherwise).
+            CostVisibility.hideCost(product, "costPrice");
+            items.forEach(i -> CostVisibility.hideCost(i, "runningAverageCost"));
+            batches.forEach(b -> CostVisibility.hideCost(b, "unitCost"));
+            ledger.forEach(l -> CostVisibility.hideCost(l, "unitCost", "totalValue"));
+            poLines.forEach(l -> CostVisibility.hideCost(l, "unitPrice", "subtotal"));
+        }
         return Obj.of("product", product, "items", items, "totalOnHand", JsNumbers.js(onHand), "totalValue",
-                JsNumbers.js(value), "batches", batches, "recentLedger", ledger, "menuProducts", menuProducts,
-                "purchaseOrderLines", poLines);
+                cost ? JsNumbers.js(value) : null, "batches", batches, "recentLedger", ledger, "menuProducts",
+                menuProducts, "purchaseOrderLines", poLines);
     }
 
     /**
@@ -481,9 +498,9 @@ public class InventoryQueryService {
         long total = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE" + where).params(params)
                 .query(Long.class).single();
         includeLedger(rows);
-        if (!InventoryReportsService.seesCost()) {
+        if (!CostVisibility.seesCost()) {
             // Hardening R5b: unit cost and value need inventory_valuation:read (null otherwise; the screen shows a dash).
-            rows.forEach(r -> InventoryReportsService.hideCost(r, "unitCost", "totalValue"));
+            rows.forEach(r -> CostVisibility.hideCost(r, "unitCost", "totalValue"));
         }
         return PageResult.of(rows, page, size, total);
     }
@@ -510,18 +527,18 @@ public class InventoryQueryService {
 
     /** Active batches expiring within {@code days} (default 30), FEFO order. */
     public List<Map<String, Object>> getExpiringBatches(String days, String locationId) {
-        return expiringBatches(days, scope.resolve(locationId));
+        return expiringBatches(days, scope.readLocations(locationId));
     }
 
-    private List<Map<String, Object>> expiringBatches(String days, String locationId) {
+    private List<Map<String, Object>> expiringBatches(String days, List<String> locs) {
         double d = JsNumbers.number(days);
         int n = (int) Math.max(1, Double.isNaN(d) || d == 0 ? 30 : d);
         Instant horizon = Instant.now().plusSeconds(86_400L * n);
         List<Object> params = new ArrayList<>(List.of(org(), SqlRows.ts(horizon)));
         String loc = "";
-        if (notBlank(locationId)) {
-            loc = " AND \"locationId\" = ?";
-            params.add(locationId);
+        if (locs != null) {
+            loc = " AND \"locationId\" = ANY(?::text[])";
+            params.add(locs.toArray(String[]::new));
         }
         List<Map<String, Object>> batches = SqlRows.list(InventoryBatch.class, jdbc.sql("SELECT * FROM \"InventoryBatch\""
                 + " WHERE \"organizationId\" = ? AND \"isActive\" = true AND quantity > 0 AND \"expiryDate\" IS NOT NULL"
@@ -547,12 +564,15 @@ public class InventoryQueryService {
             b.put("daysToExpiry", exp == null ? null : (long) Math.ceil((exp.toEpochMilli() - now) / 86_400_000.0));
             b.put("expired", exp != null && exp.toEpochMilli() < now);
         }
+        if (!CostVisibility.seesCost()) {
+            batches.forEach(b -> CostVisibility.hideCost(b, "unitCost"));
+        }
         return batches;
     }
 
     /** Par-based reorder suggestions (suggested qty in purchase units). */
     public List<Map<String, Object>> getReorderSuggestions(String locationId) {
-        return reorderSuggestions(scope.resolve(locationId));
+        return reorderSuggestions(scope.readLocations(locationId));
     }
 
     /**
@@ -561,7 +581,7 @@ public class InventoryQueryService {
      * shortage of another). Audit U-9: a product whose purchase unit cannot be converted no longer fails the whole
      * report — its line keeps the shortfall in the stock unit and says why in {@code unitError}.
      */
-    private List<Map<String, Object>> reorderSuggestions(String locationId) {
+    private List<Map<String, Object>> reorderSuggestions(List<String> locs) {
         List<Map<String, Object>> products = SqlRows.list(jdbc.sql("SELECT id, code, name, \"minQuantity\", \"reorderQty\","
                 + " \"uomConversion\", \"uomId\", \"purchaseUomId\", \"supplierId\", \"hasVariants\" FROM \"Product\" WHERE"
                 + " \"organizationId\" = ? AND \"deletedAt\" IS NULL AND \"trackInventory\" = true"
@@ -569,9 +589,9 @@ public class InventoryQueryService {
         // On-hand per product and variant in one grouped query (was one per product).
         List<Object> params = new ArrayList<>(List.of(org()));
         String loc = "";
-        if (notBlank(locationId)) {
-            loc = " AND \"locationId\" = ?";
-            params.add(locationId);
+        if (locs != null) {
+            loc = " AND \"locationId\" = ANY(?::text[])";
+            params.add(locs.toArray(String[]::new));
         }
         Map<String, BigDecimal> onHandBy = new HashMap<>();
         for (Map<String, Object> g : jdbc.sql("SELECT \"productId\", \"variantKey\", COALESCE(SUM(quantity), 0) AS q"
@@ -657,16 +677,16 @@ public class InventoryQueryService {
      * {@code netValue}) need {@code inventory_valuation:read} (null otherwise).
      */
     public List<Map<String, Object>> getMovementSummary(String start, String end, String locationId) {
-        List<Map<String, Object>> out = movementSummary(start, end, scope.resolve(locationId));
-        if (!InventoryReportsService.seesCost()) {
+        List<Map<String, Object>> out = movementSummary(start, end, scope.readLocations(locationId));
+        if (!CostVisibility.seesCost()) {
             for (Map<String, Object> row : out) {
-                InventoryReportsService.hideCost(row, "netValue");
+                CostVisibility.hideCost(row, "netValue");
                 if (row.get("byType") instanceof Map<?, ?> byType) {
                     byType.values().forEach(v -> {
                         if (v instanceof Map<?, ?> m) {
                             @SuppressWarnings("unchecked")
                             Map<String, Object> cell = (Map<String, Object>) m;
-                            InventoryReportsService.hideCost(cell, "value");
+                            CostVisibility.hideCost(cell, "value");
                         }
                     });
                 }
@@ -675,12 +695,12 @@ public class InventoryQueryService {
         return out;
     }
 
-    private List<Map<String, Object>> movementSummary(String start, String end, String locationId) {
+    private List<Map<String, Object>> movementSummary(String start, String end, List<String> locs) {
         List<Object> params = new ArrayList<>(List.of(org()));
         StringBuilder where = new StringBuilder(" \"organizationId\" = ?");
-        if (notBlank(locationId)) {
-            where.append(" AND \"locationId\" = ?");
-            params.add(locationId);
+        if (locs != null) {
+            where.append(" AND \"locationId\" = ANY(?::text[])");
+            params.add(locs.toArray(String[]::new));
         }
         if (notBlank(start)) {
             where.append(" AND \"createdAt\" >= ?");
@@ -730,7 +750,7 @@ public class InventoryQueryService {
 
     /** Cached on-hand vs Σ ledger vs Σ batches per (product, variant, location) cell. */
     public Map<String, Object> getStockReconciliation(String locationId, Double toleranceIn, boolean includeMatched) {
-        return stockReconciliation(scope.resolve(locationId), toleranceIn, includeMatched);
+        return stockReconciliation(scope.readLocations(locationId), toleranceIn, includeMatched);
     }
 
     /** Most cells one reconciliation returns (h-01 F10); {@code summary.truncated} says when there were more. */
@@ -744,7 +764,11 @@ public class InventoryQueryService {
      * Binds {@code :org}, and {@code :loc} when {@code byLocation}.
      */
     static String reconciliationCells(boolean byLocation) {
-        String loc = byLocation ? " AND \"locationId\" = :loc" : "";
+        return reconciliationCellsWhere(byLocation ? " AND \"locationId\" = :loc" : "");
+    }
+
+    /** {@link #reconciliationCells} with the location condition {@code loc} (empty = every location). */
+    private static String reconciliationCellsWhere(String loc) {
         return "WITH si AS (SELECT \"productId\" AS pid, \"variantKey\" AS vk, \"locationId\" AS lid,"
                 + " SUM(quantity) AS cached FROM \"StockItem\" WHERE \"organizationId\" = :org" + loc
                 + " GROUP BY 1, 2, 3),"
@@ -771,10 +795,10 @@ public class InventoryQueryService {
      * with {@code includeMatched}), at most {@value #RECON_ROWS}. A lot-tracked quant below zero has no lots to match,
      * so its lots are compared with zero rather than with the negative quantity (negative stock has its own report).
      */
-    private Map<String, Object> stockReconciliation(String locationId, Double toleranceIn, boolean includeMatched) {
+    private Map<String, Object> stockReconciliation(List<String> locs, Double toleranceIn, boolean includeMatched) {
         BigDecimal tolerance = new BigDecimal(JsNumbers.toJsString(toleranceIn != null ? toleranceIn : 0.000001));
-        String loc = notBlank(locationId) ? " AND \"locationId\" = :loc" : "";
-        var spec = jdbc.sql(reconciliationCells(!loc.isEmpty()) + ","
+        String loc = locs != null ? " AND \"locationId\" IN (:locs)" : "";
+        var spec = jdbc.sql(reconciliationCellsWhere(loc) + ","
                         + " e AS (SELECT c.*, abs(c.cached - c.ledger) > :tol"
                         + " OR (c.lots AND abs(GREATEST(c.cached, 0) - c.batches) > :tol) AS drifted FROM c)"
                         // The first cell always comes back, so the counts arrive even when nothing drifted.
@@ -783,8 +807,8 @@ public class InventoryQueryService {
                         + " row_number() OVER (ORDER BY NOT e.quant, e.name, e.pid, e.lid, e.vk) AS rn FROM e) x"
                         + " WHERE x.drifted OR :all OR x.rn = 1 ORDER BY x.rn LIMIT " + (RECON_ROWS + 1))
                 .param("org", org()).param("tol", tolerance).param("all", includeMatched);
-        if (!loc.isEmpty()) {
-            spec = spec.param("loc", locationId);
+        if (locs != null) {
+            spec = spec.param("locs", locs);
         }
         List<Map<String, Object>> found = SqlRows.list(spec);
         long cells = found.isEmpty() ? 0 : ((Number) found.getFirst().get("cells")).longValue();
@@ -821,15 +845,21 @@ public class InventoryQueryService {
 
     /** Quants at negative on-hand with the estimated valuation exposure. */
     public Map<String, Object> getNegativeStock(String locationId) {
-        return negativeStock(scope.resolve(locationId));
+        Map<String, Object> out = negativeStock(scope.readLocations(locationId));
+        if (!CostVisibility.seesCost()) {
+            // IPR S-2: the exposure is a stock value.
+            CostVisibility.hideCostDeep(out, java.util.Set.of("unitCost", "valuationExposure",
+                    "totalValuationExposure"));
+        }
+        return out;
     }
 
-    private Map<String, Object> negativeStock(String locationId) {
+    private Map<String, Object> negativeStock(List<String> locs) {
         List<Object> params = new ArrayList<>(List.of(org()));
         String loc = "";
-        if (notBlank(locationId)) {
-            loc = " AND si.\"locationId\" = ?";
-            params.add(locationId);
+        if (locs != null) {
+            loc = " AND si.\"locationId\" = ANY(?::text[])";
+            params.add(locs.toArray(String[]::new));
         }
         List<Map<String, Object>> items = SqlRows.list(jdbc.sql("SELECT si.\"productId\", si.\"variantKey\","
                 + " si.\"locationId\", si.quantity, si.\"runningAverageCost\", si.\"updatedAt\", p.code, p.name,"
