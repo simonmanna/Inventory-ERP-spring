@@ -136,6 +136,14 @@ IPR wave 3, stream E3 (branch `fix/ipr-w3`, **pending owner sign-off**; evidence
   reserved for sales orders; output and partial-output rows carry their line; the reversal's issues of the main
   output, partial outputs and by-products name the receipt row they undo (`reversesLedgerId`, when the order kept its
   ledger code or has a single output row of that product).
+- **Partial output (review fixes).** A partial output with a `date` is dated (`date`, `effectiveAt`) and refused past
+  the back-date limit (`Partial output date is more than N days in the past`); its overhead uses the work-centre rated
+  accounts (`absorbOverhead`, net of rated credits already posted), and a reversal reverses every rated entry of the
+  order. Completion checks the remaining pool after subtracting partials, and partials keep every by-product with a
+  cost share out of the main output's share. A reversal of an order without a main output ledger link no longer counts
+  partials twice. `receiveOutput` dates its receipt; Complete keeps the Nest back-date behaviour.
+- **Rework consumes from QC quarantine.** A rework order's consumption out of QC quarantine is part of the quality flow
+  and passes the X-3 hold (it was refused, so a rework order could not start).
 
 IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
 [2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md)):

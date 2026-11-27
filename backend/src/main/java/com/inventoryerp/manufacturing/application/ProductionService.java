@@ -490,6 +490,11 @@ public class ProductionService {
                     // IPR 1d (SW-4, E-1a): the material line on its ledger row; stock reserved for sales orders is
                     // not consumed.
                     .sourceLine(str(line, "id")).honourReservations(null);
+            if ("rework".equals(order.get("orderKind"))) {
+                // IPR wave 3 (new defect, X-3 × rework): a rework order consumes the held units from QC quarantine;
+                // that is the quality flow taking them back, not a consumption the hold must refuse.
+                move.quarantineFlow();
+            }
             Issued res = stock.issue(move);
             materialCost = materialCost.add(res.totalValue());
             Map<String, Object> upd = new LinkedHashMap<>();
