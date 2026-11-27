@@ -345,8 +345,9 @@ class ManufacturingResidualsIT extends InventoryAuditSupport {
         // the 6 dp average 3.333333 = 999,999.90 and leaves 0.10 of ledger value at quantity 0. The GL follows the
         // ledger (stock credited with what the engine issued, the 0.10 to stock adjustment), so only the valuation
         // check sees it, and only for the beads.
-        assertThat(failingChecks(report, "checks")).as("only the engine residue on the beads").allMatch(f -> f
-                .startsWith("valuation_vs_subledger ") && f.contains(bead));
+        // IPR E-1 (stream E3): the engine residue is closed — plain AVCO quants are valued at their ledger value within
+        // the rounding limit, and the issue that empties the quant sweeps what the ledger keeps — so nothing fails.
+        assertThat(failingChecks(report, "checks")).as("integrity checks after the legacy reversal (E-1)").isEmpty();
         JsonNode t = okA(200, "GET", "/reports/inventory/gl-tieout?tolerance=0.01", null);
         assertThat(t.get("glBalance").decimalValue()).as("GL = stock ledger " + t).isEqualByComparingTo(t.get(
                 "ledgerMovementValue").decimalValue());
@@ -425,5 +426,113 @@ class ManufacturingResidualsIT extends InventoryAuditSupport {
         assertThat(atQc).as(outcome).isEqualByComparingTo(hold.status() == 200 ? "10" : "0");
         assertIntegrityGreen(true, "feature_risk");
         assertGlTieOut();
+    }
+
+    // ------------------------------------------------------------------ IPR wave 3 (E3)
+
+    @Test
+    @DisplayName("N-1: a BOM listing the same component twice reserves both lines at confirm")
+    void sameComponentTwiceReservesBoth() {
+        fresh();
+        String flour = prod("N1FLOUR");
+        String bread = prod("N1BREAD");
+        stockIn(bakery, flour, 20, 2);
+        String bomId = okA(201, "POST", "/manufacturing/boms", Map.of("name", "Recipe " + sfx(), "outputProductId",
+                bread, "outputQuantity", 1, "lines", List.of(Map.of("componentProductId", flour, "quantity", 2),
+                        Map.of("componentProductId", flour, "quantity", 3)))).get("id").asString();
+        okA(201, "POST", "/manufacturing/boms/" + bomId + "/activate", null);
+        String id = created(bomId);
+        assertThat(orderReservation(id)).as("both lines reserved").isEqualByComparingTo("5");
+        okA(201, "POST", PO + id + "/start", Map.of());
+        okA(201, "POST", PO + id + "/complete", Map.of("qtyProduced", 1));
+        green("after N-1 order");
+    }
+
+    @Test
+    @DisplayName("SW-4: consumption and output rows name their order lines; a reversal names the receipt it undoes")
+    void reversalLinksItsReceipts() {
+        fresh();
+        String sugar = prod("SW4SUGAR");
+        String candy = prod("SW4CANDY");
+        stockIn(bakery, sugar, 10, 3);
+        String id = started(bom(candy, sugar, 2, 4, Map.of()));
+        okA(201, "POST", PO + id + "/complete", Map.of("qtyProduced", 2));
+        String code = okA(200, "GET", PO + id, null).get("orderCode").asString();
+        assertThat(asOrg(() -> count("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceId\" = ? AND type IN ('production_consume', 'production_output') AND \"sourceLineId\" IS"
+                + " NULL", org, code))).as("consume / output rows without their line").isZero();
+        okA(201, "POST", PO + id + "/reverse", Map.of());
+        assertThat(onHand(candy, warehouse)).isEqualByComparingTo("0");
+        assertThat(asOrg(() -> count("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"referenceType\" = 'production_reversal' AND \"productId\" = ? AND \"quantityChange\" < 0 AND"
+                + " \"reversesLedgerId\" IS NOT NULL", org, candy))).as("output reversal linked").isEqualTo(1);
+        green("after SW-4 reversal");
+    }
+
+    @Test
+    @DisplayName("review: a by-product expected at 0 still keeps its cost share out of the partial outputs (no negative"
+            + " remaining pool at completion)")
+    void byproductExpectedZeroAndPartials() {
+        fresh();
+        String flour = prod("RVFLOUR");
+        String cake = prod("RVCAKE");
+        String crumbs = prod("RVCRUMB");
+        stockIn(bakery, flour, 40, 100);
+        String bomId = bom(cake, flour, 20, 4, Map.of());
+        String id = okA(201, "POST", "/manufacturing/production-orders", Map.of("bomId", bomId, "runs", 1,
+                "locationId", bakery, "outputLocationId", warehouse, "outputs", List.of(Map.of("productId", crumbs,
+                        "kind", "byproduct", "qtyExpected", 0, "costAllocationPct", 60)))).get("id").asString();
+        okA(201, "POST", PO + id + "/confirm", null);
+        okA(201, "POST", PO + id + "/start", Map.of());
+        keyedOk(PO + id + "/partial-output", Map.of("quantity", 10));
+        String bpLine = null;
+        for (JsonNode o : okA(200, "GET", PO + id, null).get("outputs")) {
+            if ("byproduct".equals(o.get("kind").asString())) {
+                bpLine = o.get("id").asString();
+            }
+        }
+        JsonNode done = okA(201, "POST", PO + id + "/complete", Map.of("qtyProduced", 10, "outputs",
+                List.of(Map.of("lineId", bpLine, "qtyProduced", 1))));
+        assertThat(new BigDecimal(done.get("outputUnitCost").asString())).as("main output cost " + done)
+                .isPositive();
+        green("by-product expected at 0 after partials");
+    }
+
+    @Test
+    @DisplayName("review: a partial output dated beyond the back-dating limit is refused")
+    void backdatedPartialOutput() {
+        fresh();
+        String flour = prod("BDFLOUR");
+        String cake = prod("BDCAKE");
+        stockIn(bakery, flour, 40, 100);
+        String id = started(bom(cake, flour, 20, 4, Map.of()));
+        Res old = keyed("POST", PO + id + "/partial-output", Map.of("quantity", 5, "date",
+                LocalDate.now().minusDays(40).toString()));
+        assertThat(old.status()).as(old.raw().body()).isEqualTo(400);
+        assertThat(old.body().get("message").asString()).contains("Partial output date is more than");
+        assertThat(onHand(cake, warehouse)).isEqualByComparingTo("0");
+        green("after the refused backdated partial");
+    }
+
+    @Test
+    @DisplayName("review: reversing an order whose output line lost its receipt link (legacy) with partial outputs is"
+            + " no longer refused; every receipt goes back once")
+    void legacyReversalWithPartials() {
+        fresh();
+        String flour = prod("LGFLOUR");
+        String cake = prod("LGCAKE");
+        stockIn(bakery, flour, 40, 100);
+        String id = started(bom(cake, flour, 20, 4, Map.of()));
+        keyedOk(PO + id + "/partial-output", Map.of("quantity", 5));
+        okA(201, "POST", PO + id + "/complete", Map.of("qtyProduced", 15));
+        assertThat(onHand(cake, warehouse)).isEqualByComparingTo("20");
+        // An output line written before it kept its receipt (Nest data): no ledger code, no produced quantity.
+        asOrgRun(() -> jdbc.sql("UPDATE \"ProductionOutput\" SET \"ledgerCode\" = NULL, \"qtyProduced\" = 0 WHERE"
+                + " \"orderId\" = ? AND kind = 'output'").param(id).update());
+        Res rev = api("POST", PO + id + "/reverse", Map.of());
+        assertThat(rev.status()).as(rev.raw().body()).isEqualTo(201);
+        assertThat(onHand(cake, warehouse)).isEqualByComparingTo("0");
+        assertThat(onHand(flour, bakery)).isEqualByComparingTo("40");
+        green("after the legacy reversal with partials");
     }
 }
