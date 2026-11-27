@@ -219,6 +219,57 @@ class IprReview2FixesIT extends InventoryAuditSupport {
         assertIntegrityGreen();
     }
 
+    // ------------------------------------------------------------------ S-2 inventory analytics values
+
+    String token(String... permissions) {
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                + " VALUES (?, ?, ?, false, ?, now())").params(role, org, "R2 " + role.substring(0, 8), permissions)
+                .update();
+        String email = "r2-" + role.substring(0, 8) + "@audit.test";
+        createUser(org, email, "Review2@12345", role);
+        return login(orgCode, email, "Review2@12345");
+    }
+
+    static JsonNode tile(JsonNode dashboard, String key) {
+        for (JsonNode t : dashboard.get("tiles")) {
+            if (key.equals(t.get("key").asString())) {
+                return t;
+            }
+        }
+        throw new AssertionError("no tile " + key + " in " + dashboard);
+    }
+
+    @Test
+    @DisplayName("S-2: the inventory analytics dashboard hides stock values from a user without"
+            + " inventory_valuation:read; quantities and counts stay")
+    void inventoryAnalyticsHidesValuesWithoutValuationRead() {
+        fresh();
+        String p = product("R2KPI", Map.of("minQuantity", 50));
+        receive(p, 10, 10);
+
+        JsonNode full = okA(200, "GET", "/analytics/inventory", null);
+        assertThat(num(tile(full, "stockValue").get("value"))).isEqualByComparingTo("100");
+
+        String viewer = token("analytics:inventory");
+        Res r = call("GET", "/analytics/inventory", null, viewer);
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        JsonNode d = r.body();
+        for (String money : List.of("stockValue", "agedOver90", "slowStock", "deadStock", "discrepancyValue")) {
+            assertThat(tile(d, money).get("value").isNull()).as(money + " in " + d).isTrue();
+        }
+        assertThat(tile(d, "belowMinimum").get("value").asLong()).isEqualTo(1);
+        d.get("charts").forEach(c -> c.get("rows").forEach(row -> assertThat(row.get("value").isNull())
+                .as("chart " + c.get("key")).isTrue()));
+        d.get("tables").forEach(t -> t.get("rows").forEach(row -> assertThat(row.has("value")
+                && !row.get("value").isNull()).as("table " + t.get("key") + " " + row).isFalse()));
+        Res docs = call("GET", "/analytics/inventory/documents?kpi=below-minimum", null, viewer);
+        assertThat(docs.status()).as(docs.raw().body()).isEqualTo(200);
+        assertThat(docs.body().get("data")).hasSize(1);
+        assertThat(docs.body().get("data").get(0).get("amount").isNull()).as(docs.raw().body()).isTrue();
+        assertThat(num(docs.body().get("data").get(0).get("quantity"))).isEqualByComparingTo("10");
+    }
+
     // ------------------------------------------------------------------ R2-4 multi-stage late cost
 
     String productionLocation() {
