@@ -605,8 +605,10 @@ public class InvoicingWorkflowsInitializer {
             if (location == null) {
                 throw new IllegalStateException("No warehouse location for stockable line " + product.get("name"));
             }
-            BigDecimal unitCost = qty.signum() > 0 ? new BigDecimal(JsNumbers.toJsString(
-                    Money.div(d(line.get("subtotal")), qty).doubleValue())) : Money.ZERO;
+            // IPR F11 (deviation from Nest, which went through a JS number): the bill line's net unit price stays a
+            // decimal end to end (decimal.js precision, HALF_UP), so the receipt's value is the line's subtotal and the
+            // GRNI credit it raises matches the bill's GRNI debit even for large amounts.
+            BigDecimal unitCost = qty.signum() > 0 ? Money.div(d(line.get("subtotal")), qty) : Money.ZERO;
             if (functionalRate.compareTo(BigDecimal.ONE) != 0) {
                 unitCost = unitCost.multiply(functionalRate).setScale(6, java.math.RoundingMode.HALF_UP);
             }
