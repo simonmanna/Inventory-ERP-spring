@@ -37,7 +37,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Landed cost (port of {@code landed-cost.service.ts}, INV-P2-02): freight, duty, insurance and handling
+ * Legacy per-receipt landed cost. Purchase readiness B4 (owner-approved 2026-11-27): creating and posting one is
+ * retired — its engine capitalised the landed cost of goods already sold into stock (AVCO), let the credit be any
+ * account and carried no supplier invoice, approval, tax or currency. New landed costs are landed cost vouchers
+ * ({@link LandedCostVoucherService}). The history stays readable, a draft can still be cancelled and a posted one is
+ * reversed through the voucher engine.
+ *
+ * <p>Original description (port of {@code landed-cost.service.ts}, INV-P2-02): freight, duty, insurance and handling
  * capitalised onto the goods of one posted goods receipt. Posting allocates the charges over the receipt's stock
  * movements (value | quantity | equal); per movement the share still on hand raises the cost layer (lot, serials or
  * the AVCO average) and is debited to Stock Valuation, the consumed share is expensed to COGS; STANDARD items
@@ -118,8 +124,42 @@ public class LandedCostService {
         return withChildren(lc);
     }
 
-    /** Draft landed cost on a posted receipt; charges must total more than zero. */
+    /** Refusal of the retired create route (B4). */
+    public static final String CREATE_RETIRED = "Per-receipt landed costs are retired: enter freight, duty and other"
+            + " charges as a landed cost voucher for this goods receipt (Procurement > Landed Costs, POST"
+            + " /procurement/landed-cost-vouchers) — it splits the cost between stock still on hand and goods already"
+            + " sold, and records the supplier invoice, approval, tax and currency";
+
+    /** Refusal of the retired post route (B4). */
+    public static final String POST_RETIRED = "Posting a per-receipt landed cost is retired: cancel this draft and enter"
+            + " its charges as a landed cost voucher (Procurement > Landed Costs, POST /procurement/landed-cost-vouchers)";
+
+    /** Retired (B4): always refused; see {@link #CREATE_RETIRED}. */
     public Map<String, Object> create(CreateInput dto) {
+        throw ApiException.badRequest(CREATE_RETIRED);
+    }
+
+    /** Retired (B4): always refused; see {@link #POST_RETIRED}. A voucher keeps its own message. */
+    public Map<String, Object> post(String id) {
+        String type = jdbc.sql("SELECT \"voucherType\" FROM \"LandedCost\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(id, org()).query(String.class).optional().orElse("receipt");
+        if ("voucher".equals(type)) {
+            throw ApiException.badRequest("This is a landed cost voucher; post it through /procurement/landed-cost-vouchers");
+        }
+        throw ApiException.badRequest(POST_RETIRED);
+    }
+
+    /**
+     * Historical entries only: create and post a per-receipt landed cost with the retired engine, exactly as it ran
+     * before B4. Not reachable from the API; kept so the reversal and reporting of entries posted before the
+     * retirement stay covered by tests.
+     */
+    public Map<String, Object> postHistorical(CreateInput dto) {
+        return postDraft((String) createDraft(dto).get("id"));
+    }
+
+    /** Draft landed cost on a posted receipt; charges must total more than zero. */
+    private Map<String, Object> createDraft(CreateInput dto) {
         String orgId = org();
         Map<String, Object> grn = SqlRows.one(jdbc.sql("SELECT id, \"receiptNumber\", status::text AS status FROM"
                 + " \"GoodsReceiptNote\" WHERE id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL")
@@ -190,14 +230,8 @@ public class LandedCostService {
     }
 
     /** Allocate and post (one transaction): layer re-costing, allocation rows, GL. */
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> post(String id) {
+    private Map<String, Object> postDraft(String id) {
         String orgId = org();
-        String type = jdbc.sql("SELECT \"voucherType\" FROM \"LandedCost\" WHERE id = ? AND \"organizationId\" = ?")
-                .params(id, orgId).query(String.class).optional().orElse("receipt");
-        if ("voucher".equals(type)) {
-            throw ApiException.badRequest("This is a landed cost voucher; post it through /procurement/landed-cost-vouchers");
-        }
         return tx.execute(st -> {
             // Readiness gap h-05 F6: the receipt is locked before the landed cost is claimed, the order a receipt
             // reversal takes them in (it locks the receipt, re-checks for posted landed cost, then cancels drafts), so

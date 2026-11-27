@@ -683,11 +683,10 @@ class ProcureToPayGapsIT extends ApiTestSupport {
         receive(po1, product, 10);
         String po2 = createPo(supplier, product, 10, 10).get("id").asString();
         receive(po2, product, 10);
-        // Another supplier's goods returned on this supplier's note: AP falls to 50, the orders still show 100 each.
-        String other = stockProduct();
-        adhoc(partner("Residual B other"), warehouse, other, 20, 10);
-        money("PATCH", "/procurement/debit-notes/" + returnNote(supplier, warehouse, other, 15, 10).get("id").asString()
-                + "/post", null);
+        // 15 of the supplier's unbilled goods returned without a bill: AP falls to 50. (Purchase readiness MEDIUM #5,
+        // 2026-11-27: the setup used to return another supplier's goods on this supplier's note, which is now refused.)
+        money("PATCH", "/procurement/debit-notes/" + returnNote(supplier, warehouse, product, 15, 10).get("id")
+                .asString() + "/post", null);
         assertThat(supplierAp(supplier)).isEqualByComparingTo("50");
 
         String bankAccount = verifiedSupplierBankAccount(supplier);

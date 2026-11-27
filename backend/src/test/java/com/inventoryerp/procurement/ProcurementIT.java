@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
+import com.inventoryerp.procurement.application.LandedCostService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.math.BigDecimal;
@@ -39,6 +40,9 @@ class ProcurementIT extends ApiTestSupport {
 
     @Autowired
     StockService stock;
+
+    @Autowired
+    LandedCostService legacyCosts;
 
     String adminId;
     String warehouse;
@@ -737,31 +741,20 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal cogs0 = balance(mapped("cogs"));
         BigDecimal ap0 = balance(mapped("accounts_payable"));
 
-        Res draftGrn = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", ok(201, "POST",
-                "/procurement/goods-receipts", Map.of("partnerId", supplier, "warehouseId", warehouse, "lines",
-                List.of(rline(product, 1, 1)))).get("id").asString(), "creditAccountId", mapped("accounts_payable"),
-                "charges",
-                List.of(Map.of("kind", "freight", "amount", 1))));
-        assertThat(draftGrn.body().get("message").asString()).matches(
-                "Landed cost can only be added to a posted goods receipt \\(GRN-.* is draft\\)");
-        Res badAccount = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                UUID.randomUUID().toString(), "charges", List.of(Map.of("kind", "freight", "amount", 1))));
-        assertThat(badAccount.body().get("message").asString()).isEqualTo("Credit account not found");
-        Res badKind = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "tip", "amount", 1))));
-        assertThat(badKind.body().get("message").get(0).asString()).isEqualTo(
-                "charges.0.kind must be one of the following values: freight, duty, insurance, handling, other");
+        // Purchase readiness B4: the create and post routes are retired; the engine runs only for historical entries.
+        Res retired = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
+                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "freight", "amount", 150))));
+        assertThat(retired.status()).isEqualTo(400);
+        assertThat(retired.body().get("message").asString()).isEqualTo(LandedCostService.CREATE_RETIRED);
 
-        JsonNode draft = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "freight", "amount", 150),
-                        Map.of("kind", "duty", "amount", 50))));
-        assertThat(draft.get("code").asString()).startsWith("LC-");
-        assertThat(draft.get("status").asString()).isEqualTo("draft");
-        assertThat(draft.get("allocationMethod").asString()).isEqualTo("value");
-        assertThat(draft.get("totalAmount").asString()).isEqualTo("200");
-        assertThat(draft.get("charges")).hasSize(2);
-        String id = draft.get("id").asString();
-        JsonNode posted = ok(200, "POST", "/procurement/landed-costs/" + id + "/post", null);
+        String id = asAdmin(() -> (String) legacyCosts.postHistorical(new LandedCostService.CreateInput(grn,
+                mapped("accounts_payable"), null, null, null, List.of(new LandedCostService.ChargeInput("freight", null,
+                        new BigDecimal("150")), new LandedCostService.ChargeInput("duty", null, new BigDecimal("50")))))
+                .get("id"));
+        JsonNode posted = ok(200, "GET", "/procurement/landed-costs/" + id, null);
+        assertThat(posted.get("code").asString()).startsWith("LC-");
+        assertThat(posted.get("allocationMethod").asString()).isEqualTo("value");
+        assertThat(posted.get("charges")).hasSize(2);
         assertThat(posted.get("status").asString()).isEqualTo("posted");
         assertThat(posted.get("capitalizedAmount").asString()).isEqualTo("120");
         assertThat(posted.get("expensedAmount").asString()).isEqualTo("80");
@@ -777,9 +770,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(balance(mapped("cogs")).subtract(cogs0)).isEqualByComparingTo("80");
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("-200");
         Res again = as("POST", "/procurement/landed-costs/" + id + "/post", null);
-        assertThat(again.status()).isEqualTo(409);
-        assertThat(again.body().get("message").asString()).isEqualTo(
-                "Landed cost is not a draft (already posted or cancelled)");
+        assertThat(again.status()).isEqualTo(400);
+        assertThat(again.body().get("message").asString()).isEqualTo(LandedCostService.POST_RETIRED);
         Res cancelPosted = as("POST", "/procurement/landed-costs/" + id + "/cancel", null);
         assertThat(cancelPosted.body().get("message").asString()).isEqualTo("Only a draft landed cost can be cancelled");
         assertThat(ok(200, "GET", "/procurement/landed-costs?goodsReceiptId=" + grn, null)).hasSize(1);
@@ -788,8 +780,13 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(missing.status()).isEqualTo(404);
         assertThat(missing.body().get("message").asString()).isEqualTo("Landed cost not found");
 
-        String other = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "other", "amount", 5)))).get("id").asString();
+        // A draft saved before the retirement can still be cancelled (and not posted).
+        String other = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"LandedCost\" (id, \"organizationId\", code, \"goodsReceiptId\", \"allocationMethod\","
+                + " \"creditAccountId\", date, \"totalAmount\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, 'value', ?,"
+                + " now(), 5, now(), now())").params(other, demoOrg, "LC-OLD-" + suffix(), grn, mapped("accounts_payable"))
+                .update();
+        assertThat(as("POST", "/procurement/landed-costs/" + other + "/post", null).status()).isEqualTo(400);
         assertThat(ok(200, "POST", "/procurement/landed-costs/" + other + "/cancel", null).get("status").asString())
                 .isEqualTo("cancelled");
     }
@@ -802,10 +799,10 @@ class ProcurementIT extends ApiTestSupport {
                 warehouse, "lines", List.of(Map.of("productId", product, "description", "goods", "quantity", 10,
                         "unitCost", 50, "batchNumber", "LC-" + suffix())))).get("id").asString();
         asAdmin(() -> stock.issue(StockMove.of(product, warehouse, new BigDecimal("5")).source("audit", suffix())));
-        String draft = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("grni_accrued"), "allocationMethod", "quantity", "charges", List.of(Map.of("kind", "freight",
-                        "amount", 100)))).get("id").asString();
-        JsonNode posted = ok(200, "POST", "/procurement/landed-costs/" + draft + "/post", null);
+        String lcId = asAdmin(() -> (String) legacyCosts.postHistorical(new LandedCostService.CreateInput(grn,
+                mapped("grni_accrued"), "quantity", null, null, List.of(new LandedCostService.ChargeInput("freight", null,
+                        new BigDecimal("100"))))).get("id"));
+        JsonNode posted = ok(200, "GET", "/procurement/landed-costs/" + lcId, null);
         assertThat(posted.get("capitalizedAmount").asString()).isEqualTo("50");
         BigDecimal lot = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryBatch\" WHERE \"productId\" = ? AND"
                 + " \"locationId\" = ?").params(product, warehouse).query(BigDecimal.class).single();
@@ -1125,8 +1122,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(call("POST", "/procurement/three-way-match/recompute/" + poId, null, otherToken).body()).isEmpty();
         Res lc = call("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId", "x",
                 "charges", List.of(Map.of("kind", "freight", "amount", 1))), otherToken);
-        assertThat(lc.status()).isEqualTo(404);
-        assertThat(lc.body().get("message").asString()).isEqualTo("Goods receipt not found");
+        assertThat(lc.status()).isEqualTo(400);
+        assertThat(lc.body().get("message").asString()).isEqualTo(LandedCostService.CREATE_RETIRED);
     }
 
     @Test

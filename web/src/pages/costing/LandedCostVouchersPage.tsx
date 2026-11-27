@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { CheckCircle2, Plus, Send, Trash2, Undo2, Upload, XCircle } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
@@ -124,6 +124,9 @@ const blankCharge = (): ChargeRow => ({ key: crypto.randomUUID(), amount: 0, amo
 export function LandedCostVoucherEditPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // Opened from a goods receipt's landed-cost tab: the new voucher starts on that receipt.
+  const [searchParams] = useSearchParams();
+  const prefillReceiptId = id ? null : searchParams.get('goodsReceiptId');
   const { data: existing } = useLandedCostVoucher(id);
   const { data: components = [] } = useCostComponents();
   const { data: shipments = [] } = useShipments();
@@ -266,6 +269,10 @@ export function LandedCostVoucherEditPage() {
   }, [bodyKey]);
   useEffect(() => {
     if (id) return;
+    if (prefillReceiptId) {
+      setReceipts([prefillReceiptId]);
+      return;
+    }
     try {
       const raw = localStorage.getItem(DRAFT_KEY);
       if (!raw) return;

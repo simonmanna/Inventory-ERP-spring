@@ -7,6 +7,7 @@ import com.inventoryerp.costing.web.LandedCostAccrualController;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.procurement.application.LandedCostService;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -32,6 +33,9 @@ class ImportLandedScenarioIT extends ApiTestSupport {
 
     @Autowired
     StockService stock;
+
+    @Autowired
+    LandedCostService legacyCosts;
 
     String adminId;
     String warehouse;
@@ -190,15 +194,12 @@ class ImportLandedScenarioIT extends ApiTestSupport {
         // Legacy per-receipt landed cost: posted, half sold, reversed through the voucher engine.
         String legacyGrn = receive(pump, 10, 50);
         String cash = account("1100");
-        Map<String, Object> ch = new LinkedHashMap<>();
-        ch.put("kind", "freight");
-        ch.put("description", "Truck");
-        ch.put("amount", 100);
-        JsonNode lc = money("/procurement/landed-costs", Map.of("goodsReceiptId", legacyGrn, "creditAccountId", cash,
-                "allocationMethod", "value", "charges", List.of(ch)));
-        String lcId = lc.get("id").asString();
-        JsonNode posted = money("/procurement/landed-costs/" + lcId + "/post", null);
-        assertThat(posted.get("status").asString()).isEqualTo("posted");
+        // Purchase readiness B4: the create/post routes are retired; a pre-retirement entry is built with the engine.
+        String lcId = TenantContext.run(TenantStore.user(demoOrg, adminId), () -> (String) legacyCosts.postHistorical(
+                new LandedCostService.CreateInput(legacyGrn, cash, "value", null, null, List.of(
+                        new LandedCostService.ChargeInput("freight", "Truck", new BigDecimal("100"))))).get("id"));
+        assertThat(ok(200, "GET", "/procurement/landed-costs/" + lcId, null).get("status").asString())
+                .isEqualTo("posted");
         sell(pump, 5);
         assertThat(call("POST", "/procurement/landed-costs/" + lcId + "/reverse", null, adminToken).status())
                 .as("Idempotency-Key").isEqualTo(400);
