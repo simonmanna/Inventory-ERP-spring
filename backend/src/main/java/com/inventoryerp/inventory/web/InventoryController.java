@@ -192,7 +192,11 @@ public class InventoryController {
     /** {@code ReceiveStockTransferDto}. */
     public record ReceiveTransferRequest(
             @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid ReceiveLineRequest> lines,
-            @Size(max = 2000, message = NOTES) String notes) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            /* IPR S3: needed when the damaged and short goods are worth more than the approval threshold. */
+            @Size(max = 1000, message = REASON) String lossReason,
+            String approvedById,
+            @Size(max = 128, message = "must be shorter than or equal to 128 characters") String approverPin) {}
 
     /** {@code ApproveAdjustmentDto}. */
     public record ApproveAdjustmentRequest(Boolean force, @Size(max = 1000, message = REASON) String forceReason) {}
@@ -584,7 +588,8 @@ public class InventoryController {
     @RequirePermissions(Permissions.INVENTORY_DOC__UPDATE)
     public Map<String, Object> receiveTransfer(@PathVariable String id, @Valid @RequestBody ReceiveTransferRequest dto) {
         return stockDocs.receiveTransfer(id, dto.lines().stream().map(l -> new ReceiveLine(l.itemId(), l.received(),
-                l.damaged(), l.shortQty())).toList(), dto.notes());
+                l.damaged(), l.shortQty())).toList(), dto.notes(),
+                new StockDocService.LossApproval(dto.lossReason(), dto.approvedById(), dto.approverPin()));
     }
 
     @PostMapping("/transfers/{id}/recall")

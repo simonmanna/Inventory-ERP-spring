@@ -347,8 +347,10 @@ class InventoryIT extends ApiTestSupport {
         assertThat(dispatched.get("status").asString()).isEqualTo("in_transit");
         assertThat(onHand(p, from)).isEqualByComparingTo("2");
         String itemId = dispatched.get("items").get(0).get("id").asString();
+        // IPR S3: a transit loss with a value names its reason and approver (self, the pair is off).
         JsonNode partial = ok(200, "POST", "/inventory/transfers/" + id + "/receive", Map.of("lines",
-                List.of(Map.of("itemId", itemId, "received", 4, "damaged", 1, "short", 1))));
+                List.of(Map.of("itemId", itemId, "received", 4, "damaged", 1, "short", 1)), "lossReason", "torn sacks",
+                "approvedById", adminId));
         assertThat(partial.get("status").asString()).isEqualTo("partially_received");
         assertThat(partial.get("receipts")).hasSize(1);
         assertThat(onHand(p, to)).isEqualByComparingTo("4");
@@ -664,15 +666,15 @@ class InventoryIT extends ApiTestSupport {
         String p = product("AVCO", false, false);
         stockIn(loc, List.of(line(p, 10, 1)));
         ok(201, "POST", "/inventory/reservations", Map.of("productId", p, "locationId", loc, "quantity", 3,
-                "sourceType", "order", "sourceId", "SO-1"));
+                "sourceType", "manual", "sourceId", "SO-1"));
         ok(201, "POST", "/inventory/reservations", Map.of("productId", p, "locationId", loc, "quantity", 4,
-                "sourceType", "order", "sourceId", "SO-1"));
+                "sourceType", "manual", "sourceId", "SO-1"));
         JsonNode atp = ok(200, "GET", "/inventory/reservations/atp?productId=" + p + "&locationId=" + loc, null);
         assertThat(atp.get("reserved").asString()).isEqualTo("4");
         assertThat(atp.get("available").asString()).isEqualTo("6");
-        assertThat(ok(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", "SO-1"))
+        assertThat(ok(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "manual", "sourceId", "SO-1"))
                 .get("released").asInt()).isEqualTo(1);
-        assertThat(ok(200, "GET", "/inventory/reservations?sourceType=order&sourceId=SO-1", null).get(0).get("status")
+        assertThat(ok(200, "GET", "/inventory/reservations?sourceType=manual&sourceId=SO-1", null).get(0).get("status")
                 .asString()).isEqualTo("released");
     }
 

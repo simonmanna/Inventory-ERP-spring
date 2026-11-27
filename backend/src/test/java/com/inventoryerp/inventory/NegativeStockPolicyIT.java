@@ -284,7 +284,8 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         assertIntegrityGreen("received 3");
 
         JsonNode second = okA(200, "POST", "/inventory/transfers/" + id + "/receive", Map.of("lines",
-                List.of(Map.of("itemId", itemId, "received", 1, "damaged", 1, "short", 1))));
+                List.of(Map.of("itemId", itemId, "received", 1, "damaged", 1, "short", 1)), "lossReason", "damaged in"
+                        + " transit", "approvedById", auditUserId));
         assertThat(second.get("status").asString()).isEqualTo("partially_received");
         assertIntegrityGreen("received 1, damaged 1, short 1");
         assertThat(onHand(p, alt)).isEqualByComparingTo("4");

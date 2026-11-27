@@ -143,6 +143,12 @@ public final class SettingRegistry {
                 "Largest absolute difference (base currency) between stock valuation and the inventory GL balance that"
                         + " the daily check accepts.",
                 1, null, false, ORG_ONLY);
+        // IPR S3: a transit receipt that writes off more than this needs a reason and an approval.
+        def("inventory.transitLossApprovalThreshold", "inventory", "number", "Transit Loss Approval Threshold",
+                "Largest value (base currency, at the transit location's cost) of damaged and short goods that a"
+                        + " transfer receipt may write off without a reason and an approval. 0 = every loss with a value"
+                        + " needs them.",
+                0, null, true, ALL_LEVELS);
         def("inventory.defaultBatchTracking", "inventory", "bool", "Default Batch Tracking (new products)", null,
                 false, null, false, ORG_ONLY);
         def("inventory.defaultExpiryTracking", "inventory", "bool", "Default Expiry Tracking (new products)", null,
