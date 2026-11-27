@@ -57,9 +57,9 @@ public class SyncStockService {
     public static final String HELD = "offline_held_posting";
     public static final String AWAITING = "offline_awaiting_dispatch";
     /** IPR SW-7 (ADR-S088): an op stamped ahead of the server; stored at the receive time. Report-only. */
-    public static final String CLOCK_SKEW = "offline_clock_skew";
+    public static final String CLOCK_SKEW = com.inventoryerp.kernel.common.OccurredAt.CLOCK_SKEW_KIND;
     /** IPR SW-7 (ADR-S088): an op older than {@code inventory.maxBackdateDays}; accepted as sent. Report-only. */
-    public static final String LATE_SYNC = "offline_late_sync";
+    public static final String LATE_SYNC = com.inventoryerp.kernel.common.OccurredAt.LATE_SYNC_KIND;
 
     /** Transfer statuses before dispatch: a receipt waits. */
     private static final Set<String> NOT_DISPATCHED = Set.of("draft", "pending", "approved");
@@ -270,6 +270,26 @@ public class SyncStockService {
                     "The op happened at " + occ.device() + " and reached the server late; it was accepted as of that"
                             + " time.", context(c, c.opType(), null, null, extra));
         }
+    }
+
+    /**
+     * IPR review 1 (N5): a device count of {@code locationId} that cannot open its spot count because a back-office
+     * count of another type ({@code blockingCode}) is open there (the one-draft rule). The op is applied, nothing is
+     * posted, and an {@code offline_held_posting} row keeps the counted lines for a supervisor to enter into the open
+     * count (or to count again once it is closed). Its own transaction when none is open.
+     */
+    public String holdCount(OpContext c, String locationId, List<Map<String, Object>> lines, String blockingCode,
+            String blockingType) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("lines", lines);
+        extra.put("blockingCountCode", blockingCode);
+        extra.put("blockingCountType", blockingType);
+        String reason = "The location already has an open " + blockingType + " count " + blockingCode
+                + "; the device count was kept here instead of opening a second count";
+        String id = exception(HELD, locationId, null, null, "Device count held: enter it into " + blockingCode
+                + " or count again after it closes", reason, context(c, "inventory_count", null, null, extra));
+        log.info("offline count at {} held behind {}", locationId, blockingCode);
+        return id;
     }
 
     /** Test hook (R1): runs after a waiting receipt is posted, before its row is resolved (crash simulation). */

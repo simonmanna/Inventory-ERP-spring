@@ -697,6 +697,34 @@ counterpart (an extension, labelled as such); nothing existing changes.
   cost is refused); posting dated now; approval by the poster unless a workflow is configured; at most 20,000 rows per
   file and 2,000 per batch.
 
+### IPR review 1: fixes from the independent reviews (2026-11-27, awaiting owner approval)
+
+Evidence: [review1-fixes.md](../audits/ipr-evidence/review1-fixes.md). Branch `fix/ipr-review1`.
+
+- **Transit-loss threshold is cumulative (finding 2).** `inventory.transitLossApprovalThreshold` is compared with the
+  transfer's total written-off loss (its earlier `stock_transfer_loss` ledger rows plus this receipt), so splitting
+  a loss over partial receipts no longer avoids the reason and approval. The refusal message quotes that total; the
+  approval snapshot `amount` is the total, `receiptAmount` this receipt's part.
+- **Transit-loss value (finding 3).** The loss is valued at the transfer's own dispatch cost (`StockTransferLayer`),
+  else the transit location's valuation (FIFO / STANDARD layers), else the running average / cost price as before.
+- **Loss gate before the transfer lock (review 2, N4).** The `stock_transfer_loss` approval gate runs on an unlocked
+  read before `lockTransfer` (L1); under the lock the loss is measured again and a change that the gate could judge
+  differently is refused: 409 "The transit loss of <code> changed while the receipt was being recorded; record the
+  receipt again."
+- **Movement analysis hides values (finding 4).** Without `inventory_valuation:read`, `GET
+  /inventory/reports/movement-analysis` answers `null` for `summary.valueIn/valueOut/valueAdjusted/consumedValue/
+  lostValue/lossRatePct`, `byType[].value`, `trend[].valueIn/valueOut/valueAdjusted` and `top*[].value`.
+- **Opening-import separation of duties (finding 5).** `POST /inventory/opening-stock/preview` records who previewed
+  the journal (`OpeningStockImportPreview`, V722). With no approval workflow, under the `inventory_valuation` pair the
+  previewer cannot import: 403 "Separation of duties: the person who made this document cannot also clear it
+  (Inventory valuation change)". The approval snapshot carries `makerIds`. Pair off: one person may still do both.
+- **Manual release only (finding 8).** `POST /inventory/reservations/release` refuses a non-`manual` source: 400
+  "Only manual reservations can be released here (sourceType must be \"manual\"); a document's reservations follow
+  the document". Document flows release through the service and are unchanged.
+- **Count drain outside a transaction (review 2, N1).** The screen submit (`POST /inventory/counts/{id}/submit`) and
+  the device `stock.count` op drain the location's sale stock postings with no transaction open, before the submit's
+  transaction; `InventoryCountService.submit` itself no longer drains (a stuck posting is still refused).
+
 ## Status
 
 P3a: 69/69 routes. Tests: `InventoryIT` (locations, items, ledger, document flows incl. approve + reverse, transit,

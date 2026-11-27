@@ -372,7 +372,7 @@ public class CashSessionService {
             } else if (funding.signum() > 0 && !autoAdjust) {
                 throw ApiException.badRequest("Choose the source of added float and enter its reason");
             }
-            Instant occurredAt = OccurredAt.resolve(dto.occurredAt());
+            Instant occurredAt = OccurredAt.resolveRecorded(dto.occurredAt(), "cash_session.open");
             Instant at = occurredAt != null ? occurredAt : Instant.now();
             ZoneId zone = OrgDates.orgTimezone(jdbc, organizationId);
             String id = UUID.randomUUID().toString();
@@ -475,7 +475,7 @@ public class CashSessionService {
                 BigDecimal expected = computeExpected(s);
                 closing = closing.withRecomputed(recon.reconcileSession(organizationId, s), expected, counted.subtract(expected));
             }
-            Instant occurred = OccurredAt.resolve(dto.occurredAt());
+            Instant occurred = OccurredAt.resolveRecorded(dto.occurredAt(), "cash_session.close");
             Instant closedAt = occurred != null ? occurred : Instant.now();
             String closedForNote = onBehalf ? closedOnBehalfNote(actorId, (String) s.get("userId")) : null;
             String notes;
@@ -858,7 +858,7 @@ public class CashSessionService {
                 assertManagerApproval(dto.approvedById(), dto.approverEmail(), dto.managerPin(), (String) s.get("userId"),
                         "cash_session:cash_out", "adjustment".equals(dto.movementType()) ? "a cash adjustment" : "a cash pay-out");
             }
-            Instant occurredAt = OccurredAt.resolve(dto.occurredAt());
+            Instant occurredAt = OccurredAt.resolveRecorded(dto.occurredAt(), "cash_session.movement");
             String movementId = UUID.randomUUID().toString();
             jdbc.sql("INSERT INTO \"CashMovement\" (id, \"organizationId\", \"cashSessionId\", \"movementType\", amount, reason,"
                             + " \"counterpartAccountId\", \"correctionOfSessionId\", \"performedBy\", \"createdAt\")"

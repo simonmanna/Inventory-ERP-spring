@@ -343,6 +343,13 @@ None from any parity contract (new module). Autonomous decisions are listed in `
 (one current licence per profile; changes are audited), `FleetCheckout` also stores check-in, and the planned
 `FleetDriverAllowance` is `FleetDriverClaim` + `FleetDriverClaimLine` (+ `FleetClaimReceipt`).
 
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Legacy part lines return (review 2, N3).** A work-order part line issued before its `stockLedgerCode` was recorded
+  returns against the work order's own issue rows of that part (`fleet_work_order` / work-order code), capped by what
+  they still have out and by the line's remaining quantity; with no issue row the return is a 400 (was a 500).
+
 ## Status
 
 | Sub-module | Status | Tests |

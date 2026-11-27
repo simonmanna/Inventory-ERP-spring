@@ -40,6 +40,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -97,6 +98,9 @@ public class InventoryCountService {
     private final LocationScope locationScope;
     private final SegregationOfDutiesService sod;
     private final TransactionTemplate newTx;
+    /** The screen submit's own transaction (IPR review 1, N1: the drain runs before it). */
+    private final TransactionTemplate requiredTx;
+    private final TransactionTemplate readTx;
     private final StockService stock;
     private final org.springframework.beans.factory.ObjectProvider<SaleStockDrain> saleDrain;
 
@@ -118,11 +122,20 @@ public class InventoryCountService {
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         // Only the approval request (reused on the next submit) goes through newTx (gaps h-06 F7).
         this.newTx.setName(BusinessOutcome.RETRY_SAFE_TX);
+        this.requiredTx = new TransactionTemplate(txm);
+        this.readTx = new TransactionTemplate(txm);
+        this.readTx.setReadOnly(true);
     }
 
     private static String org() {
         return TenantContext.organizationId();
     }
+
+    /**
+     * Test hook (IPR review 1, N1): told, just before the sale stock postings are drained for a count submit, whether a
+     * transaction is open on this thread (it must not be).
+     */
+    public static volatile java.util.function.Consumer<Boolean> drainObserver;
 
     private Map<String, Object> session(String id) {
         return SqlRows.one(InventoryCountSession.class, jdbc.sql("SELECT * FROM \"InventoryCountSession\" WHERE id = ?"
@@ -844,11 +857,58 @@ public class InventoryCountService {
         return out;
     }
 
-    /** {@link #submit} from a user's screen: the session's location must be in the caller's data scope. */
-    @Transactional
+    /**
+     * {@link #submit} from a user's screen: the session's location must be in the caller's data scope. IPR review 1
+     * (N1): not transactional itself — the sale stock postings of the location are drained first with no transaction
+     * open ({@link #drainSales}), then the submit runs in one transaction.
+     */
     public Map<String, Object> submitChecked(String id, Boolean force, String forceReason) {
-        assertInScope(id);
-        return submit(id, force, forceReason);
+        Map<String, Object> draft = readTx.execute(s -> {
+            assertInScope(id);
+            return assertDraft(id);
+        });
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            drainSales(str(draft, "locationId"));
+        }
+        return requiredTx.execute(s -> {
+            assertInScope(id);
+            return submitLocked(id, force, forceReason);
+        });
+    }
+
+    /**
+     * IPR 1b (count spec section 5, D1) and review 1 (N1): process the not-done sale stock postings that issue at
+     * {@code locationId} before a count of it is submitted. Each job runs in its own transaction, so this must be
+     * called with no transaction open (the screen submit, and the device count before its op transaction); inside one
+     * the jobs would take a second pooled connection while the caller's suspended transaction kept its locks.
+     *
+     * @throws IllegalStateException when a transaction is open on this thread
+     */
+    public void drainSales(String locationId) {
+        SaleStockDrain drain = saleDrain.getIfAvailable();
+        if (drain == null || locationId == null) {
+            return;
+        }
+        boolean inTx = TransactionSynchronizationManager.isActualTransactionActive();
+        java.util.function.Consumer<Boolean> observer = drainObserver;
+        if (observer != null) {
+            observer.accept(inTx);
+        }
+        if (inTx) {
+            throw new IllegalStateException("drainSales must run with no transaction open");
+        }
+        drain.drainAt(locationId);
+    }
+
+    /**
+     * IPR review 1 (N5): the open draft of another count type at {@code locationId} that would refuse a new
+     * {@code countType} count there (the S4 one-draft rule of {@link #start}), or null. Read-only; lets a device count
+     * be held for staff instead of failing on the refusal.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> blockingDraft(String locationId, String countType) {
+        Map<String, Object> other = openDraftAnyType(locationId);
+        return other != null && !countType.equals(str(other, "countType")) ? other : null;
     }
 
     /**
@@ -859,13 +919,15 @@ public class InventoryCountService {
      */
     @Transactional
     public Map<String, Object> submit(String id, Boolean force, String forceReason) {
-        Map<String, Object> draft = assertDraft(id);
-        // IPR 1b (count spec section 5, D1): drain the sale stock postings of the location first, each in its own
-        // transaction and before any lock of this submit is taken (the job → invoice lock order stays as it is).
+        // IPR review 1 (N1): the sale stock postings are drained by the caller before its transaction ({@link
+        // #drainSales}: the screen submit, the device count), never in here, where the jobs would run on a second
+        // connection while this transaction keeps its locks. A posting still stuck is refused below.
+        return submitLocked(id, force, forceReason);
+    }
+
+    private Map<String, Object> submitLocked(String id, Boolean force, String forceReason) {
+        assertDraft(id);
         SaleStockDrain drain = saleDrain.getIfAvailable();
-        if (drain != null) {
-            drain.drainAt(str(draft, "locationId"));
-        }
         // S7: the session row (L1) for the rest of the submit.
         lockSession(id);
         Map<String, Object> head = assertDraft(id);

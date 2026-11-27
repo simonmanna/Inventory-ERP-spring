@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  errorsByRow, OPENING_STOCK_TEMPLATE, parseCsvText, parseOpeningStockCsv, runStatusLabel,
+  errorsByRow, OPENING_STOCK_TEMPLATE, parseCsvText, parseOpeningStockCsv, runsListState, runStatusLabel,
 } from './opening-stock-csv';
 
 describe('parseCsvText', () => {
@@ -57,5 +57,18 @@ describe('preview helpers', () => {
     expect(runStatusLabel('partial').tone).toBe('warn');
     expect(runStatusLabel('failed').tone).toBe('bad');
     expect(runStatusLabel('posting').tone).toBe('info');
+  });
+});
+
+describe('runsListState (IPR review 1, finding 9)', () => {
+  it('shows a load error instead of an empty runs table', () => {
+    expect(runsListState({ isLoading: false, isError: true, data: undefined })).toBe('error');
+    expect(runsListState({ isLoading: false, isError: true, data: [{ id: 'r1' }] })).toBe('error');
+  });
+
+  it('tells loading, empty and rows apart', () => {
+    expect(runsListState({ isLoading: true, isError: false, data: undefined })).toBe('loading');
+    expect(runsListState({ isLoading: false, isError: false, data: [] })).toBe('empty');
+    expect(runsListState({ isLoading: false, isError: false, data: [{ id: 'r1' }] })).toBe('rows');
   });
 });

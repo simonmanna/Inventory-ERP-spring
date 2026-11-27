@@ -165,6 +165,17 @@ IPR Phase 4 (2026-11-27, awaiting owner approval; evidence `docs/audits/ipr-evid
   unrestricted. Work without a tenant keeps the system mode (unrestricted): the remaining gap, an owner sign-off item.
   Property `app.tenancy.bind-connections` (default `true`) switches it off for an emergency. No API change.
 
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Tenant data source unwrap (finding 6).** `TenantBindingDataSource.unwrap(DataSource.class)` answers the wrapper,
+  not the raw Hikari pool (pool types and MXBeans still unwrap to the pool; Spring Boot reaches the pool for Flyway via
+  `getTargetDataSource()`).
+- **Alias approvals (finding 7).** `SegregationOfDutiesService.approvedByAlias` only considers the latest approved
+  request not yet consumed (`consumedAt IS NULL`); an approval used by an earlier action no longer clears the pair.
+- **`inventory.maxBackdateDays` text (finding 1).** The setting description states that till and device times (sync
+  ops, POS sales and payments, cash sessions, cash drawer) are accepted and flagged, never refused.
+
 ## Status
 
 P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.

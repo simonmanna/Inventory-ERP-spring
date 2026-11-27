@@ -382,6 +382,17 @@ approve):
   backorder job takes 500 orders per run. Index V682.
 - **X-6** Reads and writes by id in sales, invoicing and fleet services also filter by the organisation.
 
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Returns of goods not issued by fleet (review 2, N2).** Receiving a sales return finds the order line's stock issue
+  on every path: its fleet load lines (also a delivery of the line's invoice), a legacy load line without its code
+  (the trip's `fleet_trip` issue rows of the product), and the line's invoice issue (`sales_invoice` rows of the linked
+  invoice line). The goods come back against those rows, never more than they still have out. When none exists, the
+  line restocks nothing and an open `InventoryException` of kind `sales_return_unmatched` (payload `returnId`,
+  `orderLineId`, `receivedQty`) asks staff to check and restock by hand. Like other open stock exceptions it holds a
+  period close until resolved.
+
 ## Central pricing engine (ADR-S022)
 
 `SalesPricingEngine` prices every channel (sales directly; POS orders, invoices, manual delivery orders and CRM through
