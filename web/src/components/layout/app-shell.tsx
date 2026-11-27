@@ -508,6 +508,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/ledger', label: tx('Stock Ledger'), icon: ScrollText, permission: 'inventory:read', group: 'Reporting' },
       { to: '/inventory/offline-discrepancies', label: tx('Offline stock discrepancies'), icon: ListChecks, permission: PERMISSIONS.inventory.read, group: 'Reporting' },
       { to: '/inventory/cost-explanation', label: tx('Why this cost?'), icon: PackageSearch, permission: PERMISSIONS.inventoryValuation.read, group: 'Reporting' },
+      { to: '/inventory/integrity', label: tx('Integrity & Reconciliation'), icon: ShieldCheck, permission: PERMISSIONS.inventoryValuation.read, group: 'Reporting' },
       { to: '/inventory/reports', label: tx('Inventory Reports'), icon: BarChart3, permission: 'inventory:read', reportId: 'inventory.reports', group: 'Reporting' },
       { to: '/inventory/locations', label: tx('Locations'), icon: MapPin, permission: PERMISSIONS.inventoryLocation.read, group: 'Configuration' },
       { to: '/inventory/cost-policies', label: tx('Costing Policy'), icon: Calculator, permission: PERMISSIONS.costingPolicy.read, group: 'Configuration' },

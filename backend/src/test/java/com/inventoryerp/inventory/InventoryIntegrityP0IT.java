@@ -22,8 +22,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -484,7 +486,14 @@ class InventoryIntegrityP0IT extends InventoryAuditSupport {
                 .containsEntry("lot_products", false).containsEntry("fleet_delivery_orders", false);
         List<String> p2 = new ArrayList<>();
         used.get("promotedP2s").forEach(x -> p2.add(x.get("id").asString()));
-        assertThat(p2).containsExactly("C-4", "C-8", "C-9", "S13", "S-6", "S-8");
+        // The P2s these features promote, less those fixed in the programme (R6: a fixed P2 is never promoted).
+        Set<String> fixed = InventoryFeatureUsageService.P2_FEATURES.stream().filter(r -> !r.open())
+                .map(InventoryFeatureUsageService.P2Rule::id).collect(java.util.stream.Collectors.toSet());
+        assertThat(p2).containsExactlyElementsOf(Stream.of("C-4", "C-8", "C-9", "S13", "S-6", "S-8")
+                .filter(id -> !fixed.contains(id)).toList());
+        List<String> fixedListed = new ArrayList<>();
+        used.get("fixedP2s").forEach(x -> fixedListed.add(x.get("id").asString()));
+        assertThat(fixedListed).containsExactlyInAnyOrderElementsOf(fixed);
 
         // The report-only feature_risk check lists the same P2s.
         JsonNode risk = integrityCheck(integrityReport(), "feature_risk");

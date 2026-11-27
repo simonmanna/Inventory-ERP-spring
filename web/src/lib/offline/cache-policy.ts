@@ -53,7 +53,8 @@ export const RULES: readonly Rule[] = [
   ['cache-strict', [
     /report/, /^balance-sheet/, 'pnl', 'trial-balance', 'general-ledger', /^cash-flow(?!-operation-types)/, 'ap-aging', 'ar-aging',
     'budget-vs-actual', 'consolidated', 'cost-center-pnl', 'cost-center-matrix', 'profitability', 'tax-summary',
-    'tax-pack', /^fx-/, 'inventory-valuation', 'inventory-gl-tieout', 'tieout', /^journal/, 'account-ledger',
+    'tax-pack', /^fx-/, 'inventory-valuation', 'inventory-gl-tieout', 'inventory-integrity',
+    'inventory-feature-usage', 'tieout', /^journal/, 'account-ledger',
     'supplier-ledger', 'money-overview', 'money-activity', /^dashboard-/, 'sales-analysis', 'sales', 'bi',
     'bi-datasets', 'analytics', 'crm-analytics', 'procurement-analytics', /reconciliation$/, 'year-closing-balances',
     'opening-balances', 'cash-account-transactions', 'statement', 'customer-statement', 'branch-comparison',

@@ -600,6 +600,19 @@ of them changes a path, verb, permission string or response shape. Refusals are 
 - **S-8 (web): CSV export** keeps plain numbers such as `-3` or `-12.50` as numbers. Text that starts like a formula
   is still prefixed with `'`.
 
+### IPR Phase 4: go-live readiness (2026-11-27, awaiting owner approval)
+
+Evidence: `docs/audits/ipr-evidence/4-golive-p2.md`.
+
+- **T33 integrity page (web only).** Inventory → Reporting → Integrity & Reconciliation (`/inventory/integrity`,
+  `inventory_valuation:read`) shows every integrity and report-only check with its rows, the GL tie-out (needs
+  `report:accounting`), the feature-usage table with the promoted and fixed P2s, and links each failing check to its
+  Posting Monitor findings (`/inventory/posting-monitor?kind=integrity_<check>`; the Posting Monitor now reads
+  `?kind=`). No new route.
+- **Feature usage (additive).** `GET /inventory/reports/feature-usage` adds `fixedP2s: [{id, title, fixedBy}]`: P2s
+  fixed in the programme are never promoted (`P2Rule.fixed(...)`, `docs/spec/inventory-feature-risk-map.md`).
+- **Go-live checklist:** `docs/OPERATIONS.md` §8c.
+
 ## Status
 
 P3a: 69/69 routes. Tests: `InventoryIT` (locations, items, ledger, document flows incl. approve + reverse, transit,

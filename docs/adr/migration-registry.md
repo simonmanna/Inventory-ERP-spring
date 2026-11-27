@@ -90,7 +90,7 @@ is **ADR-S088**.
 | V702 | IPR Phase 2 stream C (X-9 partial output) | `V702__production_partial_output.sql`: new table `ProductionPartialOutput` (one row per partial receipt of a simple order's main output: quantity, WIP credit, overhead absorbed, ledger code), index on (org, order), RLS `tenant_isolation`. New table only; no existing row changed; ledger trigger untouched | Written on `fix/ipr-2` |
 | V703–V705 | IPR Phase 2 stream C | spare (not used) | Reserved, not written |
 | V706–V707 | IPR Phase 1a stream B (delivery and returns) | as needed | Reserved; **not needed by stream B** (`fix/ipr-1a`) |
-| V708–V709 | IPR Phase 4 stream F (go-live, promoted P2s) | as needed | Reserved |
+| V708–V709 | IPR Phase 4 stream F (`fix/ipr-4`: M-7, M-23, S-6, T33) | as needed | **Not needed by stream F**: M-7 marks the counter-return move with the ledger's existing `sourceLineId`, M-23 is a row lock, S-6 a connection setting. Free for the integrator |
 | V710–V714 | IPR Phase 3 (security and controls: SoD seeding, transit-loss approval, reservation source types) | as needed | Reserved; **not needed by stream D** (`fix/ipr-3`): SoD seeding runs in org bootstrap, the threshold is a setting, no schema change |
 | V715–V719 | IPR Phase 4 (opening-stock import: import run, batch with unique `(organizationId, importHash)`) | as needed (R5) | Reserved, not written |
 

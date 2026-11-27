@@ -157,6 +157,14 @@ IPR Phase 3 (2026-11-27, awaiting owner approval; evidence `docs/audits/ipr-evid
 - **Setting** `inventory.transitLossApprovalThreshold` (number, default 0, cascades): see `docs/spec/inventory.md`
   S3.
 
+IPR Phase 4 (2026-11-27, awaiting owner approval; evidence `docs/audits/ipr-evidence/4-golive-p2.md`):
+
+- **S-6: tenant-bound connections (ADR-S093).** Every pooled connection gets `app.org_id` set to the caller's tenant
+  (or `''` without one) when it is taken from the pool, so row-level security also restricts a tenant's statements
+  outside a transaction. Before, only `TenantAwareTransactionManager` set it, so non-transactional reads ran
+  unrestricted. Work without a tenant keeps the system mode (unrestricted): the remaining gap, an owner sign-off item.
+  Property `app.tenancy.bind-connections` (default `true`) switches it off for an emergency. No API change.
+
 ## Status
 
 P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.

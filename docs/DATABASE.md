@@ -84,6 +84,10 @@ security (RLS) backs it up.
   nullable and NULL). A transaction without a tenant (jobs spanning organizations, login, bootstrap, seeds) is not
   restricted. A new migration that adds an org-scoped table must enable RLS and add the same policy;
   `TenantRowSecurityIT` fails otherwise.
+- **Statements outside a transaction** (IPR S-6, ADR-S093): `TenantBindingDataSource` sets `app.org_id` on every
+  pooled connection when it is taken from the pool (the tenant's id, or `''` without a tenant), so a tenant's
+  non-transactional reads are restricted too. Work without a tenant stays unrestricted (system mode); cross-org work
+  inside a request uses `InstallWide` or `TenantContext.unscoped`. `TenantRlsBackstopIT` pins this.
 - **Roles**: RLS is enabled, not forced, so the table owner bypasses it. Flyway and backups connect as the owner
   (`FLYWAY_USER` / `FLYWAY_PASSWORD`, default `DB_USER`); the API connects as `DB_USER`. When the two differ, the
   `db/callback/afterMigrate.sql` callback creates `DB_USER` (`NOSUPERUSER NOBYPASSRLS`, password `DB_PASSWORD`) if
