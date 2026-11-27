@@ -141,11 +141,16 @@ public class CostAdjustmentService {
             }
             // IPR WIP-3: a cancelled or reversed order has no output left; its share follows the materials its
             // cancel / reversal received back into stock (on hand → adjunct, since sold → cost of sales); with none
-            // (a multi-stage reversal, legacy rows) it goes to cost of sales.
+            // (legacy rows) it goes to cost of sales. IPR review 2 (R2-4): a multi-stage order's materials come back
+            // through its stage reversals (referenceId = the reversed stage posting).
             List<LineageCapitalisation.Layer> layers;
             if ("cancelled".equals(statusOf.get(e.getKey()))) {
                 layers = new ArrayList<>(capitalisation.receipts("production_order_cancel", List.of(e.getKey())));
                 layers.addAll(capitalisation.receipts("production_reversal", List.of(e.getKey())));
+                layers.addAll(capitalisation.receipts("production_stage_reversal", jdbc.sql("SELECT p.id FROM"
+                        + " \"ProductionStagePosting\" p JOIN \"ProductionOrder\" o ON o.id = p.\"orderId\" WHERE"
+                        + " p.\"organizationId\" = ? AND o.\"organizationId\" = ? AND o.\"orderCode\" = ? ORDER BY"
+                        + " p.\"createdAt\", p.id").params(org(), org(), e.getKey()).query(String.class).list()));
             } else {
                 layers = capitalisation.orderOutputs(e.getKey());
             }

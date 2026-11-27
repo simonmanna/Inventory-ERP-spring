@@ -71,7 +71,13 @@ class IprPhase2AccountingIT extends InventoryAuditSupport {
 
     /** A journal entry in the audit org: {@code currency} null = base; one debit and one credit line. */
     String journal(String currency, Object rate, String debitAccount, String creditAccount, Object amount) {
-        return asOrg(() -> (String) posting.post(new PostingRequest("INV", Instant.now(), "IPR test", currency, rate,
+        return journal(Instant.now(), currency, rate, debitAccount, creditAccount, amount);
+    }
+
+    /** As {@link #journal(String, Object, String, String, Object)}, dated {@code date}. */
+    String journal(Instant date, String currency, Object rate, String debitAccount, String creditAccount,
+            Object amount) {
+        return asOrg(() -> (String) posting.post(new PostingRequest("INV", date, "IPR test", currency, rate,
                 "ipr_test", UUID.randomUUID().toString(), null, null, null, null, null, List.of(
                         Line.debit(debitAccount, amount, "IPR test"), Line.credit(creditAccount, amount, "IPR test"))))
                 .get("id"));
@@ -242,7 +248,8 @@ class IprPhase2AccountingIT extends InventoryAuditSupport {
     // ------------------------------------------------------------------ GL-10
 
     @Test
-    @DisplayName("GL-10: a period close re-runs the inventory value checks live, whatever was raised when")
+    @DisplayName("GL-10: a period close re-runs the inventory value checks at close time (as of the period end since"
+            + " IPR review 2), whatever was raised when")
     void periodCloseRunsValueChecks() {
         fresh();
         String p = product("CLOSE");
@@ -253,13 +260,15 @@ class IprPhase2AccountingIT extends InventoryAuditSupport {
                 .params(period, org).update();
         String sv = account("stock_valuation");
         String expense = account("stock_adjustment_expense");
-        journal(null, null, sv, expense, 75);
+        // IPR review 2 (R2-1): the checks run as of the period end, so the variance is dated in the period.
+        Instant inJune = Instant.parse("2008-06-15T12:00:00Z");
+        journal(inJune, null, null, sv, expense, 75);
 
         Res refused = keyed("POST", "/fiscal-periods/" + period + "/close", null);
         assertThat(refused.status()).as(refused.raw().body()).isEqualTo(400);
         assertThat(msg(refused)).startsWith("Cannot close 'IPR 2008-06': the inventory value check(s) valuation_vs_gl");
 
-        journal(null, null, expense, sv, 75);
+        journal(inJune, null, null, expense, sv, 75);
         assertGlTieOut();
         keyedOk("POST", "/fiscal-periods/" + period + "/close", null);
     }

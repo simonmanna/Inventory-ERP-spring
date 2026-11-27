@@ -148,6 +148,11 @@ promotes it.
 
 - Accounts: the mapped `wip` account ∪ accounts that active `PRODUCTION_CONSUME` / `PRODUCTION_OUTPUT` rules of the
   org debit or credit on the WIP side (WIP-4). If `wip` is unmapped, report `wip_unmapped` and stop (WIP-5).
+  IPR review 2 (R2-3): a rule account whose type is known and is not an asset (a rule that expenses consumption or
+  output directly, e.g. an operating-expense account) is not WIP. Its lines still count when a cost object explains
+  them (an order, a stage posting, a process), so an order's consumption ties as before; its other lines (ordinary
+  expense postings) are left out of the tie-out and reported in the check's note (`non-asset rule account(s)`), not
+  in `late_cost_and_other`. The mapped `wip` account and accounts of unknown type always count.
 - Journal entries with `status IN ('posted', 'reversed')`. Drafts are excluded.
 - Amounts in base currency: `baseDebit − baseCredit`.
 
@@ -182,7 +187,9 @@ reversed, and no posted `CostAdjustmentRunLine` (the same predicate as `CostAdju
 the same way. After the WIP-3 fix the cost adjustment run also takes the shares of `cancelled` (cancelled or
 reversed) orders, so an open share of such an order is a reconciling item until the next run, not a finding. The
 built check reports late-cost shares and every WIP line it cannot attribute as one object, `late_cost_and_other`
-(expected = Σ open shares), because a lineage share's `targetRef` is not reliably the order (open point below).
+(expected = Σ open shares), because a lineage share's `targetRef` is not reliably the order (open point below). A WIP
+line of a `quarry_extraction*` entry is reported once, as the `quarry_extraction` object (IPR review 2 R2-2: it was
+also added to `late_cost_and_other`, so one line failed twice).
 
 ### 5.4 SQL sketch (single-stage orders)
 

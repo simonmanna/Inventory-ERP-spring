@@ -171,6 +171,39 @@ class OpeningStockImportIT extends InventoryAuditSupport {
     }
 
     @Test
+    @DisplayName("IPR review 2 (R2-5): a draft journal citing the batch does not count in the run reconciliation")
+    void draftJournalIsNotReconciled() {
+        String[] loc = newLocation();
+        String p = product("OS-DRAFT");
+        List<Map<String, Object>> rows = List.of(row(1, code(p), loc[1], 4, "2.5", null, null, null));
+        Res r = importFile(rows, preview(rows).get("previewToken").asString(), UUID.randomUUID().toString());
+        assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+        String runId = r.body().get("id").asString();
+        String batchId = r.body().get("batches").get(0).get("id").asString();
+        assertReconciled(runId, "10");
+
+        // A draft entry citing the batch (a correction someone started and never posted) is not in the books.
+        String entry = UUID.randomUUID().toString();
+        String stock = account("stock_valuation");
+        String equity = account("retained_earnings");
+        asOrgRun(() -> {
+            String journal = jdbc.sql("SELECT id FROM \"Journal\" WHERE \"organizationId\" = ? ORDER BY code LIMIT 1")
+                    .param(org).query(String.class).single();
+            jdbc.sql("INSERT INTO \"JournalEntry\" (id, \"organizationId\", \"journalId\", \"entryNumber\","
+                    + " \"postingDate\", status, description, \"sourceType\", \"sourceId\", \"updatedAt\") VALUES (?, ?,"
+                    + " ?, ?, now(), 'draft', 'R2 draft', 'opening_stock_import', ?, now())")
+                    .params(entry, org, journal, "R2-" + entry.substring(0, 8), batchId).update();
+            String line = "INSERT INTO \"JournalLine\" (id, \"organizationId\", \"journalEntryId\", \"accountId\","
+                    + " debit, credit, \"baseDebit\", \"baseCredit\", \"lineNumber\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            jdbc.sql(line).params(UUID.randomUUID().toString(), org, entry, stock, 10, 0, 10, 0, 1).update();
+            jdbc.sql(line).params(UUID.randomUUID().toString(), org, entry, equity, 0, 10, 0, 10, 2).update();
+        });
+        assertReconciled(runId, "10");
+        assertIntegrityGreen();
+        assertGlTieOut();
+    }
+
+    @Test
     @DisplayName("idempotency: a replay with the same key answers the first result; one run, one posting")
     void replaySameKeyReturnsFirstResult() {
         String[] loc = newLocation();

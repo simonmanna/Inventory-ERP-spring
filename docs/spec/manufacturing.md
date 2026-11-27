@@ -148,7 +148,11 @@ IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
   reversal takes every partial receipt back.
 - **WIP-3: late cost of cancelled and reversed orders.** The cost adjustment run also takes the open WIP shares of
   orders in status `cancelled`, and sends them to the materials the cancel or reversal received back (on hand →
-  adjunct, sold → cost of sales; none → cost of sales). They stayed in WIP for ever before.
+  adjunct, sold → cost of sales; none → cost of sales). They stayed in WIP for ever before. The returned materials
+  are the receipts of `production_order_cancel` / `production_reversal` (single-stage order, by order code) and, since
+  IPR review 2 (R2-4), of `production_stage_reversal` (multi-stage order, by each of its stage postings): before that a
+  reversed multi-stage order had no layers and its share went to cost of sales although its stage reversal had put
+  the materials back on hand. Only a share with no returned materials at all (legacy rows) goes to cost of sales.
 - **WIP-6: `GET /manufacturing/reports/wip-reconciliation`** uses the WIP tie-out basis: base currency, posted
   entries, a single-stage order in progress carries its materials (overhead only at completion) less its partial
   outputs, QC hold = 0, multi-stage = Σ stage WIP, plus process costing and open late-cost shares. Same keys, plus

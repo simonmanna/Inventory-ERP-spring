@@ -198,20 +198,23 @@ public class PeriodCloseService {
         }
 
         // Hardening R0: an open integrity finding on stock value (valuation vs stock ledger, valuation vs GL) means the
-        // period's stock value is not final, so the period cannot close. IPR GL-10 (deviation): whatever the date the
-        // finding was raised (one raised before the period started counted for nothing), and the value checks are
-        // re-run now, so a variance no daily run has raised yet holds the close too.
+        // period's stock value is not final, so the period cannot close. IPR GL-10 (deviation): a finding raised before
+        // the period started counts too (it counted for nothing), and the value checks are re-run at close time, so a
+        // variance no daily run has raised yet holds the close too. IPR review 2 (R2-1): both as of the period end — a
+        // finding raised after it, a later variance or a journal dated after it do not hold this period, and a variance
+        // of the period that a later entry offsets still does.
         long valueFindings = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
-                        + " AND status::text = 'open' AND kind = ANY(?::text[])",
-                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new));
+                        + " AND status::text = 'open' AND kind = ANY(?::text[]) AND \"createdAt\" <= ?",
+                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new), period.endDate());
         if (valueChecks != null) {
-            List<InventoryValueChecks.Failure> failing = valueChecks.failing();
+            List<InventoryValueChecks.Failure> failing = valueChecks.failing(instant(period.endDate()));
             if (!failing.isEmpty()) {
                 List<String> what = new ArrayList<>();
                 failing.forEach(f -> what.add(f.key() + " (" + f.failures() + " row(s)"
                         + (f.note() != null ? "; " + f.note() : "") + ")"));
                 throw ApiException.badRequest("Cannot close '" + period.name() + "': the inventory value check(s) "
-                        + String.join(", ", what) + " fail now. Correct the stock value or the GL, then close.");
+                        + String.join(", ", what) + " fail as of the period end. Correct the stock value or the GL,"
+                        + " then close.");
             }
         }
         if (valueFindings > 0) {

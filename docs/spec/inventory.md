@@ -94,7 +94,7 @@ IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
   (`SEED-OPEN-INV`). A fully seeded new organisation therefore has two opening-stock entries instead of one. Existing
   organisations are not touched (no auto-repair); the GQDEMO repair is an owner action (evidence 12-residuals §D-1).
 - **GL-10: setting `inventory.closeGate.liveValueChecks`** (organisation, default on): the period close runs the
-  inventory value checks live (see accounting.md).
+  inventory value checks live, as of the period end (IPR review 2 R2-1; see accounting.md).
 
 Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
 [audit](../audits/2026-11-17-inventory-procurement-readiness.md)):
