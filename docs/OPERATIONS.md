@@ -415,3 +415,25 @@ for 15 min), `InventoryIntegrityFindingsOpen` (warning) and `InventoryIntegrityV
 `erp_inventory_integrity_open{kind=~"integrity_valuation_.*"}`), each after 1 h. The monitors' in-app alerts go to
 every user holding the related permission. Integrity and Posting Monitor: `inventory_valuation:read` and
 `pos:reports`. GL tie-out and ledger integrity: `report:accounting`.
+
+### 8c. Opening-stock import (IPR R5, ADR-S090)
+
+The go-live step that loads opening stock into **empty** locations (no ledger row, no open count). Web: Inventory →
+Configuration → *Opening stock import* (`/inventory/opening-stock`); API: `/api/v1/inventory/opening-stock/*`.
+
+1. Set costing method, lot / expiry / serial flags, variants, cost prices and STANDARD costs first: any change after
+   the preview makes the import 409 "Preview is stale — preview and approve again".
+2. Check the account mapping `retained_earnings` (opening equity) and that today's fiscal period is open.
+3. Download the CSV template (product, variant, location, quantity, unit_cost, lot, expiry, serials; quantities in the
+   base unit; serials separated by `|`), fill it, upload it and **Preview** (`inventory_valuation:manage`). Fix every
+   row error; check the journal (Dr stock / Cr opening equity) and the total.
+4. **Approve and import** (`inventory_valuation:post`). Each batch (at most 2,000 rows of one location) posts on its
+   own. For maker-checker, configure an approval workflow for entity type `opening_stock_import` (the approval is bound
+   to the preview token).
+5. If the run is *partial* or *failed*, open it, read the batch error, fix the cause and **Retry** the batch (a stale
+   batch shows its journal as it would post now; approve it again). The same file cannot be imported twice.
+6. The run's **Reconciliation** must say *Reconciled* (stock ledger = journal = valuation change = previewed value).
+   Then run the integrity report (`GET /inventory/reports/integrity`) and the GL tie-out
+   (`GET /reports/inventory/gl-tieout`): both green before the first sale.
+
+Wrong opening stock is corrected with a count or adjustment; there is no reversal of an import.

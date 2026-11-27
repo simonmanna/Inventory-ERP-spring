@@ -864,7 +864,7 @@ class InventoryIT extends ApiTestSupport {
     void authorizationMatrix() {
         // 144: GET /inventory/cost-explanation (accounting and costing review) and GET /inventory/staff-options
         // (readiness blocker UB1) joined the 142 routes; 145: GET /inventory/reports/integrity (hardening R0);
-        // 146: GET /inventory/reports/feature-usage (IPR R6).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(146);
+        // 146: GET /inventory/reports/feature-usage (IPR R6); 153: the 7 opening-stock import routes (IPR R5).
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.inventory")).isEqualTo(153);
     }
 }

@@ -92,7 +92,8 @@ is **ADR-S088**.
 | V706–V707 | IPR Phase 1a stream B (delivery and returns) | as needed | Reserved; **not needed by stream B** (`fix/ipr-1a`) |
 | V708–V709 | IPR Phase 4 stream F (go-live, promoted P2s) | as needed | Reserved |
 | V710–V714 | IPR Phase 3 (security and controls: SoD seeding, transit-loss approval, reservation source types) | as needed | Reserved; **not needed by stream D** (`fix/ipr-3`): SoD seeding runs in org bootstrap, the threshold is a setting, no schema change |
-| V715–V719 | IPR Phase 4 (opening-stock import: import run, batch with unique `(organizationId, importHash)`) | as needed (R5) | Reserved, not written |
+| V715 | IPR Phase 4 stream G (opening-stock import, R5, ADR-S090) | `V715__opening_stock_import.sql`: new tables `OpeningStockImportRun` (unique `(organizationId, importHash)` and `(organizationId, runCode)`) and `OpeningStockImportBatch` (unique `(organizationId, importHash)` and `(runId, batchNo)`, at most 2,000 rows, rows as JSONB), RLS `tenant_isolation` on both. New tables only; no existing row changed; ledger trigger untouched | Written on `fix/ipr-4-opening` |
+| V716–V719 | IPR Phase 4 stream G | spare (not used) | Reserved, not written |
 
 Phase 0 of IPR adds **no** migration (Phase 0 rules). The first V7xx is written in Phase 1b, after the owner
 accepts Phase 0. Each IPR migration must leave the trigger `inventory_ledger_append_only` enabled; a test checks
