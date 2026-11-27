@@ -3,6 +3,7 @@ package com.inventoryerp.procurement.web;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.procurement.application.ProcurementAnalyticsService;
+import com.inventoryerp.procurement.application.ProcurementDashboardService;
 import com.inventoryerp.procurement.application.PurchaseReplenishmentService;
 import com.inventoryerp.procurement.application.PurchaseReplenishmentService.RuleInput;
 import com.inventoryerp.procurement.application.SupplierPortalService;
@@ -59,12 +60,14 @@ public class ProcurementPlanningController {
     private final PurchaseReplenishmentService replenishment;
     private final ProcurementAnalyticsService analytics;
     private final SupplierPortalService portal;
+    private final ProcurementDashboardService dashboard;
 
     public ProcurementPlanningController(PurchaseReplenishmentService replenishment, ProcurementAnalyticsService analytics,
-            SupplierPortalService portal) {
+            SupplierPortalService portal, ProcurementDashboardService dashboard) {
         this.replenishment = replenishment;
         this.analytics = analytics;
         this.portal = portal;
+        this.dashboard = dashboard;
     }
 
     // ── replenishment ───────────────────────────────────────────────────────────────────────────────────────────
@@ -138,6 +141,14 @@ public class ProcurementPlanningController {
     public Map<String, Object> forecast(@RequestParam(required = false) String productId,
             @RequestParam(required = false) String locationId) {
         return analytics.forecast(productId, locationId);
+    }
+
+    /** Procurement → Analytics dashboard: KPIs, trend, pipeline, attention and breakdowns in one call. */
+    @GetMapping("/analytics/dashboard")
+    @RequirePermissions(Permissions.PROCUREMENT_ANALYTICS__READ)
+    public Map<String, Object> dashboard(@RequestParam(required = false) String period,
+            @RequestParam(required = false) String branchId) {
+        return dashboard.dashboard(period, branchId);
     }
 
     @GetMapping("/analytics/alerts")

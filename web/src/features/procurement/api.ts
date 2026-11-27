@@ -868,6 +868,43 @@ export function useSpend(groupBy: 'supplier' | 'category' | 'branch' | 'month') 
   });
 }
 
+// ---- Procurement → Analytics dashboard (2026-11-27): one call, in the shape of the sales dashboard ----
+
+export interface ProcurementDashboardRow { id: string | null; label: string | null; orders: number; spend: number; quantity: string }
+export interface ProcurementStage { count: number; value: string }
+export interface ProcurementDashboard {
+  period: string;
+  from: string;
+  to: string;
+  previousFrom: string;
+  previousTo: string;
+  kpis: {
+    spend: string; previousSpend: string; spendChangePct: string | null; orders: number; previousOrders: number;
+    averageOrder: string; suppliers: number; received: string; billed: string; paid: string;
+    onTimePct: string | null; inFullPct: string | null; deliveredOrders: number; averageLeadDays: string | null;
+  };
+  trend: Array<{ label: string; ordered: number; billed: number }>;
+  pipeline: {
+    requests: ProcurementStage; drafts: ProcurementStage; toReceive: ProcurementStage & { late: number };
+    toBill: ProcurementStage; toPay: ProcurementStage & { overdueCount: number; overdue: string; dueNext7Days: string };
+  };
+  attention: { lateDeliveries: number; overdueBills: number; draftBills: number; pendingInspections: number; pendingApprovals: number };
+  bySupplier: ProcurementDashboardRow[];
+  byCategory: ProcurementDashboardRow[];
+  byBranch: ProcurementDashboardRow[];
+  topProducts: ProcurementDashboardRow[];
+  suppliers: { count: number; averageScore: number | null; grades: Record<'A' | 'B' | 'C' | 'D', number>; best: Scorecard[]; weakest: Scorecard[] };
+  alerts: ProcurementAlert[];
+}
+
+export function useProcurementDashboard(period: string, branchId: string) {
+  return useQuery({
+    queryKey: ['procurement-analytics', 'dashboard', period, branchId],
+    queryFn: async () => (await api.get<ProcurementDashboard>('/procurement/analytics/dashboard', { params: { period, branchId: branchId || undefined } })).data,
+    placeholderData: (prev) => prev,
+  });
+}
+
 export function useProcurementAlerts() {
   return useQuery({ queryKey: ['procurement-analytics', 'alerts'], queryFn: async () => (await api.get<ProcurementAlert[]>('/procurement/analytics/alerts')).data });
 }

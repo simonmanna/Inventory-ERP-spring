@@ -1,16 +1,14 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, BarChart3, Info, Link2, PackagePlus, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Link2, PackagePlus, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { PERMISSIONS } from '@erp/shared';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { ListPageHeader, StatusPill } from '@/components/list';
+import { ListPageHeader } from '@/components/list';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import { useQuery } from '@tanstack/react-query';
@@ -18,141 +16,12 @@ import {
   errMsg,
   portalApi,
   replenishmentApi,
-  useProcurementAlerts,
   useReorderRules,
   useReplenishment,
-  useScorecards,
-  useSpend,
   useSupplierOptions,
 } from '@/features/procurement/api';
 import { notify } from '@/lib/notify';
-import { money } from '@/lib/format';
 import { tx } from '@/lib/i18n/tx';
-
-/** Single-series bar colour (reference palette slot 1; its dark-mode step on dark surfaces). */
-const BAR = 'text-[#2a78d6] dark:text-[#3987e5]';
-const GRADE_TONE = { A: 'success', B: 'info', C: 'warning', D: 'danger' } as const;
-
-/**
- * Purchasing dashboard (ADR-PROCUREMENT-001 wave 7): risk alerts, spend by supplier and by month, and supplier
- * scorecards. Statistics only — no external service.
- */
-export function ProcurementDashboardPage() {
-  const { data: alerts = [] } = useProcurementAlerts();
-  const { data: bySupplier } = useSpend('supplier');
-  const { data: byMonth } = useSpend('month');
-  const { data: cards = [] } = useScorecards();
-  const top = (bySupplier?.rows ?? []).slice(0, 8).map((r) => ({ label: r.label, value: Number(r.value), share: r.sharePct }));
-  const months = (byMonth?.rows ?? []).map((r) => ({ label: r.label, value: Number(r.value) }));
-  const orders = (bySupplier?.rows ?? []).reduce((s, r) => s + Number(r.orders), 0);
-  const avgScore = cards.length ? cards.reduce((s, c) => s + c.score, 0) / cards.length : null;
-
-  return (
-    <div className="space-y-4 p-6">
-      <ListPageHeader title={tx('Purchasing dashboard')} icon={BarChart3}
-        description={tx('Where the money goes over the last 12 months, how suppliers perform, and what needs attention.')} />
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label={tx('Spend, last 12 months')} value={money(bySupplier?.total ?? 0)} />
-        <Stat label={tx('Orders')} value={String(orders)} />
-        <Stat label={tx('Active suppliers')} value={String(cards.length)} />
-        <Stat label={tx('Average supplier score')} value={avgScore == null ? '—' : avgScore.toFixed(0)} />
-      </div>
-
-      {alerts.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle>{tx('Needs attention')}</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {alerts.map((a, i) => (
-              <Link key={i} to={a.link} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
-                {a.severity === 'info' ? <Info className="h-4 w-4 text-muted-foreground" /> : <AlertTriangle className={`h-4 w-4 ${a.severity === 'danger' ? 'text-red-600' : 'text-amber-600'}`} />}
-                <span className="sr-only">{a.severity === 'danger' ? tx('Critical') : a.severity === 'warning' ? tx('Warning') : tx('Note')}</span>
-                {a.message}
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle>{tx('Spend by supplier')}</CardTitle></CardHeader>
-          <CardContent className={BAR}>
-            {top.length ? (
-              <ResponsiveContainer width="100%" height={Math.max(160, top.length * 34)}>
-                <BarChart data={top} layout="vertical" margin={{ left: 8, right: 24 }}>
-                  <CartesianGrid horizontal={false} stroke="hsl(var(--border))" strokeDasharray="0" />
-                  <XAxis type="number" tickFormatter={(v) => compact(v)} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="label" width={140} tick={{ fontSize: 12, fill: 'hsl(var(--foreground))' }} axisLine={false} tickLine={false} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--muted))' }} formatter={(v: number) => [money(v), tx('Spend')]} />
-                  <Bar dataKey="value" fill="currentColor" barSize={16} radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : <Empty />}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader><CardTitle>{tx('Spend by month')}</CardTitle></CardHeader>
-          <CardContent className={BAR}>
-            {months.length ? (
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={months} margin={{ left: 0, right: 8 }}>
-                  <CartesianGrid vertical={false} stroke="hsl(var(--border))" />
-                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={(v) => compact(v)} tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} width={48} />
-                  <Tooltip cursor={{ fill: 'hsl(var(--muted))' }} formatter={(v: number) => [money(v), tx('Spend')]} />
-                  <Bar dataKey="value" fill="currentColor" barSize={18} radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : <Empty />}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader><CardTitle>{tx('Supplier scorecards')}</CardTitle></CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader><TableRow>
-              <TableHead>{tx('Supplier')}</TableHead><TableHead className="text-right">{tx('Orders')}</TableHead>
-              <TableHead className="text-right">{tx('Spend')}</TableHead><TableHead className="text-right">{tx('On time')}</TableHead>
-              <TableHead className="text-right">{tx('In full')}</TableHead><TableHead className="text-right">{tx('Rejected')}</TableHead>
-              <TableHead className="text-right">{tx('Claims')}</TableHead><TableHead className="text-right">{tx('Lead time (days)')}</TableHead>
-              <TableHead className="text-right">{tx('Score')}</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {!cards.length && <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">{tx('No orders in the last 12 months.')}</TableCell></TableRow>}
-              {cards.map((c) => (
-                <TableRow key={c.partnerId}>
-                  <TableCell><Link className="hover:underline" to={`/procurement/suppliers/${c.partnerId}`}>{c.partnerName}</Link></TableCell>
-                  <TableCell className="text-right">{c.orders}</TableCell>
-                  <TableCell className="text-right">{money(c.spend)}</TableCell>
-                  <TableCell className="text-right">{pct(c.onTimePct)}</TableCell>
-                  <TableCell className="text-right">{pct(c.inFullPct)}</TableCell>
-                  <TableCell className="text-right">{pct(c.rejectPct)}</TableCell>
-                  <TableCell className="text-right">{c.claims}</TableCell>
-                  <TableCell className="text-right">{c.averageLeadDays ?? '—'}</TableCell>
-                  <TableCell className="text-right"><StatusPill tone={GRADE_TONE[c.grade]}>{c.grade} · {c.score.toFixed(0)}</StatusPill></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return <Card><CardContent className="pt-6"><div className="text-xs text-muted-foreground">{label}</div><div className="text-2xl font-semibold">{value}</div></CardContent></Card>;
-}
-
-function Empty() {
-  return <p className="py-10 text-center text-sm text-muted-foreground">{tx('No orders in the last 12 months.')}</p>;
-}
-
-const pct = (v: string | null) => (v == null ? '—' : `${v}%`);
-const compact = (v: number) => new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(v);
 
 /**
  * Replenishment (ADR-PROCUREMENT-001 wave 7): reorder rules per product and store, and what to buy now. Suggestions
