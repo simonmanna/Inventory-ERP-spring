@@ -1,6 +1,6 @@
 # ADR-S011: Sales / Order-to-Cash module — quotations, sales orders, pricing, credit, fulfilment orchestration
 
-- Status: Proposed (2026-10-30) — owner approval pending
+- Status: Accepted (owner-approved 2026-11-27; proposed 2026-10-30)
 - Spec: [`docs/spec/sales.md`](../spec/sales.md), postings [`docs/spec/sales-postings.md`](../spec/sales-postings.md),
   credit [`docs/spec/credit.md`](../spec/credit.md)
 - Product context: [`docs/PRODUCT_ARCHITECTURE.md`](../PRODUCT_ARCHITECTURE.md) (Stage 2 — Sales O2C)

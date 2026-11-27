@@ -145,7 +145,7 @@ Approved by the owner 2026-11-20 (landed-cost report corrections, discrepancy 2)
   issues base-currency receipts (rate 1), so the change only affects legacy or imported receipts; the payout payments
   are unchanged. Test: `SalesReturnsIT.refundJournalAtReceiptRate`.
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 1. **Invoice-item unit snapshot (ADR-S003, V5).** `InvoiceItem` gains `uomId` + `uomFactor` (the product's
    sales unit at billing); stock issue uses the snapshot. Order lines are unchanged. Quote/prepared-line

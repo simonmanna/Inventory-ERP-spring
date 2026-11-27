@@ -888,7 +888,7 @@ retention (LP1) deletes the stored clip, marks its row `deleted` and records the
 ## Deviations
 
 None from Nest (no counterpart). Differences from the LP0 brief as first written are listed in the brief, section 12.
-Differences from the LP6 design (owner approval pending) are listed in the LP6a brief, section 6.
+Differences from the LP6 design (owner-approved 2026-11-27) are listed in the LP6a brief, section 6.
 Design choices of LP5, LP6b and LP7 that need the owner's approval are listed in their briefs (section "Open
 items").
 

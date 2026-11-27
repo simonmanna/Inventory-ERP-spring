@@ -389,7 +389,7 @@ write to `CrmQuotation` is rejected; settings defaults; tenant isolation. Existi
   forecast is not yet fed to MRP (manufacturing integration); the portal has no e-signature (acceptance is recorded
   with the token's audit trail) and no per-contact users — one link per customer contact e-mail.
 
-## Known deviations from the approved plan (owner to confirm)
+## Known deviations from the approved plan (owner-approved 2026-11-27)
 - S0: sales teams stay in CRM (`CrmTeam`) — pipeline code depends on them heavily; sales stores `teamId` pointing to
   `CrmTeam`. Revisit in S9 (targets).
 - S0: rollback is a runbook (copy rows back + drop trigger + revert release) instead of a runtime source flag; a

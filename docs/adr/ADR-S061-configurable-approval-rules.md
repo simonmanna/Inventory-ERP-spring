@@ -1,6 +1,6 @@
 # ADR-S061 — Configurable approval rules and the approval hub
 
-- Status: proposed (owner asked for an approval hub and a rules builder like `references/approvals/*`, 2026-11-08).
+- Status: accepted (owner-approved 2026-11-27; owner asked for an approval hub and a rules builder like `references/approvals/*`, 2026-11-08).
 - Builds on: the Nest approval engine (`approvals.service.ts`, ported in P1) and CTRL-1 (branch / department
   conditions, department-manager steps, limits, separation of duties).
 - Extension: no NestJS counterpart. Additive migration V421, additive JSON fields, five new routes. Every existing

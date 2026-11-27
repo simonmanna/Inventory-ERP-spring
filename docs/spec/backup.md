@@ -57,7 +57,7 @@ dynamic backup schedule.
 
 _None. Any deviation from Nest behaviour must be listed here with the owner's approval._
 
-## Deviations (pending owner approval)
+## Deviations (owner-approved 2026-11-27)
 
 1. Restore checks count applied migrations from `flyway_schema_history` (successful rows) instead of
    `_prisma_migrations` — the Spring schema is managed by Flyway; the table does not exist.

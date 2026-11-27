@@ -59,7 +59,7 @@ consumes `invoice.created`.
 
 ## Deviations
 
-- **Sales suite (ADR-S010, pending owner approval)** — additive: `Deal` gains suite columns (`kind`, `stageId`,
+- **Sales suite (ADR-S010, owner-approved 2026-11-27)** — additive: `Deal` gains suite columns (`kind`, `stageId`,
   `status`, …; `partnerId` nullable for leads) that the parity JSON does not expose; legacy stage writes keep
   `status` / `stageId` in sync. No parity route, verb, status code or response field changed.
 - **Legacy `/crm/deals` follows the pipeline (CRM review, 2026-11-22; owner approved "discard the old if not

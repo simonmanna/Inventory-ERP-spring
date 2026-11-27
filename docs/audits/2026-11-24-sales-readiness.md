@@ -131,7 +131,10 @@ Down payments keep the current model (owner decision). Rehearsal on a restored l
 | DEL-11 | No test of the stale-pass block. | — | `GatePassIT.staleGatePass` |
 | R5b | No race tests for gate-out or for confirm vs credit approval. | — | `GatePassIT.concurrentGateOut`, `SalesCreditPolicyIT.confirmVersusCreditApproval` |
 
-Deviation for owner approval: the deposit list is now newest first and capped per page (was: all rows, oldest first).
+Deviation (owner-approved 2026-11-27): the deposit list is now newest first and capped per page (was: all rows, oldest first).
 
-Still open (owner/accountant): the sign-off decisions in `sales-postings.md`, the deviations in `invoicing.md`, `sales.md`
-and `gate-pass.md`, `APP_PAYMENTS_ALLOW_TEST_GATEWAY` on live (mock mobile money is off), and the go-live decision.
+Owner decisions 2026-11-27: every sales deviation recorded in `invoicing.md`, `sales.md`, `gate-pass.md` and
+`cash-sales.md` is approved (the deployment is a demo; its data is not real). `APP_PAYMENTS_ALLOW_TEST_GATEWAY` stays
+off on live.
+
+Still open (accountant): the sign-off decisions in `sales-postings.md`, and the go-live decision.

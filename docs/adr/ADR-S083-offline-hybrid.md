@@ -401,7 +401,7 @@ a definitive 403 dead letter. Every document made offline is stamped `recordedOf
 `dispatched | received | posted | pending_approval | awaiting_dispatch | held`. The op itself is `applied`: the fact
 is kept even when its posting is held.
 
-**S4 as built — deviations to approve:**
+**S4 as built — deviations (owner-approved 2026-11-27):**
 1. **Holds use `InventoryException`, not a new `stock_discrepancy` table.** Kinds `offline_negative_stock`,
    `offline_held_posting` and `offline_awaiting_dispatch`. They appear in the existing Posting Monitor (resolve with
    POS__OVERRIDE), and an open exception in a period already blocks period close.
@@ -643,7 +643,7 @@ discount, payment mode / term, a local credit warning and the cap), Quote, Colle
 oldest-due auto-allocation the rep can change), My orders & invoices, and the server outcome of recent work. Pure
 logic: `web/src/features/sales-field/offline-sales.ts`.
 
-**O5 as built — deviations to approve:**
+**O5 as built — deviations (owner-approved 2026-11-27):**
 1. **The device price is an estimate.** It uses the customer's pricelist (else the default) — fixed / discount /
    surcharge rules by product, category or all, quantity breaks, dates, branch. Agreements, promotions, site
    pricelists, named price lists, partner-category rules and cost-plus rules are the server's alone; the audit
@@ -704,7 +704,7 @@ and `web.json` (`parity.test.ts`, through `SyncStore` + `SyncEngine`). `SyncClie
 and asserts identical invoices, payments, GL by account, shift totals, cash movements and customer. (The goldens
 differ, for example `occurredAt` precision: Android sends seconds, the web milliseconds.)
 
-**O6 as built — deviations to approve:**
+**O6 as built — deviations (owner-approved 2026-11-27):**
 1. **No new ops or scopes on the Android till.** The O4 warehouse and O5 field-sales flows are web pages that work
    offline in a browser registered as a device (including Chrome on Android tablets). The till keeps its POS op set;
    Room v15 carries only the protocol-2 fields. Building native warehouse / field-sales screens is a separate phase.
@@ -758,7 +758,7 @@ till / browser ──LAN──▶ BRANCH (erp.sync.mode=branch)             HQ
 | Cross-branch transfers | Unchanged S4 two-step ops (`transfer.dispatch` / `transfer.receive`), relayed to HQ like any op; HQ coordinates. |
 | Migration | `V599__sync_o7_branch_relay.sql`: `SyncRelayOutbox`, `SyncBranchMirror`, `SyncBranchState` (RLS like the other sync tables; empty at HQ) and a ledger index for the feed. |
 
-**O7 as built — deviations to approve:**
+**O7 as built — deviations (owner-approved 2026-11-27):**
 1. **Relay node, not a full branch ERP** (owner decision above): branch users do back-office work at HQ; a branch
    offers tills (Android and browser devices) only.
 2. **Final numbers while HQ is down:** a sale relayed later keeps its provisional number on the till; the final

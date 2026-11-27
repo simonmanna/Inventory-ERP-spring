@@ -84,7 +84,7 @@ Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
     would be stranded.
   - Mirrors the costing-method guard. Test `ReadinessBlockersIT`.
 
-Pending owner approval:
+Owner-approved 2026-11-27:
 
 1. **`GET /organizations/users`** omits `passwordHash`, `mfaSecret*` and `pinHash` (Nest returned full
    `User` rows including credential hashes).

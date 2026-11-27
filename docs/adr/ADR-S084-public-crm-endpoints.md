@@ -1,6 +1,6 @@
 # ADR-S084 — Public CRM endpoints (calendar feed, website lead form, online quotation link)
 
-- Status: proposed (2026-11-22). Built in the CRM enhancement plan the owner approved on 2026-11-22: T2b (calendar
+- Status: accepted (owner-approved 2026-11-27; proposed 2026-11-22). Built in the CRM enhancement plan the owner approved on 2026-11-22: T2b (calendar
   feed, PR #28) and T3a (lead form, quotation link). The owner reviews it when merging.
 - Extension: no NestJS counterpart. These routes are new; no existing route or response changed.
 - Migrations: `V602__crm_stage_rules_calendar_feed.sql` (`CrmCalendarFeed`) and

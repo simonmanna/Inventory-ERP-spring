@@ -1,6 +1,6 @@
 # ADR-S010: CRM sales suite — configurable pipeline, leads, quotations, customer pricing, reports
 
-- Status: Proposed (2026-10-29) — owner approval pending
+- Status: Accepted (owner-approved 2026-11-27; proposed 2026-10-29)
 - Spec: [`docs/spec/crm.md`](../spec/crm.md) § "Sales suite (ADR-S010)"
 - Migration: `V17__crm_sales_suite.sql`
 - UI references: `crm_reference/` (Odoo CRM screens), Real-Estate-Website CRM (stages with category / colour /
