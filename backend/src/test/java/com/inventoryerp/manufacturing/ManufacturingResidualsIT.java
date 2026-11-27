@@ -335,7 +335,21 @@ class ManufacturingResidualsIT extends InventoryAuditSupport {
         okA(201, "POST", PO + id + "/reverse", Map.of());
         assertThat(onHand(bead, warehouse)).isEqualByComparingTo("0");
         assertThat(onHand(ore, bakery)).isEqualByComparingTo("1");
-        green("legacy completion reversed");
+        // WIP-8: WIP got back the 1,000,000 the completion took out (before: 999,999.90, a 0.10 residual in WIP).
+        JsonNode report = integrityReport();
+        JsonNode wip = integrityCheck(report, "wip_tieout");
+        assertThat(wip.get("ok").asBoolean()).as("WIP tie-out after the legacy reversal: " + wip).isTrue();
+        JsonNode recon = okA(200, "GET", "/manufacturing/reports/wip-reconciliation", null);
+        assertThat(recon.get("balanced").asBoolean()).as("WIP reconciliation report: " + recon).isTrue();
+        // Engine residue, not this finding (engine request in the evidence): the engine issues the 300,000 beads at
+        // the 6 dp average 3.333333 = 999,999.90 and leaves 0.10 of ledger value at quantity 0. The GL follows the
+        // ledger (stock credited with what the engine issued, the 0.10 to stock adjustment), so only the valuation
+        // check sees it, and only for the beads.
+        assertThat(failingChecks(report, "checks")).as("only the engine residue on the beads").allMatch(f -> f
+                .startsWith("valuation_vs_subledger ") && f.contains(bead));
+        JsonNode t = okA(200, "GET", "/reports/inventory/gl-tieout?tolerance=0.01", null);
+        assertThat(t.get("glBalance").decimalValue()).as("GL = stock ledger " + t).isEqualByComparingTo(t.get(
+                "ledgerMovementValue").decimalValue());
     }
 
     // ------------------------------------------------------------------ R2
