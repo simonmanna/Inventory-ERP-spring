@@ -249,11 +249,31 @@ public class PostingRuleAdminService {
         }
     }
 
-    /** Hard-delete a rule. */
+    /**
+     * Hard-delete a rule. IPR GL-4 (deviation from Nest): an organisation-wide default rule (no product, no category)
+     * of a movement type that {@link InventoryPostingRuleDefaults} seeds, at its default line and side, is a system
+     * rule and cannot be hard-deleted — edit it (another account) or restore the defaults instead. Product and
+     * category rules, and extra org-wide lines, are deleted as before.
+     */
     @Transactional
     public void remove(String id) {
         require(id);
+        Map<String, Object> rule = SqlRows.one(jdbc.sql("SELECT \"movementType\"::text AS mt, \"lineIndex\" AS li,"
+                + " \"debitOrCredit\" AS side, \"productId\", \"categoryId\" FROM \"InventoryPostingRule\" WHERE id = ?"
+                + " AND \"organizationId\" = ?").params(id, org()));
+        if (rule != null && rule.get("productId") == null && rule.get("categoryId") == null
+                && isSystemDefault((String) rule.get("mt"), ((Number) rule.get("li")).intValue(),
+                        (String) rule.get("side"))) {
+            throw ApiException.badRequest("This is a system default posting rule for " + rule.get("mt")
+                    + " and cannot be deleted. Change its account instead, or use Restore defaults.");
+        }
         jdbc.sql("DELETE FROM \"InventoryPostingRule\" WHERE id = ?").param(id).update();
+    }
+
+    /** Whether (movement type, line, side) is one of the seeded default rules. */
+    static boolean isSystemDefault(String movementType, int lineIndex, String side) {
+        return InventoryPostingRuleDefaults.RULES.stream().anyMatch(r -> r.movementType().equals(movementType)
+                && r.lineIndex() == lineIndex && r.debitOrCredit().equals(side));
     }
 
     private void require(String id) {
