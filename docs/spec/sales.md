@@ -357,7 +357,9 @@ approve):
   promised date. **SO-13** The order list total is in base currency (`total`) with a `byCurrency` breakdown; credit
   checks convert foreign-currency orders to base.
 - **INV-12** Dunning works per customer and currency, net of open credit notes and unallocated receipts; fees and holds
-  apply once per customer per run; emails go after commit (`DunningEntry.currencyCode`, V679).
+  apply once per customer per run; emails go after commit (`DunningEntry.currencyCode`, V679). A document without a
+  currency counts as the organisation's base currency, and every entry stores the code (2026-11-27: a base-currency
+  entry stored as NULL read as a pre-V679 all-currency reminder and suppressed the same run's other currencies).
 - **X-7** `GET /sales/deliveries` pages on the server (`limit`, default 500, max 1000; `offset`; `search`) and returns
   the filter's total in `X-Total-Count`; reconciliation is scoped to open orders and orders done in the last 90 days
   unless `orderId` or `all=true` is given (`limit`/`offset` too). The backorder report shows at most 1000 lines and the

@@ -275,6 +275,67 @@ class SalesReadinessR6IT extends ApiTestSupport {
                 .query(BigDecimal.class).single()).isEqualByComparingTo("0");
     }
 
+    @Test
+    @DisplayName("SO-9: a duplicated order keeps variant, source location, tolerance and a future promise; a past one is dropped")
+    void duplicateKeepsLineAttributes() {
+        String[] s = stocked(10);
+        String other = stocked(1)[1];
+        String variant = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"ProductVariant\" (id, \"organizationId\", \"productId\", name, \"combinationKey\","
+                + " \"updatedAt\") VALUES (?, ?, ?, ?, ?, now())").params(variant, demoOrg, s[0], "R6 V " + sfx, variant)
+                .update();
+        String future = LocalDate.parse(today).plusDays(10).toString();
+        String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", s[1], "lines", List.of(
+                Map.of("productId", s[0], "variantId", variant, "quantity", 3, "unitPrice", 50, "sourceLocationId", other,
+                        "tolerancePct", 5, "promisedDate", future),
+                Map.of("productId", s[0], "quantity", 2, "unitPrice", 50, "promisedDate", future)))).get("id").asString();
+        // the second line's promise has since passed
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"promisedDate\" = ?::date - 3 WHERE \"orderId\" = ? AND \"variantId\" IS NULL")
+                .params(today, so).update();
+        JsonNode copy = ok(201, "POST", "/sales/orders/" + so + "/duplicate", null);
+        JsonNode lines = copy.get("lines");
+        assertThat(lines).hasSize(2);
+        JsonNode v = lines.get(0).get("variantId").isNull() ? lines.get(1) : lines.get(0);
+        JsonNode plain = v == lines.get(0) ? lines.get(1) : lines.get(0);
+        assertThat(v.get("variantId").asString()).isEqualTo(variant);
+        assertThat(v.get("sourceLocationId").asString()).isEqualTo(other);
+        assertThat(v.get("tolerancePct").asDouble()).isEqualTo(5);
+        assertThat(v.get("promisedDate").asString()).startsWith(future);
+        assertThat(v.get("unitPrice").asDouble()).isEqualTo(50);
+        assertThat(plain.get("promisedDate") == null || plain.get("promisedDate").isNull()).as(plain.toString()).isTrue();
+    }
+
+    @Test
+    @DisplayName("SO-13: list totals add orders in the base currency with a per-currency breakdown; credit checks convert")
+    void multiCurrencyTotalsAndCredit() {
+        String c = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isCustomer\", \"creditLimit\","
+                + " \"updatedAt\") VALUES (?, ?, ?, ?, true, 100000, now())").params(c, demoOrg, "R6FX-" + sfx, "R6 fx "
+                        + sfx).update();
+        String svc = ok(201, "POST", "/products", Map.of("code", "R6FXS-" + sfx, "name", "R6 fx svc " + sfx,
+                "productType", "service", "salesPrice", 10)).get("id").asString();
+        ok(201, "POST", "/sales/orders", Map.of("partnerId", c, "lines", List.of(Map.of("productId", svc, "quantity", 1,
+                "unitPrice", 50000))));
+        String usd = ok(201, "POST", "/sales/orders", Map.of("partnerId", c, "currencyCode", "USD", "exchangeRate", 3700,
+                "lines", List.of(Map.of("productId", svc, "quantity", 1, "unitPrice", 100)))).get("id").asString();
+        JsonNode totals = ok(200, "GET", "/sales/orders?partnerId=" + c, null).get("totals");
+        assertThat(totals.get("count").asInt()).isEqualTo(2);
+        assertThat(totals.get("total").asDouble()).as(totals.toString()).isEqualTo(50000 + 100 * 3700);
+        Map<String, Double> by = new java.util.HashMap<>();
+        totals.get("byCurrency").forEach(r -> by.put(r.get("currencyCode").asString(), r.get("total").asDouble()));
+        assertThat(by).containsEntry("USD", 100.0).hasSize(2);
+        // 100 USD = 370 000 in base: over the 100 000 limit, although the order's own figure (100) is not
+        ok(200, "PUT", "/credit/policy", Map.of("enforcePeriodAndReview", false));
+        ok(200, "PUT", "/sales/settings", Map.of("overLimitPolicy", "block"));
+        try {
+            Res r = call("POST", "/sales/orders/" + usd + "/confirm", null, key());
+            assertThat(r.status()).as(r.raw().body()).isEqualTo(400);
+            assertThat(r.raw().body()).contains("exceeds the customer's credit");
+        } finally {
+            ok(200, "PUT", "/sales/settings", Map.of("overLimitPolicy", "flag"));
+        }
+    }
+
     static List<Integer> race(int n, Callable<Integer> task) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(n);
         try {
