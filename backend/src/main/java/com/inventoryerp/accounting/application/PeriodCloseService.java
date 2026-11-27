@@ -247,7 +247,12 @@ public class PeriodCloseService {
             BigDecimal credit = g.getValue()[1];
             boolean creditNormal = "credit".equals(acct.normalBalance());
             BigDecimal bal = creditNormal ? credit.subtract(debit) : debit.subtract(credit);
-            Line closing = creditNormal ? new Line(acct.id(), bal, BigDecimal.ZERO) : new Line(acct.id(), BigDecimal.ZERO, bal);
+            // IPR R2 defect 1: an account whose period balance sits on its abnormal side (an expense with a net credit,
+            // a revenue account with a net debit) is closed on the opposite side, with a positive amount. A negative
+            // closing line was refused ("Line amounts cannot be negative") and blocked the close.
+            BigDecimal amt = bal.abs();
+            boolean closeWithDebit = creditNormal == (bal.signum() >= 0);
+            Line closing = closeWithDebit ? new Line(acct.id(), amt, BigDecimal.ZERO) : new Line(acct.id(), BigDecimal.ZERO, amt);
             String section = acct.reportSection() == null ? "" : acct.reportSection();
             switch (section) {
                 case "revenue", "other_income" -> totalRevenue = totalRevenue.add(bal);
