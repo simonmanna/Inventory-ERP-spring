@@ -105,6 +105,60 @@ class SalesCollectionsIT extends ApiTestSupport {
         assertThat(ok(200, "GET", "/sales/collections/runs", null).size()).isGreaterThanOrEqualTo(2);
     }
 
+    Map<String, String> key() {
+        Map<String, String> h = new LinkedHashMap<>();
+        h.put("Authorization", "Bearer " + adminToken);
+        h.put("Idempotency-Key", UUID.randomUUID().toString());
+        return h;
+    }
+
+    List<JsonNode> entriesFor(JsonNode run, String partner) {
+        List<JsonNode> out = new ArrayList<>();
+        run.get("entries").forEach(e -> {
+            if (partner.equals(e.get("partnerId").asString())) {
+                out.add(e);
+            }
+        });
+        return out;
+    }
+
+    @Test
+    @DisplayName("INV-12: dunning runs per currency, net of open credit notes and unallocated receipts; one fee per customer")
+    void dunningPerCurrencyNetOfCredit() {
+        // x: base-currency debt fully covered by an open credit note; USD debt partly covered by an unallocated receipt
+        String x = customer(null);
+        overdueInvoice(x, 40000, 45);
+        String usdInv = overdueInvoice(x, 300, 45);
+        jdbc.sql("UPDATE \"Document\" SET \"currencyId\" = 'USD' WHERE id = ?").param(usdInv).update();
+        Res cn = call("POST", "/credit-notes", Map.of("partnerId", x, "issueDate", today, "lines", List.of(Map.of(
+                "productId", product, "description", "goodwill", "quantity", 1, "unitPrice", 40000))), key());
+        assertThat(cn.status()).as(cn.raw().body()).isLessThan(300);
+        Res cnPost = call("POST", "/credit-notes/" + cn.body().get("id").asString() + "/post", null, key());
+        assertThat(cnPost.status()).as(cnPost.raw().body()).isLessThan(300);
+        Res pay = call("POST", "/payments", Map.of("partnerId", x, "paymentDate", today, "amount", 100, "paymentMethod",
+                "bank", "currencyCode", "USD", "exchangeRate", 3700), key());
+        assertThat(pay.status()).as(pay.raw().body()).isLessThan(300);
+        // y: overdue in two currencies, nothing to net
+        String y = customer(null);
+        overdueInvoice(y, 60000, 45);
+        String yUsd = overdueInvoice(y, 400, 45);
+        jdbc.sql("UPDATE \"Document\" SET \"currencyId\" = 'USD' WHERE id = ?").param(yUsd).update();
+
+        JsonNode run = ok(201, "POST", "/sales/collections/runs", Map.of());
+        List<JsonNode> ex = entriesFor(run, x);
+        assertThat(ex).as("only the USD debt is chased: " + ex).hasSize(1);
+        assertThat(ex.get(0).get("currencyCode").asString()).isEqualTo("USD");
+        assertThat(ex.get(0).get("overdueAmount").asDouble()).isEqualTo(200);
+        List<JsonNode> ey = entriesFor(run, y);
+        assertThat(ey).hasSize(2);
+        Map<String, Double> amounts = new java.util.HashMap<>();
+        ey.forEach(e -> amounts.put("USD".equals(e.get("currencyCode").asString(null)) ? "USD" : "base",
+                e.get("overdueAmount").asDouble()));
+        assertThat(amounts).containsEntry("USD", 400.0).containsEntry("base", 60000.0);
+        assertThat(ey.stream().filter(e -> !e.get("feeInvoiceId").isNull()).count()).as("one fee per customer")
+                .isEqualTo(1);
+    }
+
     @Test
     @DisplayName("promises: kept when receipts since the promise reach the amount, else broken")
     void promises() {

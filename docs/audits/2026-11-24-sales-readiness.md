@@ -135,3 +135,13 @@ Deviation for owner approval: the deposit list is now newest first and capped pe
 
 Still open (owner/accountant): the sign-off decisions in `sales-postings.md`, the deviations in `invoicing.md`, `sales.md`
 and `gate-pass.md`, `APP_PAYMENTS_ALLOW_TEST_GATEWAY` on live (mock mobile money is off), and the go-live decision.
+
+## 2026-11-27 — status check follow-ups (branch `fix/sales-x8-test-depth`)
+
+| ID | Gap found | Fix | Evidence |
+|---|---|---|---|
+| X-8 | `StatementsPage` still used `window.prompt` to record who confirmed a statement balance. | In-app ask dialog (`useAsk`). | web tsc + i18n check |
+| INV-12 | A customer overdue in two currencies got one reminder: the base-currency entry was stored with a NULL currency, which the "already reminded" check reads as a pre-V679 all-currency entry. | Base currency resolved to the organisation's code when grouping, netting and storing. | `SalesCollectionsIT.dunningPerCurrencyNetOfCredit` |
+| SO-9 | Duplicate test checked status and quantity only. | — | `SalesReadinessR6IT.duplicateKeepsLineAttributes` |
+| SO-13 | No test of base-currency list totals or the converted credit check. | — | `SalesReadinessR6IT.multiCurrencyTotalsAndCredit` |
+| INV-17 | No test that cash-sale cancel-invoice passes the `invoice_cancel` approval and keeps the reason. | — | `CashSaleIT.cancelInvoiceNeedsApproval` |

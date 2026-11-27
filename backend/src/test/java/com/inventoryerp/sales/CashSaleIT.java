@@ -666,6 +666,43 @@ class CashSaleIT extends ApiTestSupport {
     }
 
     @Test
+    @DisplayName("INV-17: cash-sale cancel-invoice goes through the invoice_cancel approval and records the user's reason")
+    void cancelInvoiceNeedsApproval() {
+        String c = partner("Cancel gate " + sfx);
+        String id = draft(c, 2);
+        double total = ok(200, "GET", "/sales/cash-sales/" + id, null).get("grandTotal").asDouble();
+        verify(id, pay(id, "cash", null, total, null));
+        assertThat(call("POST", "/sales/cash-sales/" + id + "/confirm", null, key()).status()).isEqualTo(200);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/submit", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/start-review", null);
+        ok(200, "POST", "/sales/cash-sales/" + id + "/approve", null);
+        String inv = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200).get("currentInvoiceId").asString();
+        String wf = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"ApprovalWorkflow\" (id, \"organizationId\", name, \"entityType\", \"updatedAt\")"
+                + " VALUES (?, ?, ?, 'invoice_cancel', now())").params(wf, demoOrg, "Cancel gate " + sfx).update();
+        jdbc.sql("INSERT INTO \"ApprovalStep\" (id, \"organizationId\", \"workflowId\", \"stepOrder\", name,"
+                + " \"approverPermissions\", \"updatedAt\") VALUES (?, ?, ?, 1, 'Manager', ?, now())").params(UUID
+                        .randomUUID().toString(), demoOrg, wf, new String[] {"invoice_cancel:approve"}).update();
+        try {
+            Res gated = call("POST", "/sales/cash-sales/" + id + "/cancel-invoice", Map.of("reason", "Wrong customer"),
+                    key());
+            assertThat(gated.status()).as(gated.raw().body()).isEqualTo(403);
+            assertThat(gated.raw().body()).contains("Invoice cancellation requires approval");
+            assertThat(ok(200, "GET", "/invoices/" + inv, null).get("status").asString()).isNotEqualTo("cancelled");
+            assertThat(ok(200, "GET", "/sales/cash-sales/" + id, null).get("processingStatus").asString())
+                    .isEqualTo("invoiced");
+        } finally {
+            jdbc.sql("UPDATE \"ApprovalWorkflow\" SET \"isActive\" = false WHERE id = ?").param(wf).update();
+            jdbc.sql("UPDATE \"ApprovalRequest\" SET status = 'cancelled' WHERE \"workflowId\" = ? AND status = 'pending'")
+                    .param(wf).update();
+        }
+        money("/sales/cash-sales/" + id + "/cancel-invoice", Map.of("reason", "Wrong customer"), 200);
+        assertThat(ok(200, "GET", "/invoices/" + inv, null).get("status").asString()).isEqualTo("cancelled");
+        assertThat(jdbc.sql("SELECT reason FROM \"DocumentReversal\" WHERE \"documentId\" = ?").param(inv)
+                .query(String.class).single()).isEqualTo("Wrong customer");
+    }
+
+    @Test
     @DisplayName("T21: void (goods back) — accrual reversed, stock back at cost, deposit refunded or kept as advance")
     void voidSale() {
         String c = partner("Void " + sfx);

@@ -197,31 +197,35 @@ public class SalesCollectionsService {
     /**
      * Overdue customers per currency (sales readiness INV-12): residuals of one currency only, net of the customer's
      * open credit in that currency (posted credit notes not yet used, receipts not yet allocated). A customer whose
-     * credit covers what is overdue is not chased.
+     * credit covers what is overdue is not chased. A document without a currency is in the organisation's base currency,
+     * and the entry always carries the code (a base-currency entry must not read as a pre-V679 all-currency one).
      */
     private List<Map<String, Object>> overdueCustomers(LocalDate asOf) {
         return db.rows("""
                 WITH od AS (
-                SELECT d."partnerId", COALESCE(d."currencyId", '') AS cur, p.name, p.email,
+                SELECT d."partnerId", upper(COALESCE(NULLIF(d."currencyId", ''), g."currencyCode")) AS cur, p.name, p.email,
                        COALESCE(sum(d."amountResidual"), 0) AS gross,
                        max((?::date - d."dueDate"::date)) AS "maxDays",
                        min(d."dueDate") AS "oldestDue",
                        jsonb_agg(jsonb_build_object('id', d.id, 'number', d."documentNumber", 'dueDate', d."dueDate"::date,
                            'residual', d."amountResidual", 'currency', d."currencyId") ORDER BY d."dueDate") AS invoices
                   FROM "Document" d JOIN "Partner" p ON p.id = d."partnerId"
+                  JOIN "Organization" g ON g.id = d."organizationId"
                  WHERE d."organizationId" = ? AND d."documentType"::text IN ('sales_invoice', 'debit_note')
                    AND d.status::text = 'posted' AND d."amountResidual" > 0 AND d."dueDate"::date < ?::date
-                 GROUP BY d."partnerId", COALESCE(d."currencyId", ''), p.name, p.email)
-                SELECT od."partnerId", NULLIF(od.cur, '') AS "currencyCode", od.name, od.email, od."maxDays", od."oldestDue",
+                 GROUP BY d."partnerId", upper(COALESCE(NULLIF(d."currencyId", ''), g."currencyCode")), p.name, p.email)
+                SELECT od."partnerId", od.cur AS "currencyCode", od.name, od.email, od."maxDays", od."oldestDue",
                        od.invoices,
                        od.gross - COALESCE((SELECT sum(c."amountResidual") FROM "Document" c WHERE c."organizationId" = ?
                            AND c."partnerId" = od."partnerId" AND c."documentType"::text = 'credit_note'
                            AND c.status::text = 'posted' AND c."amountResidual" > 0
-                           AND COALESCE(c."currencyId", '') = od.cur), 0)
+                           AND upper(COALESCE(NULLIF(c."currencyId", ''), (SELECT g."currencyCode" FROM "Organization" g
+                               WHERE g.id = c."organizationId"))) = od.cur), 0)
                                 - COALESCE((SELECT sum(y."unallocatedAmount") FROM "Payment" y WHERE y."organizationId" = ?
                            AND y."partnerId" = od."partnerId" AND y.direction::text = 'inbound'
                            AND y.status::text = 'posted' AND y."unallocatedAmount" > 0
-                           AND COALESCE(y."currencyId", '') = od.cur), 0) AS overdue
+                           AND upper(COALESCE(NULLIF(y."currencyId", ''), (SELECT g."currencyCode" FROM "Organization" g
+                               WHERE g.id = y."organizationId"))) = od.cur), 0) AS overdue
                   FROM od""", asOf, org(), asOf, org(), org()).stream()
                 .filter(c -> dec(c.get("overdue")).signum() > 0).toList();
     }
