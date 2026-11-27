@@ -183,10 +183,13 @@ public class SegregationOfDutiesService {
             return false;
         }
         List<String> named = makers.stream().filter(Objects::nonNull).toList();
+        // IPR review 1 (finding 7): only the latest approved request not yet used up counts — an approval consumed by
+        // an earlier action (a previous receipt's transit loss) authorised that action, not this one.
         for (Map<String, Object> r : jdbc.sql("SELECT r.id, string_agg(DISTINCT d.\"approverId\", ',')"
                         + " AS approvers FROM \"ApprovalRequest\" r LEFT JOIN \"ApprovalDecision\" d ON d.\"requestId\" = r.id"
                         + " AND d.status = 'approved' WHERE r.\"organizationId\" = :org AND r.\"entityType\" IN (:types)"
-                        + " AND r.\"entityId\" = :id AND r.status = 'approved' GROUP BY r.id")
+                        + " AND r.\"entityId\" = :id AND r.status = 'approved' AND r.\"consumedAt\" IS NULL"
+                        + " GROUP BY r.id, r.\"createdAt\" ORDER BY r.\"createdAt\" DESC, r.id DESC LIMIT 1")
                 .param("org", org()).param("types", aliases).param("id", entityId).query().listOfRows()) {
             String joined = (String) r.get("approvers");
             List<String> approvers = joined == null || joined.isEmpty() ? List.of() : List.of(joined.split(","));
