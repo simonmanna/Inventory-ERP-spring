@@ -80,7 +80,7 @@ class Acc0LifecycleIT extends AccountingFixtures {
 
         // 3. Partial supplier payment (allocated to the bill when it is open; else unallocated so the scenario goes on).
         Map<String, Object> pay = new LinkedHashMap<>(Map.of("partnerId", supplier, "paymentDate", today, "amount",
-                300, "paymentMethod", "bank"));
+                300, "paymentMethod", "cheque"));
         if (billResidual.signum() > 0) {
             pay.put("allocations", List.of(Map.of("documentId", bill, "amount", 300)));
         } else {

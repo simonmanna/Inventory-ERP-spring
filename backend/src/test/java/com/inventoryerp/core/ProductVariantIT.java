@@ -1,5 +1,6 @@
 package com.inventoryerp.core;
 
+import com.inventoryerp.TestBillSettings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
@@ -16,6 +17,9 @@ import tools.jackson.databind.JsonNode;
 
 /** Product attributes &amp; variants (ADR-S058): generation, prices, and variants on sales, purchases and stock. */
 class ProductVariantIT extends ApiTestSupport {
+
+    @org.springframework.beans.factory.annotation.Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService billSettings;
 
     final String sfx = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
     String color;
@@ -249,45 +253,47 @@ class ProductVariantIT extends ApiTestSupport {
     @Test
     @DisplayName("bill, invoice and credit note keep the variant: receive, issue and restock move the variant's stock")
     void invoicingDocuments() {
-        String p = product(100, 40);
-        JsonNode variants = configure(p).get("variants");
-        String blackLarge = byName(variants, "Black, Large").get("id").asString();
-        String today = java.time.LocalDate.now().toString();
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String p = product(100, 40);
+            JsonNode variants = configure(p).get("variants");
+            String blackLarge = byName(variants, "Black, Large").get("id").asString();
+            String today = java.time.LocalDate.now().toString();
 
-        String supplier = partner(false);
-        JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
-                List.of(Map.of("productId", p, "variantId", blackLarge, "description", "Screen", "quantity", 4,
-                        "unitPrice", 30))));
-        assertThat(bill.get("lines").get(0).get("variantId").asString()).isEqualTo(blackLarge);
-        assertThat(bill.get("lines").get(0).get("variantName").asString()).isEqualTo("Black, Large");
-        ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of());
-        assertThat(variantOnHand(blackLarge)).isEqualByComparingTo("4");
+            String supplier = partner(false);
+            JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
+                    List.of(Map.of("productId", p, "variantId", blackLarge, "description", "Screen", "quantity", 4,
+                            "unitPrice", 30))));
+            assertThat(bill.get("lines").get(0).get("variantId").asString()).isEqualTo(blackLarge);
+            assertThat(bill.get("lines").get(0).get("variantName").asString()).isEqualTo("Black, Large");
+            ok(200, "POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of());
+            assertThat(variantOnHand(blackLarge)).isEqualByComparingTo("4");
 
-        String customer = partner(true);
-        JsonNode inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
-                List.of(Map.of("productId", p, "variantId", blackLarge, "quantity", 1))));
-        JsonNode line = inv.get("lines").get(0);
-        assertThat(line.get("variantName").asString()).isEqualTo("Black, Large");
-        assertThat(line.get("unitPrice").asDouble()).isEqualTo(100);
-        ok(200, "POST", "/invoices/" + inv.get("id").asString() + "/post", null);
-        assertThat(variantOnHand(blackLarge)).isEqualByComparingTo("3");
+            String customer = partner(true);
+            JsonNode inv = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                    List.of(Map.of("productId", p, "variantId", blackLarge, "quantity", 1))));
+            JsonNode line = inv.get("lines").get(0);
+            assertThat(line.get("variantName").asString()).isEqualTo("Black, Large");
+            assertThat(line.get("unitPrice").asDouble()).isEqualTo(100);
+            ok(200, "POST", "/invoices/" + inv.get("id").asString() + "/post", null);
+            assertThat(variantOnHand(blackLarge)).isEqualByComparingTo("3");
 
-        // The credit-note line names no variant: the restock takes the credited invoice's variant. Restock goes to the
-        // POS stock location, which must be unambiguous (pinned) when the org has several warehouses.
-        pinPosWarehouse();
-        JsonNode cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
-                "reversedDocumentId", inv.get("id").asString(), "lines", List.of(Map.of("productId", p, "quantity", 1,
-                        "unitPrice", 100))));
-        ok(200, "POST", "/credit-notes/" + cn.get("id").asString() + "/post", null);
-        assertThat(variantOnHand(blackLarge)).isEqualByComparingTo("4");
+            // The credit-note line names no variant: the restock takes the credited invoice's variant. Restock goes to the
+            // POS stock location, which must be unambiguous (pinned) when the org has several warehouses.
+            pinPosWarehouse();
+            JsonNode cn = ok(200, "POST", "/credit-notes", Map.of("partnerId", customer, "issueDate", today,
+                    "reversedDocumentId", inv.get("id").asString(), "lines", List.of(Map.of("productId", p, "quantity", 1,
+                            "unitPrice", 100))));
+            ok(200, "POST", "/credit-notes/" + cn.get("id").asString() + "/post", null);
+            assertThat(variantOnHand(blackLarge)).isEqualByComparingTo("4");
 
-        // A variant of another product is refused; lines of products without variants keep their exact shape.
-        String other = product(10, 5);
-        assertThat(as("POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines", List.of(Map.of(
-                "productId", p, "variantId", UUID.randomUUID().toString(), "quantity", 1)))).status()).isEqualTo(400);
-        JsonNode plain = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
-                List.of(Map.of("productId", other, "quantity", 1, "unitPrice", 10))));
-        assertThat(plain.get("lines").get(0).has("variantId")).isFalse();
+            // A variant of another product is refused; lines of products without variants keep their exact shape.
+            String other = product(10, 5);
+            assertThat(as("POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines", List.of(Map.of(
+                    "productId", p, "variantId", UUID.randomUUID().toString(), "quantity", 1)))).status()).isEqualTo(400);
+            JsonNode plain = ok(200, "POST", "/invoices", Map.of("partnerId", customer, "issueDate", today, "lines",
+                    List.of(Map.of("productId", other, "quantity", 1, "unitPrice", 10))));
+            assertThat(plain.get("lines").get(0).has("variantId")).isFalse();
+        });
     }
 
     @Test
@@ -328,36 +334,38 @@ class ProductVariantIT extends ApiTestSupport {
     @Test
     @DisplayName("Phase I2 N4: a bill for one variant never consumes another variant's open receipt")
     void billMatchesOnlyItsVariant() {
-        String p = product(100, 40);
-        JsonNode variants = configure(p).get("variants");
-        String ws = byName(variants, "White, Small").get("id").asString();
-        String bl = byName(variants, "Black, Large").get("id").asString();
-        String supplier = partner(false);
-        JsonNode po = ok(201, "POST", "/procurement/purchase-orders", Map.of("partnerId", supplier, "warehouseId",
-                warehouse, "paymentType", "credit", "lines", List.of(Map.of("productId", p, "variantId", ws,
-                        "description", "WS", "quantity", 10, "unitPrice", 30))));
-        String poId = po.get("id").asString();
-        Map<String, String> h = new LinkedHashMap<>();
-        h.put("Authorization", "Bearer " + adminToken);
-        h.put("Idempotency-Key", UUID.randomUUID().toString());
-        Res r = call("POST", "/procurement/purchase-orders/" + poId + "/receive", Map.of("warehouseId", warehouse,
-                "lines", List.of(Map.of("purchaseOrderLineId", po.get("lines").get(0).get("id").asString(),
-                        "productId", p, "description", "x", "quantity", 10))), h);
-        assertThat(r.status()).as(r.raw().body()).isIn(200, 201);
-        assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String p = product(100, 40);
+            JsonNode variants = configure(p).get("variants");
+            String ws = byName(variants, "White, Small").get("id").asString();
+            String bl = byName(variants, "Black, Large").get("id").asString();
+            String supplier = partner(false);
+            JsonNode po = ok(201, "POST", "/procurement/purchase-orders", Map.of("partnerId", supplier, "warehouseId",
+                    warehouse, "paymentType", "credit", "lines", List.of(Map.of("productId", p, "variantId", ws,
+                            "description", "WS", "quantity", 10, "unitPrice", 30))));
+            String poId = po.get("id").asString();
+            Map<String, String> h = new LinkedHashMap<>();
+            h.put("Authorization", "Bearer " + adminToken);
+            h.put("Idempotency-Key", UUID.randomUUID().toString());
+            Res r = call("POST", "/procurement/purchase-orders/" + poId + "/receive", Map.of("warehouseId", warehouse,
+                    "lines", List.of(Map.of("purchaseOrderLineId", po.get("lines").get(0).get("id").asString(),
+                            "productId", p, "description", "x", "quantity", 10))), h);
+            assertThat(r.status()).as(r.raw().body()).isIn(200, 201);
+            assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
 
-        String today = java.time.LocalDate.now().toString();
-        JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
-                List.of(Map.of("productId", p, "variantId", bl, "description", "BL", "quantity", 4,
-                        "unitPrice", 90))));
-        Res posted = as("POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of());
-        assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
-        BigDecimal billed = jdbc.sql("SELECT COALESCE(sum(l.\"billedQuantity\"), 0) FROM \"GoodsReceiptLine\" l JOIN"
-                + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" WHERE g.\"purchaseOrderId\" = ?").param(poId)
-                .query(BigDecimal.class).single();
-        assertThat(billed).as("the White, Small receipt stays open").isEqualByComparingTo("0");
-        assertThat(variantOnHand(bl)).as("the Black, Large bill auto-receives its own 4").isEqualByComparingTo("4");
-        assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
+            String today = java.time.LocalDate.now().toString();
+            JsonNode bill = ok(200, "POST", "/vendor-bills", Map.of("partnerId", supplier, "issueDate", today, "lines",
+                    List.of(Map.of("productId", p, "variantId", bl, "description", "BL", "quantity", 4,
+                            "unitPrice", 90))));
+            Res posted = as("POST", "/vendor-bills/" + bill.get("id").asString() + "/post", Map.of());
+            assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
+            BigDecimal billed = jdbc.sql("SELECT COALESCE(sum(l.\"billedQuantity\"), 0) FROM \"GoodsReceiptLine\" l JOIN"
+                    + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" WHERE g.\"purchaseOrderId\" = ?").param(poId)
+                    .query(BigDecimal.class).single();
+            assertThat(billed).as("the White, Small receipt stays open").isEqualByComparingTo("0");
+            assertThat(variantOnHand(bl)).as("the Black, Large bill auto-receives its own 4").isEqualByComparingTo("4");
+            assertThat(variantOnHand(ws)).isEqualByComparingTo("10");
+        });
     }
 
     @Test

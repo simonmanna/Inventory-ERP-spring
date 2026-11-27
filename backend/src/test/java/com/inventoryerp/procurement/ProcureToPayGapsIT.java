@@ -683,19 +683,19 @@ class ProcureToPayGapsIT extends ApiTestSupport {
         receive(po1, product, 10);
         String po2 = createPo(supplier, product, 10, 10).get("id").asString();
         receive(po2, product, 10);
-        // Another supplier's goods returned on this supplier's note: AP falls to 50, the orders still show 100 each.
-        String other = stockProduct();
-        adhoc(partner("Residual B other"), warehouse, other, 20, 10);
-        money("PATCH", "/procurement/debit-notes/" + returnNote(supplier, warehouse, other, 15, 10).get("id").asString()
-                + "/post", null);
+        // 15 of the supplier's unbilled goods returned without a bill: AP falls to 50. (Purchase readiness MEDIUM #5,
+        // 2026-11-27: the setup used to return another supplier's goods on this supplier's note, which is now refused.)
+        money("PATCH", "/procurement/debit-notes/" + returnNote(supplier, warehouse, product, 15, 10).get("id")
+                .asString() + "/post", null);
         assertThat(supplierAp(supplier)).isEqualByComparingTo("50");
 
+        String bankAccount = verifiedSupplierBankAccount(supplier);
         ExecutorService pool = Executors.newFixedThreadPool(4);
         List<Future<Res>> futures = new ArrayList<>();
         try {
             for (String po : List.of(po1, po2, po1, po2)) {
                 futures.add(pool.submit(() -> keyed("POST", "/procurement/purchase-orders/" + po + "/pay", Map.of(
-                        "amount", 50, "method", "bank"))));
+                        "amount", 50, "method", "bank", "supplierBankAccountId", bankAccount))));
             }
             int paid = 0;
             for (Future<Res> f : futures) {
@@ -735,7 +735,8 @@ class ProcureToPayGapsIT extends ApiTestSupport {
         assertThat(some.get("canPay").asBoolean()).isTrue();
         assertThat(some.get("message").isNull()).isTrue();
 
-        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(num(pay.get("amount"))).isEqualByComparingTo("40");
         JsonNode after = ok(200, "GET", path, null);
         assertThat(num(after.get("paid"))).isEqualByComparingTo("40");

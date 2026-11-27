@@ -119,8 +119,9 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
   - **ACR-3: bill price and tax true-up.** A bill priced or taxed differently from the receipt posts the difference
     either way (PPV, input VAT, AP), so the ledger's AP equals the bill's residual. Before, a lower bill price posted
     nothing, and a higher one posted only the net difference.
-  - **ACR-4: three-way match option.** Setting `procurement.billWithoutReceipt`. `auto_receive` (default) keeps the
-    Nest behaviour: the bill receives unreceived stock itself. `block` refuses the bill with 400
+  - **ACR-4: three-way match option.** Setting `procurement.billWithoutReceipt`. `block` is the default since the
+    purchase readiness fixes of 2026-11-27 (see procurement.md); `auto_receive` (opt-in) keeps the Nest behaviour:
+    the bill receives unreceived stock itself. `block` refuses the bill with 400
     `Bill line <product>: <qty> not received yet — post the goods receipt first (Purchasing settings: a supplier bill
     needs a goods receipt)`.
 

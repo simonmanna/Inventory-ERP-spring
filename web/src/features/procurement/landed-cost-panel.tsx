@@ -1,102 +1,64 @@
-import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, CheckCircle2, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ExternalLink, Plus, X } from 'lucide-react';
 import { api } from '@/lib/api';
 import { idempotentPost } from '@/lib/idempotent-request';
 import { notify } from '@/lib/notify';
 import { date, money } from '@/lib/format';
-import { useAccounts } from '@/features/accounting/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { tx } from '@/lib/i18n/tx';
 
-interface LandedCost {
+interface LandedCostRow {
   id: string;
   code: string;
-  status: 'draft' | 'posted' | 'cancelled';
-  allocationMethod: 'value' | 'quantity' | 'equal';
+  status: string;
+  voucherType: 'receipt' | 'voucher' | 'credit' | null;
   date: string;
   totalAmount: string;
   capitalizedAmount: string;
   expensedAmount: string;
-  notes: string | null;
-  charges: Array<{ id: string; kind: string; description: string | null; amount: string }>;
+  charges: Array<{ id: string; kind: string }>;
 }
 
-const KINDS = ['freight', 'duty', 'insurance', 'handling', 'other'] as const;
-type Charge = { kind: (typeof KINDS)[number]; description: string; amount: string };
-
 /**
- * Freight, duty and insurance capitalised onto a posted goods receipt. The share
- * of the goods still on hand raises their cost; the share already sold or used
- * is expensed to COGS when the landed cost is posted.
+ * Landed costs of a posted goods receipt. New freight, duty and insurance are entered as landed cost vouchers
+ * (the per-receipt landed cost is retired: it capitalised the cost of goods already sold into stock). The list shows
+ * the vouchers covering this receipt and older per-receipt entries; an old draft can still be cancelled.
  */
-export function LandedCostPanel({ goodsReceiptId, canCreate, canPost, canCancel }: { goodsReceiptId: string; canCreate: boolean; canPost: boolean; canCancel: boolean }) {
+export function LandedCostPanel({ goodsReceiptId, canCreate, canCancel }: { goodsReceiptId: string; canCreate: boolean; canCancel: boolean }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [method, setMethod] = useState<LandedCost['allocationMethod']>('value');
-  const [creditAccountId, setCreditAccountId] = useState('');
-  const [notes, setNotes] = useState('');
-  const [charges, setCharges] = useState<Charge[]>([{ kind: 'freight', description: '', amount: '' }]);
-  const accounts = useAccounts();
-
-  const list = useQuery<LandedCost[]>({
+  const list = useQuery<LandedCostRow[]>({
     queryKey: ['landed-costs', goodsReceiptId],
-    queryFn: async () => (await api.get<LandedCost[]>('/procurement/landed-costs', { params: { goodsReceiptId } })).data,
-  });
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['landed-costs', goodsReceiptId] });
-    qc.invalidateQueries({ queryKey: ['inventory-product-stock-levels'] });
-  };
-
-  const create = useMutation({
-    mutationFn: async () =>
-      idempotentPost<LandedCost>('/procurement/landed-costs', {
-        goodsReceiptId,
-        creditAccountId,
-        allocationMethod: method,
-        notes: notes.trim() || undefined,
-        charges: charges.filter((c) => Number(c.amount) > 0).map((c) => ({ kind: c.kind, description: c.description.trim() || undefined, amount: Number(c.amount) })),
-      }),
-    onSuccess: (lc) => {
-      notify.success(tx('{{code}} saved as draft — post it to apply the cost', { code: lc.code }));
-      setOpen(false);
-      setCharges([{ kind: 'freight', description: '', amount: '' }]);
-      setNotes('');
-      refresh();
-    },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not save landed cost')),
-  });
-  const post = useMutation({
-    mutationFn: async (id: string) => await idempotentPost<LandedCost>(`/procurement/landed-costs/${id}/post`),
-    onSuccess: (lc) => {
-      notify.success(tx('{{code}} posted — {{v2}} capitalised, {{v3}} to COGS', { code: lc.code, v2: money(Number(lc.capitalizedAmount)), v3: money(Number(lc.expensedAmount)) }));
-      refresh();
-    },
-    onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not post landed cost')),
+    queryFn: async () => (await api.get<LandedCostRow[]>('/procurement/landed-costs', { params: { goodsReceiptId } })).data,
   });
   const cancel = useMutation({
-    mutationFn: async (id: string) => await idempotentPost<LandedCost>(`/procurement/landed-costs/${id}/cancel`),
-    onSuccess: () => { notify.success(tx('Landed cost cancelled')); refresh(); },
+    mutationFn: async (id: string) => await idempotentPost<LandedCostRow>(`/procurement/landed-costs/${id}/cancel`),
+    onSuccess: () => {
+      notify.success(tx('Landed cost cancelled'));
+      qc.invalidateQueries({ queryKey: ['landed-costs', goodsReceiptId] });
+    },
     onError: (e: any) => notify.error(e?.response?.data?.message ?? tx('Could not cancel landed cost')),
   });
 
-  const total = charges.reduce((s, c) => s + (Number(c.amount) > 0 ? Number(c.amount) : 0), 0);
-  const accountRows = ((accounts.data as any)?.data ?? []) as Array<{ id: string; code: string; name: string; isPostable?: boolean; isActive?: boolean }>;
   const rows = list.data ?? [];
+  const isVoucher = (lc: LandedCostRow) => lc.voucherType === 'voucher' || lc.voucherType === 'credit';
+  const posted = (lc: LandedCostRow) => lc.status === 'posted' || lc.status === 'reversed';
 
   return (
     <section aria-labelledby="landed-cost-heading" className="mt-4 rounded-md border p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 id="landed-cost-heading" className="text-sm font-semibold">{tx('Landed costs')}</h2>
-          <p className="text-xs text-muted-foreground">{tx('Freight, duty and insurance added to the cost of these goods.')}</p>
+          <p className="text-xs text-muted-foreground">
+            {tx('Freight, duty and insurance are added as landed cost vouchers: the share of goods still on hand raises their cost, the share already sold goes to COGS.')}
+          </p>
         </div>
         {canCreate && (
-          <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-            <Plus className="mr-1 h-3.5 w-3.5" />{tx('Add landed cost')}
+          <Button size="sm" variant="outline" asChild>
+            <Link to={`/procurement/landed-cost-vouchers/new?goodsReceiptId=${encodeURIComponent(goodsReceiptId)}`}>
+              <Plus className="mr-1 h-3.5 w-3.5" />{tx('New landed cost voucher')}
+            </Link>
           </Button>
         )}
       </div>
@@ -119,20 +81,25 @@ export function LandedCostPanel({ goodsReceiptId, canCreate, canPost, canCancel 
             <tbody>
               {rows.map((lc) => (
                 <tr key={lc.id} className="border-b last:border-0">
-                  <td className="py-1.5 pr-2 font-mono text-xs">{lc.code}</td>
+                  <td className="py-1.5 pr-2 font-mono text-xs">
+                    {isVoucher(lc) ? <Link className="underline" to={`/procurement/landed-cost-vouchers/${lc.id}`}>{lc.code}</Link> : lc.code}
+                  </td>
                   <td className="py-1.5 pr-2">{date(lc.date)}</td>
-                  <td className="py-1.5 pr-2 text-xs">{lc.charges.map((c) => c.kind).join(', ')} {tx('· by')} {lc.allocationMethod}</td>
+                  <td className="py-1.5 pr-2 text-xs">
+                    {(lc.charges ?? []).map((c) => c.kind).join(', ')}
+                    {!isVoucher(lc) && <span className="text-muted-foreground"> {tx('· per-receipt (retired)')}</span>}
+                  </td>
                   <td className="py-1.5 pr-2 text-right tabular-nums">{money(Number(lc.totalAmount))}</td>
-                  <td className="py-1.5 pr-2 text-right tabular-nums">{lc.status === 'posted' ? money(Number(lc.capitalizedAmount)) : '—'}</td>
-                  <td className="py-1.5 pr-2 text-right tabular-nums">{lc.status === 'posted' ? money(Number(lc.expensedAmount)) : '—'}</td>
-                  <td className="py-1.5 pr-2"><Badge variant={lc.status === 'posted' ? 'default' : lc.status === 'cancelled' ? 'destructive' : 'outline'}>{lc.status}</Badge></td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{posted(lc) ? money(Number(lc.capitalizedAmount)) : '—'}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{posted(lc) ? money(Number(lc.expensedAmount)) : '—'}</td>
+                  <td className="py-1.5 pr-2"><Badge variant={lc.status === 'posted' ? 'default' : lc.status === 'cancelled' || lc.status === 'reversed' ? 'destructive' : 'outline'}>{lc.status}</Badge></td>
                   <td className="py-1.5 text-right whitespace-nowrap">
-                    {lc.status === 'draft' && canPost && (
-                      <Button size="sm" variant="outline" disabled={post.isPending} onClick={() => post.mutate(lc.id)}>
-                        <CheckCircle2 className="mr-1 h-3.5 w-3.5" />{tx('Post')}
+                    {isVoucher(lc) && (
+                      <Button size="sm" variant="ghost" asChild aria-label={tx('Open {{code}}', { code: lc.code })}>
+                        <Link to={`/procurement/landed-cost-vouchers/${lc.id}`}><ExternalLink className="h-3.5 w-3.5" /></Link>
                       </Button>
                     )}
-                    {lc.status === 'draft' && canCancel && (
+                    {!isVoucher(lc) && lc.status === 'draft' && canCancel && (
                       <Button size="sm" variant="ghost" aria-label={tx('Cancel {{code}}', { code: lc.code })} disabled={cancel.isPending} onClick={() => cancel.mutate(lc.id)}>
                         <X className="h-3.5 w-3.5" />
                       </Button>
@@ -144,61 +111,6 @@ export function LandedCostPanel({ goodsReceiptId, canCreate, canPost, canCancel 
           </table>
         </div>
       )}
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{tx('Add landed cost')}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="text-sm font-medium" htmlFor="lc-method">{tx('Allocate by')}</label>
-                <select id="lc-method" className="block h-9 w-full rounded-md border bg-background px-2 text-sm" value={method} onChange={(e) => setMethod(e.target.value as LandedCost['allocationMethod'])}>
-                  <option value="value">{tx('Line value')}</option>
-                  <option value="quantity">{tx('Quantity')}</option>
-                  <option value="equal">{tx('Equally per line')}</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium" htmlFor="lc-account">{tx('Credit account')} <span className="text-destructive">*</span></label>
-                <select id="lc-account" className="block h-9 w-full rounded-md border bg-background px-2 text-sm" value={creditAccountId} onChange={(e) => setCreditAccountId(e.target.value)}>
-                  <option value="">{tx('Freight accrual, payable or bank…')}</option>
-                  {accountRows.filter((a) => a.isPostable !== false && a.isActive !== false).map((a) => (
-                    <option key={a.id} value={a.id}>{a.code} — {a.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              {charges.map((c, idx) => {
-                const set = (patch: Partial<Charge>) => setCharges((cur) => cur.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
-                return (
-                  <div key={idx} className="flex flex-wrap items-center gap-2">
-                    <select aria-label={tx('Charge type')} className="h-9 rounded-md border bg-background px-2 text-sm" value={c.kind} onChange={(e) => set({ kind: e.target.value as Charge['kind'] })}>
-                      {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-                    </select>
-                    <Input aria-label={tx('Charge description')} className="h-9 min-w-[140px] flex-1" placeholder={tx('Description')} value={c.description} onChange={(e) => set({ description: e.target.value })} />
-                    <Input aria-label={tx('Charge amount')} type="number" min="0" step="any" inputMode="decimal" className="h-9 w-32 text-right" placeholder={tx('Amount')} value={c.amount} onChange={(e) => set({ amount: e.target.value })} />
-                    <Button size="icon" variant="ghost" aria-label={tx('Remove charge')} disabled={charges.length === 1} onClick={() => setCharges((cur) => cur.filter((_, i) => i !== idx))}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
-                );
-              })}
-              <Button size="sm" variant="outline" onClick={() => setCharges((cur) => [...cur, { kind: 'duty', description: '', amount: '' }])}>
-                <Plus className="mr-1 h-3 w-3" />{tx('Add charge')}
-              </Button>
-            </div>
-            <Input aria-label={tx('Notes')} placeholder={tx('Notes (carrier invoice, customs entry…)')} value={notes} onChange={(e) => setNotes(e.target.value)} />
-            <p className="text-sm">{tx('Total')} <span className="font-semibold tabular-nums">{money(total)}</span></p>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>{tx('Cancel')}</Button>
-            <Button disabled={!creditAccountId || total <= 0 || create.isPending} onClick={() => create.mutate()}>
-              {create.isPending ? tx('Saving…') : tx('Save draft')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </section>
   );
 }

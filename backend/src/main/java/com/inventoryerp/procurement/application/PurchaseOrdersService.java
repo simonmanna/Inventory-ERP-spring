@@ -98,7 +98,13 @@ public class PurchaseOrdersService {
 
     /** {@code PayPODto}. */
     public record PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
-            String cashRegisterId, BigDecimal exchangeRate) {
+            String cashRegisterId, BigDecimal exchangeRate, String supplierBankAccountId) {
+
+        /** A payment naming no supplier bank account. */
+        public PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
+                String cashRegisterId, BigDecimal exchangeRate) {
+            this(amount, paidAt, reference, notes, method, cashRegisterId, exchangeRate, null);
+        }
 
         /** A payment without a stated exchange rate. */
         public PayInput(BigDecimal amount, String paidAt, String reference, String notes, String method,
@@ -145,6 +151,13 @@ public class PurchaseOrdersService {
     private final ProductVariantService variants;
     private final CurrencyService currencies;
     private final ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
+    private com.inventoryerp.invoicing.application.SupplierPaymentControls paymentControls;
+
+    /** Purchase readiness H5–H7: the controls a supplier payment passes on either route. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPaymentControls(com.inventoryerp.invoicing.application.SupplierPaymentControls paymentControls) {
+        this.paymentControls = paymentControls;
+    }
 
     public PurchaseOrdersService(JdbcClient jdbc, SequenceService sequence, EventBus events, AuditService audit,
             ApprovalsService approvals, StockService stock, StockPostingService stockPosting,
@@ -187,11 +200,12 @@ public class PurchaseOrdersService {
     // ── Step 1: Register Purchase ──────────────────────────────────────────
 
     /** Register a PO: draft pending approval when a purchase_order workflow applies, else active. */
-    public Map<String, Object> create(CreateInput dto) {
+    public Map<String, Object> create(CreateInput input) {
         String orgId = org();
-        if (dto.lines() == null || dto.lines().isEmpty()) {
+        if (input.lines() == null || input.lines().isEmpty()) {
             throw ApiException.badRequest("At least one line required");
         }
+        CreateInput dto = withCheckedLines(input, orgId);
         // ADR-S086: the PLM lifecycle policy may refuse buying a product (obsolete, being phased out).
         lifecycleGuard.ifAvailable(g -> g.requireAllowed(ProductLifecycleGuard.PURCHASE,
                 dto.lines().stream().map(LineInput::productId).toList()));
@@ -669,6 +683,14 @@ public class PurchaseOrdersService {
         this.qcGate = qcGate;
     }
 
+    private com.inventoryerp.invoicing.application.BillReceiptMatcherService billMatcher;
+
+    /** Purchase readiness H1: absorbs stock a bill already auto-received; optional for plain constructions. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBillMatcher(com.inventoryerp.invoicing.application.BillReceiptMatcherService billMatcher) {
+        this.billMatcher = billMatcher;
+    }
+
     @SuppressWarnings("unchecked")
     private static List<Map<String, Object>> lines(Map<String, Object> grn) {
         return (List<Map<String, Object>>) grn.get("lines");
@@ -901,7 +923,15 @@ public class PurchaseOrdersService {
             BigDecimal receiptTax = Money.ZERO;
             // FX-2 G: valued at the receipt-date rate (the PO rate is a commitment value and is not rewritten)
             BigDecimal rate = receiptRate(po, grnId, date);
+            // Purchase readiness H1: stock a posted bill of this supplier already auto-received is absorbed here.
+            if (billMatcher != null) {
+                billMatcher.lockSupplier(orgId, (String) po.get("partnerId"));
+            }
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> grnLines = (List<Map<String, Object>>) grn.get("lines");
+            int lineIdx = -1;
             for (Resolved r : resolved) {
+                lineIdx++;
                 ReceiveLineInput rln = r.line();
                 if (rln.productId() == null) {
                     continue;
@@ -910,10 +940,16 @@ public class PurchaseOrdersService {
                 if (product == null || !stocked(product)) {
                     continue;
                 }
+                BigDecimal absorbed = billMatcher == null ? Money.ZERO
+                        : billMatcher.absorbAutoReceived(orgId, (String) po.get("partnerId"), grnLines.get(lineIdx));
+                BigDecimal stockQty = rln.quantity().subtract(absorbed);
+                if (stockQty.signum() <= 0) {
+                    continue;
+                }
                 // P0-5: a foreign-currency PO prices in its own currency; stock and GRNI carry the functional value.
                 BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate)
                         : Money.dec(product.get("costPrice"));
-                StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), rln.quantity()).unitCost(unitCost)
+                StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), stockQty).unitCost(unitCost)
                         .variant(r.variantId())
                         .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
                         .expiry(rln.expiryDate())
@@ -1103,6 +1139,15 @@ public class PurchaseOrdersService {
                         + " the ledger shows " + JsNumbers.dec(owed.max(Money.ZERO)) + " still owed to them (returns, credits"
                         + " or other payments have reduced it)");
             }
+            // Purchase readiness H5–H7: the controls of POST /supplier-payments apply here too — guards, the
+            // supplier's status, the verified bank account and the supplier_payment approval on the functional amount
+            // (used up by this payment).
+            String method = dto.method() != null ? dto.method() : "bank";
+            String partnerId = (String) po.get("partnerId");
+            paymentControls.runGuards(partnerId, List.of());
+            paymentControls.assertPayable(partnerId);
+            String bankAccountId = paymentControls.bankAccount(partnerId, method, dto.supplierBankAccountId());
+            String approvalId = paymentControls.requireApproval(partnerId, functionalAmount, method);
             amount[0] = payAmount;
             BigDecimal amountDec = payAmount;
             BigDecimal newTotalPaid = f.paidToDate().add(payAmount);
@@ -1114,12 +1159,17 @@ public class PurchaseOrdersService {
                             + " notes, \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, " + (paidAt != null ? "?" : NOW)
                             + ", ?, ?, ?, " + NOW + ", " + NOW + ") RETURNING *")
                     .params(paymentParams(orgId, id, amountDec, paidAt, dto)));
+            if (bankAccountId != null) {
+                jdbc.sql("UPDATE \"PurchasePayment\" SET \"supplierBankAccountId\" = ? WHERE id = ?")
+                        .params(bankAccountId, payment.get("id")).update();
+                payment.put("supplierBankAccountId", bankAccountId);
+            }
+            paymentControls.consume(approvalId, "PurchasePayment:" + payment.get("id"));
             jdbc.sql("UPDATE \"PurchaseOrder\" SET \"totalPaid\" = ?, \"paymentStatus\" = ?::\"PaymentStatus\","
                             + " version = version + 1, \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?"
                             + " AND \"deletedAt\" IS NULL")
                     .params(newTotalPaid, newPaymentStatus, id, orgId).update();
 
-            String method = dto.method() != null ? dto.method() : "bank";
             Map<String, Object> session = "cash".equals(method) ? cashSession.findOpen(dto.cashRegisterId()) : null;
             if ("cash".equals(method) && session == null) {
                 throw ApiException.badRequest("Select an open register for this cash payment");
@@ -1563,6 +1613,54 @@ public class PurchaseOrdersService {
         return defined("amount", JsNumbers.js(amount), "partnerId", po.get("partnerId"), "orderNumber",
                 po.get("orderNumber"), "createdBy", po.get("createdBy"), "branchId", po.get("branchId"),
                 "departmentId", department);
+    }
+
+    /**
+     * Purchase readiness H10b (2026-11-27): the line rules of every order-creating path (the route, RFQ awards, agreement
+     * releases, requisition conversion, the portal), not only the route DTO. A quantity above 0, a price of 0 or more, a
+     * tax rate between 0 and 100. A line naming a tax takes the Tax master's rate: a different client rate is refused;
+     * an omitted rate is the master's (an inclusive or withholding tax adds no input VAT on an order line, so its
+     * omitted rate stays 0).
+     */
+    private CreateInput withCheckedLines(CreateInput dto, String orgId) {
+        Map<String, Map<String, Object>> taxes = new HashMap<>();
+        List<LineInput> lines = new ArrayList<>();
+        for (LineInput ln : dto.lines()) {
+            String what = ln.description() == null || ln.description().isBlank() ? "A line"
+                    : "Line \"" + ln.description() + "\"";
+            if (ln.quantity() == null || ln.quantity().signum() <= 0) {
+                throw ApiException.badRequest(what + ": quantity must be greater than 0");
+            }
+            if (ln.unitPrice() == null || ln.unitPrice().signum() < 0) {
+                throw ApiException.badRequest(what + ": unitPrice must not be negative");
+            }
+            BigDecimal rate = ln.taxRate();
+            if (rate != null && (rate.signum() < 0 || rate.compareTo(BigDecimal.valueOf(100)) > 0)) {
+                throw ApiException.badRequest(what + ": taxRate must be between 0 and 100");
+            }
+            if (ln.taxId() != null && !ln.taxId().isBlank()) {
+                Map<String, Object> tax = taxes.computeIfAbsent(ln.taxId(), t -> SqlRows.one(jdbc.sql("SELECT name, rate,"
+                        + " \"isInclusive\", type::text AS type FROM \"Tax\" WHERE id = ? AND \"organizationId\" = ?")
+                        .params(t, orgId)));
+                if (tax == null) {
+                    throw ApiException.notFound("Tax not found");
+                }
+                BigDecimal master = Money.dec(tax.get("rate"));
+                if (rate != null && rate.compareTo(master) != 0) {
+                    throw ApiException.badRequest(what + ": tax rate " + JsNumbers.dec(rate) + "% does not match tax "
+                            + tax.get("name") + " (" + JsNumbers.dec(master) + "%); leave the rate empty to use the"
+                            + " tax's rate");
+                }
+                if (rate == null && !Boolean.TRUE.equals(tax.get("isInclusive")) && !"withholding".equals(tax.get("type"))) {
+                    rate = master;
+                }
+            }
+            lines.add(new LineInput(ln.productId(), ln.description(), ln.quantity(), ln.unitOfMeasureId(), ln.unitPrice(),
+                    ln.taxId(), rate, ln.notes(), ln.variantId()));
+        }
+        return new CreateInput(dto.partnerId(), dto.branchId(), dto.description(), dto.expectedDeliveryDate(),
+                dto.currencyCode(), dto.exchangeRate(), dto.paymentType(), dto.notes(), dto.terms(), dto.warehouseId(),
+                dto.requestId(), lines, dto.departmentId());
     }
 
     /** Re-state an order's budget commitments after another service changed its quantities (GRN reverse). */

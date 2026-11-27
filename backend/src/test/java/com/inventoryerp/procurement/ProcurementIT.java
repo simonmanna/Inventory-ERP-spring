@@ -1,10 +1,12 @@
 package com.inventoryerp.procurement;
 
+import com.inventoryerp.TestBillSettings;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.inventoryerp.ApiTestSupport;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
+import com.inventoryerp.procurement.application.LandedCostService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import java.math.BigDecimal;
@@ -33,8 +35,14 @@ import tools.jackson.databind.JsonNode;
  */
 class ProcurementIT extends ApiTestSupport {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    com.inventoryerp.kernel.settings.SettingResolverService billSettings;
+
     @Autowired
     StockService stock;
+
+    @Autowired
+    LandedCostService legacyCosts;
 
     String adminId;
     String warehouse;
@@ -415,12 +423,13 @@ class ProcurementIT extends ApiTestSupport {
         Res over = keyed("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 999, "method", "bank"));
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 999 exceeds remaining balance of 500");
         JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 200,
-                "method", "bank", "reference", "CHQ-1"));
+                "method", "bank", "reference", "CHQ-1", "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(pay.get("amount").asString()).isEqualTo("200");
         assertThat(pay.get("reference").asString()).isEqualTo("CHQ-1");
         assertThat(ok(200, "GET", "/procurement/purchase-orders/" + poId, null).get("paymentStatus").asString())
                 .isEqualTo("partial");
-        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of());
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("supplierBankAccountId",
+                poSupplierBankAccount(poId)));
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("500");
         assertThat(balance(mapped("default_bank")).subtract(bank0)).isEqualByComparingTo("-500");
         JsonNode paid = ok(200, "GET", "/procurement/purchase-orders/" + poId, null);
@@ -439,12 +448,13 @@ class ProcurementIT extends ApiTestSupport {
         // ADR-PROCUREMENT-001 P0-4: a PO only pays what its receipts vouchered, so the race order is received first.
         String race = createPo("credit", product, 1, 100, null).get("id").asString();
         receive(race, List.of(rline(product, 1, 100)));
+        String raceAccount = poSupplierBankAccount(race);
         ExecutorService pool = Executors.newFixedThreadPool(4);
         try {
             List<Future<Res>> futures = new ArrayList<>();
             for (int i = 0; i < 4; i++) {
                 futures.add(pool.submit(() -> keyed("POST", "/procurement/purchase-orders/" + race + "/pay",
-                        Map.of("method", "bank"))));
+                        Map.of("method", "bank", "supplierBankAccountId", raceAccount))));
             }
             int okCount = 0;
             for (Future<Res> f : futures) {
@@ -731,31 +741,20 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal cogs0 = balance(mapped("cogs"));
         BigDecimal ap0 = balance(mapped("accounts_payable"));
 
-        Res draftGrn = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", ok(201, "POST",
-                "/procurement/goods-receipts", Map.of("partnerId", supplier, "warehouseId", warehouse, "lines",
-                List.of(rline(product, 1, 1)))).get("id").asString(), "creditAccountId", mapped("accounts_payable"),
-                "charges",
-                List.of(Map.of("kind", "freight", "amount", 1))));
-        assertThat(draftGrn.body().get("message").asString()).matches(
-                "Landed cost can only be added to a posted goods receipt \\(GRN-.* is draft\\)");
-        Res badAccount = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                UUID.randomUUID().toString(), "charges", List.of(Map.of("kind", "freight", "amount", 1))));
-        assertThat(badAccount.body().get("message").asString()).isEqualTo("Credit account not found");
-        Res badKind = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "tip", "amount", 1))));
-        assertThat(badKind.body().get("message").get(0).asString()).isEqualTo(
-                "charges.0.kind must be one of the following values: freight, duty, insurance, handling, other");
+        // Purchase readiness B4: the create and post routes are retired; the engine runs only for historical entries.
+        Res retired = as("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
+                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "freight", "amount", 150))));
+        assertThat(retired.status()).isEqualTo(400);
+        assertThat(retired.body().get("message").asString()).isEqualTo(LandedCostService.CREATE_RETIRED);
 
-        JsonNode draft = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "freight", "amount", 150),
-                        Map.of("kind", "duty", "amount", 50))));
-        assertThat(draft.get("code").asString()).startsWith("LC-");
-        assertThat(draft.get("status").asString()).isEqualTo("draft");
-        assertThat(draft.get("allocationMethod").asString()).isEqualTo("value");
-        assertThat(draft.get("totalAmount").asString()).isEqualTo("200");
-        assertThat(draft.get("charges")).hasSize(2);
-        String id = draft.get("id").asString();
-        JsonNode posted = ok(200, "POST", "/procurement/landed-costs/" + id + "/post", null);
+        String id = asAdmin(() -> (String) legacyCosts.postHistorical(new LandedCostService.CreateInput(grn,
+                mapped("accounts_payable"), null, null, null, List.of(new LandedCostService.ChargeInput("freight", null,
+                        new BigDecimal("150")), new LandedCostService.ChargeInput("duty", null, new BigDecimal("50")))))
+                .get("id"));
+        JsonNode posted = ok(200, "GET", "/procurement/landed-costs/" + id, null);
+        assertThat(posted.get("code").asString()).startsWith("LC-");
+        assertThat(posted.get("allocationMethod").asString()).isEqualTo("value");
+        assertThat(posted.get("charges")).hasSize(2);
         assertThat(posted.get("status").asString()).isEqualTo("posted");
         assertThat(posted.get("capitalizedAmount").asString()).isEqualTo("120");
         assertThat(posted.get("expensedAmount").asString()).isEqualTo("80");
@@ -771,9 +770,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(balance(mapped("cogs")).subtract(cogs0)).isEqualByComparingTo("80");
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("-200");
         Res again = as("POST", "/procurement/landed-costs/" + id + "/post", null);
-        assertThat(again.status()).isEqualTo(409);
-        assertThat(again.body().get("message").asString()).isEqualTo(
-                "Landed cost is not a draft (already posted or cancelled)");
+        assertThat(again.status()).isEqualTo(400);
+        assertThat(again.body().get("message").asString()).isEqualTo(LandedCostService.POST_RETIRED);
         Res cancelPosted = as("POST", "/procurement/landed-costs/" + id + "/cancel", null);
         assertThat(cancelPosted.body().get("message").asString()).isEqualTo("Only a draft landed cost can be cancelled");
         assertThat(ok(200, "GET", "/procurement/landed-costs?goodsReceiptId=" + grn, null)).hasSize(1);
@@ -782,8 +780,13 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(missing.status()).isEqualTo(404);
         assertThat(missing.body().get("message").asString()).isEqualTo("Landed cost not found");
 
-        String other = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("accounts_payable"), "charges", List.of(Map.of("kind", "other", "amount", 5)))).get("id").asString();
+        // A draft saved before the retirement can still be cancelled (and not posted).
+        String other = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"LandedCost\" (id, \"organizationId\", code, \"goodsReceiptId\", \"allocationMethod\","
+                + " \"creditAccountId\", date, \"totalAmount\", \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, ?, 'value', ?,"
+                + " now(), 5, now(), now())").params(other, demoOrg, "LC-OLD-" + suffix(), grn, mapped("accounts_payable"))
+                .update();
+        assertThat(as("POST", "/procurement/landed-costs/" + other + "/post", null).status()).isEqualTo(400);
         assertThat(ok(200, "POST", "/procurement/landed-costs/" + other + "/cancel", null).get("status").asString())
                 .isEqualTo("cancelled");
     }
@@ -796,10 +799,10 @@ class ProcurementIT extends ApiTestSupport {
                 warehouse, "lines", List.of(Map.of("productId", product, "description", "goods", "quantity", 10,
                         "unitCost", 50, "batchNumber", "LC-" + suffix())))).get("id").asString();
         asAdmin(() -> stock.issue(StockMove.of(product, warehouse, new BigDecimal("5")).source("audit", suffix())));
-        String draft = ok(200, "POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId",
-                mapped("grni_accrued"), "allocationMethod", "quantity", "charges", List.of(Map.of("kind", "freight",
-                        "amount", 100)))).get("id").asString();
-        JsonNode posted = ok(200, "POST", "/procurement/landed-costs/" + draft + "/post", null);
+        String lcId = asAdmin(() -> (String) legacyCosts.postHistorical(new LandedCostService.CreateInput(grn,
+                mapped("grni_accrued"), "quantity", null, null, List.of(new LandedCostService.ChargeInput("freight", null,
+                        new BigDecimal("100"))))).get("id"));
+        JsonNode posted = ok(200, "GET", "/procurement/landed-costs/" + lcId, null);
         assertThat(posted.get("capitalizedAmount").asString()).isEqualTo("50");
         BigDecimal lot = jdbc.sql("SELECT \"unitCost\" FROM \"InventoryBatch\" WHERE \"productId\" = ? AND"
                 + " \"locationId\" = ?").params(product, warehouse).query(BigDecimal.class).single();
@@ -976,24 +979,26 @@ class ProcurementIT extends ApiTestSupport {
     @Test
     @DisplayName("audit H18: a bill priced in the purchase unit lands as base units (10 cases × 24)")
     void billInPurchaseUnit() {
-        String cat = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"UomCategory\" (id, \"organizationId\", name, \"updatedAt\") VALUES (?, ?, ?, now())")
-                .params(cat, demoOrg, "AUD-UNITS-" + suffix()).update();
-        String each = UUID.randomUUID().toString();
-        String box = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
-                + " VALUES (?, ?, ?, ?, 'Each', 1, now())").params(each, demoOrg, cat, "EA-" + suffix()).update();
-        jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
-                + " VALUES (?, ?, ?, ?, 'Case of 24', 24, now())").params(box, demoOrg, cat, "CASE-" + suffix()).update();
-        jdbc.sql("UPDATE \"UomCategory\" SET \"referenceUomId\" = ? WHERE id = ?").params(each, cat).update();
-        String soda = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
-                        + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"uomId\", \"purchaseUomId\", \"salesUomId\","
-                        + " \"updatedAt\") VALUES (?, ?, ?, 'Soda', 'stockable', true, 'AVCO', 0, 0, ?, ?, ?, now())")
-                .params(soda, demoOrg, "H18-" + suffix(), each, box, each).update();
-        postBill(partner("H18"), Map.of("productId", soda, "description", "Soda (cases)", "quantity", 10, "unitPrice",
-                240));
-        assertThat(onHand(soda, null)).isEqualByComparingTo("240");
+        TestBillSettings.autoReceive(jdbc, demoOrg, billSettings, () -> {
+            String cat = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"UomCategory\" (id, \"organizationId\", name, \"updatedAt\") VALUES (?, ?, ?, now())")
+                    .params(cat, demoOrg, "AUD-UNITS-" + suffix()).update();
+            String each = UUID.randomUUID().toString();
+            String box = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
+                    + " VALUES (?, ?, ?, ?, 'Each', 1, now())").params(each, demoOrg, cat, "EA-" + suffix()).update();
+            jdbc.sql("INSERT INTO \"UnitOfMeasure\" (id, \"organizationId\", \"categoryId\", code, name, factor, \"updatedAt\")"
+                    + " VALUES (?, ?, ?, ?, 'Case of 24', 24, now())").params(box, demoOrg, cat, "CASE-" + suffix()).update();
+            jdbc.sql("UPDATE \"UomCategory\" SET \"referenceUomId\" = ? WHERE id = ?").params(each, cat).update();
+            String soda = UUID.randomUUID().toString();
+            jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"trackInventory\","
+                            + " \"costingMethod\", \"costPrice\", \"salesPrice\", \"uomId\", \"purchaseUomId\", \"salesUomId\","
+                            + " \"updatedAt\") VALUES (?, ?, ?, 'Soda', 'stockable', true, 'AVCO', 0, 0, ?, ?, ?, now())")
+                    .params(soda, demoOrg, "H18-" + suffix(), each, box, each).update();
+            postBill(partner("H18"), Map.of("productId", soda, "description", "Soda (cases)", "quantity", 10, "unitPrice",
+                    240));
+            assertThat(onHand(soda, null)).isEqualByComparingTo("240");
+        });
     }
 
     // ------------------------------------------------------------------ supplier-payment-withholding
@@ -1007,7 +1012,7 @@ class ProcurementIT extends ApiTestSupport {
         BigDecimal bank0 = balance(mapped("default_bank"));
         BigDecimal wht0 = balance(mapped("withholding_payable"));
         JsonNode pay = money("POST", "/supplier-payments", Map.of("partnerId", sup, "paymentDate", today, "amount", 1000,
-                "paymentMethod", "bank", "withholdingAmount", 60, "allocations", List.of(Map.of("documentId",
+                "paymentMethod", "cheque", "withholdingAmount", 60, "allocations", List.of(Map.of("documentId",
                         bill.get("id").asString(), "amount", 1000))));
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("1000");
         assertThat(balance(mapped("default_bank")).subtract(bank0)).isEqualByComparingTo("-940");
@@ -1117,8 +1122,8 @@ class ProcurementIT extends ApiTestSupport {
         assertThat(call("POST", "/procurement/three-way-match/recompute/" + poId, null, otherToken).body()).isEmpty();
         Res lc = call("POST", "/procurement/landed-costs", Map.of("goodsReceiptId", grn, "creditAccountId", "x",
                 "charges", List.of(Map.of("kind", "freight", "amount", 1))), otherToken);
-        assertThat(lc.status()).isEqualTo(404);
-        assertThat(lc.body().get("message").asString()).isEqualTo("Goods receipt not found");
+        assertThat(lc.status()).isEqualTo(400);
+        assertThat(lc.body().get("message").asString()).isEqualTo(LandedCostService.CREATE_RETIRED);
     }
 
     @Test
@@ -1127,6 +1132,7 @@ class ProcurementIT extends ApiTestSupport {
         // 158 Source-to-Pay + 1 PROC-4 supplier performance + 14 PROC-3/5 (budgets, delegations, PR approval).
         // Accounting controls (2026-11-17): +4 supplier-claim quantity routes, +1 debit-note reversal.
         // Readiness gaps h06-F6 (2026-11-18): +1 GET /procurement/purchase-orders/{id}/payable.
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(200);
+        // Purchase readiness H7 (2026-11-27): +1 GET /procurement/suppliers/{partnerId}/bank-accounts/verified.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(201);
     }
 }

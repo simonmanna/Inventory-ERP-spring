@@ -410,7 +410,8 @@ public class ApprovalsService {
     @Transactional
     public Map<String, Object> checkOrRequestApproval(String entityType, String entityId, Map<String, Object> snapshot) {
         List<ApprovalRequest> existing = em.createQuery("select r from ApprovalRequest r where r.organizationId = :org"
-                        + " and r.entityType = :type and r.entityId = :eid and r.status in :st", ApprovalRequest.class)
+                        + " and r.entityType = :type and r.entityId = :eid and r.status in :st and r.consumedAt is null"
+                        + " order by r.createdAt desc", ApprovalRequest.class)
                 .setParameter("org", TenantContext.organizationId())
                 .setParameter("type", entityType)
                 .setParameter("eid", entityId)
@@ -427,6 +428,8 @@ public class ApprovalsService {
                 double now = amountOf(snapshot);
                 if (now <= approved + 0.005) {
                     out.put("needsApproval", false);
+                    // purchase readiness H6: the approved request, so a single-use caller can consume it
+                    out.put("requestId", existing.getFirst().getId());
                     return out;
                 }
                 existing.getFirst().setStatus(ApprovalStatus.CANCELLED);
@@ -451,6 +454,29 @@ public class ApprovalsService {
             return out;
         }
         return null;
+    }
+
+    /**
+     * Purchase readiness H6 (owner-approved 2026-11-27): use up an approved request so it authorises exactly one action
+     * (a supplier payment). Runs in the caller's transaction, so the approval is consumed only if the payment commits;
+     * the conditional update takes the request's row lock, so two concurrent payments cannot both use it.
+     */
+    @Transactional
+    public void consumeApproval(String requestId, String consumedRef) {
+        int n = em.createNativeQuery("UPDATE \"ApprovalRequest\" SET \"consumedAt\" = now(), \"consumedRef\" = ?1,"
+                        + " \"updatedAt\" = now() WHERE id = ?2 AND \"organizationId\" = ?3 AND status = 'approved'"
+                        + " AND \"consumedAt\" IS NULL")
+                .setParameter(1, consumedRef)
+                .setParameter(2, requestId)
+                .setParameter(3, TenantContext.organizationId())
+                .executeUpdate();
+        if (n == 0) {
+            throw ApiException.conflict("Approval request " + requestId + " has already been used for another payment."
+                    + " Request a new approval for this payment.");
+        }
+        Map<String, Object> nv = new LinkedHashMap<>();
+        nv.put("consumedRef", consumedRef);
+        audit.recordInTx(AuditInput.of("ApprovalRequest", requestId, "update", null, nv));
     }
 
     /**

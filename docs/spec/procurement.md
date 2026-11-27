@@ -706,3 +706,187 @@ Tests: `PlanningIT`. Web:
 - Vendor bills, including subcontract valuation bills (`withholdingTaxId` on the valuation request), can withhold tax
   at posting. See [invoicing.md](invoicing.md) and
   [ADR-S071](../adr/ADR-S071-tax-groups-withholding-reverse-charge.md).
+
+## Purchase readiness fixes (owner-approved 2026-11-27) — supplier payments (stream "pay")
+
+Fixes from the read-only purchase-flow audit of origin/main. V690 adds `ApprovalRequest.consumedAt/consumedRef`,
+`Payment.supplierBankAccountId` and `PurchasePayment.supplierBankAccountId`. One component,
+`invoicing.application.SupplierPaymentControls`, now runs on both `POST /supplier-payments` and
+`POST /procurement/purchase-orders/:id/pay`.
+
+- **B1 — overpayment cap counts unallocated payments.** `POST /supplier-payments` without `allowOverpayment` is capped
+  at the finance audit A5 tie-out measure (`accounting.application.ApOpenItemsSql`): open vendor bills at their
+  carrying rate less the supplier's posted, non-void, unallocated supplier payments at their payment rate. A foreign
+  payment is capped at the open bills in its currency less the unallocated payments in that currency, reduced (at the
+  payment's rate) by any excess of unallocated payments in other currencies over those currencies' bills. A functional
+  payment no longer adds foreign bills' residuals unconverted. Bills on payment hold are left out. Payments to one
+  supplier are serialised on the `Partner` row (`FOR NO KEY UPDATE`, the lock the PO pay route takes after its PO
+  lock). Message: `Payment amount X exceeds supplier outstanding balance Y (open bills less payments not yet allocated
+  to a bill). Overpayments require allowOverpayment=true.`
+- **B2 — AP aging ties to the GL.** `GET /reports/ap/aging` (live and the nightly snapshot) is in base currency: bills
+  at their carrying rate, receipt-voucher payables (stocked lines only — `trackInventory` and not a service, the PO pay
+  route's measure) at the receipts' rate, less unallocated supplier payments. New fields: `unapplied` (top level and per
+  partner); `total` = Σ buckets − unapplied. The report-library AP open items (`reporting.OpenItems`) use the same
+  receipt-voucher measure, so `ap.reconciliation` / the tie-out agree.
+- **H5 — PO pay passes the supplier payment controls**: the ADR-S074 guards, the supplier status check, the verified
+  bank account rule and the `supplier_payment` approval on the payment amount in the functional currency
+  (`Vendor payment requires approval. Request ID: …`, 403, as on `/supplier-payments`).
+- **H6 — an approval authorises one payment.** An approved `supplier_payment` request covers exactly one payment of at
+  most the approved amount; the payment consumes it in its own transaction (`consumedRef` = `Payment:<id>` or
+  `PurchasePayment:<id>`). A second payment needs a new approval. Two concurrent payments cannot share one: the loser
+  gets 409 `Approval request <id> has already been used for another payment. Request a new approval for this
+  payment.` The web flow is unchanged (refused → approver approves → retry).
+- **H7 — supplier status and bank accounts gate payments.** (a) A supplier whose profile is `suspended` or
+  `blacklisted` is refused on both routes: `Supplier <name> is suspended (<reason>); payments to a suspended or
+  blacklisted supplier are refused`. Inactive partners are not blocked (their open debts can still be settled).
+  (b) Both routes take an optional `supplierBankAccountId`; it must belong to the supplier (`The supplier bank account
+  does not belong to this supplier`) and be verified (`The supplier bank account is pending verification; only a
+  verified bank account can receive a payment`); it is stored on the payment. (c) New org setting
+  `procurement.supplierBankVerification` (`off` | `block`, **default `block`**): a `bank` method supplier payment —
+  and a PO payment, whose method defaults to `bank` — must name a verified account: `A bank transfer to a supplier must
+  name one of the supplier's verified bank accounts (supplierBankAccountId). Register the account on the supplier and
+  have someone else verify it first.` Cheque, cash and mobile money are not affected. New route
+  `GET /procurement/suppliers/:partnerId/bank-accounts/verified` (`supplier:read` or `payment:create` or
+  `purchase_order:pay`) feeds the account picker on the supplier payment form and the PO pay page. The GQDEMO seed
+  registers a verified demo account for the supplier it pays by bank.
+- **M — payment hold**: a bill on payment hold (`PUT /vendor-bills/:id/payment-schedule {onHold: true}`) takes no
+  allocation (payment or advance allocation): `Bill <number> is on payment hold; release the hold in the payment
+  schedule before paying it`.
+- **M — drawer accounts**: a supplier payment outside a register shift cannot credit a register's drawer account
+  (`A supplier payment cannot use the drawer account of register <code>. …`), as treasury and expenses already refuse.
+
+## Purchase readiness fixes (owner-approved 2026-11-27) — stream "bills"
+
+- **B3 — one bill, two lines, same product.** Bill posting tracks the receipt quantity earlier lines of the same bill
+  already matched (`BillReceiptMatcherService.matchLine(..., claimed)`), so a receipt of 10 billed as 10 + 5 matches
+  10 once; the other 5 are unreceived and follow `procurement.billWithoutReceipt`. V692 adds
+  `GoodsReceiptLine_billed_le_received` (`billedQuantity <= quantity + 0.0001`); it is validated when existing data
+  allows, otherwise left `NOT VALID` (still enforced on new writes) with a migration notice.
+- **H1 — bill before goods.** `procurement.billWithoutReceipt` now defaults to `block` (three-way match: a bill for
+  stock items needs a goods receipt; 400 `Bill line <product>: <qty> not received yet — post the goods receipt first
+  (Purchasing settings: a supplier bill needs a goods receipt)`). Organisations without a stored value change
+  behaviour on deploy; set `auto_receive` to keep the old one. In `auto_receive` mode a bill records what it received
+  itself (`VendorBillAutoReceipt`, V692, base units). A goods receipt of the same supplier, product and variant posted
+  later (draft post or the PO receive route) absorbs that quantity first: no second stock-in, no receipt voucher (AP)
+  for it; the receipt line is billed by that bill (`VendorBillReceiptMatch`, PO line billed too). A bill whose stock
+  was absorbed cannot be cancelled: 400 `Bill <number> cannot be cancelled: the stock it received was matched by goods
+  receipt <GRN>. Raise a debit note for the bill instead.` Bill posts and goods-receipt posts of one supplier serialise
+  on an advisory lock. Bills auto-received before V692 are not tracked (no backfill).
+- **H2 — duplicate bills.** `bill.duplicateCheck` gains `block_reference`, the new default: a posted bill of the same
+  supplier with the same normalised invoice reference (lower-case letters and digits only: `INV-001` = `inv 001` =
+  `INV001`) is refused with 409 `Duplicate bill: this supplier already has <bills> with the same invoice reference —
+  cancel this bill or correct its reference`; the same amount within 7 days only warns (bill posts with `warnings`,
+  `bill.duplicate_suspected` event). `warn` and `block` keep their meaning (`block` refuses both kinds), `off` disables
+  it. An advisory lock on (organisation, supplier, normalised reference) serialises concurrent posts. The landed-cost
+  guard (`LandedCostBillGuard`, `procurement.invoiceRef.normalization`) keeps its own rule (separators removed) because
+  its normalised numbers are stored on landed-cost charges.
+- **H8 — approval override.** `overrideApproval` on bill post is now the poster's decision through the approval
+  workflow (`ApprovalsService.decide`: step order, eligible approvers, amount limits, separation of duties), committed
+  on its own. When the workflow still needs other steps: 403 `Your approval of bill <number> was recorded, but its
+  approval workflow needs further approvers (request <id>) before it can be posted`. The last editor (`updatedBy`, now
+  stamped by bill update) cannot override: 403 `You cannot approve a bill you last edited — another approver must
+  decide`; an approval given by the last editor is cancelled at post and a new request raised: 403 `This bill was
+  approved by the person who last edited it; another approver must approve it (request <id>)`. The approval content
+  hash also covers issue date, due date, reference and branch (`v2:` hashes; requests recorded with the earlier hash
+  still count while it matches). Approval snapshots carry `makerIds`.
+- **PO links.** A bill links only purchase orders of its own supplier: 400 `Purchase order <number> belongs to another
+  supplier — a bill can only be linked to purchase orders of its own supplier`.
+- **Three-way match.** Bill quantities are compared in base units (`uomFactor` of bill and PO lines; a missing factor
+  counts as 1), so a bill in boxes matches an order in pieces. A bill linked to several orders counts each bill line
+  once: the linked orders that order the product take it oldest first, each up to its ordered quantity, the last any
+  excess.
+
+## Purchase readiness fixes (owner-approved 2026-11-27) — stream "returns"
+
+**B4 — legacy per-receipt landed cost retired.** `POST /procurement/landed-costs` and `POST
+/procurement/landed-costs/:id/post` always answer 400. Messages (verbatim):
+- create: "Per-receipt landed costs are retired: enter freight, duty and other charges as a landed cost voucher for
+  this goods receipt (Procurement > Landed Costs, POST /procurement/landed-cost-vouchers) — it splits the cost between
+  stock still on hand and goods already sold, and records the supplier invoice, approval, tax and currency"
+- post: "Posting a per-receipt landed cost is retired: cancel this draft and enter its charges as a landed cost voucher
+  (Procurement > Landed Costs, POST /procurement/landed-cost-vouchers)"
+
+Why: its AVCO path capitalised the landed cost of goods already sold into stock (`onHand = min(quant, receipt qty)`),
+the credit account could be anything, and it had no supplier invoice / duplicate check, approval, tax or currency.
+`GET` (list, one), `/:id/cancel` (drafts) and `/:id/reverse` (posted entries, through the voucher engine) keep working.
+The goods-receipt screen's Landed costs tab lists the vouchers covering the receipt plus older per-receipt entries and
+opens "New landed cost voucher" prefilled with the receipt (`/procurement/landed-cost-vouchers/new?goodsReceiptId=`).
+`LandedCostService.postHistorical` keeps the old engine only for tests of historical entries (not routed).
+
+**H3 — return to vendor against a bill is limited.** On post, under a lock on the bill, per product (+variant) in base
+units: returned ≤ billed on that bill − earlier posted (not reversed) returns against it, and — when the bill was
+matched to receipts — ≤ what claims (verified, or settled as stock adjustment) and bill-less returns left of those
+receipt lines. A product not on the bill is refused at create and post. The stock issue requires available stock.
+- "Supplier bill {no} does not bill {item}; a return against a bill can only send back goods that bill billed"
+- "Only {n} of {item} can still be returned against supplier bill {no}: it billed {b}, earlier returns against it took
+  {e}[ and supplier claims or returns without a bill already cover {c} of the received goods]; this return asks for {q}"
+- "The referenced supplier bill is no longer posted; the return cannot be credited against it"
+
+**MEDIUM #5 — return naming no bill.** It must be fully covered by the supplier's open, unbilled posted receipt
+quantity (less verified/settled claim quantity); otherwise 400:
+- billed goods exist: "Only {n} of {item} are open on unbilled receipts from this supplier (this return asks for {q});
+  the rest is already billed — name the supplier bill ({bills}) on the return so that bill is credited"
+- otherwise: "Only {n} of {item} received from this supplier are still open to return; this return asks for {q}"
+
+**H4 — claim and return cannot credit the same goods twice.** `SupplierReturnLedger` computes per receipt line the
+quantity returned (bill-less returns via `DebitNoteReceiptMatch`, plus the least share of returns against a bill that
+matched the line). Claim quantity lines (add and settlement re-check) deduct it; returns deduct verified / settled
+stock-adjustment claim quantities. The claim value cap deducts returns: on a bill the posted return notes' net
+subtotal, on a receipt / order the returned quantity at the receipt (order) price. Message suffixes: "(… of …; returns to
+the supplier already credited {v})", "({r} already returned to the supplier)", "than the {n} received less the {r}
+already returned to the supplier". **Choice (claims without a document):** a claim credits AP at settlement, so a claim
+naming no bill, receipt or order is refused at accept (price / other claims; quantity claims get their receipt from
+their lines) and at settle: "Claim {no} names no supplier bill, goods receipt or purchase order; a claim credits the
+supplier only against the document it is about, which caps the amount — raise the claim on that document".
+
+**Also:** the audit's "linked bill supplier ≠ charge supplier" point was already enforced when a voucher is saved
+("Vendor bill {no} belongs to another supplier than charge {c}"); a regression assertion was added. `PATCH /procurement/debit-notes/:id/post`
+and `/reverse` now require an `Idempotency-Key` (the web always sends one).
+
+**Not changed:** a return does not reduce the PO line's `receivedQuantity` (replacement goods are received on a new
+receipt / order line); left for a separate decision.
+
+## Purchase readiness fixes (owner-approved 2026-11-27)
+
+### Receipts stream (`fix/purchase-receipts`, `V696__purchase_line_value_checks.sql`)
+
+- **H9a — reversal needs the goods on hand.** `PATCH /procurement/goods-receipts/:id/reverse` takes back only what is
+  still at the receipt location, in the received lot / serial units and not reserved, whatever
+  `inventory.allowNegativeStock` says. The check runs inside the stock engine under the quant locks (engine lock
+  order), so a concurrent issue and reversal cannot both take the same units. New 400:
+  `Receipt GRN-… cannot be reversed: only N of M units of <product>[ (<variant>)][, lot L][, serial S] are still in
+  <location>[ (R of what is there is reserved)]. Return the remaining goods to the supplier with a debit note instead.`
+  (`StockReversalService.LedgerSource` gained optional `shortfallLabel` / `shortfallAdvice`; other reversals are
+  unchanged.)
+- **H9b — reversal unwinds quality control and inspection.** In the reversal transaction, before the stock-out:
+  refused while a decided quality check still holds goods in quarantine — 400 `Receipt GRN-… cannot be reversed:
+  quality check QCC-… holds N in quarantine after its decision. Return those goods to the supplier with a debit note or
+  scrap them from quarantine instead.`; a pending post-receipt check moves its quarantined quantity back to the
+  receive location (refused with `Quality check QCC-…: only N of M is left in quarantine, so the receipt cannot be
+  reversed.` when it is no longer there) and every pending generated check is cancelled (`QcGate.unwindForReversal`,
+  `QcQuarantineService.returnOnReversal`). A pending incoming inspection is cancelled (reason `Goods receipt reversed:
+  <reason>`, by the reversing user), which lifts its bill hold. Recording results on or completing the inspection of a
+  reversed receipt is refused: `Goods receipt GRN-… was reversed: its inspection cannot be recorded or completed; cancel
+  the inspection instead` (the completion now locks the receipt first, so it cannot race a reversal).
+- **H10a — purchase request line values.** `quantity` must be > 0 (`quantity must be greater than 0`),
+  `estimatedUnitPrice` ≥ 0 when given (`estimatedUnitPrice must not be negative`), both at most 14 digits and 6
+  decimals. The service repeats the check for paths without the DTO (replenishment, reorder rules):
+  `Line "<description>": quantity must be greater than 0` / `…: estimatedUnitPrice must not be negative`. A
+  zero-value request still routes through approval (a band starting at 0 matches amount 0; no change needed).
+- **H10b — purchase order line tax.** `taxRate` must be 0–100 (route and service). A line with `taxId` takes the Tax
+  master's rate: a different client rate is refused (`Line "<description>": tax rate X% does not match tax <name>
+  (Y%); leave the rate empty to use the tax's rate`); an unknown tax is 404 `Tax not found`; an omitted rate becomes
+  the master's rate. **Behaviour change:** the web PO form sends the product's `taxId` without a rate, so those lines
+  were stored at 0 % and now carry the tax's rate (e.g. VAT 18 %), raising the PO total and the receipt voucher's input
+  VAT. An inclusive or withholding tax with an omitted rate stays at 0 % on the order line. The service also refuses a
+  quantity ≤ 0 or a negative unit price on every order-creating path (RFQ award, agreement release, requisition
+  conversion, portal).
+- **Receipt line resolution.** A product-only line of a PO receipt (no `purchaseOrderLineId`) is stored with the
+  order's only line of that product (draft creation, and at posting for drafts saved earlier), so it takes the
+  order's unit, variant, price and input VAT, and the pay cap sees its tax. A receipt line naming a different variant
+  than its order line is refused: `Line "<description>" names a different variant than the purchase order line it
+  receives; receive the ordered variant or add the other variant to the order first`.
+- **DB:** `V696` adds CHECK constraints `PurchaseRequestLine` quantity > 0 and `estimatedUnitPrice` ≥ 0,
+  `PurchaseOrderLine` quantity > 0, `unitPrice` ≥ 0, `taxRate` 0–100. Added `NOT VALID` then validated when the
+  existing rows comply; on a database with old violating rows the constraint stays `NOT VALID` (new rows are still
+  checked) — fix the rows and run `ALTER TABLE … VALIDATE CONSTRAINT …`.

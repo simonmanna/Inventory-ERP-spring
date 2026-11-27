@@ -182,6 +182,19 @@ export function useSupplier(partnerId?: string) {
   });
 }
 
+/**
+ * Purchase readiness H7: the supplier's verified bank accounts (masked), for the supplier / PO payment screens. A bank
+ * transfer to a supplier must name one (setting `procurement.supplierBankVerification`, default block).
+ */
+export function useVerifiedBankAccounts(partnerId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['procurement-suppliers', 'verified-bank-accounts', partnerId],
+    enabled: !!partnerId && enabled,
+    queryFn: async () =>
+      (await api.get<BankAccount[]>(`/procurement/suppliers/${partnerId}/bank-accounts/verified`)).data,
+  });
+}
+
 export function useExpiringCertificates(days = 30) {
   return useQuery({
     queryKey: ['procurement-suppliers', 'expiring', days],

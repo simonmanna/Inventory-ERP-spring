@@ -352,6 +352,13 @@ public class InvoicingWorkflowsInitializer {
                 new Transition("posted", "cancelled", "cancel", "expense:cancel",
                         ctx -> !(d(ctx.entity().get("amountPaid")).signum() > 0), ctx -> {
                             Map<String, Object> doc = ctx.entity();
+                            String absorbedBy = matcher.absorbingReceipt(ctx.organizationId(), (String) doc.get("id"));
+                            if (absorbedBy != null) {
+                                // Purchase readiness H1: the goods are in stock through that receipt now.
+                                throw ApiException.badRequest("Bill " + doc.get("documentNumber") + " cannot be cancelled:"
+                                        + " the stock it received was matched by goods receipt " + absorbedBy
+                                        + ". Raise a debit note for the bill instead.");
+                            }
                             if (doc.get("journalEntryId") != null) {
                                 posting.reverse((String) doc.get("journalEntryId"), null,
                                         "Void of " + doc.get("documentNumber"));
@@ -413,6 +420,12 @@ public class InvoicingWorkflowsInitializer {
             }
         }
         Map<String, BillLineMatch> matchByLine = new HashMap<>();
+        // Purchase readiness B3: receipt quantity already matched by earlier lines of this bill (stamped later).
+        Map<String, BigDecimal> claimedReceiptQty = new HashMap<>();
+        if (productById.values().stream().anyMatch(p -> Boolean.TRUE.equals(p.get("trackInventory")))) {
+            // Purchase readiness H1: one supplier's bill and goods-receipt posts serialise (auto-receive vs absorb).
+            matcher.lockSupplier(ctx.organizationId(), partnerId);
+        }
         // FX-1: the rate the bill actually posts at, not its stored column (1 for API-created bills), so the receipt
         // variance and the vouchered-payable remeasurement see the real bill rate.
         BigDecimal documentRate = fxRates != null ? fxRates.effectiveRate(full, instant(full.get("issueDate")))
@@ -434,7 +447,8 @@ public class InvoicingWorkflowsInitializer {
                 continue;
             }
             BillLineMatch match = matcher.matchLine(ctx.organizationId(), partnerId, (String) line.get("productId"),
-                    (String) line.get("variantId"), qty, line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
+                    (String) line.get("variantId"), qty, line.get("uomFactor") == null ? null : d(line.get("uomFactor")),
+                    claimedReceiptQty);
             matchByLine.put((String) line.get("id"), match);
             if (match.unmatchedQuantity().signum() > 0 && billsNeedReceipt()) {
                 // Review 2026-11-17 (ACR-4): the bill would receive goods nobody counted in (three-way match).
@@ -612,6 +626,10 @@ public class InvoicingWorkflowsInitializer {
                             line.get("uomFactor") == null ? null : d(line.get("uomFactor")))
                     .notes("Auto-receive for bill " + full.get("documentNumber"));
             stock.receiveFromBill(m, id, instant(full.get("issueDate")));
+            // Purchase readiness H1: a later goods receipt of this supplier absorbs this quantity instead of adding it.
+            matcher.recordAutoReceipt(ctx.organizationId(), id, (String) line.get("id"), partnerId,
+                    (String) line.get("productId"), (String) line.get("variantId"), toReceive,
+                    line.get("uomFactor") == null ? null : d(line.get("uomFactor")));
         }
         // ACC-4 (B15): the bill is the open AP item for its whole amount. Vouchered quantities were raised on AP by the
         // receipt voucher, so the bill posts no second AP for them, but the supplier is paid against this bill — its

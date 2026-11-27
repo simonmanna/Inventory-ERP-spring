@@ -21,6 +21,7 @@ import com.inventoryerp.procurement.application.PurchaseOrdersService.ReceiveLin
 import com.inventoryerp.procurement.application.PurchaseOrdersService.UpdateInput;
 import com.inventoryerp.shared.validation.OneOf;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -53,6 +54,9 @@ public class PurchaseOrdersController {
             String unitOfMeasureId,
             @NotNull(message = NUM) @DecimalMin(value = "0", message = "must not be less than 0") BigDecimal unitPrice,
             String taxId,
+            // Purchase readiness H10b (2026-11-27): a percentage; with taxId it must match the tax master.
+            @DecimalMin(value = "0", message = "taxRate must not be less than 0")
+            @DecimalMax(value = "100", message = "taxRate must not be greater than 100")
             BigDecimal taxRate,
             String notes,
             // ADR-S058: product variant (required for a product with variants).
@@ -105,7 +109,9 @@ public class PurchaseOrdersController {
             String cashRegisterId,
             /* FX-3: the payment-date rate for a foreign PO (else the rate table). */
             @jakarta.validation.constraints.Positive(message = "exchangeRate must be a positive number")
-            BigDecimal exchangeRate) {}
+            BigDecimal exchangeRate,
+            /* Purchase readiness H7: the supplier's verified bank account a bank transfer goes to. */
+            String supplierBankAccountId) {}
 
     /** {@code UpdatePODto}. */
     public record UpdatePORequest(
@@ -181,7 +187,7 @@ public class PurchaseOrdersController {
     @RequirePermissions(Permissions.PROCUREMENT__PURCHASE_ORDER__PAY)
     public Map<String, Object> pay(@PathVariable String id, @Valid @RequestBody PayPORequest dto) {
         return svc.pay(id, new PayInput(dto.amount(), dto.paidAt(), dto.reference(), dto.notes(), dto.method(),
-                dto.cashRegisterId(), dto.exchangeRate()));
+                dto.cashRegisterId(), dto.exchangeRate(), dto.supplierBankAccountId()));
     }
 
     @PostMapping("/{id}/cancel")

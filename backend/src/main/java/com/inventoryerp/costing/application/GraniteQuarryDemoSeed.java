@@ -598,7 +598,28 @@ public class GraniteQuarryDemoSeed implements DemoOrganization {
         boolean usd = "GQ-S03".equals(supplier);
         payments.createSupplierPayment(new PaymentInput(c.partner.get(supplier), c.date(day), dec(amount), "bank",
                 null, ref, null, List.of(new AllocationInput(doc, null, dec(amount))), null, null, null, null,
-                usd ? "USD" : null, usd ? USD_RATE : null), true);
+                usd ? "USD" : null, usd ? USD_RATE : null, null, null, verifiedBankAccount(c, c.partner.get(supplier))),
+                true);
+    }
+
+    /**
+     * Purchase readiness H7: a bank transfer to a supplier names one of its verified bank accounts. The demo supplier
+     * gets a seeded, already verified account (demo data: no real account number is stored).
+     */
+    private String verifiedBankAccount(Ctx c, String partnerId) {
+        String existing = jdbc.sql("SELECT id FROM \"SupplierBankAccount\" WHERE \"organizationId\" = ? AND"
+                + " \"partnerId\" = ? AND status = 'verified' LIMIT 1").params(c.org, partnerId).query(String.class)
+                .optional().orElse(null);
+        if (existing != null) {
+            return existing;
+        }
+        String id = java.util.UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"SupplierBankAccount\" (id, \"organizationId\", \"partnerId\", \"bankName\","
+                + " \"accountName\", \"accountNumberLast4\", \"accountNumberEnc\", \"isDefault\", status, \"verifiedAt\")"
+                + " SELECT ?, ?, p.id, 'Demo Bank', p.name, '0000', '{\"demo\": true}'::jsonb, true, 'verified',"
+                + " CURRENT_TIMESTAMP FROM \"Partner\" p WHERE p.id = ? AND p.\"organizationId\" = ?")
+                .params(id, c.org, partnerId, c.org).update();
+        return id;
     }
 
     // ------------------------------------------------------------------ the plant in the asset register

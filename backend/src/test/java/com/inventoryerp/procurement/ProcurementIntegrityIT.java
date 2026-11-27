@@ -235,7 +235,8 @@ class ProcurementIntegrityIT extends ApiTestSupport {
                 "bank"));
         assertThat(over.body().get("message").asString()).isEqualTo("Payment of 201 exceeds remaining balance of 200");
         BigDecimal ap0 = balance(mapped("accounts_payable"));
-        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank", "supplierBankAccountId",
+                poSupplierBankAccount(poId)));
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("200");
 
         String wf = workflow("purchase_order");
@@ -257,7 +258,8 @@ class ProcurementIntegrityIT extends ApiTestSupport {
         String poId = createPo(Map.of("partnerId", own), product, 10, 50).get("id").asString();
         receive(poId, product, 4);
         assertThat(agingTotal(own)).isEqualByComparingTo("200");
-        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 120, "method", "bank"));
+        money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("amount", 120, "method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(agingTotal(own)).isEqualByComparingTo("80");
         jdbc.sql("DELETE FROM \"ReportApAgingSnapshot\" WHERE \"organizationId\" = ?").param(demoOrg).update();
         Res rebuilt = as("POST", "/reports/accounting/rebuild-snapshots", null);
@@ -291,7 +293,8 @@ class ProcurementIntegrityIT extends ApiTestSupport {
         assertThat(net(mapped("grni_accrued"), "goods_receipt", grnId)).isEqualByComparingTo("0");
         // Paying 20 (PO currency) relieves 74,000 of functional AP.
         BigDecimal ap0 = balance(mapped("accounts_payable"));
-        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank"));
+        JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
+                "supplierBankAccountId", poSupplierBankAccount(poId)));
         assertThat(pay.get("amount").asString()).isEqualTo("20");
         assertThat(balance(mapped("accounts_payable")).subtract(ap0)).isEqualByComparingTo("74000");
     }
@@ -362,7 +365,7 @@ class ProcurementIntegrityIT extends ApiTestSupport {
         String ap = mapped("accounts_payable");
         BigDecimal fx0 = balance(mapped("fx_loss"));
         JsonNode pay = money("POST", "/procurement/purchase-orders/" + poId + "/pay", Map.of("method", "bank",
-                "amount", 20, "exchangeRate", 3820));
+                "amount", 20, "exchangeRate", 3820, "supplierBankAccountId", poSupplierBankAccount(poId)));
         Map<String, Object> row = jdbc.sql("SELECT \"exchangeRate\", \"carryingRate\", \"fxAmount\" FROM"
                 + " \"PurchasePayment\" WHERE id = ?").param(pay.get("id").asString()).query().singleRow();
         assertThat((BigDecimal) row.get("exchangeRate")).isEqualByComparingTo("3820");

@@ -185,7 +185,7 @@ class FxGainLossFx1IT extends AccountingFixtures {
                 .get("id").asString();
         ok(200, "POST", "/vendor-bills/" + bill + "/post", Map.of());
         Res r = call("POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today(), "amount", 10,
-                "paymentMethod", "bank", "accountId", usdBank, "currencyCode", ccy, "allocations",
+                "paymentMethod", "cheque", "accountId", usdBank, "currencyCode", ccy, "allocations",
                 List.of(Map.of("documentId", bill, "amount", 10))), demoKey());
         assertThat(r.status()).as(r.raw().body()).isEqualTo(400);
         assertThat(r.body().get("message").asString()).contains("has insufficient funds (available " + ccy + " 0.00)");
@@ -222,7 +222,7 @@ class FxGainLossFx1IT extends AccountingFixtures {
         // 5 Dec: pay 400 at 3,950 → relieved at the bill's 3,800, realised loss 60,000.
         BigDecimal fx0 = fxNet(b.org());
         Res paid = moneyAs(b, "POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", d2.toString(),
-                "amount", 400, "paymentMethod", "bank", "currencyCode", ccy, "exchangeRate", 3950, "allocations",
+                "amount", 400, "paymentMethod", "cheque", "currencyCode", ccy, "exchangeRate", 3950, "allocations",
                 List.of(Map.of("documentId", bill, "amount", 400))));
         assertThat(paid.status()).as(paid.raw().body()).isIn(200, 201);
         assertThat(fxNet(b.org()).subtract(fx0)).as("realised loss 400 × 150, no double count")

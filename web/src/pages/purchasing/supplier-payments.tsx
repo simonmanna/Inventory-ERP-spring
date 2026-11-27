@@ -25,6 +25,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { PERMISSIONS } from '@erp/shared';
 import { notify } from '@/lib/notify';
 import { tx } from '@/lib/i18n/tx';
+import { SupplierBankAccountSelect } from '@/features/procurement/supplier-bank-account-select';
 
 const statusVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   posted: 'default',
@@ -37,6 +38,7 @@ interface FormValues {
   amount: string;
   paymentMethod: string;
   accountId: string;
+  supplierBankAccountId: string;
   reference?: string;
   notes?: string;
 }
@@ -70,6 +72,7 @@ export function SupplierPaymentsPage() {
       amount: '',
       paymentMethod: 'cash',
       accountId: '',
+      supplierBankAccountId: '',
     },
   });
 
@@ -82,6 +85,9 @@ export function SupplierPaymentsPage() {
         paymentMethod: values.paymentMethod,
         reference: values.reference || undefined,
         accountId: values.accountId,
+        // purchase readiness H7: a bank transfer names one of the supplier's verified accounts
+        supplierBankAccountId:
+          values.paymentMethod === 'bank' && values.supplierBankAccountId ? values.supplierBankAccountId : undefined,
       });
       notify.success(tx('Payment recorded successfully'));
       setOpen(false);
@@ -91,6 +97,7 @@ export function SupplierPaymentsPage() {
         amount: '',
         paymentMethod: 'cash',
         accountId: '',
+        supplierBankAccountId: '',
       });
     } catch (error) {
       notify.error(error instanceof Error ? error.message : tx('Failed to record payment'));
@@ -211,6 +218,14 @@ export function SupplierPaymentsPage() {
                 </SelectContent>
               </Select>
             </div>
+            {form.watch('paymentMethod') === 'bank' && (
+              <SupplierBankAccountSelect
+                id="supplier-payment-bank-account"
+                partnerId={form.watch('partnerId') || undefined}
+                value={form.watch('supplierBankAccountId')}
+                onChange={(v) => form.setValue('supplierBankAccountId', v)}
+              />
+            )}
             <div className="space-y-2">
               <Label>{tx('Account')}</Label>
               <Select value={form.watch('accountId')} onValueChange={(v) => form.setValue('accountId', v)}>

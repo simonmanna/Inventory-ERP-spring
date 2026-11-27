@@ -111,15 +111,24 @@ public final class SettingRegistry {
         def("costing.landedCost.reapprovalToleranceAmount", "costing", "number",
                 "Landed Cost Re-approval Tolerance (amount)", "… or by more than this amount in the base currency."
                         + " Either threshold triggers re-approval; 0 = any change.", 1000, null, false, ORG_ONLY);
+        // Purchase readiness H7 (owner-approved 2026-11-27): supplier bank-account dual control gates payments.
+        def("procurement.supplierBankVerification", "purchasing", "enum", "Supplier Bank Account Verification",
+                "block = a bank-transfer supplier payment (supplier payments and PO payments) must name one of the"
+                        + " supplier's verified bank accounts (default); off = naming an account is optional (a named"
+                        + " account must still be verified and belong to the supplier).",
+                "block", List.of("off", "block"), false, ORG_ONLY);
         def("procurement.invoiceRef.normalization", "purchasing", "enum", "Supplier Invoice Number Matching",
                 "strict = upper case, trimmed, separators (space - _ / .) ignored, so AB-12 and AB12 are the same"
                         + " invoice (and so are AB-12 and A-B12); exact = upper case and trimmed only.",
                 "strict", List.of("strict", "exact"), false, ORG_ONLY);
-        // Review 2026-11-17 (ACR-4): three-way match. auto_receive keeps the Nest behaviour.
+        // Review 2026-11-17 (ACR-4): three-way match. Purchase readiness H1 (owner-approved 2026-11-27): block is the
+        // default; auto_receive (the Nest behaviour) is opt-in, and a later goods receipt absorbs what a bill received.
         def("procurement.billWithoutReceipt", "purchasing", "enum", "Supplier Bill Without Goods Receipt",
-                "auto_receive = a bill for stock items nobody received yet receives them into stock itself (default);"
-                        + " block = the bill is refused until a goods receipt covers it (three-way match).",
-                "auto_receive", List.of("auto_receive", "block"), false, ORG_ONLY);
+                "block = a bill for stock items is refused until a goods receipt covers it (three-way match, default);"
+                        + " auto_receive = such a bill receives the goods into stock itself, and a goods receipt of the"
+                        + " same supplier and product posted later is matched to that bill instead of adding the stock"
+                        + " again.",
+                "block", List.of("auto_receive", "block"), false, ORG_ONLY);
         def("costing.dimensionEnforcement", "costing", "enum", "Costing Branch Dimension",
                 "off = not checked; warn = costing postings without a branch are listed in the dimension compliance"
                         + " report (default); enforce = a costing posting without a branch is refused.",

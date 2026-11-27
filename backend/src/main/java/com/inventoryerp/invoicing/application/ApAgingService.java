@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.application;
 
+import com.inventoryerp.accounting.application.ApOpenItemsSql;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
@@ -16,36 +17,17 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** AP aging (port of {@code ap-aging.service.ts}): a fresh snapshot (≤ 60 s old, ≤ asOf) when present, else live. */
+/**
+ * AP aging (port of {@code ap-aging.service.ts}): a fresh snapshot (≤ 60 s old, ≤ asOf) when present, else live. In
+ * base currency, net of unapplied supplier payments ({@code unapplied}, per partner and in total), so it ties to the
+ * payable control accounts ({@link ApOpenItemsSql}, purchase readiness B2).
+ */
 @Service
 @Transactional(readOnly = true)
 public class ApAgingService {
 
     private static final long FALLBACK_EPSILON_MS = 60_000L;
     private static final List<String> BUCKETS = List.of("current", "b1_30", "b31_60", "b61_90", "b90p");
-
-    /**
-     * Payables raised by purchase-order receipts (receipt vouchers, P1-7) that no supplier bill has taken over yet:
-     * unbilled receipts less the PO payments not applied to a bill, aged from the first receipt (review 2026-11-17,
-     * ACR-2 — a billed receipt is the bill's open item, ACC-4, and counting it here too doubled the supplier's
-     * balance). Same measure as the PO pay route. Two org parameters.
-     */
-    static final String RECEIPT_VOUCHER_PAYABLES = "SELECT po.\"partnerId\", p.name AS \"partnerName\", v.at AS \"dueDate\", v.at AS \"issueDate\","
-            + " LEAST(po.\"totalAmount\", v.amt) - v.billed - (GREATEST(COALESCE(pp.paid, 0),"
-            + " COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) AS \"amountResidual\" FROM (SELECT"
-            + " g.\"purchaseOrderId\" AS po, MIN(g.\"receivedAt\") AS at, SUM(l.quantity * l.\"unitCost\" * (1 +"
-            + " COALESCE(pl.\"taxRate\", 0) / 100)) AS amt, SUM(LEAST(l.\"billedQuantity\", l.quantity) *"
-            + " l.\"unitCost\" * (1 + COALESCE(pl.\"taxRate\", 0) / 100)) AS billed FROM \"GoodsReceiptLine\" l JOIN"
-            + " \"GoodsReceiptNote\" g ON g.id = l.\"goodsReceiptId\" LEFT JOIN \"PurchaseOrderLine\" pl ON pl.id ="
-            + " l.\"purchaseOrderLineId\" WHERE g.\"organizationId\" = ? AND g.status::text = 'posted' AND"
-            + " g.\"deletedAt\" IS NULL AND l.\"productId\" IS NOT NULL AND g.\"purchaseOrderId\" IS NOT NULL GROUP BY"
-            + " g.\"purchaseOrderId\") v JOIN \"PurchaseOrder\" po ON po.id = v.po LEFT JOIN \"Partner\" p ON p.id ="
-            + " po.\"partnerId\" LEFT JOIN (SELECT \"purchaseOrderId\", SUM(amount) AS paid FROM \"PurchasePayment\""
-            + " WHERE \"organizationId\" = ? GROUP BY \"purchaseOrderId\") pp ON pp.\"purchaseOrderId\" = po.id LEFT"
-            + " JOIN LATERAL (SELECT SUM(a.amount) AS applied FROM \"PurchaseOrderBillApplication\" a WHERE"
-            + " a.\"organizationId\" = po.\"organizationId\" AND a.\"purchaseOrderId\" = po.id AND a.\"releasedAt\" IS"
-            + " NULL) ap ON true WHERE po.status::text <> 'cancelled' AND LEAST(po.\"totalAmount\", v.amt) - v.billed -"
-            + " (GREATEST(COALESCE(pp.paid, 0), COALESCE(po.\"totalPaid\", 0)) - COALESCE(ap.applied, 0)) > 0.005";
 
     private final JdbcClient jdbc;
 
@@ -74,53 +56,74 @@ public class ApAgingService {
                     + " \"organizationId\" = ? AND \"asOf\" = ? ORDER BY \"partnerName\" ASC").params(org, SqlRows.ts(snapshot)));
             Agg agg = aggregate(rows);
             return Obj.of("asOf", snapshot, "buckets", bucketsToString(agg.totals), "total", JsNumbers.dec(agg.grand),
-                    "partners", agg.perPartner, "source", "snapshot");
+                    "unapplied", JsNumbers.dec(agg.unapplied), "partners", agg.perPartner, "source", "snapshot");
         }
+        // Purchase readiness B2 (owner-approved 2026-11-27): base currency — bills at their carrying rate, open
+        // receipt-voucher payables (stocked lines, as the PO pay route) at the receipts' rate — less unapplied supplier
+        // payments as a credit per partner, so the total ties to the payable control accounts (the A5 tie-out measure).
         Map<String, Map<String, Object>> buckets = new LinkedHashMap<>();
-        for (Map<String, Object> bill : SqlRows.list(jdbc.sql("SELECT d.\"partnerId\", p.name AS \"partnerName\","
-                + " d.\"dueDate\", d.\"issueDate\", d.\"amountResidual\" FROM \"Document\" d LEFT JOIN \"Partner\" p"
-                + " ON p.id = d.\"partnerId\" WHERE d.\"organizationId\" = ? AND d.\"documentType\" = 'vendor_bill'"
-                + " AND d.status IN ('posted', 'paid') AND d.\"amountResidual\" > 0 UNION ALL " + RECEIPT_VOUCHER_PAYABLES)
-                .params(org, org, org))) {
+        for (Map<String, Object> bill : SqlRows.list(jdbc.sql("SELECT b.\"partnerId\", b.\"partnerName\", b.\"dueDate\","
+                + " b.\"issueDate\", b.base AS \"amountResidual\" FROM (" + ApOpenItemsSql.OPEN_BILLS + ") b UNION ALL"
+                + " SELECT v.\"partnerId\", v.\"partnerName\", v.\"dueDate\", v.\"issueDate\", round(v.\"amountResidual\" *"
+                + " v.rate, 2) FROM (" + ApOpenItemsSql.RECEIPT_VOUCHER_PAYABLES + ") v").params(org, org, org))) {
             Instant due = (Instant) (bill.get("dueDate") != null ? bill.get("dueDate") : bill.get("issueDate"));
             long days = Math.max(0, (long) Math.floor((requested.toEpochMilli() - due.toEpochMilli()) / 86_400_000.0));
             String bucket = days <= 0 ? "current" : days <= 30 ? "b1_30" : days <= 60 ? "b31_60" : days <= 90 ? "b61_90"
                     : "b90p";
             BigDecimal residual = Money.dec(bill.get("amountResidual"));
             String name = bill.get("partnerName") == null ? "" : (String) bill.get("partnerName");
-            Map<String, Object> e = buckets.computeIfAbsent((String) bill.get("partnerId"), k -> {
-                Map<String, Object> m = Obj.of("partnerId", k, "partnerName", name, "total", Money.ZERO);
-                BUCKETS.forEach(b -> m.put(b, Money.ZERO));
-                return m;
-            });
+            Map<String, Object> e = partnerRow(buckets, (String) bill.get("partnerId"), name);
             e.put(bucket, ((BigDecimal) e.get(bucket)).add(residual));
             e.put("total", ((BigDecimal) e.get("total")).add(residual));
             e.put("partnerName", name);
         }
+        for (Map<String, Object> u : SqlRows.list(jdbc.sql("SELECT u.\"partnerId\", max(pt.name) AS \"partnerName\","
+                + " sum(u.base) AS base FROM (" + ApOpenItemsSql.UNAPPLIED_SUPPLIER_PAYMENTS + ") u LEFT JOIN \"Partner\" pt"
+                + " ON pt.id = u.\"partnerId\" GROUP BY u.\"partnerId\"").params(org))) {
+            Map<String, Object> e = partnerRow(buckets, (String) u.get("partnerId"),
+                    u.get("partnerName") == null ? "" : (String) u.get("partnerName"));
+            e.put("total", ((BigDecimal) e.get("total")).subtract(Money.dec(u.get("base"))));
+        }
         Agg agg = aggregate(new ArrayList<>(buckets.values()));
-        return Obj.of("asOf", asOf, "buckets", bucketsToString(agg.totals), "total", JsNumbers.dec(agg.grand), "partners",
-                agg.perPartner, "source", "live");
+        return Obj.of("asOf", asOf, "buckets", bucketsToString(agg.totals), "total", JsNumbers.dec(agg.grand),
+                "unapplied", JsNumbers.dec(agg.unapplied), "partners", agg.perPartner, "source", "live");
     }
 
-    private record Agg(Map<String, BigDecimal> totals, BigDecimal grand, List<Map<String, Object>> perPartner) {}
+    private static Map<String, Object> partnerRow(Map<String, Map<String, Object>> rows, String partnerId, String name) {
+        return rows.computeIfAbsent(partnerId, k -> {
+            Map<String, Object> m = Obj.of("partnerId", k, "partnerName", name, "total", Money.ZERO);
+            BUCKETS.forEach(b -> m.put(b, Money.ZERO));
+            return m;
+        });
+    }
+
+    private record Agg(Map<String, BigDecimal> totals, BigDecimal grand, BigDecimal unapplied,
+            List<Map<String, Object>> perPartner) {}
 
     private static Agg aggregate(List<Map<String, Object>> rows) {
         Map<String, BigDecimal> totals = new LinkedHashMap<>();
         BUCKETS.forEach(b -> totals.put(b, Money.ZERO));
         BigDecimal grand = Money.ZERO;
+        BigDecimal unapplied = Money.ZERO;
         List<Map<String, Object>> per = new ArrayList<>();
         for (Map<String, Object> p : rows) {
             Map<String, Object> b = new LinkedHashMap<>();
+            BigDecimal bucketed = Money.ZERO;
             for (String k : BUCKETS) {
                 BigDecimal v = Money.dec(p.get(k));
                 totals.merge(k, v, BigDecimal::add);
+                bucketed = bucketed.add(v);
                 b.put(k, JsNumbers.dec(v));
             }
-            grand = grand.add(Money.dec(p.get("total")));
+            BigDecimal total = Money.dec(p.get("total"));
+            // B2: unapplied supplier payments are the part of the partner's total no bucket holds (total = Σ − unapplied)
+            BigDecimal partnerUnapplied = bucketed.subtract(total).max(Money.ZERO);
+            unapplied = unapplied.add(partnerUnapplied);
+            grand = grand.add(total);
             per.add(Obj.of("partnerId", p.get("partnerId"), "partnerName", p.get("partnerName"), "total",
-                    JsNumbers.dec(Money.dec(p.get("total"))), "buckets", b));
+                    JsNumbers.dec(total), "unapplied", JsNumbers.dec(partnerUnapplied), "buckets", b));
         }
-        return new Agg(totals, grand, per);
+        return new Agg(totals, grand, unapplied, per);
     }
 
     private static Map<String, Object> bucketsToString(Map<String, BigDecimal> t) {

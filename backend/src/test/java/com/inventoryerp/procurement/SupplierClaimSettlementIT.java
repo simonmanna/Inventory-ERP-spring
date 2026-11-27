@@ -186,7 +186,7 @@ class SupplierClaimSettlementIT extends AccountingFixtures {
         // Gap fix h03-F7: claims are capped at the bill's value (100 net), so the open amount is lowered by a payment
         // (118 → 68) rather than by a first claim.
         String payment = demoMoney("POST", "/supplier-payments", Map.of("partnerId", supplier, "paymentDate", today(),
-                "amount", 50, "paymentMethod", "bank", "allocations", List.of(Map.of("documentId", bill, "amount",
+                "amount", 50, "paymentMethod", "cheque", "allocations", List.of(Map.of("documentId", bill, "amount",
                         50)))).get("id").asString();
         assertThat(residual(bill)).isEqualByComparingTo("68");
         String second = claim(supplier, "damage", 100, Map.of("vendorBillId", bill));

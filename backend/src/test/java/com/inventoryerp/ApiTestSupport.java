@@ -171,6 +171,10 @@ public abstract class ApiTestSupport {
                     + "|deliveries/[^/]+/(fail|return|approve|issue|pod-correction|confirm|customer-weight|cancel)"
                     + "|returns/[^/]+/(receive|inspect|close)|rebates/accruals/[^/]+/settle))(\\?.*)?$");
 
+    /** PATCH routes that refuse a request without an Idempotency-Key (purchase readiness: debit-note post / reverse). */
+    private static final java.util.regex.Pattern PATCH_KEY_REQUIRED = java.util.regex.Pattern.compile(
+            "^/procurement/debit-notes/[^/]+/(post|reverse)(\\?.*)?$");
+
     /** Header name (never sent) that suppresses the automatic Idempotency-Key. */
     protected static final String NO_IDEMPOTENCY_KEY = "X-Test-No-Idempotency-Key";
 
@@ -183,7 +187,8 @@ public abstract class ApiTestSupport {
                     b.header(k, v);
                 }
             });
-            if (!suppress && "POST".equals(method) && KEY_REQUIRED.matcher(path).matches()
+            if (!suppress && ("POST".equals(method) && KEY_REQUIRED.matcher(path).matches()
+                    || "PATCH".equals(method) && PATCH_KEY_REQUIRED.matcher(path).matches())
                     && headers.keySet().stream().noneMatch("Idempotency-Key"::equalsIgnoreCase)) {
                 b.header("Idempotency-Key", UUID.randomUUID().toString());
             }
@@ -434,6 +439,36 @@ public abstract class ApiTestSupport {
         String email = "some-" + UUID.randomUUID() + "@demo.test";
         createUser(demoOrg, email, "Some@12345", role);
         return login("DEMO", email, "Some@12345");
+    }
+
+    private static final Map<String, String> SUPPLIER_BANK_ACCOUNTS = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile String bankVerifierToken;
+
+    /**
+     * Purchase readiness H7: a verified bank account of a DEMO supplier (registered by the admin, verified by another
+     * user, as the dual control requires), so a bank transfer to the supplier may name it. One per supplier.
+     */
+    protected String verifiedSupplierBankAccount(String partnerId) {
+        return SUPPLIER_BANK_ACCOUNTS.computeIfAbsent(partnerId, k -> {
+            Res added = as("POST", "/procurement/suppliers/" + k + "/bank-accounts", Map.of("bankName", "Test Bank",
+                    "accountName", "Supplier account", "accountNumber", "0001234567"));
+            assertThat(added.status()).as(added.raw().body()).isEqualTo(201);
+            String id = added.body().get("id").asString();
+            if (bankVerifierToken == null) {
+                bankVerifierToken = tokenHolding(Permissions.SUPPLIER__VERIFY_BANK);
+            }
+            Res verified = call("POST", "/procurement/suppliers/bank-accounts/" + id + "/verify", null,
+                    bankVerifierToken);
+            assertThat(verified.status()).as(verified.raw().body()).isIn(200, 201);
+            return id;
+        });
+    }
+
+    /** {@link #verifiedSupplierBankAccount} of a DEMO purchase order's supplier. */
+    protected String poSupplierBankAccount(String purchaseOrderId) {
+        Res po = as("GET", "/procurement/purchase-orders/" + purchaseOrderId, null);
+        assertThat(po.status()).as(po.raw().body()).isEqualTo(200);
+        return verifiedSupplierBankAccount(po.body().get("partnerId").asString());
     }
 
     /** Every permission of the catalogue except {@code without} (and the customer-portal marker: a staff user). */
