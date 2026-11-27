@@ -323,16 +323,15 @@ class ManufacturingLifecycleIT extends InventoryAuditSupport {
         String s2 = order.get("stages").get(1).get("id").asString();
         okA(201, "POST", PO + id + "/confirm", null);
         keyedOk("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 50));
-        // New defect (reported): stage consumption does not reduce the order's stock reservation, which stays at the
-        // planned quantity until completion, so `reservations` shows over_reserved while a multi-stage order is open.
-        List<String> openReservation = List.of("reservations");
-        green("stage 1 partial", openReservation);
+        // IPR D-2 (fixed by stream H): stage consumption reduces the order's stock reservation, so `reservations`
+        // stays green while a multi-stage order is open.
+        green("stage 1 partial");
         keyedOk("/manufacturing/production-stages/" + s1 + "/output", Map.of("qtyGood", 50, "complete", true));
         keyedOk("/manufacturing/production-stages/" + s2 + "/issue", Map.of("lines", List.of(Map.of("productId",
                 crushed, "quantity", 100))));
         keyedOk("/manufacturing/production-stages/" + s2 + "/conversion-costs", Map.of("amount", 40, "kind",
                 "labour"));
-        green("stage 2 open with WIP", openReservation);
+        green("stage 2 open with WIP");
         JsonNode done = keyedOk("/manufacturing/production-stages/" + s2 + "/output", Map.of("qtyGood", 100,
                 "complete", true));
         assertThat(done.get("status").asString()).isEqualTo("completed");
