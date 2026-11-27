@@ -218,6 +218,15 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
     offline_price_variance`) records the variance, and the push result carries `priceVariance`. Online checkout still
     refuses with "The price changed. Refresh the quote before payment." Test `SyncDeviceIntegrityIT`.
 
+16. **A refund restocks against the sale's own issue rows (IPR 1d SW-1 / X-5; awaiting owner approval).** A restock
+    refund returns the refunded share of what the line still has out (its issue rows by order line / invoice item,
+    net of earlier returns such as a line void), through the engine's linked return: each product and recipe, combo or
+    extra component comes back to the location, lot and serial it left, at its issue cost, with `reversesLedgerId`.
+    Before, the restock was the gross issued quantity × refunded / sold, to the sale location, into a new lot: a void
+    followed by a refund restocked the voided units twice. A part refund of a plain serial-tracked line is 400 "Tracked
+    returns require an identified stock return; …". Lines sold before R4 (issue rows without a source line) keep the
+    old proportional restock.
+
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
 - **Rental POS mode** (owner-approved): `PATCH /pos/settings` accepts `posMode` = `rental` in addition to Nest's

@@ -86,9 +86,9 @@ public class InventoryIntegrityService {
 
     /**
      * Report-only checks that only inform: always ok (so the monitor never raises them), their rows show the scale of a
-     * known gap (unlinked restocks: P1 1d; period-shifted movements: R3).
+     * known gap (period-shifted movements: R3). Unlinked restocks left this list in IPR 1d: they fail for new rows.
      */
-    public static final List<String> INFORMATIONAL_CHECKS = List.of(UNLINKED_RESTOCKS, PERIOD_SHIFTED);
+    public static final List<String> INFORMATIONAL_CHECKS = List.of(PERIOD_SHIFTED);
 
     /** Age after which a pending or processing stock-posting job is stale. */
     public static final Duration STOCK_JOB_MAX_AGE = Duration.ofHours(6);
@@ -873,28 +873,42 @@ public class InventoryIntegrityService {
                 QTY_TOLERANCE, f, null);
     }
 
-    /** Informational (P1 1d gap): undo/restock rows without {@code reversesLedgerId}, per source type. */
+    /**
+     * Undo / restock rows without {@code reversesLedgerId}, per source type and direction (all of them listed, history
+     * included). IPR 1d: a source type is linked once it has written a linked row; from then on an unlinked row of that
+     * type written after its first linked one ({@code afterLinked}) is a regression and fails the check. Rows written
+     * before (history, never repaired) and source types still unlinked (deferred: vendor-bill cancel, production
+     * reversal) are listed only. Self-calibrating: no cut-off date to configure.
+     */
     private IntegrityCheck unlinkedRestocks(String loc) {
         String locL = loc == null ? "" : " AND l.\"locationId\" = :loc";
         String in = types(1);
         String out = types(-1);
         String both = types(0);
         Found f = find("""
+                WITH firsts AS (SELECT x."referenceType" AS rt, MIN(x."createdAt") AS at FROM "InventoryLedger" x
+                                 WHERE x."organizationId" = :org AND x."reversesLedgerId" IS NOT NULL
+                                   AND x."referenceType" IN (%s, %s, %s, 'fleet_work_order')
+                                 GROUP BY 1)
                 SELECT l."referenceType", CASE WHEN l."quantityChange" > 0 THEN 'inflow' ELSE 'outflow' END AS direction,
                        count(*) AS rows, SUM(abs(l."quantityChange")) AS quantity, MIN(l."createdAt") AS "firstAt",
-                       MAX(l."createdAt") AS "lastAt", count(*) OVER () AS failures_total
-                  FROM "InventoryLedger" l
+                       MAX(l."createdAt") AS "lastAt", MIN(fi.at) AS "linkedSince",
+                       count(*) FILTER (WHERE fi.at IS NOT NULL AND l."createdAt" > fi.at) AS "afterLinked",
+                       count(*) OVER () AS failures_total
+                  FROM "InventoryLedger" l LEFT JOIN firsts fi ON fi.rt = l."referenceType"
                  WHERE l."organizationId" = :org AND l."reversesLedgerId" IS NULL AND l."quantityChange" <> 0
                    AND ((l."referenceType" IN (%s) AND l."quantityChange" > 0)
                      OR (l."referenceType" IN (%s) AND l."quantityChange" < 0)
                      OR l."referenceType" IN (%s)
                      OR (l."referenceType" = 'fleet_work_order' AND l.type::text = 'return_in'))%s
                  GROUP BY 1, 2
-                 ORDER BY count(*) DESC, 1, 2""".formatted(in, out, both, locL), params(loc, null));
+                 ORDER BY count(*) DESC, 1, 2""".formatted(in, out, both, in, out, both, locL), params(loc, null));
         long rows = f.rows().stream().mapToLong(r -> ((Number) r.get("rows")).longValue()).sum();
-        return informational(UNLINKED_RESTOCKS, "informational: restock / undo rows (by source type) that do not link"
-                + " the movement they undo (reversesLedgerId)", f, rows + " unlinked row(s) in " + f.total()
-                + " (source type, direction) group(s)");
+        long after = f.rows().stream().mapToLong(r -> ((Number) r.get("afterLinked")).longValue()).sum();
+        return new IntegrityCheck(UNLINKED_RESTOCKS, after == 0, false, "restock / undo rows (by source type) link the"
+                + " movement they undo (reversesLedgerId); an unlinked row written after its source type's first linked"
+                + " row fails", null, after, f.total() > f.rows().size(), f.rows(), rows + " unlinked row(s) in "
+                + f.total() + " (source type, direction) group(s); " + after + " written after their type was linked");
     }
 
     private static String types(int direction) {

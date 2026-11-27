@@ -137,10 +137,52 @@ public final class StockMove {
     BigDecimal traceFactor;
 
     /**
+     * IPR X-3: a move posted by a manual stock document (stock-out, waste, adjustment approval, transfer, direct stock
+     * in / out). The engine refuses it into or out of a quarantine or rental virtual location
+     * ({@link StockService#QUARANTINE_CODES}, {@link StockService#RENTAL_HELD_CODES}), except a transfer into a
+     * quarantine location (a hold). Count variances are not manual moves.
+     */
+    public boolean manualMove;
+    /**
+     * IPR X-3: the move belongs to the flow that owns a quarantine location (quality / QC release, rejection,
+     * downgrade, returns inspection), so it may issue from it. Callers not yet passing it are recognised by their
+     * source type ({@link StockService#QUARANTINE_OWNER_SOURCES}).
+     */
+    public boolean quarantineFlow;
+    /**
+     * IPR E-1a (F5): opt in to honour active sales-order reservations ({@code sales_order_line}) at the cell: an issue
+     * or transfer that would eat into stock reserved for a sales order is refused, except the reservations of
+     * {@link #reservationHolderIds}. A POS / offline sale drain is refused only where the existing availability rules
+     * would refuse it (stock policy {@code block}, a lot-tracked block, {@link #requireAvailable}).
+     */
+    public boolean honourSalesReservations;
+    /** IPR E-1a: the reservation source ids ({@code StockReservation.sourceId}) the caller holds itself. */
+    public List<String> reservationHolderIds;
+
+    /**
      * Phase A A3 / I2 M-6: the exact base-unit quantity of an issue whose document quantity is in another unit, when
      * the caller rounds cumulatively (per delivery-order line, not per load). Null = convert {@code quantity}.
      */
     public BigDecimal baseQuantity;
+
+    /** IPR X-3: a manual stock document move (see {@link #manualMove}). */
+    public StockMove manual() {
+        this.manualMove = true;
+        return this;
+    }
+
+    /** IPR X-3: a move of the flow owning a quarantine location (see {@link #quarantineFlow}). */
+    public StockMove quarantineFlow() {
+        this.quarantineFlow = true;
+        return this;
+    }
+
+    /** IPR E-1a: honour sales-order reservations except those of {@code holderIds}. */
+    public StockMove honourReservations(List<String> holderIds) {
+        this.honourSalesReservations = true;
+        this.reservationHolderIds = holderIds;
+        return this;
+    }
 
     /** See {@link #baseQuantity}. */
     public StockMove baseQuantity(BigDecimal v) {

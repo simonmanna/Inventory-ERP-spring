@@ -370,7 +370,8 @@ public class StockReversalService {
         }
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT l.*, b.\"batchNumber\" AS \"_batchNumber\","
                         + " b.\"expiryDate\" AS \"_expiryDate\", s.\"serialNumber\" AS \"_serialNumber\","
-                        + " p.\"batchTracking\" AS \"_batchTracking\" FROM \"InventoryLedger\" l"
+                        + " p.\"batchTracking\" AS \"_batchTracking\", p.\"serialTracking\" AS \"_serialTracking\""
+                        + " FROM \"InventoryLedger\" l"
                         + " LEFT JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\""
                         + " LEFT JOIN \"InventorySerial\" s ON s.id = l.\"serialId\""
                         + " JOIN \"Product\" p ON p.id = l.\"productId\""
@@ -428,6 +429,10 @@ public class StockReversalService {
                         .batch(batchTracking ? (batchNumber != null ? batchNumber : "REV-" + p.reversalSourceId()) : null)
                         .expiry(batchTracking && r.get("_expiryDate") != null
                                 ? JsonConfig.toJsIso((Instant) r.get("_expiryDate")) : null);
+                if (batchTracking && r.get("batchId") != null) {
+                    // IPR C-1: the units go back into the lot row they left (same location), not a new lot.
+                    m.returnBatchId = str(r, "batchId");
+                }
                 Received res = stock.receive(m);
                 moved.merge(str(r, "productId"), res.totalValue().negate(), BigDecimal::add);
             } else {
@@ -436,6 +441,20 @@ public class StockReversalService {
                         .people(str(r, "responsibleById"), user).serials(serials).batch(batchNumber)
                         .moveType("reversal_out").strategy(batchNumber != null ? "MANUAL" : null).skipGl()
                         .reverses(str(r, "id")).requireAvailable(strictOnHand);
+                if (serials == null && Boolean.TRUE.equals(r.get("_serialTracking"))) {
+                    // IPR C-1: a receipt row of several serial units takes back the units it received (receiptRef).
+                    List<Map<String, Object>> received = receivedSerials(org, r);
+                    List<String> inStock = received.stream().filter(x -> "in_stock".equals(x.get("status"))
+                            && str(r, "locationId").equals(str(x, "locationId"))).map(x -> str(x, "serialNumber"))
+                            .toList();
+                    if (strictOnHand && inStock.size() < received.size()) {
+                        throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, inStock.size(),
+                                received.size(), p.referenceId());
+                    }
+                    if (!inStock.isEmpty() && inStock.size() <= qty.intValue()) {
+                        m.serials(inStock);
+                    }
+                }
                 Issued res;
                 if (strictOnHand) {
                     String key = cellKey(r);
@@ -557,6 +576,130 @@ public class StockReversalService {
         return ApiException.badRequest(p.shortfallLabel() + ": only " + JsNumbers.dec(n) + " of " + JsNumbers.dec(total)
                 + " units of " + what + " are still in " + location + held + "."
                 + (p.shortfallAdvice() == null ? "" : " " + p.shortfallAdvice()));
+    }
+
+    /**
+     * The serial units a receipt row brought in: {@code receiptRef} = its reference type (or {@code receipt}) : its
+     * reference id (or ledger code), in the row's lot when it has one. Any status.
+     */
+    private List<Map<String, Object>> receivedSerials(String org, Map<String, Object> r) {
+        String ref = (r.get("referenceType") != null ? str(r, "referenceType") : "receipt") + ":"
+                + (r.get("referenceId") != null ? str(r, "referenceId") : str(r, "ledgerCode"));
+        return SqlRows.list(jdbc.sql("SELECT id, \"serialNumber\", status::text AS status, \"locationId\" FROM"
+                        + " \"InventorySerial\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"receiptRef\" = ?"
+                        + " AND (?::text IS NULL OR \"batchId\" = ? OR \"batchId\" IN (SELECT b2.id FROM \"InventoryBatch\" b2"
+                        + " JOIN \"InventoryBatch\" b1 ON b1.id = ? AND b2.\"organizationId\" = b1.\"organizationId\""
+                        + " AND b2.\"productId\" = b1.\"productId\" AND b2.\"batchNumber\" = b1.\"batchNumber\"))"
+                        + " ORDER BY \"serialNumber\"")
+                .params(org, str(r, "productId"), ref, str(r, "batchId"), str(r, "batchId"), str(r, "batchId")));
+    }
+
+    private ApiException serialShortfall(String label, String advice, Map<String, Object> r, int inStock, int received,
+            String documentId) {
+        String product = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(str(r, "productId"))
+                .query(String.class).optional().orElse(str(r, "productId"));
+        String location = jdbc.sql("SELECT name FROM \"InventoryLocation\" WHERE id = ?").param(str(r, "locationId"))
+                .query(String.class).optional().orElse(str(r, "locationId"));
+        return ApiException.badRequest((label == null ? "Cannot take the stock back" : label) + ": only " + inStock
+                + " of " + received + " serial units of " + product + " received by " + documentId + " are still in "
+                + location + "." + (advice == null ? "" : " " + advice));
+    }
+
+    /** Parameters of {@link #issueBackReceipt}. {@code moveType} null = {@code return_to_supplier}. */
+    public record IssueBackReceipt(String referenceType, String referenceId, String sourceType, String sourceId,
+            String moveType, String reference, String notes, Instant date, String shortfallLabel,
+            String shortfallAdvice) {}
+
+    /** One movement {@link #issueBackReceipt} posted and the receipt row it takes back. */
+    public record IssuedBack(String ledgerCode, String reversesLedgerId, String productId, String variantId,
+            String locationId, BigDecimal quantity, BigDecimal totalValue) {}
+
+    /**
+     * IPR 1d (engine helper for the deferred F6 / SW-2 vendor-bill cancel): issue back exactly what the receipt rows of
+     * ({@code referenceType}, {@code referenceId}) still hold — each inflow row's quantity net of earlier take-backs
+     * ({@code reversesLedgerId}, net of their own reversals) — pinned to the row's lot and its received serial units,
+     * with an on-hand check whatever {@code inventory.allowNegativeStock} says ({@code requireAvailable}). Each new row
+     * names its receipt row ({@code reversesLedgerId}). Quantity only ({@code skipGl}): the caller posts the journal
+     * from the returned values (the layers' own cost). A shortfall is refused with {@code "<shortfallLabel>: only N of
+     * M units of <product> received by <id> are still in <location>. <shortfallAdvice>"}; a second call issues nothing
+     * more. Lock order: the caller's document (L1), the receipt rows {@code FOR UPDATE ORDER BY id} (L2), then the
+     * engine (L3 → L6). Runs in the caller's transaction.
+     */
+    @Transactional
+    public List<IssuedBack> issueBackReceipt(IssueBackReceipt p) {
+        String org = org();
+        List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT l.*, b.\"batchNumber\" AS \"_batchNumber\","
+                        + " p.\"serialTracking\" AS \"_serialTracking\" FROM \"InventoryLedger\" l"
+                        + " LEFT JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\" JOIN \"Product\" p ON p.id = l.\"productId\""
+                        + " WHERE l.\"organizationId\" = ? AND l.\"referenceType\" = ? AND l.\"referenceId\" = ?"
+                        + " AND l.\"quantityChange\" > 0 AND l.\"valuationComponent\" IS NULL"
+                        + " ORDER BY l.\"createdAt\" ASC, l.seq ASC")
+                .params(org, p.referenceType(), p.referenceId()));
+        if (rows.isEmpty()) {
+            throw ApiException.badRequest(p.referenceId() + " has no received stock to issue back");
+        }
+        String[] ids = rows.stream().map(r -> str(r, "id")).toArray(String[]::new);
+        jdbc.sql("SELECT id FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND id = ANY(?::text[]) ORDER BY id"
+                + " FOR UPDATE").params(org, ids).query().listOfRows();
+        Map<String, BigDecimal> left = new LinkedHashMap<>();
+        rows.forEach(r -> left.put(str(r, "id"), dec(r, "quantityChange")));
+        jdbc.sql("SELECT r.\"reversesLedgerId\" AS id, SUM(-r.\"quantityChange\" - COALESCE(u.q, 0)) AS back"
+                        + " FROM \"InventoryLedger\" r LEFT JOIN (SELECT x.\"reversesLedgerId\" AS rid,"
+                        + " SUM(x.\"quantityChange\") AS q FROM \"InventoryLedger\" x WHERE x.\"organizationId\" = ?"
+                        + " AND x.\"quantityChange\" > 0 GROUP BY 1) u ON u.rid = r.id"
+                        + " WHERE r.\"organizationId\" = ? AND r.\"reversesLedgerId\" = ANY(?::text[])"
+                        + " AND r.\"quantityChange\" < 0 GROUP BY 1")
+                .params(org, org, ids)
+                .query((rs, n) -> left.merge(rs.getString("id"), rs.getBigDecimal("back").negate(), BigDecimal::add))
+                .list();
+        List<Map<String, Object>> ordered = new ArrayList<>(rows);
+        ordered.sort(java.util.Comparator.comparing((Map<String, Object> r) -> str(r, "productId"))
+                .thenComparing(r -> r.get("variantId") == null ? "" : str(r, "variantId"))
+                .thenComparing(r -> str(r, "locationId")));
+        List<IssuedBack> out = new ArrayList<>();
+        for (Map<String, Object> r : ordered) {
+            BigDecimal qty = left.get(str(r, "id"));
+            if (qty == null || qty.signum() <= 0) {
+                continue;
+            }
+            StockMove m = StockMove.of(str(r, "productId"), str(r, "locationId"), qty).variant(str(r, "variantId"))
+                    .source(p.sourceType(), p.sourceId()).reference(p.reference()).notes(p.notes()).date(p.date())
+                    .moveType(p.moveType() != null ? p.moveType() : "return_to_supplier").skipGl()
+                    .requireAvailable(true).reverses(str(r, "id"));
+            m.pinnedBatchIds = r.get("batchId") != null ? List.of(str(r, "batchId")) : null;
+            if (Boolean.TRUE.equals(r.get("_serialTracking"))) {
+                List<Map<String, Object>> received = receivedSerials(org, r);
+                List<String> inStock = received.stream().filter(x -> "in_stock".equals(x.get("status"))
+                        && str(r, "locationId").equals(str(x, "locationId"))).map(x -> str(x, "serialNumber")).toList();
+                if (r.get("serialId") != null) {
+                    received = List.of(r);
+                    inStock = jdbc.sql("SELECT \"serialNumber\" FROM \"InventorySerial\" WHERE id = ? AND status ="
+                                    + " 'in_stock' AND \"locationId\" = ?").params(str(r, "serialId"), str(r, "locationId"))
+                            .query(String.class).list();
+                }
+                if (inStock.size() < Math.min(received.size(), qty.intValue())) {
+                    throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, inStock.size(), received.size(),
+                            p.referenceId());
+                }
+                m.serials(inStock.size() > qty.intValue() ? inStock.subList(0, qty.intValue()) : inStock);
+            }
+            Issued res;
+            try {
+                res = stock.issue(m);
+            } catch (ApiException e) {
+                String msg = e.getMessage() == null ? "" : e.getMessage();
+                if (!msg.startsWith("Insufficient stock") && !msg.startsWith("Serial number(s) not available")) {
+                    throw e;
+                }
+                throw shortfall(new LedgerSource(p.referenceType(), p.referenceId(), p.sourceType(), p.sourceId(),
+                        List.of(), p.notes(), null, p.shortfallLabel() != null ? p.shortfallLabel()
+                                : "Cannot issue back " + p.referenceId(), p.shortfallAdvice()), r,
+                        str(r, "_batchNumber"), Money.ZERO, qty, Money.ZERO);
+            }
+            out.add(new IssuedBack(res.ledgerCode(), str(r, "id"), str(r, "productId"), str(r, "variantId"),
+                    str(r, "locationId"), qty, res.totalValue()));
+        }
+        return out;
     }
 
     /**
