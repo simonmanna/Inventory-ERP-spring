@@ -38,7 +38,7 @@ const PoChangeApprovalsPage = lazy(() => import('./s2p/ControlsPages').then((m) 
 const SupplierClaimsPage = lazy(() => import('./s2p/ControlsPages').then((m) => ({ default: m.SupplierClaimsPage })));
 const EmergencyPurchasesPage = lazy(() => import('./s2p/QualityPages').then((m) => ({ default: m.EmergencyPurchasesPage })));
 const InspectionsPage = lazy(() => import('./s2p/QualityPages').then((m) => ({ default: m.InspectionsPage })));
-const ProcurementDashboardPage = lazy(() => import('./s2p/PlanningPages').then((m) => ({ default: m.ProcurementDashboardPage })));
+const ProcurementDashboardPage = lazy(() => import('./dashboard/ProcurementDashboardPage').then((m) => ({ default: m.ProcurementDashboardPage })));
 const ReplenishmentPage = lazy(() => import('./s2p/PlanningPages').then((m) => ({ default: m.ReplenishmentPage })));
 const SupplierPortalPage = lazy(() => import('./s2p/SupplierPortalPage').then((m) => ({ default: m.SupplierPortalPage })));
 
