@@ -1,7 +1,9 @@
 package com.inventoryerp.kernel.common;
 
+import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -58,6 +60,8 @@ public final class Savepoints {
         Isolation previous = ISOLATION.get();
         Isolation mine = new Isolation();
         ISOLATION.set(mine);
+        List<TransactionSynchronization> before = TransactionSynchronizationManager.isSynchronizationActive()
+                ? TransactionSynchronizationManager.getSynchronizations() : null;
         try {
             run(jdbc, () -> {
                 body.run();
@@ -66,6 +70,9 @@ public final class Savepoints {
                             + " failure was swallowed; the block is rolled back");
                 }
             });
+        } catch (RuntimeException | Error e) {
+            dropSynchronizationsSince(before);
+            throw e;
         } finally {
             if (previous == null) {
                 ISOLATION.remove();
@@ -73,6 +80,24 @@ public final class Savepoints {
                 ISOLATION.set(previous);
             }
         }
+    }
+
+    /**
+     * After-commit callbacks ({@code AfterCommit.run}, e.g. {@code journal.posted}) registered inside a block the
+     * savepoint rolled back announce work that no longer exists: keep only the synchronizations registered before it.
+     * Spring has no unregister, so the list is rebuilt with the earlier ones (it is ordered on read, not on insert).
+     */
+    static void dropSynchronizationsSince(List<TransactionSynchronization> before) {
+        if (before == null || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        List<TransactionSynchronization> now = TransactionSynchronizationManager.getSynchronizations();
+        if (now.size() <= before.size()) {
+            return;
+        }
+        TransactionSynchronizationManager.clearSynchronization();
+        TransactionSynchronizationManager.initSynchronization();
+        before.forEach(TransactionSynchronizationManager::registerSynchronization);
     }
 
     /**
