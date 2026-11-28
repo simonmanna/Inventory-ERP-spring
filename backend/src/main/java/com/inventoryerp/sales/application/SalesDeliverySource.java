@@ -44,6 +44,22 @@ public class SalesDeliverySource implements DeliverySourcePort {
 
     private com.inventoryerp.inventory.application.StockReservationService reservations;
 
+    private SalesRevenueDeferralService deferrals;
+
+    /** ADR-S094 C2b: revenue invoiced before dispatch follows the goods. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setDeferrals(@org.springframework.context.annotation.Lazy SalesRevenueDeferralService deferrals) {
+        this.deferrals = deferrals;
+    }
+
+    /** ADR-S094 C2b: release the revenue of what left on the trip, or hold again what came back. */
+    @Override
+    public void deliveryChanged(String sourceId, String loadId, java.time.Instant at) {
+        if (deferrals != null) {
+            deferrals.deliveryChanged(sourceId, loadId, at);
+        }
+    }
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setReservations(com.inventoryerp.inventory.application.StockReservationService reservations) {
         this.reservations = reservations;

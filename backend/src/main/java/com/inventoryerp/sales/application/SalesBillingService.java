@@ -66,6 +66,18 @@ public class SalesBillingService {
         this.creditNotes = creditNotes;
     }
 
+    private SalesRevenueDeferralService deferrals;
+
+    private com.inventoryerp.invoicing.application.DocumentLineDimensionService lineDimensions;
+
+    /** ADR-S094 C2b: revenue invoiced before delivery follows posts, cancellations and quantity credits. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeferrals(SalesRevenueDeferralService deferrals,
+            com.inventoryerp.invoicing.application.DocumentLineDimensionService lineDimensions) {
+        this.deferrals = deferrals;
+        this.lineDimensions = lineDimensions;
+    }
+
     /** What can be invoiced now, per line, plus deposits of the order and its invoices. */
     @Transactional(readOnly = true)
     public Map<String, Object> preview(String orderId) {
@@ -442,6 +454,109 @@ public class SalesBillingService {
                 org())) {
             deposits.consume(str(k.get("dp")), documentId, dec(k.get("net")), "deduction");
         }
+        // ADR-S094 C2b: what the invoice bills beyond what has left is held as a contract liability.
+        if (deferrals != null) {
+            deferrals.invoicePosted(documentId);
+        }
+    }
+
+    /**
+     * ADR-S094 C2b, inside the cancelling transaction of a posted invoice ({@link SalesInvoicePostGuard#afterCancel}):
+     * its journal entry was just reversed, so the revenue it deferred is dropped too.
+     */
+    @Transactional
+    public void afterCancel(String documentId) {
+        if (deferrals != null) {
+            deferrals.invoiceCancelled(documentId);
+        }
+    }
+
+    /**
+     * ADR-S094 C2b (§3.6): credit what a line invoiced beyond what was delivered, then close the line short. Per posted
+     * invoice that billed the line, newest first (the units still deferred), a posted quantity credit note against that
+     * invoice at its price and tax, on the revenue account the invoice line posted to, linked to the line. The deferral
+     * then releases against the contract liability (net Dr contract liability + VAT / Cr receivable) and the
+     * undelivered remainder of the line is closed short. Refused when nothing invoiced waits for delivery.
+     */
+    @Transactional
+    public Map<String, Object> creditUndelivered(String orderId, String lineId, String reason) {
+        Map<String, Object> o = orders.lock(orderId);
+        if (!SalesOrderService.OPEN.contains(o.get("status"))) {
+            throw ApiException.badRequest("Only confirmed orders can be closed short");
+        }
+        if (blank(reason)) {
+            throw ApiException.badRequest("reason should not be empty");
+        }
+        Map<String, Object> l = db.row("SELECT * FROM \"SalesOrderLine\" WHERE id = ? AND \"orderId\" = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE", lineId, orderId, org());
+        if (l == null) {
+            throw ApiException.notFound("Order line not found");
+        }
+        if (l.get("closedShortAt") != null) {
+            throw ApiException.badRequest("Line is already closed short");
+        }
+        BigDecimal left = deferrals.undelivered(orderId, lineId);
+        if (left.signum() <= 0) {
+            throw ApiException.badRequest("Nothing invoiced on this line is waiting for delivery");
+        }
+        BigDecimal credited = left;
+        List<Object> notes = new ArrayList<>();
+        for (Map<String, Object> inv : db.rows("""
+                SELECT d.id, d."documentNumber", k."documentLineId", dl."unitPrice", dl."discountPercent", dl."taxId",
+                       dl."taxInclusive", dl.dimensions::text AS dims,
+                       k.quantity - COALESCE((SELECT sum(ck.quantity) FROM "SalesInvoiceLink" ck
+                                               JOIN "Document" cn ON cn.id = ck."documentId"
+                                              WHERE ck."orderLineId" = k."orderLineId" AND ck.kind = 'credit_note'
+                                                AND cn.status::text IN ('posted', 'paid') AND cn."reversedDocumentId" = d.id),
+                                             0) AS open
+                  FROM "SalesInvoiceLink" k
+                  JOIN "Document" d ON d.id = k."documentId"
+                  JOIN "DocumentLine" dl ON dl.id = k."documentLineId"
+                 WHERE k."orderLineId" = ? AND k."organizationId" = ? AND k.kind = 'regular'
+                   AND d.status::text IN ('posted', 'paid')
+                 ORDER BY d."postedAt" DESC NULLS LAST, d."createdAt" DESC, k."documentLineId" DESC""", lineId, org())) {
+            BigDecimal qty = left.min(dec(inv.get("open")));
+            if (qty.signum() <= 0) {
+                continue;
+            }
+            String account = deferrals.revenueAccount(str(inv.get("documentLineId")));
+            Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(o.get("partnerId")), LocalDate.now(
+                    BusinessZone.get()).toString(), null, str(o.get("number")), "Not delivered: "
+                            + qty.stripTrailingZeros().toPlainString() + " of " + l.get("description") + " invoiced on "
+                            + inv.get("documentNumber") + ", sales order " + o.get("number") + " (" + reason.trim()
+                            + "). The line carries no product, so posting does not move stock.", str(inv.get("id")),
+                    List.of(new LineInput(null, null, null, null, account, "Not delivered: " + l.get("description"), qty,
+                            dec(inv.get("unitPrice")), dec(inv.get("discountPercent")), null, null, null, "manual",
+                            str(inv.get("taxId")), null, Boolean.TRUE.equals(inv.get("taxInclusive")), null))));
+            String id = str(cn.get("id"));
+            String cnLineId = str(db.row("SELECT id FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"organizationId\""
+                    + " = ? ORDER BY \"lineNumber\" LIMIT 1", id, org()).get("id"));
+            // The credit carries the invoice line's dimensions, so revenue by cost centre / dimension nets exactly.
+            Map<String, Object> dims = SalesRevenueDeferralService.dimensions(inv.get("dims"));
+            if (dims != null) {
+                lineDimensions.set(id, List.of(new com.inventoryerp.invoicing.application.DocumentLineDimensionService
+                        .LineDimensions(cnLineId, dims)));
+            }
+            creditNotes.post(id, "none");
+            link(orderId, lineId, id, "credit_note", qty, BigDecimal.ZERO, cnLineId);
+            db.update(SalesCreditFlowService.MARK_KIND, "quantity", id, org());
+            Map<String, Object> posted = db.row("SELECT \"documentNumber\" FROM \"Document\" WHERE id = ?", id);
+            notes.add(posted == null ? id : posted.get("documentNumber"));
+            left = left.subtract(qty);
+            if (left.signum() <= 0) {
+                break;
+            }
+        }
+        if (left.signum() > 0) {
+            throw ApiException.conflict("Only " + credited.subtract(left).stripTrailingZeros().toPlainString() + " of "
+                    + credited.stripTrailingZeros().toPlainString() + " undelivered could be credited against the"
+                    + " invoices of this line");
+        }
+        // qtyCredited follows the links; the deferral releases the credited units
+        recomputeInvoiced(orderId);
+        audit.record(AuditInput.of("SalesOrder", orderId, "update", null, Obj.of("lineId", lineId,
+                "creditedUndelivered", JsNumbers.js(credited), "creditNotes", notes, "reason", reason.trim())));
+        return orders.closeShort(orderId, lineId, reason);
     }
 
     /**
@@ -709,6 +824,10 @@ public class SalesBillingService {
                        JOIN "Document" d ON d.id = k."documentId" WHERE k."orderLineId" = l.id AND k.kind = 'credit_note'
                         AND d.status::text IN ('posted', 'paid')), 0)
                  WHERE l."orderId" = ?""", orderId);
+        // ADR-S094 C2b: a quantity credit (or an invoice posted / cancelled by another path) moves the deferral
+        if (deferrals != null) {
+            deferrals.resync(orderId, "invoicing");
+        }
         orders.refreshStatus(orderId);
     }
 

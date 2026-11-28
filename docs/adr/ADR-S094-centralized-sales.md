@@ -344,6 +344,56 @@ Proposed treatment (Option A):
 
 AD-2 decides. **Nothing is built before AD-2.**
 
+**As built (C2b, V734; AD-2 = Option A and AD-16 = dispatch, approved 2026-11-28)**:
+- **What is deferred.** Per sale line, T = max(N − (D − Rc − W), 0), never above N:
+  - N = net invoiced: posted regular links − posted credit-note links;
+  - D = net dispatched: fleet load lines of the sale's live delivery orders, on trips dispatched or later, less what
+    came back;
+  - Rc = returned and credited; W = written off.
+
+  T is recomputed at every event, not only at the invoice post. A line without a product, or worth nothing, never
+  defers.
+- **Layers.** `SalesRevenueDeferral` keeps T per posted invoice line, newest posted invoice first. Each layer carries
+  its own functional amount per unit: line subtotal ÷ quantity × that invoice's rate. A dispatch releases the oldest
+  invoiced units; a bring-back holds the newest again. The liability is never revalued. Every change is a
+  `SalesRevenueMovement` and posts only the difference.
+- **Journals.** The invoice keeps posting its revenue as before; `InvoicingWorkflowsInitializer` is unchanged. In the
+  same transaction, a separate entry moves the deferred share:
+  - defer: Dr revenue / Cr contract liability. Journal GEN, source `sales_revenue_deferral`, source id = the sale.
+  - release: Dr contract liability / Cr revenue. Source `sales_revenue_release`.
+  - The revenue line uses the invoice line's own account (the category's income account), partner, cost centre and
+    dimensions. The liability line carries the customer. Both are in base currency.
+  - The net effect equals the split invoice entry above (V4), while the invoice posting path stays as it is.
+  - Posting key `<source>:<uuid>` instead of `srr:<loadLineId>`, because one entry can cover several lines and
+    invoices. Being exactly once comes from the stored layers under the sale lines' locks.
+- **Events.** Each runs inside the transaction of the change, under the sale lines' row locks (the same lock as the
+  fulfilment rebuild):
+  - **invoice post**: `InvoicePostGuard.afterPost` (the C1b hook). Dated like the invoice's entry.
+  - **cancel of a posted invoice**: the new hook `InvoicePostGuard.afterCancel`, after the workflow has reversed the
+    invoice's entry. Dated like that reversal: the invoice's own date while its period is open.
+  - **dispatch, POD with goods brought back, load returned**: the new `DeliverySourcePort.deliveryChanged(sourceId,
+    loadId, at)`, called by `FleetDispatchService`, so fleet stays independent of sales. Dated on the business day of
+    the event. A POD that delivers everything moves nothing.
+  - **catch-up**: quantity credits (`recomputeInvoiced`), a fulfilment rebuild that changed a line, and the nightly
+    `SalesReconcileJob` step. The nightly step re-syncs confirmed sales with posted invoices and any sale still
+    holding deferred revenue, one transaction per sale.
+- **Credit undelivered.** New route `POST /sales/orders/{id}/lines/{lineId}/credit-undelivered`:
+  - needs `sales:order:close_short` **and** `sales:credit_note:write`; Idempotency-Key and reason required.
+  - For each posted invoice of the line, newest first, it posts a quantity credit note against that invoice. The credit
+    uses the invoice's price, discount and tax, the revenue account the invoice line posted to, and that line's
+    dimensions. It is linked as `credit_note`.
+  - Then the line closes short. Net effect: Dr contract liability + Dr VAT / Cr AR.
+- **Close short** is refused while the line has T > 0, with the message "<line>: <T> invoiced but not delivered.
+  Deliver them, or credit the undelivered quantity to close the line".
+- **Views and reversal.** The sale detail shows `qtyDeferred` / `amountDeferred` per line and `revenueDeferred` on the
+  sale, in functional currency. Both sources are registered in `SubledgerSources`, so generic reversal is refused and
+  names the credit-undelivered route or the trip return.
+- **Deviation: value credit notes.** A value credit note (price or goodwill) on an invoice whose goods are still
+  deferred debits revenue at once, and the deferral is not reduced, because value credits carry no quantity (§7.3).
+  Until the goods leave, revenue is understated and the contract liability overstated by that credit. Once the goods
+  leave, both are correct.
+- **Not built:** the period-end accrual (AD-3), and cash sales delivered later (AD-1).
+
 ### 3.7 Scenario flows
 
 ```

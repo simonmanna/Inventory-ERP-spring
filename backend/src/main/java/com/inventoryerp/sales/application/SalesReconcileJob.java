@@ -23,14 +23,17 @@ public class SalesReconcileJob {
     private final SalesBillingService billing;
 
     private final SalesOrderService orders;
+    private final SalesRevenueDeferralService deferrals;
     private final org.springframework.transaction.support.TransactionTemplate perOrder;
 
     public SalesReconcileJob(JdbcClient jdbc, SalesFulfilmentService fulfilment, SalesBillingService billing,
-            SalesOrderService orders, org.springframework.transaction.PlatformTransactionManager txm) {
+            SalesOrderService orders, SalesRevenueDeferralService deferrals,
+            org.springframework.transaction.PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.fulfilment = fulfilment;
         this.billing = billing;
         this.orders = orders;
+        this.deferrals = deferrals;
         this.perOrder = new org.springframework.transaction.support.TransactionTemplate(txm);
     }
 
@@ -56,7 +59,39 @@ public class SalesReconcileJob {
                 log.warn("Sales reconciliation failed for {}: {}", orgId, e.toString());
             }
         }
+        resyncDeferrals();
         refreshOutcomes();
+    }
+
+    /**
+     * ADR-S094 C2b: bring the revenue deferral of every open sale with posted invoices, and of every sale still holding
+     * deferred revenue, to its figures, one transaction per sale (repairs anything an event path missed).
+     */
+    void resyncDeferrals() {
+        String scope = " FROM \"SalesOrder\" o WHERE o.\"deletedAt\" IS NULL AND ((o.status = 'confirmed' AND EXISTS (SELECT 1"
+                + " FROM \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id = k.\"documentId\" WHERE k.\"orderId\" = o.id AND"
+                + " k.kind = 'regular' AND d.status::text IN ('posted', 'paid'))) OR EXISTS (SELECT 1 FROM"
+                + " \"SalesRevenueDeferral\" r WHERE r.\"orderId\" = o.id AND (r.quantity > 0 OR r.amount > 0)))";
+        List<String> orgs = jdbc.sql("SELECT DISTINCT o.\"organizationId\"" + scope).query(String.class).list();
+        for (String orgId : orgs) {
+            try {
+                TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
+                    List<String> ids = jdbc.sql("SELECT o.id" + scope + " AND o.\"organizationId\" = ?").param(orgId)
+                            .query(String.class).list();
+                    for (String id : ids) {
+                        try {
+                            perOrder.executeWithoutResult(t -> deferrals.resync(id, "nightly"));
+                        } catch (RuntimeException e) {
+                            // one sale that cannot be brought up to date must not hold back the others
+                            log.warn("Sales revenue deferral resync failed for order {}: {}", id, e.toString());
+                        }
+                    }
+                    return ids.size();
+                });
+            } catch (RuntimeException e) {
+                log.warn("Sales revenue deferral resync failed for {}: {}", orgId, e.toString());
+            }
+        }
     }
 
     /**

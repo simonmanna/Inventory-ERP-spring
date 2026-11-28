@@ -864,6 +864,9 @@ public class InvoiceService {
         // ADR-S094 C1b: the down payments this invoice deducted become available again.
         deposits.getObject().releaseConsumption(id);
         workflow.transition("invoice", id, "cancel", Obj.of("reason", reason), doc);
+        if (postGuards != null) {
+            postGuards.orderedStream().forEach(g -> g.afterCancel(id));
+        }
         reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("sales_invoice",
                 id, (String) doc.get("documentNumber"), (String) doc.get("partnerId"), reason, "Document",
                 List.of("invoice"), List.of(), List.of()));

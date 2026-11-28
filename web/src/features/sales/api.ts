@@ -63,6 +63,10 @@ export interface SalesOrderLine {
   closedShort?: boolean;
   closeShortReason?: string | null;
   qty?: LineQuantities;
+  /** ADR-S094 C2b: invoiced but not dispatched yet; its revenue waits in the contract liability until the goods leave. */
+  qtyDeferred?: number;
+  /** Revenue of {@link qtyDeferred}, in the company's functional currency. */
+  amountDeferred?: number;
 }
 
 export interface SalesOrder {
@@ -103,6 +107,8 @@ export interface SalesOrder {
   advanceHeld?: number;
   /** Credit of this sale the customer may still use, be refunded or keep on account (detail only). */
   openCredit?: number;
+  /** ADR-S094 C2b: revenue invoiced before the goods left, held as a contract liability (functional currency, detail only). */
+  revenueDeferred?: number;
   partnerId: string;
   partnerName: string | null;
   quotationId: string | null;
@@ -181,6 +187,9 @@ export const salesApi = {
     (await api.post<SalesOrder>(`/sales/orders/${id}/keep-credit`, { reason })).data,
   closeShort: async ({ id, lineId, reason }: { id: string; lineId: string; reason: string }) =>
     (await api.post<SalesOrder>(`/sales/orders/${id}/lines/${lineId}/close-short`, { reason })).data,
+  /** ADR-S094 C2b: credit what the line invoiced but did not deliver (posted credit notes), then close it short. */
+  creditUndelivered: async ({ id, lineId, reason }: { id: string; lineId: string; reason: string }) =>
+    idempotentPost<SalesOrder>(`/sales/orders/${id}/lines/${lineId}/credit-undelivered`, { reason }),
   requestChange: async ({ id, ...body }: { id: string; reason: string; changes: Record<string, unknown> }) =>
     (await api.post<ChangeRequest>(`/sales/orders/${id}/change-requests`, body)).data,
   decideChange: async ({ id, action, comment }: { id: string; action: 'approve' | 'reject'; comment?: string }) =>

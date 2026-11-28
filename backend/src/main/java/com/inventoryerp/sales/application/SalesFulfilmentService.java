@@ -130,6 +130,10 @@ public class SalesFulfilmentService {
             }
         }
         if (!changed.isEmpty()) {
+            // ADR-S094 C2b: a fleet change that reached sales by its event only (no source hook) moves the deferral
+            if (deferrals != null) {
+                deferrals.resync(orderId, "fulfilment");
+            }
             orders.refreshStatus(orderId);
             atp.followOrder(orderId);
         }
@@ -297,6 +301,13 @@ public class SalesFulfilmentService {
     }
 
     private org.springframework.transaction.support.TransactionTemplate perOrder;
+
+    private SalesRevenueDeferralService deferrals;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeferrals(SalesRevenueDeferralService deferrals) {
+        this.deferrals = deferrals;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void setTransactions(org.springframework.transaction.PlatformTransactionManager txm) {

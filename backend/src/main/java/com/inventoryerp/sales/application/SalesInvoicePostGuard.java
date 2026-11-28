@@ -44,6 +44,12 @@ class SalesInvoicePostGuard implements InvoicePostGuard {
         billing.afterPost(documentId);
     }
 
+    /** ADR-S094 C2b: the revenue a cancelled invoice deferred is dropped with its journal entry. */
+    @Override
+    public void afterCancel(String documentId) {
+        billing.afterCancel(documentId);
+    }
+
     /** The invoice of a branch cash sale carries the sale's frozen lines, one for one and in order. */
     List<String> cashSaleProblems(String documentId) {
         Map<String, Object> d = db.row("SELECT \"sourceId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? AND"
