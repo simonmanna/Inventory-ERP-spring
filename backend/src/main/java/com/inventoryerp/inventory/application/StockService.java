@@ -377,7 +377,10 @@ public class StockService {
         // the quantity this average is computed from.
         LockedQuant quant = lockQuant(org, dto.productId, variantId, dto.locationId, Money.ZERO);
         if (blankCost) {
-            actualUnitCost = currentCost(quant, product, dto.productId, variantId, dto.locationId);
+            // IPR review 3 (#4): the current cost of a standard-governed product is its governing standard (not the
+            // quant average, last receipt or cost price), so a blank cost books no purchase price variance.
+            actualUnitCost = standardUnit != null ? standardUnit
+                    : currentCost(quant, product, dto.productId, variantId, dto.locationId);
             if (standardUnit == null) {
                 unitCost = actualUnitCost;
             }
