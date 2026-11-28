@@ -140,6 +140,9 @@ class SalesCashReversalIT extends CashSaleTestBase {
         String cn = col(id, "reversalCreditNoteId");
         assertThat(ret.get("creditNoteId")).isEqualTo(cn);
         assertThat(sourceKind(cn)).as("ADR-S094 §8.2").isEqualTo("credit");
+        // ADR-S094 C4b: the reversal cancels the sale's fiscal document; its credit note is not registered as a credit
+        assertThat(count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"salesOrderId\" = ? AND \"ownerKind\" ="
+                + " 'document'", id)).isZero();
         Map<String, Object> doc = jdbc.sql("SELECT status::text AS status, \"reversedDocumentId\", \"totalAmount\","
                 + " \"journalEntryId\" FROM \"Document\" WHERE id = ?").param(cn).query().singleRow();
         assertThat(doc.get("status")).isIn("posted", "paid");
@@ -388,6 +391,8 @@ class SalesCashReversalIT extends CashSaleTestBase {
         assertThat(((Number) cancel.get("submissions")).intValue()).isEqualTo(2);
         assertThat(mock.submissions("so:" + id + ":cancel:1")).isEqualTo(1);
         assertThat(mock.documents("so:" + id + ":cancel:1")).isEqualTo(1);
+        assertThat(count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"salesOrderId\" = ? AND \"ownerKind\" ="
+                + " 'document'", id)).as("ADR-S094 C4b: no credit-note registration").isZero();
         assertThat(returnsOf(id)).isEqualTo(1);
     }
 

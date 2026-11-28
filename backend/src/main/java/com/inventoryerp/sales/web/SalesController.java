@@ -332,19 +332,19 @@ public final class SalesController {
             return cashSales.verifyPayment(id, paymentId, body(b));
         }
 
-        /** ADR-S094 C3: the cash sale's fiscal operations. */
+        /** ADR-S094 C3: the sale's fiscal operations (C4b: an order-type sale's per invoice and credit note). */
         @GetMapping("/{id}/fiscal")
-        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ}, anyOf = true)
         public List<Map<String, Object>> fiscal(@PathVariable String id) {
-            svc.require(id);
+            svc.requireFor(id, Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ);
             return fiscal.forSale(id);
         }
 
-        /** ADR-S094 C3: send the cash sale's open fiscal operations again (stable references; never a second document). */
+        /** ADR-S094 C3: send the sale's open fiscal operations again (stable references; never a second document). */
         @PostMapping("/{id}/fiscal/retry")
-        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ}, anyOf = true)
         public List<Map<String, Object>> retryFiscal(@PathVariable String id) {
-            svc.require(id);
+            svc.requireFor(id, Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ);
             return fiscal.retryForSale(id);
         }
 
@@ -354,10 +354,11 @@ public final class SalesController {
          * again under the same reference; a {@code note}).
          */
         @PostMapping("/{id}/fiscal/{fiscalId}/resolve")
-        @RequirePermissions(Permissions.SALES__CASH_SALE_REVIEW)
+        @RequirePermissions(value = {Permissions.SALES__INVOICE_CREATE, Permissions.SALES__CASH_SALE_REVIEW},
+                anyOf = true)
         public Map<String, Object> resolveFiscal(@PathVariable String id, @PathVariable String fiscalId,
                 @RequestBody Map<String, Object> b) {
-            svc.require(id);
+            svc.requireFor(id, Permissions.SALES__INVOICE_CREATE, Permissions.SALES__CASH_SALE_REVIEW);
             return fiscal.resolve(id, fiscalId, body(b));
         }
 

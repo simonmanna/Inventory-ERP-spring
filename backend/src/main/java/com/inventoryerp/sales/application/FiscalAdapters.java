@@ -60,6 +60,7 @@ public final class FiscalAdapters {
         private final Map<String, Result> accepted = new ConcurrentHashMap<>();
         private final Map<String, Integer> submissions = new ConcurrentHashMap<>();
         private final Map<String, Integer> documents = new ConcurrentHashMap<>();
+        private final Map<String, Map<String, Object>> payloads = new ConcurrentHashMap<>();
         private int counter;
         private boolean lookup = true;
         private boolean dedupe = true;
@@ -92,6 +93,11 @@ public final class FiscalAdapters {
         /** How many submissions of {@code requestRef} reached the provider. */
         public int submissions(String requestRef) {
             return submissions.getOrDefault(requestRef, 0);
+        }
+
+        /** ADR-S094 C4b: the payload of the last submission of {@code requestRef} that reached the provider. */
+        public Map<String, Object> payload(String requestRef) {
+            return payloads.getOrDefault(requestRef, Map.of());
         }
 
         /** How many fiscal documents the provider issued for {@code requestRef} (more than one: a duplicate). */
@@ -127,6 +133,8 @@ public final class FiscalAdapters {
                 throw new Timeout("Simulated timeout before the provider received the request");
             }
             submissions.merge(ref, 1, Integer::sum);
+            payloads.put(ref, java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(
+                    request.payload() == null ? Map.of() : request.payload())));
             if ("reject".equals(outcome)) {
                 return Result.rejected("Simulated rejection of " + request.operation());
             }

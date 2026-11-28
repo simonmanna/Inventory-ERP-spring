@@ -64,6 +64,13 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **A posted credit note calls a module hook; a sale invoice's cancel can be refused for fiscal reasons** (ADR-S094
+  C4b, V738; AD-5, owner instruction 2026-11-28). Details in ADR-S094 §5.5, under "As built (C4b)".
+  - New `InvoicePostGuard.afterCreditNotePost(creditNoteId)`, called inside `CreditNoteService.post` after the journal
+    entry, settlement and restock, before `creditnote.issued`. Sales queues the fiscal credit note of a credit note on
+    a registered sale invoice. Throwing rolls the post back.
+  - `POST /invoices/:id/cancel` of a posted sale invoice is refused by the sales guard while its fiscal registration is
+    open (409) and once an outside authority registered it (400). Other invoices are unchanged.
 - **Customer documents name their source; manual invoices can be blocked** (ADR-S094 C4, V737; AD-13 and OD-3, owner
   instruction 2026-11-28). Details in ADR-S094 §8, under "As built (C4)".
   - New column `Document.sourceKind`, written by `DocumentBuilderService`, the only class that inserts a `Document`

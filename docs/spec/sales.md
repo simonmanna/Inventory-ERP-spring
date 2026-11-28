@@ -360,7 +360,7 @@ branch scope.
     - Receipts carry no cash session.
     - Mobile money is verified by hand.
     - Negative stock follows the inventory policy.
-    - Order-type invoices and credit notes are fiscalised from C4b.
+    - Order-type invoices and credit notes are fiscalised from C4b (built, V738; see the C4b item below).
     - The cash Reverse: see the next item (C3b).
     - The legacy `/sales/cash-sales` flow is unchanged until it is retired.
 - **A cash sale is reversed in two phases** (ADR-S094 C3b, V736; owner instruction 2026-11-28). The flow is in ADR-S094
@@ -399,6 +399,21 @@ branch scope.
     - the dunning fee: `collections_fee`; legacy cash-sale invoices: `cash_sale`.
   - A database check requires a kind on every sales invoice and credit note.
   - `sourceType` / `sourceId` keep their values and no response changes.
+- **Every invoice of a Sale is registered with the fiscal authority** (ADR-S094 C4b, V738; AD-5, owner instruction
+  2026-11-28). Details in ADR-S094 §5.5, under "As built (C4b)".
+  - A posted invoice of an order-type Sale queues a fiscal `issue` in its posting transaction. A posted credit note on
+    a registered sale invoice queues a `credit_note`, sent once the invoice is registered, with its fiscal number.
+  - The provider is the sale's branch profile, else `none` (completed at once). A cash Sale keeps its one sale-level
+    document (C3a); its Reverse credit note is not registered (C3b).
+  - A registered invoice is credited, not cancelled. Cancel is refused while the registration is open (409) and once
+    an outside authority registered it (400).
+  - The fiscal routes of a sale follow its type: `sales:order:read` (view, retry) and `sales:invoice:create`
+    (reconcile) for an order; the cash-sale permissions for a cash sale.
+  - Limits:
+    - Invoices that do not come from a Sale are not fiscalised.
+    - A rejected registration is final (no re-issue).
+    - A credit note that names no invoice, or credits an unregistered invoice, is not fiscalised.
+    - The EFRIS adapter is still to be written.
 - **Revenue invoiced before the goods leave is deferred** (ADR-S094 C2b, V734; AD-2 = contract liability, AD-16 =
   release at dispatch, approved 2026-11-28).
   - A posted invoice that bills more than has been dispatched moves the revenue of the difference to the contract

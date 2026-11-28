@@ -663,6 +663,10 @@ public class CreditNoteService {
                 }
             }
         }
+        if (postGuards != null) {
+            // ADR-S094 C4b: what the credit settles outside (its fiscal credit note) is queued in this transaction.
+            postGuards.orderedStream().forEach(guard -> guard.afterCreditNotePost(id));
+        }
         Map<String, Object> payload = new HashMap<>();
         payload.put("organizationId", org());
         payload.put("documentId", id);
@@ -684,6 +688,14 @@ public class CreditNoteService {
     @org.springframework.beans.factory.annotation.Autowired
     void setDeposits(org.springframework.beans.factory.ObjectProvider<CustomerDepositService> deposits) {
         this.deposits = deposits;
+    }
+
+    /** Resolved at posting time, so the guards (which depend on modules that use this service) form no bean cycle. */
+    private org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setPostGuards(org.springframework.beans.factory.ObjectProvider<InvoicePostGuard> postGuards) {
+        this.postGuards = postGuards;
     }
 
     /** R1: restocks are posted against the credited invoice's original issue. */

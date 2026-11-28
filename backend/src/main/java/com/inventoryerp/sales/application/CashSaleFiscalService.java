@@ -47,6 +47,12 @@ import org.springframework.transaction.support.TransactionTemplate;
  * behind) is looked up first. It is sent again, with the same reference, only once the provider's settlement time has
  * passed since the last send. A provider that can neither be asked nor ignore a repeated reference never gets the
  * request again automatically: the row goes to {@code review} and a person reconciles it ({@link #resolve}).
+ *
+ * <p>ADR-S094 C4b (AD-5): an operation may also belong to one invoice or credit note of a Sale ({@code ownerKind}
+ * {@code document}, reference {@code doc:<documentId>:<operation>:<n>}; {@link SaleDocumentFiscalService} queues them).
+ * Such rows leave the sale's {@code fiscalStatus} alone: a sale's several invoices are registered side by side. A
+ * {@code credit_note} operation is sent only once the invoice it credits is registered, with that invoice's fiscal
+ * number; until then it waits, and it fails if the invoice's registration failed.
  */
 @Service
 public class CashSaleFiscalService {
@@ -102,8 +108,8 @@ public class CashSaleFiscalService {
      */
     Map<String, Object> request(Map<String, Object> css, String operation, String invoiceId, Map<String, Object> payload,
             String reason) {
-        return queue(new Target(false, str(css.get("id"))), str(css.get("profileId")), "css:", operation, invoiceId,
-                payload, reason);
+        return queue(new Target(false, str(css.get("id")), false), str(css.get("profileId")), "css:", operation,
+                invoiceId, payload, reason);
     }
 
     /**
@@ -112,8 +118,42 @@ public class CashSaleFiscalService {
      */
     Map<String, Object> requestForSale(Map<String, Object> sale, String operation, String invoiceId,
             Map<String, Object> payload, String reason) {
-        return queue(new Target(true, str(sale.get("id"))), str(sale.get("profileId")), "so:", operation, invoiceId,
-                payload, reason);
+        return queue(new Target(true, str(sale.get("id")), false), str(sale.get("profileId")), "so:", operation,
+                invoiceId, payload, reason);
+    }
+
+    /**
+     * ADR-S094 C4b (AD-5): queue {@code operation} for one invoice or credit note of a Sale ({@code documentId}) in the
+     * current transaction, to {@code provider}. A local provider completes it at once; the sale's own
+     * {@code fiscalStatus} is not touched.
+     */
+    Map<String, Object> requestForDocument(Map<String, Object> sale, String operation, String documentId,
+            String provider, Map<String, Object> payload, String reason) {
+        return enqueue(new Target(true, str(sale.get("id")), true), provider, "doc:", operation, documentId, payload,
+                reason);
+    }
+
+    /** ADR-S094 C4b: the fiscal provider of a Sale: its own branch profile, else its branch's, else {@code none}. */
+    String providerFor(Map<String, Object> sale) {
+        Map<String, Object> profile = sale.get("profileId") != null ? db.row("SELECT \"fiscalProvider\" FROM"
+                + " \"BranchSalesProfile\" WHERE id = ? AND \"organizationId\" = ?", sale.get("profileId"), org())
+                : sale.get("branchId") == null ? null : db.row("SELECT \"fiscalProvider\" FROM \"BranchSalesProfile\""
+                        + " WHERE \"branchId\" = ? AND \"organizationId\" = ?", sale.get("branchId"), org());
+        return profile == null || blank(str(profile.get("fiscalProvider"))) ? "none"
+                : str(profile.get("fiscalProvider"));
+    }
+
+    /** True when {@code provider} answers locally, without an external call. */
+    boolean localProvider(String provider) {
+        FiscalDocumentPort port = adapters.get(provider);
+        return port != null && port.local();
+    }
+
+    /** ADR-S094 C4b: the latest {@code issue} of a document (a cash Sale's invoice or a Sale document), or null. */
+    Map<String, Object> latestIssue(String documentId) {
+        return documentId == null ? null : db.row("SELECT * FROM \"FiscalDocument\" WHERE \"invoiceId\" = ? AND"
+                + " \"organizationId\" = ? AND operation = 'issue' ORDER BY \"createdAt\" DESC, id DESC LIMIT 1",
+                documentId, org());
     }
 
     private Map<String, Object> queue(Target t, String profileId, String refPrefix, String operation, String invoiceId,
@@ -121,11 +161,18 @@ public class CashSaleFiscalService {
         Map<String, Object> profile = profileId == null ? null : db.row("SELECT \"fiscalProvider\" FROM"
                 + " \"BranchSalesProfile\" WHERE id = ? AND \"organizationId\" = ?", profileId, org());
         String provider = profile == null ? "none" : str(profile.get("fiscalProvider"));
-        long n = db.count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"" + t.column() + "\" = ? AND operation = ?",
-                List.of(t.id(), operation));
-        Map<String, Object> doc = db.insert("FiscalDocument", Obj.of(t.column(), t.id(), "invoiceId", invoiceId,
-                "provider", provider, "operation", operation, "requestRef", refPrefix + t.id() + ":" + operation + ":"
-                        + (n + 1), "requestPayload", null, "reason", reason, "userId", user()));
+        return enqueue(t, provider, refPrefix, operation, invoiceId, payload, reason);
+    }
+
+    private Map<String, Object> enqueue(Target t, String provider, String refPrefix, String operation, String invoiceId,
+            Map<String, Object> payload, String reason) {
+        // a document's operations are numbered per document; a sale's or a submission's per owner
+        String subject = t.document() ? invoiceId : t.id();
+        long n = db.count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"" + (t.document() ? "invoiceId" : t.column())
+                + "\" = ? AND operation = ? AND \"ownerKind\" = ?", List.of(subject, operation, t.ownerKind()));
+        Map<String, Object> doc = db.insert("FiscalDocument", Obj.of(t.column(), t.id(), "ownerKind", t.ownerKind(),
+                "invoiceId", invoiceId, "provider", provider, "operation", operation, "requestRef", refPrefix + subject
+                        + ":" + operation + ":" + (n + 1), "requestPayload", null, "reason", reason, "userId", user()));
         db.update("UPDATE \"FiscalDocument\" SET \"requestPayload\" = ?::jsonb WHERE id = ?"
                 + " AND \"organizationId\" = ?", EntityJson.toJson(
                 payload == null ? Map.of() : payload), doc.get("id"), org());
@@ -145,8 +192,11 @@ public class CashSaleFiscalService {
         return db.row("SELECT * FROM \"FiscalDocument\" WHERE id = ? AND \"organizationId\" = ?", doc.get("id"), org());
     }
 
-    /** The document a fiscal operation belongs to: a legacy submission or a cash Sale (ADR-S094 C3). */
-    private record Target(boolean sale, String id) {
+    /**
+     * What a fiscal operation belongs to: a legacy submission, a cash Sale (ADR-S094 C3), or one invoice or credit note
+     * of a Sale ({@code document}, C4b: {@code id} is the sale, {@code invoiceId} the document).
+     */
+    private record Target(boolean sale, String id, boolean document) {
 
         String table() {
             return sale ? "SalesOrder" : "SalesSubmission";
@@ -155,14 +205,21 @@ public class CashSaleFiscalService {
         String column() {
             return sale ? "salesOrderId" : "submissionId";
         }
+
+        String ownerKind() {
+            return document ? "document" : sale ? "sale" : "submission";
+        }
     }
 
     private static Target target(Map<String, Object> d) {
-        return d.get("salesOrderId") != null ? new Target(true, str(d.get("salesOrderId")))
-                : new Target(false, str(d.get("submissionId")));
+        return d.get("salesOrderId") != null ? new Target(true, str(d.get("salesOrderId")), "document".equals(str(d.get(
+                "ownerKind")))) : new Target(false, str(d.get("submissionId")), false);
     }
 
     private void fiscalStatus(Target t, String status) {
+        if (t.document()) {
+            return; // C4b: a document's status is its own operations; the sale's status is a cash sale's document
+        }
         db.update("UPDATE \"" + t.table() + "\" SET \"fiscalStatus\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
                 + " AND \"organizationId\" = ?", status, t.id(), org());
     }
@@ -245,10 +302,12 @@ public class CashSaleFiscalService {
                 return;
             }
             if (db.count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"salesOrderId\" = ? AND \"organizationId\" = ? AND"
-                    + " operation = 'cancel' AND status IN " + LIVE, List.of(orderId, org())) == 0) {
+                    + " \"ownerKind\" = 'sale' AND operation = 'cancel' AND status IN " + LIVE, List.of(orderId, org()))
+                    == 0) {
                 // the first request, or the last cancellation failed for good: ask (again) under a new reference
                 Map<String, Object> issued = db.row("SELECT \"invoiceId\" FROM \"FiscalDocument\" WHERE \"salesOrderId\" ="
-                        + " ? AND \"organizationId\" = ? AND operation = 'issue' AND status = 'succeeded' ORDER BY"
+                        + " ? AND \"organizationId\" = ? AND \"ownerKind\" = 'sale' AND operation = 'issue' AND status ="
+                        + " 'succeeded' ORDER BY"
                         + " \"createdAt\" DESC LIMIT 1", orderId, org());
                 requestForSale(sale, "cancel", issued == null ? null : str(issued.get("invoiceId")), Obj.of("reason",
                         reason), reason);
@@ -364,10 +423,44 @@ public class CashSaleFiscalService {
             fail(d, "Fiscal provider " + d.get("provider") + " is not available");
             return;
         }
+        Prepared prepared = prepare(d);
+        if (prepared.failure() != null) {
+            fail(d, prepared.failure());
+            return;
+        }
+        if (prepared.payload() == null) {
+            return; // C4b: a credit note waits for the invoice it credits
+        }
         db.update("UPDATE \"FiscalDocument\" SET attempts = attempts + 1, submissions = submissions + 1, \"submittedAt\" = "
                 + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", fiscalId, org());
         accepted(d, port.submit(new FiscalDocumentPort.Request(str(d.get("requestRef")), str(d.get("operation")),
-                payload(d))));
+                prepared.payload())));
+    }
+
+    /** What one attempt sends: the payload, or why the operation fails, or neither (it waits). */
+    private record Prepared(Map<String, Object> payload, String failure) {}
+
+    /**
+     * ADR-S094 C4b: a credit note is sent once the invoice it credits is registered, with that invoice's fiscal number
+     * and reference. While the invoice's own registration is open the credit note waits; an invoice whose registration
+     * failed fails its credit note. Other operations send their payload as queued.
+     */
+    private Prepared prepare(Map<String, Object> d) {
+        Map<String, Object> p = new LinkedHashMap<>(payload(d));
+        if (!"credit_note".equals(str(d.get("operation")))) {
+            return new Prepared(p, null);
+        }
+        Map<String, Object> issue = latestIssue(str(p.get("originalInvoiceId")));
+        String status = issue == null ? "failed" : str(issue.get("status"));
+        if ("failed".equals(status)) {
+            return new Prepared(null, "The credited invoice is not registered with the fiscal authority");
+        }
+        if (!"succeeded".equals(status)) {
+            return new Prepared(null, null);
+        }
+        p.put("originalFiscalNumber", str(issue.get("fiscalNumber")));
+        p.put("originalRequestRef", str(issue.get("requestRef")));
+        return new Prepared(p, null);
     }
 
     /**
@@ -392,6 +485,14 @@ public class CashSaleFiscalService {
             log.warn("Fiscal operation {} ({}): the worker of attempt {} stopped after its claim; looking it up first",
                     fiscalId, d.get("requestRef"), d.get("attempts"));
         }
+        Prepared prepared = prepare(d);
+        if (prepared.failure() != null) {
+            fail(d, prepared.failure());
+            return null;
+        }
+        if (prepared.payload() == null) {
+            return null; // C4b: a credit note waits for the invoice it credits
+        }
         // after a timeout, or a claim whose worker never recorded what happened, the provider may have the request
         boolean unknownOutcome = !"pending".equals(status);
         if (unknownOutcome && !port.supportsLookup() && !port.dedupes()) {
@@ -408,8 +509,8 @@ public class CashSaleFiscalService {
         Object since = d.get("sinceSubmit");
         Duration sinceSubmit = since == null ? null : Duration.ofMillis((long) (Double.parseDouble(since.toString())
                 * 1000));
-        return new Claim(fiscalId, str(d.get("requestRef")), str(d.get("operation")), payload(d), port, lookupFirst,
-                sinceSubmit, attempt);
+        return new Claim(fiscalId, str(d.get("requestRef")), str(d.get("operation")), prepared.payload(), port,
+                lookupFirst, sinceSubmit, attempt);
     }
 
     /** A claimed attempt. {@code sinceSubmit}: time since the last send before this attempt (null: never sent). */
@@ -509,7 +610,7 @@ public class CashSaleFiscalService {
 
     /**
      * ADR-S094 C3b (§5.5): settle an operation whose outcome is unknown by hand, after checking with the provider.
-     * {@code resolution}: {@code issued} (the provider has it: its {@code fiscalNumber} for an issue, optional
+     * {@code resolution}: {@code issued} (the provider has it: its {@code fiscalNumber} for an issue or a credit note, optional
      * {@code externalRef}) or {@code not_received} (it never arrived: sent again under the same reference). A
      * {@code note} is required. Only for operations in review or unknown.
      */
@@ -537,7 +638,9 @@ public class CashSaleFiscalService {
                 throw ApiException.badRequest("Only an operation whose outcome is unknown can be reconciled by hand");
             }
             String number = str(in.get("fiscalNumber"));
-            if ("issued".equals(resolution) && "issue".equals(d.get("operation")) && blank(number)) {
+            // an issue and (C4b) a credit note each get a fiscal number of their own
+            if ("issued".equals(resolution) && Set.of("issue", "credit_note").contains(str(d.get("operation")))
+                    && blank(number)) {
                 throw ApiException.badRequest("fiscalNumber should not be empty: give the number the provider issued");
             }
             db.update("UPDATE \"FiscalDocument\" SET \"resolvedById\" = ?, \"resolvedAt\" = " + NOW + ", resolution = ?,"

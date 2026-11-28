@@ -19,6 +19,9 @@ Status: **CS-0 design frozen (2026-11-04)**. This is a Spring-native extension w
 > **ADR-S094 C4 (built, V737).** A legacy cash-sale invoice is created with source kind `cash_sale`; a cash Sale's
 > invoice with `sale` (ADR-S094 §8, "As built (C4)").
 
+> **ADR-S094 C4b (built, V738).** A legacy cash sale's fiscal operations are `FiscalDocument` rows with
+> `ownerKind = submission`; their behaviour is unchanged (ADR-S094 §5.5, "As built (C4b)").
+
 **Production gate.** Before go-live, the accountant must sign off three things:
 
 - the VAT tax point for showroom sales;

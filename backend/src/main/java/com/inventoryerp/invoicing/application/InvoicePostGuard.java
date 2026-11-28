@@ -22,4 +22,11 @@ public interface InvoicePostGuard {
      * journal entry: a module reverses what it booked for the post (a revenue deferral). Throwing rolls the cancel back.
      */
     default void afterCancel(String documentId) {}
+
+    /**
+     * ADR-S094 C4b: called inside the posting transaction of a credit note, after its journal entry, settlement and
+     * restock: a module queues what the credit settles outside (the fiscal credit note of a sale invoice). Called for
+     * every posted credit note. Throwing rolls the post back.
+     */
+    default void afterCreditNotePost(String creditNoteId) {}
 }
