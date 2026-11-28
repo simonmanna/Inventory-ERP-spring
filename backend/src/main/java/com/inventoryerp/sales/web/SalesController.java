@@ -5,7 +5,9 @@ import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.sales.application.SalesAtpService;
+import com.inventoryerp.sales.application.CashSaleFiscalService;
 import com.inventoryerp.sales.application.SalesBillingService;
+import com.inventoryerp.sales.application.SalesCashSaleService;
 import com.inventoryerp.sales.application.SalesFulfilmentService;
 import com.inventoryerp.sales.application.SalesOrderChangeService;
 import com.inventoryerp.sales.application.SalesOrderService;
@@ -220,74 +222,144 @@ public final class SalesController {
         private final SalesFulfilmentService fulfilment;
         private final SalesBillingService billing;
         private final CustomerDepositService deposits;
+        private final SalesCashSaleService cashSales;
+        private final CashSaleFiscalService fiscal;
 
         public OrderController(SalesOrderService svc, SalesOrderChangeService changes, SalesAtpService atp,
-                SalesFulfilmentService fulfilment, SalesBillingService billing, CustomerDepositService deposits) {
+                SalesFulfilmentService fulfilment, SalesBillingService billing, CustomerDepositService deposits,
+                SalesCashSaleService cashSales, CashSaleFiscalService fiscal) {
             this.billing = billing;
             this.deposits = deposits;
+            this.cashSales = cashSales;
+            this.fiscal = fiscal;
             this.svc = svc;
             this.changes = changes;
             this.atp = atp;
             this.fulfilment = fulfilment;
         }
 
+        /** ADR-S094 C3: orders and cash sales (filter {@code saleType}); each type with its own read permission. */
         @GetMapping
-        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ}, anyOf = true)
         public Map<String, Object> list(@RequestParam Map<String, String> q) {
             return svc.list(q);
         }
 
+        /** ADR-S094 C3: the payment modes a cash sale can take (cash, mobile money, bank, card). */
+        @GetMapping("/payment-modes")
+        @RequirePermissions(value = {Permissions.SALES__CASH_SALE_READ, Permissions.SALES__CASH_SALE_CREATE}, anyOf = true)
+        public List<Map<String, Object>> paymentModes() {
+            return cashSales.paymentModes();
+        }
+
         @GetMapping("/{id}")
-        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ}, anyOf = true)
         public Map<String, Object> get(@PathVariable String id) {
             return svc.get(id);
         }
 
         @GetMapping("/{id}/revisions")
-        @RequirePermissions(Permissions.SALES__ORDER_READ)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ}, anyOf = true)
         public List<Map<String, Object>> revisions(@PathVariable String id) {
             return svc.revisions(id);
         }
 
+        /** ADR-S094 C3: the cash sale's timeline (tenders, verification, confirm, fiscal). */
+        @GetMapping("/{id}/events")
+        @RequirePermissions(value = {Permissions.SALES__ORDER_READ, Permissions.SALES__CASH_SALE_READ}, anyOf = true)
+        public List<Map<String, Object>> events(@PathVariable String id) {
+            return cashSales.events(id);
+        }
+
+        /** ADR-S094 C3: a new sale; {@code saleType: cash} drafts a cash sale at the caller's branch. */
         @PostMapping
         @ResponseStatus(HttpStatus.CREATED)
-        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_CREATE}, anyOf = true)
         public Map<String, Object> create(@RequestBody Map<String, Object> b) {
+            SalesOrderService.requireType(SalesOrderService.saleType(body(b)), Permissions.SALES__ORDER_WRITE,
+                    Permissions.SALES__CASH_SALE_CREATE);
             return svc.create(body(b));
         }
 
         @PutMapping("/{id}")
-        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_CREATE}, anyOf = true)
         public Map<String, Object> update(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            svc.requireFor(id, Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_CREATE);
             return svc.update(id, body(b));
         }
 
         @DeleteMapping("/{id}")
-        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_CREATE}, anyOf = true)
         public Map<String, Object> delete(@PathVariable String id) {
+            svc.requireFor(id, Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_CREATE);
             return svc.delete(id);
         }
 
+        /**
+         * Confirm a draft. ADR-S094 C3: a cash sale is confirmed with its {@code handover} and runs pickup, invoice,
+         * receipts and the fiscal outbox in one transaction.
+         */
         @PostMapping("/{id}/confirm")
         @Idempotent(required = true)
-        @RequirePermissions(Permissions.SALES__ORDER_CONFIRM)
-        public Map<String, Object> confirm(@PathVariable String id) {
-            return svc.confirm(id);
+        @RequirePermissions(value = {Permissions.SALES__ORDER_CONFIRM, Permissions.SALES__CASH_SALE_CONFIRM}, anyOf = true)
+        public Map<String, Object> confirm(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            return svc.confirm(id, b);
+        }
+
+        /** ADR-S094 C3: capture a tender line on a draft cash sale. */
+        @PostMapping("/{id}/payments")
+        @ResponseStatus(HttpStatus.CREATED)
+        @RequirePermissions(Permissions.SALES__CASH_SALE_CREATE)
+        public Map<String, Object> addPayment(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return cashSales.addPayment(id, body(b));
+        }
+
+        @DeleteMapping("/{id}/payments/{paymentId}")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_CREATE)
+        public Map<String, Object> removePayment(@PathVariable String id, @PathVariable String paymentId) {
+            return cashSales.removePayment(id, paymentId);
+        }
+
+        /** ADR-S094 C3: verify or fail a pending tender line (cash: the confirmer or a verifier; others: a verifier). */
+        @PostMapping("/{id}/payments/{paymentId}/verify")
+        @RequirePermissions(value = {Permissions.SALES__CASH_SALE_VERIFY_PAYMENT, Permissions.SALES__CASH_SALE_CONFIRM},
+                anyOf = true)
+        public Map<String, Object> verifyPayment(@PathVariable String id, @PathVariable String paymentId,
+                @RequestBody(required = false) Map<String, Object> b) {
+            return cashSales.verifyPayment(id, paymentId, body(b));
+        }
+
+        /** ADR-S094 C3: the cash sale's fiscal operations. */
+        @GetMapping("/{id}/fiscal")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public List<Map<String, Object>> fiscal(@PathVariable String id) {
+            svc.require(id);
+            return fiscal.forSale(id);
+        }
+
+        /** ADR-S094 C3: send the cash sale's open fiscal operations again (stable references; never a second document). */
+        @PostMapping("/{id}/fiscal/retry")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_READ)
+        public List<Map<String, Object>> retryFiscal(@PathVariable String id) {
+            svc.require(id);
+            return fiscal.retryForSale(id);
         }
 
         /** ADR-S094 §4.2: send a draft that needs approval to its approvers (explicit; never done by confirm). */
         @PostMapping("/{id}/submit-approval")
-        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_SUBMIT}, anyOf = true)
         public Map<String, Object> submitApproval(@PathVariable String id,
                 @RequestBody(required = false) Map<String, Object> b) {
+            svc.requireFor(id, Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_SUBMIT);
             return svc.submitApproval(id, text(b, "justification"));
         }
 
         /** ADR-S094 §4.2: take a submission back (the submitter); the draft can be edited again. */
         @PostMapping("/{id}/withdraw-approval")
-        @RequirePermissions(Permissions.SALES__ORDER_WRITE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_SUBMIT}, anyOf = true)
         public Map<String, Object> withdrawApproval(@PathVariable String id,
                 @RequestBody(required = false) Map<String, Object> b) {
+            svc.requireFor(id, Permissions.SALES__ORDER_WRITE, Permissions.SALES__CASH_SALE_SUBMIT);
             return svc.withdrawApproval(id, text(b, "reason"));
         }
 
@@ -301,14 +373,16 @@ public final class SalesController {
 
         @PostMapping("/{id}/approve")
         @Idempotent(required = true)
-        @RequirePermissions(Permissions.SALES__ORDER_APPROVE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_APPROVE, Permissions.SALES__CASH_SALE_APPROVE}, anyOf = true)
         public Map<String, Object> approve(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            svc.requireFor(id, Permissions.SALES__ORDER_APPROVE, Permissions.SALES__CASH_SALE_APPROVE);
             return svc.approve(id, text(b, "comment"));
         }
 
         @PostMapping("/{id}/reject")
-        @RequirePermissions(Permissions.SALES__ORDER_APPROVE)
+        @RequirePermissions(value = {Permissions.SALES__ORDER_APPROVE, Permissions.SALES__CASH_SALE_APPROVE}, anyOf = true)
         public Map<String, Object> reject(@PathVariable String id, @RequestBody(required = false) Map<String, Object> b) {
+            svc.requireFor(id, Permissions.SALES__ORDER_APPROVE, Permissions.SALES__CASH_SALE_APPROVE);
             return svc.reject(id, text(b, "reason"));
         }
 

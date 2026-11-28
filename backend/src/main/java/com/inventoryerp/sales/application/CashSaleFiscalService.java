@@ -29,6 +29,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * {@code none} provider, which makes no external call. Each row has a stable {@code requestRef}; a timeout leaves it
  * {@code unknown} and recovery looks the reference up before sending again, so a retry never creates a second fiscal
  * document. The submission's {@code fiscalStatus} gates void, invoice cancel and identity amendments.
+ *
+ * <p>ADR-S094 C3: an operation belongs to a legacy submission ({@code submissionId}) or to a cash Sale
+ * ({@code salesOrderId}, reference {@code so:<id>:<operation>:<n>}); the sale's {@code fiscalStatus} and its
+ * {@code SalesOrderEvent} timeline follow it the same way.
  */
 @Service
 public class CashSaleFiscalService {
@@ -61,16 +65,30 @@ public class CashSaleFiscalService {
      */
     Map<String, Object> request(Map<String, Object> css, String operation, String invoiceId, Map<String, Object> payload,
             String reason) {
-        String id = str(css.get("id"));
-        Map<String, Object> profile = db.row("SELECT \"fiscalProvider\" FROM \"BranchSalesProfile\" WHERE id = ?"
-                + " AND \"organizationId\" = ?",
-                css.get("profileId"), org());
+        return queue(new Target(false, str(css.get("id"))), str(css.get("profileId")), "css:", operation, invoiceId,
+                payload, reason);
+    }
+
+    /**
+     * ADR-S094 C3: queue {@code operation} for a cash Sale in the current transaction (the outbox row commits with
+     * the sale). The branch profile names the provider; {@code none} completes at once without an external call.
+     */
+    Map<String, Object> requestForSale(Map<String, Object> sale, String operation, String invoiceId,
+            Map<String, Object> payload, String reason) {
+        return queue(new Target(true, str(sale.get("id"))), str(sale.get("profileId")), "so:", operation, invoiceId,
+                payload, reason);
+    }
+
+    private Map<String, Object> queue(Target t, String profileId, String refPrefix, String operation, String invoiceId,
+            Map<String, Object> payload, String reason) {
+        Map<String, Object> profile = profileId == null ? null : db.row("SELECT \"fiscalProvider\" FROM"
+                + " \"BranchSalesProfile\" WHERE id = ? AND \"organizationId\" = ?", profileId, org());
         String provider = profile == null ? "none" : str(profile.get("fiscalProvider"));
-        long n = db.count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"submissionId\" = ? AND operation = ?",
-                List.of(id, operation));
-        Map<String, Object> doc = db.insert("FiscalDocument", Obj.of("submissionId", id, "invoiceId", invoiceId,
-                "provider", provider, "operation", operation, "requestRef", "css:" + id + ":" + operation + ":" + (n + 1),
-                "requestPayload", null, "reason", reason, "userId", user()));
+        long n = db.count("SELECT count(*) FROM \"FiscalDocument\" WHERE \"" + t.column() + "\" = ? AND operation = ?",
+                List.of(t.id(), operation));
+        Map<String, Object> doc = db.insert("FiscalDocument", Obj.of(t.column(), t.id(), "invoiceId", invoiceId,
+                "provider", provider, "operation", operation, "requestRef", refPrefix + t.id() + ":" + operation + ":"
+                        + (n + 1), "requestPayload", null, "reason", reason, "userId", user()));
         db.update("UPDATE \"FiscalDocument\" SET \"requestPayload\" = ?::jsonb WHERE id = ?"
                 + " AND \"organizationId\" = ?", EntityJson.toJson(
                 payload == null ? Map.of() : payload), doc.get("id"), org());
@@ -80,15 +98,35 @@ public class CashSaleFiscalService {
             default -> null;
         };
         if (status != null) {
-            db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
-                    + " AND \"organizationId\" = ?",
-                    status, id, org());
+            fiscalStatus(t, status);
         }
-        timeline(id, "fiscal_" + operation + "_requested", reason);
+        timeline(t, "fiscal_" + operation + "_requested", reason);
         if ("none".equals(provider)) {
             run(str(doc.get("id")));
         }
         return db.row("SELECT * FROM \"FiscalDocument\" WHERE id = ? AND \"organizationId\" = ?", doc.get("id"), org());
+    }
+
+    /** The document a fiscal operation belongs to: a legacy submission or a cash Sale (ADR-S094 C3). */
+    private record Target(boolean sale, String id) {
+
+        String table() {
+            return sale ? "SalesOrder" : "SalesSubmission";
+        }
+
+        String column() {
+            return sale ? "salesOrderId" : "submissionId";
+        }
+    }
+
+    private static Target target(Map<String, Object> d) {
+        return d.get("salesOrderId") != null ? new Target(true, str(d.get("salesOrderId")))
+                : new Target(false, str(d.get("submissionId")));
+    }
+
+    private void fiscalStatus(Target t, String status) {
+        db.update("UPDATE \"" + t.table() + "\" SET \"fiscalStatus\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
+                + " AND \"organizationId\" = ?", status, t.id(), org());
     }
 
     /**
@@ -155,6 +193,26 @@ public class CashSaleFiscalService {
         newTx.executeWithoutResult(s -> processOpen(submissionId));
         return db.rows("SELECT * FROM \"FiscalDocument\" WHERE \"submissionId\" = ? AND \"organizationId\" = ? ORDER BY"
                 + " \"createdAt\"", submissionId, org());
+    }
+
+    /**
+     * ADR-S094 C3: send the open operations of one cash Sale again (retry route), in a transaction of their own, as the
+     * legacy retry does; each keeps its request reference, so a retry never creates a second fiscal document.
+     */
+    public List<Map<String, Object>> retryForSale(String orderId) {
+        newTx.executeWithoutResult(s -> {
+            for (Map<String, Object> d : db.rows("SELECT id FROM \"FiscalDocument\" WHERE \"salesOrderId\" = ? AND"
+                    + " \"organizationId\" = ? AND status IN ('pending', 'unknown') ORDER BY \"createdAt\"", orderId, org())) {
+                run(str(d.get("id")));
+            }
+        });
+        return forSale(orderId);
+    }
+
+    /** ADR-S094 C3: the fiscal operations of a cash Sale, oldest first. */
+    public List<Map<String, Object>> forSale(String orderId) {
+        return db.rows("SELECT * FROM \"FiscalDocument\" WHERE \"salesOrderId\" = ? AND \"organizationId\" = ? ORDER BY"
+                + " \"createdAt\", id", orderId, org());
     }
 
     void processOpen(String submissionId) {
@@ -255,23 +313,24 @@ public class CashSaleFiscalService {
     private void fail(Map<String, Object> d, String error) {
         db.update("UPDATE \"FiscalDocument\" SET status = 'failed', \"lastError\" = ?, \"updatedAt\" = " + NOW
                 + " WHERE id = ? AND \"organizationId\" = ?", error, d.get("id"), org());
-        String sub = str(d.get("submissionId"));
+        Target t = target(d);
         if ("issue".equals(d.get("operation"))) {
-            db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = 'failed', \"updatedAt\" = " + NOW
-                    + " WHERE id = ? AND \"organizationId\" = ?", sub, org());
+            fiscalStatus(t, "failed");
         }
-        // A failed cancellation keeps the submission in cancellation_pending: nothing is reversed internally.
-        timeline(sub, "fiscal_" + d.get("operation") + "_failed", error);
+        // A failed cancellation keeps the document in cancellation_pending: nothing is reversed internally.
+        timeline(t, "fiscal_" + d.get("operation") + "_failed", error);
     }
 
     private void succeeded(Map<String, Object> d) {
-        String sub = str(d.get("submissionId"));
+        Target t = target(d);
+        String sub = t.id();
         switch (str(d.get("operation"))) {
-            case "issue" -> db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = 'issued', \"updatedAt\" = " + NOW
-                    + " WHERE id = ? AND \"organizationId\" = ?", sub, org());
-            case "cancel" -> db.update("UPDATE \"SalesSubmission\" SET \"fiscalStatus\" = 'cancelled', \"updatedAt\" = "
-                    + NOW + " WHERE id = ? AND \"organizationId\" = ?", sub, org());
+            case "issue" -> fiscalStatus(t, "issued");
+            case "cancel" -> fiscalStatus(t, "cancelled");
             case "correct" -> {
+                if (t.sale()) {
+                    break; // identity corrections are a legacy submission route
+                }
                 Map<String, Object> css = db.row("SELECT * FROM \"SalesSubmission\" WHERE id = ?"
                         + " AND \"organizationId\" = ?", sub, org());
                 Map<String, Object> changes = payload(d);
@@ -302,12 +361,18 @@ public class CashSaleFiscalService {
                 // nothing
             }
         }
-        timeline(sub, "fiscal_" + d.get("operation") + "_succeeded", null);
+        timeline(t, "fiscal_" + d.get("operation") + "_succeeded", null);
     }
 
-    private void timeline(String submissionId, String action, String reason) {
+    private void timeline(Target t, String action, String reason) {
+        if (t.sale()) {
+            db.update("INSERT INTO \"SalesOrderEvent\" (id, \"organizationId\", \"orderId\", action, note, \"userId\")"
+                    + " SELECT ?, \"organizationId\", id, ?, ?, ? FROM \"SalesOrder\" WHERE id = ?", SalesDb.newId(), action,
+                    reason, user(), t.id());
+            return;
+        }
         db.update("INSERT INTO \"SalesSubmissionEvent\" (id, \"organizationId\", \"submissionId\", action, reason,"
                 + " \"userId\") SELECT ?, \"organizationId\", id, ?, ?, ? FROM \"SalesSubmission\" WHERE id = ?",
-                SalesDb.newId(), action, reason, user(), submissionId);
+                SalesDb.newId(), action, reason, user(), t.id());
     }
 }

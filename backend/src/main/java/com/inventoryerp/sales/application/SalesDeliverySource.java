@@ -127,6 +127,14 @@ public class SalesDeliverySource implements DeliverySourcePort {
                 "delivery_loss");
     }
 
+    /** ADR-S094 OD-6: a cash sale is paid in full before its goods are handed over at the counter. */
+    @Override
+    public boolean prepaid(String sourceId) {
+        Map<String, Object> o = db.row("SELECT \"saleType\" FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?",
+                sourceId, org());
+        return o != null && "cash".equals(o.get("saleType"));
+    }
+
     @Override
     public boolean supports(String sourceType, String sourceId) {
         return "sales_order".equals(sourceType) && sourceId != null && db.exists("SalesOrder", sourceId);

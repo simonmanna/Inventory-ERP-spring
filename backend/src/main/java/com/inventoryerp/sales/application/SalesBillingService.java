@@ -177,7 +177,8 @@ public class SalesBillingService {
             throw ApiException.badRequest("Every product line needs a tax before invoicing");
         }
         BigDecimal above = dec(s.get("requireTaxNumberAbove"));
-        if (above.signum() > 0 && dec(o.get("total")).compareTo(above) > 0) {
+        // ADR-S094 AD-8: a cash sale to the walk-in customer carries the buyer's tax number on the sale itself
+        if (above.signum() > 0 && dec(o.get("total")).compareTo(above) > 0 && blank(str(o.get("customerTin")))) {
             Map<String, Object> p = db.row("SELECT \"taxNumber\" FROM \"Partner\" WHERE id = ?"
                     + " AND \"organizationId\" = ?", o.get("partnerId"), org());
             if (p == null || blank(str(p.get("taxNumber")))) {
