@@ -258,36 +258,26 @@ public class CreditNoteService {
     }
 
     /**
-     * R1 (P1-2, owner-approved 2026-11-23): where the credited invoice's goods left stock. An invoice that issued its
-     * own stock → its {@code sales_invoice} rows; an invoice whose stock a cash sale issued ({@code stockIssuedBy},
-     * source {@code cash_sale}) → that sale's {@code cash_sale} rows; an invoice delivered by Fleet → the
-     * {@code fleet_trip} rows of the loads of the delivery orders that carried its goods (from the invoice, its sales
-     * order, or allocated to it). Null when the credit note credits no invoice.
+     * R1 (P1-2, owner-approved 2026-11-23): where the credited invoice's goods left stock. IPR F1: every row kind at
+     * once — the invoice's own {@code sales_invoice} rows (its post, or a collection of undelivered goods), the
+     * {@code cash_sale} rows of the cash sale it bills, and the {@code fleet_trip} rows of the loads of the delivery
+     * orders that carried its goods (from the invoice, its sales order, or allocated to it) — whatever its
+     * {@code stockIssuedBy} mark says now (a delivery order cancelled or closed short hands the rest back to the
+     * invoice). Null when the credit note credits no invoice.
      */
     private StockReversalService.IssueSource invoiceIssueSource(String invoiceId) {
         if (invoiceId == null) {
             return null;
         }
-        Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT \"sourceType\", \"sourceId\", data->>'stockIssuedBy' AS"
-                + " \"stockIssuedBy\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
-                .params(invoiceId, org()));
-        if (doc == null) {
-            return null;
-        }
-        if (doc.get("stockIssuedBy") == null) {
-            return StockReversalService.IssueSource.of("sales_invoice", invoiceId);
-        }
-        if ("cash_sale".equals(doc.get("sourceType")) && doc.get("sourceId") != null) {
-            return StockReversalService.IssueSource.of("cash_sale", (String) doc.get("sourceId"));
-        }
-        String salesOrder = "sales_order".equals(doc.get("sourceType")) ? (String) doc.get("sourceId") : null;
-        List<String> loads = jdbc.sql("SELECT DISTINCT l.id FROM \"FleetLoad\" l JOIN \"FleetDeliveryOrder\" o ON"
-                + " o.id = l.\"deliveryOrderId\" WHERE l.\"organizationId\" = ? AND o.\"organizationId\" = ? AND"
-                + " ((o.\"sourceType\" = 'invoice' AND o.\"sourceId\" = ?) OR o.\"goodsInvoiceId\" = ?"
-                + " OR (o.\"sourceType\" = 'sales_order' AND o.\"sourceId\" = ?) OR o.id IN (SELECT \"deliveryOrderId\""
-                + " FROM \"FleetDeliveryInvoiceLine\" WHERE \"documentId\" = ? AND \"organizationId\" = ?))")
-                .params(org(), org(), invoiceId, invoiceId, salesOrder, invoiceId, org()).query(String.class).list();
-        return StockReversalService.IssueSource.of("fleet_trip", loads);
+        return StockReversalService.IssueSource.ledgerCodes(goods.issueLedgerCodes(invoiceId));
+    }
+
+    private InvoiceGoodsService goods;
+
+    /** IPR F1: where an invoice's goods left stock. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setGoods(InvoiceGoodsService goods) {
+        this.goods = goods;
     }
 
     /**

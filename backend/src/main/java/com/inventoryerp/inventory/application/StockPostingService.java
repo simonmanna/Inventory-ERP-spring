@@ -536,7 +536,27 @@ public class StockPostingService {
         if (totalValue.signum() <= 0) {
             return;
         }
-        boolean gain = delta.signum() > 0;
+        postAdjustmentAt(productId, null, delta, unitCost, date, sourceType, sourceId, description, opening);
+    }
+
+    /**
+     * As {@link #postAdjustment(String, BigDecimal, BigDecimal, Instant, String, String, String, boolean)} for a
+     * movement at {@code locationId}: its stock lines carry the location, and at a transit location with goods in
+     * transit separated (IPR S13) they post to the transit account.
+     */
+    public void postAdjustmentAt(String productId, String locationId, BigDecimal delta, BigDecimal unitCost,
+            Instant date, String sourceType, String sourceId, String description, boolean opening) {
+        BigDecimal totalValue = unitCost.multiply(delta.abs());
+        if (delta.signum() == 0 || totalValue.signum() <= 0) {
+            return;
+        }
+        List<Line> lines = stamp(adjustmentLines(productId, delta.signum() > 0, totalValue, opening), productId,
+                locationId);
+        post("ADJ", date, description != null ? description : "Stock adjustment", sourceType, sourceId, null, lines);
+    }
+
+    /** The journal lines of a count / adjustment variance (rule, else mappings; opening: equity side). */
+    private List<Line> adjustmentLines(String productId, boolean gain, BigDecimal totalValue, boolean opening) {
         List<Line> lines = resolveLines(gain ? "ADJUSTMENT_GAIN" : "ADJUSTMENT_LOSS", productId, totalValue);
         if (lines == null) {
             String sv = determination.mapped("stock_valuation");
@@ -555,8 +575,46 @@ public class StockPostingService {
                             l.costCenterId(), l.dimensions())
                     : l).toList();
         }
-        lines = stamp(lines, productId, null);
-        post("ADJ", date, description != null ? description : "Stock adjustment", sourceType, sourceId, null, lines);
+        return lines;
+    }
+
+    private com.inventoryerp.accounting.application.AccountResolverService accounts;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setAccounts(com.inventoryerp.accounting.application.AccountResolverService accounts) {
+        this.accounts = accounts;
+    }
+
+    /**
+     * IPR E1: why a count variance of sign {@code delta} for {@code productId} could not be posted, without throwing.
+     * A throw out of this bean (class-level {@code @Transactional(MANDATORY)}) marks the caller's whole transaction
+     * rollback-only, which a JDBC savepoint does not undo, so the engine's late count correction asks first: the
+     * lines must resolve (posting rule, else account mappings; equity for an opening count) to accounts of this
+     * organisation that accept postings. Null = postable. The checks run on non-transactional collaborators only.
+     */
+    public String adjustmentPostingProblem(String productId, BigDecimal delta, boolean opening) {
+        if (delta == null || delta.signum() == 0) {
+            return null;
+        }
+        try {
+            List<Line> lines = adjustmentLines(productId, delta.signum() > 0, BigDecimal.ONE, opening);
+            if (accounts != null) {
+                java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+                lines.forEach(l -> ids.add(l.accountId()));
+                Map<String, com.inventoryerp.accounting.application.AccountResolverService.AccountMeta> metas =
+                        accounts.meta(ids);
+                for (String id : ids) {
+                    var meta = metas.get(id);
+                    if (meta == null) {
+                        return "Account " + id + " does not exist in this organization";
+                    }
+                    com.inventoryerp.accounting.application.AccountResolverService.assertPostable(meta, true);
+                }
+            }
+            return null;
+        } catch (RuntimeException e) {
+            return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        }
     }
 
     /** Inter-location transfer: STOCK_TRANSFER_OUT and STOCK_TRANSFER_IN rule entries (no fallback). */
@@ -576,6 +634,32 @@ public class StockPostingService {
             post("INV", date, description != null ? description : "Transfer in · " + name, sourceType, sourceId,
                     null, stamp(in, productId, toLocationId));
         }
+        if ((out == null || out.isEmpty()) && (in == null || in.isEmpty())) {
+            postTransitMove(productId, totalValue, fromLocationId, toLocationId, date, sourceType, sourceId,
+                    description, name);
+        }
+    }
+
+    /**
+     * IPR S13 (goods in transit, opt-in via {@code inventory.transitGlSeparation} + the {@code stock_in_transit}
+     * mapping): with no transfer posting rules, a transfer into a transit location moves its value from the stock
+     * account to goods in transit (Dr transit / Cr stock), and one out of a transit location moves it back. Both lines
+     * resolve the product's stock account and {@link #stamp} turns the transit side into the transit account, so a
+     * transfer between two ordinary locations (both sides the same account) posts nothing, as before.
+     */
+    private void postTransitMove(String productId, BigDecimal totalValue, String fromLocationId, String toLocationId,
+            Instant date, String sourceType, String sourceId, String description, String name) {
+        if (valuation.transitAccountId() == null
+                || valuation.isTransitLocation(fromLocationId) == valuation.isTransitLocation(toLocationId)) {
+            return;
+        }
+        boolean dispatch = valuation.isTransitLocation(toLocationId);
+        String v = JsNumbers.dec(totalValue);
+        String label = (dispatch ? "Goods in transit · " : "Goods arrived · ") + name;
+        String account = stockAccount(productId, totalValue);
+        List<Line> lines = new ArrayList<>(stamp(List.of(Line.debit(account, v, label)), productId, toLocationId));
+        lines.addAll(stamp(List.of(Line.credit(account, v, label)), productId, fromLocationId));
+        post("INV", date, description != null ? description : label, sourceType, sourceId, null, lines);
     }
 
     /** Return to supplier: Dr GRNI / Cr Stock Valuation. */
@@ -752,11 +836,30 @@ public class StockPostingService {
             return lines;
         }
         Set<String> stock = new HashSet<>(valuation.inventoryAccountIds());
+        // IPR S13 (opt-in): at a transit location the stock side posts to goods in transit (stock_in_transit) instead
+        // of the stock account (value-only adjunct accounts — price difference, NRV — keep theirs).
+        String transit = locationId != null ? valuation.transitAccountId() : null;
+        if (transit != null && !valuation.isTransitLocation(locationId)) {
+            transit = null;
+        }
+        Set<String> adjunct = transit == null ? Set.of() : new HashSet<>(adjunctAccounts());
         List<Line> out = new ArrayList<>(lines.size());
         for (Line l : lines) {
-            out.add(stock.contains(l.accountId()) ? stampLine(l, productId, locationId) : l);
+            Line line = l;
+            if (transit != null && stock.contains(l.accountId()) && !adjunct.contains(l.accountId())) {
+                line = new Line(transit, l.debit(), l.credit(), l.partnerId(), l.description(), l.branchId(),
+                        l.costCenterId(), l.dimensions(), l.currencyId(), l.foreignAmount());
+            }
+            out.add(stock.contains(l.accountId()) ? stampLine(line, productId, locationId) : line);
         }
         return out;
+    }
+
+    /** CM-1 value-only adjunct accounts (price difference, NRV allowance) of this organisation. */
+    private List<String> adjunctAccounts() {
+        return jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key IN"
+                + " ('inventory_price_difference', 'inventory_nrv_allowance')").param(TenantContext.organizationId())
+                .query(String.class).list();
     }
 
     /** {@code line} with the product (and location) dimension keys added; a key the line already carries is kept. */
@@ -789,18 +892,35 @@ public class StockPostingService {
         }
     }
 
+    /**
+     * The AccountMapping default of an issue whose movement type has no posting rule. IPR GL-4 (deviation from Nest,
+     * which sent every type other than the four write-off types to COGS): a return to supplier credits stock against
+     * GRNI and a production consumption against WIP, the same accounts as their default rules and as
+     * {@link #postReturnToSupplier} / {@link #postProductionConsume}; a movement type with no known default fails
+     * closed instead of silently landing in COGS.
+     */
     private List<Line> fallbackLinesIssue(String movementType, BigDecimal totalValue, String productName) {
         String v = JsNumbers.dec(totalValue);
-        if (movementType != null
-                && List.of("WASTE", "EXPIRY_WRITE_OFF", "INTERNAL_CONSUMPTION", "PROMO_SAMPLE").contains(movementType)) {
-            String sv = determination.mapped("stock_valuation");
-            String expense = determination.mapped("stock_adjustment_expense");
-            return List.of(Line.debit(expense, v, movementType + " · " + productName),
-                    Line.credit(sv, v, movementType + " · " + productName));
-        }
-        String cogs = determination.mapped("cogs");
+        String mt = movementType == null ? "STOCK_OUT" : movementType;
         String sv = determination.mapped("stock_valuation");
-        return List.of(Line.debit(cogs, v, "COGS · " + productName), Line.credit(sv, v, "Stock issue · " + productName));
+        return switch (mt) {
+            case "WASTE", "EXPIRY_WRITE_OFF", "INTERNAL_CONSUMPTION", "PROMO_SAMPLE" -> {
+                // IPR S13: waste and expiry write-offs go to their own expense account when it is mapped.
+                String own = "WASTE".equals(mt) ? determination.mappedOptional("stock_waste_expense")
+                        : "EXPIRY_WRITE_OFF".equals(mt) ? determination.mappedOptional("stock_expiry_expense") : null;
+                String expense = own != null ? own : determination.mapped("stock_adjustment_expense");
+                yield List.of(Line.debit(expense, v, mt + " · " + productName),
+                        Line.credit(sv, v, mt + " · " + productName));
+            }
+            case "RETURN_TO_SUPPLIER" -> List.of(Line.debit(determination.mapped("grni_accrued"), v,
+                    "Return to supplier · " + productName), Line.credit(sv, v, "Return to supplier · " + productName));
+            case "PRODUCTION_CONSUME" -> List.of(Line.debit(wipOr(sv), v, "Production consume · " + productName),
+                    Line.credit(sv, v, "Production consume · " + productName));
+            case "STOCK_OUT" -> List.of(Line.debit(determination.mapped("cogs"), v, "COGS · " + productName),
+                    Line.credit(sv, v, "Stock issue · " + productName));
+            default -> throw ApiException.badRequest("No posting rule or default account is configured for stock"
+                    + " movements of type " + mt + "; add a posting rule for it under Inventory > Posting rules");
+        };
     }
 
     private void simple(String movementType, String productId, BigDecimal totalValue, Instant date, String sourceType,

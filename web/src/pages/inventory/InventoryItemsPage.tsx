@@ -18,6 +18,8 @@ import { formatMoney } from '@/lib/format';
 import { useDebouncedValue } from '@/lib/use-debounced-value';
 import { DirectStockActions } from './DirectStockActions';
 import { tx } from '@/lib/i18n/tx';
+import { apiErrorMessage } from '@/lib/api-error';
+import { useSeesCost } from '@/features/inventory/cost-visibility';
 
 interface ProductStockLevel {
   id: string;
@@ -29,7 +31,7 @@ interface ProductStockLevel {
   batchTracking: boolean;
   uom: string | null;
   totalQuantity: number;
-  averageCost: number;
+  averageCost: number | null;
   totalValue?: number | null;
   isLow: boolean;
   isOut: boolean;
@@ -73,6 +75,8 @@ export function InventoryItemsPage() {
   if (locationId && locationId !== 'all') params.set('locationId', locationId);
   if (view === 'low') params.set('lowStock', 'true');
   if (view === 'out') params.set('outOfStock', 'true');
+
+  const seesCost = useSeesCost();
 
   const items = useQuery<{ data: ProductStockLevel[]; meta: { page: number; pageSize: number; total: number; totalPages: number } }>({
     queryKey: ['inventory-product-stock-levels', debouncedSearch, locationId, view],
@@ -161,6 +165,12 @@ export function InventoryItemsPage() {
 
       {items.isLoading && <Skeleton className="h-64 w-full" />}
 
+      {items.isError && (
+        <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {apiErrorMessage(items.error, tx('Could not load stock levels'))}
+        </div>
+      )}
+
       {items.data && (
         <>
           <div className="rounded-md border">
@@ -172,18 +182,18 @@ export function InventoryItemsPage() {
                   <th className="px-3 py-2 text-left font-medium">{tx('Type')}</th>
                   <th className="px-3 py-2 text-right font-medium">{tx('On Hand')}</th>
                   <th className="px-3 py-2 text-right font-medium">{tx('Min Qty')}</th>
-                  <th className="px-3 py-2 text-right font-medium">{tx('Avg Cost')}</th>
-                  <th className="px-3 py-2 text-right font-medium">{tx('Total Value')}</th>
+                  {seesCost && <th className="px-3 py-2 text-right font-medium">{tx('Avg Cost')}</th>}
+                  {seesCost && <th className="px-3 py-2 text-right font-medium">{tx('Total Value')}</th>}
                   <th className="px-3 py-2 text-center font-medium">{tx('Status')}</th>
                 </tr>
               </thead>
               <tbody>
                 {items.data.data.length === 0 && (
-                  <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">{tx('No products found')}</td></tr>
+                  <tr><td colSpan={seesCost ? 8 : 6} className="px-3 py-8 text-center text-muted-foreground">{tx('No products found')}</td></tr>
                 )}
                 {items.data.data.map((item) => {
                   // The server values stock by its costing method; the average-cost product is only a fallback.
-                  const value = item.totalValue != null ? Number(item.totalValue) : item.averageCost * item.totalQuantity;
+                  const value = item.totalValue != null ? Number(item.totalValue) : Number(item.averageCost ?? 0) * item.totalQuantity;
                   return (
                     <tr key={item.id} className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => navigate(`/inventory/items/${item.id}`)}>
                       <td className="px-3 py-2 font-medium hover:text-primary hover:underline">{item.name}</td>
@@ -197,12 +207,16 @@ export function InventoryItemsPage() {
                       <td className="px-3 py-2 text-right text-muted-foreground">
                         {item.minQuantity ?? '—'}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono tabular-nums">
-                        {formatMoney(item.averageCost)}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono tabular-nums">
-                        {formatMoney(value)}
-                      </td>
+                      {seesCost && (
+                        <td className="px-3 py-2 text-right font-mono tabular-nums">
+                          {formatMoney(item.averageCost)}
+                        </td>
+                      )}
+                      {seesCost && (
+                        <td className="px-3 py-2 text-right font-mono tabular-nums">
+                          {formatMoney(value)}
+                        </td>
+                      )}
                       <td className="px-3 py-2 text-center">
                         {item.isOut ? (
                           <Badge variant="destructive">{tx('Out of stock')}</Badge>

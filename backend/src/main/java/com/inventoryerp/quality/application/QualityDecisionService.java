@@ -4,6 +4,7 @@ import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.PostingRequest;
 import com.inventoryerp.accounting.application.PostingRequest.Line;
 import com.inventoryerp.accounting.application.PostingService;
+import com.inventoryerp.inventory.application.StandardCostService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockPostingService;
 import com.inventoryerp.inventory.application.StockService;
@@ -76,6 +77,12 @@ public class QualityDecisionService {
             throw ApiException.badRequest("Lot " + lot.get("lotNumber") + " is " + status + "; only an open lot can be"
                     + " put on hold.");
         }
+        if (quality(lot) && Q.has(Q.str(lot, "locationId"))) {
+            // IPR X-2 (owner decision D2; deviation from Nest, where a hold only set the status and the stock stayed
+            // sellable): the held quantity moves to QC quarantine with the existing transfer. Release moves it back.
+            lots.moveToQuarantine(lot, openQty(lot), in == null ? null : in.reason(), "hold", "hold");
+            return done(lot, "hold", openQty(lot));
+        }
         db.update(QualityInspectionLot.class, id, Obj.of("status", "hold", "updatedBy", TenantContext.userId()));
         lots.decision(id, "hold", openQty(lot), null, null, in == null ? null : in.reason(), null, null);
         return done(lot, "hold", openQty(lot));
@@ -93,6 +100,7 @@ public class QualityDecisionService {
             if (!Q.has(Q.str(lot, "locationId"))) {
                 throw ApiException.badRequest("Lot " + lot.get("lotNumber") + " has no stock location to quarantine.");
             }
+            // A held lot (IPR X-2) already sits in quarantine: moveToQuarantine only changes its status then.
             lots.quarantineStock(lot, qty, in == null ? null : in.reason());
         } else {
             db.update(QualityInspectionLot.class, id, Obj.of("status", "quarantined", "updatedBy",
@@ -233,6 +241,7 @@ public class QualityDecisionService {
             if (je != null) {
                 db.update(QualityLotDecision.class, decisionId, Obj.of("journalEntryId", je));
             }
+            postDowngradeAtStandard(decisionId, code, in.productId(), toQty, newValue, now);
         } else {
             lots.decision(id, "downgrade", qty, null, null, in.reason(), null, extra);
         }
@@ -294,6 +303,37 @@ public class QualityDecisionService {
         Map<String, Object> je = posting.post(PostingRequest.of("INV", date, label, DOWNGRADE_SOURCE, decisionId,
                 "quality:downgrade:" + QualityDb.org() + ":" + decisionId, lines));
         return je == null ? null : Q.str(je, "id");
+    }
+
+    /**
+     * IPR GL-2 (deviation from Nest): a STANDARD second-grade product enters stock at its standard (the stock engine
+     * receives it there), while {@link #postDowngrade} debited its stock account with the downgrade value. The
+     * difference moves between that stock account and the purchase price variance account, so the GL follows the
+     * stock ledger ({@link StandardCostService#postReturnVariance}, recorded in the variance register).
+     */
+    private void postDowngradeAtStandard(String decisionId, String code, String toProduct, BigDecimal toQty,
+            BigDecimal newValue, Instant date) {
+        if (standards == null || toQty.signum() <= 0 || !db.jdbc().sql("SELECT count(*) FROM \"Product\" WHERE id = ?"
+                + " AND \"organizationId\" = ? AND \"costingMethod\"::text = 'STANDARD'").params(toProduct,
+                        QualityDb.org()).query(Long.class).single().equals(1L)) {
+            return;
+        }
+        BigDecimal standard = standards.governingStandard(toProduct).orElse(null);
+        if (standard == null) {
+            return;
+        }
+        BigDecimal standardValue = standard.multiply(toQty).setScale(6, RoundingMode.HALF_UP);
+        String account = stockPosting.stockAccount(toProduct, standardValue.signum() > 0 ? standardValue
+                : BigDecimal.ONE);
+        standards.postReturnVariance(toProduct, account, toQty, newValue.setScale(2, RoundingMode.HALF_UP),
+                standardValue, date, DOWNGRADE_SOURCE, decisionId, "Quality downgrade at standard " + code);
+    }
+
+    private StandardCostService standards;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStandards(StandardCostService standards) {
+        this.standards = standards;
     }
 
     // ------------------------------------------------------------------ cancel

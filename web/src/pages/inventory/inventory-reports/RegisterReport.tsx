@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/card';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { dateTime } from '@/lib/format';
-import { DataTable, Kpi, KpiGrid, ReportState, money, qty, type Column } from './shared';
+import { DataTable, Kpi, KpiGrid, ReportState, cost, qty, type Column } from './shared';
 import { Field, FilterBar, type useReportFilters } from './filters';
 import { tx } from '@/lib/i18n/tx';
 
@@ -98,7 +98,7 @@ function Donut({ data, empty }: { data: Group[]; empty: string }) {
     if (byLines.length === 0) return <div className="py-10 text-center text-sm text-muted-foreground">{empty}</div>;
     return <DonutChart slices={byLines} format={(v) => `${v} line(s)`} />;
   }
-  return <DonutChart slices={slices} format={(v) => money(v)} />;
+  return <DonutChart slices={slices} format={(v) => cost(v)} />;
 }
 
 function DonutChart({ slices, format }: { slices: { name: string; value: number }[]; format: (v: number) => string }) {
@@ -140,7 +140,7 @@ function RankBars({ rows, empty, color }: { rows: Group[]; empty: string; color:
           <div className="flex justify-between gap-2">
             <span className="truncate" title={g.name ?? g.key}>{g.name ?? g.key}</span>
             <span className="whitespace-nowrap font-mono text-xs tabular-nums">
-              {useLines ? `${g.lines} line(s)` : money(g.value)} · {qty(g.qty)}{g.uom ? ` ${g.uom}` : ''}
+              {useLines ? `${g.lines} line(s)` : cost(g.value)} · {qty(g.qty)}{g.uom ? ` ${g.uom}` : ''}
             </span>
           </div>
           <div className="mt-1 h-1.5 overflow-hidden rounded bg-muted">
@@ -223,9 +223,9 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
     { key: 'documents', header: tx('Documents'), align: 'right', render: (g) => g.documents, sort: (g) => g.documents },
     { key: 'lines', header: tx('Lines'), align: 'right', render: (g) => g.lines, sort: (g) => g.lines },
     { key: 'qty', header: isAdj ? tx('Net Qty') : tx('Qty'), align: 'right', render: (g) => `${qty(g.qty)}${g.uom ? ` ${g.uom}` : ''}`, sort: (g) => g.qty },
-    { key: 'avgUnitCost', header: tx('Avg Unit Cost'), align: 'right', render: (g) => money(g.avgUnitCost), sort: (g) => g.avgUnitCost ?? 0, hidden: breakdown !== 'byProduct' },
-    ...(isAdj ? [{ key: 'netValue', header: tx('Net Value'), align: 'right' as const, render: (g: Group) => <span className={g.netValue < 0 ? 'text-destructive' : 'text-emerald-600'}>{money(g.netValue)}</span>, sort: (g: Group) => g.netValue }] : []),
-    { key: 'value', header: isAdj ? tx('Gross Value') : tx('Value'), align: 'right', render: (g) => <span className="font-semibold">{money(g.value)}</span>, sort: (g) => g.value },
+    { key: 'avgUnitCost', header: tx('Avg Unit Cost'), align: 'right', render: (g) => cost(g.avgUnitCost), sort: (g) => g.avgUnitCost ?? 0, hidden: breakdown !== 'byProduct' },
+    ...(isAdj ? [{ key: 'netValue', header: tx('Net Value'), align: 'right' as const, render: (g: Group) => <span className={g.netValue < 0 ? 'text-destructive' : 'text-emerald-600'}>{cost(g.netValue)}</span>, sort: (g: Group) => g.netValue }] : []),
+    { key: 'value', header: isAdj ? tx('Gross Value') : tx('Value'), align: 'right', render: (g) => <span className="font-semibold">{cost(g.value)}</span>, sort: (g) => g.value },
     {
       key: 'sharePct', header: tx('Share'), align: 'right', sort: (g) => g.sharePct,
       render: (g) => (
@@ -251,8 +251,8 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
       key: 'qty', header: tx('Qty'), align: 'right', sort: (l) => l.qty,
       render: (l) => <span className={cn(isAdj && (l.qty < 0 ? 'text-destructive' : 'text-emerald-600'))}>{isAdj && l.qty > 0 ? '+' : ''}{qty(l.qty)}{l.uom ? ` ${l.uom}` : ''}</span>,
     },
-    { key: 'unitCost', header: tx('Unit Cost'), align: 'right', render: (l) => money(l.unitCost), sort: (l) => l.unitCost },
-    { key: 'value', header: tx('Value'), align: 'right', render: (l) => <span className={cn('font-semibold', isAdj && l.value < 0 && 'text-destructive')}>{money(l.value)}</span>, sort: (l) => l.value },
+    { key: 'unitCost', header: tx('Unit Cost'), align: 'right', render: (l) => cost(l.unitCost), sort: (l) => l.unitCost },
+    { key: 'value', header: tx('Value'), align: 'right', render: (l) => <span className={cn('font-semibold', isAdj && l.value < 0 && 'text-destructive')}>{cost(l.value)}</span>, sort: (l) => l.value },
     { key: 'responsible', header: tx('Responsible'), render: (l) => l.responsible ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.responsible },
     { key: 'approvedBy', header: tx('Approved By'), render: (l) => l.approvedBy ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.approvedBy },
     { key: 'performedBy', header: tx('Recorded By'), render: (l) => l.performedBy ?? <span className="text-muted-foreground">—</span>, sort: (l) => l.performedBy },
@@ -271,15 +271,15 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
             <KpiGrid>
               {isAdj ? (
                 <>
-                  <Kpi label={tx('Net adjustment value')} value={money(s.value)} tone={s.value < 0 ? 'bad' : s.value > 0 ? 'good' : undefined} hint={<Change pct={s.changePct.value} />} />
-                  <Kpi label={tx('Gains (+)')} value={money(s.gainValue)} tone="good" hint={`${qty(s.gainQty)} units`} />
-                  <Kpi label={tx('Losses (−)')} value={money(s.lossValue)} tone="bad" hint={`${qty(s.lossQty)} units`} />
+                  <Kpi label={tx('Net adjustment value')} value={cost(s.value)} tone={s.value < 0 ? 'bad' : s.value > 0 ? 'good' : undefined} hint={<Change pct={s.changePct.value} />} />
+                  <Kpi label={tx('Gains (+)')} value={cost(s.gainValue)} tone="good" hint={`${qty(s.gainQty)} units`} />
+                  <Kpi label={tx('Losses (−)')} value={cost(s.lossValue)} tone="bad" hint={`${qty(s.lossQty)} units`} />
                 </>
               ) : (
                 <>
-                  <Kpi label={cfg.valueLabel} value={money(s.value)} tone={cfg.tone} hint={<Change pct={s.changePct.value} invert={kind === 'damages'} />} />
+                  <Kpi label={cfg.valueLabel} value={cost(s.value)} tone={cfg.tone} hint={<Change pct={s.changePct.value} invert={kind === 'damages'} />} />
                   <Kpi label={tx('Quantity')} value={qty(s.qty)} hint={<Change pct={s.changePct.qty} invert={kind === 'damages'} />} />
-                  <Kpi label={tx('Daily average')} value={money(s.avgValuePerDay)} hint={tx('over {{days}} day(s)', { days: d.range.days })} />
+                  <Kpi label={tx('Daily average')} value={cost(s.avgValuePerDay)} hint={tx('over {{days}} day(s)', { days: d.range.days })} />
                 </>
               )}
               <Kpi label={tx('Documents / lines')} value={`${s.documents} / ${s.lines}`} hint={<Change pct={s.changePct.lines} invert={kind === 'damages'} />} />
@@ -294,7 +294,7 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
 
             <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
               <span>{tx('Period')} {d.range.start} → {d.range.end}</span>
-              <span>{tx('Compared with')} {d.previousRange.start} → {d.previousRange.end}: {money(s.previous.value)} · {s.previous.lines} {tx('line(s)')}</span>
+              <span>{tx('Compared with')} {d.previousRange.start} → {d.previousRange.end}: {cost(s.previous.value)} · {s.previous.lines} {tx('line(s)')}</span>
               {s.topItem && <span>{tx('Top item:')} <b className="text-foreground">{s.topItem.name}</b> ({s.topItem.sharePct}{tx('% of value)')}</span>}
               {zeroCost && <span className="text-amber-600">{tx('⚠ All lines carry zero cost — value charts fall back to line counts. Check item cost prices.')}</span>}
             </div>
@@ -307,7 +307,7 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
                     <XAxis dataKey="label" fontSize={11} minTickGap={16} />
                     <YAxis yAxisId="v" fontSize={11} width={64} tickFormatter={(v: number) => v.toLocaleString(undefined, { notation: 'compact' })} />
                     <YAxis yAxisId="l" orientation="right" fontSize={11} width={32} allowDecimals={false} />
-                    <Tooltip formatter={(v: number, name: string) => (name === 'Lines' ? v : money(v))} />
+                    <Tooltip formatter={(v: number, name: string) => (name === 'Lines' ? v : cost(v))} />
                     <Legend />
                     {isAdj ? (
                       <>
@@ -345,7 +345,7 @@ export function RegisterReport({ kind, ctl }: { kind: RegisterKind; ctl: ReturnT
                     <BarChart data={d.byWeekday}>
                       <XAxis dataKey="key" fontSize={11} />
                       <YAxis fontSize={11} width={28} allowDecimals={false} />
-                      <Tooltip formatter={(v: number, name: string) => (name === 'value' ? money(v) : v)} />
+                      <Tooltip formatter={(v: number, name: string) => (name === 'value' ? cost(v) : v)} />
                       <Bar dataKey="lines" name="Lines" fill={cfg.color} radius={[2, 2, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>

@@ -7,6 +7,7 @@ import com.inventoryerp.analytics.application.Dashboard.Chart;
 import com.inventoryerp.analytics.application.Dashboard.Series;
 import com.inventoryerp.analytics.application.Dashboard.Table;
 import com.inventoryerp.analytics.application.Dashboard.Tile;
+import com.inventoryerp.inventory.application.CostVisibility;
 import com.inventoryerp.inventory.application.InventoryQueryService;
 import com.inventoryerp.inventory.application.InventoryReportsService;
 import com.inventoryerp.kernel.common.Obj;
@@ -95,6 +96,14 @@ public class InventoryKpiService {
                                 Obj.of("source", "countVariance", "entries", countLines, "value", counts.get("value")),
                                 Obj.of("source", "surveyVariance", "entries", surveyCount, "value",
                                         surveys.get("value")))));
+        if (!CostVisibility.seesCost()) {
+            // IPR review 2 (S-2): stock values are cost; without inventory_valuation:read every money figure is null
+            // (the screen shows "—"), the counts stay.
+            tiles = tiles.stream().map(t -> "money".equals(t.format()) ? new Tile(t.key(), null, t.format(), t.drill())
+                    : t).toList();
+            charts.forEach(c -> c.rows().forEach(r -> CostVisibility.hideCost(r, "value")));
+            tables.forEach(t -> t.rows().forEach(r -> CostVisibility.hideCost(r, "value")));
+        }
         List<String> notes = new ArrayList<>(List.of("stockAsOfNow"));
         if (health.partial()) {
             notes.add("stockAgingPartial");
@@ -227,12 +236,16 @@ public class InventoryKpiService {
     public PageResult<Map<String, Object>> documents(String kpi, AnalyticsFilter f, Paging paging) {
         AnalyticsView v = views.view(f);
         String[] locations = views.stockLocationIds(v);
-        return switch (kpi == null ? "" : kpi) {
+        PageResult<Map<String, Object>> page = switch (kpi == null ? "" : kpi) {
             case "below-minimum" -> belowMinimum(f, locations, paging);
             case "count-variances" -> countDocuments(v, locations, paging);
             case "stockpile-surveys" -> surveyDocuments(v, locations, paging);
             default -> throw AnalyticsDocuments.unknown(kpi);
         };
+        if (!CostVisibility.seesCost()) {
+            page.data().forEach(r -> CostVisibility.hideCost(r, "amount")); // IPR review 2 (S-2)
+        }
+        return page;
     }
 
     private PageResult<Map<String, Object>> belowMinimum(AnalyticsFilter f, String[] locations,

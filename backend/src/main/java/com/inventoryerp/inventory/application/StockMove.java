@@ -70,8 +70,25 @@ public final class StockMove {
     public String distStrategy;
     public String responsibleById;
     public String approvedById;
-    /** Issue only: movement date (period check + GL date); now when null. */
+    /**
+     * Movement posting date (period check + GL date); now when null. Honoured by issue, return restock, adjust and
+     * transfer (IPR SW-6: adjust and transfer used to post at now).
+     */
     public Instant date;
+    /**
+     * ADR-S088: when the goods physically moved (business time), recorded on every ledger row as {@code effectiveAt}.
+     * Null = the offline op time bound in {@code EffectiveTime}, else server now. A value later than now + {@code
+     * inventory.maxFutureEffectiveMinutes} is stored as now and flagged {@code clockSkew}. Never re-sorts the ledger:
+     * it only decides which side of a count cut-off and which period a movement falls on.
+     */
+    public Instant effectiveAt;
+    /**
+     * IPR 1b (count spec): the count session whose variance this move posts. Its own posting is exempt from that
+     * session's freeze, and a count variance never triggers a late count correction.
+     */
+    public String countSessionId;
+    /** IPR 1b: never look for a late count correction for this move (corrections and count variances themselves). */
+    public boolean skipLateCountCheck;
     /** Issue only: quantity-only (the caller posts the balanced entry itself). */
     public boolean skipGlPosting;
     /** Issue only: refuse when pickable on-hand is short, regardless of the negative-stock setting. */
@@ -120,10 +137,60 @@ public final class StockMove {
     BigDecimal traceFactor;
 
     /**
+     * IPR X-3: a move posted by a manual stock document (stock-out, waste, adjustment approval, transfer, direct stock
+     * in / out). The engine refuses it into or out of a quarantine or rental virtual location
+     * ({@link StockService#QUARANTINE_CODES}, {@link StockService#RENTAL_HELD_CODES}), except a transfer into a
+     * quarantine location (a hold). Count variances are not manual moves.
+     */
+    public boolean manualMove;
+    /**
+     * IPR X-3: the move belongs to the flow that owns a quarantine location (quality / QC release, rejection,
+     * downgrade, returns inspection), so it may issue from it. Callers not yet passing it are recognised by their
+     * source type ({@link StockService#QUARANTINE_OWNER_SOURCES}).
+     */
+    public boolean quarantineFlow;
+    /**
+     * IPR E-1a (F5): opt in to honour active sales-order reservations ({@code sales_order_line}) at the cell: an issue
+     * or transfer that would eat into stock reserved for a sales order is refused, except the reservations of
+     * {@link #reservationHolderIds}. A POS / offline sale drain is refused only where the existing availability rules
+     * would refuse it (stock policy {@code block}, a lot-tracked block, {@link #requireAvailable}).
+     */
+    public boolean honourSalesReservations;
+    /** IPR E-1a: the reservation source ids ({@code StockReservation.sourceId}) the caller holds itself. */
+    public List<String> reservationHolderIds;
+
+    /**
      * Phase A A3 / I2 M-6: the exact base-unit quantity of an issue whose document quantity is in another unit, when
      * the caller rounds cumulatively (per delivery-order line, not per load). Null = convert {@code quantity}.
      */
     public BigDecimal baseQuantity;
+
+    /**
+     * IPR review 3 (#2): issue only — a take-back of a receipt row (reversal, issue-back). The units beyond the named
+     * serial numbers leave as units without a serial first (the row's unserialised part), and in-stock serial units of
+     * other receipts are picked only for what no unit without a serial covers. False (forward issues): the IPR C-2
+     * rule, the rest is picked from the serial units in stock.
+     */
+    public boolean unserialisedRestFirst;
+
+    /** IPR X-3: a manual stock document move (see {@link #manualMove}). */
+    public StockMove manual() {
+        this.manualMove = true;
+        return this;
+    }
+
+    /** IPR X-3: a move of the flow owning a quarantine location (see {@link #quarantineFlow}). */
+    public StockMove quarantineFlow() {
+        this.quarantineFlow = true;
+        return this;
+    }
+
+    /** IPR E-1a: honour sales-order reservations except those of {@code holderIds}. */
+    public StockMove honourReservations(List<String> holderIds) {
+        this.honourSalesReservations = true;
+        this.reservationHolderIds = holderIds;
+        return this;
+    }
 
     /** See {@link #baseQuantity}. */
     public StockMove baseQuantity(BigDecimal v) {
@@ -231,6 +298,12 @@ public final class StockMove {
 
     public StockMove date(Instant v) {
         this.date = v;
+        return this;
+    }
+
+    /** ADR-S088: the business time of the move (see {@link #effectiveAt}). */
+    public StockMove effectiveAt(Instant v) {
+        this.effectiveAt = v;
         return this;
     }
 

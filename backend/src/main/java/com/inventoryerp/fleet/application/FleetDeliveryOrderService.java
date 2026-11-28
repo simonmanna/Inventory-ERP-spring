@@ -20,6 +20,7 @@ import com.inventoryerp.fleet.domain.FleetDeliveryOrderLine;
 import com.inventoryerp.fleet.domain.FleetLoad;
 import com.inventoryerp.inventory.application.PosStockLocation;
 import com.inventoryerp.invoicing.application.CreditControlService;
+import com.inventoryerp.invoicing.application.InvoiceGoodsService;
 import com.inventoryerp.invoicing.application.InvoiceService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
@@ -393,12 +394,19 @@ public class FleetDeliveryOrderService {
         return insert(h, "sales_order", in.sourceId(), src.number(), "dispatch", null, null, null, lines);
     }
 
-    /** From a sales invoice: draft → fleet issues the stock (the invoice is marked), posted → already issued. */
+    /**
+     * From a sales invoice: draft → fleet issues the stock (the invoice is marked), posted → already issued. IPR F1
+     * (owner decision D4): an invoice awaiting delivery (an earlier delivery order was cancelled or closed short with
+     * goods left), draft or posted, gets a delivery order in stock mode dispatch for what is still undelivered, which
+     * takes over the invoice's mark. The invoice row is locked first (L1), so a collection of the undelivered goods
+     * ({@code POST /invoices/:id/issue-undelivered}) and a new delivery order never both take the same goods.
+     */
     @Transactional
     public Map<String, Object> fromInvoice(FromSourceInput in) {
         Map<String, Object> head = SqlRows.one(db.jdbc().sql("SELECT id, \"documentNumber\", status::text AS status,"
-                + " \"partnerId\", \"branchId\", \"deliveryDate\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?"
-                + " AND \"documentType\" = 'sales_invoice'").params(in.sourceId(), FleetDb.org()));
+                + " \"partnerId\", \"branchId\", \"deliveryDate\", \"sourceType\", data->>'stockIssuedBy' AS marked, data->>'"
+                + InvoiceGoodsService.AWAITING + "' AS awaiting FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? AND \"documentType\" ="
+                + " 'sales_invoice' FOR UPDATE").params(in.sourceId(), FleetDb.org()));
         if (head == null) {
             throw ApiException.notFound("Invoice not found");
         }
@@ -407,7 +415,26 @@ public class FleetDeliveryOrderService {
         if (!Set.of("draft", "posted", "paid").contains(status)) {
             throw ApiException.badRequest("Invoice " + number + " is " + status + " and cannot be delivered");
         }
+        if (head.get("awaiting") != null && goods != null) {
+            return fromInvoiceAwaiting(in, head, number);
+        }
         assertNoLiveOrder("invoice", in.sourceId(), "Invoice " + number);
+        // IPR residual (stream H): an invoice whose stock issue belongs to another document. A sales-order invoice is
+        // marked by its order (the order's own deliveries issue the goods, and may already have), a delivery-order
+        // invoice by that delivery order: a delivery order from the invoice would either never issue the goods
+        // (posted: stock mode invoiced) or issue them a second time (draft: stock mode dispatch). A cash-sale invoice's
+        // goods left stock at the sale's handover: its delivery order carries them in stock mode invoiced and keeps
+        // the cash sale's mark.
+        String marked = str(head.get("marked"));
+        boolean cashSale = "cash_sale".equals(head.get("sourceType"));
+        if (marked != null && !cashSale) {
+            if ("sales_order".equals(head.get("sourceType"))) {
+                throw ApiException.conflict("Invoice " + number + " bills sales order " + marked + ", whose deliveries"
+                        + " issue its goods. Create the delivery order from the sales order.");
+            }
+            throw ApiException.conflict("Invoice " + number + "'s goods leave stock through " + marked
+                    + "; deliver them there.");
+        }
         Map<String, Object> doc = invoices.findOne(in.sourceId());
         List<Line> lines = new ArrayList<>();
         if (doc.get("lines") instanceof List<?> list) {
@@ -436,13 +463,82 @@ public class FleetDeliveryOrderService {
         LocalDate deliveryDate = head.get("deliveryDate") instanceof Instant i
                 ? i.atZone(BusinessZone.get()).toLocalDate() : null;
         Header h = header(in, str(head.get("partnerId")), str(head.get("branchId")), deliveryDate);
-        boolean draft = "draft".equals(status);
+        boolean draft = "draft".equals(status) && !cashSale;
         Map<String, Object> out = insert(h, "invoice", in.sourceId(), number, draft ? "dispatch" : "invoiced",
                 in.sourceId(), number, "document", lines);
         if (draft) {
             invoices.setStockIssuedByDelivery(in.sourceId(), (String) out.get("code"));
         }
         return out;
+    }
+
+    /** IPR F1: the delivery order of an invoice awaiting delivery: its undelivered quantity, issued at dispatch. */
+    private Map<String, Object> fromInvoiceAwaiting(FromSourceInput in, Map<String, Object> head, String number) {
+        String open = goods.openDeliveryOrder(in.sourceId());
+        if (open != null) {
+            throw ApiException.conflict("Invoice " + number + " already has delivery order " + open);
+        }
+        List<Line> lines = new ArrayList<>();
+        for (InvoiceGoodsService.UndeliveredLine u : goods.undelivered(in.sourceId())) {
+            Map<String, Object> product = product(u.productId());
+            String uomId = u.uomId() != null ? u.uomId() : (String) product.get("uomId");
+            lines.add(new Line(u.productId(), u.variantId(), u.description(), uomId, u.uomFactor(),
+                    // IPR review: never above the undelivered quantity (the goods service states it exactly).
+                    u.quantity().setScale(3, RoundingMode.DOWN), u.lineId(), u.unitPrice(), u.discountPercent(),
+                    u.taxId(), null, null));
+        }
+        if (lines.isEmpty()) {
+            throw ApiException.badRequest("Invoice " + number + " has no undelivered goods to deliver");
+        }
+        LocalDate deliveryDate = head.get("deliveryDate") instanceof Instant i
+                ? i.atZone(BusinessZone.get()).toLocalDate() : null;
+        Header h = header(in, str(head.get("partnerId")), str(head.get("branchId")), deliveryDate);
+        Map<String, Object> out = insert(h, "invoice", in.sourceId(), number, "dispatch", in.sourceId(), number,
+                "document", lines);
+        invoices.assignStockToDelivery(in.sourceId(), (String) out.get("code"));
+        return out;
+    }
+
+    /**
+     * IPR F1 (owner decision D4): when a dispatch-mode delivery order of an invoice is cancelled or closed short, the
+     * invoice's goods it did not deliver go back to the invoice. A draft from which nothing has left stock simply loses
+     * the mark (it issues everything when it posts, as before); otherwise, while anything is undelivered, the invoice
+     * becomes awaiting delivery (a new delivery order or a collection issues the rest). Fully delivered: unchanged.
+     * Runs under the delivery order's row lock; the invoice row is locked next (L1 → L1, the order of the cancel route).
+     */
+    private void handBackInvoiceGoods(Map<String, Object> order) {
+        if (!"invoice".equals(order.get("sourceType")) || !"dispatch".equals(order.get("stockMode"))) {
+            return;
+        }
+        String invoiceId = (String) order.get("sourceId");
+        String code = (String) order.get("code");
+        Map<String, Object> inv = SqlRows.one(db.jdbc().sql("SELECT status::text AS status, data->>'stockIssuedBy' AS"
+                + " marked FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE").params(invoiceId,
+                FleetDb.org()));
+        if (inv == null || !code.equals(inv.get("marked"))) {
+            return;
+        }
+        if (goods == null) {
+            if ("draft".equals(inv.get("status"))) {
+                invoices.setStockIssuedByDelivery(invoiceId, null);
+            }
+            return;
+        }
+        boolean nothingIssued = goods.issueLedgerCodes(invoiceId).isEmpty();
+        if ("draft".equals(inv.get("status")) && nothingIssued) {
+            invoices.setStockIssuedByDelivery(invoiceId, null);
+        } else if (Set.of("draft", "posted", "paid").contains(str(inv.get("status")))
+                && !goods.undelivered(invoiceId).isEmpty()) {
+            invoices.releaseStockToAwaitingDelivery(invoiceId, code);
+        }
+    }
+
+    private InvoiceGoodsService goods;
+
+    /** IPR F1: what an invoice still has to deliver. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setGoods(InvoiceGoodsService goods) {
+        this.goods = goods;
     }
 
     private Header header(FromSourceInput in, String partnerId, String branchId, LocalDate fallbackDate) {
@@ -572,7 +668,10 @@ public class FleetDeliveryOrderService {
         return get(id);
     }
 
-    /** Cancel: only while no goods left the yard; open trips are cancelled with it; a marked draft invoice is freed. */
+    /**
+     * Cancel: only while no goods left the yard; open trips are cancelled with it; a marked draft invoice is freed, a
+     * posted one goes back to awaiting delivery (IPR F1).
+     */
     @Transactional
     public Map<String, Object> cancel(String id, String reason) {
         Map<String, Object> before = require(id, true);
@@ -592,18 +691,15 @@ public class FleetDeliveryOrderService {
                 + " WHERE \"organizationId\" = ? AND \"deliveryOrderId\" = ?").params(FleetDb.org(), id).update();
         Map<String, Object> after = db.update(FleetDeliveryOrder.class, id, Obj.of("status", "cancelled",
                 "cancelReason", reason.trim(), "cancelledAt", Instant.now(), "updatedBy", TenantContext.userId()));
-        if ("invoice".equals(before.get("sourceType")) && "dispatch".equals(before.get("stockMode"))) {
-            String st = db.jdbc().sql("SELECT status::text FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?")
-                    .params(before.get("sourceId"), FleetDb.org()).query(String.class).optional().orElse(null);
-            if ("draft".equals(st)) {
-                invoices.setStockIssuedByDelivery((String) before.get("sourceId"), null);
-            }
-        }
+        handBackInvoiceGoods(before);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "cancel", before, after));
         return get(id);
     }
 
-    /** Short-close: the remaining quantity will not be delivered; trips still open must be finished or cancelled. */
+    /**
+     * Short-close: the remaining quantity will not be delivered; trips still open must be finished or cancelled. IPR F1:
+     * an invoice's goods it did not deliver go back to the invoice (awaiting delivery).
+     */
     @Transactional
     public Map<String, Object> close(String id, CloseOrderInput in) {
         Map<String, Object> before = require(id, true);
@@ -618,6 +714,7 @@ public class FleetDeliveryOrderService {
         Map<String, Object> after = db.update(FleetDeliveryOrder.class, id, Obj.of("status", "closed", "closedAt",
                 Instant.now(), "closeReason", in == null ? null : FleetVehicleService.trim(in.reason()), "updatedBy",
                 TenantContext.userId()));
+        handBackInvoiceGoods(before);
         audit.recordInTx(AuditInput.of(AUDIT_ENTITY, id, "update", before, after));
         return get(id);
     }

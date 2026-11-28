@@ -48,6 +48,7 @@ class CostingSettingsIT extends ApiTestSupport {
         org = boot.body().get("organization").get("id").asString();
         userId = boot.body().get("adminUser").get("id").asString();
         token = login(code, "owner@" + code + ".test", "Owner@12345");
+        inventorySodPairsOff(token);
         String role = UUID.randomUUID().toString();
         jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\") VALUES"
                 + " (?, ?, 'Controller', false, ?, now())").params(role, org, Permissions.ALL.toArray(String[]::new))

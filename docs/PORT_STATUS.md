@@ -2121,6 +2121,15 @@ Not verified yet: the tours driven by hand in a browser.
   (`integrity_*` exceptions; value kinds hold the period close), read-only data checks
   `docs/audits/2026-11-22-inventory-data-checks.sql` — `InventoryIntegrityIT`, `PeriodCloseChecklistIT`;
   [review](audits/2026-11-22-inventory-review.md)
+- [x] IPR Phase 0 (2026-11-27): 12 report-only integrity checks (`reportOnlyChecks`, never block a close),
+  `GET /api/v1/inventory/reports/feature-usage` (`inventory_valuation:read`) + daily `integrity_feature_risk`,
+  [feature-risk map](spec/inventory-feature-risk-map.md), read-only `docs/audits/2026-11-27-inventory-data-checks.sql`,
+  ledger append-only source scan — `InventoryIntegrityP0IT`, `InventoryLedgerImmutabilityTest`
+- [x] IPR Phase 4 R5 (2026-11-27, ADR-S090, V715): opening-stock import — `POST /api/v1/inventory/opening-stock/preview`
+  (`inventory_valuation:manage`), `POST …/import` and `POST …/runs/{id}/batches/{batchId}/retry`
+  (`inventory_valuation:post`, Idempotency-Key), `GET …/runs`, `…/runs/{id}`, `…/runs/{id}/batches/{batchId}`,
+  `…/runs/{id}/reconciliation` (`inventory_valuation:read`); web `/inventory/opening-stock` — `OpeningStockImportIT`,
+  [evidence](audits/ipr-evidence/4-opening-stock.md)
 
 ## Inventory hardening R1 (corruption blockers, gate G1; owner-approved 2026-11-23)
 
