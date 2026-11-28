@@ -130,7 +130,8 @@ public class FleetWorkOrderCostService {
         String lineId = java.util.UUID.randomUUID().toString();
         StockMove.Issued issued = stock.issue(StockMove.of(in.productId(), in.locationId(), in.quantity())
                 .variant(trim(in.variantId())).skipGl().requireAvailable(true).moveType("internal_use")
-                .source(SOURCE, code).reference(code).notes("Work order " + code + " · " + w.get("title")).date(at));
+                .source(SOURCE, code).reference(code).notes("Work order " + code + " · " + w.get("title")).date(at)
+                .honourReservations(null)); // IPR E-1a
         BigDecimal value = issued.totalValue().setScale(6, RoundingMode.HALF_UP);
         String key = "fleet:wo_part:" + lineId;
         String label = "Work order " + code + " · part " + productName(in.productId());
@@ -152,6 +153,14 @@ public class FleetWorkOrderCostService {
         return saved(w, db.insert(FleetWorkOrderLine.class, data));
     }
 
+    private com.inventoryerp.inventory.application.StockReversalService stockReturns;
+
+    /** IPR SW-3: linked restock through the engine (setter: keeps the constructor as it is). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(com.inventoryerp.inventory.application.StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
+    }
+
     /** Return unused quantity of an issued part to the location it came from, at the issue cost. */
     @Transactional
     public Map<String, Object> returnPart(String workOrderId, String lineId, PartReturnInput in) {
@@ -167,12 +176,24 @@ public class FleetWorkOrderCostService {
             throw ApiException.badRequest("Only " + JsNumbers.dec(remaining) + " of this part can still be returned");
         }
         BigDecimal unitCost = SqlRows.dec(part, "unitCost");
-        BigDecimal value = in.quantity().multiply(unitCost).setScale(6, RoundingMode.HALF_UP);
         String productId = (String) part.get("productId");
-        StockMove receipt = StockMove.of(productId, (String) part.get("locationId"), in.quantity())
-                .variant((String) part.get("variantId")).unitCost(unitCost).moveType("return_in")
-                .source(SOURCE, code).reference(code).notes("Unused part returned from work order " + code);
-        stock.receive(receipt);
+        // IPR SW-3: the part comes back against its issue row (lot, serial, cost; reversesLedgerId), never more than
+        // that issue still holds; the journal carries the value the rows brought back. IPR review 1 (N3): a legacy
+        // line without its issue code returns against the work order's own issue rows of that part (capped by what
+        // they still have out, and by the line's remaining quantity above); none at all is a 400, never a 500.
+        String issueCode = (String) part.get("stockLedgerCode");
+        com.inventoryerp.inventory.application.StockReversalService.IssueSource source = issueCode != null
+                ? com.inventoryerp.inventory.application.StockReversalService.IssueSource.ledgerCodes(List.of(issueCode))
+                : com.inventoryerp.inventory.application.StockReversalService.IssueSource.of(SOURCE, code);
+        List<com.inventoryerp.inventory.application.StockReversalService.ReturnedRow> back = stockReturns
+                .returnFromSource(new com.inventoryerp.inventory.application.StockReversalService.ReturnFromSource(
+                        source,
+                        List.of(com.inventoryerp.inventory.application.StockReversalService.ReturnLine.of(productId,
+                                (String) part.get("variantId"), in.quantity())),
+                        SOURCE, code, code, "Unused part returned from work order " + code, null,
+                        (String) part.get("locationId"), false, "return_in"));
+        BigDecimal value = back.stream().map(r -> r.totalValue()).reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(6, RoundingMode.HALF_UP);
         String returnId = java.util.UUID.randomUUID().toString();
         String key = "fleet:wo_part_return:" + returnId;
         String label = "Work order " + code + " · part returned " + productName(productId);

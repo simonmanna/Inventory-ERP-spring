@@ -283,7 +283,8 @@ class InventoryAuditConservationIT extends InventoryAuditSupport {
                 List.of(receiveLine(itemId, 10, null, null))));
         assertThat(partial.get("status").asString()).isEqualTo("partially_received");
         JsonNode done = okA(200, "POST", "/inventory/transfers/" + id + "/receive", Map.of("lines",
-                List.of(receiveLine(itemId, 8, 1, 1)), "notes", "two cartons crushed / missing"));
+                List.of(receiveLine(itemId, 8, 1, 1)), "notes", "two cartons crushed / missing", "lossReason",
+                "two cartons crushed / missing", "approvedById", auditUserId));
         assertThat(done.get("status").asString()).isEqualTo("completed");
         assertThat(done.get("receipts")).hasSize(2);
 

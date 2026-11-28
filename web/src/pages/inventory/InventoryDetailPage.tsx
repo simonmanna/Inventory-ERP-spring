@@ -12,6 +12,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatCurrency } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api-error';
+import { costText } from '@/features/inventory/cost-visibility';
+
+/** IPR S-2: a cost the server hides (null) without inventory_valuation:read shows as a dash, never as zero. */
+const costCurrency = (v: number | string | null | undefined) => costText(v, true, formatCurrency);
 import { date, dateTime } from '@/lib/format';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useInventoryItemDetail, type InventoryItemDetail } from '@/features/inventory/api';
@@ -139,9 +144,9 @@ function TabOverview({ data }: { data: InventoryItemDetail }) {
               </div>
             </div>
             <dl className="divide-y">
-              <InfoRow label={tx('Unit Cost')} value={formatCurrency(product.costPrice)} />
+              <InfoRow label={tx('Unit Cost')} value={costCurrency(product.costPrice)} />
               <InfoRow label={tx('Sales Price')} value={formatCurrency(product.salesPrice)} />
-              <InfoRow label={tx('Stock Value')} value={<span className="font-bold text-emerald-600">{formatCurrency(data.totalValue)}</span>} />
+              <InfoRow label={tx('Stock Value')} value={<span className="font-bold text-emerald-600">{costCurrency(data.totalValue)}</span>} />
               <InfoRow label={tx('Reorder Qty')} value={Number(product.reorderQty ?? 0) > 0 ? Number(product.reorderQty).toLocaleString() : null} />
             </dl>
           </CardContent>
@@ -259,7 +264,7 @@ function TabLocations({ data }: { data: InventoryItemDetail }) {
         <Separator orientation="vertical" className="h-10" />
         <div>
           <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{tx('Stock Value')}</p>
-          <p className="text-2xl font-bold text-emerald-600">{formatCurrency(data.totalValue)}</p>
+          <p className="text-2xl font-bold text-emerald-600">{costCurrency(data.totalValue)}</p>
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -435,8 +440,8 @@ function TabPurchaseOrders({ data }: { data: InventoryItemDetail }) {
               <TableCell><PoStatusBadge status={poi.order.status} /></TableCell>
               <TableCell className="text-right font-bold text-sm">{Number(poi.quantity).toLocaleString()}</TableCell>
               <TableCell className="text-right text-sm"><span className={Number(poi.receivedQuantity) < Number(poi.quantity) ? 'text-amber-600 font-bold' : 'text-emerald-600 font-bold'}>{Number(poi.receivedQuantity).toLocaleString()}</span></TableCell>
-              <TableCell className="text-right text-sm">{formatCurrency(poi.unitPrice)}</TableCell>
-              <TableCell className="text-right font-bold text-sm">{formatCurrency(poi.subtotal)}</TableCell>
+              <TableCell className="text-right text-sm">{costCurrency(poi.unitPrice)}</TableCell>
+              <TableCell className="text-right font-bold text-sm">{costCurrency(poi.subtotal)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -548,7 +553,7 @@ function TabAccounting({ data }: { data: InventoryItemDetail }) {
 export default function InventoryDetailPage() {
   const navigate = useNavigate();
   const { productId } = useParams<{ productId: string }>();
-  const { data, isLoading, refetch, isRefetching } = useInventoryItemDetail(productId);
+  const { data, isLoading, isError, error, refetch, isRefetching } = useInventoryItemDetail(productId);
   const [activeTab, setActiveTab] = useState('overview');
   const canExplainCost = useAuthStore((st) => st.hasPermission(PERMISSIONS.inventoryValuation.read));
 
@@ -568,6 +573,14 @@ export default function InventoryDetailPage() {
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-96 w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div role="alert" className="flex items-center justify-center h-64">
+        <div className="text-center text-destructive"><Package className="h-12 w-12 opacity-30 mx-auto mb-2" /><p className="font-semibold">{apiErrorMessage(error, tx('Could not load this item'))}</p></div>
       </div>
     );
   }
@@ -645,12 +658,12 @@ export default function InventoryDetailPage() {
             <Separator orientation="vertical" className="h-4" />
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{tx('Unit Cost:')}</span>
-              <span className="font-semibold text-sm">{formatCurrency(data.product.costPrice)}</span>
+              <span className="font-semibold text-sm">{costCurrency(data.product.costPrice)}</span>
             </div>
             <Separator orientation="vertical" className="h-4" />
             <div className="flex items-center gap-1.5">
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{tx('Stock Value:')}</span>
-              <span className="font-bold text-sm text-emerald-600">{formatCurrency(data.totalValue)}</span>
+              <span className="font-bold text-sm text-emerald-600">{costCurrency(data.totalValue)}</span>
             </div>
           </div>
           {(isOutOfStock(data) || isLowStock(data)) && (

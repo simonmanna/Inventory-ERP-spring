@@ -4,6 +4,7 @@ import com.inventoryerp.core.application.BranchScopeService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.shared.web.ApiException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 
@@ -76,6 +77,35 @@ public class LocationScope {
             throw ApiException.badRequest("Choose a location: your access is limited to specific locations");
         }
         return s.locationIds().iterator().next();
+    }
+
+    /**
+     * IPR S-1: the locations a read covers. {@code null} = every location (an unrestricted caller with a blank filter);
+     * otherwise the ids to filter on. A named location must be in the caller's access (403 otherwise). A restricted
+     * caller's blank filter becomes every location of their access (sorted), so a user with two or more locations
+     * gets their locations instead of the 400 of {@link #resolve}.
+     */
+    public List<String> readLocations(String locationId) {
+        DataScope s = current();
+        boolean named = locationId != null && !locationId.isBlank();
+        if (!s.restricted()) {
+            return named ? List.of(locationId) : null;
+        }
+        if (named) {
+            if (!s.allowsLocation(locationId)) {
+                throw ApiException.forbidden("This location is outside your data access");
+            }
+            return List.of(locationId);
+        }
+        if (s.locationIds().isEmpty()) {
+            throw ApiException.forbidden("Your data access has no location");
+        }
+        return s.locationIds().stream().sorted().toList();
+    }
+
+    /** The single location of {@link #readLocations}, or {@code null} when it covers several or all. */
+    public static String single(List<String> locations) {
+        return locations != null && locations.size() == 1 ? locations.getFirst() : null;
     }
 
     /** {@link #resolve} on a query map; an unrestricted user gets the same map back. */

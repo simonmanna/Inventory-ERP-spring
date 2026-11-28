@@ -4,10 +4,15 @@ import static com.inventoryerp.pos.application.PosSql.NOW;
 import static com.inventoryerp.pos.application.PosSql.org;
 import static com.inventoryerp.pos.application.PosSql.user;
 
+import com.inventoryerp.accounting.application.InventoryTieOutMonitor;
+import com.inventoryerp.inventory.application.InventoryIntegrityService;
+import com.inventoryerp.inventory.application.InventoryIntegrityService.IntegrityCheck;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.security.Permissions;
+import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.pos.domain.InventoryException;
 import com.inventoryerp.pos.domain.StockPostingJob;
 import com.inventoryerp.shared.web.ApiException;
@@ -37,11 +42,18 @@ public class PosStockPostingService {
     private final PosDb db;
     private final AuditService audit;
     private final PosInvoiceService billing;
+    private InventoryIntegrityService integrity;
 
     public PosStockPostingService(PosDb db, AuditService audit, PosInvoiceService billing) {
         this.db = db;
         this.audit = audit;
         this.billing = billing;
+    }
+
+    /** IPR GL-3: resolving an integrity value finding re-runs its check. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setIntegrity(InventoryIntegrityService integrity) {
+        this.integrity = integrity;
     }
 
     public List<Map<String, Object>> listJobs(String status) {
@@ -212,6 +224,7 @@ public class PosStockPostingService {
         if (!"open".equals(row.get("status"))) {
             throw ApiException.badRequest("Already " + row.get("status"));
         }
+        assertIntegrityResolvable((String) row.get("kind"));
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", status);
         data.put("resolutionNote", note.trim());
@@ -227,6 +240,34 @@ public class PosStockPostingService {
         newValues.put("menuItemId", row.get("menuItemId"));
         audit.record(AuditInput.of("InventoryException", id, "update", null, newValues));
         return Obj.of("id", updated.get("id"), "status", updated.get("status"), "resolvedAt", updated.get("resolvedAt"));
+    }
+
+    /**
+     * IPR GL-3 (deviation from Nest, where {@code pos:override} closed any exception with a note): an inventory
+     * integrity finding ({@code integrity_*}) is closed only by a holder of {@code inventory_valuation:manage}; a finding
+     * on stock value ({@link InventoryTieOutMonitor#INTEGRITY_VALUE_KINDS}, the ones that hold a period close) is closed
+     * only when its check, re-run now over the whole organisation, passes. Resolving or discarding the note no longer
+     * hides a variance that is still there.
+     */
+    private void assertIntegrityResolvable(String kind) {
+        if (kind == null || !kind.startsWith(InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX)) {
+            return;
+        }
+        if (!TenantContext.permissions().contains(Permissions.INVENTORY_VALUATION__MANAGE)) {
+            throw ApiException.forbidden("Closing an inventory integrity finding needs the inventory_valuation:manage"
+                    + " permission");
+        }
+        if (!InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.contains(kind) || integrity == null) {
+            return;
+        }
+        String key = kind.substring(InventoryTieOutMonitor.INTEGRITY_KIND_PREFIX.length());
+        IntegrityCheck check = integrity.valueChecks().stream().filter(c -> key.equals(c.key())).findFirst()
+                .orElse(null);
+        if (check != null && !check.ok()) {
+            throw ApiException.badRequest("The integrity check " + key + " still fails (" + check.failures()
+                    + " row(s)" + (check.note() != null ? "; " + check.note() : "") + "). Correct the cause, then close"
+                    + " the finding.");
+        }
     }
 
     /**

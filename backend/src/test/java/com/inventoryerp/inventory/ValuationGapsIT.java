@@ -53,6 +53,7 @@ class ValuationGapsIT extends ApiTestSupport {
         org = boot.body().get("organization").get("id").asString();
         userId = boot.body().get("adminUser").get("id").asString();
         token = login(code, "owner@" + code + ".test", "Owner@12345");
+        inventorySodPairsOff(token);
         location = ok(201, "POST", "/inventory/locations", Map.of("code", "WH-1", "name", "Main", "type",
                 "warehouse")).get("id").asString();
     }

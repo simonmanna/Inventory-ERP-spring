@@ -73,8 +73,10 @@ public class SalesFulfilmentService {
      */
     @Transactional
     public List<Map<String, Object>> rebuild(String orderId) {
-        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", orderId,
-                org());
+        // IPR LK-3: the sales order first, then its lines (the order every sales route uses: order → delivery order →
+        // trip → order lines), so this subscriber and a sales delivery route on the same order cannot deadlock.
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                orderId, org());
         if (o == null) {
             throw ApiException.notFound("Sales order not found");
         }

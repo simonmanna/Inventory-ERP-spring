@@ -927,6 +927,12 @@ public class CashSaleService {
             if (!Boolean.TRUE.equals(l.get("trackInventory"))) {
                 continue;
             }
+            if (reservations != null) {
+                // IPR F5: a cash sale leaves the stock reserved for sales orders alone.
+                BigDecimal factor = dec(l.get("uomFactor")).signum() > 0 ? dec(l.get("uomFactor")) : BigDecimal.ONE;
+                reservations.assertNotReservedForSalesOrders(str(l.get("productId")), str(l.get("variantId")),
+                        str(s.get("locationId")), dec(l.get("quantity")).multiply(factor));
+            }
             StockMove.Issued issued = stock.issue(StockMove.of(str(l.get("productId")), str(s.get("locationId")),
                     dec(l.get("quantity"))).variant(str(l.get("variantId"))).uom(str(l.get("uomId")), dec(l.get("uomFactor"))).source("cash_sale", id).sourceLine(str(l.get("id")))
                     .reference(number).date(postDate).notes("Cash sale " + number));
@@ -1694,5 +1700,13 @@ public class CashSaleService {
     private String orgCurrency() {
         Map<String, Object> o = db.row("SELECT \"currencyCode\" FROM \"Organization\" WHERE id = ?", org());
         return o == null || o.get("currencyCode") == null ? "USD" : str(o.get("currencyCode"));
+    }
+
+    private com.inventoryerp.inventory.application.StockReservationService reservations;
+
+    /** IPR F5: sales-order reservations are honoured by cash sales. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setReservations(com.inventoryerp.inventory.application.StockReservationService reservations) {
+        this.reservations = reservations;
     }
 }

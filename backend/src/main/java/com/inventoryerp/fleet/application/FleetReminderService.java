@@ -6,7 +6,7 @@ import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.notifications.NotificationsService;
-import com.inventoryerp.kernel.notifications.NotificationsService.SendInput;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.shared.events.DomainEvents;
 import com.inventoryerp.shared.web.PageResult;
@@ -172,10 +172,14 @@ public class FleetReminderService {
         Map<String, Object> payload = Obj.of("kind", "fleet.reminder", "itemType", it.type(), "itemId", it.itemId(),
                 "state", it.state(), "dueOn", it.dueOn() == null ? null : it.dueOn().toString(), "link", it.link());
         try {
-            Map<String, Object> n = notifications.send(new SendInput(org, null, "in_app", "fleet", it.title(),
-                    it.body(), payload));
-            db.jdbc().sql("UPDATE \"FleetReminderLog\" SET \"notificationId\" = ? WHERE id = ?").params(n.get("id"), id)
-                    .update();
+            // IPR OPS-1: a row without a user reaches no inbox; the fleet report readers get it. The log keeps the
+            // first notification written.
+            List<String> sent = notifications.sendToPermissionIds(org, Permissions.FLEET__REPORT, "fleet", it.title(),
+                    it.body(), payload, null);
+            if (!sent.isEmpty()) {
+                db.jdbc().sql("UPDATE \"FleetReminderLog\" SET \"notificationId\" = ? WHERE id = ?")
+                        .params(sent.getFirst(), id).update();
+            }
         } catch (RuntimeException e) {
             log.warn("fleet reminder {} not delivered: {}", it.key(), e.toString());
         }

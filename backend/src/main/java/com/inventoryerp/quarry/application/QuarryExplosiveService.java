@@ -2,7 +2,6 @@ package com.inventoryerp.quarry.application;
 
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockMove.Issued;
-import com.inventoryerp.inventory.application.StockMove.Received;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.approvals.ApprovalAdminService;
 import com.inventoryerp.kernel.approvals.ApprovalsService;
@@ -481,7 +480,7 @@ public class QuarryExplosiveService {
             StockMove m = StockMove.of((String) l.get("productId"), (String) magazine.get("locationId"), qty)
                     .source(STOCK_ISSUE, id).reference((String) i.get("code")).notes("Explosives " + i.get("code")
                             + " · blast " + blast.get("code")).moveType("internal_use").date(now).skipGl()
-                    .requireAvailable(true);
+                    .requireAvailable(true).honourReservations(null); // IPR E-1a
             m.responsibleById = user;
             m.approvedById = (String) i.get("decidedBy");
             Issued out = stock.issue(m);
@@ -501,6 +500,14 @@ public class QuarryExplosiveService {
         audit.recordInTx(AuditInput.of(AUDIT, id, "issue", i, Obj.merge(after, Obj.of("lines", lines(id),
                 "netExplosiveKg", JsNumbers.dec(kg)))));
         return issue(id);
+    }
+
+    private com.inventoryerp.inventory.application.StockReversalService stockReturns;
+
+    /** IPR SW-3: linked restock through the engine (setter: keeps the constructor as it is). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(com.inventoryerp.inventory.application.StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
     }
 
     /** Record the unused explosives returned to the magazine (stock back at its issue cost) and close the issue. */
@@ -545,22 +552,24 @@ public class QuarryExplosiveService {
             if (qty.signum() == 0) {
                 continue;
             }
-            BigDecimal unit = SqlRows.dec(l, "unitCost");
-            Map<String, Object> product = sites.stockProduct((String) l.get("productId"));
-            StockMove m = StockMove.of((String) l.get("productId"), (String) magazine.get("locationId"), qty)
-                    .unitCost(unit).source(STOCK_RETURN, id).reference((String) i.get("code"))
-                    .notes("Unused explosives returned · " + i.get("code")).moveType("return_in");
-            if (Boolean.TRUE.equals(product.get("batchTracking"))) {
-                m.batch("RET-" + i.get("code"));
-            }
-            m.responsibleById = TenantContext.userId();
-            Received back = stock.receive(m);
-            BigDecimal value = qty.multiply(unit).setScale(2, RoundingMode.HALF_UP);
+            // IPR SW-3: unused explosives come back against the line's issue row (its lot and cost; reversesLedgerId),
+            // never more than that issue still holds.
+            List<com.inventoryerp.inventory.application.StockReversalService.ReturnedRow> backRows = stockReturns
+                    .returnFromSource(new com.inventoryerp.inventory.application.StockReversalService.ReturnFromSource(
+                            com.inventoryerp.inventory.application.StockReversalService.IssueSource.ledgerCodes(
+                                    List.of((String) l.get("stockLedgerCode"))),
+                            List.of(com.inventoryerp.inventory.application.StockReversalService.ReturnLine.of(
+                                    (String) l.get("productId"), null, qty)),
+                            STOCK_RETURN, id, (String) i.get("code"), "Unused explosives returned · " + i.get("code"),
+                            null, (String) magazine.get("locationId"), false, "return_in"));
+            BigDecimal value = backRows.stream().map(r -> r.totalValue()).reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .setScale(2, RoundingMode.HALF_UP);
+            String backCode = backRows.isEmpty() ? null : backRows.getFirst().ledgerCode();
             byProduct.merge((String) l.get("productId"), value, BigDecimal::add);
             total = total.add(value);
             kg = kg.add(qty.multiply(netKg((String) l.get("explosiveId"))));
             db.update(QuarryExplosiveIssueLine.class, (String) l.get("id"), Obj.of("returnedQty", qty, "returnedValue",
-                    value, "returnLedgerCode", back.ledgerCode()));
+                    value, "returnLedgerCode", backCode));
         }
         String entryId = postings.postExplosives(i, site, byProduct, now, true);
         if (total.signum() > 0 || kg.signum() > 0) {

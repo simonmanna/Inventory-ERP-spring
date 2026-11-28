@@ -368,6 +368,139 @@ public abstract class InventoryAuditSupport extends ApiTestSupport {
                 : digits);
     }
 
+    // ------------------------------------------------------------------ integrity and GL asserts (IPR T04)
+
+    /** The audit org's integrity report ({@code GET /inventory/reports/integrity}). */
+    protected JsonNode integrityReport() {
+        return okA(200, "GET", "/inventory/reports/integrity", null);
+    }
+
+    /** Keys (with rows) of the failing checks in {@code section} ({@code checks} or {@code reportOnlyChecks}). */
+    protected static List<String> failingChecks(JsonNode report, String section) {
+        List<String> failing = new ArrayList<>();
+        JsonNode checks = report.get(section);
+        if (checks != null) {
+            for (JsonNode c : checks) {
+                if (!c.get("ok").asBoolean()) {
+                    failing.add(c.get("key").asString() + " " + c.get("rows"));
+                }
+            }
+        }
+        return failing;
+    }
+
+    /** The check {@code key} of the report (searched in both sections). */
+    protected static JsonNode integrityCheck(JsonNode report, String key) {
+        for (String section : List.of("checks", "reportOnlyChecks")) {
+            for (JsonNode c : report.get(section)) {
+                if (key.equals(c.get("key").asString())) {
+                    return c;
+                }
+            }
+        }
+        throw new AssertionError("no integrity check " + key);
+    }
+
+    /** G1 / G2 evidence: every check of the organisation's integrity report passes (report-only checks not judged). */
+    protected void assertIntegrityGreen() {
+        assertThat(failingChecks(integrityReport(), "checks")).as("integrity checks").isEmpty();
+    }
+
+    /**
+     * {@link #assertIntegrityGreen()} plus the report-only checks (IPR Phase 0), except {@code allowedReportOnly} (for
+     * example {@code feature_risk}, which every organisation that keeps stock fails while a P2 is open).
+     */
+    protected void assertIntegrityGreen(boolean includeReportOnly, String... allowedReportOnly) {
+        JsonNode report = integrityReport();
+        assertThat(failingChecks(report, "checks")).as("integrity checks").isEmpty();
+        if (includeReportOnly) {
+            List<String> allowed = List.of(allowedReportOnly);
+            assertThat(failingChecks(report, "reportOnlyChecks").stream()
+                    .filter(f -> !allowed.contains(f.substring(0, f.indexOf(' ')))).toList())
+                    .as("report-only integrity checks").isEmpty();
+        }
+    }
+
+    /**
+     * Inventory ties to the GL: the organisation tie-out ({@code GET /reports/inventory/gl-tieout}, tolerance 0.01)
+     * is within tolerance, and the per-account base-currency tie-out of the integrity report passes.
+     */
+    protected void assertGlTieOut() {
+        JsonNode t = okA(200, "GET", "/reports/inventory/gl-tieout?tolerance=0.01", null);
+        assertThat(t.get("withinTolerance").asBoolean()).as("GL tie-out " + t).isTrue();
+        JsonNode byAccount = integrityCheck(integrityReport(), "gl_tieout_by_account");
+        assertThat(byAccount.get("ok").asBoolean()).as("GL tie-out by account " + byAccount).isTrue();
+    }
+
+    // ------------------------------------------------------------------ concurrency (IPR T04)
+
+    /** Outcome of one racer: its result, or the exception it threw. */
+    protected record Raced<T>(T value, Throwable error) {
+
+        public boolean ok() {
+            return error == null;
+        }
+
+        /** The error message (or class name), null when the racer succeeded. */
+        public String message() {
+            return error == null ? null : error.getMessage() != null ? error.getMessage() : error.toString();
+        }
+    }
+
+    /**
+     * Start every task at the same instant (one latch; the pattern of {@code InventoryAuditConcurrencyIT}) and collect
+     * each outcome without failing on the first error. Keep the number of tasks at or below 10 so the waiting
+     * transactions never exhaust the connection pool. Fails when a task does not finish within {@code timeout}
+     * (a deadlock the database did not break), or when any task died of a deadlock (SQLSTATE 40P01).
+     */
+    protected <T> List<Raced<T>> race(java.time.Duration timeout, List<Callable<T>> tasks) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(tasks.size());
+        try {
+            CountDownLatch ready = new CountDownLatch(tasks.size());
+            CountDownLatch go = new CountDownLatch(1);
+            List<Future<Raced<T>>> futures = new ArrayList<>();
+            for (Callable<T> t : tasks) {
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    go.await();
+                    try {
+                        return new Raced<>(t.call(), null);
+                    } catch (Throwable e) {
+                        return new Raced<T>(null, e);
+                    }
+                }));
+            }
+            assertThat(ready.await(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS))
+                    .as("racers ready").isTrue();
+            go.countDown();
+            long deadline = System.nanoTime() + timeout.toNanos();
+            List<Raced<T>> out = new ArrayList<>();
+            for (Future<Raced<T>> f : futures) {
+                long left = Math.max(1, deadline - System.nanoTime());
+                out.add(f.get(left, java.util.concurrent.TimeUnit.NANOSECONDS));
+            }
+            for (Raced<T> r : out) {
+                assertThat(isDeadlock(r.error())).as("deadlock (40P01): " + r.message()).isFalse();
+            }
+            return out;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /** True when {@code e} (or a cause) is a PostgreSQL deadlock, SQLSTATE 40P01. */
+    protected static boolean isDeadlock(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.sql.SQLException s && "40P01".equals(s.getSQLState())) {
+                return true;
+            }
+            if (t.getMessage() != null && t.getMessage().contains("deadlock detected")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Run every task at once; returns their results in order. */
     protected <T> List<T> parallel(List<Callable<T>> tasks) throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(tasks.size());
@@ -412,11 +545,17 @@ public abstract class InventoryAuditSupport extends ApiTestSupport {
         return () -> owner("DROP TRIGGER IF EXISTS " + name + " ON \"" + table + "\"");
     }
 
-    /** Statements run as the schema owner (DDL the application role may not run). */
+    /**
+     * Statements run as the schema owner (DDL the application role may not run). On an external test DB
+     * ({@code IT_EXTERNAL_DB}) the owner connection details may carry no URL or credentials: each falls back to the
+     * environment ({@code JDBC_DATABASE_URL}, {@code FLYWAY_USER}, {@code FLYWAY_PASSWORD}).
+     */
     protected void owner(String... statements) {
-        FlywayConnectionDetails o = ownerDetails.getObject();
-        try (Connection c = DriverManager.getConnection(o.getJdbcUrl(), o.getUsername(), o.getPassword());
-                Statement s = c.createStatement()) {
+        FlywayConnectionDetails o = ownerDetails.getIfAvailable();
+        String url = o != null && o.getJdbcUrl() != null ? o.getJdbcUrl() : System.getenv("JDBC_DATABASE_URL");
+        String user = o != null && o.getUsername() != null ? o.getUsername() : System.getenv("FLYWAY_USER");
+        String password = o != null && o.getPassword() != null ? o.getPassword() : System.getenv("FLYWAY_PASSWORD");
+        try (Connection c = DriverManager.getConnection(url, user, password); Statement s = c.createStatement()) {
             for (String sql : statements) {
                 s.execute(sql);
             }

@@ -38,7 +38,8 @@ export interface InventoryProduct {
 export interface StockItemWithLocation {
   id: string;
   quantity: number;
-  runningAverageCost: string;
+  /** Null without inventory_valuation:read (IPR S-2). */
+  runningAverageCost: string | null;
   location: { id: string; code: string; name: string; type: string };
 }
 
@@ -59,8 +60,8 @@ export interface LedgerEntry {
   qtyBefore: number;
   quantityChange: number;
   balanceAfter: number;
-  unitCost: number;
-  totalValue: number;
+  unitCost: number | null;
+  totalValue: number | null;
   referenceType: string | null;
   referenceId: string | null;
   notes: string | null;
@@ -80,8 +81,8 @@ export interface POLineItem {
   id: string;
   quantity: number;
   receivedQuantity: number;
-  unitPrice: number;
-  subtotal: number;
+  unitPrice: number | null;
+  subtotal: number | null;
   version: number;
   order: {
     id: string;
@@ -96,7 +97,8 @@ export interface InventoryItemDetail {
   product: InventoryProduct;
   items: StockItemWithLocation[];
   totalOnHand: number;
-  totalValue: number;
+  /** Null without inventory_valuation:read (IPR S-2). */
+  totalValue: number | null;
   batches: BatchInfo[];
   recentLedger: LedgerEntry[];
   menuProducts: MenuProductLink[];
