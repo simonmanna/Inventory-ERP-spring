@@ -1133,6 +1133,6 @@ class ProcurementIT extends ApiTestSupport {
         // Accounting controls (2026-11-17): +4 supplier-claim quantity routes, +1 debit-note reversal.
         // Readiness gaps h06-F6 (2026-11-18): +1 GET /procurement/purchase-orders/{id}/payable.
         // Purchase readiness H7 (2026-11-27): +1 GET /procurement/suppliers/{partnerId}/bank-accounts/verified.
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(201);
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.procurement")).isEqualTo(202);
     }
 }

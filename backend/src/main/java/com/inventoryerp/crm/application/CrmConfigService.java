@@ -503,6 +503,59 @@ public class CrmConfigService {
         return row;
     }
 
+    /**
+     * Teams to choose from when putting an HR employee on a team (HR employee page): id, name, colour, leader name,
+     * member count, department and branch. Inactive teams come last.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> teamOptions() {
+        return db.rows("SELECT t.id, t.name, t.color, t.\"isActive\", t.\"leaderId\", COALESCE(NULLIF(trim(concat_ws(' ',"
+                + " u.\"firstName\", u.\"lastName\")), ''), u.email) AS \"leaderName\", cardinality(t.\"memberIds\") AS"
+                + " \"memberCount\", d.name AS \"departmentName\", b.name AS \"branchName\" FROM \"CrmTeam\" t"
+                + " LEFT JOIN \"User\" u ON u.id = t.\"leaderId\" LEFT JOIN \"HrDepartment\" d ON d.id = t.\"departmentId\""
+                + " LEFT JOIN \"Branch\" b ON b.id = t.\"branchId\" WHERE t.\"organizationId\" = ?"
+                + " ORDER BY t.\"isActive\" DESC, t.name", org());
+    }
+
+    /**
+     * Put one user on a team ({@code role}: {@code member}, the default, or {@code leader}). The user must be an
+     * active HR employee with a login. Atomic, so concurrent edits of the same team never lose a member.
+     */
+    @Transactional
+    public Map<String, Object> addTeamMember(String teamId, Map<String, Object> in) {
+        db.require("CrmTeam", teamId, "Not found");
+        String userId = str(in.get("userId"));
+        if (blank(userId)) {
+            throw ApiException.badRequest("userId is required");
+        }
+        String role = blank(str(in.get("role"))) ? "member" : str(in.get("role"));
+        if (!Set.of("member", "leader").contains(role)) {
+            throw ApiException.badRequest("role must be one of: member, leader");
+        }
+        requireTeamEmployee(userId);
+        if ("leader".equals(role)) {
+            db.update("UPDATE \"CrmTeam\" SET \"leaderId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                    + " \"organizationId\" = ?", userId, teamId, org());
+        } else {
+            db.update("UPDATE \"CrmTeam\" SET \"memberIds\" = array_append(\"memberIds\", ?::text), \"updatedAt\" = "
+                    + NOW + " WHERE id = ? AND \"organizationId\" = ? AND NOT (?::text = ANY(\"memberIds\"))", userId,
+                    teamId, org(), userId);
+        }
+        audit.record(AuditInput.of("CrmTeam", teamId, "update", null, Obj.of("addMember", userId, "role", role)));
+        return db.require("CrmTeam", teamId, "Not found");
+    }
+
+    /** Take a user off a team: out of the members, and no longer its leader. */
+    @Transactional
+    public Map<String, Object> removeTeamMember(String teamId, String userId) {
+        db.require("CrmTeam", teamId, "Not found");
+        db.update("UPDATE \"CrmTeam\" SET \"memberIds\" = array_remove(\"memberIds\", ?::text), \"leaderId\" = CASE"
+                + " WHEN \"leaderId\" = ? THEN NULL ELSE \"leaderId\" END, \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                + " \"organizationId\" = ?", userId, userId, teamId, org());
+        audit.record(AuditInput.of("CrmTeam", teamId, "update", null, Obj.of("removeMember", userId)));
+        return db.require("CrmTeam", teamId, "Not found");
+    }
+
     // ------------------------------------------------------------------ tags / sources / lost reasons
 
     @Transactional(readOnly = true)

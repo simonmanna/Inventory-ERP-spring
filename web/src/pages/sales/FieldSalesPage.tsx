@@ -334,8 +334,6 @@ function NewOrder({ data, record, busy }: TabProps) {
               </select></div>
             <div className="grid gap-1.5"><Label>{tx('Requested date')}</Label>
               <Input type="date" className="h-12" value={requestedDate} onChange={(e) => setRequestedDate(e.target.value)} /></div>
-            <div className="grid gap-1.5"><Label>{tx('Customer reference')}</Label>
-              <Input className="h-12" value={customerRef} onChange={(e) => setCustomerRef(e.target.value)} /></div>
           </div>
           <div className="grid gap-1.5"><Label>{tx('Notes')}</Label>
             <Input className="h-12" value={notes} onChange={(e) => setNotes(e.target.value)} /></div>

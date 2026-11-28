@@ -42,10 +42,12 @@ public class SalesProformaService {
     private final NotificationsService notifications;
     private final AuditService audit;
     private final ObjectProvider<SalesOrderService> orders;
+    private final SalesLetterhead letterhead;
 
     public SalesProformaService(SalesDb db, DocumentBuilderService builder, SalesSettingsService settings,
             SalesAccess access, NotificationsService notifications, AuditService audit,
-            ObjectProvider<SalesOrderService> orders) {
+            ObjectProvider<SalesOrderService> orders, SalesLetterhead letterhead) {
+        this.letterhead = letterhead;
         this.db = db;
         this.builder = builder;
         this.settings = settings;
@@ -83,6 +85,11 @@ public class SalesProformaService {
         return Obj.of("data", rows, "meta", Obj.of("page", page, "pageSize", size, "total", total));
     }
 
+    /**
+     * One proforma: the document row, its advance terms and payment details, the customer ({@code partnerName},
+     * {@code partner}), {@code currencyCode} and its {@code lines} (with {@code unit} and {@code tax} names). Payment
+     * details missing on the proforma fall back to the current Sales settings.
+     */
     @Transactional(readOnly = true)
     public Map<String, Object> get(String id) {
         Map<String, Object> d = builder.document(id, TYPE);
@@ -93,7 +100,41 @@ public class SalesProformaService {
         Map<String, Object> out = new java.util.LinkedHashMap<>(d);
         Map<String, Object> extra = extra(id);
         out.putAll(extra);
+        if (blank(str(out.get("bankDetails"))) || blank(str(out.get("mobileDetails")))) {
+            // A plain read: settings() creates the row when missing, which a read-only transaction cannot do.
+            Map<String, Object> s = db.row("SELECT \"proformaBankDetails\", \"proformaMobileDetails\" FROM"
+                    + " \"SalesSettings\" WHERE \"organizationId\" = ?", org());
+            if (s == null) {
+                s = Map.of();
+            }
+            if (blank(str(out.get("bankDetails")))) {
+                out.put("bankDetails", blank(str(s.get("proformaBankDetails"))) ? null : str(s.get("proformaBankDetails")));
+            }
+            if (blank(str(out.get("mobileDetails")))) {
+                out.put("mobileDetails", blank(str(s.get("proformaMobileDetails"))) ? null
+                        : str(s.get("proformaMobileDetails")));
+            }
+        }
+        Map<String, Object> partner = d.get("partnerId") == null ? null : db.row("SELECT id, name, email, phone,"
+                + " \"taxNumber\", district FROM \"Partner\" WHERE id = ? AND \"organizationId\" = ?", d.get("partnerId"),
+                org());
+        out.put("partner", partner);
+        out.put("partnerName", partner == null ? null : partner.get("name"));
+        Map<String, Object> cur = d.get("currencyId") == null ? null : db.row("SELECT code FROM \"Currency\" WHERE id = ?",
+                d.get("currencyId"));
+        out.put("currencyCode", cur == null ? null : cur.get("code"));
+        out.put("lines", lines(id));
         return out;
+    }
+
+    /** Printable lines in order, with unit symbol, tax name and the product's sizing unit. */
+    private List<Map<String, Object>> lines(String id) {
+        return db.rows("SELECT l.id, l.\"lineNumber\", l.\"productId\", l.\"variantId\", l.\"variantName\", l.description,"
+                + " l.quantity, l.\"unitPrice\", l.\"discountPercent\", l.subtotal, l.\"taxAmount\", l.total, l.pieces,"
+                + " l.length, l.width, l.height, p.\"sizingUnit\", COALESCE(NULLIF(u.symbol, ''), u.code) AS unit,"
+                + " t.name AS tax FROM \"DocumentLine\" l LEFT JOIN \"Product\" p ON p.id = l.\"productId\""
+                + " LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" LEFT JOIN \"Tax\" t ON t.id = l.\"taxId\""
+                + " WHERE l.\"documentId\" = ? AND l.\"organizationId\" = ? ORDER BY l.\"lineNumber\", l.id", id, org());
     }
 
     private Map<String, Object> extra(String id) {
@@ -162,24 +203,41 @@ public class SalesProformaService {
     @Transactional(readOnly = true)
     public byte[] pdf(String id) {
         Map<String, Object> d = get(id);
-        Map<String, Object> p = db.row("SELECT name FROM \"Partner\" WHERE id = ?"
-                + " AND \"organizationId\" = ?", d.get("partnerId"), org());
-        List<Map<String, Object>> lines = db.rows("SELECT description, quantity, \"unitPrice\", \"discountPercent\", total FROM"
-                + " \"DocumentLine\" WHERE \"documentId\" = ?", id);
-        Map<String, Object> cur = d.get("currencyId") == null ? null : db.row("SELECT code FROM \"Currency\" WHERE id = ?",
-                d.get("currencyId"));
-        List<SalesDocumentPdf.Total> totals = new ArrayList<>();
-        totals.add(new SalesDocumentPdf.Total("Total", dec(d.get("totalAmount"))));
-        if (dec(d.get("advanceAmount")).signum() > 0) {
-            totals.add(new SalesDocumentPdf.Total("Advance required", dec(d.get("advanceAmount"))));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> partner = (Map<String, Object>) d.get("partner");
+        List<String> billTo = new ArrayList<>();
+        if (partner != null) {
+            billTo.add(str(partner.get("name")));
+            for (String[] k : new String[][] {{"district", ""}, {"phone", "Tel: "}, {"email", ""}, {"taxNumber", "TIN: "}}) {
+                if (!blank(str(partner.get(k[0])))) {
+                    billTo.add(k[1] + str(partner.get(k[0])).trim());
+                }
+            }
         }
-        return SalesDocumentPdf.render(company(), "PROFORMA INVOICE", str(d.get("documentNumber")), List.of(
-                "Customer: " + (p == null ? "" : p.get("name")), "Date: " + day(d.get("issueDate")),
-                "Not a tax invoice. No amount is due until an invoice is issued."), lines, cur == null ? null
-                        : str(cur.get("code")), totals, List.of(new SalesDocumentPdf.Block("Bank details",
-                                str(d.get("bankDetails"))), new SalesDocumentPdf.Block("Mobile money",
-                                        str(d.get("mobileDetails"))), new SalesDocumentPdf.Block("Notes",
-                                                str(d.get("notes")))));
+        if (billTo.isEmpty()) {
+            billTo.add("-");
+        }
+        QuoteLayout layout = settings.quoteLayout();
+        SalesLetterhead.Head head = letterhead.company(layout.companyName());
+        List<SalesQuotationPdf.Fact> facts = new ArrayList<>();
+        facts.add(new SalesQuotationPdf.Fact("Date", day(d.get("issueDate"))));
+        facts.add(new SalesQuotationPdf.Fact("Valid until", d.get("dueDate") == null ? null : day(d.get("dueDate"))));
+        facts.add(new SalesQuotationPdf.Fact("Reference", str(d.get("sourceDocument"))));
+        facts.add(new SalesQuotationPdf.Fact("Customer ref", str(d.get("reference"))));
+        if (layout.showSalesperson()) {
+            facts.add(new SalesQuotationPdf.Fact("Salesperson", str(d.get("salespersonName"))));
+        }
+        BigDecimal total = dec(d.get("totalAmount"));
+        BigDecimal tax = dec(d.get("taxAmount"));
+        BigDecimal discount = dec(d.get("discountTotal"));
+        BigDecimal subtotal = d.get("subtotal") == null ? total.subtract(tax) : dec(d.get("subtotal"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> lines = (List<Map<String, Object>>) d.get("lines");
+        return SalesProformaPdf.render(new SalesProformaPdf.Proforma(new SalesQuotationPdf.Company(head.name(),
+                head.lines(), head.logo()), str(d.get("documentNumber")), facts, billTo, str(d.get("deliveryAddress")),
+                lines, str(d.get("currencyCode")), subtotal, discount, tax, total, d.get("advancePercent") == null ? null
+                        : dec(d.get("advancePercent")), dec(d.get("advanceAmount")), str(d.get("bankDetails")),
+                str(d.get("mobileDetails")), str(d.get("notes"))), layout);
     }
 
     @Transactional
@@ -192,15 +250,15 @@ public class SalesProformaService {
             throw ApiException.badRequest("Customer has no email on file. Add one in Partners or pass \"to\".");
         }
         boolean sent = notifications.sendExternalEmail(address, "Proforma invoice " + d.get("documentNumber") + " from "
-                + company(), "Please find attached proforma invoice " + d.get("documentNumber") + ".", new NotificationsService.Attachment(
+                + company(settings.quoteLayout()), "Please find attached proforma invoice " + d.get("documentNumber") + ".", new NotificationsService.Attachment(
                         d.get("documentNumber") + ".pdf", "application/pdf", pdf(id)));
         return Obj.of("ok", true, "sentTo", address, "delivered", sent, "advanceAmount", JsNumbers.js(dec(d.get(
                 "advanceAmount"))));
     }
 
-    private String company() {
-        return str(db.row("SELECT COALESCE(NULLIF(\"receiptHeader\"->>'businessName', ''), name) AS n FROM \"Organization\""
-                + " WHERE id = ?", org()).get("n"));
+    /** The printed company name: the quotation layout's override, else the company settings name. */
+    private String company(QuoteLayout layout) {
+        return letterhead.company(layout.companyName()).name();
     }
 
     private static String day(Object v) {

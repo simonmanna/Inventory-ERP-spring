@@ -136,6 +136,27 @@ public final class CrmSuiteController {
             return svc.saveTeam(id, body(b));
         }
 
+        /** Teams to put an employee on, for the HR employee page (crm:configure or hr:employee). */
+        @GetMapping("/team-options")
+        @RequirePermissions(value = {Permissions.CRM__CONFIGURE, Permissions.HR__EMPLOYEE}, anyOf = true)
+        public List<Map<String, Object>> teamOptions() {
+            return svc.teamOptions();
+        }
+
+        /** {@code {userId, role?: member | leader}}: put one HR employee's user on the team (atomic). */
+        @PostMapping("/teams/{id}/members")
+        @RequirePermissions(value = {Permissions.CRM__CONFIGURE, Permissions.HR__EMPLOYEE}, anyOf = true)
+        public Map<String, Object> addTeamMember(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return svc.addTeamMember(id, body(b));
+        }
+
+        /** Take a user off the team (member and leader). */
+        @DeleteMapping("/teams/{id}/members/{userId}")
+        @RequirePermissions(value = {Permissions.CRM__CONFIGURE, Permissions.HR__EMPLOYEE}, anyOf = true)
+        public Map<String, Object> removeTeamMember(@PathVariable String id, @PathVariable String userId) {
+            return svc.removeTeamMember(id, userId);
+        }
+
         @DeleteMapping("/teams/{id}")
         @RequirePermissions(Permissions.CRM__CONFIGURE)
         public Map<String, Object> deleteTeam(@PathVariable String id) {

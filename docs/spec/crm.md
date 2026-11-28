@@ -416,6 +416,17 @@ must be HR employees with a login.
   The CRM authorization matrix goes from 137 to 138 routes.
 - **Existing data:** run the read-only check below before deploying. It lists team members who are not active
   employees. Nothing is changed automatically.
+- **Own page and HR side (2026-11-27, owner request):**
+  - Sales teams moved out of CRM → Settings into their own page, CRM → Sales Teams (`/crm/sales-teams`,
+    `crm:configure`), listed below Complaints & Requests. Same editor, plus a summary, search and member list per team.
+  - New routes, each `crm:configure` **or** `hr:employee`:
+    - `GET /crm/config/team-options`: teams with leader name, member count, department and branch.
+    - `POST /crm/config/teams/{id}/members` `{userId, role?: member | leader}`: same HR employee rule as above. It is
+      an atomic `array_append` that does nothing if the user is already a member; `leader` replaces the leader.
+    - `DELETE /crm/config/teams/{id}/members/{userId}`: removes the user from `memberIds` and clears `leaderId` when
+      they lead the team.
+  - The HR employee "Sales teams" card gets "Add to sales team" (team + role) and a remove button per team.
+  - Tests: CrmTeamsHrIT `membershipFromHr`. The CRM authorization matrix goes from 141 to 144 routes.
 
 ```sql
 SELECT t.name AS team, u.email, CASE WHEN t."leaderId" = u.id THEN 'leader' ELSE 'member' END AS role,

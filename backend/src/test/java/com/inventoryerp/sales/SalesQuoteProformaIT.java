@@ -347,7 +347,7 @@ class SalesQuoteProformaIT extends ApiTestSupport {
 
     @Test
     @DisplayName("proforma from a quote and an order: listed, opened, advance applied, no journal or receivable")
-    void proforma() {
+    void proforma() throws Exception {
         ok(200, "PUT", "/sales/settings", Map.of("proformaBankDetails", "ACME Bank 123", "proformaMobileDetails", "MoMo 777",
                 "proformaAdvancePercent", 30));
         long journals = jdbc.sql("SELECT count(*) FROM \"JournalEntry\" WHERE \"organizationId\" = ?").param(demoOrg)
@@ -357,6 +357,10 @@ class SalesQuoteProformaIT extends ApiTestSupport {
         JsonNode pq = ok(200, "GET", "/sales/proformas/" + fromQuote, null);
         assertThat(pq.get("advanceAmount").asDouble()).isEqualTo(75);
         assertThat(pq.get("bankDetails").asString()).isEqualTo("ACME Bank 123");
+        assertThat(pq.get("lines").size()).as("detail page lines").isPositive();
+        assertThat(pq.get("lines").get(0).get("description").asString()).isNotBlank();
+        assertThat(pq.get("partnerName").asString()).isNotBlank();
+        assertThat(pq.get("partner").get("id").asString()).isEqualTo(customer);
 
         String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "branchId", branch, "lines", List.of(Map.of(
                 "productId", product, "quantity", 1, "unitPrice", 200)))).get("id").asString();
@@ -379,5 +383,14 @@ class SalesQuoteProformaIT extends ApiTestSupport {
         h2.put("Idempotency-Key", UUID.randomUUID().toString());
         assertThat(call("POST", "/sales/orders/" + so + "/proforma", Map.of("advanceAmount", 99999), h2).status()).isEqualTo(400);
         assertThat(ok(200, "POST", "/sales/proformas/" + pf + "/email", Map.of()).get("ok").asBoolean()).isTrue();
+        // The PDF carries the company settings name (not the receipt header), the title, lines and payment details.
+        String orgName = jdbc.sql("SELECT name FROM \"Organization\" WHERE id = ?").param(demoOrg).query(String.class)
+                .single();
+        HttpResponse<byte[]> r = http.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port
+                + "/api/v1/sales/proformas/" + pf + "/pdf")).header("Authorization", "Bearer " + adminToken).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertThat(r.statusCode()).isEqualTo(200);
+        assertThat(pdfText(r.body())).contains(orgName, "PROFORMA INVOICE", "BILL TO", "ACME Bank 123", "MoMo 777",
+                "ADVANCE REQUIRED", "not a tax invoice");
     }
 }

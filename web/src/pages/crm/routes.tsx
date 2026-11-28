@@ -15,6 +15,7 @@ const CustomersPage = lazy(() => import('./CustomersPage').then((m) => ({ defaul
 const PriceRulesPage = lazy(() => import('./PriceRulesPage').then((m) => ({ default: m.PriceRulesPage })));
 const CrmReportsPage = lazy(() => import('./CrmReportsPage').then((m) => ({ default: m.CrmReportsPage })));
 const CrmSettingsPage = lazy(() => import('./CrmSettingsPage').then((m) => ({ default: m.CrmSettingsPage })));
+const SalesTeamsPage = lazy(() => import('./SalesTeamsPage').then((m) => ({ default: m.SalesTeamsPage })));
 const CasesPage = lazy(() => import('./CasesPage').then((m) => ({ default: m.CasesPage })));
 const CaseDetailPage = lazy(() => import('./CaseDetailPage').then((m) => ({ default: m.CaseDetailPage })));
 
@@ -44,6 +45,7 @@ export const crmRoutes = (
     <Route path="/crm/cases/:id" element={<RequirePermission permission={P.caseRead}><CaseDetailPage /></RequirePermission>} />
     <Route path="/crm/pricing" element={<RequirePermission permission={P.pricingRead}><PriceRulesPage /></RequirePermission>} />
     <Route path="/crm/reports" element={<RequirePermission permission={P.reportRead}><CrmReportsPage /></RequirePermission>} />
+    <Route path="/crm/sales-teams" element={<RequirePermission permission={P.configure}><SalesTeamsPage /></RequirePermission>} />
     <Route path="/crm/settings" element={<RequirePermission permission={P.configure}><CrmSettingsPage /></RequirePermission>} />
     <Route path="/crm/deals" element={<Navigate to="/crm/pipeline" replace />} />
     <Route path="/crm/deals/:id" element={<LegacyDealRedirect />} />

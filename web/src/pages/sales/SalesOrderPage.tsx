@@ -295,7 +295,7 @@ export function SalesOrderPage() {
               // Use the new customer at once (credit / billing panel and agreements follow the selection).
               setPartnerId(c.id); setPartnerName(c.name); setDirty(true);
             }} />
-            <OrderHeaderFields only={['customerRef', 'payment', 'priority']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
+            <OrderHeaderFields only={[...(!isNew && o?.customerRef ? ['customerRef' as const] : []), 'payment', 'priority']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
             {o && (
               <>
                 <InlineField label={tx('Source Doc')}>

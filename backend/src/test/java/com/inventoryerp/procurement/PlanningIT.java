@@ -146,6 +146,28 @@ class PlanningIT extends ApiTestSupport {
         assertThat(fc.get("history")).hasSize(12);
         assertThat(fc.get("method").asString()).isEqualTo("exponential_smoothing");
         assertThat(ok(200, "GET", "/procurement/analytics/alerts", null).isArray()).isTrue();
+
+        // Procurement → Analytics dashboard (2026-11-27)
+        JsonNode dash = ok(200, "GET", "/procurement/analytics/dashboard?period=last_12_months", null);
+        assertThat(dash.get("period").asString()).isEqualTo("last_12_months");
+        assertThat(dash.get("kpis").get("orders").asInt()).isGreaterThanOrEqualTo(2);
+        assertThat(new java.math.BigDecimal(dash.get("kpis").get("spend").asString())).isGreaterThanOrEqualTo(
+                new java.math.BigDecimal("400"));
+        assertThat(new java.math.BigDecimal(dash.get("kpis").get("received").asString())).isPositive();
+        assertThat(dash.get("trend")).hasSize(12);
+        assertThat(dash.get("bySupplier").findValuesAsString("label")).anyMatch(l -> l.startsWith("Hima"));
+        assertThat(dash.get("topProducts").size()).isPositive();
+        for (String stage : List.of("requests", "drafts", "toReceive", "toBill", "toPay")) {
+            assertThat(dash.get("pipeline").has(stage)).as(stage).isTrue();
+        }
+        assertThat(dash.get("attention").has("lateDeliveries")).isTrue();
+        assertThat(dash.get("suppliers").get("grades").has("A")).isTrue();
+        assertThat(dash.get("alerts").isArray()).isTrue();
+        JsonNode otherBranch = ok(200, "GET", "/procurement/analytics/dashboard?period=this_year&branchId="
+                + UUID.randomUUID(), null);
+        assertThat(otherBranch.get("kpis").get("orders").asInt()).isZero();
+        assertThat(otherBranch.get("kpis").get("spend").asString()).isEqualTo("0");
+        assertThat(as("GET", "/procurement/analytics/dashboard?period=forever", null).status()).isEqualTo(400);
     }
 
     @Test
@@ -208,6 +230,6 @@ class PlanningIT extends ApiTestSupport {
     @Test
     @DisplayName("authorization matrix: planning routes need permissions; the portal is public")
     void authorization() {
-        assertThat(assertAuthorizationMatrix(ProcurementPlanningController.class, SupplierPortalController.class)).isEqualTo(18);
+        assertThat(assertAuthorizationMatrix(ProcurementPlanningController.class, SupplierPortalController.class)).isEqualTo(19);
     }
 }
