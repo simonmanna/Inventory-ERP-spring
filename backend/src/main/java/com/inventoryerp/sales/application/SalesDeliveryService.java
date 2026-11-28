@@ -1362,7 +1362,7 @@ public class SalesDeliveryService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> reconciliation(Map<String, String> q) {
         List<Object> params = new ArrayList<>(List.of(org()));
-        StringBuilder where = new StringBuilder(" WHERE o.\"organizationId\" = ? AND o.status IN ('confirmed', 'in_fulfilment', 'done') AND"
+        StringBuilder where = new StringBuilder(" WHERE o.\"organizationId\" = ? AND o.status IN ('confirmed', 'done') AND"
                 + " o.\"deletedAt\" IS NULL");
         where.append(access.branchClause("o.\"branchId\"", params));
         if (!blank(q.get("orderId"))) {

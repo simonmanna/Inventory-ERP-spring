@@ -111,8 +111,11 @@ class SalesPricingToolsIT extends ApiTestSupport {
         ok(200, "PUT", "/sales/price-limits", Map.of("productId", p, "minPrice", 80, "maxPrice", 120));
         assertThat(as("PUT", "/sales/price-limits", Map.of("productId", p, "minPrice", 80, "maxPrice", 70)).status()).isEqualTo(400);
         JsonNode low = order(Map.of(), Map.of("productId", p, "quantity", 1, "unitPrice", 60));
-        JsonNode pending = ok(200, "POST", "/sales/orders/" + low.get("id").asString() + "/confirm", null);
-        assertThat(pending.get("status").asString()).isEqualTo("pending_approval");
+        // ADR-S094 §4.2: the draft shows it needs approval; it is submitted explicitly
+        assertThat(low.get("approvalStatus").asString()).isEqualTo("required");
+        JsonNode pending = ok(200, "POST", "/sales/orders/" + low.get("id").asString() + "/submit-approval", null);
+        assertThat(pending.get("approvalStatus").asString()).isEqualTo("pending");
+        assertThat(pending.get("stage").asString()).isEqualTo("pending_approval");
         assertThat(pending.get("approvalReasons").toString()).contains("below the minimum");
     }
 

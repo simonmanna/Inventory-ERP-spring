@@ -256,7 +256,7 @@ export function SalesDashboardPage() {
               <div data-tour="sales.flow" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-5">
                 <FlowStage step={1} icon={FileText} title={tx('Open quotations')} value={fmt(quoteValue)} sub={`${quoteCount} ${quoteCount === 1 ? tx('quotation') : tx('quotations')}`} to="/sales/quotations"
                   foot={summary ? `${summary.conversion.rate}% ${tx('converted, last 90 days')}` : undefined} />
-                <FlowStage step={2} icon={ClipboardList} title={tx('Open orders')} value={fmt(summary?.openOrders.total)} sub={orderCount(summary?.openOrders.count ?? 0)} to="/sales/orders?tab=confirmed%2Cin_fulfilment" />
+                <FlowStage step={2} icon={ClipboardList} title={tx('Open orders')} value={fmt(summary?.openOrders.total)} sub={orderCount(summary?.openOrders.count ?? 0)} to="/sales/orders?tab=confirmed" />
                 <FlowStage step={3} icon={Truck} title={tx('To deliver')} value={fmt(summary?.toFulfil.total)} sub={orderCount(summary?.toFulfil.count ?? 0)} to="/sales/orders?tab=to_fulfil" />
                 <FlowStage step={4} icon={CircleDollarSign} title={tx('To collect')} value={fmt(kpi('outstanding')?.value)} sub={tx('unpaid invoices')} to={href('outstanding-balances')}
                   foot={`${fmt(overdue)} ${tx('overdue')}`} />

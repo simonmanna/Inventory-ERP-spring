@@ -311,6 +311,16 @@ branch scope.
 
 ## Deviations
 
+- **Sale status and approval are separate dimensions** (ADR-S094 C1, V732; OD-7 and OD-8 approved 2026-11-28).
+  - `status` is `draft | confirmed | done | cancelled`. The former `pending_approval` is a `draft` with
+    `approvalStatus = pending`; `in_fulfilment` is `confirmed`, with progress in `deliveryStatus` / `invoiceStatus`.
+    Responses carry the old value as `stage` for one release, and list and report filters on the old values still
+    match.
+  - `confirm` no longer sends an order to approval. It refuses with "This sale needs approval: submit it for approval
+    first" until `POST /sales/orders/:id/submit-approval` is approved; `withdraw-approval` takes a submission back.
+  - An approval is bound to the order's commercial content and reasons (ADR-S094 §4.2). The approver cannot be the
+    creator, the submitter or the last editor of that content; `allowSelfApproval` (default off) lets `sales:configure`
+    holders do it, audited. `confirmOnApproval` (default on) keeps the old approve-then-confirm behaviour for orders.
 - **Taxed down payments are deducted on the final invoice** (ADR-S094 C1b, V731, fixes D-VAT-1; AD-14 pro-rata, AD-15,
   AD-17). With `depositTaxPoint = receipt` a regular invoice of `POST /sales/orders/:id/invoices` carries one negative
   deduction line per posted taxed down payment and consumes its deposit when posted. A regular invoice is refused while

@@ -85,7 +85,7 @@ public class SalesCustomerService {
                 + " \"lifetimeSales\", count(*) FILTER (WHERE \"documentType\"::text = 'sales_invoice') AS invoices, max(\"issueDate\") AS"
                 + " \"lastInvoiceDate\" FROM \"Document\" WHERE \"organizationId\" = ? AND \"partnerId\" = ANY(?::text[]) AND"
                 + " status::text = 'posted'", org(), set);
-        Map<String, Object> so = db.row("SELECT count(*) AS orders, count(*) FILTER (WHERE status IN ('confirmed', 'in_fulfilment'))"
+        Map<String, Object> so = db.row("SELECT count(*) AS orders, count(*) FILTER (WHERE status IN ('confirmed'))"
                 + " AS \"openOrders\" FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND \"partnerId\" = ANY(?::text[]) AND"
                 + " \"deletedAt\" IS NULL", org(), set);
         Map<String, Object> out = new LinkedHashMap<>(ar);
@@ -203,7 +203,7 @@ public class SalesCustomerService {
             throw ApiException.badRequest("The target customer was itself merged; merge into the final record");
         }
         long open = db.count("SELECT (SELECT count(*) FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND"
-                + " \"deletedAt\" IS NULL AND status IN ('draft', 'pending_approval', 'confirmed', 'in_fulfilment')) + (SELECT"
+                + " \"deletedAt\" IS NULL AND status IN ('draft', 'confirmed')) + (SELECT"
                 + " count(*) FROM \"SalesQuotation\" WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND \"deletedAt\" IS NULL AND"
                 + " status IN ('draft', 'pending_approval', 'approved', 'sent', 'accepted')) + (SELECT count(*) FROM \"Document\""
                 + " WHERE \"organizationId\" = ? AND \"partnerId\" = ? AND status::text = 'draft')",

@@ -30,7 +30,7 @@ public class SalesBackorderJob {
     public void tick() {
         List<String> orgs = jdbc.sql("SELECT DISTINCT o.\"organizationId\" FROM \"SalesOrder\" o JOIN \"SalesSettings\" s ON"
                 + " s.\"organizationId\" = o.\"organizationId\" WHERE s.\"reservationTrigger\" = 'confirm' AND o.status IN"
-                + " ('confirmed', 'in_fulfilment')").query(String.class).list();
+                + " ('confirmed')").query(String.class).list();
         for (String orgId : orgs) {
             try {
                 int n = TenantContext.run(TenantContext.TenantStore.organization(orgId), atp::retryBackorders);

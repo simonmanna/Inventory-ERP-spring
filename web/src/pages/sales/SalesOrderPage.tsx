@@ -30,7 +30,8 @@ import { LineColumnsPicker, useLineColumns, type LineColumn } from '@/components
 import { defaultUnitId, unitPrice as priceForUnit, unitPriceUnknown, withVariantPrices } from '@/features/products/units';
 import { cachedVariantOption, type VariantOption } from '@/features/products/variants-api';
 import {
-  salesApi, useChangeRequests, useOrderRevisions, useSalesMutation, useSalesOrder, type ChangeRequest, type SalesOrder, type SalesOrderLine,
+  salesApi, useChangeRequests, useOrderRevisions, useSalesMutation, useSalesOrder, type ChangeRequest, type SalesOrder, type SalesOrderAction,
+  type SalesOrderLine,
 } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
@@ -110,7 +111,8 @@ export function SalesOrderPage() {
     }
   }, [o]);
 
-  const editable = isNew || (o?.status === 'draft' && has(P.orderWrite));
+  // ADR-S094 §4.2: a draft waiting for approval keeps its content until it is withdrawn
+  const editable = isNew || (o?.status === 'draft' && o.approvalStatus !== 'pending' && has(P.orderWrite));
   const agreements = useQuery({
     queryKey: ['sales', 'agreements', 'active', partnerId],
     queryFn: async () => (await api.get<Array<{ id: string; number: string; name: string }>>('/sales/agreements', { params: { partnerId, status: 'active' } })).data,
@@ -170,17 +172,20 @@ export function SalesOrderPage() {
     });
   };
   const { ask, dialog: askDialog } = useAsk();
-  const run = (a: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject', body?: Record<string, unknown>) =>
+  const run = (a: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject' | 'submit-approval' | 'withdraw-approval', body?: Record<string, unknown>) =>
     action.mutate({ id: o!.id, action: a, body }, {
       onSuccess: (r) => {
         if (a === 'duplicate') { navigate(`/sales/orders/${r.id}`); return; }
         const res = r as SalesOrder & { creditRequest?: unknown };
         // X-8: a confirm over the credit limit opens a credit request and leaves the order a draft; say so.
-        if (a === 'confirm' && res.creditRequest) toast.info(tx('Over the credit limit: a credit request was sent for approval. The order stays a draft until it is approved.'));
-        else if (res.status === 'pending_approval') toast.success(tx('Sent for approval'));
-        else if (a === 'confirm' && res.onHold) toast.warning(tx('Confirmed — on hold: ') + (res.holdReason ?? ''));
+        if ((a === 'confirm' || a === 'approve') && res.creditRequest) toast.info(tx('Over the credit limit: a credit request was sent for approval. The order stays a draft until it is approved.'));
+        else if (a === 'submit-approval') toast.success(tx('Sent for approval'));
+        else if (a === 'withdraw-approval') toast.success(tx('Approval request withdrawn'));
+        else if (a === 'approve' && res.confirmError) toast.warning(tx('Approved, but not confirmed:') + ' ' + res.confirmError, { duration: 10000 });
+        else if ((a === 'confirm' || a === 'approve') && res.status === 'confirmed' && res.onHold) toast.warning(tx('Confirmed — on hold: ') + (res.holdReason ?? ''));
+        else if (a === 'approve' && res.status === 'confirmed') toast.success(tx('Order approved and confirmed'));
         else toast.success(a === 'confirm' ? tx('Order confirmed') : a === 'approve' ? tx('Order approved') : a === 'reject' ? tx('Order rejected') : a === 'release' ? tx('Order released') : tx('Done'));
-        const warn = a === 'confirm' ? res.stockWarnings ?? [] : [];
+        const warn = a === 'confirm' || (a === 'approve' && res.status === 'confirmed') ? res.stockWarnings ?? [] : [];
         if (warn.length) {
           const name = (lineId: string) => res.lines?.find((l) => l.id === lineId)?.description ?? lineId;
           toast.warning(tx('Not enough stock today for:') + ' ' + warn.map((w) => `${name(w.lineId)} (${tx('short')} ${w.shortage})`).join(', '), { duration: 10000 });
@@ -192,13 +197,26 @@ export function SalesOrderPage() {
   if (!isNew && isLoading) return <Skeleton className="h-96 w-full" />;
   if (!isNew && !o) return <p className="text-sm text-muted-foreground">{tx('Sales order not found.')}</p>;
   const status = o?.status ?? 'draft';
-  const open = ['confirmed', 'in_fulfilment'].includes(status);
+  const stage = o?.stage ?? status;
+  const open = status === 'confirmed';
+  // ADR-S094 §4.2: the API lists the approval and confirm steps this user may take on the draft
+  const allowed = (a: SalesOrderAction) => !!o && o.status === 'draft' && (o.actions ? o.actions.includes(a) : a === 'confirm' && has(P.orderConfirm));
+  const submitForApproval = async () => {
+    if (!o) return;
+    if (o.approvalStatus === 'rejected') {
+      const justification = await ask({ title: tx('Submit again for approval'), description: tx('This order was rejected and has not changed since. Say why it should be approved now.'), label: tx('Justification'), input: 'textarea', confirmLabel: tx('Submit for approval') });
+      if (justification) run('submit-approval', { justification });
+      return;
+    }
+    if (dirty) doSave(() => run('submit-approval'));
+    else run('submit-approval');
+  };
   const ribbon = [tx('Quotation'), tx('Sales order'), tx('Delivered'), tx('Invoiced')];
   const step = !o ? 1 : o.invoiceStatus === 'invoiced' ? 3 : o.deliveryStatus === 'full' ? 2 : 1;
   const currency = o?.currencyCode;
   const est = lines.reduce((s, l) => s + n(l.quantity) * n(l.unitPrice) * (1 - n(l.discountPercent) / 100), 0);
   const rel = o?.relations;
-  const fulfilling = !!o && ['confirmed', 'in_fulfilment', 'done'].includes(o.status);
+  const fulfilling = !!o && ['confirmed', 'done'].includes(o.status);
   const ico = 'mr-2 h-4 w-4';
   type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
   const menu: MenuItem[] = [];
@@ -207,7 +225,7 @@ export function SalesOrderPage() {
     if ((status === 'draft' || (o.onHold && o.holdKind !== 'manual')) && has(P.orderWrite)) menu.push({ key: 'credit', label: tx('Ask for credit approval'), icon: <FileSignature className={ico} />, onSelect: async () => { const reason = await ask({ title: tx('Ask for credit approval'), label: tx('Why should this order be allowed over the limit?'), confirmLabel: tx('Send request') }); if (reason) api.post(`/sales/orders/${o.id}/credit-request`, { reason }).then(() => toast.success(tx('Credit request sent'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
     if (open && has(P.orderAmend)) menu.push({ key: 'change', label: tx('Request change'), icon: <FileSignature className={ico} />, onSelect: () => setDialog('change') });
-    if (['in_fulfilment', 'done'].includes(status) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
+    if (['in_fulfilment', 'done'].includes(stage) && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return / claim'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
     if (status !== 'cancelled' && has(PERMISSIONS.project.manage)) menu.push({ key: 'project', label: tx('Create project'), icon: <FolderKanban className={ico} />, onSelect: () => setDialog('project') });
     if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'proforma', label: tx('Create proforma'), icon: <FileText className={ico} />, onSelect: () => { api.post(`/sales/orders/${o.id}/proforma`, {}, { headers: { 'Idempotency-Key': crypto.randomUUID() } }).then((r) => navigate(`/sales/proformas/${r.data.id}`)).catch((err) => toast.error(apiErrorMessage(err, tx('Could not create the proforma')))); } });
     if (status !== 'cancelled' && has(P.orderWrite)) menu.push({ key: 'recurring', label: tx('Repeat this order'), icon: <History className={ico} />, onSelect: async () => { const frequency = await ask({ title: tx('Repeat this order'), label: tx('How often?'), input: 'select', defaultValue: 'monthly', options: [['weekly', tx('Weekly')], ['monthly', tx('Monthly')], ['quarterly', tx('Quarterly')], ['yearly', tx('Yearly')]], confirmLabel: tx('Repeat') }); if (frequency) api.post(`/sales/orders/${o.id}/recurring`, { frequency }).then(() => toast.success(tx('A draft copy will be created when due'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
@@ -225,7 +243,7 @@ export function SalesOrderPage() {
           <span className="mx-1.5 text-muted-foreground">/</span>
           <span className="font-semibold">{o ? o.number : tx('New')}</span>
           {o && o.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{o.revision}</span>}
-          {o && <span className="ml-3"><OrderStatusPill status={o.status} onHold={o.onHold} /></span>}
+          {o && <span className="ml-3"><OrderStatusPill status={stage} approval={o.approvalStatus} onHold={o.onHold} /></span>}
         </div>
         {status !== 'cancelled' && <div data-tour="sales.order.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
@@ -233,11 +251,11 @@ export function SalesOrderPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div data-tour="sales.order.actions" className="flex flex-wrap items-center gap-2">
           {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
-          {o?.status === 'draft' && has(P.orderConfirm) && <Button data-tour="sales.order.confirm" variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
-          {o?.status === 'pending_approval' && has(P.orderApprove) && <>
-            <Button onClick={() => run('approve', {})}>{tx('Approve')}</Button>
-            <Button variant="destructive" onClick={async () => { const r = await ask({ title: `${tx('Reject')} ${o.number}?`, label: tx('Reason'), confirmLabel: tx('Reject'), destructive: true }); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>
-          </>}
+          {allowed('confirm') && <Button data-tour="sales.order.confirm" variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
+          {allowed('submit_approval') && <Button variant="secondary" disabled={action.isPending} onClick={submitForApproval}>{tx('Submit for approval')}</Button>}
+          {allowed('withdraw_approval') && <Button variant="outline" disabled={action.isPending} onClick={() => run('withdraw-approval', {})}>{tx('Withdraw from approval')}</Button>}
+          {allowed('approve') && <Button disabled={action.isPending} onClick={() => run('approve', {})}>{tx('Approve')}</Button>}
+          {allowed('reject') && o && <Button variant="destructive" disabled={action.isPending} onClick={async () => { const r = await ask({ title: `${tx('Reject')} ${o.number}?`, label: tx('Reason'), confirmLabel: tx('Reject'), destructive: true }); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>}
           {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
           {menu.length > 0 && (
             <DropdownMenu>
@@ -264,8 +282,9 @@ export function SalesOrderPage() {
         </div>
       </div>
 
-      {o?.status === 'pending_approval' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('Waiting for approval')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul></div>}
-      {o?.status === 'draft' && o.approvalReasons?.length > 0 && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.approvalReasons.join(' · ')}</div>}
+      {o?.status === 'draft' && o.approvalStatus === 'pending' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('Waiting for approval')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul><p className="mt-1 text-xs">{tx('Withdraw it from approval to change its lines, prices or terms.')}</p></div>}
+      {o?.status === 'draft' && o.approvalStatus === 'required' && o.approvalReasons?.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('This order needs approval before it can be confirmed')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul></div>}
+      {o?.status === 'draft' && o.approvalStatus === 'rejected' && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent"><p>{o.approvalReasons?.join(' · ')}</p><p className="mt-1 text-xs">{tx('Change the order, or submit it again with a justification.')}</p></div>}
       {o?.onHold && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.holdKind === 'credit' ? tx('Credit hold') : o.holdKind === 'customer' ? tx('Customer blocked') : tx('On hold')}: {o.holdReason}{o.holdKind === 'credit' && <span className="block text-xs">{tx('Release needs the credit override permission.')}</span>}</div>}
 
       <section className="rounded-xl border bg-card shadow-sm">

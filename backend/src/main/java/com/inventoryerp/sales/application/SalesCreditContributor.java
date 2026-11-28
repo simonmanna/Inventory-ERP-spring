@@ -31,7 +31,7 @@ public class SalesCreditContributor implements CreditExposureContributor {
                        COALESCE(sum(GREATEST(l."qtyBillable" - l."qtyInvoiced", 0) * l."lineTotal" / l.quantity), 0)
                            AS delivered
                   FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId"
-                 WHERE o."organizationId" = ? AND o."partnerId" = ? AND o.status IN ('confirmed', 'in_fulfilment')
+                 WHERE o."organizationId" = ? AND o."partnerId" = ? AND o.status IN ('confirmed')
                    AND o."paymentMode" = 'credit' AND o."deletedAt" IS NULL""", org(), partnerId);
         return new Contribution(scale(r.get("undelivered")), scale(r.get("delivered")), BigDecimal.ZERO, BigDecimal.ZERO,
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, 0);

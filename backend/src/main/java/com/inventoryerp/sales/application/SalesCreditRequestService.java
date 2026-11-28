@@ -135,8 +135,8 @@ public class SalesCreditRequestService {
         } else if ("draft".equals(o.get("status"))) {
             credit.override(str(r.get("partnerId")), "sales_order", orderId, str(o.get("number")), comment);
             // Sales readiness R3 (P1-1): confirm through the full checks. When they refuse (no lines, short stock, or
-            // the order needs commercial approval and goes to pending_approval) the credit approval still stands and
-            // covers the order's next confirm; the requester is told why it is still a draft.
+            // the order still needs commercial approval, ADR-S094 §4.2) the credit approval still stands and covers
+            // the order's next confirm; the requester is told why it is still a draft.
             Map<String, Object> confirmed = orders.getObject().confirmAfterCredit(orderId);
             if (confirmed.get("confirmError") != null) {
                 alerts.send(str(r.get("requestedById")), "sales_credit_decision", "Order " + o.get("number")

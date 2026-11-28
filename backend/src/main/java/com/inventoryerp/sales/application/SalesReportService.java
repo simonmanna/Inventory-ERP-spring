@@ -39,13 +39,13 @@ public class SalesReportService {
         long pending = db.count("SELECT (SELECT count(*) FROM \"SalesQuotation\" WHERE \"organizationId\" = ? AND"
                 + " status = 'pending_approval' AND \"deletedAt\" IS NULL) + (SELECT count(*) FROM"
                 + " \"SalesOrderChangeRequest\" WHERE \"organizationId\" = ? AND status = 'pending_approval') + (SELECT"
-                + " count(*) FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND status = 'pending_approval' AND"
-                + " \"deletedAt\" IS NULL)", List.of(org(), org(), org()));
+                + " count(*) FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND status = 'draft' AND \"approvalStatus\" ="
+                + " 'pending' AND \"deletedAt\" IS NULL)", List.of(org(), org(), org()));
         Map<String, Object> open = db.row("SELECT count(*) AS count, COALESCE(sum(total), 0) AS total FROM"
-                + " \"SalesOrder\" WHERE \"organizationId\" = ? AND status IN ('confirmed', 'in_fulfilment') AND"
+                + " \"SalesOrder\" WHERE \"organizationId\" = ? AND status IN ('confirmed') AND"
                 + " \"deletedAt\" IS NULL", org());
         Map<String, Object> toFulfil = db.row("SELECT count(*) AS count, COALESCE(sum(total), 0) AS total FROM"
-                + " \"SalesOrder\" WHERE \"organizationId\" = ? AND status IN ('confirmed', 'in_fulfilment') AND"
+                + " \"SalesOrder\" WHERE \"organizationId\" = ? AND status IN ('confirmed') AND"
                 + " \"deliveryStatus\" <> 'full' AND NOT \"onHold\" AND \"deletedAt\" IS NULL", org());
         long held = db.count("SELECT count(*) FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND \"onHold\" AND"
                 + " \"deletedAt\" IS NULL", List.of(org()));

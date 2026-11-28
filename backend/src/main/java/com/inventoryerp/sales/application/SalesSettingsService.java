@@ -65,6 +65,15 @@ public class SalesSettingsService {
         return row;
     }
 
+    /**
+     * Settings of the current organization as stored, for read-only callers (a GET runs in a read-only transaction, so
+     * it cannot create the row); null when the organization has never saved or read its sales settings.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Object> stored() {
+        return db.row("SELECT * FROM \"SalesSettings\" WHERE \"organizationId\" = ?", org());
+    }
+
     /** How customer deposit receipts are headed (defaults filled in); read-only. */
     @Transactional(readOnly = true)
     public DepositReceiptLayout depositReceiptLayout() {
@@ -138,7 +147,8 @@ public class SalesSettingsService {
         for (String k : List.of("creditCheck", "autoWinOnConversion", "marginCheck", "dunningAutoRun",
                 "monthlyStatements", "allowAlternativeWarehouse", "notifyOnHold", "notifyOnShortage",
                 "orderApprovalAlways", "deliveryPostingApproval", "requireLineTax", "cashBypassesCredit",
-                "quoteLineImages", "deliveryLossPosting", "rejectedToQuarantine")) {
+                "quoteLineImages", "deliveryLossPosting", "rejectedToQuarantine", "confirmOnApproval",
+                "allowSelfApproval")) {
             if (in.containsKey(k)) {
                 sets.add("\"" + k + "\" = ?");
                 params.add(Boolean.TRUE.equals(in.get(k)));

@@ -169,7 +169,7 @@ public class SalesPresentationService {
                         : pct(BigDecimal.valueOf(((Number) q.get("converted")).longValue()), BigDecimal.valueOf(qCount))));
 
         String confirmed = "SELECT count(*) AS count, COALESCE(sum(total), 0) AS value FROM \"SalesOrder\""
-                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND status IN ('confirmed', 'in_fulfilment',"
+                + " WHERE \"organizationId\" = ? AND \"deletedAt\" IS NULL AND status IN ('confirmed',"
                 + " 'done') AND COALESCE(\"confirmedAt\", \"createdAt\") >= ? AND COALESCE(\"confirmedAt\","
                 + " \"createdAt\") < ?";
         Map<String, Object> o = db.row(confirmed, org(), from, to.plusDays(1));

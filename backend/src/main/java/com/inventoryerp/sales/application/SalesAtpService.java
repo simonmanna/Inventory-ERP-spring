@@ -424,7 +424,7 @@ public class SalesAtpService {
                        (SELECT min("expectedDate") FROM "SalesSupplyPeg" g WHERE g."orderLineId" = l.id) AS "nextSupply"
                   FROM "SalesOrderLine" l JOIN "SalesOrder" o ON o.id = l."orderId" JOIN "Product" pr ON pr.id = l."productId"
                   LEFT JOIN "Partner" p ON p.id = o."partnerId"
-                 WHERE o."organizationId" = ? AND o.status IN ('confirmed', 'in_fulfilment') AND o."deletedAt" IS NULL
+                 WHERE o."organizationId" = ? AND o.status IN ('confirmed') AND o."deletedAt" IS NULL
                    AND pr."trackInventory" AND l.quantity - l."qtyCancelled" - l."qtyDelivered" - l."qtyReserved" > 0
                  ORDER BY o.priority DESC, o."confirmedAt", l."sortOrder" LIMIT 1000""", org());
     }
@@ -434,7 +434,7 @@ public class SalesAtpService {
         List<Map<String, Object>> orders = db.rows("""
                 SELECT DISTINCT o.id, o.priority, o."confirmedAt" FROM "SalesOrder" o JOIN "SalesOrderLine" l ON l."orderId" = o.id
                   JOIN "Product" pr ON pr.id = l."productId"
-                 WHERE o."organizationId" = ? AND o.status IN ('confirmed', 'in_fulfilment') AND o."deletedAt" IS NULL
+                 WHERE o."organizationId" = ? AND o.status IN ('confirmed') AND o."deletedAt" IS NULL
                    AND pr."trackInventory" AND l.quantity - l."qtyCancelled" - l."qtyDelivered" - l."qtyReserved" > 0
                  ORDER BY o.priority DESC, o."confirmedAt" LIMIT 500""", org());
         // Sales readiness X-7: at most 500 orders per run (highest priority first); the next run takes the rest.

@@ -124,6 +124,13 @@ public class SyncSalesService {
         }
         Map<String, Object> after;
         try {
+            // ADR-S094 §4.2: the rep asked to confirm; an order that needs approval is submitted for it (the device's
+            // explicit request), so the device sees the same outcome as before.
+            if ("required".equals(orders.get(id).get("approvalStatus"))) {
+                Map<String, Object> submitted = orders.submitApproval(id, null);
+                return result(id, mapping, "pending_approval", String.join("; ", strings(submitted.get(
+                        "approvalReasons"))), actual);
+            }
             after = orders.confirm(id);
         } catch (ApiException e) {
             if (!businessRefusal(e)) {
@@ -135,10 +142,6 @@ public class SyncSalesService {
             return result(id, mapping, "draft", e.getMessage(), actual);
         }
         String status = str(after.get("status"));
-        if ("pending_approval".equals(status)) {
-            return result(id, mapping, "pending_approval", String.join("; ", strings(after.get("approvalReasons"))),
-                    actual);
-        }
         if (!"confirmed".equals(status)) {
             // Over the limit with an "approve" policy: a credit request was opened, the order waits as a draft.
             return result(id, mapping, "credit_approval", "Over the customer's credit limit: a credit request was opened",

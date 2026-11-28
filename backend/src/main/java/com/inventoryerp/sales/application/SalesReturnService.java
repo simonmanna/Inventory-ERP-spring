@@ -124,7 +124,7 @@ public class SalesReturnService {
     public Map<String, Object> create(Map<String, Object> in) {
         String orderId = str(in.get("orderId"));
         Map<String, Object> o = orders.lock(orderId);
-        if (!Set.of("confirmed", "in_fulfilment", "done").contains(o.get("status"))) {
+        if (!Set.of("confirmed", "done").contains(o.get("status"))) {
             throw ApiException.badRequest("Only confirmed orders can have returns");
         }
         String reason = str(in.get("reason"));

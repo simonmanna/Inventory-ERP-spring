@@ -100,8 +100,8 @@ class SalesAgreementIT extends ApiTestSupport {
 
         String over = ok(201, "POST", "/sales/orders", Map.of("partnerId", c, "agreementId", id, "lines", List.of(Map.of(
                 "productId", product, "quantity", 50)))).get("id").asString();
-        JsonNode pending = ok(200, "POST", "/sales/orders/" + over + "/confirm", null);
-        assertThat(pending.get("status").asString()).isEqualTo("pending_approval");
+        JsonNode pending = ok(200, "POST", "/sales/orders/" + over + "/submit-approval", null);
+        assertThat(pending.get("approvalStatus").asString()).isEqualTo("pending");
         assertThat(pending.get("approvalReasons").toString()).contains("exceeds the agreement balance of 40");
 
         assertThat(as("POST", "/sales/orders", Map.of("partnerId", customer(), "agreementId", id, "lines", List.of(

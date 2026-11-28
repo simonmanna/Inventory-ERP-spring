@@ -10,7 +10,7 @@ import { atpApi, useOrderAtp, useSalesMutation, type SalesOrder } from '@/featur
 
 /** Stock availability, reservations and incoming supply per order line (ADR-S011 S4). */
 export function AvailabilityPanel({ order }: { order: SalesOrder }) {
-  const open = ['confirmed', 'in_fulfilment'].includes(order.status);
+  const open = order.status === 'confirmed';
   const { data } = useOrderAtp(order.id, order.status !== 'cancelled');
   const canReserve = useAuthStore((s) => s.hasPermission(PERMISSIONS.sales.orderConfirm));
   const reserve = useSalesMutation(atpApi.reserve);

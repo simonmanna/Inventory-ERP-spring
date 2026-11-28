@@ -859,7 +859,10 @@ class SalesBillingReports implements SalesReportSet {
                 SELECT * FROM (
                   SELECT o.id, 'Sales order' AS kind, o.number, COALESCE(o."confirmedAt", o."createdAt")::date AS date,
                          p.name AS customer, trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson,
-                         o.status, o."maxDiscountPercent", array_to_string(o."approvalReasons", ', ') AS reasons, o.total,
+                         CASE WHEN o.status = 'draft' AND o."approvalStatus" = 'rejected' THEN 'rejected'
+                              WHEN o.status = 'draft' AND o."approvalStatus" = 'pending' THEN 'pending_approval'
+                              ELSE o.status END AS status,
+                         o."maxDiscountPercent", array_to_string(o."approvalReasons", ', ') AS reasons, o.total,
                          '/sales/orders/' || o.id AS route, o."branchId", o."ownerId", o."partnerId", p."categoryId"
                     FROM "SalesOrder" o LEFT JOIN "Partner" p ON p.id = o."partnerId" LEFT JOIN "User" u ON u.id = o."ownerId"
                    WHERE o."organizationId" = ? AND o."deletedAt" IS NULL AND cardinality(o."approvalReasons") > 0

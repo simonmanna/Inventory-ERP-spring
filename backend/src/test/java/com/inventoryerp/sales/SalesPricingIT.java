@@ -160,16 +160,21 @@ class SalesPricingIT extends ApiTestSupport {
             JsonNode o = call("POST", "/sales/orders", Map.of("partnerId", other, "lines", List.of(Map.of("productId",
                     aggregate, "quantity", 5, "discountPercent", 30))), repToken).body();
             String oid = o.get("id").asString();
-            JsonNode pending = call("POST", "/sales/orders/" + oid + "/confirm", null, repToken).body();
-            assertThat(pending.get("status").asString()).isEqualTo("pending_approval");
+            assertThat(call("POST", "/sales/orders/" + oid + "/confirm", null, repToken).status())
+                    .as("ADR-S094: confirm never submits implicitly").isEqualTo(400);
+            JsonNode pending = call("POST", "/sales/orders/" + oid + "/submit-approval", null, repToken).body();
+            assertThat(pending.get("approvalStatus").asString()).isEqualTo("pending");
             assertThat(pending.get("approvalReasons").get(0).asString()).contains("Discount 30");
             assertThat(call("POST", "/sales/orders/" + oid + "/approve", Map.of(), repToken).status()).isEqualTo(403);
             JsonNode rejected = ok(200, "POST", "/sales/orders/" + oid + "/reject", Map.of("reason", "Too cheap"));
             assertThat(rejected.get("status").asString()).isEqualTo("draft");
+            assertThat(rejected.get("approvalStatus").asString()).isEqualTo("rejected");
             assertThat(rejected.get("approvalReasons").get(0).asString()).contains("Too cheap");
-            call("POST", "/sales/orders/" + oid + "/confirm", null, repToken);
+            call("POST", "/sales/orders/" + oid + "/submit-approval", Map.of("justification", "Strategic account"),
+                    repToken);
             JsonNode approved = ok(200, "POST", "/sales/orders/" + oid + "/approve", Map.of("comment", "Strategic"));
             assertThat(approved.get("status").asString()).isEqualTo("confirmed");
+            assertThat(approved.get("approvalStatus").asString()).isEqualTo("approved");
             // within policy: confirmed at once
             JsonNode plain = call("POST", "/sales/orders", Map.of("partnerId", other, "lines", List.of(Map.of(
                     "productId", aggregate, "quantity", 5))), repToken).body();

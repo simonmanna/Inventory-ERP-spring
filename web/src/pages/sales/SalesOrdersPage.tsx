@@ -14,7 +14,8 @@ import { DELIVERY_LABEL, INVOICE_LABEL, OrderStatusPill } from './sales-ui';
 const TABS: Array<{ key: string; label: string; extra?: Record<string, string> }> = [
   { key: '', label: tx('All') },
   { key: 'draft', label: tx('Drafts') },
-  { key: 'confirmed,in_fulfilment', label: tx('Open') },
+  { key: 'approval', label: tx('Awaiting approval'), extra: { approvalStatus: 'pending' } },
+  { key: 'confirmed', label: tx('Open') },
   { key: 'to_fulfil', label: tx('To deliver'), extra: { toFulfil: 'true' } },
   { key: 'on_hold', label: tx('On hold'), extra: { onHold: 'true' } },
   { key: 'done', label: tx('Done') },
@@ -63,7 +64,7 @@ export function SalesOrdersPage() {
                 <td className="px-3 py-2 font-medium">{o.number}{o.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{o.revision}</span>}</td>
                 <td className="px-3 py-2">{o.partnerName}</td>
                 <td className="px-3 py-2">{o.requestedDate ? date(o.requestedDate) : '—'}</td>
-                <td className="px-3 py-2"><OrderStatusPill status={o.status} onHold={o.onHold} /></td>
+                <td className="px-3 py-2"><OrderStatusPill status={o.stage ?? o.status} approval={o.approvalStatus} onHold={o.onHold} /></td>
                 <td className="px-3 py-2 text-xs">{DELIVERY_LABEL[o.deliveryStatus]}</td>
                 <td className="px-3 py-2 text-xs">{INVOICE_LABEL[o.invoiceStatus]}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{money(o.total, o.currencyCode)}</td>
