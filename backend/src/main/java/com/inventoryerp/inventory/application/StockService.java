@@ -1765,8 +1765,12 @@ public class StockService {
             }
         }
         for (String loc : sorted) {
-            jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint)").param(freezeLockKey(org, loc))
-                    .query().listOfRows();
+            if (dto.countSessionId == null) {
+                // A count's own posting (countSessionId) does not ask for L3b: it already holds the quant locks (L4).
+                // It is checked against the committed freezes below, so only the freeze's own session is exempt.
+                jdbc.sql("SELECT pg_advisory_xact_lock_shared(hashtext(?)::bigint)").param(freezeLockKey(org, loc))
+                        .query().listOfRows();
+            }
             Map<String, Object> frozen = SqlRows.one(jdbc.sql("SELECT s.id, s.\"countCode\", l.name FROM"
                             + " \"InventoryCountSession\" s JOIN \"InventoryLocation\" l ON l.id = s.\"locationId\""
                             + " WHERE s.\"organizationId\" = ? AND s.\"locationId\" = ? AND s.status = 'draft'"
@@ -1788,9 +1792,9 @@ public class StockService {
             "credit_note", "credit_note_cancel");
 
     private static boolean freezeExempt(StockMove dto) {
-        // A count's own posting (countSessionId) is exempt: with one draft per location (S4) the only freeze at its
-        // location is its own, and it already holds the quant locks (L4), so it must not ask for L3b after them.
-        if (isSaleDrain(dto) || LATE_COUNT_CORRECTION.equals(dto.sourceType) || dto.countSessionId != null
+        // IPR review 3 (#7): a count's own posting (countSessionId) is not exempt here: assertNotFrozen lets through
+        // only the session that holds the freeze (without taking L3b, see there).
+        if (isSaleDrain(dto) || LATE_COUNT_CORRECTION.equals(dto.sourceType)
                 || (dto.sourceType != null && SALE_SOURCES.contains(dto.sourceType))) {
             return true;
         }
