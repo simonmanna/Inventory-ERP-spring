@@ -4,6 +4,7 @@ import static com.inventoryerp.inventory.application.InventoryLookups.dec;
 import static com.inventoryerp.inventory.application.InventoryLookups.str;
 import static com.inventoryerp.inventory.application.StockService.NOW;
 
+import com.inventoryerp.accounting.application.InventoryValuationService;
 import com.inventoryerp.core.application.BranchScopeService.DataScope;
 import com.inventoryerp.inventory.application.StockMove.Issued;
 import com.inventoryerp.inventory.domain.InventoryLocation;
@@ -27,6 +28,8 @@ import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.sequence.SequenceService;
+import com.inventoryerp.kernel.settings.SettingResolverService;
+import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import com.inventoryerp.shared.web.EntityJson;
@@ -75,6 +78,21 @@ public class StockDocService {
     /** One transit receipt line. */
     public record ReceiveLine(String itemId, BigDecimal received, BigDecimal damaged, BigDecimal shortQty) {}
 
+    /**
+     * IPR S3: what a receipt that writes off damaged or short goods above the approval threshold must carry: the
+     * reason, and (when no approval workflow answers {@value #TRANSIT_LOSS_APPROVAL}) a named approver with their PIN.
+     */
+    public record LossApproval(String lossReason, String approvedById, String approverPin) {
+
+        static final LossApproval NONE = new LossApproval(null, null, null);
+    }
+
+    /** IPR S3: approval entity type of a transit loss above the threshold. */
+    public static final String TRANSIT_LOSS_APPROVAL = "stock_transfer_loss";
+
+    /** IPR S3: the loss value (base currency) above which a transit write-off needs a reason and an approval. */
+    public static final String TRANSIT_LOSS_THRESHOLD = "inventory.transitLossApprovalThreshold";
+
     /** Waste list / summary filters. */
     public record WasteQuery(String status, String category, String locationId, String from, String to) {}
 
@@ -88,13 +106,16 @@ public class StockDocService {
     private final AuditService audit;
     private final StaffAttribution staff;
     private final LocationScope scope;
+    private final SettingResolverService settings;
     private final TransactionTemplate newTx;
     private final TransactionTemplate tx;
 
     public StockDocService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq, StockService stock,
             ApprovalsService approvals, SegregationOfDutiesService sod, StockPostingService stockPosting,
-            AuditService audit, StaffAttribution staff, LocationScope scope, PlatformTransactionManager txm) {
+            AuditService audit, StaffAttribution staff, LocationScope scope, SettingResolverService settings,
+            PlatformTransactionManager txm) {
         this.scope = scope;
+        this.settings = settings;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
@@ -165,6 +186,17 @@ public class StockDocService {
                         + " WHERE p.id = ? AND p.\"organizationId\" = ?")
                 .params(variantId, variantId == null ? "" : variantId, locationId, productId, org())
                 .query(BigDecimal.class).optional().orElse(Money.ZERO);
+    }
+
+    /**
+     * IPR S-2: a stock document read (header, lines, ledger rows, journal lines, summary) without its costs and values
+     * for a caller who does not hold {@code inventory_valuation:read}.
+     */
+    private static <T> T costGuarded(T read) {
+        if (!CostVisibility.seesCost()) {
+            CostVisibility.hideCostDeep(read, CostVisibility.DOCUMENT_COST_KEYS);
+        }
+        return read;
     }
 
     /** Who made a stock document (separation of duties): its performer / reporter and its creator. */
@@ -239,7 +271,8 @@ public class StockDocService {
                     .variant(str(item, "variantId")).moveType(catToMove.getOrDefault(str(doc, "category"), "issue"))
                     .strategy(item.get("distStrategy") != null ? str(item, "distStrategy") : "FEFO")
                     .batch(str(item, "batchNumber")).source("stock_out", str(doc, "outCode")).notes(str(doc, "reason"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"))
+                    .manual().honourReservations(null); // IPR X-3, E-1a
             Issued res = stock.issue(m);
             total = total.add(res.totalValue());
             jdbc.sql("UPDATE \"StockOutItem\" SET \"unitCost\" = ?, \"totalCost\" = ? WHERE id = ?")
@@ -338,7 +371,8 @@ public class StockDocService {
                     .moveType(Boolean.TRUE.equals(item.get("isExpiry")) ? "expiry_write_off" : "waste")
                     .strategy(batch != null ? "MANUAL" : "FEFO").batch(batch).source("waste", str(doc, "wasteCode"))
                     .notes(str(doc, "notes"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"))
+                    .manual(); // IPR X-3 (a physical loss: sales-order reservations do not refuse it)
             Issued res = stock.issue(m);
             total = total.add(res.totalValue());
             jdbc.sql("UPDATE \"WasteItem\" SET \"unitCost\" = ?, \"totalCost\" = ? WHERE id = ?")
@@ -381,7 +415,7 @@ public class StockDocService {
         // Gaps h-00 F11: items and locations in one query each, not per record.
         withItems(out, "WasteItem", WasteItem.class, "wasteId");
         withLocations(out, false);
-        return out;
+        return costGuarded(out);
     }
 
     /** One waste record with its ledger rows and posted journals. */
@@ -419,7 +453,7 @@ public class StockDocService {
         }
         doc.put("journalEntries", journals);
         doc.put("ledger", ledger);
-        return doc;
+        return costGuarded(doc);
     }
 
     /** Posted damages & waste totals by category / product / location, plus pending. */
@@ -478,7 +512,7 @@ public class StockDocService {
         }
         Comparator<Map<String, Object>> desc =
                 (a, b) -> ((BigDecimal) b.get("value")).compareTo((BigDecimal) a.get("value"));
-        return Obj.of("period", Obj.of("from", q.from(), "to", q.to()),
+        return costGuarded(Obj.of("period", Obj.of("from", q.from(), "to", q.to()),
                 "postedRecords", posted.size(),
                 "totalValue", JsNumbers.js(totalValue),
                 "expiryValue", JsNumbers.js(expiryValue),
@@ -486,7 +520,7 @@ public class StockDocService {
                 "pendingValue", JsNumbers.js(pending.get("v") == null ? BigDecimal.ZERO : dec(pending, "v")),
                 "byCategory", jsValues(sorted(byCategory.values(), desc)),
                 "byLocation", jsValues(sorted(byLocation.values(), desc)),
-                "topProducts", jsValues(sorted(byProduct.values(), desc).stream().limit(10).toList()));
+                "topProducts", jsValues(sorted(byProduct.values(), desc).stream().limit(10).toList())));
     }
 
     private static List<Map<String, Object>> sorted(java.util.Collection<Map<String, Object>> rows,
@@ -627,9 +661,19 @@ public class StockDocService {
             throw ApiException.badRequest("Cannot approve a " + status + " document");
         }
         List<Map<String, Object>> items = items("StockAdjustmentItem", StockAdjustmentItem.class, "adjId", id);
+        if (!embedded) {
+            assertNoOpenCount(str(doc, "locationId"));
+        }
         if (claim("StockAdjustment", id, "approved") == 0) {
             throw ApiException.badRequest("Adjustment was posted or cancelled concurrently");
         }
+        // ADR-S088 / IPR M-1: an adjustment recorded on an offline device moved at the device time.
+        Instant offlineAt = jdbc.sql("SELECT \"occurredAt\" FROM \"StockAdjustment\" WHERE id = ? AND \"organizationId\" = ?"
+                        + " AND \"recordedOffline\" = true").params(id, org())
+                .query((rs, n) -> {
+                    var t = rs.getTimestamp(1);
+                    return t == null ? null : t.toLocalDateTime().toInstant(java.time.ZoneOffset.UTC);
+                }).optional().orElse(null);
         // Gaps h-00 F6: the on-hand each line's count is measured against (the snapshot, or what the drift check read
         // when forcing over drift); the line then posts qtyActual minus it as a delta on the on-hand read under the
         // quant lock, so a movement committing after that read is kept instead of overwritten.
@@ -672,8 +716,9 @@ public class StockDocService {
             StockMove m = StockMove.of(str(item, "productId"), str(doc, "locationId"), null)
                     .variant(str(item, "variantId")).notes(doc.get("adjCode") + " · " + doc.get("reason"))
                     .batch(str(item, "batchNumber")).source("stock_adjustment", str(doc, "adjCode"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById")).manual();
             m.deltaQuantity = dec(item, "qtyActual").subtract(basis.getOrDefault(item.get("id"), dec(item, "qtySystem")));
+            m.effectiveAt = offlineAt;
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
@@ -692,11 +737,17 @@ public class StockDocService {
      * FEFO order and a gain goes into its newest lot, as before.
      */
     public record CountVariance(String productId, String variantId, String unit, String batchNumber,
-            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId) {
+            BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId,
+            String countLineId, Instant countedAt) {
 
         public CountVariance(String productId, String variantId, String unit, String batchNumber,
                 BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers) {
-            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, null);
+            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, null, null, null);
+        }
+
+        public CountVariance(String productId, String variantId, String unit, String batchNumber,
+                BigDecimal qtySystem, BigDecimal qtyActual, BigDecimal delta, List<String> serialNumbers, String lotId) {
+            this(productId, variantId, unit, batchNumber, qtySystem, qtyActual, delta, serialNumbers, lotId, null, null);
         }
     }
 
@@ -719,6 +770,17 @@ public class StockDocService {
     @Transactional
     public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
             List<CountVariance> lines, boolean opening) {
+        return postCountVariances(locationId, responsibleById, notes, lines, opening, null);
+    }
+
+    /**
+     * As {@link #postCountVariances(String, String, String, List, boolean)} for count session {@code countSessionId}
+     * (IPR 1b): each variance row records its count line ({@code sourceLineId}) and the line's cut-off as its effective
+     * time, and the session's own posting is exempt from the session's location freeze.
+     */
+    @Transactional
+    public Map<String, Object> postCountVariances(String locationId, String responsibleById, String notes,
+            List<CountVariance> lines, boolean opening, String countSessionId) {
         lookups.requireLocation(locationId);
         Map<String, String> names = lookups.productNames(new LinkedHashSet<>(lines.stream()
                 .map(CountVariance::productId).toList()));
@@ -755,12 +817,31 @@ public class StockDocService {
             m.deltaQuantity = l.delta();
             m.openingBalance = opening;
             m.lotId = l.lotId();
+            m.sourceLineId = l.countLineId();
+            m.effectiveAt = l.countedAt();
+            m.countSessionId = countSessionId;
+            m.skipLateCountCheck = true;
             stock.adjust(m);
         }
         jdbc.sql("UPDATE \"StockAdjustment\" SET status = 'completed', \"approvedById\" = ?, \"approvedAt\" = " + NOW
                         + ", \"postedAt\" = " + NOW + ", \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(user, id).update();
         return withItems(adjustment(id));
+    }
+
+    /**
+     * IPR S4: a stock adjustment is not approved against a location while a count session is open there (draft): the
+     * count would post its own variance over the same cells.
+     */
+    private void assertNoOpenCount(String locationId) {
+        Map<String, Object> open = SqlRows.one(jdbc.sql("SELECT s.\"countCode\", l.name FROM \"InventoryCountSession\" s"
+                + " JOIN \"InventoryLocation\" l ON l.id = s.\"locationId\" WHERE s.\"organizationId\" = ?"
+                + " AND s.\"locationId\" = ? AND s.status = 'draft' AND s.\"deletedAt\" IS NULL LIMIT 1")
+                .params(org(), locationId));
+        if (open != null) {
+            throw ApiException.conflict("Location " + open.get("name") + " has an open count " + open.get("countCode")
+                    + "; submit or cancel the count before approving an adjustment there");
+        }
     }
 
     /** Discard a not-yet-posted adjustment. */
@@ -868,7 +949,8 @@ public class StockDocService {
             StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), str(doc, "toLocId"),
                             dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                     .source("stock_transfer", str(doc, "transferCode")).notes(str(doc, "notes"))
-                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"));
+                    .people(str(doc, "responsibleById"), user != null ? user : str(doc, "approvedById"))
+                    .manual().honourReservations(null); // IPR X-3, E-1a
             recordArrivedLayers(id, str(item, "id"), stock.transfer(m), true);
             jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyTransferred\" = ? WHERE id = ?")
                     .params(dec(item, "qtyRequested"), item.get("id")).update();
@@ -888,7 +970,7 @@ public class StockDocService {
             throw ApiException.notFound("Transfer not found");
         }
         scope.assertEither(str(doc, "fromLocId"), str(doc, "toLocId"));
-        return withReceipts(withItems(doc), true);
+        return costGuarded(withReceipts(withItems(doc), true));
     }
 
     /** The org's transit location, created on first use (outside the movement transaction). */
@@ -968,7 +1050,8 @@ public class StockDocService {
                 StockMove m = StockMove.transfer(str(item, "productId"), str(doc, "fromLocId"), transit,
                                 dec(item, "qtyRequested")).variant(str(item, "variantId")).batch(str(item, "batchNumber"))
                         .source("stock_transfer_dispatch", str(doc, "transferCode")).notes(str(doc, "notes"))
-                        .people(str(doc, "responsibleById"), str(doc, "approvedById"));
+                        .people(str(doc, "responsibleById"), str(doc, "approvedById"))
+                        .manual().honourReservations(null); // IPR X-3, E-1a
                 recordTransitLayers(id, str(item, "id"), dec(item, "qtyRequested"), stock.transfer(m));
                 jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyDispatched\" = ? WHERE id = ?")
                         .params(dec(item, "qtyRequested"), item.get("id")).update();
@@ -987,12 +1070,132 @@ public class StockDocService {
     /** Record one destination receipt splitting outstanding transit qty into received / damaged / short. */
     @Transactional
     public Map<String, Object> receiveTransfer(String id, List<ReceiveLine> lines, String notes) {
+        return receiveTransfer(id, lines, notes, LossApproval.NONE);
+    }
+
+    /**
+     * {@link #receiveTransfer(String, List, String)} with the loss controls of IPR S3: when the damaged and short
+     * quantities are worth more than {@value #TRANSIT_LOSS_THRESHOLD} (estimated at the transit location's cost), the
+     * receipt needs a reason and an approval, either through the approval engine ({@value #TRANSIT_LOSS_APPROVAL},
+     * used once) or from a named approver with their PIN. Under the {@code stock_write_off} separation-of-duties pair
+     * the receiver cannot approve their own loss.
+     */
+    @Transactional
+    public Map<String, Object> receiveTransfer(String id, List<ReceiveLine> lines, String notes,
+            LossApproval lossApproval) {
+        LossApproval approval = lossApproval == null ? LossApproval.NONE : lossApproval;
+        // IPR review 1 (N4): the loss gate (approval engine, its own connection) runs on an unlocked read, before the
+        // transfer row lock (L1) is taken, like the other stock document gates; the locked state is checked again.
+        LossGate gate = null;
+        Map<String, Object> unlocked = transitTransfer(id);
+        if (unlocked != null && ("in_transit".equals(str(unlocked, "status"))
+                || "partially_received".equals(str(unlocked, "status")))) {
+            scope.assertAllowed(str(unlocked, "toLocId"));
+            List<Object[]> prePlan;
+            try {
+                prePlan = receiptPlan(unlocked, lines);
+            } catch (ApiException invalid) {
+                prePlan = null; // the locked read below refuses it with the same message
+            }
+            if (prePlan != null) {
+                gate = lossGate(unlocked, prePlan, str(unlocked, "transitLocId"), approval);
+            }
+        }
         Map<String, Object> doc = lockTransfer(id, false);
         String status = str(doc, "status");
         String code = str(doc, "transferCode");
         if (!"in_transit".equals(status) && !"partially_received".equals(status)) {
             throw ApiException.badRequest(code + " is " + status + "; only in-transit transfers can be received");
         }
+        List<Object[]> plan = receiptPlan(doc, lines);
+        String receiptCode = seq.next("stock_transfer_receipt", "TRR-", 5);
+        String transitLocId = str(doc, "transitLocId");
+        String reference = code + " " + receiptCode;
+        String user = TenantContext.userId();
+        LossControl loss = transitLossControl(doc, plan, transitLocId, receiptCode, approval, gate);
+        String lossApprover = loss.approvedById() != null ? loss.approvedById() : user;
+        List<Map<String, Object>> receiptLines = new ArrayList<>();
+        Map<Object, Map<String, Object>> receiptLineByItem = new HashMap<>();
+        List<Object[]> ordered = new ArrayList<>(plan);
+        ordered.sort(Comparator.comparing((Object[] p) -> String.valueOf(((Map<?, ?>) p[0]).get("productId")))
+                .thenComparing(p -> ((Map<?, ?>) p[0]).get("variantId") == null ? ""
+                        : String.valueOf(((Map<?, ?>) p[0]).get("variantId"))));
+        for (Object[] p : ordered) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> item = (Map<String, Object>) p[0];
+            BigDecimal received = (BigDecimal) p[1];
+            BigDecimal damaged = (BigDecimal) p[2];
+            BigDecimal shortQty = (BigDecimal) p[3];
+            if (received.signum() > 0) {
+                List<String> n = new ArrayList<>(List.of(receiptCode));
+                if (notes != null && !notes.isEmpty()) {
+                    n.add(notes);
+                }
+                recordArrivedLayers(id, str(item, "id"), stock.transfer(pinTransit(StockMove.transfer(
+                        str(item, "productId"), transitLocId, str(doc, "toLocId"), received)
+                        .variant(str(item, "variantId")).source("stock_transfer_receipt", code)
+                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user).manual(),
+                        str(item, "id"))), false);
+            }
+            if (damaged.signum() > 0) {
+                stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, damaged)
+                        .variant(str(item, "variantId")).moveType("waste").source("stock_transfer_loss", code)
+                        .reference(reference + " damaged in transit").requireAvailable(true).people(null, lossApprover),
+                        str(item, "id")));
+            }
+            if (shortQty.signum() > 0) {
+                Issued res = stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, shortQty)
+                        .variant(str(item, "variantId")).moveType("adjustment_out").source("stock_transfer_loss", code)
+                        .reference(reference + " short on arrival").requireAvailable(true).skipGl()
+                        .people(null, lossApprover),
+                        str(item, "id")));
+                stockPosting.postAdjustmentAt(str(item, "productId"), transitLocId, BigDecimal.ONE.negate(),
+                        res.totalValue(), Instant.now(), "stock_transfer_loss", code, "Transit shortage · "
+                                + item.get("productName") + " · " + JsNumbers.dec(shortQty) + " · " + reference, false);
+            }
+            jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyReceived\" = \"qtyReceived\" + ?, \"qtyDamaged\" ="
+                            + " \"qtyDamaged\" + ?, \"qtyShort\" = \"qtyShort\" + ?, \"qtyTransferred\" ="
+                            + " \"qtyTransferred\" + ? WHERE id = ?")
+                    .params(received, damaged, shortQty, received, item.get("id")).update();
+            receiptLineByItem.put(item.get("id"), Obj.of("itemId", item.get("id"), "productId", item.get("productId"),
+                    "received", JsNumbers.dec(received), "damaged", JsNumbers.dec(damaged), "short",
+                    JsNumbers.dec(shortQty)));
+        }
+        for (Object[] p : plan) {
+            receiptLines.add(receiptLineByItem.get(((Map<?, ?>) p[0]).get("id")));
+        }
+        jdbc.sql("INSERT INTO \"StockTransferReceipt\" (id, \"organizationId\", \"transferId\", \"receiptCode\", kind,"
+                        + " \"receivedById\", notes, lines, \"createdAt\") VALUES (?, ?, ?, ?, 'receipt', ?, ?, ?::jsonb, "
+                        + NOW + ")")
+                .params(UUID.randomUUID().toString(), org(), id, receiptCode, user, loss.receiptNotes(notes),
+                        EntityJson.toJson(receiptLines))
+                .update();
+        Map<String, Object> done = finaliseTransit(id, false);
+        Map<String, Object> auditValues = Obj.of("kind", "transfer_received", "transferCode", code, "receiptCode",
+                receiptCode, "status", done.get("status"));
+        if (loss.controlled()) {
+            auditValues.put("lossValue", JsNumbers.dec(loss.value()));
+            auditValues.put("lossReason", loss.reason());
+            auditValues.put("lossApprovedById", loss.approvedById());
+            auditValues.put("lossApprovalRequestId", loss.requestId());
+        }
+        audit.recordInTx(AuditInput.of("StockTransfer", id, "update", null, auditValues));
+        return done;
+    }
+
+    /** The transit transfer with its items, read without a lock (null when missing or not a transit transfer). */
+    private Map<String, Object> transitTransfer(String id) {
+        Map<String, Object> doc = transfer(id);
+        if (doc == null || !"transit".equals(str(doc, "mode"))) {
+            return null;
+        }
+        doc.put("items", items("StockTransferItem", StockTransferItem.class, "transferId", id));
+        return doc;
+    }
+
+    /** The receipt lines checked against the transfer's lines: {item, received, damaged, short} per moved line. */
+    private List<Object[]> receiptPlan(Map<String, Object> doc, List<ReceiveLine> lines) {
+        String code = str(doc, "transferCode");
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> docItems = (List<Map<String, Object>>) doc.get("items");
         Map<String, Map<String, Object>> byId = new HashMap<>();
@@ -1025,68 +1228,180 @@ public class StockDocService {
         if (plan.isEmpty()) {
             throw ApiException.badRequest("Enter a received, damaged or short quantity on at least one line");
         }
-        String receiptCode = seq.next("stock_transfer_receipt", "TRR-", 5);
-        String transitLocId = str(doc, "transitLocId");
-        String reference = code + " " + receiptCode;
+        return plan;
+    }
+
+    /** IPR S3: the outcome of the loss controls of one receipt. */
+    private record LossControl(boolean controlled, BigDecimal value, String reason, String approvedById,
+            String requestId) {
+
+        static final LossControl FREE = new LossControl(false, BigDecimal.ZERO, null, null, null);
+
+        String receiptNotes(String notes) {
+            if (!controlled) {
+                return notes;
+            }
+            String line = "Transit loss " + JsNumbers.dec(value) + ": " + reason;
+            return notes == null || notes.isEmpty() ? line : notes + " · " + line;
+        }
+    }
+
+    /**
+     * IPR S3 / review 1: what one receipt writes off and how the threshold judges it. {@code receiptValue} is this
+     * receipt's damaged + short goods at the transfer's transit cost (finding 3); {@code cumulative} adds what earlier
+     * receipts of the transfer already wrote off (finding 2: splitting a loss into partial receipts does not avoid
+     * the approval). {@code gate} is the approval engine's answer, asked before the transfer row lock (N4).
+     */
+    private record LossGate(BigDecimal lossQty, BigDecimal receiptValue, BigDecimal cumulative, BigDecimal threshold,
+            boolean controlled, String reason, Map<String, Object> gate) {}
+
+    /** Above this, a value measured under the lock differs from the one the gate judged. */
+    private static final BigDecimal LOSS_VALUE_EPSILON = new BigDecimal("0.005");
+
+    /** The loss of {@code plan} and the threshold decision; runs the approval-engine gate when controlled. */
+    private LossGate lossGate(Map<String, Object> doc, List<Object[]> plan, String transitLocId, LossApproval in) {
+        LossGate m = lossGateMeasure(doc, plan, transitLocId);
+        if (!m.controlled()) {
+            return m;
+        }
+        BigDecimal lossQty = m.lossQty();
+        BigDecimal value = m.receiptValue();
+        BigDecimal cumulative = m.cumulative();
+        BigDecimal threshold = m.threshold();
+        String code = str(doc, "transferCode");
+        String reason = in.lossReason() == null ? "" : in.lossReason().trim();
+        if (reason.isEmpty()) {
+            throw ApiException.badRequest("Give a reason (lossReason) for the damaged or short goods of " + code
+                    + ": their value " + JsNumbers.dec(Money.round(cumulative, 2)) + " is above the approval threshold "
+                    + JsNumbers.dec(threshold));
+        }
+        String id = str(doc, "id");
+        Map<String, Object> snapshot = Obj.of("amount", JsNumbers.js(Money.round(cumulative, 2)), "receiptAmount",
+                JsNumbers.js(Money.round(value, 2)), "quantity", JsNumbers.js(lossQty), "transferCode", code,
+                "reason", reason, "makerIds", TenantContext.userId());
+        Map<String, Object> gate = newTx.execute(s -> approvals.checkOrRequestApproval(TRANSIT_LOSS_APPROVAL, id,
+                snapshot));
+        if (gate != null && Boolean.TRUE.equals(gate.get("needsApproval"))) {
+            throw ApiException.badRequest("Approval required before writing off the transit loss of " + code
+                    + ". Pending approval request " + gate.get("requestId") + ".");
+        }
+        return new LossGate(lossQty, value, cumulative, threshold, true, reason, gate);
+    }
+
+    /**
+     * IPR S3: apply the loss controls of a receipt, after the transfer row is locked (L1) and before any stock moves.
+     * The approval-engine gate already ran before the lock ({@code pre}, review 1 N4); the loss is measured again
+     * under the lock, and a receipt whose loss changed in a way the gate could judge differently is refused.
+     */
+    private LossControl transitLossControl(Map<String, Object> doc, List<Object[]> plan, String transitLocId,
+            String receiptCode, LossApproval in, LossGate pre) {
+        LossGate now = lossGateMeasure(doc, plan, transitLocId);
+        String code = str(doc, "transferCode");
+        if (!now.controlled()) {
+            return LossControl.FREE;
+        }
+        if (pre == null || !pre.controlled()
+                || now.cumulative().subtract(pre.cumulative()).compareTo(LOSS_VALUE_EPSILON) > 0) {
+            throw ApiException.conflict("The transit loss of " + code + " changed while the receipt was being"
+                    + " recorded; record the receipt again.");
+        }
+        String id = str(doc, "id");
         String user = TenantContext.userId();
-        List<Map<String, Object>> receiptLines = new ArrayList<>();
-        Map<Object, Map<String, Object>> receiptLineByItem = new HashMap<>();
-        List<Object[]> ordered = new ArrayList<>(plan);
-        ordered.sort(Comparator.comparing((Object[] p) -> String.valueOf(((Map<?, ?>) p[0]).get("productId")))
-                .thenComparing(p -> ((Map<?, ?>) p[0]).get("variantId") == null ? ""
-                        : String.valueOf(((Map<?, ?>) p[0]).get("variantId"))));
-        for (Object[] p : ordered) {
+        Map<String, Object> gate = pre.gate();
+        String reason = pre.reason();
+        if (gate != null && gate.get("requestId") != null) {
+            // Approved through the engine: the approver must not be the receiver, and the approval is used once.
+            sod.assertSeparated(SegregationOfDutiesService.STOCK_WRITE_OFF, "StockTransfer", id, List.of(user));
+            approvals.consumeApproval((String) gate.get("requestId"), receiptCode);
+            return new LossControl(true, now.receiptValue(), reason, null, (String) gate.get("requestId"));
+        }
+        String approver = in.approvedById();
+        if (approver == null || approver.isBlank()) {
+            throw ApiException.badRequest("Name the approver (approvedById) of the transit loss of " + code
+                    + " and enter their PIN");
+        }
+        if (approver.equals(user) && sod.enforced(SegregationOfDutiesService.STOCK_WRITE_OFF)) {
+            sod.recordBlocked(SegregationOfDutiesService.STOCK_WRITE_OFF, "StockTransfer", id, user, List.of(user));
+            throw ApiException.forbidden("Separation of duties: the person receiving the transfer cannot also approve"
+                    + " its transit loss (Stock write-off)");
+        }
+        staff.assertDirectStockApproval(org(), user, TenantContext.permissions(), approver, in.approverPin());
+        return new LossControl(true, now.receiptValue(), reason, approver, null);
+    }
+
+    /** {@link #lossGate} without the reason check and the approval engine (the locked re-measure). */
+    private LossGate lossGateMeasure(Map<String, Object> doc, List<Object[]> plan, String transitLocId) {
+        BigDecimal lossQty = BigDecimal.ZERO;
+        BigDecimal value = BigDecimal.ZERO;
+        for (Object[] p : plan) {
             @SuppressWarnings("unchecked")
             Map<String, Object> item = (Map<String, Object>) p[0];
-            BigDecimal received = (BigDecimal) p[1];
-            BigDecimal damaged = (BigDecimal) p[2];
-            BigDecimal shortQty = (BigDecimal) p[3];
-            if (received.signum() > 0) {
-                List<String> n = new ArrayList<>(List.of(receiptCode));
-                if (notes != null && !notes.isEmpty()) {
-                    n.add(notes);
-                }
-                recordArrivedLayers(id, str(item, "id"), stock.transfer(pinTransit(StockMove.transfer(
-                        str(item, "productId"), transitLocId, str(doc, "toLocId"), received)
-                        .variant(str(item, "variantId")).source("stock_transfer_receipt", code)
-                        .notes(String.join(" · ", n)).people(str(doc, "responsibleById"), user), str(item, "id"))), false);
+            BigDecimal q = ((BigDecimal) p[2]).add((BigDecimal) p[3]);
+            if (q.signum() > 0) {
+                lossQty = lossQty.add(q);
+                value = value.add(q.multiply(transitUnitCost(item, transitLocId)));
             }
-            if (damaged.signum() > 0) {
-                stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, damaged)
-                        .variant(str(item, "variantId")).moveType("waste").source("stock_transfer_loss", code)
-                        .reference(reference + " damaged in transit").requireAvailable(true).people(null, user),
-                        str(item, "id")));
-            }
-            if (shortQty.signum() > 0) {
-                Issued res = stock.issue(pinTransit(StockMove.of(str(item, "productId"), transitLocId, shortQty)
-                        .variant(str(item, "variantId")).moveType("adjustment_out").source("stock_transfer_loss", code)
-                        .reference(reference + " short on arrival").requireAvailable(true).skipGl().people(null, user),
-                        str(item, "id")));
-                stockPosting.postAdjustment(str(item, "productId"), BigDecimal.ONE.negate(), res.totalValue(),
-                        Instant.now(), "stock_transfer_loss", code, "Transit shortage · " + item.get("productName")
-                                + " · " + JsNumbers.dec(shortQty) + " · " + reference);
-            }
-            jdbc.sql("UPDATE \"StockTransferItem\" SET \"qtyReceived\" = \"qtyReceived\" + ?, \"qtyDamaged\" ="
-                            + " \"qtyDamaged\" + ?, \"qtyShort\" = \"qtyShort\" + ?, \"qtyTransferred\" ="
-                            + " \"qtyTransferred\" + ? WHERE id = ?")
-                    .params(received, damaged, shortQty, received, item.get("id")).update();
-            receiptLineByItem.put(item.get("id"), Obj.of("itemId", item.get("id"), "productId", item.get("productId"),
-                    "received", JsNumbers.dec(received), "damaged", JsNumbers.dec(damaged), "short",
-                    JsNumbers.dec(shortQty)));
         }
-        for (Object[] p : plan) {
-            receiptLines.add(receiptLineByItem.get(((Map<?, ?>) p[0]).get("id")));
+        BigDecimal cumulative = value.add(writtenOffInTransit(str(doc, "transferCode")));
+        Number configured = settings.resolveNumber(TRANSIT_LOSS_THRESHOLD,
+                new SettingContext(null, null, str(doc, "toLocId")));
+        BigDecimal threshold = configured == null ? BigDecimal.ZERO : new BigDecimal(configured.toString());
+        boolean controlled = lossQty.signum() > 0 && cumulative.compareTo(threshold) > 0;
+        return new LossGate(lossQty, value, cumulative, threshold, controlled, null, null);
+    }
+
+    /**
+     * IPR review 1 (finding 3): the unit cost one transit line's lost goods are written off at — the transfer's own
+     * dispatch cost (its {@code StockTransferLayer} row without lot or serial, what the move out of transit is pinned
+     * to), else the quantity-weighted cost of the lots / serials the line dispatched; when none is known (older
+     * dispatches), the valuation of the product at the transit location (FIFO /
+     * STANDARD layers, read-only); else the location's running average or the cost price, as before.
+     */
+    private BigDecimal transitUnitCost(Map<String, Object> item, String transitLocId) {
+        BigDecimal carried = jdbc.sql("SELECT \"unitCost\" FROM \"StockTransferLayer\" WHERE \"organizationId\" = ?"
+                        + " AND \"transferItemId\" = ? AND \"batchId\" IS NULL AND \"serialId\" IS NULL"
+                        + " AND \"unitCost\" IS NOT NULL ORDER BY \"unitCost\" DESC LIMIT 1")
+                .params(org(), str(item, "id")).query(BigDecimal.class).optional().orElse(null);
+        if (carried != null && carried.signum() > 0) {
+            return carried;
         }
-        jdbc.sql("INSERT INTO \"StockTransferReceipt\" (id, \"organizationId\", \"transferId\", \"receiptCode\", kind,"
-                        + " \"receivedById\", notes, lines, \"createdAt\") VALUES (?, ?, ?, ?, 'receipt', ?, ?, ?::jsonb, "
-                        + NOW + ")")
-                .params(UUID.randomUUID().toString(), org(), id, receiptCode, user, notes,
-                        EntityJson.toJson(receiptLines))
-                .update();
-        Map<String, Object> done = finaliseTransit(id, false);
-        audit.recordInTx(AuditInput.of("StockTransfer", id, "update", null, Obj.of("kind", "transfer_received",
-                "transferCode", code, "receiptCode", receiptCode, "status", done.get("status"))));
-        return done;
+        // Lot / serial dispatches carry their cost on the layers this line moved (FIFO, batch-tracked products).
+        BigDecimal layered = jdbc.sql("SELECT CASE WHEN SUM(quantity) > 0 THEN SUM(quantity * \"unitCost\") /"
+                        + " SUM(quantity) END FROM \"StockTransferLayer\" WHERE \"organizationId\" = ? AND"
+                        + " \"transferItemId\" = ? AND (\"batchId\" IS NOT NULL OR \"serialId\" IS NOT NULL)"
+                        + " AND \"unitCost\" IS NOT NULL")
+                .params(org(), str(item, "id")).query(BigDecimal.class).optional().orElse(null);
+        if (layered != null && layered.signum() > 0) {
+            return layered;
+        }
+        String productId = str(item, "productId");
+        InventoryValuationService valuation = valuations == null ? null : valuations.getIfAvailable();
+        if (valuation != null && transitLocId != null) {
+            BigDecimal[] qv = valuation.qtyAndValueByProduct(List.of(productId), transitLocId).get(productId);
+            if (qv != null && qv[0].signum() > 0 && qv[1].signum() > 0) {
+                return qv[1].divide(qv[0], 6, java.math.RoundingMode.HALF_UP);
+            }
+        }
+        return unitCostAt(transitLocId, productId, str(item, "variantId"));
+    }
+
+    /**
+     * IPR review 1 (finding 2): the value earlier receipts of transfer {@code transferCode} already wrote off in
+     * transit (its {@code stock_transfer_loss} ledger rows, a reversal netted out).
+     */
+    private BigDecimal writtenOffInTransit(String transferCode) {
+        return jdbc.sql("SELECT COALESCE(SUM(CASE WHEN \"quantityChange\" < 0 THEN \"totalValue\" ELSE"
+                        + " -\"totalValue\" END), 0) FROM \"InventoryLedger\" WHERE \"organizationId\" = ?"
+                        + " AND \"referenceType\" = 'stock_transfer_loss' AND \"referenceId\" = ?")
+                .params(org(), transferCode).query(BigDecimal.class).single();
+    }
+
+    private org.springframework.beans.factory.ObjectProvider<InventoryValuationService> valuations;
+
+    /** Read-only valuation of the transit location (setter: keeps the constructor as it is). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setValuations(org.springframework.beans.factory.ObjectProvider<InventoryValuationService> valuations) {
+        this.valuations = valuations;
     }
 
     /** Recall everything still in transit back to the source. */
@@ -1320,7 +1635,7 @@ public class StockDocService {
         if ("transfer".equals(kind)) {
             withReceipts(out);
         }
-        return out;
+        return costGuarded(out);
     }
 
     private boolean reachable(String kind, Map<String, Object> row) {

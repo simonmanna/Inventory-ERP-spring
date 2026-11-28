@@ -905,6 +905,11 @@ public class PurchaseOrdersService {
         }
         Instant date = dto.receivedAt() != null ? ProcurementSql.date(dto.receivedAt()) : nowMs();
         Map<String, Object> result = tx.execute(st -> {
+            // IPR LK-1: the supplier lock first, before any purchase-order row (the order a bill post takes: supplier →
+            // PO line → PO), so this receipt and a bill on the same order cannot deadlock. Taken again below.
+            if (billMatcher != null) {
+                billMatcher.lockSupplier(orgId, (String) po.get("partnerId"));
+            }
             // 1. GRN (draft)
             Map<String, Object> grn = insertGrnDraft(grnId, orgId, receiptNumber, po, dto, resolved);
             // 2. Advance the PO under optimistic locks (shared with the goods-receipt post).
@@ -947,13 +952,14 @@ public class PurchaseOrdersService {
                     continue;
                 }
                 // P0-5: a foreign-currency PO prices in its own currency; stock and GRNI carry the functional value.
-                BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate)
-                        : Money.dec(product.get("costPrice"));
+                // IPR C-3 / GL-6 (D3): a line without a price enters at the current cost (it took the cost price).
+                BigDecimal unitCost = r.unitCost() != null ? r.unitCost().multiply(rate) : null;
                 StockMove move = StockMove.of(rln.productId(), dto.warehouseId(), stockQty).unitCost(unitCost)
                         .variant(r.variantId())
                         .uom(stockUnit(r.unit(), product), r.unit().factor()).batch(rln.batchNumber())
                         .expiry(rln.expiryDate())
-                        .reference("GRN " + receiptNumber);
+                        .reference("GRN " + receiptNumber)
+                        .sourceLine((String) grnLines.get(lineIdx).get("id")); // IPR 1d: the receipt line
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", grnId, date));
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 Map<String, Object> poLine = r.resolvedLineId() == null ? null : poLines.get(r.resolvedLineId());

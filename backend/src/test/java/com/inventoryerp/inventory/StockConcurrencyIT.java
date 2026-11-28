@@ -254,7 +254,7 @@ class StockConcurrencyIT extends ApiTestSupport {
         String t2 = transit(s2, d2, p, 3);
         String item2 = ok(200, "GET", "/inventory/transfers/" + t2, null).get("items").get(0).get("id").asString();
         ok(200, "POST", "/inventory/transfers/" + t2 + "/receive", Map.of("lines", List.of(Map.of("itemId", item2,
-                "received", 2, "damaged", 1))));
+                "received", 2, "damaged", 1)), "lossReason", "dented", "approvedById", adminId));
         Map<String, Object> lot = jdbc.sql("SELECT \"batchNumber\", \"unitCost\" FROM \"InventoryBatch\" WHERE"
                 + " \"productId\" = ? AND \"locationId\" = ? AND quantity > 0").params(p, d2).query().singleRow();
         assertThat(lot.get("batchNumber")).isEqualTo("NEW");
@@ -313,7 +313,7 @@ class StockConcurrencyIT extends ApiTestSupport {
         for (int i = 1; i <= 4; i++) {
             int q = i;
             tasks.add(() -> as("POST", "/inventory/reservations", Map.of("productId", p, "locationId", loc, "quantity", q,
-                    "sourceType", "order", "sourceId", src)).status());
+                    "sourceType", "manual", "sourceId", src)).status());
         }
         assertThat(parallel(tasks)).allMatch(s -> s == 201);
         long active = jdbc.sql("SELECT count(*) FROM \"StockReservation\" WHERE \"organizationId\" = ? AND \"sourceId\" = ?"

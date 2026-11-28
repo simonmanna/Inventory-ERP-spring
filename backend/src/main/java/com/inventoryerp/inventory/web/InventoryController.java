@@ -96,7 +96,9 @@ public class InventoryController {
             @OneOf({"FEFO", "FIFO", "MANUAL", "SERIAL"}) String distStrategy,
             String batchNumber,
             @Pattern(regexp = ISO_DATE, message = "must be a valid ISO 8601 date string") String expiryDate,
-            @Size(max = 2000, message = NOTES) String notes) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            // IPR C-3 / GL-6 (D3, additive): why a stock-in line is taken in at an explicit cost of 0.
+            @Size(max = 500, message = "must be shorter than or equal to 500 characters") String zeroCostReason) {}
 
     /** {@code DirectStockInDto} / {@code DirectStockOutDto}. */
     public record DirectStockRequest(
@@ -192,7 +194,11 @@ public class InventoryController {
     /** {@code ReceiveStockTransferDto}. */
     public record ReceiveTransferRequest(
             @NotNull(message = ARR) @ArrayMinSize(1) @Size(max = MAX_LINES, message = LINES) List<@Valid ReceiveLineRequest> lines,
-            @Size(max = 2000, message = NOTES) String notes) {}
+            @Size(max = 2000, message = NOTES) String notes,
+            /* IPR S3: needed when the damaged and short goods are worth more than the approval threshold. */
+            @Size(max = 1000, message = REASON) String lossReason,
+            String approvedById,
+            @Size(max = 128, message = "must be shorter than or equal to 128 characters") String approverPin) {}
 
     /** {@code ApproveAdjustmentDto}. */
     public record ApproveAdjustmentRequest(Boolean force, @Size(max = 1000, message = REASON) String forceReason) {}
@@ -285,7 +291,8 @@ public class InventoryController {
     private static DirectStockService.Request direct(DirectStockRequest dto) {
         return new DirectStockService.Request(dto.locationId(), dto.responsibleById(), dto.approvedById(),
                 dto.approverPin(), dto.items().stream().map(i -> new DirectStockService.Line(i.productId(), i.variantId(),
-                        i.quantity(), i.unitCost(), i.batchNumber(), i.expiryDate(), i.distStrategy(), i.notes())).toList(),
+                        i.quantity(), i.unitCost(), i.batchNumber(), i.expiryDate(), i.distStrategy(), i.notes(),
+                        i.zeroCostReason())).toList(),
                 dto.notes());
     }
 
@@ -584,7 +591,8 @@ public class InventoryController {
     @RequirePermissions(Permissions.INVENTORY_DOC__UPDATE)
     public Map<String, Object> receiveTransfer(@PathVariable String id, @Valid @RequestBody ReceiveTransferRequest dto) {
         return stockDocs.receiveTransfer(id, dto.lines().stream().map(l -> new ReceiveLine(l.itemId(), l.received(),
-                l.damaged(), l.shortQty())).toList(), dto.notes());
+                l.damaged(), l.shortQty())).toList(), dto.notes(),
+                new StockDocService.LossApproval(dto.lossReason(), dto.approvedById(), dto.approverPin()));
     }
 
     @PostMapping("/transfers/{id}/recall")

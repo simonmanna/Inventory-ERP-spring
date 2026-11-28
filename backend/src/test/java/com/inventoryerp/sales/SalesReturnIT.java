@@ -78,18 +78,107 @@ class SalesReturnIT extends ApiTestSupport {
         return r.body();
     }
 
+    JsonNode money201(String path, Object body) {
+        Res r = call("POST", path, body, key());
+        assertThat(r.status()).as(path + " → " + r.raw().body()).isIn(200, 201);
+        return r.body();
+    }
+
+    @Test
+    @DisplayName("IPR F2: a return of goods that never left stock (delivery recorded without a stock issue) restocks"
+            + " nothing; the credit still follows")
+    void returnWithoutIssueRestocksNothing() throws Exception {
+        String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", yard, "lines", List.of(
+                Map.of("productId", blocks, "quantity", 4)))).get("id").asString();
+        ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
+        // Projection only (as legacy data and the earlier fixtures had it): no stock issue behind the delivery.
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 4, \"qtyDelivered\" = 4, \"qtyAccepted\" = 4,"
+                + " \"qtyBillable\" = 4 WHERE \"orderId\" = ?").param(so).update();
+        String inv = money("/sales/orders/" + so + "/invoices", Map.of()).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        drainOutboxFully();
+        String id = rma(so, 4, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id + "/approve", null);
+        BigDecimal before = onHand(yard);
+        money("/sales/returns/" + id + "/receive", Map.of());
+        assertThat(onHand(yard)).as("nothing left stock, nothing comes back").isEqualByComparingTo(before);
+        money("/sales/returns/" + id + "/inspect", Map.of());
+        assertThat(onHand(yard)).isEqualByComparingTo(before);
+        JsonNode closed = money("/sales/returns/" + id + "/close", Map.of("outcome", "credit_note"));
+        assertThat(closed.get("creditAmount").asDouble()).isEqualTo(4 * 2500);
+        ledger.receivableTiesOut(customer);
+    }
+
+    @Test
+    @DisplayName("IPR review 1 N2: goods issued by their invoice (no fleet load code) come back against that issue;"
+            + " a line with no issue at all is flagged for manual review")
+    void returnAgainstInvoiceIssue() throws Exception {
+        String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", yard, "lines", List.of(
+                Map.of("productId", blocks, "quantity", 3)))).get("id").asString();
+        ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 3, \"qtyDelivered\" = 3, \"qtyAccepted\" = 3,"
+                + " \"qtyBillable\" = 3 WHERE \"orderId\" = ?").param(so).update();
+        String inv = money("/sales/orders/" + so + "/invoices", Map.of()).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv + "/post", null);
+        drainOutboxFully();
+        Map<String, Object> link = jdbc.sql("SELECT \"documentId\", \"documentLineId\" FROM \"SalesInvoiceLink\" WHERE"
+                + " \"orderLineId\" = ? AND kind = 'regular'").param(lineId(so)).query().singleRow();
+        assertThat(link.get("documentLineId")).isNotNull();
+        // The goods left on the invoice's own issue (a collection of undelivered goods, or an invoice posted before
+        // sales orders marked their invoices as delivered by fleet): a sales_invoice row naming the invoice line.
+        String adminId = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = 'admin@demo.test'")
+                .param(demoOrg).query(String.class).single();
+        TenantContext.run(TenantStore.user(demoOrg, adminId), () -> new TransactionTemplate(txm).executeWithoutResult(
+                s -> stock.issue(StockMove.of(blocks, yard, new BigDecimal("3")).source("sales_invoice",
+                        (String) link.get("documentId")).sourceLine((String) link.get("documentLineId")))));
+        BigDecimal before = onHand(yard);
+        String id = rma(so, 2, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id + "/approve", null);
+        money("/sales/returns/" + id + "/receive", Map.of());
+        assertThat(onHand(yard)).as("2 of the 3 issued come back").isEqualByComparingTo(before.add(new BigDecimal("2")));
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"referenceType\" = 'sales_return' AND"
+                + " \"referenceId\" = ? AND \"reversesLedgerId\" IS NOT NULL").param(id).query(Long.class).single())
+                .as("linked to the invoice issue").isPositive();
+
+        // A line whose goods have no recorded issue at all: received, nothing restocked, flagged for review.
+        String so2 = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", yard, "lines",
+                List.of(Map.of("productId", blocks, "quantity", 2)))).get("id").asString();
+        ok(200, "POST", "/sales/orders/" + so2 + "/confirm", null);
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 2, \"qtyDelivered\" = 2, \"qtyAccepted\" = 2,"
+                + " \"qtyBillable\" = 2 WHERE \"orderId\" = ?").param(so2).update();
+        String inv2 = money("/sales/orders/" + so2 + "/invoices", Map.of()).get("id").asString();
+        ok(200, "POST", "/invoices/" + inv2 + "/post", null);
+        drainOutboxFully();
+        String id2 = rma(so2, 2, "damaged", true, null).get("id").asString();
+        ok(200, "POST", "/sales/returns/" + id2 + "/approve", null);
+        BigDecimal before2 = onHand(yard);
+        money("/sales/returns/" + id2 + "/receive", Map.of());
+        assertThat(onHand(yard)).isEqualByComparingTo(before2);
+        assertThat(jdbc.sql("SELECT count(*) FROM \"InventoryException\" WHERE kind = 'sales_return_unmatched' AND"
+                + " status = 'open' AND payload->>'returnId' = ?").param(id2).query(Long.class).single())
+                .as("manual review flag").isEqualTo(1);
+    }
+
     BigDecimal onHand(String location) {
         return jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"productId\" = ? AND \"locationId\" = ?")
                 .params(blocks, location).query(BigDecimal.class).single();
     }
 
-    /** Confirmed order of {@code qty} blocks, delivered (projection) and, if {@code invoice}, invoiced and posted. */
+    /**
+     * Confirmed order of {@code qty} blocks, delivered and, if {@code invoice}, invoiced and posted. IPR F2: the goods
+     * leave stock through a real sales delivery (issue + proof of delivery), since a return restocks only what a
+     * recorded issue took out.
+     */
     String deliveredOrder(int qty, boolean invoice) throws Exception {
         String so = ok(201, "POST", "/sales/orders", Map.of("partnerId", customer, "locationId", yard, "lines", List.of(
                 Map.of("productId", blocks, "quantity", qty)))).get("id").asString();
         ok(200, "POST", "/sales/orders/" + so + "/confirm", null);
-        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = ?, \"qtyDelivered\" = ?, \"qtyAccepted\" = ?,"
-                + " \"qtyBillable\" = ? WHERE \"orderId\" = ?").params(qty, qty, qty, qty, so).update();
+        JsonNode d = money201("/sales/orders/" + so + "/deliveries", Map.of("vehiclePlate", "UAX 7"));
+        String delivery = d.get("id").asString();
+        money201("/sales/deliveries/" + delivery + "/issue", null);
+        money201("/sales/deliveries/" + delivery + "/confirm", Map.of("receiverName", "Agent", "lines", List.of(Map.of(
+                "loadLineId", d.get("lines").get(0).get("id").asString(), "deliveredQty", qty))));
+        drainOutboxFully();
         if (invoice) {
             String inv = money("/sales/orders/" + so + "/invoices", Map.of()).get("id").asString();
             ok(200, "POST", "/invoices/" + inv + "/post", null);

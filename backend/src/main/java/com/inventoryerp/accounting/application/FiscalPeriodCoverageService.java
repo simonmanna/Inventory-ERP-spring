@@ -2,6 +2,7 @@ package com.inventoryerp.accounting.application;
 
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.notifications.NotificationsService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
 import com.inventoryerp.kernel.tenancy.TenantContext;
@@ -165,8 +166,9 @@ public class FiscalPeriodCoverageService {
 
     private void notify(String orgId, String title, String body, Map<String, Object> payload) {
         try {
-            notifications.send(new NotificationsService.SendInput(orgId, null, "in_app", "accounting", title, body,
-                    payload));
+            // IPR OPS-1: a row without a user reaches no inbox; the people who can create fiscal periods get it.
+            notifications.sendToPermission(orgId, Permissions.FISCAL_PERIOD__CREATE, "accounting", title, body,
+                    payload, null);
         } catch (RuntimeException e) {
             log.error("[fiscal-period-coverage] failed to send the alert: {}", e.toString());
         }

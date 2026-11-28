@@ -51,6 +51,7 @@ class AdvancedCostingIT extends ApiTestSupport {
         org = boot.body().get("organization").get("id").asString();
         userId = boot.body().get("adminUser").get("id").asString();
         token = login(code, "owner@" + code + ".test", "Owner@12345");
+        inventorySodPairsOff(token);
         location = ok(201, "POST", "/inventory/locations", Map.of("code", "WH-1", "name", "Main", "type", "warehouse"))
                 .get("id").asString();
     }
@@ -135,8 +136,19 @@ class AdvancedCostingIT extends ApiTestSupport {
         Res posted = keyed("POST", "/costing/material-ledger/runs/" + runId + "/post", null);
         assertThat(posted.status()).as(posted.raw().body()).isEqualTo(200);
         assertThat(posted.body().get("status").asString()).isEqualTo("posted");
-        assertThat(balance(mapped("stock_valuation")).subtract(stock0)).isEqualByComparingTo("45");
+        // IPR wave 3 (material-ledger GL defect): the run's value rows are price-difference components, so its journal
+        // posts to the adjunct account (1396), not to stock valuation, and both per-product / per-account checks hold.
+        assertThat(balance(mapped("stock_valuation")).subtract(stock0)).isEqualByComparingTo("0");
+        assertThat(balance(account("1396"))).isEqualByComparingTo("45");
         assertThat(balance(account("5965"))).isEqualByComparingTo("-45");
+        JsonNode report = ok(200, "GET", "/inventory/reports/integrity", null);
+        for (String key : List.of("valuation_vs_gl_by_product", "gl_tieout_by_account", "valuation_vs_subledger")) {
+            for (JsonNode c : report.get("checks")) {
+                if (key.equals(c.get("key").asString())) {
+                    assertThat(c.get("ok").asBoolean()).as(key + " after the material-ledger run: " + c).isTrue();
+                }
+            }
+        }
 
         // The next run must follow on; a reversal restores the books.
         assertThat(call("POST", "/costing/material-ledger/runs", Map.of("from", today, "to", today), token).body()
@@ -144,6 +156,7 @@ class AdvancedCostingIT extends ApiTestSupport {
         Res reversed = keyed("POST", "/costing/material-ledger/runs/" + runId + "/reverse", null);
         assertThat(reversed.body().get("status").asString()).as(reversed.raw().body()).isEqualTo("reversed");
         assertThat(balance(mapped("stock_valuation")).subtract(stock0)).isEqualByComparingTo("0");
+        assertThat(balance(account("1396"))).isEqualByComparingTo("0");
         assertThat(ok(200, "GET", "/costing/material-ledger/runs", null)).hasSize(1);
         assertThat(call("GET", "/costing/material-ledger/runs/" + runId, null, otherToken).status()).isEqualTo(404);
 

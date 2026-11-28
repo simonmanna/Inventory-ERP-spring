@@ -19,8 +19,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Stock + invoice mechanics of a rental (port of {@code rental-posting.service.ts}). Checkout moves stock RENT-STOCK →
- * RENT-OUT as a plain internal transfer (no COGS, no revenue); returns move RENT-OUT → RENT-CLEAN / RENT-REPAIR /
- * RENT-DAMAGED and inspection RENT-CLEAN → RENT-STOCK. Fees ride the POS invoice spine (one Order + one Invoice per
+ * RENT-OUT as a plain internal transfer (no COGS, no revenue); the counter return moves what came back RENT-OUT →
+ * RENT-CLEAN (IPR M-7) and inspection RENT-CLEAN → RENT-STOCK or RENT-DAMAGED. Fees ride the POS invoice spine (one Order + one Invoice per
  * billing event), so the GL and COA mapping stay those of an ordinary sale.
  */
 @Service
@@ -68,7 +68,7 @@ public class RentalPostingService {
             throw ApiException.badRequest("Line quantity must be positive");
         }
         move(productId, unitId, stockLoc, outLoc, quantity, "rental_checkout", agreementId,
-                "Rental checkout " + agreementId);
+                "Rental checkout " + agreementId, null);
     }
 
     /** Return transfer: RENT-OUT → destination by disposition (damaged / repair / otherwise cleaning). */
@@ -81,12 +81,60 @@ public class RentalPostingService {
     @Transactional
     public void returnTransfer(String agreementId, String productId, double quantity, String disposition,
             String unitId) {
+        returnTransfer(agreementId, productId, quantity, disposition, unitId, false);
+    }
+
+    /**
+     * Inspection disposition of a returned line. IPR M-7: when the counter return already moved the line to RENT-CLEAN
+     * ({@code fromCleaning}), the disposition moves it on from RENT-CLEAN, so RENT-OUT is not decremented a second time.
+     */
+    @Transactional
+    public void returnTransfer(String agreementId, String productId, double quantity, String disposition,
+            String unitId, boolean fromCleaning) {
         String orgId = RentalRows.org();
-        String outLoc = locations.resolve(orgId, "out");
+        String from = locations.resolve(orgId, fromCleaning ? "cleaning" : "out");
         String role = "damaged".equals(disposition) ? "damaged" : "repair".equals(disposition) ? "repair" : "cleaning";
         String dest = locations.resolve(orgId, role);
-        move(productId, unitId, outLoc, dest, quantity, "rental_return", agreementId,
-                "Rental return (" + disposition + ") " + agreementId);
+        move(productId, unitId, from, dest, quantity, "rental_return", agreementId,
+                "Rental return (" + disposition + ") " + agreementId, null);
+    }
+
+    /**
+     * IPR M-7 (deviation from Nest): the counter return moves what physically came back RENT-OUT → RENT-CLEAN, once per
+     * return line ({@code sourceLineId} = the return line, which {@link #counterReturned} reads back at inspection).
+     */
+    @Transactional
+    public void counterReturnTransfer(String agreementId, String productId, double quantity, String unitId,
+            String returnLineId) {
+        String orgId = RentalRows.org();
+        move(productId, unitId, locations.resolve(orgId, "out"), locations.resolve(orgId, "cleaning"), quantity,
+                "rental_return", agreementId, "Rental return (counter) " + agreementId, returnLineId);
+    }
+
+    /** IPR M-7: whether the counter return of this return line moved its stock RENT-OUT → RENT-CLEAN. */
+    public boolean counterReturned(String returnLineId) {
+        return counterReturnedQuantity(returnLineId) > 0;
+    }
+
+    /** IPR M-7: the quantity the counter return of this return line put into RENT-CLEAN. */
+    public double counterReturnedQuantity(String returnLineId) {
+        String orgId = RentalRows.org();
+        BigDecimal q = db.jdbc().sql("SELECT COALESCE(SUM(\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE"
+                + " \"organizationId\" = ? AND \"referenceType\" = 'rental_return' AND \"sourceLineId\" = ? AND"
+                + " \"locationId\" = ? AND \"quantityChange\" > 0").params(orgId, returnLineId,
+                        locations.resolve(orgId, "cleaning")).query(BigDecimal.class).single();
+        return q.doubleValue();
+    }
+
+    /**
+     * IPR M-7: a clean line returned before the fix never left RENT-OUT, so its inspection moves it RENT-OUT →
+     * RENT-STOCK (Nest moved RENT-CLEAN → RENT-STOCK, taking another unit's cleaning stock or failing).
+     */
+    @Transactional
+    public void legacyReturnToStockTransfer(String agreementId, String productId, double quantity, String unitId) {
+        String orgId = RentalRows.org();
+        move(productId, unitId, locations.resolve(orgId, "out"), locations.resolve(orgId, "stock"), quantity,
+                "rental_inspect", agreementId, "Rental inspection passed " + agreementId, null);
     }
 
     /** Cleaning complete: RENT-CLEAN → RENT-STOCK (inspection passed). */
@@ -102,7 +150,7 @@ public class RentalPostingService {
         String stockLoc = locations.resolve(orgId, "stock");
         String cleanLoc = locations.resolve(orgId, "cleaning");
         move(productId, unitId, cleanLoc, stockLoc, quantity, "rental_inspect", agreementId,
-                "Rental inspection passed " + agreementId);
+                "Rental inspection passed " + agreementId, null);
     }
 
     /**
@@ -111,11 +159,12 @@ public class RentalPostingService {
      * the transfer moves the product's units as before.
      */
     private void move(String productId, String unitId, String from, String to, double quantity, String sourceType,
-            String sourceId, String notes) {
+            String sourceId, String notes, String sourceLineId) {
         StockMove m = StockMove.transfer(productId, from, to, RentalRows.dec(quantity));
         m.sourceType = sourceType;
         m.sourceId = sourceId;
         m.notes = notes;
+        m.sourceLineId = sourceLineId;
         Map<String, Object> unit = unitId == null ? null : db.first(com.inventoryerp.rental.domain.RentalUnit.class,
                 "id = ? AND \"organizationId\" = ? AND \"productId\" = ?", unitId, RentalRows.org(), productId);
         if (unit != null) {

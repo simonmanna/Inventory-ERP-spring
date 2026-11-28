@@ -161,6 +161,15 @@ public final class PlmCommands {
     /** {@code force}: switch over now even though stock of removed components is still to be used up. */
     public record ApplyChange(Boolean force) {}
 
+    /**
+     * IPR X-3 follow-up: release stock a rework disposition put in QC quarantine back to the location it came from.
+     * {@code lines} null or empty = everything still held for the change.
+     */
+    public record ReworkRelease(@Valid @Size(max = 500) List<ReworkReleaseLine> lines) {}
+
+    public record ReworkReleaseLine(@NotBlank String productId, @NotNull @jakarta.validation.constraints.Positive
+            java.math.BigDecimal quantity) {}
+
     public record LinkDocuments(@NotNull List<String> documentIds) {}
 
     /** The new routing's operations of a routing ECO (replaces them all). */

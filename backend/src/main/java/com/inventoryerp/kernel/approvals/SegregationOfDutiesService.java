@@ -97,6 +97,22 @@ public class SegregationOfDutiesService {
                 false));
     }
 
+    /**
+     * IPR S9: the approval entity types whose approval, by someone who made none of the document, also clears a pair.
+     * The stock documents gate their posting with their own entity type ({@code stock_out}, {@code waste}, the count
+     * submit), which is not the pair key, so an approval through the engine never cleared the pair.
+     */
+    private static final Map<String, List<String>> APPROVAL_ALIASES = Map.of(
+            STOCK_WRITE_OFF, List.of("stock_out", "waste", "stock_transfer_loss"),
+            STOCK_ADJUSTMENT, List.of("inventory_count_submit"));
+
+    /**
+     * IPR S2 (owner decision P15-6): the pairs switched on for every new organisation (property
+     * {@code erp.sod.new-org-active-pairs}, comma separated; empty switches none). Existing organisations are not
+     * changed.
+     */
+    public static final String NEW_ORG_DEFAULTS = STOCK_ADJUSTMENT + "," + STOCK_WRITE_OFF + "," + INVENTORY_VALUATION;
+
     private static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
 
     private final JdbcClient jdbc;
@@ -129,7 +145,8 @@ public class SegregationOfDutiesService {
      * @param makers user ids of whoever made the document; nulls are ignored
      */
     public void assertSeparated(String pairKey, String auditEntity, String entityId, Collection<String> makers) {
-        if (!enforced(pairKey) || approvedByRequest(pairKey, entityId)) {
+        if (!enforced(pairKey) || approvedByRequest(pairKey, entityId)
+                || approvedByAlias(pairKey, entityId, makers)) {
             return;
         }
         assertNotMaker(pairKey, auditEntity, entityId, TenantContext.userId(), makers);
@@ -153,6 +170,51 @@ public class SegregationOfDutiesService {
             Collection<String> makers) {
         audit.record(AuditInput.of(AUDIT_ENTITY, entityId, "reject", null, Obj.of("pair", pairKey, "document",
                 auditEntity, "actorId", actorId, "makers", new ArrayList<>(makers), "outcome", "blocked")));
+    }
+
+    /**
+     * IPR S9: an approved request on one of the pair's alias entity types ({@link #APPROVAL_ALIASES}) for this
+     * document clears the pair only when at least one person approved it and nobody who approved it is a maker. The
+     * engine does not apply the pair to those entity types when they are decided, so the makers are checked here.
+     */
+    private boolean approvedByAlias(String pairKey, String entityId, Collection<String> makers) {
+        List<String> aliases = APPROVAL_ALIASES.getOrDefault(pairKey, List.of());
+        if (aliases.isEmpty() || entityId == null) {
+            return false;
+        }
+        List<String> named = makers.stream().filter(Objects::nonNull).toList();
+        // IPR review 1 (finding 7): only the latest approved request not yet used up counts — an approval consumed by
+        // an earlier action (a previous receipt's transit loss) authorised that action, not this one.
+        for (Map<String, Object> r : jdbc.sql("SELECT r.id, string_agg(DISTINCT d.\"approverId\", ',')"
+                        + " AS approvers FROM \"ApprovalRequest\" r LEFT JOIN \"ApprovalDecision\" d ON d.\"requestId\" = r.id"
+                        + " AND d.status = 'approved' WHERE r.\"organizationId\" = :org AND r.\"entityType\" IN (:types)"
+                        + " AND r.\"entityId\" = :id AND r.status = 'approved' AND r.\"consumedAt\" IS NULL"
+                        + " GROUP BY r.id, r.\"createdAt\" ORDER BY r.\"createdAt\" DESC, r.id DESC LIMIT 1")
+                .param("org", org()).param("types", aliases).param("id", entityId).query().listOfRows()) {
+            String joined = (String) r.get("approvers");
+            List<String> approvers = joined == null || joined.isEmpty() ? List.of() : List.of(joined.split(","));
+            if (!approvers.isEmpty() && approvers.stream().noneMatch(named::contains)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * IPR S2 (P15-6): switch on {@code pairKeys} (unknown keys are ignored) for a new organisation, inside its creation
+     * transaction. Rows already present are left as they are.
+     */
+    public void seedNewOrganization(String organizationId, Collection<String> pairKeys) {
+        for (String key : pairKeys) {
+            if (!PAIRS.containsKey(key) || PAIRS.get(key).alwaysOn()) {
+                continue;
+            }
+            jdbc.sql("INSERT INTO \"SodRule\" (id, \"organizationId\", \"pairKey\", \"isActive\", notes, \"updatedBy\","
+                            + " \"createdAt\", \"updatedAt\") VALUES (?, ?, ?, TRUE, ?, NULL, " + NOW + ", " + NOW + ")"
+                            + " ON CONFLICT (\"organizationId\", \"pairKey\") DO NOTHING")
+                    .params(UUID.randomUUID().toString(), organizationId, key, "Default for new organisations")
+                    .update();
+        }
     }
 
     private boolean approvedByRequest(String pairKey, String entityId) {
