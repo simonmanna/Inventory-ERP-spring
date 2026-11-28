@@ -22,6 +22,14 @@ Status: **CS-0 design frozen (2026-11-04)**. This is a Spring-native extension w
 > **ADR-S094 C4b (built, V738).** A legacy cash sale's fiscal operations are `FiscalDocument` rows with
 > `ownerKind = submission`; their behaviour is unchanged (ADR-S094 §5.5, "As built (C4b)").
 
+> **ADR-S094 C6 (built, no migration).** The web records cash sales as Sales: Sales → Cash Sales (`/sales/cash`,
+> `/sales/cash/new`, detail `/sales/orders/:id`); see ADR-S094 §13, "As built (C6)".
+> - The screens below are now "Legacy cash sales". They no longer create a sale: `/sales/cash-sales/new` leads to the
+>   new screen.
+> - A legacy draft can only be discarded. A confirmed legacy sale still finishes its head-office processing, so its
+>   1215 / 2216 postings are closed.
+> - The routes in this document are unchanged until C8 removes them.
+
 **Production gate.** Before go-live, the accountant must sign off three things:
 
 - the VAT tax point for showroom sales;

@@ -10,8 +10,18 @@ export type SalesOrderStatus = 'draft' | 'confirmed' | 'done' | 'cancelled';
 export type SalesOrderStage = 'draft' | 'pending_approval' | 'confirmed' | 'in_fulfilment' | 'done' | 'cancelled';
 /** ADR-S094 §4.2: approval of a draft sale, bound to its content. */
 export type SalesApprovalStatus = 'not_required' | 'required' | 'pending' | 'approved' | 'rejected';
-/** Steps the signed-in user may take now: approval and confirm on a draft; keeping open credit after confirm. */
-export type SalesOrderAction = 'submit_approval' | 'withdraw_approval' | 'approve' | 'reject' | 'confirm' | 'keep_credit';
+/**
+ * Steps the signed-in user may take now: approval and confirm on a draft; keeping open credit after confirm. A cash sale
+ * adds tender capture on its draft and its Reverse once done (ADR-S094 C3, C3b).
+ */
+export type SalesOrderAction = 'submit_approval' | 'withdraw_approval' | 'approve' | 'reject' | 'confirm' | 'keep_credit'
+  | 'add_payment' | 'reverse';
+/** ADR-S094 §5.1: how a cash sale's customer paid (one tender line each). */
+export type TenderMethod = 'cash' | 'mobile_money' | 'bank' | 'card';
+/** ADR-S094 C3: the cash sale's one fiscal document (an order-type sale registers each invoice instead, C4b). */
+export type SaleFiscalStatus = 'none' | 'pending' | 'issued' | 'failed' | 'cancellation_pending' | 'cancelled';
+/** ADR-S094 C3b (§7.4): where a cash sale's reversal stands; null when none was asked for. */
+export type ReversalStage = 'reversed' | 'approval_pending' | 'approval_rejected' | 'fiscal_cancel_pending' | 'reversal_pending';
 /** ADR-S094 §4.4: where the money of a sale stands, from its posted documents. */
 export type SalesPaymentStatus = 'no_charge' | 'not_invoiced' | 'unpaid' | 'partially_paid' | 'paid' | 'credit_balance'
   | 'refunded' | 'credited' | 'written_off';
@@ -67,6 +77,77 @@ export interface SalesOrderLine {
   qtyDeferred?: number;
   /** Revenue of {@link qtyDeferred}, in the company's functional currency. */
   amountDeferred?: number;
+  qtyCancelled?: number;
+  trackInventory?: boolean;
+  /** Serial-tracked product: the handover and the reversal name one serial number per unit (ADR-S094 C6). */
+  serialTracking?: boolean;
+}
+
+/** A cash sale's tender line (ADR-S094 §5.1): captured, verified, then posted as a receipt at confirm. */
+export interface SaleTender {
+  id: string;
+  method: TenderMethod;
+  provider: string | null;
+  paymentModeId: string | null;
+  paymentModeLabel: string | null;
+  accountId: string;
+  accountCode: string | null;
+  accountName: string | null;
+  amount: number | string;
+  /** Physical cash: what the customer handed over; the change is never posted. */
+  amountTendered: number | string | null;
+  changeGiven: number | string;
+  reference: string | null;
+  paymentDate: string | null;
+  payerName: string | null;
+  payerAccount: string | null;
+  notes: string | null;
+  attachmentIds: string[];
+  collectedById: string | null;
+  collectedAt: string;
+  verificationStatus: 'pending' | 'verified' | 'failed';
+  verifiedAt: string | null;
+  verificationSource: string | null;
+  verificationNote: string | null;
+  status: 'captured' | 'posted' | 'voided';
+  paymentId: string | null;
+  paymentNumber: string | null;
+}
+
+/** A payment mode a cash sale can take (`GET /sales/orders/payment-modes`). */
+export interface SalePaymentMode {
+  id: string; code: string; label: string; kind: TenderMethod; provider: string | null;
+  accountId: string | null; accountName: string | null; accountCode: string | null; requiresReference: boolean;
+}
+
+export type FiscalOperationStatus = 'pending' | 'sent' | 'unknown' | 'review' | 'succeeded' | 'failed';
+/** One operation on the fiscal outbox (ADR-S094 §5.5): a cash sale's document, or one invoice or credit note of a sale. */
+export interface FiscalOperation {
+  id: string;
+  ownerKind: 'submission' | 'sale' | 'document';
+  salesOrderId: string | null;
+  invoiceId: string | null;
+  provider: string;
+  operation: 'issue' | 'cancel' | 'correct' | 'credit_note';
+  requestRef: string;
+  status: FiscalOperationStatus;
+  attempts: number;
+  submissions?: number;
+  lastError: string | null;
+  externalRef: string | null;
+  fiscalNumber: string | null;
+  requestPayload?: Record<string, unknown> | null;
+  reason: string | null;
+  resolution: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A line of a cash sale's timeline (`GET /sales/orders/:id/events`). */
+export interface SaleEvent {
+  id: string; action: string; fromStatus: string | null; toStatus: string | null; note: string | null;
+  data: Record<string, unknown> | null; userName: string | null; createdAt: string;
 }
 
 export interface SalesOrder {
@@ -109,6 +190,20 @@ export interface SalesOrder {
   openCredit?: number;
   /** ADR-S094 C2b: revenue invoiced before the goods left, held as a contract liability (functional currency, detail only). */
   revenueDeferred?: number;
+  /** ADR-S094 C3: a cash sale's branch profile, sale date, buyer identity and fiscal document. */
+  profileId?: string | null;
+  saleDate?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerTin?: string | null;
+  customerAddress?: string | null;
+  fiscalStatus?: SaleFiscalStatus;
+  /** Cash sale (detail only): tender lines, and what is still to collect on the draft. */
+  payments?: SaleTender[];
+  balanceDue?: number;
+  reversalStage?: ReversalStage | null;
+  reversalReason?: string | null;
+  reversedAt?: string | null;
   partnerId: string;
   partnerName: string | null;
   quotationId: string | null;

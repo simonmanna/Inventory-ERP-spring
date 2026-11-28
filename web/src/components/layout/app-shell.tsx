@@ -362,7 +362,9 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/orders', label: tx('Sales Orders'), icon: ShoppingCart, permission: PERMISSIONS.sales.orderRead },
       { to: '/sales/field', label: tx('Field sales'), icon: Smartphone, permission: PERMISSIONS.sales.orderWrite },
       { to: '/sales/offline-review', label: tx('Offline sales review'), icon: ShieldAlert, permission: PERMISSIONS.sales.orderRead },
-      { to: '/sales/cash-sales', label: tx('Branch Cash Sales'), icon: Store, permission: PERMISSIONS.sales.cashSaleRead },
+      // ADR-S094 C6: a cash sale is a Sale; the legacy branch cash sales stay readable (and finish processing) until C8
+      { to: '/sales/cash', label: tx('Cash Sales'), icon: Store, permission: PERMISSIONS.sales.cashSaleRead },
+      { to: '/sales/cash-sales', label: tx('Legacy cash sales'), icon: History, permission: PERMISSIONS.sales.cashSaleRead },
       { to: '/sales/cash-sales/processing', label: tx('Branch Sales Processing'), icon: ClipboardCheck, permission: PERMISSIONS.sales.cashSaleReadAll },
       { to: '/fleet/delivery-orders', label: tx('Deliveries'), icon: Truck, permission: PERMISSIONS.fleetDispatch.read, feature: 'fleet' },
       { to: '/invoices', label: tx('Invoices'), icon: Receipt, permission: PERMISSIONS.invoice.read },

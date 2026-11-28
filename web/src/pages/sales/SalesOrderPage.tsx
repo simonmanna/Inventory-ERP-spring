@@ -50,6 +50,8 @@ import { OrderDeliveryTab } from './delivery/OrderDeliveryTab';
 import { DeliveryPlanPanel } from './delivery/DeliveryPlanPanel';
 import { OrderStageStepper } from './delivery/delivery-ui';
 import { blankHeader, OrderHeaderFields, type OrderHeader } from './OrderHeaderFields';
+import { CashIdentityFields, CashSaleInfo, CashSaleNotices, FiscalPanel, HandoverDialog, ReverseDialog, SaleTimeline, TenderPanel } from './CashSalePanels';
+import { blankIdentity, identityOf, useCashProfiles, type CashIdentity } from '@/features/sales/sale-cash-api';
 
 /** A draft line with its typed size (ADR-S066: sold by length / area / volume). */
 /** `priceUnknown` (screen only): the unit's conversion is unknown here, so the price was cleared and must be typed. */
@@ -72,9 +74,14 @@ type LineCol = 'description' | 'uom' | 'discount' | 'taxes';
 const LINE_COLS: Array<LineColumn<LineCol>> = [
   ['description', tx('Description')], ['uom', tx('UoM')], ['discount', tx('Disc.%')], ['taxes', tx('Taxes')],
 ];
+const TAB_TRIGGER = '-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none';
 
-/** Create / edit (draft) / process a sales order (ADR-S011). Confirmed orders change through change requests. */
-export function SalesOrderPage() {
+/**
+ * Create / edit (draft) / process a sale (ADR-S011, ADR-S094). Confirmed orders change through change requests. A cash
+ * sale (ADR-S094 C6) is drafted at a branch counter, paid with tender lines and confirmed with its handover in one step;
+ * afterwards it is corrected only by Reverse.
+ */
+export function SalesOrderPage({ newType }: { newType?: 'cash' } = {}) {
   const { id } = useParams();
   const isNew = !id || id === 'new';
   const navigate = useNavigate();
@@ -83,6 +90,7 @@ export function SalesOrderPage() {
   const taxes = useTaxOptions();
   const has = useAuthStore((s) => s.hasPermission);
   const P = PERMISSIONS.sales;
+  const cash = isNew ? newType === 'cash' : o?.saleType === 'cash';
 
   const [partnerId, setPartnerId] = useState('');
   const [partnerName, setPartnerName] = useState<string | null>(null);
@@ -100,6 +108,14 @@ export function SalesOrderPage() {
   const [reason, setReason] = useState('');
   const [closeLine, setCloseLine] = useState<string | null>(null);
   const [tab, setTab] = useState('lines');
+  // ADR-S094 C6: a cash sale's branch (chosen on a new sale), its buyer identity (sent only once typed, so a named
+  // customer's own details apply otherwise) and its confirm / Reverse dialogs
+  const [cashBranchId, setCashBranchId] = useState('');
+  const [identity, setIdentity] = useState<CashIdentity>(blankIdentity);
+  const [identityTouched, setIdentityTouched] = useState(false);
+  const [cashDialog, setCashDialog] = useState<'handover' | 'reverse' | null>(null);
+  const cashProfiles = useCashProfiles(cash);
+  const cashProfile = (cashProfiles.data ?? []).find((p) => (o ? p.id === o.profileId : !!cashBranchId && p.branchId === cashBranchId));
   const { cols, show, toggle } = useLineColumns<LineCol>('sales-order-lines.columns', LINE_COLS, ['description', 'uom', 'discount', 'taxes']);
 
   useEffect(() => {
@@ -109,15 +125,16 @@ export function SalesOrderPage() {
       setOrderDiscount(Number(o.orderDiscountPercent ?? 0));
       setHeader({ branchId: o.branchId ?? '', locationId: o.locationId ?? '', paymentTermId: o.paymentTermId ?? '', currencyCode: o.currencyCode ?? '', exchangeRate: Number(o.exchangeRate ?? 1), priority: Number(o.priority ?? 0), paymentMode: o.paymentMode ?? 'credit' });
       setNotes(o.notes ?? ''); setLines(o.lines?.length ? o.lines.map((l) => ({ ...l, size: sizeOf(l as Parameters<typeof sizeOf>[0]) })) : [blankLine()]); setDirty(false);
+      setIdentity(identityOf(o)); setIdentityTouched(false);
     }
   }, [o]);
 
   // ADR-S094 §4.2: a draft waiting for approval keeps its content until it is withdrawn
-  const editable = isNew || (o?.status === 'draft' && o.approvalStatus !== 'pending' && has(P.orderWrite));
+  const editable = isNew || (o?.status === 'draft' && o.approvalStatus !== 'pending' && has(cash ? P.cashSaleCreate : P.orderWrite));
   const agreements = useQuery({
     queryKey: ['sales', 'agreements', 'active', partnerId],
     queryFn: async () => (await api.get<Array<{ id: string; number: string; name: string }>>('/sales/agreements', { params: { partnerId, status: 'active' } })).data,
-    enabled: !!partnerId && editable && has(P.agreementRead), retry: false,
+    enabled: !!partnerId && editable && !cash && has(P.agreementRead), retry: false,
   });
   const productOpts = useMemo(() => (products.data ?? []).map((p) => ({ value: p.id, label: p.name, code: p.code ?? undefined })), [products.data]);
   const patchLine = (i: number, p: Partial<DraftOrderLine>) => { setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true); };
@@ -134,6 +151,27 @@ export function SalesOrderPage() {
   };
 
   const save = useSalesMutation(async () => {
+    const lineBody = lines.filter((l) => l.productId || l.description).map((l) => ({
+      productId: l.productId || undefined, variantId: l.variantId || undefined, description: l.description || undefined, quantity: n(l.quantity),
+      // the size (when typed) decides the quantity server-side; the size fields only render for sized products
+      ...(l.productId ? sizePayload(l.size, 'volume') : {}),
+      uomId: l.productId ? l.uomId || undefined : undefined,
+      // Review M-12: a unit this screen cannot convert is priced by the server (it knows every conversion).
+      unitPrice: l.productId && l.priceUnknown ? undefined
+        : (l.id && l.priceSource !== undefined) || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
+      discountPercent: n(l.discountPercent), taxId: l.taxId || null, promisedDate: l.promisedDate || undefined,
+    }));
+    if (cash) {
+      // ADR-S094 C3: the branch profile sets the location, terms and delivery. The customer is sent when chosen or
+      // changed (the walk-in customer otherwise); the buyer identity only once typed.
+      const body = {
+        ...(isNew ? { saleType: 'cash', ...(cashBranchId ? { branchId: cashBranchId } : {}), ...(partnerId ? { partnerId } : {}) }
+          : partnerId !== o!.partnerId ? { partnerId: partnerId || null } : {}),
+        ...(identityTouched ? identity : {}),
+        notes, orderDiscountPercent: orderDiscount || null, lines: lineBody,
+      };
+      return isNew ? salesApi.createOrder(body) : salesApi.updateOrder({ id: o!.id, ...body, version: o!.version });
+    }
     const body = {
       partnerId, customerRef, requestedDate: requestedDate || undefined, notes,
       branchId: header.branchId || null, locationId: header.locationId || null, paymentTermId: header.paymentTermId || null,
@@ -141,16 +179,7 @@ export function SalesOrderPage() {
       ...(header.currencyCode ? { currencyCode: header.currencyCode, exchangeRate: header.exchangeRate || 1 } : {}), priority: header.priority,
       ...(isNew ? { deliveryMethod: handover.method === 'pickup' ? 'collect' : 'delivery', deliveryAddress: handover.method === 'delivery' || handover.method === 'courier' ? handover.address : undefined } : {}),
       agreementId: agreementId || (isNew ? undefined : null),
-      lines: lines.filter((l) => l.productId || l.description).map((l) => ({
-        productId: l.productId || undefined, variantId: l.variantId || undefined, description: l.description || undefined, quantity: n(l.quantity),
-        // the size (when typed) decides the quantity server-side; the size fields only render for sized products
-        ...(l.productId ? sizePayload(l.size, 'volume') : {}),
-        uomId: l.productId ? l.uomId || undefined : undefined,
-        // Review M-12: a unit this screen cannot convert is priced by the server (it knows every conversion).
-        unitPrice: l.productId && l.priceUnknown ? undefined
-          : (l.id && l.priceSource !== undefined) || l.priceSource === 'manual' || !l.productId ? n(l.unitPrice) : undefined,
-        discountPercent: n(l.discountPercent), taxId: l.taxId || null, promisedDate: l.promisedDate || undefined,
-      })),
+      lines: lineBody,
     };
     return isNew ? salesApi.createOrder(body) : salesApi.updateOrder({ id: o!.id, ...body, version: o!.version });
   });
@@ -161,12 +190,14 @@ export function SalesOrderPage() {
   const del = useSalesMutation(salesApi.deleteOrder);
 
   const doSave = (then?: () => void) => {
-    if (!partnerId) return toast.error(tx('Choose a customer'));
+    if (!partnerId && !cash) return toast.error(tx('Choose a customer'));
     save.mutate(undefined, {
       onSuccess: async (s) => {
         setDirty(false);
         if (isNew) {
-          try { await saveHandoverDraft(`/sales/orders/${s.id}/handover`, handover); } catch (e) { toast.error(apiErrorMessage(e, tx('Order saved, but the delivery details could not be saved'))); }
+          if (!cash) {
+            try { await saveHandoverDraft(`/sales/orders/${s.id}/handover`, handover); } catch (e) { toast.error(apiErrorMessage(e, tx('Order saved, but the delivery details could not be saved'))); }
+          }
           navigate(`/sales/orders/${s.id}`, { replace: true });
         } else toast.success(tx('Saved'));
         then?.();
@@ -227,8 +258,11 @@ export function SalesOrderPage() {
     const reason = await ask({ title: tx('Credit undelivered'), description: tx('Credit notes are posted for the {{qty}} invoiced but not delivered, against the invoices that billed them, and the line is closed short.', { qty }), label: tx('Reason'), confirmLabel: tx('Credit and close') });
     if (reason) creditRest.mutate({ id: o.id, lineId, reason }, { onSuccess: () => toast.success(tx('Undelivered quantity credited; line closed short')), onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))) });
   };
-  const ribbon = [tx('Quotation'), tx('Sales order'), tx('Delivered'), tx('Invoiced')];
-  const step = !o ? 1 : o.invoiceStatus === 'invoiced' ? 3 : o.deliveryStatus === 'full' ? 2 : 1;
+  // ADR-S094 C6: a cash sale is paid on its draft, then handed over and invoiced in one confirm
+  const ribbon = cash ? [tx('Draft'), tx('Paid'), tx('Handed over'), tx('Invoiced')] : [tx('Quotation'), tx('Sales order'), tx('Delivered'), tx('Invoiced')];
+  const step = cash
+    ? (!o || o.status === 'draft' ? (o && (o.payments?.length ?? 0) > 0 && n(o.balanceDue) <= 0 ? 1 : 0) : 3)
+    : !o ? 1 : o.invoiceStatus === 'invoiced' ? 3 : o.deliveryStatus === 'full' ? 2 : 1;
   const currency = o?.currencyCode;
   const est = lines.reduce((s, l) => s + n(l.quantity) * n(l.unitPrice) * (1 - n(l.discountPercent) / 100), 0);
   const rel = o?.relations;
@@ -236,7 +270,12 @@ export function SalesOrderPage() {
   const ico = 'mr-2 h-4 w-4';
   type MenuItem = { key: string; label: string; icon: ReactNode; onSelect: () => void; danger?: boolean };
   const menu: MenuItem[] = [];
-  if (o) {
+  if (o && cash) {
+    // a cash sale is deleted while a draft; once confirmed it is corrected by Reverse (no hold, change or cancel)
+    // ADR-S094 §7.4: part of a confirmed cash sale comes back through the normal return flow (the sale stays done)
+    if (stage === 'done' && !o.reversalStage && has(P.returnWrite)) menu.push({ key: 'return', label: tx('Return part of the sale'), icon: <Undo2 className={ico} />, onSelect: () => setDialog('return') });
+    if (status === 'draft' && has(P.cashSaleCreate)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: async () => { if (await ask({ title: tx('Delete this draft?'), description: tx('The draft sale, its lines and its payments are removed. This cannot be undone.'), confirmLabel: tx('Delete'), destructive: true }) !== null) del.mutate(o.id, { onSuccess: () => navigate('/sales/cash'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
+  } else if (o) {
     if (open && !o.onHold && has(P.orderHoldRelease)) menu.push({ key: 'hold', label: tx('Hold'), icon: <Pause className={ico} />, onSelect: () => { setReason(''); setDialog('hold'); } });
     if ((status === 'draft' || (o.onHold && o.holdKind !== 'manual')) && has(P.orderWrite)) menu.push({ key: 'credit', label: tx('Ask for credit approval'), icon: <FileSignature className={ico} />, onSelect: async () => { const reason = await ask({ title: tx('Ask for credit approval'), label: tx('Why should this order be allowed over the limit?'), confirmLabel: tx('Send request') }); if (reason) api.post(`/sales/orders/${o.id}/credit-request`, { reason }).then(() => toast.success(tx('Credit request sent'))).catch((err) => toast.error(apiErrorMessage(err, tx('Action failed')))); } });
     if (open && !o.onHold && has(P.deliveryWrite)) menu.push({ key: 'delivery', label: tx('New delivery'), icon: <Truck className={ico} />, onSelect: () => setDialog('delivery') });
@@ -249,31 +288,71 @@ export function SalesOrderPage() {
     if (!['cancelled', 'done'].includes(status) && has(P.orderCancel)) menu.push({ key: 'cancel', label: tx('Cancel order'), icon: <XCircle className={ico} />, danger: true, onSelect: () => { setReason(''); setDialog('cancel'); } });
     if (status === 'draft' && has(P.orderWrite)) menu.push({ key: 'delete', label: tx('Delete draft'), icon: <Trash2 className={ico} />, danger: true, onSelect: async () => { if (await ask({ title: tx('Delete this draft?'), description: tx('The draft order and its lines are removed. This cannot be undone.'), confirmLabel: tx('Delete'), destructive: true }) !== null) del.mutate(o.id, { onSuccess: () => navigate('/sales/orders'), onError: (e) => toast.error(apiErrorMessage(e, tx('Could not delete'))) }); } });
   }
+  const pickPartner = (pid: string, name: string | null) => {
+    setPartnerId(pid); setPartnerName(name || null); setDirty(true);
+    // ADR-S094 C3: a named customer brings their own buyer details; details typed for someone else are dropped
+    if (cash) { setIdentity(blankIdentity); setIdentityTouched(false); }
+  };
+  const walkIn = cashProfile?.walkInPartnerId ? [{ id: cashProfile.walkInPartnerId, name: cashProfile.walkInPartnerName ?? tx('Walk-in customer') }] : undefined;
+  const customerField = (
+    <InlineField label={tx('Customer')}>
+      {editable ? (
+        <div className="flex items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <PartnerPicker value={partnerId} label={partnerName} placeholder={cash ? tx('Walk-in customer') : undefined} pinned={cash ? walkIn : undefined} onPick={(i, nm) => pickPartner(i, nm)} />
+          </div>
+          {has(PERMISSIONS.partners.create) && (
+            <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      ) : <span className="font-medium">{o?.partnerName}</span>}
+    </InlineField>
+  );
+  const totals = (
+    <>
+      <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
+      <div className="mb-1 flex items-center justify-between gap-2"><span className="text-muted-foreground">{tx('Order discount %')}</span><Input aria-label={tx('Order discount %')} disabled={!editable} type="number" min={0} max={100} className="h-8 w-24 text-right" value={orderDiscount} onChange={(e) => { setOrderDiscount(Number(e.target.value)); setDirty(true); }} /></div>
+      <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est * (1 - orderDiscount / 100) : o.subtotal, currency)} />
+      {o && !dirty && <Row label={tx('Taxes')} value={money(o.taxAmount, currency)} />}
+      {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
+    </>
+  );
 
   return (
     <div className="space-y-4">
       {askDialog}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm">
-          <Link to="/sales/orders" className="font-medium text-primary hover:underline">{tx('Sales Orders')}</Link>
+          {cash
+            ? <Link to="/sales/cash" className="font-medium text-primary hover:underline">{tx('Cash Sales')}</Link>
+            : <Link to="/sales/orders" className="font-medium text-primary hover:underline">{tx('Sales Orders')}</Link>}
           <span className="mx-1.5 text-muted-foreground">/</span>
           <span className="font-semibold">{o ? o.number : tx('New')}</span>
           {o && o.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{o.revision}</span>}
           {o && <span className="ml-3"><OrderStatusPill status={stage} approval={o.approvalStatus} onHold={o.onHold} /></span>}
           {o && o.status !== 'draft' && <span className="ml-1"><PaymentPill status={o.paymentStatus} /></span>}
         </div>
-        {status !== 'cancelled' && <div data-tour="sales.order.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
+        {status !== 'cancelled' && (cash
+          ? <div data-tour="sales.cash.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>
+          : <div data-tour="sales.order.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>)}
       </div>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div data-tour="sales.order.actions" className="flex flex-wrap items-center gap-2">
-          {editable && <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>}
-          {allowed('confirm') && <Button data-tour="sales.order.confirm" variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>}
+          {editable && (cash
+            ? <Button data-tour="sales.cash.save" onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>
+            : <Button onClick={() => doSave()} disabled={save.isPending}>{tx('Save')}</Button>)}
+          {allowed('confirm') && (cash
+            ? <Button data-tour="sales.cash.confirm" variant="secondary" disabled={save.isPending} onClick={() => dirty ? doSave(() => setCashDialog('handover')) : setCashDialog('handover')}>{tx('Confirm sale & hand over')}</Button>
+            : <Button data-tour="sales.order.confirm" variant="secondary" disabled={action.isPending} onClick={() => dirty ? doSave(() => run('confirm')) : run('confirm')}>{tx('Confirm order')}</Button>)}
           {allowed('submit_approval') && <Button variant="secondary" disabled={action.isPending} onClick={submitForApproval}>{tx('Submit for approval')}</Button>}
           {allowed('withdraw_approval') && <Button variant="outline" disabled={action.isPending} onClick={() => run('withdraw-approval', {})}>{tx('Withdraw from approval')}</Button>}
           {allowed('approve') && <Button disabled={action.isPending} onClick={() => run('approve', {})}>{tx('Approve')}</Button>}
           {allowed('reject') && o && <Button variant="destructive" disabled={action.isPending} onClick={async () => { const r = await ask({ title: `${tx('Reject')} ${o.number}?`, label: tx('Reason'), confirmLabel: tx('Reject'), destructive: true }); if (r) run('reject', { reason: r }); }}>{tx('Reject')}</Button>}
           {o?.onHold && has(P.orderHoldRelease) && <Button variant="outline" onClick={() => run('release')}><Play className="mr-1.5 h-4 w-4" />{tx('Release')}</Button>}
+          {cash && o?.actions?.includes('reverse') && <Button data-tour="sales.cash.reverse" variant="outline" onClick={() => setCashDialog('reverse')}><Undo2 className="mr-1.5 h-4 w-4" />{tx('Reverse')}</Button>}
           {menu.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -290,6 +369,12 @@ export function SalesOrderPage() {
             </DropdownMenu>
           )}
         </div>
+        {cash ? (
+          <div data-tour="sales.cash.links" className="flex flex-wrap gap-2">
+            <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/sales/deliveries?orderId=${o?.id}`)} />
+            <SmartButton icon={<Receipt className="h-4 w-4" />} count={rel?.invoices.length ?? 0} label={tx('Invoices')} disabled={!rel?.invoices.length} onClick={() => rel?.invoices.length && navigate(`/invoices/${rel.invoices[0].id}`)} />
+          </div>
+        ) : (
         <div data-tour="sales.order.links" className="flex flex-wrap gap-2">
           <SmartButton icon={<FileText className="h-4 w-4" />} count={rel?.quotation ? 1 : 0} label={tx('Quotation')} disabled={!rel?.quotation} onClick={() => rel?.quotation && navigate(`/sales/quotations/${rel.quotation.id}`)} />
           <SmartButton icon={<Truck className="h-4 w-4" />} count={rel?.deliveries.length ?? 0} label={tx('Deliveries')} disabled={!rel?.deliveries.length} onClick={() => rel?.deliveries.length && navigate(`/sales/deliveries?orderId=${o?.id}`)} />
@@ -297,66 +382,63 @@ export function SalesOrderPage() {
           <SmartButton icon={<FileSignature className="h-4 w-4" />} count={rel?.changeRequests ?? 0} label={tx('Change requests')} disabled={!rel?.changeRequests} onClick={() => setTab('other')} />
           <SmartButton icon={<History className="h-4 w-4" />} count={rel?.revisions ?? 0} label={tx('Revisions')} disabled={!rel?.revisions} onClick={() => setDialog('revisions')} />
         </div>
+        )}
       </div>
 
       {o?.status === 'draft' && o.approvalStatus === 'pending' && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('Waiting for approval')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul><p className="mt-1 text-xs">{tx('Withdraw it from approval to change its lines, prices or terms.')}</p></div>}
       {o?.status === 'draft' && o.approvalStatus === 'required' && o.approvalReasons?.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-transparent"><p className="font-semibold">{tx('This order needs approval before it can be confirmed')}</p><ul className="ml-4 list-disc">{o.approvalReasons.map((r) => <li key={r}>{r}</li>)}</ul></div>}
       {o?.status === 'draft' && o.approvalStatus === 'rejected' && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent"><p>{o.approvalReasons?.join(' · ')}</p><p className="mt-1 text-xs">{tx('Change the order, or submit it again with a justification.')}</p></div>}
       {o?.onHold && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900 dark:bg-transparent">{o.holdKind === 'credit' ? tx('Credit hold') : o.holdKind === 'customer' ? tx('Customer blocked') : tx('On hold')}: {o.holdReason}{o.holdKind === 'credit' && <span className="block text-xs">{tx('Release needs the credit override permission.')}</span>}</div>}
+      {o && cash && <CashSaleNotices order={o} />}
 
       <section className="rounded-xl border bg-card shadow-sm">
         <div className="px-5 pt-5">
           <h1 className="flex items-baseline gap-1.5 text-2xl font-bold">
             <span>{o ? o.number : tx('New')}</span>
-            <span className="text-sm font-medium text-muted-foreground">{tx('Sales order')}</span>
+            <span className="text-sm font-medium text-muted-foreground">{cash ? tx('Cash sale') : tx('Sales order')}</span>
           </h1>
         </div>
         <div className="grid grid-cols-1 gap-x-12 px-5 pb-5 pt-4 md:grid-cols-2">
           <div>
-            <InlineField label={tx('Customer')}>
-              {editable ? (
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    <PartnerPicker value={partnerId} label={partnerName} onPick={(i, nm) => { setPartnerId(i); setPartnerName(nm || null); setDirty(true); }} />
-                  </div>
-                  {has(PERMISSIONS.partners.create) && (
-                    <Button type="button" variant="outline" size="icon" className="shrink-0" title={tx('New customer')} aria-label={tx('New customer')} onClick={() => setNewCustomerOpen(true)}>
-                      <UserPlus className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              ) : <span className="font-medium">{o?.partnerName}</span>}
-            </InlineField>
+            {cash ? <div data-tour="sales.cash.customer">{customerField}</div> : customerField}
             <PartnerCreateDialog open={newCustomerOpen} onOpenChange={setNewCustomerOpen} onCreated={(c) => {
               // Use the new customer at once (credit / billing panel and agreements follow the selection).
-              setPartnerId(c.id); setPartnerName(c.name); setDirty(true);
+              pickPartner(c.id, c.name);
             }} />
-            <OrderHeaderFields only={[...(!isNew && o?.customerRef ? ['customerRef' as const] : []), 'payment', 'priority']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
+            {cash
+              ? <CashIdentityFields value={identity} disabled={!editable} onChange={(v) => { setIdentity(v); setIdentityTouched(true); setDirty(true); }} />
+              : <OrderHeaderFields only={[...(!isNew && o?.customerRef ? ['customerRef' as const] : []), 'payment', 'priority']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />}
             {o && (
               <>
-                <InlineField label={tx('Source Doc')}>
-                  {o.quotationId && o.quotationNumber
-                    ? <Link to={`/sales/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
-                    : <span className="text-muted-foreground">-</span>}
-                </InlineField>
+                {!cash && (
+                  <InlineField label={tx('Source Doc')}>
+                    {o.quotationId && o.quotationNumber
+                      ? <Link to={`/sales/quotations/${o.quotationId}`} className="text-primary hover:underline">{o.quotationNumber}</Link>
+                      : <span className="text-muted-foreground">-</span>}
+                  </InlineField>
+                )}
                 <InlineField label={tx('Salesperson')}>{o.ownerName ?? <span className="text-muted-foreground">-</span>}</InlineField>
               </>
             )}
           </div>
           <div>
-            <OrderHeaderFields only={['branch', 'warehouse', 'terms', 'currency']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
-            {(agreementId || (agreements.data?.length ?? 0) > 0) && (
-              <InlineField label={tx('Agreement')}>
-                <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
-                  <option value="">{tx('None')}</option>
-                  {agreementId && !agreements.data?.some((a) => a.id === agreementId) && <option value={agreementId}>{o?.relations?.agreement?.number ?? agreementId}</option>}
-                  {(agreements.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.number} · {a.name}</option>)}
-                </select>
-              </InlineField>
+            {cash ? <CashSaleInfo order={o} branchId={cashBranchId} onBranch={(v) => { setCashBranchId(v); setDirty(true); }} /> : (
+              <>
+                <OrderHeaderFields only={['branch', 'warehouse', 'terms', 'currency']} value={header} customerRef={customerRef} disabled={!editable} onChange={(h) => { setHeader(h); setDirty(true); }} onCustomerRef={(v) => { setCustomerRef(v); setDirty(true); }} />
+                {(agreementId || (agreements.data?.length ?? 0) > 0) && (
+                  <InlineField label={tx('Agreement')}>
+                    <select disabled={!editable} className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={agreementId} onChange={(e) => { setAgreementId(e.target.value); setDirty(true); }}>
+                      <option value="">{tx('None')}</option>
+                      {agreementId && !agreements.data?.some((a) => a.id === agreementId) && <option value={agreementId}>{o?.relations?.agreement?.number ?? agreementId}</option>}
+                      {(agreements.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.number} · {a.name}</option>)}
+                    </select>
+                  </InlineField>
+                )}
+              </>
             )}
             {o && (
               <>
-                <InlineField label={tx('Order Date')}>{date(o.createdAt)}</InlineField>
+                {!cash && <InlineField label={tx('Order Date')}>{date(o.createdAt)}</InlineField>}
                 {o.confirmedAt && <InlineField label={tx('Confirmed')}>{date(o.confirmedAt)}</InlineField>}
                 {o.cancelledAt && <InlineField label={tx('Cancelled')}>{date(o.cancelledAt)} — {o.cancelReason}</InlineField>}
               </>
@@ -364,11 +446,16 @@ export function SalesOrderPage() {
           </div>
         </div>
 
-        <Tabs value={tab} onValueChange={setTab}>
+        {/* the page is reused across sales: a tab the current type does not have shows the lines */}
+        <Tabs value={(cash ? ['lines', 'payments', 'fiscal', 'billing', 'other'] : ['lines', 'delivery', 'billing', 'other']).includes(tab) ? tab : 'lines'} onValueChange={setTab}>
           <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto rounded-none border-b bg-transparent p-0 px-5 pt-1.5">
-            {([['lines', tx('Order lines')], ['delivery', tx('Delivery & fulfilment')], ['billing', tx('Billing')], ['other', tx('Other info')]] as const).map(([v, label]) => (
-              <TabsTrigger key={v} value={v} data-tour={`sales.order.tab.${v}`} className="-mb-px rounded-none rounded-t-md border border-transparent px-4 py-2 data-[state=active]:border-border data-[state=active]:border-b-card data-[state=active]:bg-card data-[state=active]:shadow-none">{label}</TabsTrigger>
-            ))}
+            {cash
+              ? ([['lines', tx('Sale lines')], ['payments', tx('Payments')], ['fiscal', tx('Fiscal')], ['billing', tx('Billing')], ['other', tx('Other info')]] as const).map(([v, label]) => (
+                <TabsTrigger key={v} value={v} data-tour={`sales.cash.tab.${v}`} className={TAB_TRIGGER}>{label}</TabsTrigger>
+              ))
+              : ([['lines', tx('Order lines')], ['delivery', tx('Delivery & fulfilment')], ['billing', tx('Billing')], ['other', tx('Other info')]] as const).map(([v, label]) => (
+                <TabsTrigger key={v} value={v} data-tour={`sales.order.tab.${v}`} className={TAB_TRIGGER}>{label}</TabsTrigger>
+              ))}
           </TabsList>
 
           <TabsContent value="lines" className="mt-0 space-y-4 p-5">
@@ -418,10 +505,10 @@ export function SalesOrderPage() {
                     <td className="py-1.5 pr-2 pt-3 text-right tabular-nums">{money(l.lineSubtotal ?? n(l.quantity) * n(l.unitPrice) * (1 - n(l.discountPercent) / 100), currency)}</td>
                     <td className="py-1.5 pt-2">
                       {editable && <button className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setLines((ls) => ls.filter((_, j) => j !== i)); setDirty(true); }}><Trash2 className="h-4 w-4" /></button>}
-                      {!editable && open && !l.closedShort && n(l.qty?.remaining) > 0 && n(l.qtyDeferred) <= 0 && has(P.orderCloseShort) && (
+                      {!editable && open && !cash && !l.closedShort && n(l.qty?.remaining) > 0 && n(l.qtyDeferred) <= 0 && has(P.orderCloseShort) && (
                         <button title={tx('Close short')} className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => { setCloseLine(l.id!); setReason(''); setDialog('close'); }}><Scissors className="h-4 w-4" /></button>
                       )}
-                      {!editable && open && !l.closedShort && n(l.qtyDeferred) > 0 && has(P.orderCloseShort) && has(P.creditNoteWrite) && (
+                      {!editable && open && !cash && !l.closedShort && n(l.qtyDeferred) > 0 && has(P.orderCloseShort) && has(P.creditNoteWrite) && (
                         <button title={tx('Credit undelivered')} disabled={creditRest.isPending} className="rounded p-1 text-muted-foreground hover:bg-muted" onClick={() => creditUndelivered(l.id!, n(l.qtyDeferred))}><FileMinus className="h-4 w-4" /></button>
                       )}
                     </td>
@@ -430,20 +517,27 @@ export function SalesOrderPage() {
               </tbody>
             </table>
           </div>
-          {editable && <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>}
+          {editable && (cash
+            ? <Button data-tour="sales.cash.add-line" variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>
+            : <Button variant="outline" size="sm" onClick={() => { setLines((ls) => [...ls, blankLine()]); setDirty(true); }}><Plus className="mr-1 h-4 w-4" />{tx('Add a line')}</Button>)}
           <div className="grid gap-4 border-t pt-4 md:grid-cols-[minmax(0,1fr)_320px]">
             <Field label={tx('Notes')}><Textarea disabled={!editable} rows={3} value={notes} onChange={(e) => { setNotes(e.target.value); setDirty(true); }} /></Field>
-            <div className="text-sm">
-              <h2 className="mb-2 font-semibold">{tx('Totals')}{dirty && <span className="ml-2 text-xs font-normal text-amber-600">{tx('(estimate — save to recalculate)')}</span>}</h2>
-              <div className="mb-1 flex items-center justify-between gap-2"><span className="text-muted-foreground">{tx('Order discount %')}</span><Input aria-label={tx('Order discount %')} disabled={!editable} type="number" min={0} max={100} className="h-8 w-24 text-right" value={orderDiscount} onChange={(e) => { setOrderDiscount(Number(e.target.value)); setDirty(true); }} /></div>
-              <Row label={tx('Untaxed amount')} value={money(dirty || !o ? est * (1 - orderDiscount / 100) : o.subtotal, currency)} />
-              {o && !dirty && <Row label={tx('Taxes')} value={money(o.taxAmount, currency)} />}
-              {o && !dirty && <div className="mt-2 border-t pt-2"><Row label={tx('Total')} value={<strong className="text-lg">{money(o.total, currency)}</strong>} /></div>}
-            </div>
+            {cash ? <div data-tour="sales.cash.totals" className="text-sm">{totals}</div> : <div className="text-sm">{totals}</div>}
           </div>
           </TabsContent>
 
-          <TabsContent value="delivery" className="mt-0 space-y-4 p-5">
+          {cash && (
+            <>
+              <TabsContent value="payments" className="mt-0 space-y-4 p-5">
+                {o ? <TenderPanel order={o} /> : <p className="text-sm text-muted-foreground">{tx('Save the sale to add its payments.')}</p>}
+              </TabsContent>
+              <TabsContent value="fiscal" className="mt-0 space-y-4 p-5">
+                {o ? <FiscalPanel order={o} /> : <p className="text-sm text-muted-foreground">{tx('The fiscal receipt is requested when the sale is confirmed.')}</p>}
+              </TabsContent>
+            </>
+          )}
+
+          {!cash && <TabsContent value="delivery" className="mt-0 space-y-4 p-5">
             {isNew || !o ? (
               <div className="space-y-5">
                 <div className="flex flex-wrap items-center gap-4">
@@ -463,7 +557,7 @@ export function SalesOrderPage() {
                 onRequestedDate={(v) => { setRequestedDate(v); setDirty(true); }}
                 footer={<AvailabilityPanel order={o} />} />
             )}
-          </TabsContent>
+          </TabsContent>}
 
           <TabsContent value="billing" className="mt-0 space-y-4 p-5">
             <TabSection title={tx('Invoicing')}>
@@ -471,7 +565,9 @@ export function SalesOrderPage() {
               <Field label={tx('Order total')}><p className="py-2 text-sm font-medium tabular-nums">{money(o && !dirty ? o.total : est, currency)}</p></Field>
             </TabSection>
             {o && o.status !== 'draft' && o.paymentStatus && <OutcomeSection order={o} currency={currency} onKeepCredit={o.actions?.includes('keep_credit') ? keepCredit : undefined} busy={keep.isPending} />}
-            {(o?.partnerId || partnerId) ? (
+            {/* ADR-S094 C4b: each invoice and credit note of an order is registered with the tax authority */}
+            {!cash && o && o.status !== 'draft' && <FiscalPanel order={o} hideEmpty />}
+            {cash ? null : (o?.partnerId || partnerId) ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {o && fulfilling && <BillingPanel order={o} />}
                 {o && fulfilling && <FulfilmentPanel order={o} />}
@@ -484,8 +580,7 @@ export function SalesOrderPage() {
           <TabsContent value="other" className="mt-0 space-y-4 p-5">
             {o ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
-                <ChangeRequestsPanel orderId={o.id} />
-                <AmendmentHistory orderId={o.id} />
+                {cash ? <SaleTimeline orderId={o.id} /> : <><ChangeRequestsPanel orderId={o.id} /><AmendmentHistory orderId={o.id} /></>}
                 <AttachmentPanel resType="sales_order" resId={o.id} />
               </div>
             ) : <p className="text-sm text-muted-foreground">{tx('Save the order to add attachments and change requests.')}</p>}
@@ -515,6 +610,8 @@ export function SalesOrderPage() {
       {o && <FromSalesOrderDialog open={dialog === 'project'} onClose={() => setDialog(null)} salesOrder={{ id: o.id, number: o.number, partnerName: o.partnerName }} />}
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
+      {o && cashDialog === 'handover' && <HandoverDialog order={o} onClose={() => setCashDialog(null)} />}
+      {o && cashDialog === 'reverse' && <ReverseDialog order={o} onClose={() => setCashDialog(null)} />}
     </div>
   );
 }

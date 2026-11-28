@@ -191,6 +191,15 @@ class SalesCashSaleIT extends CashSaleTestBase {
         assertThat(s.get("branchId").asString()).isEqualTo(branch);
         assertThat(s.get("profileId").asString()).isEqualTo(profile);
         assertThat(s.get("status").asString()).isEqualTo("draft");
+        // C6: each line says whether its product is serial-tracked (the handover and the Reverse ask for serials)
+        JsonNode line = ok(200, "GET", "/sales/orders/" + id, null).get("lines").get(0);
+        assertThat(line.has("serialTracking")).isTrue();
+        assertThat(line.get("serialTracking").asBoolean()).isFalse();
+        // C6: the sale register finds a cash sale by its buyer's name (the walk-in partner's name does not match)
+        List<String> found = new ArrayList<>();
+        ok(200, "GET", "/sales/orders?saleType=cash&pageSize=100&q=Construction", null).get("data")
+                .forEach(x -> found.add(x.get("id").asString()));
+        assertThat(found).contains(id);
 
         Map<String, Object> bad = saleBody(branch, null, goods, 1);
         bad.put("saleType", "barter");
