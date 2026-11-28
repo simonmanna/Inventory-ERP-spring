@@ -1,13 +1,15 @@
 # ADR-S094 — Centralized Sales: one Sale document from order to invoice
 
-- Status: **proposed, revision 3** (2026-11-28). The owner approved revision 3 for the next step. The architecture is
-  approved in principle; only C0 (documentation and read-only assessment) may proceed. C1–C8 are not approved, and
-  production is NO-GO (review status below). Revisions 1 and 2 were reviewed and are replaced by this text.
+- Status: **accepted for implementation** (owner, 2026-11-28), revision 3. After the C0 assessment the owner chose the
+  recommended option for every open decision, dropped the historical migration (live holds demo data only) and asked
+  for the build: see "Owner decisions (2026-11-28)" below. Deployment to live is a separate owner decision.
+  Revisions 1 and 2 were reviewed and are replaced by this text.
 - Extension: changes Spring-only sales and invoicing code. NestJS parity routes keep their contract: `POST /invoices`,
-  `POST /credit-notes`, `/recurring`, POS, `/orders`, rental, repair (§8). One parity deviation is proposed: the
-  idempotency fix for D-IDEM-1 (§6), which needs owner approval (OD-14).
-- Migrations: none yet. V730–V749 are reserved for this ADR; re-verify across all refs before use.
-- Supersedes in part: ADR-S056 (branch cash sales with head-office invoicing), once C3 and C5 ship. Builds on
+  `POST /credit-notes`, `/recurring`, POS, `/orders`, rental, repair (§8). One parity deviation, approved (OD-14): the
+  idempotency fix for D-IDEM-1 (§6).
+- Migrations: V730–V749 are reserved for this ADR (re-verified across all refs on 2026-11-28; the highest number in
+  use on any branch is V722).
+- Supersedes in part: ADR-S056 (branch cash sales with head-office invoicing), once C3 and C6 ship. Builds on
   ADR-S011 (sales O2C), ADR-S073 (deferred revenue) and ADR-S080 (FX deposits).
 - Spec: [`sales.md`](../spec/sales.md), [`cash-sales.md`](../spec/cash-sales.md),
   [`invoicing.md`](../spec/invoicing.md), [`sales-postings.md`](../spec/sales-postings.md). Planned changes there are
@@ -28,6 +30,38 @@
 | C3 cash-sale implementation | Not approved |
 | C5 historical migration | Not approved |
 | Production deployment | **NO-GO** |
+
+**Owner decisions (2026-11-28)**: "use recommended settings, you can clear the data. its just demo data. dont worry
+to migrate or something. just code and develop."
+
+| Topic | Decision | Effect on the build |
+|---|---|---|
+| Stages | C1a, C1b, C1, C2, C3, C4, C6 and C7 approved for development; the review gates above are replaced for development. | Built as stacked PRs, one per stage. |
+| C5 historical migration | **Dropped.** Legacy cash sales (`SalesSubmission`) are demo data and are not migrated. | No migration, preflight guards, replay journal or freeze tooling. Legacy cash-sale data is cleared at deploy, after the owner confirms that step. OD-15 and AD-11 are moot. |
+| Legacy cash-sale module | Replaced by the cash Sale. | After C6 the web no longer creates legacy cash sales; the legacy screens and routes stay read-only until C8 removes them. |
+| AD-1 | Interim path: an order-type Sale with a full advance. | C3d (cash paid now, delivered later) is not built. |
+| AD-2, AD-16 | Contract liability (`unearned_revenue`), released at **dispatch**. | F4 deferral is built (stage C2b). |
+| AD-3 | Period-end accrual for delivered, not invoiced. | Stage C7b, after the core. P7 per delivery stays available where the revenue policy already uses it. |
+| AD-4, AD-5 | Tax points as designed (§3); every sale invoice, the zero-total final invoice and reversal credit notes are fiscalised through the outbox. | — |
+| AD-6, AD-7, AD-8 | Approved: P4 + P8 + P11 for cash; one gap-free invoice series per organization; walk-in partner per branch with `requireTaxNumberAbove`. | — |
+| AD-9 | Existing returns accounts; restock at the original issue cost; damaged to quarantine, scrap to the scrap account; refund over the original tender by default; customer-credit retention with permission. | — |
+| AD-10, OD-4 | Fleet transport charges stay on their own invoice. | C4f not built. |
+| AD-12 | POS refunds and settled voids reduce the measures on the refund date; write-offs are excluded (bad debt). | §9 as written. |
+| AD-13 | The module sources in §8.1 are approved. | — |
+| AD-14 | **Pro-rata** deduction of taxed down payments. | C1b. |
+| AD-15, AD-17 | Approved: a credit note on a down-payment invoice reduces its deposit and is refused once consumed; a zero-total final invoice is a tax invoice. | C1b. |
+| AD-18 | Nothing to correct (C0: no occurrences). | — |
+| AD-19 | Zero-value sales: delivery note only, no tax invoice. | C2. |
+| AD-20 | Quantity credit without a return: own permission plus approval; no stock movement; posted like a return credit. | C2. |
+| OD-1, OD-2 | Yes: counter pickup is exempt from delivery-posting approval and delivery QC; quotation → POS `Order` conversion is retired after a usage check. | OD-2 is a small separate change. |
+| OD-3 | Manual customer invoices stay allowed; the per-organization switch is built, default `allowed`. | C4. |
+| OD-5, OD-10, OD-11 | Release lead and window are set when a deploy is requested. Hypercare 7 days. No command journal (C5 dropped). | — |
+| OD-6, OD-7 | Yes. | C3, C1. |
+| OD-8 | No self-approval; an audited organization setting may allow it for `sales:configure` holders. | C1. |
+| OD-9 | Excess non-cash payment is refused. | C3. |
+| OD-12 | A kernel in-transaction outbox is a separate ADR, outside this one. | Not built here. |
+| OD-13 | Enable WAL archiving on the live host at the next deploy (needs a restart). | Ops task, done with the owner at deploy. |
+| OD-14 | The idempotency deviation is approved. | C1a; `CONTRACT.md` §6 updated. |
 
 **Governing principle** (from the review): accounting correctness and historical integrity are never sacrificed to
 make the new sales workflow simpler. Where the two conflict, the workflow is gated until a decision, not simplified.
@@ -1271,8 +1305,9 @@ are dropped after each test.
 ## 13. Stages and acceptance criteria
 
 General rules:
-- One PR per stage, with a review stop after each. **No stage starts without the owner's go.**
-- Dedicated worktree off a fresh `origin/main`.
+- One PR per stage. The owner approved development of every stage below except C5 (dropped) on 2026-11-28; each PR
+  still waits for the owner's merge.
+- Dedicated worktree; the stage PRs stack on the C0 docs PR.
 - Migration block V730–V749, re-verified across all refs.
 - Fast loop only (`compileJava compileTestJava` + `fastTest --tests`). No full build unless the owner asks.
 
@@ -1288,16 +1323,18 @@ redesign.
 | **C2** Returns / credits / outcome / completion (after AD-9, AD-15, AD-20) | §7, §4.4, §4.5 | RT, CS and FO groups · `qtyCredited` for every credit path · `SalesReturnFlowIT` green |
 | **C3** Cash pickup | §5: payment model, T1, handover, fiscal outbox | Exact F1 journals · PM, PH, FI, TP, RC, FR, CC, RV groups green · R1–R3 = 0 · 20-line confirm p95 < 1.5 s and CC-5 without timeout on the rehearsal DB |
 | **C4** Invoice from sale + typed source contract | §8 | IS group · `sourceKind` backfilled on every existing customer document before the constraint is added and validated · parity scenarios unchanged · recurring unchanged |
-| **C5** Migration + consumers + rollout tooling | §10, §11: freeze switch, job flags, command journal, kill switches, reconciliation reports | MG-1…MG-3 · every consumer proof · snapshot equality on the rehearsal copy · R6 = 0 |
+| **C2b** Revenue deferral for invoice-before-delivery (AD-2 = A, AD-16 = dispatch) | §3.6 | DF-1…DF-5 · V1–V5 hold |
+| ~~**C5** Migration + consumers + rollout tooling~~ | **Dropped by the owner (2026-11-28)**: no historical migration; legacy demo data is cleared at deploy. §10 and §11 stay as the reference if a real migration is ever needed. | — |
 | **C6** Web | screens incl. approval submit / withdraw, tender panel (card, change), handover block, return serial / lot entry, outcome and settlement badges | build · i18n · e2e smoke F1 / F3 / F5 / F6 · no console errors |
 | **C7** Reporting | §9 | R5a–R5g = 0 · RP-1 and RP-2 bridges explained |
-| **Release** | C1a–C7 | RB-1…RB-6 passed within 7 days · go/no-go criteria met · P0–P6 executed · RP-3 after go-live |
+| **C7b** Period-end accrual of delivered, not invoiced (AD-3) | §3.7 F3 | accrual and next-period reversal ITs · R5f |
+| **Release** | C1a–C7b, when the owner asks for a deploy | standard pre-deploy dump; legacy cash-sale demo data cleared only after the owner confirms; WAL archiving enabled (OD-13); RP-3 after go-live |
 | **C8** Cleanup (next release) | drop legacy tables and code; command journal off after release closure | owner verification · one release elapsed · no reads of legacy tables · fresh backup |
-| Gated | C3d cash delivered later (AD-1, AD-4); C4f freight on the invoice (AD-10, OD-4); F4 deferral (AD-2, AD-16); kernel in-transaction outbox (OD-12) | each after its decision |
+| Not built | C3d cash delivered later (AD-1 chose the interim path); C4f freight on the invoice (OD-4: no); kernel in-transaction outbox (OD-12: separate ADR) | — |
 
 ---
 
-## 14. Remaining decisions
+## 14. Decisions (answered by the owner on 2026-11-28; see the table at the top)
 
 ### Accountant (go-live gate)
 
@@ -1350,8 +1387,7 @@ Recorded in `sales-postings.md` with: question · decision · approved treatment
 ---
 
 ## 15. Next steps
-- **C0 documentation (approved)**: this ADR and the spec notes marked "ADR-S094 (proposed)", in a docs-only PR.
-- **C0 read-only assessment (approved)**: preflight, D-VAT-1, pre-guard invoice count and credit-note classification on
-  a **restored copy** of the live dump; WAL / PITR status read on the live host without changing anything.
-- Collect the AD and OD answers.
-- No code, migrations or data changes, and no C1 / C1a / C1b, until the owner says so.
+- C0 is done (this ADR, the spec notes and the [assessment](../audits/2026-11-28-adr-s094-c0-assessment.md)).
+- Build order: C1a → C1b → C1 → C2 → C2b → C3 → C4 → C6 → C7 → C7b, one stacked PR each. Web changes ship in the same
+  PR as the backend change they depend on, so every PR leaves the web working.
+- No deploy until the owner asks for one.

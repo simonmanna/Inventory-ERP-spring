@@ -61,7 +61,7 @@ the current behaviour is its own PR, linked in "Implementation ref", with its te
 Go-live needs every row with a decision, an approver and a date. `docs/spec/cash-sales.md` (production gate) points
 here for rows 7–9.
 
-### ADR-S094 decisions (proposed redesign)
+### ADR-S094 decisions (owner, 2026-11-28)
 
 [ADR-S094](../adr/ADR-S094-centralized-sales.md) §14 lists these. They are recorded here in the same way: decision,
 approved treatment, approver, date, implementation ref, test evidence. "Overlaps" points at the go-live row above that
@@ -69,26 +69,26 @@ the same answer settles.
 
 | # | Question | Overlaps | Decision | Approved treatment | Approver | Date | Implementation ref | Test evidence |
 |---|---|---|---|---|---|---|---|---|
-| AD-1 | Cash sale paid now, delivered later: interim order + full advance / contract liability / bill-and-hold | — | pending | | | | | |
-| AD-2 | Invoice before ownership transfer (F4): contract liability released at dispatch / period-end deferral journal / materiality threshold | row 4 | pending | | | | | |
-| AD-3 | Delivered-not-invoiced at period end: period-end accrual / per-delivery P7 | — | pending | | | | | |
-| AD-4 | Tax point per scenario (pickup; advances in Mode R vs Mode D; invoice before delivery) under local VAT law | rows 1, 7 | pending | | | | | |
-| AD-5 | EFRIS timing (cash confirm; all sale invoices; credit notes on reversal) and the zero-total invoice | row 8 | pending | | | | | |
-| AD-6 | Cash postings P4 + P8 + P11 with no unbilled-receivable (1215), deposit or 2216 entries | row 7 | pending | | | | | |
-| AD-7 | Branch-issued invoices from the single org gap-free series | — | pending | | | | | |
-| AD-8 | Walk-in invoicing (walk-in partner per branch, buyer identity, `requireTaxNumberAbove`) | row 9 | pending | | | | | |
-| AD-9 | Returns accounts, restock cost, damaged / scrap accounts, refund tender rules, credit retention | row 3 | pending | | | | | |
-| AD-10 | Transport revenue account if freight moves onto the sale invoice | — | pending | | | | | |
-| AD-11 | Migrated history acceptance (1215 / 2216 residuals zero after drain) | — | pending | | | | | |
-| AD-12 | POS refunds / voids / write-offs in the revenue measures | — | pending | | | | | |
-| AD-13 | Module sources allowed to issue customer invoices (ADR-S094 §8.1) | — | pending | | | | | |
-| AD-14 | Deducting taxed down payments across partial invoices: pro-rata / oldest-first / manual | row 2 | pending | | | | | |
-| AD-15 | A credit note on a down-payment invoice reduces the deposit; refused once consumed | — | pending | | | | | |
-| AD-16 | Contract-liability account and release trigger for F4 (dispatch / POD) | row 4 | pending | | | | | |
-| AD-17 | Zero-total final invoice after a 100% taxed advance, issued as a tax invoice | — | pending | | | | | |
-| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred | — | pending | | | | | |
-| AD-19 | Zero-value sales (replacement, sample): tax invoice required, or delivery note only | — | pending | | | | | |
-| AD-20 | Quantity credit without a return (write-off): accounts, approval level, stock treatment | — | pending | | | | | |
+| AD-1 | Cash sale paid now, delivered later: interim order + full advance / contract liability / bill-and-hold | — | interim order + full advance | Order-type Sale with a full advance (J1 / J1-D); no cash-delivered-later flow | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-2 | Invoice before ownership transfer (F4): contract liability released at dispatch / period-end deferral journal / materiality threshold | row 4 | contract liability released at dispatch | ADR-S094 §3.6 Option A, account mapping `unearned_revenue` | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-3 | Delivered-not-invoiced at period end: period-end accrual / per-delivery P7 | — | period-end accrual | Period-end accrual of delivered-not-invoiced, reversed next period; P7 stays where the policy uses it | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-4 | Tax point per scenario (pickup; advances in Mode R vs Mode D; invoice before delivery) under local VAT law | rows 1, 7 | as designed | Pickup: tax at the cash invoice; advances per `depositTaxPoint`; invoice before delivery: tax at the invoice | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-5 | EFRIS timing (cash confirm; all sale invoices; credit notes on reversal) and the zero-total invoice | row 8 | fiscalise every sale invoice | Through the fiscal outbox, including the zero-total final invoice and reversal credit notes | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-6 | Cash postings P4 + P8 + P11 with no unbilled-receivable (1215), deposit or 2216 entries | row 7 | approved | P4 + P8 + P11, no 1215 / deposit / 2216 entries | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-7 | Branch-issued invoices from the single org gap-free series | — | approved | One gap-free invoice series per organization | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-8 | Walk-in invoicing (walk-in partner per branch, buyer identity, `requireTaxNumberAbove`) | row 9 | approved | Walk-in partner per branch; buyer identity per `requireTaxNumberAbove` | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-9 | Returns accounts, restock cost, damaged / scrap accounts, refund tender rules, credit retention | row 3 | existing accounts | Restock at the original issue cost; damaged to quarantine; scrap to the scrap account; refund over the original tender; retention with permission | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-10 | Transport revenue account if freight moves onto the sale invoice | — | not applicable | Freight stays on the fleet invoice (OD-4) | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-11 | Migrated history acceptance (1215 / 2216 residuals zero after drain) | — | not applicable | No historical migration (C5 dropped) | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-12 | POS refunds / voids / write-offs in the revenue measures | — | as designed | Refunds and settled voids negative on the refund date; write-offs excluded (bad debt) | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-13 | Module sources allowed to issue customer invoices (ADR-S094 §8.1) | — | approved | ADR-S094 §8.1 module sources | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-14 | Deducting taxed down payments across partial invoices: pro-rata / oldest-first / manual | row 2 | pro-rata | Deduction = advance remaining × invoiced net / remaining order net, last invoice takes the rest | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-15 | A credit note on a down-payment invoice reduces the deposit; refused once consumed | — | approved | Credit note on a DP invoice reduces its deposit; refused once consumed | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-16 | Contract-liability account and release trigger for F4 (dispatch / POD) | row 4 | dispatch | Release at dispatch, per load line | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-17 | Zero-total final invoice after a 100% taxed advance, issued as a tax invoice | — | approved | Zero-total final invoice is issued as a tax invoice | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred | — | none needed | C0 assessment: no occurrences | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-19 | Zero-value sales (replacement, sample): tax invoice required, or delivery note only | — | delivery note only | Zero-value sales get no tax invoice | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-20 | Quantity credit without a return (write-off): accounts, approval level, stock treatment | — | approved | Own permission plus approval; no stock movement; posted like a return credit | owner (recommended option) | 2026-11-28 | ADR-S094 | |
 
 ## 3. Policy matrix (fulfilment and recognition)
 
