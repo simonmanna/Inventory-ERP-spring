@@ -61,6 +61,35 @@ the current behaviour is its own PR, linked in "Implementation ref", with its te
 Go-live needs every row with a decision, an approver and a date. `docs/spec/cash-sales.md` (production gate) points
 here for rows 7–9.
 
+### ADR-S094 decisions (proposed redesign)
+
+[ADR-S094](../adr/ADR-S094-centralized-sales.md) §14 lists these. They are recorded here in the same way: decision,
+approved treatment, approver, date, implementation ref, test evidence. "Overlaps" points at the go-live row above that
+the same answer settles.
+
+| # | Question | Overlaps | Decision | Approved treatment | Approver | Date | Implementation ref | Test evidence |
+|---|---|---|---|---|---|---|---|---|
+| AD-1 | Cash sale paid now, delivered later: interim order + full advance / contract liability / bill-and-hold | — | pending | | | | | |
+| AD-2 | Invoice before ownership transfer (F4): contract liability released at dispatch / period-end deferral journal / materiality threshold | row 4 | pending | | | | | |
+| AD-3 | Delivered-not-invoiced at period end: period-end accrual / per-delivery P7 | — | pending | | | | | |
+| AD-4 | Tax point per scenario (pickup; advances in Mode R vs Mode D; invoice before delivery) under local VAT law | rows 1, 7 | pending | | | | | |
+| AD-5 | EFRIS timing (cash confirm; all sale invoices; credit notes on reversal) and the zero-total invoice | row 8 | pending | | | | | |
+| AD-6 | Cash postings P4 + P8 + P11 with no 1215 / 2350 / 2216 | row 7 | pending | | | | | |
+| AD-7 | Branch-issued invoices from the single org gap-free series | — | pending | | | | | |
+| AD-8 | Walk-in invoicing (walk-in partner per branch, buyer identity, `requireTaxNumberAbove`) | row 9 | pending | | | | | |
+| AD-9 | Returns accounts, restock cost, damaged / scrap accounts, refund tender rules, credit retention | row 3 | pending | | | | | |
+| AD-10 | Transport revenue account if freight moves onto the sale invoice | — | pending | | | | | |
+| AD-11 | Migrated history acceptance (1215 / 2216 residuals zero after drain) | — | pending | | | | | |
+| AD-12 | POS refunds / voids / write-offs in the revenue measures | — | pending | | | | | |
+| AD-13 | Module sources allowed to issue customer invoices (ADR-S094 §8.1) | — | pending | | | | | |
+| AD-14 | Deducting taxed down payments across partial invoices: pro-rata / oldest-first / manual | row 2 | pending | | | | | |
+| AD-15 | A credit note on a down-payment invoice reduces the deposit; refused once consumed | — | pending | | | | | |
+| AD-16 | Contract-liability account and release trigger for F4 (dispatch / POD) | row 4 | pending | | | | | |
+| AD-17 | Zero-total final invoice after a 100% taxed advance, issued as a tax invoice | — | pending | | | | | |
+| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred | — | pending | | | | | |
+| AD-19 | Zero-value sales (replacement, sample): tax invoice required, or delivery note only | — | pending | | | | | |
+| AD-20 | Quantity credit without a return (write-off): accounts, approval level, stock treatment | — | pending | | | | | |
+
 ## 3. Policy matrix (fulfilment and recognition)
 
 | # | Physical movement | Ownership transfer | COGS | Revenue | Valid |
@@ -138,6 +167,116 @@ Open questions for the accountant (block S6):
 5. Treatment of weighbridge excess over ordered quantity (bill or absorb).
 6. (S9, Q-S9-1) Rebate settlement credit notes are issued without VAT; confirm whether a volume rebate must reduce
    output VAT (tax credit note) and whether accruals should be net of VAT.
+
+## 5a. Taxed advances and the final invoice — ADR-S094 (proposed)
+
+**Known defect D-VAT-1** (on `main`; [ADR-S094](../adr/ADR-S094-centralized-sales.md) §3.5): with
+`depositTaxPoint = receipt` (Mode R):
+- a down-payment invoice (D2) records the deposit at its **net** amount;
+- the final invoice (D4) then charges full VAT on all goods and has no deduction line;
+- applying the net deposit (P9) therefore leaves AR open by the advance's VAT, and output VAT is counted twice.
+
+D2 followed by D4 in the table above assumes an untaxed deposit, so it only holds in Mode D (`delivery`, the default),
+which is not affected.
+
+**Proposed rule** (not built; needs AD-14, AD-15 and AD-17):
+- In Mode R the final invoice deducts the taxed down payment with a negative line on the deposit account, carrying the
+  same tax (Odoo's method).
+- The deduction consumes the deposit. P9 is used only for untaxed deposits (Mode D).
+- A credit note on a down-payment invoice reduces its deposit.
+- Zero-total final invoices are allowed.
+
+**Common data**: 10 units × 100.00 = net 1,000.00; VAT 18% = 180.00; gross 1,180.00; unit cost 60.00 (COGS 600.00).
+
+| Required scenario | Where |
+|---|---|
+| 100% down payment with a tax invoice | J1 (Mode R); J1-D (Mode D) |
+| Partial advance, then final delivery | J2 (both modes) |
+| Deposit taxed at receipt | Mode R: J1, J2-R, J3, J4-A, J4-D |
+| Deposit taxed at the final invoice | Mode D: J1-D, J2-D, J3 Mode D variant, J4-C |
+| Partial delivery and partial invoicing | J3 (pro-rata, oldest-first and Mode D variants) |
+| Credit note after an advance invoice | J4-A (cancel), J4-B (return), J4-D (advance reduced) |
+
+**J1 — 100% advance with a tax invoice (Mode R)**
+
+| Step | Entry | Dr | Cr |
+|---|---|---|---|
+| 1 Down-payment invoice DP-1 (P3) | AR | 1,180.00 | |
+| | Customer deposit (2350) | | 1,000.00 |
+| | Output VAT | | 180.00 |
+| 2 Receipt (P11) | Bank / AR | 1,180.00 | 1,180.00 |
+| 3 Dispatch 10 units (P4) | COGS / Inventory | 600.00 | 600.00 |
+| 4 Final invoice INV-1: goods 1,000.00 + VAT 180.00; deduction −1,000.00 (2350) VAT −180.00 → **total 0.00** | Customer deposit | 1,000.00 | |
+| | Output VAT (deduction) | 180.00 | |
+| | Revenue | | 1,000.00 |
+| | Output VAT (goods) | | 180.00 |
+
+Balances: AR 0 · deposit 0 · **output VAT 180.00 (once)** · revenue 1,000.00 · bank 1,180.00 · COGS 600.00.
+
+*Today's code (D-VAT-1)*: step 4 posts Dr AR 1,180.00 / Cr revenue 1,000.00 / Cr VAT 180.00. The 1,000.00 deposit is
+then applied, which leaves AR open at **180.00** and output VAT at **360.00**.
+
+**J1-D — 100% advance, Mode D**: P2 Dr Bank / Cr deposit 1,180.00 → P4 → P8 Dr AR 1,180.00 / Cr revenue 1,000.00,
+Cr VAT 180.00 → P9 Dr deposit / Cr AR 1,180.00. AR 0, deposit 0, VAT 180.00.
+
+**J2 — 30% advance, then full delivery**
+
+| Mode R (deposit taxed at receipt) | Dr | Cr |
+|---|---|---|
+| DP invoice: AR / deposit 300.00, VAT 54.00 | 354.00 | 354.00 |
+| Receipt: Bank / AR | 354.00 | 354.00 |
+| Dispatch: COGS / Inventory | 600.00 | 600.00 |
+| Final invoice: AR 826.00, deposit 300.00, VAT 54.00 / revenue 1,000.00, VAT 180.00 | 1,180.00 | 1,180.00 |
+| Receipt: Bank / AR | 826.00 | 826.00 |
+
+Balances: AR 0, deposit 0, **VAT 54 + 180 − 54 = 180**, revenue 1,000, bank 1,180.
+
+| Mode D (deposit taxed at the final invoice) | Dr | Cr |
+|---|---|---|
+| Deposit (P2): Bank / deposit | 354.00 | 354.00 |
+| Dispatch: COGS / Inventory | 600.00 | 600.00 |
+| Final invoice (P8): AR / revenue 1,000.00, VAT 180.00 | 1,180.00 | 1,180.00 |
+| Apply deposit (P9): deposit / AR | 354.00 | 354.00 |
+| Receipt (P11): Bank / AR | 826.00 | 826.00 |
+
+Balances: AR 0, deposit 0, VAT 180, revenue 1,000, bank 1,180.
+
+**J3 — Partial delivery and partial invoicing, 50% advance, Mode R, pro-rata deduction (AD-14)**
+
+| Step | Entry |
+|---|---|
+| DP invoice 590.00 | Dr AR 590 / Cr deposit 500, Cr VAT 90; receipt 590 |
+| Dispatch 4 units | Dr COGS 240 / Cr Inventory 240 |
+| Invoice 1 (4 units): goods 400 + VAT 72; deduction 400/1,000 × 500 = 200 + VAT 36 → total **236.00** | Dr AR 236, Dr deposit 200, Dr VAT 36 / Cr revenue 400, Cr VAT 72; receipt 236 |
+| Dispatch 6 units | Dr COGS 360 / Cr Inventory 360 |
+| Invoice 2 (6 units): goods 600 + VAT 108; deduction rest 300 + VAT 54 → total **354.00** | Dr AR 354, Dr deposit 300, Dr VAT 54 / Cr revenue 600, Cr VAT 108; receipt 354 |
+
+Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · COGS 600 · bank 1,180.
+- *Oldest-first variant*: invoice 1 deducts 400 + 72 (total 0); invoice 2 deducts 100 + 18 (total 590). VAT
+  90 + 0 + 90 = 180.
+- *Mode D variant*: deposit 590 untaxed; P9 applies 472 to invoice 1 and 118 to invoice 2; receipt 590. VAT 72 + 108 =
+  180.
+
+**J4 — Credit note after an advance invoice**
+
+| Case | Entries | Balances after |
+|---|---|---|
+| A. Order cancelled before delivery; Mode R advance 354 (300 + 54) paid | Credit note on DP-1: Dr deposit 300, Dr VAT 54 / Cr AR 354. The linked deposit record is reduced by 300; refused if already consumed (AD-15). Refund: Dr AR 354 / Cr Bank 354, **or** keep as customer credit. | deposit 0, VAT 0, AR 0 (or a 354 customer credit), bank 0 |
+| B. Return of 2 units after the J2-R final invoice | Credit note on INV-1, goods only: Dr sales returns 200, Dr VAT 36 / Cr AR 236. Stock return (P13): Dr Inventory 120 / Cr COGS 120. Refund 236 or keep as credit. The deduction is not reversed. | revenue net 800, VAT 144, COGS 480, deposit 0, customer net paid 944 |
+| C. Order cancelled; Mode D deposit 354 | Refund (P10): Dr deposit 354 / Cr Bank 354; no VAT effect | deposit 0, VAT 0 |
+| D. Advance reduced 354 → 236 before delivery (Mode R) | Credit note on DP-1: Dr deposit 100, Dr VAT 18 / Cr AR 118; refund 118. The final invoice deducts 200 + 36 → total 944. | VAT 54 − 18 + 180 − 36 = 180; deposit 0; cash 354 − 118 + 944 = 1,180 |
+
+**Reconciliation summary** (closing balances; cash = net received after refunds):
+
+| Example | AR open | Deposit (2350) | Output VAT | Revenue (net) | COGS | Cash | Check |
+|---|---|---|---|---|---|---|---|
+| J1-R, J1-D, J2-R, J2-D, J3 (all variants), J4-D | 0 | 0 | 180 | 1,000 | 600 | 1,180 | VAT = 18% × revenue; cash = revenue + VAT |
+| J4-A, J4-C (cancelled, refunded) | 0 | 0 | 0 | 0 | 0 | 0 | nothing left open |
+| J4-B (2 units returned, refunded) | 0 | 0 | 144 | 800 | 480 | 944 | VAT = 18% × 800 |
+| **Today's code, J1-R (D-VAT-1)** | **180** | 0 | **360** | 1,000 | 600 | 1,180 | ✗ VAT counted twice; customer shown as owing 180 |
+
+Invariants V1–V5 (ADR-S094 §3.4) are asserted in each example's test. V1: Σ output VAT per sale = VAT on net delivered
+and invoiced goods.
 
 ## 6. Worked example — contractor, 100 t aggregate, policy A (default)
 

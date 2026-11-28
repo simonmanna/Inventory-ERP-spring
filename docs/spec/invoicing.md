@@ -8,6 +8,11 @@
 | Feature flag | always on |
 | Java package | `com.inventoryerp.invoicing` |
 
+> **ADR-S094 (proposed, not implemented).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) §8 lists the 27
+> creators of customer invoices and credit notes. It plans a typed source contract (`SourceRef`, one creation entry
+> point, a `Document.sourceKind` column) and an optional per-organization restriction on manual customer invoices,
+> off by default. Parity routes (`POST /invoices`, `POST /credit-notes`, `/recurring`) keep their contract.
+
 ## Purpose
 
 Customer invoices, credit notes, vendor bills (+ receipt matching, supplier ledger), customer payments with allocations and withholding, supplier payments, tax calculation, AR/AP reports.

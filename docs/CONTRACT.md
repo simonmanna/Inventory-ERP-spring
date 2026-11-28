@@ -111,6 +111,9 @@ Timestamps should be emitted with millisecond precision to match Prisma (`Instan
   2. Existing completed + **different hash** → 409.
   3. Existing **pending** → 409 `{ "code": "OPERATION_PENDING", "message": "This operation needs recovery; do not submit it with a new key. Retry with the same key.", "operationKey": key, "recovery": <stored responseJson> }`.
      Money route pending > 2 min with empty outcome = abandoned → delete and re-run.
+     Known issue D-IDEM-1 ([ADR-S094](adr/ADR-S094-centralized-sales.md) §6): if the first execution is still
+     running after 2 min, a retry runs it a second time. The proposed fix (lease + fencing) is a parity deviation
+     awaiting owner approval (OD-14). Until then, this rule is the contract.
   4. None → insert pending row (unique constraint = lock), run handler, store response, mark completed.
      Handler failure → the pending row is **kept** for recovery (same key again → 409 `OPERATION_PENDING`),
      except a definitive 4xx on an OUTCOME route with no saved outcome, cached as completed with `safeToRetry: true`.

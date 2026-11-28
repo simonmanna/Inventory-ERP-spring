@@ -6,6 +6,14 @@ Design: [ADR-S011](../adr/ADR-S011-sales-o2c.md). Postings: [`sales-postings.md`
 Status: **design (Step 0)**. Nothing below is built yet. This is a non-Nest extension: no parity routes are added;
 existing parity routes keep their contract (see "Backward compatibility").
 
+> **ADR-S094 (proposed, not implemented).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) plans to make
+> `SalesOrder` the one central Sale document (`saleType` `order` | `cash`), with invoices created from the Sale. It
+> separates approval from the commercial status (explicit submit for approval) and defines completion and
+> financial-outcome rules. Nothing below changes until a stage is approved and shipped.
+> **Known defect D-VAT-1** (ADR-S094 §3.5): with `depositTaxPoint = receipt`, the final invoice after a taxed
+> down-payment invoice charges VAT on the advance again and leaves a receivable equal to that VAT. The fix (stage C1b)
+> waits for accountant decisions AD-14, AD-15 and AD-17 ([`sales-postings.md`](sales-postings.md) §5a).
+
 ## 1. Scope and ownership
 
 Sales owns commercial commitments and orchestrates the rest of order-to-cash.
