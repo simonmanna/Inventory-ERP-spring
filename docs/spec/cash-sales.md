@@ -5,6 +5,11 @@ Design: [ADR-S056](../adr/ADR-S056-branch-cash-sales-central-invoicing.md). Rela
 
 Status: **CS-0 design frozen (2026-11-04)**. This is a Spring-native extension with no parity routes.
 
+> **ADR-S094 (proposed, not implemented).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) plans to replace this
+> flow with a Sale of type `cash`: handover, invoice and full payment at the counter in one confirm, with no
+> head-office review queue. Existing cash sales would be migrated with their ids; ledgers are never rewritten. This
+> spec stays in force until stages C3 and C5 are approved and shipped.
+
 **Production gate.** Before go-live, the accountant must sign off three things:
 
 - the VAT tax point for showroom sales;
