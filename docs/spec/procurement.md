@@ -68,6 +68,18 @@ same points as Nest. No subscribers in this module.
 
 ## Deviations
 
+- **IPR Phase 1a, LK-1 (2026-11-27).** The PO receive route and goods-receipt post take the supplier lock
+  (`BillReceiptMatcherService.lockSupplier`) before they update any purchase-order row. A bill post takes the same
+  order (supplier → receipt lines → PO lines → PO), so a receipt and a bill on the same order no longer deadlock
+  (`ReceiptBillLockOrderIT`). There is no behaviour change beyond the wait.
+
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**):
+
+- **GL-1: `GET /procurement/reports/grni`** sums the GRNI account in base currency (`baseDebit`, `baseCredit`).
+- **GL-8: return to vendor stock account.** A posted debit note that returns goods credits the account the product's
+  receipts debit (its `STOCK_IN` rule or inventory account override, `StockPostingService.stockAccount`), not the
+  organisation's `stock_valuation` mapping.
+
 Approved by the owner 2026-11-17 (accounting and costing review,
 [audit](../audits/2026-11-17-accounting-costing-review.md)):
 

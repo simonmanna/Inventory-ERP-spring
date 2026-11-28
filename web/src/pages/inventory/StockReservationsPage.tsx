@@ -12,6 +12,7 @@ import { DataTable, type Column } from '@/components/data-table';
 import {
   DataTablePagination, FilterSelect, ListCard, ListPageHeader, ListToolbar, SearchInput, useListState,
 } from '@/components/list';
+import { canConsumeReservation } from '@/features/inventory/cost-visibility';
 import { useAuthStore } from '@/stores/auth.store';
 import { api } from '@/lib/api';
 import { notify } from '@/lib/notify';
@@ -100,7 +101,9 @@ export function StockReservationsPage() {
       render: (r) => canMove && r.status === 'active' && (
         <div className="flex justify-end gap-1">
           <Button size="sm" variant="outline" disabled={close.isPending} onClick={() => close.mutate({ action: 'release', r })}>{tx('Release')}</Button>
-          <Button size="sm" variant="ghost" disabled={close.isPending} onClick={() => close.mutate({ action: 'consume', r })}>{tx('Consume')}</Button>
+          {canConsumeReservation(r) && (
+            <Button size="sm" variant="ghost" disabled={close.isPending} onClick={() => close.mutate({ action: 'consume', r })}>{tx('Consume')}</Button>
+          )}
         </div>
       ),
     },

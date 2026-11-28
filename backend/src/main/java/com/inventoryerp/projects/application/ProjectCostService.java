@@ -168,7 +168,8 @@ public class ProjectCostService {
         Instant date = instant(in.date());
         String id = UUID.randomUUID().toString();
         Issued issued = stock.issue(StockMove.of(in.productId(), location, in.quantity()).source("project_issue", id)
-                .notes(in.notes() == null ? "Issue to project " + p.get("code") : in.notes()).date(date).skipGl());
+                .notes(in.notes() == null ? "Issue to project " + p.get("code") : in.notes()).date(date).skipGl()
+                .honourReservations(null)); // IPR E-1a
         BigDecimal value = issued.totalValue().setScale(2, RoundingMode.HALF_UP);
         String text = "Project " + p.get("code") + " · " + w.get("code") + " · material";
         List<Line> lines = new ArrayList<>();
@@ -425,6 +426,14 @@ public class ProjectCostService {
                 .list();
     }
 
+    private com.inventoryerp.inventory.application.StockReversalService stockReturns;
+
+    /** IPR SW-3: linked restock through the engine (setter: keeps the constructor as it is). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setStockReturns(com.inventoryerp.inventory.application.StockReversalService stockReturns) {
+        this.stockReturns = stockReturns;
+    }
+
     /** Reverse a capture: the journal entry (with every cost line it carries) and, for an issue, the stock. */
     @Transactional
     public Map<String, Object> reverse(String costLineId) {
@@ -442,13 +451,17 @@ public class ProjectCostService {
                     + c.get("description")).get("id");
         }
         if ("project_issue".equals(c.get("sourceType")) && c.get("quantity") != null) {
-            Map<String, Object> led = SqlRows.one(jdbc.sql("SELECT \"locationId\" FROM \"InventoryLedger\" WHERE"
-                    + " \"organizationId\" = ? AND \"referenceType\" = 'project_issue' AND \"referenceId\" = ? LIMIT 1")
-                    .params(org(), c.get("sourceId")));
-            if (led != null) {
-                stock.receive(StockMove.of((String) c.get("sourceLineId"), (String) led.get("locationId"),
-                        SqlRows.dec(c, "quantity")).unitCost(SqlRows.dec(c, "rate")).moveType("reversal_in")
-                        .source("project_issue_reversal", costLineId).notes("Reversal of " + c.get("description")));
+            Long issued = jdbc.sql("SELECT count(*) FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                    + " \"referenceType\" = 'project_issue' AND \"referenceId\" = ? AND \"quantityChange\" < 0")
+                    .params(org(), c.get("sourceId")).query(Long.class).single();
+            if (issued > 0) {
+                // IPR SW-3: everything the issue still holds comes back against its rows (location, lot, serial and
+                // cost of each; reversesLedgerId), never more than was issued.
+                stockReturns.returnFromSource(new com.inventoryerp.inventory.application.StockReversalService
+                        .ReturnFromSource(com.inventoryerp.inventory.application.StockReversalService.IssueSource.of(
+                                "project_issue", (String) c.get("sourceId")), null, "project_issue_reversal",
+                                costLineId, null, "Reversal of " + c.get("description"), null, null, false,
+                                "reversal_in"));
             }
         }
         String where = c.get("journalEntryId") == null ? "id = ?" : "\"journalEntryId\" = ?";

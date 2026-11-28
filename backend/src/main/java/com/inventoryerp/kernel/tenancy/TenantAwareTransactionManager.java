@@ -1,5 +1,6 @@
 package com.inventoryerp.kernel.tenancy;
 
+import com.inventoryerp.kernel.common.Savepoints;
 import com.inventoryerp.shared.persistence.TenancyFilters;
 import jakarta.persistence.EntityManagerFactory;
 import java.sql.PreparedStatement;
@@ -7,6 +8,7 @@ import org.hibernate.Session;
 import org.springframework.orm.jpa.EntityManagerHolder;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -25,6 +27,7 @@ public class TenantAwareTransactionManager extends JpaTransactionManager {
     @Override
     protected void doBegin(Object transaction, TransactionDefinition definition) {
         super.doBegin(transaction, definition);
+        Savepoints.transactionBegun();
         String orgId = TenantContext.optionalOrganizationId();
         if (orgId == null || orgId.isEmpty()) {
             return;
@@ -42,5 +45,26 @@ public class TenantAwareTransactionManager extends JpaTransactionManager {
                 ps.execute();
             }
         });
+    }
+
+    /**
+     * IPR review 3 (#6): a participant that fails inside a {@link Savepoints#runIsolated} block does not mark the whole
+     * transaction rollback-only; the block's savepoint undoes it. Everywhere else: Spring's default.
+     */
+    @Override
+    protected void doSetRollbackOnly(DefaultTransactionStatus status) {
+        if (Savepoints.absorbParticipantRollback()) {
+            return;
+        }
+        super.doSetRollbackOnly(status);
+    }
+
+    @Override
+    protected void doCleanupAfterCompletion(Object transaction) {
+        try {
+            super.doCleanupAfterCompletion(transaction);
+        } finally {
+            Savepoints.transactionCompleted();
+        }
     }
 }

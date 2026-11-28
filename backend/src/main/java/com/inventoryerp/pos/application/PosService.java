@@ -120,7 +120,7 @@ public class PosService {
             throw ApiException.badRequest("Cart is empty");
         }
         String orgId = org();
-        OccurredAt.resolve((String) input.get("occurredAt"));
+        OccurredAt.resolveRecorded((String) input.get("occurredAt"), "pos.sale");
         String cashSessionId = requireCashSession(input);
         input.put("cashSessionId", cashSessionId);
         boolean isCredit = "credit".equals(input.get("settleMode"));
@@ -638,7 +638,7 @@ public class PosService {
     private Map<String, Object> settleTabInScope(String tableId, Map<String, Object> inputIn) {
         Map<String, Object> input = new LinkedHashMap<>(inputIn);
         String orgId = org();
-        OccurredAt.resolve((String) input.get("occurredAt"));
+        OccurredAt.resolveRecorded((String) input.get("occurredAt"), "pos.sale");
         input.put("cashSessionId", requireCashSession(input));
         tx.executeWithoutResult(st -> jdbc.sql("SELECT id FROM \"PosTable\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(tableId, orgId).query().listOfRows());
@@ -661,7 +661,7 @@ public class PosService {
     private Map<String, Object> settleOrderInScope(String orderId, Map<String, Object> inputIn) {
         Map<String, Object> input = new LinkedHashMap<>(inputIn);
         String orgId = org();
-        OccurredAt.resolve((String) input.get("occurredAt"));
+        OccurredAt.resolveRecorded((String) input.get("occurredAt"), "pos.sale");
         input.put("cashSessionId", requireCashSession(input));
         tx.executeWithoutResult(st -> jdbc.sql("SELECT id FROM \"Order\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(orderId, orgId).query().listOfRows());

@@ -496,6 +496,25 @@ class PlmIT extends PlmTestSupport {
         assertThat(jdbc.sql("SELECT l.code FROM \"StockTransfer\" t JOIN \"InventoryLocation\" l ON l.id ="
                 + " t.\"toLocId\" WHERE t.id = ?").param(trf.get("id").asString()).query(String.class).single())
                 .isEqualTo("QC-QUARANTINE");
+        // IPR X-3 follow-up (E3): once the hold transfer has moved, a quality release brings the stock back.
+        String trfId = trf.get("id").asString();
+        String quarantine = jdbc.sql("SELECT t.\"toLocId\" FROM \"StockTransfer\" t WHERE t.id = ?").param(trfId)
+                .query(String.class).single();
+        Res moved = keyedPost("/inventory/transfers/" + trfId + "/approve"); // an immediate transfer moves on approval
+        assertThat(moved.status()).as(moved.raw().body()).isIn(200, 201);
+        assertThat(onHand(noSupplier, quarantine)).isEqualByComparingTo("6");
+        assertThat(onHand(noSupplier, bakery)).isEqualByComparingTo("0");
+        String release = PLM + "/changes/" + eco2.get("id").asString() + "/rework-release";
+        JsonNode released = ok(200, "POST", release, Map.of("lines", List.of(Map.of("productId", noSupplier,
+                "quantity", 2))));
+        assertThat(released.get("released")).hasSize(1);
+        assertThat(onHand(noSupplier, bakery)).isEqualByComparingTo("2");
+        ok(200, "POST", release, Map.of());
+        assertThat(onHand(noSupplier, quarantine)).isEqualByComparingTo("0");
+        assertThat(onHand(noSupplier, bakery)).isEqualByComparingTo("6");
+        Res nothing = call("POST", release, Map.of(), adminToken);
+        assertThat(nothing.status()).isEqualTo(400);
+        assertThat(nothing.body().get("message").asString()).contains("is held in QC quarantine for rework");
         String out3 = product("ROUT3");
         String old3 = product("ROLD3");
         stockIn(bakery, old3, 1, 1);
@@ -516,5 +535,12 @@ class PlmIT extends PlmTestSupport {
         assertThat(call("GET", PLM + "/items/" + itemId, null, otherToken).status()).isEqualTo(404);
         assertThat(call("GET", PLM + "/items", null, otherToken).body().toString()).doesNotContain(itemId);
         assertThat(sweepGetRoutes("com.inventoryerp.plm.web")).isEmpty();
+    }
+
+    Res keyedPost(String path) {
+        Map<String, String> h = new java.util.LinkedHashMap<>();
+        h.put("Authorization", "Bearer " + adminToken);
+        h.put("Idempotency-Key", UUID.randomUUID().toString());
+        return call("POST", path, Map.of(), h);
     }
 }

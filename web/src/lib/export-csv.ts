@@ -4,9 +4,15 @@
  * formula by Excel/Sheets. Item, waiter and customer names are user-editable,
  * so prefix such cells with a single quote to force them to render as text.
  */
-function csvCell(v: string): string {
+const NUMBER = /^[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?$/;
+
+/**
+ * IPR S-8: a plain number (a negative quantity or value such as `-3` or `-12.50`) is data, not a formula: it stays a
+ * number so the spreadsheet can sum it. Text that only starts like a formula is still guarded.
+ */
+export function csvCell(v: string | number | null | undefined): string {
   const s = String(v ?? '');
-  const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  const guarded = !NUMBER.test(s.trim()) && /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
   return `"${guarded.replace(/"/g, '""')}"`;
 }
 
