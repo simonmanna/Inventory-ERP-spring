@@ -195,8 +195,10 @@ public class SalesOrderService {
         }
         if (!blank(p.get("q"))) {
             String like = "%" + com.inventoryerp.kernel.crud.BaseCrudService.escapeLike(p.get("q").trim()) + "%";
-            where.append(" AND (o.number ILIKE ? OR p.name ILIKE ? OR o.\"customerRef\" ILIKE ?)");
-            params.addAll(List.of(like, like, like));
+            // ADR-S094 C6: a cash sale is also found by its buyer's name (a walk-in customer is named only there)
+            where.append(" AND (o.number ILIKE ? OR p.name ILIKE ? OR o.\"customerRef\" ILIKE ? OR o.\"customerName\""
+                    + " ILIKE ?)");
+            params.addAll(List.of(like, like, like, like));
         }
         if (!blank(p.get("from"))) {
             where.append(" AND o.\"createdAt\" >= ?");
@@ -342,7 +344,7 @@ public class SalesOrderService {
     List<Map<String, Object>> lines(String orderId) {
         List<Map<String, Object>> lines = db.rows("SELECT l.*, pr.name AS \"productName\", pr.code AS \"productCode\", (SELECT v.name FROM"
                 + " \"ProductVariant\" v WHERE v.id = l.\"variantId\") AS \"variantName\","
-                + " pr.\"trackInventory\", pr.\"sizingMode\", pr.\"sizingUnit\", t.name AS \"taxName\", t.rate AS"
+                + " pr.\"trackInventory\", pr.\"serialTracking\", pr.\"sizingMode\", pr.\"sizingUnit\", t.name AS \"taxName\", t.rate AS"
                 + " \"taxRate\", u.code AS \"uomCode\" FROM \"SalesOrderLine\" l LEFT JOIN \"Product\" pr ON pr.id = l.\"productId\" LEFT JOIN \"Tax\" t ON t.id ="
                 + " l.\"taxId\" LEFT JOIN \"UnitOfMeasure\" u ON u.id = l.\"uomId\" WHERE l.\"orderId\" = ? ORDER BY"
                 + " l.\"sortOrder\"", orderId);

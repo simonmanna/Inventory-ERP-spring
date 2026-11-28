@@ -115,7 +115,10 @@ export function CashSalePage() {
   const [tab, setTab] = useState('lines');
   const { cols, show, toggle } = useLineColumns<LineCol>('cash-sale-lines.columns', LINE_COLS, LINE_COLS.map(([c]) => c));
   const [handover, setHandover] = useState<HandoverForm>(() => emptyHandover());
-  const editable = isNew || s?.executionStatus === 'draft';
+  // ADR-S094 C6: a new cash sale is a Sale (/sales/cash/new). A legacy draft is no longer edited, paid or confirmed here;
+  // a confirmed legacy sale still finishes its head-office processing, so none of its postings is left open.
+  const editable = isNew;
+  const legacyDraft = !isNew && s?.executionStatus === 'draft';
 
   useEffect(() => {
     if (!s) return;
@@ -218,7 +221,7 @@ export function CashSalePage() {
       : api.post(`/sales/cash-sales/${id}/${path}`, payload ?? null)), ok);
 
   if (!isNew && isLoading) return <Skeleton className="h-96 w-full" />;
-  const actions = s?.actions ?? [];
+  const actions = (s?.actions ?? []).filter((a) => !legacyDraft || a === 'discard');
   const has = (a: string) => actions.includes(a);
   const ho = s && !editable && ['submitted', 'under_review', 'approved', 'rejected', 'invoiced'].includes(s.processingStatus);
   const ribbon = [tx('Draft'), tx('Confirmed'), tx('Submitted'), tx('Approved'), tx('Invoiced')];
@@ -308,6 +311,7 @@ export function CashSalePage() {
         )}
       </div>
 
+      {legacyDraft && <Notice tone="orange">{tx('This draft was started before cash sales became Sales and can no longer be completed here. Record the sale again as a new cash sale, then discard this draft.')}{has('discard') && <> <Link className="font-semibold underline" to="/sales/cash/new">{tx('New cash sale')}</Link></>}</Notice>}
       {s?.processingStatus === 'returned_for_correction' && <Notice tone="orange">{tx('Returned by head office for correction — the reason is in the timeline. Correct the customer details, then resubmit.')}</Notice>}
       {s?.processingStatus === 'rejected' && <Notice tone="rose">{tx('Rejected')}: {s.rejectionReason} · {tx('The sale stays posted until it is reopened or returned.')}</Notice>}
       {s?.executionStatus === 'voided' && <Notice tone="rose">{tx('Voided')}: {s.voidReason}</Notice>}
@@ -465,7 +469,7 @@ export function CashSalePage() {
             </TabsContent>
 
             <TabsContent value="payments" className="mt-0 p-5">
-              {s ? <Payments sale={s} busy={busy} onAdd={() => setDialog('payment')} run={run} /> : <p className="text-sm text-muted-foreground">{tx('Save the draft to capture payments.')}</p>}
+              {s ? <Payments sale={s} busy={busy} locked={legacyDraft} onAdd={() => setDialog('payment')} run={run} /> : <p className="text-sm text-muted-foreground">{tx('Save the draft to capture payments.')}</p>}
             </TabsContent>
             <TabsContent value="delivery" className="mt-0 p-5">
               {s ? <CashSaleDelivery sale={s} busy={busy} run={run} />
@@ -516,8 +520,9 @@ function Notice({ tone, children }: { tone: 'orange' | 'rose' | 'emerald'; child
   return <div className={cn('rounded-lg border px-3 py-2 text-sm dark:bg-transparent', c)}>{children}</div>;
 }
 
-function Payments({ sale, busy, onAdd, run }: { sale: CashSale; busy: boolean; onAdd: () => void; run: (fn: () => Promise<unknown>, ok: string) => Promise<void> }) {
-  const draft = sale.executionStatus === 'draft';
+function Payments({ sale, busy, onAdd, run, locked }: { sale: CashSale; busy: boolean; onAdd: () => void; run: (fn: () => Promise<unknown>, ok: string) => Promise<void>; locked?: boolean }) {
+  // a locked legacy draft shows its payments without capture, verification or removal (ADR-S094 C6)
+  const draft = sale.executionStatus === 'draft' && !locked;
   const canVerifyAll = useAuthStore((st) => st.hasPermission(PERMISSIONS.sales.cashSaleVerifyPayment));
   const canConfirm = useAuthStore((st) => st.hasPermission(PERMISSIONS.sales.cashSaleConfirm));
   const [preview, setPreview] = useState<{ id: string; name: string; contentType: string | null } | null>(null);

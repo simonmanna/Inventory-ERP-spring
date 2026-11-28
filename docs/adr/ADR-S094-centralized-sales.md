@@ -38,7 +38,7 @@ to migrate or something. just code and develop."
 |---|---|---|
 | Stages | C1a, C1b, C1, C2, C3, C4, C6 and C7 approved for development; the review gates above are replaced for development. | Built as stacked PRs, one per stage. |
 | C5 historical migration | **Dropped.** Legacy cash sales (`SalesSubmission`) are demo data and are not migrated. | No migration, preflight guards, replay journal or freeze tooling. Legacy cash-sale data is cleared at deploy, after the owner confirms that step. OD-15 and AD-11 are moot. |
-| Legacy cash-sale module | Replaced by the cash Sale. | After C6 the web no longer creates legacy cash sales; the legacy screens and routes stay read-only until C8 removes them. |
+| Legacy cash-sale module | Replaced by the cash Sale. | After C6 the web no longer creates legacy cash sales; the legacy screens and routes stay read-only until C8 removes them. C6 (built) refines this: a legacy draft can only be discarded, and a confirmed legacy sale still finishes its head-office processing, so its 1215 / 2216 postings are closed rather than left open. The legacy API routes are unchanged until C8. |
 | AD-1 | Interim path: an order-type Sale with a full advance. | C3d (cash paid now, delivered later) is not built. |
 | AD-2, AD-16 | Contract liability (`unearned_revenue`), released at **dispatch**. | F4 deferral is built (stage C2b). |
 | AD-3 | Period-end accrual for delivered, not invoiced. | Stage C7b, after the core. P7 per delivery stays available where the revenue policy already uses it. |
@@ -959,7 +959,7 @@ recommended options)**:
   - Tender-reference uniqueness does not check the legacy `SalesSubmissionPayment` table.
   - **C3b** (built, V736) brings the cash Reverse, the fiscal gate for a sale's reversal, the fiscal outbox recovery
     and TP-3 / TP-4 / RC / FR / RV: see §7.4, "As built (C3b)".
-  - No web change. Nothing in the web creates a cash-type sale yet; the screens move in C6.
+  - No web change in C3a. The screens came in C6 (built): see §13, "As built (C6)".
   - AP-8 moved from `SalesApprovalIT` to `SalesCashSaleIT`. A cash sale now needs its branch profile
     (`SalesOrder_cash_profile_check`), so the old SQL-faked one is refused.
 
@@ -1379,7 +1379,8 @@ needs owner approval (OD-14) and an update of `CONTRACT.md` §6 in C1a.
   - The reversal's fiscal counterpart is the cancel of the sale's fiscal document. The reversal credit note is not
     fiscalised on its own.
   - New fiscal statuses `sent` and `review`. The stuck alert runs every 10 minutes, after 30 minutes.
-  - "Fiscal pending" on printed invoices comes with the screens (C6). A lost notification is only logged.
+  - From C6 the sale screen and the sale list show the fiscal status. Printed invoices do not show "fiscal pending"
+    yet. A lost notification is only logged.
   - The tests cover goods lines only. Lines without goods are credited with the rest; no test covers them yet.
 
 ---
@@ -1962,12 +1963,66 @@ redesign.
 | **C4b** Fiscalisation of order-type invoices and credit notes (AD-5) (built, V738) | Each posted sale invoice and credit note queued on the fiscal outbox, owned by its invoice (`FiscalDocument.invoiceId`); provider from the sale's branch profile | FR group for order-type documents · zero-total final invoice fiscalised · reversal and credit-note gates |
 | **C2b** Revenue deferral for invoice-before-delivery (AD-2 = A, AD-16 = dispatch) | §3.6 | DF-1…DF-5 · V1–V5 hold |
 | ~~**C5** Migration + consumers + rollout tooling~~ | **Dropped by the owner (2026-11-28)**: no historical migration; legacy demo data is cleared at deploy. §10 and §11 stay as the reference if a real migration is ever needed. | — |
-| **C6** Web | screens incl. approval submit / withdraw, tender panel (card, change), handover block, return serial / lot entry, outcome and settlement badges | build · i18n · e2e smoke F1 / F3 / F5 / F6 · no console errors |
+| **C6** Web (built, no migration) | screens incl. approval submit / withdraw, tender panel (card, change), handover block, return serial / lot entry, outcome and settlement badges | build · i18n · e2e smoke F1 / F3 / F5 / F6 · no console errors |
 | **C7** Reporting | §9 | R5a–R5g = 0 · RP-1 and RP-2 bridges explained |
 | **C7b** Period-end accrual of delivered, not invoiced (AD-3) | §3.7 F3 | accrual and next-period reversal ITs · R5f |
 | **Release** | C1a–C7b, when the owner asks for a deploy | standard pre-deploy dump; legacy cash-sale demo data cleared only after the owner confirms; WAL archiving enabled (OD-13); RP-3 after go-live |
 | **C8** Cleanup (next release) | drop legacy tables and code; command journal off after release closure | owner verification · one release elapsed · no reads of legacy tables · fresh backup |
 | Not built | C3d cash delivered later (AD-1 chose the interim path); C4f freight on the invoice (OD-4: no); kernel in-transaction outbox (OD-12: separate ADR) | — |
+
+**As built (C6, no migration; owner instruction 2026-11-28: recommended options for every AD / OD)**: the cash sale
+moves to the Sale screens, and the web stops creating legacy cash sales.
+
+- **Where**
+  - Sales → **Cash Sales** (`/sales/cash`): the sale register preset to `saleType = cash`. `/sales/orders` gains a type
+    switch (orders, cash sales, all) for users who read both types. A reader of one type sees only that type; the API
+    already filters by permission (C3a).
+  - `/sales/cash/new` drafts a cash sale (`sales:cash_sale:create`). Its detail stays `/sales/orders/:id`, which cash-only
+    readers can now open. `/sales/cash-sales/new` and the dashboard shortcut lead to the new screen.
+- **The cash sale screen** (the Sale screen, switched by `saleType`)
+  - Header: customer (the branch's walk-in customer by default, offered first in the picker), buyer name, phone, TIN and
+    address (sent only once typed, so a named customer's own details apply otherwise), branch (on a new sale: the
+    user's branch or a chosen active profile), counter location, sale date and fiscal status.
+  - Ribbon: Draft → Paid → Handed over → Invoiced. Notices for each reversal stage and for a pending or failed fiscal
+    receipt.
+  - **Payments** tab: tender lines with a payment mode, or a method plus the mobile-money provider (MTN, Airtel) when
+    no mode is configured; cash handed over and the change; card approval code; reference, payer and attachments.
+    Verify, Not received and Remove follow the actions the API allows.
+  - **Confirm sale & hand over** opens the handover block: received by (required), phone, notes, the affirmation, and
+    one serial number per unit on serial-tracked lines. Sale lines now carry `serialTracking`; this is the one backend
+    change. The confirm is sent with its Idempotency-Key.
+  - **Fiscal** tab: each operation with its status, attempts, last error and fiscal number. "Send again" retries under
+    the same reference. "Reconcile" (`sales:cash_sale:review`) resolves an unknown or review operation.
+  - **Reverse** (`sales:cash_sale:void`): reason, refund or keep as credit, return reason, receiving location, and per
+    goods line its serials, condition, disposition and location. Damaged or defective goods cannot be restocked (AD-9).
+  - Menu: delete a draft; **Return part of the sale** (the normal return flow, §7.4 item 4).
+  - Hidden for a cash sale: the delivery tab, agreements, change requests, hold, close short, proforma, duplicate and
+    cancel.
+  - Other info: the timeline from `SalesOrderEvent`, and attachments.
+- **Order-type sales**: the Billing tab lists the fiscal registrations of their invoices and credit notes (C4b), with
+  "Send again" and "Reconcile" (`sales:invoice:create`).
+- **Already built, unchanged**: approval submit / withdraw (C1); return serial and lot entry, and the outcome and
+  settlement badges (C2).
+- **Legacy cash sales (ADR-S056)**
+  - The web no longer creates them. The sidebar entry is renamed "Legacy cash sales".
+  - A legacy draft can only be discarded; a notice sends the user to a new cash sale.
+  - A confirmed legacy sale still finishes its head-office processing (submit, review, approve, invoice, void), so its
+    1215 / 2216 postings are closed rather than left open. The head-office tour stays for these sales.
+  - The legacy API routes are unchanged until C8; their tests still use them.
+- **Sale list search**: also matches the buyer name of a cash sale (`customerName`).
+- **Guided tours**: `sales.cash-sale` version 3 (list → new sale → lines → save → payments → confirm → fiscal receipt →
+  invoice) and `sales.branch-cash-full` version 2, in three chapters (sale and payments; handover, invoice and fiscal
+  receipt; correction by Reverse). The Branch Cash Sales report chapter is removed until C7 rebuilds that report.
+- **Tests**
+  - Web: vitest `sale-cash-api.test.ts` (request bodies checked against the field sets the API accepts; change;
+    serial numbers; timeline labels), the tour catalog and the offline cache policy. Typecheck, lint and the i18n check
+    pass.
+  - Backend: `SalesCashSaleIT` asserts `serialTracking` on the sale lines and the buyer-name search.
+- **Limits**
+  - The repo has no browser end-to-end suite, so the F1 / F3 / F5 / F6 smoke of the acceptance row was not run. The
+    screens were not tried in a browser (no deploy).
+  - Printed invoices do not show "fiscal pending"; the sale screen and the list do.
+  - The Branch Cash Sales report and the report-center channels still read legacy cash sales until C7.
 
 ---
 

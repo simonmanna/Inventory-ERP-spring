@@ -282,7 +282,7 @@ export function DashboardPage() {
   const actions = [
     { to: '/sales/quotations/new', label: tx('New quotation'), icon: ClipboardList, ok: hasPermission(PERMISSIONS.sales.quotationWrite) },
     { to: '/sales/orders/new', label: tx('New sales order'), icon: ShoppingCart, ok: hasPermission(PERMISSIONS.sales.orderWrite) },
-    { to: '/sales/cash-sales/new', label: tx('New cash sale'), icon: ShoppingBag, ok: hasPermission(PERMISSIONS.sales.cashSaleCreate) },
+    { to: '/sales/cash/new', label: tx('New cash sale'), icon: ShoppingBag, ok: hasPermission(PERMISSIONS.sales.cashSaleCreate) },
     { to: '/invoices/new', label: tx('New invoice'), icon: FileText, ok: hasPermission(PERMISSIONS.invoice.create) },
     { to: '/payments', label: tx('Record payment'), icon: HandCoins, ok: hasPermission(PERMISSIONS.payment.create) },
     { to: '/procurement/purchase-orders/new', label: tx('New purchase'), icon: Truck, ok: hasPermission(PERMISSIONS.procurement.purchaseOrder.create) },

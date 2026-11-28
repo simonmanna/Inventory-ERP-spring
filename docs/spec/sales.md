@@ -399,6 +399,18 @@ branch scope.
     - the dunning fee: `collections_fee`; legacy cash-sale invoices: `cash_sale`.
   - A database check requires a kind on every sales invoice and credit note.
   - `sourceType` / `sourceId` keep their values and no response changes.
+- **Cash sales are recorded on the Sale screens** (ADR-S094 C6, no migration; owner instruction 2026-11-28). Details in
+  ADR-S094 §13, under "As built (C6)".
+  - Sales → Cash Sales (`/sales/cash`) lists cash Sales; `/sales/cash/new` drafts one; the detail is
+    `/sales/orders/:id`. `/sales/orders` and `/sales/orders/:id` accept `sales:order:read` or `sales:cash_sale:read`,
+    and the list shows each reader only the types they may read.
+  - The cash screen has tender lines, the handover block with serial numbers, the fiscal operations, the Reverse wizard
+    and the timeline. Sale lines now carry `serialTracking`.
+  - The sale list search also matches a cash sale's buyer name (`customerName`).
+  - The web no longer creates legacy cash sales. A legacy draft can only be discarded; a confirmed legacy sale still
+    finishes its head-office processing. The legacy routes are unchanged until C8.
+  - Limits: no browser end-to-end test; printed invoices do not show "fiscal pending"; the Branch Cash Sales report
+    reads legacy sales until C7.
 - **Every invoice of a Sale is registered with the fiscal authority** (ADR-S094 C4b, V738; AD-5, owner instruction
   2026-11-28). Details in ADR-S094 §5.5, under "As built (C4b)".
   - A posted invoice of an order-type Sale queues a fiscal `issue` in its posting transaction. A posted credit note on

@@ -273,112 +273,91 @@ const invoiceSteps = (): TourStep[] => [
   },
 ];
 
-/** Showroom: a new cash sale with its lines and payment. */
+/** Counter: a new cash sale with its lines and payments (ADR-S094 C6: a cash sale is a Sale). */
 const showroomSteps = (): TourStep[] => [
   {
-    route: '/sales/cash-sales',
+    route: '/sales/cash',
     anchor: 'sales.cash.new',
     title: tx('Start a cash sale'),
-    body: tx('A branch cash sale is for a customer who pays at the showroom, without a quotation or order. Click "New cash sale".'),
+    body: tx('A cash sale is for a customer who pays at the branch counter and takes the goods away, without a quotation or order. Click "New cash sale".'),
     advanceOn: { click: 'sales.cash.new' },
   },
   {
-    route: '/sales/cash-sales/new',
+    route: '/sales/cash/new',
     anchor: 'sales.cash.customer',
     title: tx('Customer'),
-    body: tx('Leave the walk-in customer, or pick a named customer when they need an invoice in their name. Head office checks these details later.'),
+    body: tx('Leave the walk-in customer, or pick a named customer when the invoice must carry their name. For a walk-in customer, type the buyer\'s name and phone below.'),
     advanceOn: 'next',
   },
   {
-    route: '/sales/cash-sales/new',
+    route: '/sales/cash/new',
     anchor: 'sales.cash.add-line',
     title: tx('Add what was sold'),
     body: tx('Click "Add a line", pick the product and enter the quantity. Add one line per product.'),
     advanceOn: { click: 'sales.cash.add-line' },
   },
   {
-    route: '/sales/cash-sales/new',
+    route: '/sales/cash/new',
     anchor: 'sales.cash.totals',
     title: tx('Totals'),
     body: tx('The totals are an estimate until you save; saving works out prices and taxes exactly.'),
     advanceOn: 'next',
   },
   {
-    route: '/sales/cash-sales/new',
+    route: '/sales/cash/new',
     anchor: 'sales.cash.save',
     title: tx('Save the draft'),
     body: tx('Click Save. The sale gets its number; payments can be added once it is saved.'),
-    advanceOn: { route: '/sales/cash-sales/:id' },
+    advanceOn: { route: '/sales/orders/:id' },
   },
   {
-    route: '/sales/cash-sales/:id',
+    route: '/sales/orders/:id',
     anchor: 'sales.cash.tab.payments',
     title: tx('Payments'),
-    body: tx('Open "Billing & payments details" to record how the customer paid.'),
+    body: tx('Open the Payments tab to record how the customer paid.'),
     advanceOn: { click: 'sales.cash.tab.payments' },
   },
   {
-    route: '/sales/cash-sales/:id',
+    route: '/sales/orders/:id',
     anchor: 'sales.cash.add-payment',
     title: tx('Add the payment'),
-    body: tx('Click "Add payment" and enter the payment mode, the amount and the reference, such as the mobile money code. Split payments are added one by one. A supervisor marks each payment Verified once the money is seen.'),
+    body: tx('Click "Add payment" and choose the payment mode and the amount. For cash, enter what the customer handed over to see the change. Mobile money, bank and card need their reference or approval code. Split payments are added one by one, and each is verified before the sale is confirmed.'),
     advanceOn: 'next',
   },
 ];
 
-/** Confirm the cash sale, hand the goods over and print the delivery note. */
+/** Confirm the paid cash sale and hand the goods over: stock, invoice, receipts and the fiscal receipt in one step. */
 const cashHandoverSteps = (): TourStep[] => [
   {
-    route: '/sales/cash-sales/:id',
+    route: '/sales/orders/:id',
     anchor: 'sales.cash.confirm',
-    title: tx('Confirm sale & handover'),
-    body: tx('Click "Confirm sale & handover". Stock, payments and revenue are posted once, here. After that the amounts are frozen. If your branch does not confirm sales itself, the button is not shown: press Skip.'),
-    advanceOn: { click: 'sales.cash.confirm' },
-  },
-  {
-    route: '/sales/cash-sales/:id',
-    anchor: 'sales.cash.tab.delivery',
-    title: tx('Delivery and fulfilment'),
-    body: tx('Open this tab to record how the goods reach the customer.'),
-    advanceOn: { click: 'sales.cash.tab.delivery' },
-  },
-  {
-    route: '/sales/cash-sales/:id',
-    anchor: 'sales.cash.delivery',
-    title: tx('Collect or deliver'),
-    body: tx('Choose "Customer collect" when the customer takes the goods, or delivery to site with the address, contact, vehicle and driver.'),
+    title: tx('Confirm sale & hand over'),
+    body: tx('When every payment is verified and the sale is fully paid, "Confirm sale & hand over" asks who received the goods and their serial numbers, then posts the stock issue, the invoice and one receipt per payment together. Not shown? A payment is still unverified or the sale needs approval: press Next.'),
     advanceOn: 'next',
   },
   {
-    route: '/sales/cash-sales/:id',
-    anchor: 'handover.actions',
-    title: tx('Record the handover'),
-    body: tx('Use Schedule and "Mark dispatched" for a delivery, then "Mark delivered" (or "Mark collected") with the name of the person who received the goods.'),
+    route: '/sales/orders/:id',
+    anchor: 'sales.cash.tab.fiscal',
+    title: tx('Fiscal receipt'),
+    body: tx('The Fiscal tab shows the receipt registered with the tax authority. While it is pending, "Send again" retries it under the same reference; it never creates a second receipt.'),
     advanceOn: 'next',
   },
   {
-    route: '/sales/cash-sales/:id',
-    anchor: 'handover.note',
-    title: tx('Delivery note'),
-    body: tx('The delivery note lists what was handed over. Print it or download the PDF for the customer to sign; it also lists any returns.'),
+    route: '/sales/orders/:id',
+    anchor: 'sales.cash.links',
+    title: tx('The invoice'),
+    body: tx('The Invoices button opens the posted invoice: print it or send it to the customer.'),
     advanceOn: 'next',
   },
 ];
 
-/** Branch sends the confirmed sale to head office. */
-const cashSubmitSteps = (): TourStep[] => [
+/** A confirmed cash sale is corrected by Reverse, never edited. */
+const cashReverseSteps = (): TourStep[] => [
   {
-    route: '/sales/cash-sales/:id',
-    anchor: 'sales.cash.submit',
-    title: tx('Submit to head office'),
-    body: tx('Click "Submit to head office". Head office reviews the sale and issues the official invoice. If the button is not shown, the sale is not confirmed yet or was already submitted: press Skip.'),
-    advanceOn: { click: 'sales.cash.submit' },
-  },
-  {
-    route: '/sales/cash-sales/:id',
-    anchor: 'sales.cash.ribbon',
-    title: tx('Track it here'),
-    body: tx('The ribbon shows where the sale stands. If head office returns it for correction, the reason is in the Timeline tab: correct it and resubmit.'),
+    route: '/sales/orders/:id',
+    anchor: 'sales.cash.reverse',
+    title: tx('Correct a confirmed sale'),
+    body: tx('A confirmed cash sale cannot be edited. When the goods come back or the sale was wrong, "Reverse" takes every line back, cancels the fiscal receipt and refunds the payments, or keeps the amount as customer credit. To take back only part of a sale, use a return. Not shown? The sale is not complete or you lack the right: press Next.'),
     advanceOn: 'next',
   },
 ];
@@ -592,15 +571,15 @@ export function salesTours(): TourDef[] {
     },
     {
       key: 'sales.cash-sale',
-      version: 2,
+      version: 3,
       module: 'sales',
-      title: tx('Record a branch cash sale'),
-      summary: tx('At the showroom: record the sale and payment, hand the goods over with a delivery note and submit to head office.'),
-      keywords: ['cash', 'branch', 'showroom', 'walk', 'counter', 'pay', 'payment', 'mobile', 'money', 'receipt', 'shop', 'delivery', 'note', 'submit'],
+      title: tx('Record a cash sale'),
+      summary: tx('At the branch counter: record the sale and its payments, then confirm it as the goods are handed over. The invoice and the fiscal receipt are issued at once.'),
+      keywords: ['cash', 'branch', 'showroom', 'walk', 'counter', 'pay', 'payment', 'mobile', 'money', 'card', 'change', 'receipt', 'shop', 'handover', 'fiscal'],
       permissions: [P.cashSaleCreate],
-      startPath: '/sales/cash-sales',
-      steps: [...showroomSteps(), ...cashHandoverSteps(), ...cashSubmitSteps(),
-        done(tx('The sale is recorded, handed over and with head office.'))],
+      startPath: '/sales/cash',
+      steps: [...showroomSteps(), ...cashHandoverSteps(),
+        done(tx('The sale is paid, handed over and invoiced.'))],
     },
     {
       key: 'sales.branch-cash-review',
@@ -615,27 +594,18 @@ export function salesTours(): TourDef[] {
     },
     {
       key: 'sales.branch-cash-full',
-      version: 1,
+      version: 2,
       module: 'sales',
-      title: tx('Branch cash sales: showroom to report'),
-      summary: tx('The whole branch cash sale in five chapters: the sale, handover and delivery note, submission, head-office review and invoice, and the Branch Cash Sales report.'),
-      keywords: ['branch', 'cash', 'full', 'whole', 'complete', 'process', 'wizard', 'showroom', 'head', 'office', 'report', 'delivery', 'note'],
-      permissions: [P.cashSaleCreate, P.cashSaleReadAll],
-      startPath: '/sales/cash-sales',
+      title: tx('Cash sales: counter to correction'),
+      summary: tx('The whole cash sale in three chapters: the sale and its payments, the handover with invoice and fiscal receipt, and how a confirmed sale is corrected.'),
+      keywords: ['branch', 'cash', 'full', 'whole', 'complete', 'process', 'wizard', 'counter', 'showroom', 'handover', 'fiscal', 'reverse', 'refund'],
+      permissions: [P.cashSaleCreate],
+      startPath: '/sales/cash',
       steps: [
-        ...chapter(tx('Chapter 1 · The sale'), showroomSteps()),
-        ...chapter(tx('Chapter 2 · Handover and delivery note'), cashHandoverSteps()),
-        ...chapter(tx('Chapter 3 · Submit to head office'), cashSubmitSteps()),
-        ...chapter(tx('Chapter 4 · Head-office review and invoice'), [
-          goTo('/sales/cash-sales/processing', tx('Over to head office'),
-            tx('Head office works from "Branch Sales Processing" in the Sales menu. Click it (it needs head-office rights; otherwise ask a colleague to show you).')),
-          ...headOfficeSteps(),
-        ]),
-        ...chapter(tx('Chapter 5 · Branch Cash Sales report'), [
-          goTo('/sales/reports', tx('Reports'), tx('Click "Sales Reports" in the Sales menu, under Reporting.')),
-          ...reportSteps('branch-cash', tx('Click "Branch Cash Sales": takings per branch and day, the cash / mobile money / bank split, the sale register and head-office processing.')),
-        ]),
-        done(tx('You have followed a branch cash sale from the showroom to the report.')),
+        ...chapter(tx('Chapter 1 · The sale and its payments'), showroomSteps()),
+        ...chapter(tx('Chapter 2 · Handover, invoice and fiscal receipt'), cashHandoverSteps()),
+        ...chapter(tx('Chapter 3 · Correcting a confirmed sale'), cashReverseSteps()),
+        done(tx('You have followed a cash sale from the counter to its correction.')),
       ],
     },
     {

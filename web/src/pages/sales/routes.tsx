@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { Route } from 'react-router-dom';
+import { Navigate, Route } from 'react-router-dom';
 import { PERMISSIONS } from '@erp/shared';
 import { RequirePermission } from '@/components/require-permission';
 
@@ -44,9 +44,12 @@ const P = PERMISSIONS.sales;
 export const salesRoutes = (
   <>
     <Route path="/sales" element={<RequirePermission permission={P.reportRead}><SalesDashboardPage /></RequirePermission>} />
-    <Route path="/sales/orders" element={<RequirePermission permission={P.orderRead}><SalesOrdersPage /></RequirePermission>} />
+    {/* ADR-S094 C6: orders and cash sales are one Sale document; each type is read with its own permission */}
+    <Route path="/sales/orders" element={<RequirePermission permission={[P.orderRead, P.cashSaleRead]}><SalesOrdersPage /></RequirePermission>} />
     <Route path="/sales/orders/new" element={<RequirePermission permission={P.orderWrite}><SalesOrderPage /></RequirePermission>} />
-    <Route path="/sales/orders/:id" element={<RequirePermission permission={P.orderRead}><SalesOrderPage /></RequirePermission>} />
+    <Route path="/sales/orders/:id" element={<RequirePermission permission={[P.orderRead, P.cashSaleRead]}><SalesOrderPage /></RequirePermission>} />
+    <Route path="/sales/cash" element={<RequirePermission permission={P.cashSaleRead}><SalesOrdersPage saleType="cash" /></RequirePermission>} />
+    <Route path="/sales/cash/new" element={<RequirePermission permission={P.cashSaleCreate}><SalesOrderPage newType="cash" /></RequirePermission>} />
     <Route path="/sales/quotations" element={<RequirePermission permission={P.quotationRead}><QuotationsPage /></RequirePermission>} />
     <Route path="/sales/quotations/new" element={<RequirePermission permission={P.quotationWrite}><QuotationEditorPage /></RequirePermission>} />
     <Route path="/sales/quotations/:id" element={<RequirePermission permission={P.quotationRead}><QuotationEditorPage /></RequirePermission>} />
@@ -77,7 +80,8 @@ export const salesRoutes = (
     <Route path="/sales/credit" element={<RequirePermission permission={PERMISSIONS.credit.read}><CreditPage /></RequirePermission>} />
     <Route path="/sales/cash-sales" element={<RequirePermission permission={P.cashSaleRead}><CashSalesPage scope="branch" /></RequirePermission>} />
     <Route path="/sales/cash-sales/processing" element={<RequirePermission permission={P.cashSaleReadAll}><CashSalesPage scope="head_office" /></RequirePermission>} />
-    <Route path="/sales/cash-sales/new" element={<RequirePermission permission={P.cashSaleCreate}><CashSalePage /></RequirePermission>} />
+    {/* Legacy branch cash sales (ADR-S056) stay readable until C8; a new cash sale is a Sale */}
+    <Route path="/sales/cash-sales/new" element={<Navigate to="/sales/cash/new" replace />} />
     <Route path="/sales/cash-sales/:id" element={<RequirePermission permission={P.cashSaleRead}><CashSalePage /></RequirePermission>} />
     <Route path="/sales/branch-profiles" element={<RequirePermission permission={P.cashSaleRead}><BranchProfilesPage /></RequirePermission>} />
     <Route path="/sales/margin-floors" element={<RequirePermission permission={P.pricingRead}><MarginFloorsPage /></RequirePermission>} />
