@@ -9,4 +9,11 @@ public interface InvoicePostGuard {
 
     /** Called inside the posting transaction, before the workflow transition. */
     void beforePost(String documentId);
+
+    /**
+     * ADR-S094 C1b: called inside the posting transaction right after the workflow transition (the document is posted
+     * and journalled), for the same documents as {@link #beforePost}: a module books what the post settles, such as the
+     * deposits its deductions consume. Throwing rolls the post back.
+     */
+    default void afterPost(String documentId) {}
 }

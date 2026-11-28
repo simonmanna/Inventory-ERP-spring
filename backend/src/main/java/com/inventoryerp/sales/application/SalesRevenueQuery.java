@@ -68,7 +68,7 @@ public class SalesRevenueQuery {
 
     /**
      * Basis {@code paid}: invoice lines pro rata to the payment allocations made in {@code [from, to]}, plus credit
-     * notes issued in the period (clawback).
+     * notes issued in the period (clawback), plus zero-total invoices posted in the period (paid by their down payments).
      */
     List<Map<String, Object>> paid(LocalDate from, LocalDate to) {
         String share = "(a.amount - COALESCE(a.\"refundedAmount\", 0)) / NULLIF(d.\"totalAmount\", 0)";
@@ -81,6 +81,12 @@ public class SalesRevenueQuery {
                 + " COALESCE(pr.\"costPrice\", 0) AS cost, 'paid' AS basis" + JOINS + " WHERE" + SCOPE
                 + " AND d.\"documentType\" = 'credit_note' AND d.\"issueDate\" >= ? AND d.\"issueDate\" < ?", org(), from,
                 to.plusDays(1)));
+        // ADR-S094 C1b: an invoice its taxed down payments cover in full totals zero and gets no allocation; it is paid
+        // in full when posted.
+        out.addAll(db.rows(COLUMNS + "l.quantity AS quantity, l.subtotal * d.\"exchangeRate\" AS revenue, l.quantity *"
+                + " COALESCE(pr.\"costPrice\", 0) AS cost, 'paid' AS basis" + JOINS + " WHERE" + SCOPE
+                + " AND d.\"documentType\" = 'sales_invoice' AND d.\"totalAmount\" = 0 AND d.\"postedAt\" >= ? AND"
+                + " d.\"postedAt\" < ?", org(), from, to.plusDays(1)));
         return out;
     }
 }

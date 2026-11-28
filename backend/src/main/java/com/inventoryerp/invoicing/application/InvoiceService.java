@@ -93,6 +93,14 @@ public class InvoiceService {
         this.postGuards = postGuards;
     }
 
+    /** ADR-S094 C1b: resolved lazily (the deposit service depends on payments, which depend on invoices). */
+    private org.springframework.beans.factory.ObjectProvider<CustomerDepositService> deposits;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setDeposits(org.springframework.beans.factory.ObjectProvider<CustomerDepositService> deposits) {
+        this.deposits = deposits;
+    }
+
     /** The PLM lifecycle policy (ADR-S086 §6), when the PLM application is part of the build. */
     private org.springframework.beans.factory.ObjectProvider<ProductLifecycleGuard> lifecycleGuard;
 
@@ -685,16 +693,19 @@ public class InvoiceService {
         // Sales readiness R1: every draft with a commercial source is rechecked against it, goods or not.
         boolean sourced = jdbc.sql("SELECT \"sourceType\" IS NOT NULL FROM \"Document\" WHERE id = ? AND"
                 + " \"organizationId\" = ?").params(id, org()).query(Boolean.class).optional().orElse(false);
-        if ((delivered || sourced) && "draft".equals(String.valueOf(doc.get("status")))) {
-            if (postGuards != null) {
-                postGuards.orderedStream().forEach(g -> g.beforePost(id));
-            }
+        boolean guarded = (delivered || sourced) && "draft".equals(String.valueOf(doc.get("status")));
+        if (guarded && postGuards != null) {
+            postGuards.orderedStream().forEach(g -> g.beforePost(id));
         }
         if ("draft".equals(String.valueOf(doc.get("status")))) {
             // Sales readiness INV-11: the legal number is taken now, in this transaction (gap-free).
             doc.put("documentNumber", builder.numberAtPost(id));
         }
         workflow.transition("invoice", id, "post", null, doc);
+        if (guarded && postGuards != null) {
+            // ADR-S094 C1b: what the post settles (a deposit a deduction consumes) is booked in the same transaction.
+            postGuards.orderedStream().forEach(g -> g.afterPost(id));
+        }
         snapshots.record("invoice", id);
         publish("invoice.posted", doc);
         return withLinesAndPartner(id);
@@ -885,6 +896,8 @@ public class InvoiceService {
                 .query().listOfRows();
         assertNothingSettled(id, (String) doc.get("documentNumber"));
         voidDownPaymentDeposit(id, (String) doc.get("documentNumber"), reason);
+        // ADR-S094 C1b: the down payments this invoice deducted become available again.
+        deposits.getObject().releaseConsumption(id);
         workflow.transition("invoice", id, "cancel", Obj.of("reason", reason), doc);
         reversals.record(new com.inventoryerp.accounting.application.DocumentReversalService.Recording("sales_invoice",
                 id, (String) doc.get("documentNumber"), (String) doc.get("partnerId"), reason, "Document",

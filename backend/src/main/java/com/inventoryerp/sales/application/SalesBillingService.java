@@ -235,18 +235,38 @@ public class SalesBillingService {
                         .withUnitSnapshot(str(l.get("uomId")), l.get("uomFactor") == null ? null
                                 : dec(l.get("uomFactor"))));
             }
+            // ADR-S094 C1b (D-VAT-1): taxed down payments are deducted on this invoice, with their VAT.
+            List<Deduction> deductions = deductions(o, items);
+            deductions.forEach(d -> lines.add(d.line()));
             doc = create(o, issue, lines, "Sales order " + number);
             String docId = str(doc.get("id"));
             invoices.linkSource(docId, "sales_order", orderId, false);
             if (goods) {
                 invoices.setStockIssuedByDelivery(docId, number);
             }
-            List<String> docLines = db.rows("SELECT id FROM \"DocumentLine\" WHERE \"documentId\" = ? ORDER BY"
-                    + " \"lineNumber\", id", docId).stream().map(r -> str(r.get("id"))).toList();
+            List<Map<String, Object>> docLines = db.rows("SELECT id, total FROM \"DocumentLine\" WHERE \"documentId\" = ?"
+                    + " ORDER BY \"lineNumber\", id", docId);
+            boolean aligned = docLines.size() == items.size() + deductions.size();
             for (int i = 0; i < items.size(); i++) {
                 Map<String, Object> it = items.get(i);
                 link(orderId, str(it.get("lineId")), docId, "regular", dec(it.get("quantity")), dec(it.get("amount")),
-                        docLines.size() == items.size() ? docLines.get(i) : null);
+                        aligned ? str(docLines.get(i).get("id")) : null);
+            }
+            if (!deductions.isEmpty()) {
+                if (!aligned) {
+                    throw new IllegalStateException("Invoice lines do not match the sales order lines and deductions");
+                }
+                for (int j = 0; j < deductions.size(); j++) {
+                    Map<String, Object> dl = docLines.get(items.size() + j);
+                    db.update("INSERT INTO \"SalesInvoiceLink\" (id, \"organizationId\", \"orderId\", \"documentId\", kind,"
+                            + " quantity, amount, \"documentLineId\", \"downPaymentDocumentId\") VALUES (?, ?, ?, ?,"
+                            + " 'deduction', 0, ?, ?, ?)", SalesDb.newId(), org(), orderId, docId,
+                            dec(dl.get("total")).negate(), str(dl.get("id")), deductions.get(j).downPaymentId());
+                }
+                if (dec(invoices.findOne(docId).get("totalAmount")).signum() < 0) {
+                    throw ApiException.badRequest("The down payments to deduct exceed what sales order " + number
+                            + " invoices now");
+                }
             }
             deliveryInvoicing.markGoodsInvoiced("sales_order", orderId, docId, str(doc.get("documentNumber")));
         } else {
@@ -299,6 +319,150 @@ public class SalesBillingService {
         return inv;
     }
 
+    /** ADR-S094 C1b: one negative line deducting a taxed down payment, and the down-payment invoice it deducts. */
+    private record Deduction(String downPaymentId, LineInput line) {}
+
+    /** Live deductions and posted deposit-account credit notes of down-payment invoice {@code d.id} (net amounts). */
+    private static final String DP_USED = """
+            COALESCE((SELECT sum(-x.subtotal) FROM "SalesInvoiceLink" j JOIN "Document" e ON e.id = j."documentId"
+                       JOIN "DocumentLine" x ON x.id = j."documentLineId"
+                      WHERE j."downPaymentDocumentId" = d.id AND j.kind = 'deduction'
+                        AND e.status::text NOT IN ('cancelled', 'rejected')), 0) AS deducted,
+            COALESCE((SELECT sum(y.subtotal) FROM "Document" c JOIN "DocumentLine" y ON y."documentId" = c.id
+                      WHERE c."reversedDocumentId" = d.id AND c."documentType" = 'credit_note'
+                        AND c.status::text IN ('posted', 'paid') AND y."accountId" = ?), 0) AS credited""";
+
+    /**
+     * ADR-S094 C1b (D-VAT-1, AD-14 pro-rata, AD-17): the taxed down payments of the order this regular invoice deducts.
+     * A down payment whose deposit line carries a tax ({@code depositTaxPoint = receipt}) already charged the VAT on the
+     * advance, so the final invoice deducts it — on the deposit account, with the same tax — instead of applying the
+     * deposit, which would charge that VAT a second time. Each invoice deducts, of every down payment, what is left of
+     * it × this invoice's net / the order's net not yet invoiced (AD-14); the invoice that leaves nothing more to invoice
+     * deducts all that is left. The whole down payment at once is the down payment's own line negated, so its net and VAT
+     * come back exactly as charged; a part is a tax-exclusive line for that net, with the same tax.
+     */
+    private List<Deduction> deductions(Map<String, Object> o, List<Map<String, Object>> items) {
+        String orderId = str(o.get("id"));
+        String account = deposits.depositAccount();
+        if (db.count("SELECT count(*) FROM \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id = k.\"documentId\" JOIN"
+                + " \"DocumentLine\" dl ON dl.\"documentId\" = d.id AND dl.\"accountId\" = ? AND dl.\"taxId\" IS NOT NULL"
+                + " WHERE k.\"orderId\" = ? AND k.\"organizationId\" = ? AND k.kind = 'down_payment' AND d.status::text ="
+                + " 'draft'", List.of(account, orderId, org())) > 0) {
+            throw ApiException.badRequest("A down-payment invoice of sales order " + o.get("number") + " is still a"
+                    + " draft; post or cancel it before invoicing the order");
+        }
+        List<Map<String, Object>> dps = db.rows("SELECT d.id, d.\"documentNumber\", dl.\"taxId\", dl.\"taxInclusive\","
+                + " dl.quantity, dl.\"unitPrice\", dl.subtotal, " + DP_USED + " FROM \"SalesInvoiceLink\" k JOIN \"Document\" d"
+                + " ON d.id = k.\"documentId\" JOIN \"DocumentLine\" dl ON dl.\"documentId\" = d.id AND dl.\"accountId\" = ? AND"
+                + " dl.\"taxId\" IS NOT NULL WHERE k.\"orderId\" = ? AND k.\"organizationId\" = ? AND k.kind = 'down_payment'"
+                + " AND d.status::text IN ('posted', 'paid') ORDER BY d.\"postedAt\", d.id", account, account, orderId, org());
+        if (dps.isEmpty()) {
+            return List.of();
+        }
+        Map<String, BigDecimal> now = new java.util.HashMap<>();
+        for (Map<String, Object> it : items) {
+            now.merge(str(it.get("lineId")), dec(it.get("quantity")), BigDecimal::add);
+        }
+        // AD-14: net of this invoice's goods, and net of the order not yet invoiced before it (live invoices).
+        boolean last = true;
+        BigDecimal invoiceNet = BigDecimal.ZERO;
+        BigDecimal remainingNet = BigDecimal.ZERO;
+        for (Map<String, Object> l : db.rows("""
+                SELECT l.id, l.quantity, l."qtyCancelled", l."lineSubtotal",
+                       COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k JOIN "Document" d ON d.id = k."documentId"
+                                  WHERE k."orderLineId" = l.id AND k.kind = 'regular'
+                                    AND d.status::text NOT IN ('cancelled', 'rejected')), 0) AS linked
+                  FROM "SalesOrderLine" l WHERE l."orderId" = ?""", orderId)) {
+            BigDecimal qty = dec(l.get("quantity"));
+            BigDecimal open = qty.subtract(dec(l.get("qtyCancelled"))).max(BigDecimal.ZERO);
+            BigDecimal linked = dec(l.get("linked"));
+            BigDecimal here = now.getOrDefault(str(l.get("id")), BigDecimal.ZERO);
+            if (linked.add(here).compareTo(open) < 0) {
+                last = false;
+            }
+            if (qty.signum() > 0) {
+                BigDecimal unitNet = dec(l.get("lineSubtotal")).divide(qty, 10, RoundingMode.HALF_UP);
+                invoiceNet = invoiceNet.add(unitNet.multiply(here));
+                remainingNet = remainingNet.add(unitNet.multiply(open.subtract(linked).max(here)));
+            }
+        }
+        Map<String, Object> currency = db.row("SELECT \"decimalPlaces\" FROM \"Currency\" WHERE code = ?",
+                o.get("currencyCode"));
+        int scale = currency == null || currency.get("decimalPlaces") == null ? 2
+                : ((Number) currency.get("decimalPlaces")).intValue();
+        List<Deduction> out = new ArrayList<>();
+        for (Map<String, Object> dp : dps) {
+            BigDecimal net = dec(dp.get("subtotal"));
+            BigDecimal used = dec(dp.get("deducted")).add(dec(dp.get("credited")));
+            BigDecimal remaining = net.subtract(used);
+            if (remaining.signum() <= 0) {
+                continue;
+            }
+            BigDecimal share = last || remainingNet.signum() <= 0 || invoiceNet.compareTo(remainingNet) >= 0 ? remaining
+                    : remaining.multiply(invoiceNet).divide(remainingNet, scale, RoundingMode.HALF_UP).min(remaining);
+            if (share.signum() <= 0) {
+                continue;
+            }
+            String description = "Deduction of down payment " + dp.get("documentNumber");
+            String taxId = str(dp.get("taxId"));
+            LineInput line = used.signum() == 0 && share.compareTo(net) == 0
+                    ? new LineInput(null, null, null, null, account, description, dec(dp.get("quantity")).negate(),
+                            dec(dp.get("unitPrice")), BigDecimal.ZERO, null, null, null, "manual", taxId, null,
+                            Boolean.TRUE.equals(dp.get("taxInclusive")), null)
+                    : new LineInput(null, null, null, null, account, description, BigDecimal.ONE.negate(), share,
+                            BigDecimal.ZERO, null, null, null, "manual", taxId, null, false, null);
+            out.add(new Deduction(str(dp.get("id")), line));
+        }
+        return out;
+    }
+
+    /**
+     * ADR-S094 C1b, inside the posting transaction ({@link SalesInvoicePostGuard#afterPost}): a posted down-payment
+     * invoice registers its deposit now (its event does it again, idempotently), and a posted regular invoice consumes
+     * the deposits of the down payments it deducts.
+     */
+    @Transactional
+    public void afterPost(String documentId) {
+        if (db.count("SELECT count(*) FROM \"SalesInvoiceLink\" WHERE \"documentId\" = ? AND \"organizationId\" = ? AND"
+                + " kind = 'down_payment'", List.of(documentId, org())) > 0) {
+            deposits.registerDownPayment(documentId);
+        }
+        for (Map<String, Object> k : db.rows("SELECT k.\"downPaymentDocumentId\" AS dp, -dl.subtotal AS net FROM"
+                + " \"SalesInvoiceLink\" k JOIN \"DocumentLine\" dl ON dl.id = k.\"documentLineId\" WHERE k.\"documentId\" = ?"
+                + " AND k.\"organizationId\" = ? AND k.kind = 'deduction' ORDER BY k.\"downPaymentDocumentId\"", documentId,
+                org())) {
+            deposits.consume(str(k.get("dp")), documentId, dec(k.get("net")), "deduction");
+        }
+    }
+
+    /**
+     * ADR-S094 C1b post-time recheck: each deduction line is still the down payment's own (deposit account, its tax,
+     * negative, the linked amount), its down-payment invoice is still posted, and with the other live deductions and the
+     * credit notes on it no down payment is deducted beyond its net amount.
+     */
+    List<String> deductionProblems(String documentId) {
+        List<String> out = new ArrayList<>();
+        String account = deposits.depositAccount();
+        for (Map<String, Object> r : db.rows("SELECT k.amount, d.\"documentNumber\" AS dp, d.status::text AS \"dpStatus\","
+                + " dpl.\"taxId\" AS \"dpTax\", dpl.subtotal AS \"dpNet\", dl.id AS \"dlId\", dl.\"accountId\","
+                + " dl.\"productId\", dl.quantity, dl.\"taxId\", dl.total, " + DP_USED + " FROM \"SalesInvoiceLink\" k JOIN"
+                + " \"Document\" d ON d.id = k.\"downPaymentDocumentId\" LEFT JOIN \"DocumentLine\" dpl ON dpl.\"documentId\" ="
+                + " d.id AND dpl.\"accountId\" = ? LEFT JOIN \"DocumentLine\" dl ON dl.id = k.\"documentLineId\" AND"
+                + " dl.\"documentId\" = k.\"documentId\" WHERE k.\"documentId\" = ? AND k.\"organizationId\" = ? AND k.kind ="
+                + " 'deduction'", account, account, documentId, org())) {
+            if (!List.of("posted", "paid").contains(str(r.get("dpStatus")))) {
+                out.add("Down-payment invoice " + r.get("dp") + " deducted on this invoice is " + r.get("dpStatus"));
+            } else if (r.get("dlId") == null || r.get("productId") != null || !account.equals(r.get("accountId"))
+                    || dec(r.get("quantity")).signum() >= 0 || !java.util.Objects.equals(r.get("taxId"), r.get("dpTax"))
+                    || dec(r.get("total")).add(dec(r.get("amount"))).abs().compareTo(CENT) > 0) {
+                out.add("The deduction of down-payment invoice " + r.get("dp") + " no longer matches its line");
+            } else if (dec(r.get("deducted")).add(dec(r.get("credited"))).subtract(dec(r.get("dpNet"))).compareTo(CENT) > 0) {
+                out.add("Down-payment invoice " + r.get("dp") + " would be deducted beyond its amount");
+            }
+        }
+        return out;
+    }
+
     private void link(String orderId, String lineId, String documentId, String kind, BigDecimal qty, BigDecimal amount,
             String documentLineId) {
         db.update("INSERT INTO \"SalesInvoiceLink\" (id, \"organizationId\", \"orderId\", \"orderLineId\", \"documentId\","
@@ -334,6 +498,7 @@ public class SalesBillingService {
         }
         out.addAll(lineProblems(documentId));
         out.addAll(downPaymentProblems(documentId));
+        out.addAll(deductionProblems(documentId));
         return out;
     }
 
@@ -403,8 +568,10 @@ public class SalesBillingService {
                 out.add(where + " differs from the invoice line (" + String.join(", ", diff) + ")");
             }
         }
-        long lines = db.count("SELECT count(*) FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"organizationId\" = ?",
-                List.of(documentId, org()));
+        // ADR-S094 C1b: a deduction line is accounted for by its deduction link (checked in deductionProblems).
+        long lines = db.count("SELECT count(*) FROM \"DocumentLine\" dl WHERE dl.\"documentId\" = ? AND dl.\"organizationId\" = ?"
+                + " AND NOT EXISTS (SELECT 1 FROM \"SalesInvoiceLink\" j WHERE j.\"documentLineId\" = dl.id AND j.kind ="
+                + " 'deduction')", List.of(documentId, org()));
         if (lines > linkedLines.size()) {
             out.add("The invoice carries " + (lines - linkedLines.size()) + " line(s) that no sales order line accounts for");
         }
@@ -597,6 +764,10 @@ public class SalesBillingService {
                 + " FROM \"Document\" d JOIN \"Organization\" o ON o.id = d.\"organizationId\" WHERE d.id = ?", documentId);
         String invCurrency = inv == null ? null : str(inv.get("ccy"));
         for (Map<String, Object> d : deposits.list(null, orderId, "open")) {
+            // ADR-S094 C1b: a taxed down payment is deducted on the invoice itself, never applied
+            if (deposits.isTaxedDownPayment(d)) {
+                continue;
+            }
             // ADR-S080: only deposits in the invoice's currency settle it (the list fills in the functional code)
             if (invCurrency != null && !invCurrency.equalsIgnoreCase(str(d.get("currency")))) {
                 continue;

@@ -82,11 +82,11 @@ the same answer settles.
 | AD-11 | Migrated history acceptance (1215 / 2216 residuals zero after drain) | — | not applicable | No historical migration (C5 dropped) | owner (recommended option) | 2026-11-28 | ADR-S094 | |
 | AD-12 | POS refunds / voids / write-offs in the revenue measures | — | as designed | Refunds and settled voids negative on the refund date; write-offs excluded (bad debt) | owner (recommended option) | 2026-11-28 | ADR-S094 | |
 | AD-13 | Module sources allowed to issue customer invoices (ADR-S094 §8.1) | — | approved | ADR-S094 §8.1 module sources | owner (recommended option) | 2026-11-28 | ADR-S094 | |
-| AD-14 | Deducting taxed down payments across partial invoices: pro-rata / oldest-first / manual | row 2 | pro-rata | Deduction = advance remaining × invoiced net / remaining order net, last invoice takes the rest | owner (recommended option) | 2026-11-28 | ADR-S094 | |
-| AD-15 | A credit note on a down-payment invoice reduces the deposit; refused once consumed | — | approved | Credit note on a DP invoice reduces its deposit; refused once consumed | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-14 | Deducting taxed down payments across partial invoices: pro-rata / oldest-first / manual | row 2 | pro-rata | Deduction = advance remaining × invoiced net / remaining order net, last invoice takes the rest | owner (recommended option) | 2026-11-28 | ADR-S094 C1b (V731) | `SalesDownPaymentVatIT` |
+| AD-15 | A credit note on a down-payment invoice reduces the deposit; refused once consumed | — | approved | Credit note on a DP invoice reduces its deposit; refused once consumed | owner (recommended option) | 2026-11-28 | ADR-S094 C1b (V731) | `SalesDownPaymentVatIT` |
 | AD-16 | Contract-liability account and release trigger for F4 (dispatch / POD) | row 4 | dispatch | Release at dispatch, per load line | owner (recommended option) | 2026-11-28 | ADR-S094 | |
-| AD-17 | Zero-total final invoice after a 100% taxed advance, issued as a tax invoice | — | approved | Zero-total final invoice is issued as a tax invoice | owner (recommended option) | 2026-11-28 | ADR-S094 | |
-| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred | — | none needed | C0 assessment: no occurrences | owner (recommended option) | 2026-11-28 | ADR-S094 | |
+| AD-17 | Zero-total final invoice after a 100% taxed advance, issued as a tax invoice | — | approved | Zero-total final invoice is issued as a tax invoice | owner (recommended option) | 2026-11-28 | ADR-S094 C1b (V731) | `SalesDownPaymentVatIT` |
+| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred | — | none needed | C0 assessment: no occurrences | owner (recommended option) | 2026-11-28 | ADR-S094 C0 | C0 read-only assessment |
 | AD-19 | Zero-value sales (replacement, sample): tax invoice required, or delivery note only | — | delivery note only | Zero-value sales get no tax invoice | owner (recommended option) | 2026-11-28 | ADR-S094 | |
 | AD-20 | Quantity credit without a return (write-off): accounts, approval level, stock treatment | — | approved | Own permission plus approval; no stock movement; posted like a return credit | owner (recommended option) | 2026-11-28 | ADR-S094 | |
 
@@ -168,9 +168,9 @@ Open questions for the accountant (block S6):
 6. (S9, Q-S9-1) Rebate settlement credit notes are issued without VAT; confirm whether a volume rebate must reduce
    output VAT (tax credit note) and whether accruals should be net of VAT.
 
-## 5a. Taxed advances and the final invoice — ADR-S094 (proposed)
+## 5a. Taxed advances and the final invoice — ADR-S094 (built in C1b, V731)
 
-**Known defect D-VAT-1** (on `main`; [ADR-S094](../adr/ADR-S094-centralized-sales.md) §3.5): with
+**Defect D-VAT-1, fixed in C1b** ([ADR-S094](../adr/ADR-S094-centralized-sales.md) §3.5). Before C1b, with
 `depositTaxPoint = receipt` (Mode R):
 - a down-payment invoice (D2) records the deposit at its **net** amount;
 - the final invoice (D4) then charges full VAT on all goods and has no deduction line;
@@ -179,12 +179,32 @@ Open questions for the accountant (block S6):
 D2 followed by D4 in the table above assumes an untaxed deposit, so it only holds in Mode D (`delivery`, the default),
 which is not affected.
 
-**Proposed rule** (not built; needs AD-14, AD-15 and AD-17):
+**Rule** (C1b; AD-14, AD-15 and AD-17 approved 2026-11-28):
 - In Mode R the final invoice deducts the taxed down payment with a negative line on the deposit account, carrying the
   same tax (Odoo's method).
 - The deduction consumes the deposit. P9 is used only for untaxed deposits (Mode D).
 - A credit note on a down-payment invoice reduces its deposit.
 - Zero-total final invoices are allowed.
+
+**As built** (`SalesBillingService.deductions`, `CustomerDepositService.consume`, V731):
+
+| Topic | Behaviour |
+|---|---|
+| Which down payments | Posted (or paid) down-payment invoices of the order whose deposit-account line carries a tax. Untaxed down payments (Mode D) are applied with P9 as before. |
+| Deduction line | One per down payment, on the deposit account, with the down payment's tax, negative quantity, no product. Deducting the whole down payment at once gives the down payment's own line negated (same quantity, unit price and tax-inclusive flag), so its net and VAT come back exactly. A part is a tax-exclusive line, quantity −1, unit price = the net share; the tax engine computes its VAT and rounds it to the currency's decimals like any other line. |
+| Share (AD-14 pro-rata) | what is left of the down payment × net of this invoice's goods ÷ net of the order not yet invoiced before it (live invoices, drafts included). The invoice that leaves nothing more to invoice (every line invoiced up to ordered − cancelled, close-short included) deducts everything left. *Left* = the down payment's net − its deductions on live invoices − posted credit notes on its invoice. |
+| Refused at create | "A down-payment invoice of sales order X is still a draft; post or cancel it before invoicing the order" (a draft taxed down payment could otherwise be deducted later or never); "The down payments to deduct exceed what sales order X invoices now" (negative total). |
+| Recheck at post (sales post guard) | Each deduction line still matches its link (deposit account, the down payment's tax, negative quantity, amount ±0.01); the down-payment invoice is still posted; the down payment is not deducted or credited beyond its net. |
+| Consumption | In the posting transaction (`InvoicePostGuard.afterPost`, not the asynchronous `invoice.posted` event): one `DepositApplication` of kind `deduction` per deducted down payment, without a payment. The deposit closes when nothing is left. A posted down-payment invoice registers its deposit in the same hook (the event still does it too, idempotently). |
+| Release | A discarded draft never consumed anything. Cancelling a posted final invoice stamps its deductions `reversedAt` and re-opens the deposit; the next regular invoice deducts again. |
+| P9 / P10 | Refused for a taxed down-payment deposit: "Deposit X is a down payment invoiced with VAT; it is deducted on the final invoice of its sales order, not applied" and "Deposit X is a down payment invoiced with VAT; refund it with a credit note on its down-payment invoice Y". Automatic deposit application on invoice post skips them. |
+| Credit note on a down-payment invoice (AD-15) | Lines on the deposit account only ("A credit note on a down-payment invoice credits the customer deposit account only"), with the down payment's tax ("A credit note on a down-payment invoice takes the tax of the down payment"); in both modes, so the deposit record always follows the deposit account. Posting consumes the deposit (`DepositApplication` kind `credit_note`) and is refused when less is left: "Down-payment invoice X has only Y of its deposit left; the rest was already deducted, credited or applied". The existing cap (credit notes ≤ invoice total) applies first. Reversing the credit note releases it. |
+| Zero and negative lines (AD-17) | A zero-total invoice posts without an AR line and is `paid` at once. A negative revenue line posts as a debit ("Deduction"), a negative tax line as a debit to the tax account ("Output tax deducted"); zero lines are skipped. A negative invoice total is refused: "An invoice total cannot be negative". |
+
+**Rounding example** (UGX, no decimals; ADR-S094 AD-14): 50% advance 590 (500 + VAT 90), reduced by a credit note of
+100 + 18 to 400 left. Invoice 1 (4 of 10): deduction 400 × 400 ÷ 1,000 = 160, VAT 28.80 → **29**; total 472 − 189 =
+283. Invoice 2 (the rest): 240, VAT 43; total 708 − 283 = 425. Output VAT 90 − 18 + 72 − 29 + 108 − 43 = 180; owed
+590 − 118 + 283 + 425 = 1,180.
 
 **Common data**: 10 units × 100.00 = net 1,000.00; VAT 18% = 180.00; gross 1,180.00; unit cost 60.00 (COGS 600.00).
 
@@ -216,8 +236,8 @@ created only when no mapping exists (`CustomerDepositService.depositAccount`). I
 
 Balances: AR 0 · deposit 0 · **output VAT 180.00 (once)** · revenue 1,000.00 · bank 1,180.00 · COGS 600.00.
 
-*Today's code (D-VAT-1)*: step 4 posts Dr AR 1,180.00 / Cr revenue 1,000.00 / Cr VAT 180.00. The 1,000.00 deposit is
-then applied, which leaves AR open at **180.00** and output VAT at **360.00**.
+*Before C1b (D-VAT-1)*: step 4 posted Dr AR 1,180.00 / Cr revenue 1,000.00 / Cr VAT 180.00. The 1,000.00 deposit is
+then applied, which left AR open at **180.00** and output VAT at **360.00**.
 
 **J1-D — 100% advance, Mode D**: P2 Dr Bank / Cr deposit 1,180.00 → P4 → P8 Dr AR 1,180.00 / Cr revenue 1,000.00,
 Cr VAT 180.00 → P9 Dr deposit / Cr AR 1,180.00. AR 0, deposit 0, VAT 180.00.
@@ -255,8 +275,8 @@ Balances: AR 0, deposit 0, VAT 180, revenue 1,000, bank 1,180.
 | Invoice 2 (6 units): goods 600 + VAT 108; deduction rest 300 + VAT 54 → total **354.00** | Dr AR 354, Dr deposit 300, Dr VAT 54 / Cr revenue 600, Cr VAT 108; receipt 354 |
 
 Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · COGS 600 · bank 1,180.
-- *Oldest-first variant*: invoice 1 deducts 400 + 72 (total 0); invoice 2 deducts 100 + 18 (total 590). VAT
-  90 + 0 + 90 = 180.
+- *Oldest-first variant* (not built; AD-14 chose pro-rata): invoice 1 would deduct 400 + 72 (total 0); invoice 2
+  100 + 18 (total 590). VAT 90 + 0 + 90 = 180.
 - *Mode D variant*: deposit 590 untaxed; P9 applies 472 to invoice 1 and 118 to invoice 2; receipt 590. VAT 72 + 108 =
   180.
 
@@ -276,10 +296,16 @@ Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · CO
 | J1-R, J1-D, J2-R, J2-D, J3 (all variants), J4-D | 0 | 0 | 180 | 1,000 | 600 | 1,180 | VAT = 18% × revenue; cash = revenue + VAT |
 | J4-A, J4-C (cancelled, refunded) | 0 | 0 | 0 | 0 | 0 | 0 | nothing left open |
 | J4-B (2 units returned, refunded) | 0 | 0 | 144 | 800 | 480 | 944 | VAT = 18% × 800 |
-| **Today's code, J1-R (D-VAT-1)** | **180** | 0 | **360** | 1,000 | 600 | 1,180 | ✗ VAT counted twice; customer shown as owing 180 |
+| **Before C1b, J1-R (D-VAT-1)** | **180** | 0 | **360** | 1,000 | 600 | 1,180 | ✗ VAT counted twice; customer shown as owing 180 |
 
 Invariants V1–V5 (ADR-S094 §3.4) are asserted in each example's test. V1: Σ output VAT per sale = VAT on net delivered
 and invoiced goods.
+
+**Tests** (`SalesDownPaymentVatIT`, one customer and one VAT account per test; output VAT, customer deposits, AR, the AR
+tie-out and the trial balance asserted): J1, J1-D, J2-R, J3, J4-A (with the P9 / P10 refusals and the wrong-account
+credit note), J4-D (with the refusal of a credit note once the deposit is consumed), the rounding example above, draft
+discard and posted-invoice cancel releasing the deduction, and the draft down-payment guard. J4-B and J4-C use
+existing flows (credit note on the final invoice; P10 refund) and keep their existing tests.
 
 ## 6. Worked example — contractor, 100 t aggregate, policy A (default)
 

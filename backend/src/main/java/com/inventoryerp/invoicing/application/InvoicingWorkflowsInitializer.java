@@ -177,8 +177,15 @@ public class InvoicingWorkflowsInitializer {
         Grouped g = builder.groupForPosting((String) full.get("partnerId"), lines, "sales", null);
         List<Line> post = new ArrayList<>();
         String partnerId = (String) full.get("partnerId");
-        post.add(new Line(g.counterAccount(), JsNumbers.dec(d(full.get("totalAmount"))), null, partnerId,
-                "Invoice " + full.get("documentNumber"), null, null, null));
+        BigDecimal total = d(full.get("totalAmount"));
+        if (total.signum() < 0) {
+            throw ApiException.badRequest("An invoice total cannot be negative");
+        }
+        // ADR-S094 C1b (AD-17): a final invoice that deducts a 100 % taxed down payment totals zero: no receivable line.
+        if (total.signum() > 0) {
+            post.add(new Line(g.counterAccount(), JsNumbers.dec(total), null, partnerId,
+                    "Invoice " + full.get("documentNumber"), null, null, null));
+        }
         String accrual = jdbc.sql("SELECT data->>'revenueAccruedBy' FROM \"Document\" WHERE id = ? AND \"organizationId\" = ?").params(id, com.inventoryerp.kernel.tenancy.TenantContext.organizationId())
                 .query(String.class).optional().orElse(null);
         if (accrual != null) {
@@ -211,18 +218,37 @@ public class InvoicingWorkflowsInitializer {
                 g.taxByAccount().forEach((acc, amt) -> post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax")));
             }
         } else {
-            g.itemLines().forEach(it -> post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), partnerId,
-                    "Revenue", null, it.costCenterId(), it.glDimensions())));
-            g.taxByAccount().forEach((acc, amt) -> post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax")));
+            // ADR-S094 C1b: an account whose lines net negative (a down-payment deduction on the deposit account, with its
+            // tax) is debited; an account whose lines net to zero gets no journal line.
+            g.itemLines().forEach(it -> {
+                if (it.amount().signum() > 0) {
+                    post.add(new Line(it.accountId(), null, JsNumbers.dec(it.amount()), partnerId, "Revenue", null,
+                            it.costCenterId(), it.glDimensions()));
+                } else if (it.amount().signum() < 0) {
+                    post.add(new Line(it.accountId(), JsNumbers.dec(it.amount().negate()), null, partnerId, "Deduction",
+                            null, it.costCenterId(), it.glDimensions()));
+                }
+            });
+            g.taxByAccount().forEach((acc, amt) -> {
+                if (amt.signum() > 0) {
+                    post.add(Line.credit(acc, JsNumbers.dec(amt), "Output tax"));
+                } else if (amt.signum() < 0) {
+                    post.add(Line.debit(acc, JsNumbers.dec(amt.negate()), "Output tax deducted"));
+                }
+            });
         }
-        var journal = journals.resolveSalesJournal((String) full.get("invoicingJournalId"));
-        Map<String, Object> entry = posting.post(new PostingRequest(journal.getCode(), instant(full.get("issueDate")),
-                "Invoice " + full.get("documentNumber"), (String) full.get("currencyId"),
-                d(full.get("exchangeRate")), "invoice", id, null, null, accrual == null ? null : (String) full.get("branchId"),
-                null, null, post));
-        jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" = 'not_paid',"
-                        + " \"updatedAt\" = " + NOW + " WHERE id = ?")
-                .params(entry.get("id"), d(full.get("totalAmount")), id).update();
+        Map<String, Object> entry = null;
+        if (!post.isEmpty()) {
+            var journal = journals.resolveSalesJournal((String) full.get("invoicingJournalId"));
+            entry = posting.post(new PostingRequest(journal.getCode(), instant(full.get("issueDate")),
+                    "Invoice " + full.get("documentNumber"), (String) full.get("currencyId"),
+                    d(full.get("exchangeRate")), "invoice", id, null, null, accrual == null ? null
+                            : (String) full.get("branchId"), null, null, post));
+        }
+        jdbc.sql("UPDATE \"Document\" SET \"journalEntryId\" = ?, \"amountResidual\" = ?, \"paymentStatus\" ="
+                        + " ?::\"PaymentStatus\", \"updatedAt\" = " + NOW + " WHERE id = ?")
+                .params(entry == null ? null : entry.get("id"), total, total.signum() == 0 ? "paid" : "not_paid", id)
+                .update();
     }
 
     /** Invoice cancel: reverse the JE, return the auto-issued stock (with its COGS), zero the residual. */

@@ -63,6 +63,18 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Taxed down payments are deducted, not applied** (ADR-S094 C1b, V731; accountant decisions AD-14, AD-15, AD-17
+  recorded 2026-11-28 under the owner's recommended-option instruction). Nest has no down-payment invoices; these rules
+  extend the Spring-only billing of sales orders. Details in `sales-postings.md` §5a.
+  - An invoice line may have a negative quantity (the deduction of a down payment). Posting is sign-aware: negative
+    revenue and tax lines post as debits, zero lines are skipped, a zero-total invoice posts without an AR line and is
+    `paid` at once; a negative total is refused ("An invoice total cannot be negative").
+  - `POST /customer-deposits/:id/apply` and `/refund` refuse a deposit registered from a down-payment invoice with VAT
+    (it is deducted on the final invoice, or credited on its own invoice).
+  - A credit note on a down-payment invoice credits the customer-deposit account only, with the down payment's tax,
+    and consumes the deposit (refused when less is left); reversing it, or cancelling a final invoice that deducted a down payment, releases
+    the deposit.
+  - New post-guard hook `InvoicePostGuard.afterPost`, run in the posting transaction after the transition.
 - **IPR wave 3 (stream E3; owner sign-off required).**
   - **Bill cancel issues back its receipt** (`issueBackReceipt`, linked rows, journal at the receipt's cost); refused
     when the goods are no longer on hand (inventory.md deviation 72).

@@ -408,6 +408,11 @@ public class CustomerDepositService {
             throw ApiException.badRequest("Deposit " + d.get("number") + " is a refundable deposit; classify it as an"
                     + " advance before applying it to an invoice");
         }
+        if (isTaxedDownPayment(d)) {
+            // ADR-S094 C1b (D-VAT-1): applying it would leave the advance's VAT charged twice.
+            throw ApiException.badRequest("Deposit " + d.get("number") + " is a down payment invoiced with VAT; it is"
+                    + " deducted on the final invoice of its sales order, not applied");
+        }
         Map<String, Object> doc = SqlRows.one(jdbc.sql("SELECT id, \"partnerId\", \"amountResidual\", status::text AS status,"
                 + " data->>'downPaymentFor' AS dp, \"currencyId\", \"documentNumber\" FROM \"Document\" WHERE id = ? AND"
                 + " \"organizationId\" = ? AND \"documentType\" = 'sales_invoice'").params(documentId, org()));
@@ -478,6 +483,11 @@ public class CustomerDepositService {
         String depositId = (String) d.get("id");
         if (!"open".equals(d.get("status"))) {
             throw ApiException.badRequest("Deposit " + d.get("number") + " is " + d.get("status"));
+        }
+        if (isTaxedDownPayment(d)) {
+            // ADR-S094 C1b (AD-15): the VAT charged on the advance must be reversed too.
+            throw ApiException.badRequest("Deposit " + d.get("number") + " is a down payment invoiced with VAT; refund it"
+                    + " with a credit note on its down-payment invoice " + d.get("reference"));
         }
         BigDecimal available = available(d);
         BigDecimal amount = amountIn == null ? available : amountIn.setScale(6, RoundingMode.HALF_UP);
@@ -620,6 +630,74 @@ public class CustomerDepositService {
         audit.recordInTx(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("unapplied", amount,
                 "documentId", a.get("documentId"), "paymentId", paymentId, "reason", reason.strip())));
         return get(depositId);
+    }
+
+    /**
+     * ADR-S094 C1b (D-VAT-1): a deposit registered from a down-payment invoice whose deposit line carries a tax
+     * ({@code depositTaxPoint = receipt}). It is never applied or refunded like a plain advance: a final invoice deducts
+     * it ({@code deduction}) or a credit note on its own invoice reduces it ({@code credit_note}), each with its VAT.
+     */
+    public boolean isTaxedDownPayment(Map<String, Object> d) {
+        return "down_payment_invoice".equals(d.get("source")) && d.get("documentId") != null
+                && jdbc.sql("SELECT count(*) FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"accountId\" = ? AND"
+                        + " \"taxId\" IS NOT NULL").params(d.get("documentId"), depositAccount()).query(Long.class).single() > 0;
+    }
+
+    /**
+     * ADR-S094 C1b: book the part of a down payment's deposit that a posted document consumed without a payment — the
+     * deduction on a final invoice ({@code kind = deduction}, AD-14) or a credit note on the down-payment invoice itself
+     * ({@code credit_note}, AD-15). The deposit is registered first when the down-payment invoice's event has not done
+     * it yet. Refused beyond what is still open on the deposit; a repeat for the same document changes nothing.
+     */
+    @Transactional
+    public void consume(String downPaymentDocumentId, String documentId, BigDecimal net, String kind) {
+        if (net == null || net.signum() <= 0) {
+            return;
+        }
+        Map<String, Object> registered = registerDownPayment(downPaymentDocumentId);
+        if (registered == null) {
+            throw ApiException.badRequest("The down-payment invoice has no posted deposit to consume");
+        }
+        Map<String, Object> d = lock((String) registered.get("id"));
+        String depositId = (String) d.get("id");
+        if (SqlRows.one(jdbc.sql("SELECT id FROM \"DepositApplication\" WHERE \"depositId\" = ? AND \"documentId\" = ? AND"
+                + " kind = ? AND \"reversedAt\" IS NULL").params(depositId, documentId, kind)) != null) {
+            return;
+        }
+        BigDecimal amount = net.setScale(6, RoundingMode.HALF_UP);
+        BigDecimal available = "open".equals(d.get("status")) ? available(d) : BigDecimal.ZERO;
+        if (amount.compareTo(available) > 0) {
+            throw ApiException.badRequest("Down-payment invoice " + d.get("reference") + " has only "
+                    + JsNumbers.dec(available) + " of its deposit left; the rest was already deducted, credited or"
+                    + " applied");
+        }
+        jdbc.sql("INSERT INTO \"DepositApplication\" (id, \"organizationId\", \"depositId\", \"documentId\", amount, kind,"
+                + " \"createdById\") VALUES (?, ?, ?, ?, ?, ?, ?)").params(UUID.randomUUID().toString(), org(), depositId,
+                        documentId, amount, kind, TenantContext.userId()).update();
+        settle(depositId, amount, BigDecimal.ZERO);
+        audit.recordInTx(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of(kind, amount, "documentId",
+                documentId)));
+    }
+
+    /**
+     * ADR-S094 C1b: a cancelled final invoice or a reversed credit note gives back what it consumed of down-payment
+     * deposits ({@link #consume}); the rows are stamped {@code reversedAt}, never deleted.
+     */
+    @Transactional
+    public void releaseConsumption(String documentId) {
+        for (Map<String, Object> a : SqlRows.list(jdbc.sql("SELECT id, \"depositId\", amount, kind FROM \"DepositApplication\""
+                + " WHERE \"organizationId\" = ? AND \"documentId\" = ? AND kind IN ('deduction', 'credit_note') AND"
+                + " \"reversedAt\" IS NULL ORDER BY \"depositId\"").params(org(), documentId))) {
+            String depositId = (String) a.get("depositId");
+            lock(depositId);
+            BigDecimal amount = SqlRows.dec(a, "amount");
+            jdbc.sql("UPDATE \"DepositApplication\" SET \"reversedAt\" = " + NOW + " WHERE id = ?").param(a.get("id"))
+                    .update();
+            jdbc.sql("UPDATE \"CustomerDeposit\" SET \"appliedAmount\" = \"appliedAmount\" - ?, status = 'open',"
+                    + " \"updatedAt\" = " + NOW + " WHERE id = ?").params(amount, depositId).update();
+            audit.recordInTx(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("released", amount,
+                    "kind", a.get("kind"), "documentId", documentId)));
+        }
     }
 
     private void settle(String depositId, BigDecimal applied, BigDecimal refunded) {
@@ -836,8 +914,13 @@ public class CustomerDepositService {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> apps = (List<Map<String, Object>>) d.get("applications");
         List<CustomerDepositReceiptPdf.HistoryRow> history = apps.stream().map(a -> new CustomerDepositReceiptPdf.HistoryRow(
-                day(a.get("createdAt")), "refund".equals(a.get("kind")) ? "Refund" : "Applied to invoice "
-                        + (a.get("documentNumber") == null ? "" : a.get("documentNumber")), SqlRows.dec(a, "amount"),
+                day(a.get("createdAt")), switch (String.valueOf(a.get("kind"))) {
+                    case "refund" -> "Refund";
+                    case "deduction" -> "Deducted on invoice " + (a.get("documentNumber") == null ? ""
+                            : a.get("documentNumber"));
+                    case "credit_note" -> "Credited by " + (a.get("documentNumber") == null ? "" : a.get("documentNumber"));
+                    default -> "Applied to invoice " + (a.get("documentNumber") == null ? "" : a.get("documentNumber"));
+                }, SqlRows.dec(a, "amount"),
                 a.get("reversedAt") != null)).toList();
         String source = switch (String.valueOf(d.get("source"))) {
             case "down_payment_invoice" -> "Down payment (invoice " + (d.get("reference") == null ? "" : d.get("reference"))

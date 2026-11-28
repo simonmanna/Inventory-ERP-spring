@@ -299,13 +299,28 @@ Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · CO
     refusal of a plain deposit.
   - Revision 2 of this ADR (F2 Option C, F5) described the same flow without noticing the defect.
 - **Affected**: organizations with `depositTaxPoint = receipt`. The default `delivery` is not affected.
-- **Fix** (after the accountant approves AD-14, AD-15 and AD-17):
-  - deduction lines (pro-rata or oldest-first, AD-14) on regular invoices of orders with taxed down payments;
-  - a post-guard check that deductions ≤ the remaining taxed advance;
-  - a credit note on a DP invoice reduces its deposit;
-  - P9 only for untaxed deposits;
-  - zero-total final invoices allowed;
-  - J1–J4 as integration tests.
+- **Fix (built in C1b, migration V731; AD-14 pro-rata, AD-15 and AD-17 approved 2026-11-28)**:
+  - Regular invoices of orders with taxed down payments get one deduction line per down payment: deposit account, the
+    down payment's tax, negative quantity. Share = what is left of the down payment × net of the invoice's goods ÷ net
+    of the order not yet invoiced; the invoice that leaves nothing to invoice takes the rest. A whole down payment at
+    once is its own line negated (exact net and VAT); a part is a tax-exclusive line, rounded by the tax engine to the
+    currency's decimals like any line.
+  - A regular invoice is refused while a taxed down-payment invoice of the order is a draft, and when the deductions
+    would exceed the invoice.
+  - The sales post guard rechecks each deduction (line unchanged, down payment still posted, never deducted beyond its
+    net). Consumption is booked **in the posting transaction** through a new hook, `InvoicePostGuard.afterPost`,
+    because `invoice.posted` subscribers run after commit and are not atomic with the post (TA-3). Cancelling a posted
+    final invoice releases its deductions.
+  - `DepositApplication` gains the kinds `deduction` and `credit_note` (no payment); `SalesInvoiceLink` gains the kind
+    `deduction` with `downPaymentDocumentId`.
+  - A credit note on a DP invoice credits the deposit account only and consumes the deposit; refused once nothing is
+    left (AD-15); reversing it releases the deposit.
+  - P9 (apply) and P10 (refund) are refused for a taxed down-payment deposit; automatic application skips it.
+  - Zero-total invoices post without an AR line and are paid at once; negative lines post as debits; a negative total
+    is refused. The V206 comment "never a negative invoice line" is superseded (V206 itself is not edited).
+  - Tests: `SalesDownPaymentVatIT` (J1, J1-D, J2-R, J3, J4-A, J4-D, a rounding case in UGX, draft and cancel release,
+    the draft down-payment guard), each asserting output VAT, deposits, AR, the AR tie-out and the trial balance.
+    Details in `sales-postings.md` §5a.
 - **Historical rows**: the C0 read-only assessment lists organizations with `receipt`, and any posted final invoices
   that followed taxed down payments. Corrections only with accountant approval, as credit notes, never by editing
   (AD-18).
@@ -1326,7 +1341,7 @@ redesign.
 |---|---|---|
 | **C0** Docs + assessment (approved to proceed) | ADR rev 3 in `docs/adr`; spec updates (`sales.md`, `cash-sales.md` superseded, `invoicing.md`, `sales-postings.md` with J1–J4, F1–F7, §3.6 and the sign-off table). Read-only on a **restored copy**: preflight, D-VAT-1 assessment, count of invoices posted before the guard (§10.4), credit-note creator classification (§7.3). WAL / PITR status of the live host checked read-only. **Assessment done 2026-11-28**: [report](../audits/2026-11-28-adr-s094-c0-assessment.md). | Owner approves the ADR · §8 matrix approved · AD and OD answered or gated · reports with zero unexplained items |
 | **C1a** Idempotency lease and fencing (kernel) + TA-6 fix | §6; quarantine location created when the setting is saved and named `RETRY_SAFE_TX` | IL-1…IL-10 green (IL-1 / IL-2 shown failing before the change) · TP-6 · all existing idempotency ITs and parity scenarios unchanged · `CONTRACT.md` §6 updated for the approved deviation only (OD-14) |
-| **C1b** D-VAT-1 correction | §3.5, after AD-14 / 15 / 17 | VAT-J1…J4 green in both modes · V1–V5 hold · historical assessment signed off (AD-18) |
+| **C1b** D-VAT-1 correction | §3.5, after AD-14 / 15 / 17 (built, V731) | VAT-J1…J4 green in both modes · V1–V5 hold · historical assessment signed off (AD-18) |
 | **C1** Schema + state dimensions + approval | §4, including the submit button in the web; order behaviour preserved except the approved approval changes | Backfill proof (counts per old status = new combinations) · AP-1…AP-10 · I1–I7 · authorization matrix · tenant isolation · every existing SalesOrder IT green |
 | **C2** Returns / credits / outcome / completion (after AD-9, AD-15, AD-20) | §7, §4.4, §4.5 | RT, CS and FO groups · `qtyCredited` for every credit path · `SalesReturnFlowIT` green |
 | **C3** Cash pickup | §5: payment model, T1, handover, fiscal outbox | Exact F1 journals · PM, PH, FI, TP, RC, FR, CC, RV groups green · R1–R3 = 0 · 20-line confirm p95 < 1.5 s and CC-5 without timeout on the rehearsal DB |

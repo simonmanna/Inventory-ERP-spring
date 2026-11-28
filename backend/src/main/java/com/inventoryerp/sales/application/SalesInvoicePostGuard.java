@@ -38,6 +38,12 @@ class SalesInvoicePostGuard implements InvoicePostGuard {
         }
     }
 
+    /** ADR-S094 C1b: register a down payment's deposit, or consume the deposits a final invoice deducts. */
+    @Override
+    public void afterPost(String documentId) {
+        billing.afterPost(documentId);
+    }
+
     /** The invoice of a branch cash sale carries the sale's frozen lines, one for one and in order. */
     List<String> cashSaleProblems(String documentId) {
         Map<String, Object> d = db.row("SELECT \"sourceId\" FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? AND"

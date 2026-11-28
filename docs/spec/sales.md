@@ -311,6 +311,11 @@ branch scope.
 
 ## Deviations
 
+- **Taxed down payments are deducted on the final invoice** (ADR-S094 C1b, V731, fixes D-VAT-1; AD-14 pro-rata, AD-15,
+  AD-17). With `depositTaxPoint = receipt` a regular invoice of `POST /sales/orders/:id/invoices` carries one negative
+  deduction line per posted taxed down payment and consumes its deposit when posted. A regular invoice is refused while
+  a taxed down-payment invoice of the order is still a draft. See `sales-postings.md` §5a and the
+  [invoicing deviation](invoicing.md#deviations).
 - **IPR Phase 1a (2026-11-27; owner sign-off required).**
   - **F2: restock only what left stock.** A return line with no recorded stock issue (for example an order-policy
     line invoiced but never delivered) is a financial credit only. Receive and inspect move no stock. A line with an
