@@ -299,7 +299,8 @@ class SyncInventoryIT extends ApiTestSupport {
     }
 
     @Test
-    @DisplayName("stock.count: the variance is counted − on-hand when counted (later movements carry it forward)")
+    @DisplayName("stock.count: the variance is counted − on-hand when counted (later movements carry it forward by"
+            + " effective time)")
     void countMeasuredWhenCounted() {
         String p = product();
         stockIn(p, locA, 10);
@@ -310,11 +311,16 @@ class SyncInventoryIT extends ApiTestSupport {
                 "countedQty", 8))), countedAt));
         assertThat(r.get("status").asString()).as(r.toString()).isEqualTo("applied");
         String session = r.get("mapping").get("countId").asString();
-        Map<String, Object> line = jdbc.sql("SELECT \"systemQty\", \"countedQty\" FROM \"InventoryCountLine\" WHERE"
-                + " \"sessionId\" = ? AND \"productId\" = ?").params(session, p).query().singleRow();
+        Map<String, Object> line = jdbc.sql("SELECT \"systemQty\", \"countedQty\", \"countedAt\" FROM"
+                + " \"InventoryCountLine\" WHERE \"sessionId\" = ? AND \"productId\" = ?").params(session, p).query()
+                .singleRow();
         assertThat((BigDecimal) line.get("systemQty")).isEqualByComparingTo("15");
-        // counted 8 when on hand was 10: two missing; the 5 received later are carried forward.
-        assertThat((BigDecimal) line.get("countedQty")).isEqualByComparingTo("13");
+        // IPR X-1c (ADR-S088): the device's figure is kept as counted, cut off at the device time; the 5 received
+        // later are carried forward by effective time when the variance is posted (8 + 5 − 15 = −2).
+        assertThat((BigDecimal) line.get("countedQty")).isEqualByComparingTo("8");
+        assertThat(((java.sql.Timestamp) line.get("countedAt")).toLocalDateTime().toInstant(java.time.ZoneOffset.UTC))
+                .isBetween(countedAt.minusMillis(1), countedAt.plusMillis(1)); // timestamp(3) rounds
+        assertThat(onHand(p, locA)).as("two missing").isEqualByComparingTo("13");
     }
 
     @Test

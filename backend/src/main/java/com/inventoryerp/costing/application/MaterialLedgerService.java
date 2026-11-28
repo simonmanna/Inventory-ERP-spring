@@ -92,6 +92,19 @@ public class MaterialLedgerService {
         return r;
     }
 
+    /**
+     * IPR M-23: the run row {@code FOR UPDATE} (lock level L1, before the journal and the value rows). A second post,
+     * reverse or delete of the same run waits here and then sees the status the first one committed.
+     */
+    private Map<String, Object> lockedRun(String id) {
+        Map<String, Object> r = SqlRows.one(jdbc.sql("SELECT * FROM \"MaterialLedgerRun\" WHERE id = ? AND"
+                + " \"organizationId\" = ? FOR UPDATE").params(id, org()));
+        if (r == null) {
+            throw ApiException.notFound("Material ledger run not found");
+        }
+        return r;
+    }
+
     /** Create a draft run for the period after the last posted run (or {@code from}..{@code to} for the first). */
     @Transactional
     public Map<String, Object> create(String fromRaw, String toRaw) {
@@ -136,7 +149,7 @@ public class MaterialLedgerService {
 
     @Transactional
     public Map<String, Object> delete(String id) {
-        Map<String, Object> r = run(id);
+        Map<String, Object> r = lockedRun(id);
         if (!"draft".equals(r.get("status"))) {
             throw ApiException.badRequest("Only a draft run can be deleted");
         }
@@ -226,7 +239,7 @@ public class MaterialLedgerService {
     /** Post the change in carried variance: Dr / Cr stock valuation against 5965 Material Ledger Revaluation. */
     @Transactional
     public Map<String, Object> post(String id) {
-        Map<String, Object> r = run(id);
+        Map<String, Object> r = lockedRun(id);
         if (!"draft".equals(r.get("status"))) {
             throw ApiException.badRequest("Only a draft run can be posted");
         }
@@ -238,7 +251,12 @@ public class MaterialLedgerService {
             throw ApiException.badRequest("The run no longer follows the last posted run; recompute it");
         }
         compute(id, from, (LocalDate) r.get("periodTo"));
-        String stock = determination.mapped("stock_valuation");
+        // IPR wave 3 (material-ledger GL defect): the run's value rows are CM-1 price-difference components
+        // (valueRows → recordValueOnly "price_difference"), which the integrity checks tie to the adjunct account
+        // (1396, gl_tieout_by_account) and leave out of the per-product stock-account check. The journal posted them to
+        // stock valuation, so both checks failed after every run; it now posts to the adjunct, like every other
+        // price-difference component. Runs posted before keep their journals (R1; their reversal mirrors them).
+        String stock = lineage.priceDifferenceAccount();
         String reval = accounts.ensureByCode("5965", "Material Ledger Revaluation", "cost_of_goods_sold",
                 "material_ledger_revaluation");
         List<PostingRequest.Line> lines = new ArrayList<>();
@@ -269,9 +287,13 @@ public class MaterialLedgerService {
             entryId = (String) entry.get("id");
             deltas.forEach((productId, d) -> valueRows(productId, d, "material_ledger_run", id));
         }
-        jdbc.sql("UPDATE \"MaterialLedgerRun\" SET status = 'posted', \"journalEntryId\" = ?, \"postedAt\" = now(),"
-                + " \"postedBy\" = ? WHERE id = ? AND \"organizationId\" = ?").params(entryId, TenantContext.userId(), id,
-                        org()).update();
+        int claimed = jdbc.sql("UPDATE \"MaterialLedgerRun\" SET status = 'posted', \"journalEntryId\" = ?,"
+                + " \"postedAt\" = now(), \"postedBy\" = ? WHERE id = ? AND \"organizationId\" = ? AND status = 'draft'")
+                .params(entryId, TenantContext.userId(), id, org()).update();
+        if (claimed != 1) {
+            // Unreachable under the row lock; refuses (and rolls back the journal and value rows) if it ever is.
+            throw ApiException.badRequest("Only a draft run can be posted");
+        }
         audit.recordInTx(AuditInput.of("MaterialLedgerRun", id, "post", null, Obj.of("journalEntryId", entryId)));
         return get(id);
     }
@@ -279,7 +301,7 @@ public class MaterialLedgerService {
     /** Reverse the last posted run (mirrored entry); carried amounts fall back to the run before. */
     @Transactional
     public Map<String, Object> reverse(String id) {
-        Map<String, Object> r = run(id);
+        Map<String, Object> r = lockedRun(id);
         if (!"posted".equals(r.get("status"))) {
             throw ApiException.badRequest("Only a posted run can be reversed");
         }
@@ -299,8 +321,12 @@ public class MaterialLedgerService {
                         (String) r.get("journalEntryId"));
             }
         }
-        jdbc.sql("UPDATE \"MaterialLedgerRun\" SET status = 'reversed', \"reversalEntryId\" = ?, \"reversedAt\" = now()"
-                + " WHERE id = ? AND \"organizationId\" = ?").params(reversal, id, org()).update();
+        int claimed = jdbc.sql("UPDATE \"MaterialLedgerRun\" SET status = 'reversed', \"reversalEntryId\" = ?,"
+                + " \"reversedAt\" = now() WHERE id = ? AND \"organizationId\" = ? AND status = 'posted'")
+                .params(reversal, id, org()).update();
+        if (claimed != 1) {
+            throw ApiException.badRequest("Only a posted run can be reversed");
+        }
         audit.recordInTx(AuditInput.of("MaterialLedgerRun", id, "reopen", null, Obj.of("reversalEntryId", reversal)));
         return get(id);
     }

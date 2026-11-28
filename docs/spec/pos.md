@@ -83,6 +83,14 @@ reservation-no-show 1 min, reservation-refresh 5 min, stock-posting-drain 30 s, 
 
 ## Deviations
 
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**):
+
+- **GL-3: closing an integrity finding.** `POST /pos/posting-monitor/exceptions/:id/resolve` on a finding of kind
+  `integrity_*` also needs `inventory_valuation:manage` (403 "Closing an inventory integrity finding needs the
+  inventory_valuation:manage permission"); for a value finding (`valuation_vs_subledger`, `valuation_vs_gl`,
+  `valuation_vs_gl_by_product`) it re-runs the value checks and refuses while one fails (400 "The integrity check
+  <key> still fails (<n> row(s); <note>). Correct the cause, then close the finding."). Other kinds unchanged.
+
 Approved by the owner 2026-11-23 (inventory hardening R4, workflow integrity, release gate G1;
 [review](../audits/2026-11-22-inventory-review.md) P1-11, P1-12):
 
@@ -209,6 +217,26 @@ Approved by the owner (decision D4, 2026-11-15, [ADR-S072](../adr/ADR-S072-pos-v
     difference: device charged X, catalog price Y", an `AuditLog` row (`Invoice update`, `kind:
     offline_price_variance`) records the variance, and the push result carries `priceVariance`. Online checkout still
     refuses with "The price changed. Refresh the quote before payment." Test `SyncDeviceIntegrityIT`.
+
+16. **A refund restocks against the sale's own issue rows (IPR 1d SW-1 / X-5; awaiting owner approval).** A restock
+    refund returns the refunded share of what the line still has out (its issue rows by order line / invoice item,
+    net of earlier returns such as a line void), through the engine's linked return: each product and recipe, combo or
+    extra component comes back to the location, lot and serial it left, at its issue cost, with `reversesLedgerId`.
+    Before, the restock was the gross issued quantity × refunded / sold, to the sale location, into a new lot: a void
+    followed by a refund restocked the voided units twice. A part refund of a plain serial-tracked line is 400 "Tracked
+    returns require an identified stock return; …". Lines sold before R4 (issue rows without a source line) keep the
+    old proportional restock.
+
+17. **Refund restock shares (IPR review blocker + 1d pre-R4 cap; awaiting owner approval).** A linked refund restock
+    returns `issued × refunded / line quantity` of each product, capped by what is still returnable; it returns
+    everything still returnable only when every earlier refund of the line was a restock. Before, a `waste` /
+    `no_return` refund counted in `refundedQty` but restocked nothing, so a later restock refund brought back phantom
+    units. The proportional path for lines sold before R4 is capped by what the sale still has out (issue rows net of
+    linked returns and of unlinked refunds, voids and cancels of the sale).
+
+18. **Stock timing change no longer loses a sale (IPR X-8).** When an order closes billed and has no stock-posting job
+    (billed under `at_payment` or an order-level timing, closed under `at_invoice`), the close enqueues its one job
+    (`postingTrigger = timing_catch_up`). Not for `manual` or the fulfilment timings.
 
 Post-parity additions (no Nest counterpart, explicitly labelled):
 
@@ -344,6 +372,15 @@ Same as Nest, kept on purpose:
   `toLocaleDateString()` columns use the en-US ICU format of Node 22 (`3:04:05 PM` with U+202F).
 - `GET /pos/posting-monitor/jobs?status=` / `/exceptions?status=` with an unknown status → 500 (Prisma enum/where error).
 - Business timestamps Nest sets with `new Date()` use the database clock (`clock_timestamp()`), as in every module.
+
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Device-time flags are recorded on the online routes (finding 1, ADR-S088 / P15-1).** The POS sale, settle,
+  invoice, payment and cash-drawer routes accept an `occurredAt` that is too old or too far ahead as before, and now
+  record the flag as the sync path does: an `InventoryException` of kind `offline_late_sync` (kept as sent) or
+  `offline_clock_skew` (stored at the receive time) with `payload.channel = online`, once per request and time.
+  Report-only: these two kinds no longer hold a period close (they never were unposted sale lines).
 
 ## Status
 

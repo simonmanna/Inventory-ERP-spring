@@ -516,6 +516,8 @@ public class SalesBillingService {
     /** Gross invoiced per line = Σ regular links on posted / paid invoices. */
     @Transactional
     public void recomputeInvoiced(String orderId) {
+        // IPR LK-3: the sales order before its lines, the order every other sales path uses.
+        db.row("SELECT id FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE", orderId, org());
         db.update("""
                 UPDATE "SalesOrderLine" l SET "qtyInvoiced" = COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k
                        JOIN "Document" d ON d.id = k."documentId" WHERE k."orderLineId" = l.id AND k.kind = 'regular'

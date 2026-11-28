@@ -76,7 +76,8 @@ public class ApprovalsNotificationsSubscriber {
                 return;
             }
             List<String> approvers = !named.isEmpty() ? named : jdbc.sql("""
-                            SELECT u.id FROM "User" u WHERE u."organizationId" = :org AND EXISTS (
+                            SELECT u.id FROM "User" u WHERE u."organizationId" = :org AND u."isActive" = true
+                              AND u."deletedAt" IS NULL AND EXISTS (
                               SELECT 1 FROM "_UserRoles" ur JOIN "Role" r ON r.id = ur."A"
                               WHERE ur."B" = u.id AND r.permissions && CAST(:perms AS text[]))""")
                     .param("org", orgId)

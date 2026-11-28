@@ -49,8 +49,9 @@ class IntercompanyIT extends ApiTestSupport {
         Res boot = call("POST", "/organizations/bootstrap", Map.of("organizationCode", code, "organizationName", name,
                 "adminEmail", email, "adminFirstName", "Owner", "adminPassword", "Owner@12345"), (String) null);
         assertThat(boot.status()).as(boot.raw().body()).isEqualTo(201);
-        return new Books(boot.body().get("organization").get("id").asString(), code,
-                login(code, email, "Owner@12345"));
+        String token = login(code, email, "Owner@12345");
+        inventorySodPairsOff(token);
+        return new Books(boot.body().get("organization").get("id").asString(), code, token);
     }
 
     JsonNode okAs(Books b, int status, String method, String path, Object body) {

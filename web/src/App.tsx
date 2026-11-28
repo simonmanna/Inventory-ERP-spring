@@ -59,6 +59,7 @@ const StockTabletPage = lazy(() => import('@/pages/warehouse/StockTabletPage').t
 const OfflineDiscrepanciesPage = lazy(() => import('@/pages/warehouse/OfflineDiscrepanciesPage').then((m) => ({ default: m.OfflineDiscrepanciesPage })));
 const SyncStatusPage = lazy(() => import('@/pages/pos/SyncStatusPage').then((m) => ({ default: m.SyncStatusPage })));
 const DeadLettersPage = lazy(() => import('@/pages/pos/DeadLettersPage').then((m) => ({ default: m.DeadLettersPage })));
+const InventoryIntegrityPage = lazy(() => import('@/pages/inventory/InventoryIntegrityPage').then((m) => ({ default: m.InventoryIntegrityPage })));
 const PostingMonitorPage = lazy(() => import('@/pages/pos/PostingMonitorPage').then((m) => ({ default: m.PostingMonitorPage })));
 const ApprovalsPage = lazy(() => import('@/pages/approvals').then((m) => ({ default: m.ApprovalsPage })));
 const ApprovalPoliciesPage = lazy(() => import('@/pages/approval-policies').then((m) => ({ default: m.ApprovalPoliciesPage })));
@@ -210,6 +211,7 @@ const StockAdjustmentsPage = lazy(() => import('@/pages/inventory/StockAdjustmen
 const WastePage = lazy(() => import('@/pages/inventory/WastePage').then((m) => ({ default: m.WastePage })));
 const StockTransfersPage = lazy(() => import('@/pages/inventory/StockTransfersPage').then((m) => ({ default: m.StockTransfersPage })));
 const InventoryCountPage = lazy(() => import('@/pages/inventory/InventoryCountPage').then((m) => ({ default: m.InventoryCountPage })));
+const OpeningStockImportPage = lazy(() => import('@/pages/inventory/OpeningStockImportPage').then((m) => ({ default: m.OpeningStockImportPage })));
 const InventoryReportsPage = lazy(() => import('@/pages/inventory/InventoryReportsPage').then((m) => ({ default: m.InventoryReportsPage })));
 const BottleCountPage = lazy(() => import('@/pages/beverage/BottleCountPage').then((m) => ({ default: m.BottleCountPage })));
 const BeverageDashboardPage = lazy(() => import('@/pages/beverage/BeverageDashboardPage').then((m) => ({ default: m.BeverageDashboardPage })));
@@ -546,6 +548,7 @@ export function App() {
             <Route path="/costing/close" element={<RequirePermission permission={PERMISSIONS.costingClose.read}><CostClosePage /></RequirePermission>} />
             <Route path="/costing/profitability" element={<RequirePermission permission={PERMISSIONS.profitability.read}><ProfitabilityPage /></RequirePermission>} />
             <Route path="/inventory/cost-explanation" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><CostExplanationPage /></RequirePermission>} />
+            <Route path="/inventory/integrity" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><InventoryIntegrityPage /></RequirePermission>} />
             <Route path="/manufacturing/process-costing" element={<ProcessCostingPage />} />
             <Route path="/manufacturing/stage-wip" element={<StageWipReportPage />} />
             {/* Concrete block / precast (2.4) — /manufacturing/precast/* */}
@@ -573,6 +576,7 @@ export function App() {
             <Route path="/inventory/transfers" element={<RequirePermission permission={PERMISSIONS.inventoryDoc.read}><StockTransfersPage /></RequirePermission>} />
             <Route path="/inventory/reports" element={<RequireReport reportId="inventory.reports"><InventoryReportsPage /></RequireReport>} />
             <Route path="/inventory/count" element={<RequirePermission permission={PERMISSIONS.inventoryCount.read}><InventoryCountPage /></RequirePermission>} />
+            <Route path="/inventory/opening-stock" element={<RequirePermission permission={PERMISSIONS.inventoryValuation.read}><OpeningStockImportPage /></RequirePermission>} />
             <Route path="/beverage" element={<BeverageDashboardPage />} />
             <Route path="/beverage/count" element={<BottleCountPage />} />
             {/* Rental — static segments before /rental/agreements/:id */}
