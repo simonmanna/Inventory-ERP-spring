@@ -52,6 +52,14 @@ public class PeriodCloseService {
         this.accounts = accounts;
     }
 
+    private InventoryValueChecks valueChecks;
+
+    /** IPR GL-10: the live inventory value checks (absent when the inventory module is not on the classpath). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setValueChecks(InventoryValueChecks valueChecks) {
+        this.valueChecks = valueChecks;
+    }
+
     private Period lockPeriod(String periodId, String organizationId) {
         jdbc.sql("SELECT id FROM \"FiscalPeriod\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
                 .params(periodId, organizationId).query(String.class).list();
@@ -116,6 +124,8 @@ public class PeriodCloseService {
             + " LEFT JOIN \"Invoice\" i ON i.id = x.\"invoiceId\" AND i.\"organizationId\" = x.\"organizationId\""
             + " WHERE x.\"organizationId\" = ? AND x.status::text = 'open' AND x.kind IS DISTINCT FROM ?"
             + " AND NOT starts_with(COALESCE(x.kind, ''), ?)"
+            // ADR-S088 / IPR review 1: the device-time flags are report-only and never hold a close.
+            + " AND COALESCE(x.kind, '') NOT IN ('offline_clock_skew', 'offline_late_sync')"
             + " AND (COALESCE(i.\"issueDate\", x.\"createdAt\") BETWEEN ? AND ? OR x.\"createdAt\" BETWEEN ? AND ?)";
 
     /**
@@ -187,12 +197,26 @@ public class PeriodCloseService {
                     + " Resolve them in the Posting Monitor before closing.");
         }
 
-        // Hardening R0: an open integrity finding on stock value (valuation vs stock ledger, valuation vs GL) raised
-        // since the period started means the period's stock value is not final, so the period cannot close.
+        // Hardening R0: an open integrity finding on stock value (valuation vs stock ledger, valuation vs GL) means the
+        // period's stock value is not final, so the period cannot close. IPR GL-10 (deviation): a finding raised before
+        // the period started counts too (it counted for nothing), and the value checks are re-run at close time, so a
+        // variance no daily run has raised yet holds the close too. IPR review 2 (R2-1): both as of the period end — a
+        // finding raised after it, a later variance or a journal dated after it do not hold this period, and a variance
+        // of the period that a later entry offsets still does.
         long valueFindings = count("SELECT count(*) FROM \"InventoryException\" WHERE \"organizationId\" = ?"
-                        + " AND status::text = 'open' AND kind = ANY(?::text[]) AND \"createdAt\" >= ?",
-                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new),
-                period.startDate());
+                        + " AND status::text = 'open' AND kind = ANY(?::text[]) AND \"createdAt\" <= ?",
+                organizationId, InventoryTieOutMonitor.INTEGRITY_VALUE_KINDS.toArray(String[]::new), period.endDate());
+        if (valueChecks != null) {
+            List<InventoryValueChecks.Failure> failing = valueChecks.failing(instant(period.endDate()));
+            if (!failing.isEmpty()) {
+                List<String> what = new ArrayList<>();
+                failing.forEach(f -> what.add(f.key() + " (" + f.failures() + " row(s)"
+                        + (f.note() != null ? "; " + f.note() : "") + ")"));
+                throw ApiException.badRequest("Cannot close '" + period.name() + "': the inventory value check(s) "
+                        + String.join(", ", what) + " fail as of the period end. Correct the stock value or the GL,"
+                        + " then close.");
+            }
+        }
         if (valueFindings > 0) {
             throw ApiException.badRequest("Cannot close '" + period.name() + "': " + valueFindings
                     + " open inventory integrity finding(s) on stock value (valuation vs stock ledger or GL)."
@@ -223,7 +247,12 @@ public class PeriodCloseService {
             BigDecimal credit = g.getValue()[1];
             boolean creditNormal = "credit".equals(acct.normalBalance());
             BigDecimal bal = creditNormal ? credit.subtract(debit) : debit.subtract(credit);
-            Line closing = creditNormal ? new Line(acct.id(), bal, BigDecimal.ZERO) : new Line(acct.id(), BigDecimal.ZERO, bal);
+            // IPR R2 defect 1: an account whose period balance sits on its abnormal side (an expense with a net credit,
+            // a revenue account with a net debit) is closed on the opposite side, with a positive amount. A negative
+            // closing line was refused ("Line amounts cannot be negative") and blocked the close.
+            BigDecimal amt = bal.abs();
+            boolean closeWithDebit = creditNormal == (bal.signum() >= 0);
+            Line closing = closeWithDebit ? new Line(acct.id(), amt, BigDecimal.ZERO) : new Line(acct.id(), BigDecimal.ZERO, amt);
             String section = acct.reportSection() == null ? "" : acct.reportSection();
             switch (section) {
                 case "revenue", "other_income" -> totalRevenue = totalRevenue.add(bal);

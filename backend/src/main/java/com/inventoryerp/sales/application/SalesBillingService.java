@@ -816,8 +816,8 @@ public class SalesBillingService {
      */
     @Transactional
     public void recomputeInvoiced(String orderId) {
-        // Lock order: the sale before its lines, as every sales command takes them (orders.lock, then the lines). This
-        // also runs as an event reaction (invoice posted or cancelled, payment allocated, credit note issued); taking the
+        // Lock order (IPR LK-3, ADR-S094 C2b): the sale before its lines, as every sales command takes them. This also
+        // runs as an event reaction (invoice posted or cancelled, payment allocated, credit note issued); taking the
         // lines first deadlocked against a command that held the sale and was writing rows that reference its lines.
         db.row("SELECT id FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE", orderId, org());
         db.update("""

@@ -1,0 +1,20 @@
+# CODEOWNERS — reviewers GitHub requests automatically for a pull request.
+# The 'Protect Main' ruleset already needs one approving review; these paths must be reviewed by the owner.
+# Background: IPR requirement R8, docs/ARCHITECTURE.md §11 and docs/adr/migration-registry.md.
+# Later lines win over earlier ones. Keep this list short: only the shared inventory engine core and migrations.
+
+# Shared inventory engine core (one open PR at a time may touch these files)
+/backend/src/main/java/com/inventoryerp/inventory/application/StockService.java           @simonmanna
+/backend/src/main/java/com/inventoryerp/inventory/application/StockMove.java              @simonmanna
+/backend/src/main/java/com/inventoryerp/inventory/application/StockReversalService.java   @simonmanna
+/backend/src/main/java/com/inventoryerp/inventory/application/StockPostingService.java    @simonmanna
+/backend/src/main/java/com/inventoryerp/inventory/application/CostResolver.java           @simonmanna
+/backend/src/main/java/com/inventoryerp/inventory/application/LayerCostWriter.java        @simonmanna
+/backend/src/main/java/com/inventoryerp/inventory/domain/InventoryLedger*                 @simonmanna
+
+# Database migrations (numbers come only from docs/adr/migration-registry.md)
+/backend/src/main/resources/db/migration/                                                 @simonmanna
+
+# The registry and the ownership file itself
+/docs/adr/migration-registry.md                                                           @simonmanna
+/.github/CODEOWNERS                                                                       @simonmanna

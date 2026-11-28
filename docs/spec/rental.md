@@ -157,16 +157,33 @@ when `app.jobs.enabled` and `app.modules.rental`). Per org in its tenant scope: 
     stock issue (and its reservation, variant and ATP checks) skips every order item with `rentalFeeType` set.
   Tests `InventoryReturnsIdentityIT.feeLineNeverMovesStock`, `.feeProductsAreServicesAndMissingIsRefused`.
 
+- **Returns leave RENT-OUT exactly once (IPR M-7, P1, owner decision P15-3, 2026-11-27).** Nest never moved
+  stock at the counter return and moved clean lines RENT-CLEAN → RENT-STOCK at inspection, so RENT-OUT kept every
+  returned unit (and the clean move either failed `No stock found at source location` or took the stock of another
+  unit waiting in cleaning). Now:
+  - `POST /rental/returns` moves what physically came back (`quantity − quantityMissing`, nothing for a missing line)
+    RENT-OUT → RENT-CLEAN at once (`referenceType = rental_return`, the return line as `sourceLineId`); missing units
+    stay in RENT-OUT;
+  - `POST /rental/returns/:id/inspect` moves a clean line RENT-CLEAN → RENT-STOCK and a damaged line RENT-CLEAN →
+    RENT-DAMAGED. A line returned before this change (no counter-return move on the ledger) moves from RENT-OUT
+    instead (clean → RENT-STOCK, damaged → RENT-DAMAGED), so RENT-OUT is decremented once either way. A **missing**
+    line moves no stock at inspection, even with damages (Nest moved it RENT-OUT → RENT-DAMAGED): it stays in RENT-OUT
+    until a later return finds it. The damage rows and charges are still recorded. No historical row is changed;
+  - the agreement row is locked for the return and the return row for the inspection (L1). New refusals (400):
+    `Cannot return <n> on agreement line <id>: only <m> still out` (a line cannot come back beyond what is out, M-8)
+    and `Return line <id> has already been inspected` (a second inspection would move stock again, M-8);
+  - the swap is unchanged (its old unit already went RENT-OUT → RENT-CLEAN).
+  Tests `RentalStockLifecycleIT` (clean, damaged, partial and missing, with integrity and GL tie-out),
+  `RentalIT.lifecycle` (expects RENT-OUT 0 and the swapped unit still in cleaning after inspection).
+
 ## Same as Nest, kept on purpose (owner may want these fixed after parity)
 
 - Deposits are a sub-ledger only: collection, refund, forfeit and application post no journal entry.
 - Settlement bills the **full** late + damage charges whenever the deposit did not cover everything, although the
   applied deposit already covered part of them. Damages waived with `POST /rental/damages/:id/waive` still count;
   only `waiveDamageIds` in the settle body exclude a damage. The score counts waived damages too.
-- `createReturn` never moves stock and never sets `RentalAgreement.returnedAt`: clean lines are moved RENT-CLEAN →
-  RENT-STOCK at inspection (fails with `No stock found at source location` unless a swap left stock in RENT-CLEAN),
-  RENT-OUT keeps the returned quantity, and the 14-day auto-forfeit only sees agreements whose `returnedAt` was set
-  by other means.
+- `createReturn` never sets `RentalAgreement.returnedAt`, so the 14-day auto-forfeit only sees agreements whose
+  `returnedAt` was set by other means. (Its stock move changed: Deviations, IPR M-7.)
 - A return only checks its own items for "all back": an agreement returned line by line stays `partially_returned`.
   Settling one return closes the agreement, so later returns cannot be settled.
 - `POST /rental/returns/:id/inspect` answers with the return as it was **before** the inspection (Nest reads it on

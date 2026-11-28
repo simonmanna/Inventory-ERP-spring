@@ -4,8 +4,11 @@ import com.inventoryerp.accounting.application.LedgerIntegrityService.IntegrityC
 import com.inventoryerp.accounting.application.LedgerIntegrityService.IntegrityReport;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.notifications.NotificationsService;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.EntityJson;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -20,10 +23,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Nightly ledger integrity monitor (finance readiness audit 2026-11-23, step A0). Runs {@link LedgerIntegrityService}
  * for the current organisation and keeps one open {@code LedgerIntegrityFinding} per failing check: opened when the check
- * starts failing, refreshed while it keeps failing, resolved once it passes. Opening findings raises one in-app alert;
- * a check that stays broken does not alert again. The inventory GL tie-out is left to {@link InventoryTieOutMonitor},
- * which already alerts on it; the AR / AP tie-out (I8, finance audit A5) is one of the checks recorded here. Nothing is
- * corrected.
+ * starts failing, refreshed while it keeps failing, resolved once it passes. Opening findings raises one in-app alert to
+ * every user holding {@code report:accounting} (the ledger integrity report's permission; once per user per set of
+ * checks per day); a check that stays broken does not alert again. The inventory GL tie-out is left to
+ * {@link InventoryTieOutMonitor}, which already alerts on it; the AR / AP tie-out (I8, finance audit A5) is one of
+ * the checks recorded here. Nothing is corrected.
  */
 @Service
 public class LedgerIntegrityMonitor {
@@ -89,11 +93,12 @@ public class LedgerIntegrityMonitor {
             String list = report.checks().stream().filter(c -> opened.contains(c.key()))
                     .map(c -> c.key() + " (" + c.failures() + ")").collect(Collectors.joining(", "));
             try {
-                notifications.send(new NotificationsService.SendInput(orgId, null, "in_app", "accounting",
+                notifications.sendToPermission(orgId, Permissions.REPORT__ACCOUNTING, "accounting",
                         "Ledger integrity check failed", "The nightly ledger check found problems: " + list
                                 + ". The ledger integrity report (/reports/accounting/integrity) lists the entries and"
                                 + " periods involved.",
-                        Obj.of("kind", KIND, "checks", List.copyOf(opened))));
+                        Obj.of("kind", KIND, "checks", List.copyOf(opened)),
+                        KIND + ":" + LocalDate.now(ZoneOffset.UTC) + ":" + String.join(",", opened));
             } catch (RuntimeException e) {
                 log.error("[ledger-integrity] failed to send the alert: {}", e.toString());
             }

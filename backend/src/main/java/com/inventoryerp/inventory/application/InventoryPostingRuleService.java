@@ -111,6 +111,60 @@ public class InventoryPostingRuleService {
         return out;
     }
 
+    /**
+     * IPR GL-11: every GL account the organisation's active {@code movementType} rules on {@code side} ({@code debit} /
+     * {@code credit}) can post to, each rule resolved exactly as {@link #resolve} resolves it for the products it
+     * covers: a mapping or literal rule to its account; a {@code category_field} rule per category of the products in
+     * its scope (its product, its category, or every product for a movement-type default), falling back to the mapping
+     * of its key; a {@code product_field} rule per product in its scope (override, then category field, then the
+     * mapping). A line that resolves no account (an unmapped key) adds nothing. Read-only.
+     */
+    public Set<String> ruleAccounts(String movementType, String side) {
+        String org = TenantContext.organizationId();
+        Set<String> out = new java.util.LinkedHashSet<>();
+        Map<String, Map<String, Object>> categories = new java.util.HashMap<>();
+        for (Map<String, Object> rule : jdbc.sql("SELECT * FROM \"InventoryPostingRule\" WHERE \"organizationId\" = ? AND"
+                + " \"movementType\"::text = ? AND \"debitOrCredit\" = ? AND \"isActive\" = true")
+                .params(org, movementType, side).query().listOfRows()) {
+            String source = String.valueOf(rule.get("accountSource"));
+            String productId = (String) rule.get("productId");
+            String categoryId = (String) rule.get("categoryId");
+            String scope = productId != null ? " AND id = ?" : categoryId != null ? " AND \"categoryId\" = ?" : "";
+            List<Object> params = new ArrayList<>(List.of(org));
+            if (!scope.isEmpty()) {
+                params.add(productId != null ? productId : categoryId);
+            }
+            if ("category_field".equals(source)) {
+                for (String cid : jdbc.sql("SELECT DISTINCT \"categoryId\" FROM \"Product\" WHERE \"organizationId\" = ?"
+                        + " AND \"deletedAt\" IS NULL" + scope).params(params).query(String.class).list()) {
+                    Map<String, Object> category = cid == null ? null : categories.computeIfAbsent(cid, this::category);
+                    addResolved(out, rule, null, category);
+                }
+            } else if ("product_field".equals(source)) {
+                for (Map<String, Object> product : jdbc.sql("SELECT * FROM \"Product\" WHERE \"organizationId\" = ? AND"
+                        + " \"deletedAt\" IS NULL" + scope).params(params).query().listOfRows()) {
+                    String cid = (String) product.get("categoryId");
+                    addResolved(out, rule, product, cid == null ? null : categories.computeIfAbsent(cid, this::category));
+                }
+            } else {
+                addResolved(out, rule, null, null);
+            }
+        }
+        return out;
+    }
+
+    private void addResolved(Set<String> out, Map<String, Object> rule, Map<String, Object> product,
+            Map<String, Object> category) {
+        try {
+            String account = resolveAccount(rule, product, category);
+            if (account != null) {
+                out.add(account);
+            }
+        } catch (RuntimeException e) {
+            // an unmapped key: the rule resolves no account, as resolve() would refuse to post
+        }
+    }
+
     /** Account ids per rule line without values (UI preview). */
     public List<StructureLine> resolveStructure(String movementType, String productId) {
         Map<String, Object> product = product(productId);

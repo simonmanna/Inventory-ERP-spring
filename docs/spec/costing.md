@@ -151,3 +151,21 @@ Additions to existing screens:
 - Production order: the rework treatment.
 
 Checked with `pnpm web:typecheck`, lint and the i18n check. Not exercised in a browser.
+
+## IPR wave 3 (stream E3): material-ledger GL account
+
+- A material-ledger run's journal posts to the price-difference adjunct (1396, `inventory_price_difference`) instead
+  of stock valuation, matching its value rows (`price_difference` components), so `valuation_vs_gl_by_product` and
+  `gl_tieout_by_account` hold after a run. Runs posted before keep their journals (their reversal mirrors them).
+
+## IPR M-23 (2026-11-27, evidence `docs/audits/ipr-evidence/4-golive-p2.md`)
+
+A material-ledger run is posted, reversed or deleted once: `MaterialLedgerService` locks the run row (`FOR UPDATE`,
+lock level L1) before the status check, and the status UPDATE claims `draft` (post) or `posted` (reverse). Before, two
+posts with different idempotency keys both passed the unlocked read; the journal key deduplicated the entry but the
+value rows were written twice, so the stock ledger stopped tying to the GL. The losing request answers the existing
+400 `Only a draft run can be posted` / `Only a posted run can be reversed`. Test `MaterialLedgerRaceIT`.
+
+Open (found by that test, not changed): a posted run debits `stock_valuation` per product while its ledger rows are
+value-only `price_difference` rows, which `valuation_vs_gl_by_product` leaves out, so the per-product check shows the
+run delta until the run is reversed. Decision for the owner / stream C (see the evidence file, "New defects found").

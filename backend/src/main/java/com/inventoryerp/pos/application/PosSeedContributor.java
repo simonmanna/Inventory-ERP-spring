@@ -265,7 +265,7 @@ public class PosSeedContributor implements SeedContributor {
         }
     }
 
-    /** Dr Stock Valuation / Cr Retained Earnings for the seeded opening stock (once per org). */
+    /** Dr Stock Valuation / Cr Retained Earnings for the opening stock this contributor seeded (once per org). */
     private void postOpeningInventory(String org) {
         String postingKey = "seed_opening_inventory:" + org;
         if (one("SELECT id FROM \"JournalEntry\" WHERE \"organizationId\" = ? AND \"postingKey\" = ? LIMIT 1", org,
@@ -281,9 +281,11 @@ public class PosSeedContributor implements SeedContributor {
         if (stockAccount == null || equityAccount == null || journal == null) {
             return;
         }
+        // IPR D-1: only the opening stock this contributor seeded (seedSunriseCafe); the inventory seed (order 300)
+        // journals its own widget stock with it, so a base-only seed is balanced too.
         BigDecimal value = jdbc.sql("SELECT coalesce(sum(\"totalValue\"), 0) FROM \"InventoryLedger\" WHERE"
-                + " \"organizationId\" = ? AND \"referenceType\" = 'opening_balance'").param(org)
-                .query(BigDecimal.class).single();
+                + " \"organizationId\" = ? AND \"referenceType\" = 'opening_balance' AND notes = 'Seeded opening stock'")
+                .param(org).query(BigDecimal.class).single();
         if (value.signum() <= 0) {
             return;
         }

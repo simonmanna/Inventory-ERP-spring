@@ -80,6 +80,10 @@ public class InventoryCountLine {
     @Column(name = "batchNumber")
     private String batchNumber;
 
+    /** IPR 1b (V700, count spec section 1): highest ledger seq of the cell the submit measurement saw. */
+    @Column(name = "measuredSeq")
+    private Long measuredSeq;
+
     /** V465: the line belongs to a per-lot count of a batch-tracked product (a lot line or its "no lot" line). */
     @Column(name = "lotLine", nullable = false)
     private Boolean lotLine;
@@ -270,5 +274,13 @@ public class InventoryCountLine {
 
     public void setSession(InventoryCountSession session) {
         this.session = session;
+    }
+
+    public Long getMeasuredSeq() {
+        return measuredSeq;
+    }
+
+    public void setMeasuredSeq(Long measuredSeq) {
+        this.measuredSeq = measuredSeq;
     }
 }
