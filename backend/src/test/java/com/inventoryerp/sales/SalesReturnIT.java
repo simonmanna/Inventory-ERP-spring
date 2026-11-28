@@ -291,12 +291,23 @@ class SalesReturnIT extends ApiTestSupport {
     void claimAndReplacement() throws Exception {
         String so = deliveredOrder(10, false);
         String id = rma(so, 1, "short_quantity", false, null).get("id").asString();
-        ok(200, "POST", "/sales/returns/" + id + "/approve", null);
+        // ADR-S094 AD-20: a write-off is approved by someone other than the requester
+        assertThat(as("POST", "/sales/returns/" + id + "/approve", null).status()).isEqualTo(403);
+        String role = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
+                + " VALUES (?, ?, ?, false, ?, now())").params(role, demoOrg, "Return approver " + role,
+                new String[] {"sales:return:read", "sales:return:approve", "sales:order:read", "sales:order:read_all"})
+                .update();
+        String email = "rma-approver-" + role + "@demo.test";
+        createUser(demoOrg, email, "Approve@12345", role);
+        assertThat(call("POST", "/sales/returns/" + id + "/approve", null, login("DEMO", email, "Approve@12345"))
+                .status()).isIn(200, 201);
         assertThat(call("POST", "/sales/returns/" + id + "/receive", Map.of(), key()).status()).isEqualTo(400);
         money("/sales/returns/" + id + "/close", Map.of("outcome", "credit_note"));
         JsonNode l = line(so);
         assertThat(l.get("qtyBillable").asDouble()).isEqualTo(9);
-        assertThat(l.get("decisions").get(0).get("reason").asString()).contains("Returned on");
+        assertThat(l.get("qtyWrittenOff").asDouble()).isEqualTo(1);
+        assertThat(l.get("decisions").get(0).get("reason").asString()).contains("Written off on");
 
         String so2 = deliveredOrder(4, false);
         String id2 = rma(so2, 2, "damaged", true, null).get("id").asString();

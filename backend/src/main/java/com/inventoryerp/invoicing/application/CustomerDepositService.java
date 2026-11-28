@@ -147,6 +147,26 @@ public class CustomerDepositService {
         this.receiptGuards = receiptGuards;
     }
 
+    /** ADR-S094 §4.4: modules that derive state from a deposit's balance (resolved per call: no bean cycle). */
+    private ObjectProvider<DepositChangeListener> changeListeners;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setChangeListeners(ObjectProvider<DepositChangeListener> changeListeners) {
+        this.changeListeners = changeListeners;
+    }
+
+    /** Tell the listeners, inside this transaction, that a sales order's deposit balance changed. */
+    private void changed(String depositId) {
+        if (changeListeners == null) {
+            return;
+        }
+        String order = jdbc.sql("SELECT \"salesOrderId\" FROM \"CustomerDeposit\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(depositId, org()).query(String.class).optional().orElse(null);
+        if (order != null) {
+            changeListeners.orderedStream().forEach(l -> l.depositChanged(order));
+        }
+    }
+
     /**
      * R6 Q1: whether a plain advance may be taken against {@code salesOrderId} (no-op without an order). Called by the
      * deposit routes and the mobile-money initiation, before any money is collected.
@@ -223,6 +243,7 @@ public class CustomerDepositService {
                 .update();
         audit.record(AuditInput.of("CustomerDeposit", id, "create", null, Obj.of("number", number, "amount", amount,
                 "currencyCode", cur, "exchangeRate", rate, "salesOrderId", in.salesOrderId(), "kind", kind)));
+        changed(id);
         return get(id);
     }
 
@@ -466,6 +487,7 @@ public class CustomerDepositService {
         settle(depositId, amount, BigDecimal.ZERO);
         audit.record(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("applied", amount, "documentId",
                 documentId)));
+        changed(depositId);
         return get(depositId);
     }
 
@@ -519,6 +541,7 @@ public class CustomerDepositService {
         settle(depositId, BigDecimal.ZERO, amount);
         audit.record(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("refunded", amount, "reason",
                 reason)));
+        changed(depositId);
         return get(depositId);
     }
 
@@ -593,6 +616,7 @@ public class CustomerDepositService {
         jdbc.sql("UPDATE \"CustomerDeposit\" SET status = 'void', notes = ?, \"updatedAt\" = " + NOW + " WHERE id = ?")
                 .params(reason, depositId).update();
         audit.record(AuditInput.of("CustomerDeposit", depositId, "cancel", null, Obj.of("reason", reason)));
+        changed(depositId);
         return get(depositId);
     }
 
@@ -629,6 +653,7 @@ public class CustomerDepositService {
                 + " \"updatedAt\" = " + NOW + " WHERE id = ?").params(amount, depositId).update();
         audit.recordInTx(AuditInput.of("CustomerDeposit", depositId, "update", null, Obj.of("unapplied", amount,
                 "documentId", a.get("documentId"), "paymentId", paymentId, "reason", reason.strip())));
+        changed(depositId);
         return get(depositId);
     }
 

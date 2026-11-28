@@ -38,6 +38,13 @@ public class SalesCreditFlowService {
 
     static final Set<String> TYPES = Set.of("return", "price_adjustment", "goodwill", "billing_error", "write_off");
 
+    /**
+     * ADR-S094 §7.3: a credit note's kind ({@code quantity}: reduces the credited quantity of sale lines, with a return
+     * or a write-off; {@code value}: amount only). Parameters: kind, document id, organization id.
+     */
+    static final String MARK_KIND = "UPDATE \"Document\" SET data = COALESCE(data, '{}'::jsonb) || jsonb_build_object("
+            + "'creditKind', ?::text) WHERE id = ? AND \"organizationId\" = ?";
+
     private final SalesDb db;
     private final CreditNoteService creditNotes;
     private final PaymentService payments;
@@ -53,6 +60,20 @@ public class SalesCreditFlowService {
         this.delivery = delivery;
         this.settings = settings;
         this.audit = audit;
+    }
+
+    private SalesOutcomeService outcome;
+    private SalesBillingService billing;
+
+    /** ADR-S094 §7.3: a credit posted from a sales command refreshes the sale it touches, in the same transaction. */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setOutcome(SalesOutcomeService outcome, @org.springframework.context.annotation.Lazy SalesBillingService billing) {
+        this.outcome = outcome;
+        this.billing = billing;
+    }
+
+    private void refreshSales(String documentId) {
+        outcome.ordersOf(documentId).forEach(billing::recomputeInvoiced);
     }
 
     /** Credit notes, newest first. {@code open=true} keeps those with credit left. */
@@ -92,6 +113,13 @@ public class SalesCreditFlowService {
         if (raw.isEmpty()) {
             throw ApiException.badRequest("Add at least one line");
         }
+        String invoiceId = str(in.get("invoiceId"));
+        if ("return".equals(type) && !blank(invoiceId) && db.count("SELECT count(*) FROM \"SalesInvoiceLink\" WHERE"
+                + " \"documentId\" = ? AND \"organizationId\" = ? AND kind = 'regular'", List.of(invoiceId, org())) > 0) {
+            // ADR-S094 §7.3: returned goods of a sale come back through a sales return, so stock and quantities follow
+            throw ApiException.badRequest("Goods returned on a sales order are credited through a sales return, so the"
+                    + " stock and the order quantities follow");
+        }
         String account = "return".equals(type) ? str(settings.settings().get("salesReturnsAccountId")) : null;
         List<LineInput> lines = new ArrayList<>();
         for (Map<String, Object> r : raw) {
@@ -111,17 +139,23 @@ public class SalesCreditFlowService {
         creditNotes.post(id, "none");
         markType(id, type);
         audit.record(AuditInput.of("Document", id, "create", null, Obj.of("creditType", type, "reason", reason)));
+        refreshSales(id);
         return creditNotes.findOne(id);
     }
 
+    /** The credit type, and the §7.3 kind it implies: a return credits quantity, the other types value. */
     void markType(String id, String type) {
         db.update("UPDATE \"Document\" SET data = COALESCE(data, '{}'::jsonb) || jsonb_build_object('creditType', ?::text),"
                 + " \"updatedAt\" = " + NOW + " WHERE id = ? AND \"organizationId\" = ?", type, id, org());
+        db.update(MARK_KIND, "return".equals(type) ? "quantity" : "value", id, org());
     }
 
     @Transactional
     public Map<String, Object> allocate(String id, String invoiceId, BigDecimal amount) {
-        return creditNotes.allocate(id, invoiceId, amount);
+        Map<String, Object> out = creditNotes.allocate(id, invoiceId, amount);
+        refreshSales(id);
+        refreshSales(invoiceId);
+        return out;
     }
 
     /** Pay the credit left on a posted credit note back to the customer. */
@@ -135,6 +169,7 @@ public class SalesCreditFlowService {
         Map<String, Object> p = payOut(id, str(cn.get("partnerId")), open, str(in.get("paymentMethod")),
                 str(in.get("accountId")), decimal(in.get("exchangeRate")), "Refund of credit note " + cn.get("documentNumber"));
         audit.record(AuditInput.of("Document", id, "update", null, Obj.of("refund", JsNumbers.js(open), "paymentId", p.get("id"))));
+        refreshSales(id);
         return Obj.of("creditNoteId", id, "refunded", JsNumbers.js(open), "paymentId", p.get("id"));
     }
 

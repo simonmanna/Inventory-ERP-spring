@@ -19,6 +19,8 @@ import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Obj;
+import com.inventoryerp.kernel.security.Permissions;
+import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.events.EventBus;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.shared.events.DomainEvents;
@@ -66,12 +68,16 @@ public class SalesReturnService {
     private SalesSettingsService settings;
     private SalesCreditFlowService creditFlow;
 
+    private SalesFulfilmentService fulfilment;
+
     @org.springframework.beans.factory.annotation.Autowired
     void setCollaborators(SalesAccess access, SalesSettingsService settings,
-            @org.springframework.context.annotation.Lazy SalesCreditFlowService creditFlow) {
+            @org.springframework.context.annotation.Lazy SalesCreditFlowService creditFlow,
+            @org.springframework.context.annotation.Lazy SalesFulfilmentService fulfilment) {
         this.access = access;
         this.settings = settings;
         this.creditFlow = creditFlow;
+        this.fulfilment = fulfilment;
     }
 
     public SalesReturnService(SalesDb db, SalesOrderService orders, StockService stock, CreditNoteService creditNotes,
@@ -112,8 +118,57 @@ public class SalesReturnService {
         if (r == null) {
             throw ApiException.notFound("Return not found");
         }
-        r.put("lines", db.rows("SELECT * FROM \"SalesReturnLine\" WHERE \"returnId\" = ? ORDER BY description", id));
+        r.put("lines", db.rows("SELECT rl.*, p.\"serialTracking\", t.code AS \"loadCode\" FROM \"SalesReturnLine\" rl"
+                + " LEFT JOIN \"Product\" p ON p.id = rl.\"productId\" LEFT JOIN \"FleetLoadLine\" ll ON ll.id ="
+                + " rl.\"loadLineId\" LEFT JOIN \"FleetLoad\" t ON t.id = ll.\"loadId\" WHERE rl.\"returnId\" = ? ORDER BY"
+                + " rl.description", id));
         return r;
+    }
+
+    /**
+     * ADR-S094 §7.2: what each line of an order can still come back from, per delivery (load line): delivered (accepted)
+     * on that delivery minus what other returns already claim, with the serial numbers it issued.
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> returnable(String orderId) {
+        orders.require(orderId);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> ol : db.rows("SELECT l.*, p.\"serialTracking\" FROM \"SalesOrderLine\" l LEFT JOIN"
+                + " \"Product\" p ON p.id = l.\"productId\" WHERE l.\"orderId\" = ? AND l.\"organizationId\" = ? ORDER BY"
+                + " l.\"sortOrder\", l.id", orderId, org())) {
+            List<Map<String, Object>> deliveries = new ArrayList<>();
+            for (Map<String, Object> d : deliveries(str(ol.get("id")))) {
+                deliveries.add(Obj.of("loadLineId", d.get("loadLineId"), "loadCode", d.get("loadCode"), "deliveredAt",
+                        d.get("deliveredAt"), "delivered", JsNumbers.js(dec(d.get("delivered"))), "returnable",
+                        JsNumbers.js(dec(d.get("returnable"))), "serialNumbers", SalesDb.strings(d.get("serialNumbers"))));
+            }
+            out.add(Obj.of("orderLineId", ol.get("id"), "description", ol.get("description"), "productId",
+                    ol.get("productId"), "serialTracking", Boolean.TRUE.equals(ol.get("serialTracking")), "returnable",
+                    JsNumbers.js(returnable(ol)), "deliveries", deliveries));
+        }
+        return out;
+    }
+
+    /** The delivered load lines of an order line, oldest first, with what is left to return from each. */
+    private List<Map<String, Object>> deliveries(String orderLineId) {
+        return db.rows("""
+                SELECT ll.id AS "loadLineId", t.code AS "loadCode", t."deliveredAt",
+                       CASE WHEN jsonb_typeof(ll."serialNumbers") = 'array'
+                            THEN ARRAY(SELECT jsonb_array_elements_text(ll."serialNumbers")) ELSE '{}'::text[] END
+                           AS "serialNumbers",
+                       ll."stockLedgerCode", ll."stockValue", ll."dispatchedQty", ll."uomFactor",
+                       COALESCE(ll."billableQty", ll."deliveredQty", 0) AS delivered,
+                       GREATEST(COALESCE(ll."billableQty", ll."deliveredQty", 0)
+                         - COALESCE((SELECT sum(CASE WHEN r."physicalReturn" AND r.status IN ('received', 'inspected', 'closed')
+                                                     THEN rl."receivedQty" - COALESCE(rl."rejectedQty", 0) ELSE rl.quantity END)
+                                       FROM "SalesReturnLine" rl JOIN "SalesReturn" r ON r.id = rl."returnId"
+                                      WHERE rl."loadLineId" = ll.id AND r.status NOT IN ('rejected', 'cancelled')), 0), 0)
+                           AS returnable
+                  FROM "FleetLoadLine" ll
+                  JOIN "FleetLoad" t ON t.id = ll."loadId"
+                  JOIN "FleetDeliveryOrderLine" dl ON dl.id = ll."deliveryOrderLineId"
+                 WHERE dl."sourceLineId" = ? AND ll."organizationId" = ? AND t.status IN ('delivered', 'closed')
+                 ORDER BY t."deliveredAt", t."createdAt", ll.id""", orderLineId, org());
     }
 
     // ------------------------------------------------------------------ lifecycle
@@ -132,6 +187,10 @@ public class SalesReturnService {
             throw ApiException.badRequest("reason must be one of: " + String.join(", ", REASONS.stream().sorted().toList()));
         }
         boolean physical = !Boolean.FALSE.equals(in.get("physicalReturn"));
+        if (!physical && !TenantContext.has(Permissions.SALES__RETURN_WRITE_OFF)) {
+            // ADR-S094 AD-20: crediting goods the customer keeps or lost has its own permission (and an approval)
+            throw ApiException.forbidden("Crediting goods without a return needs the write-off permission");
+        }
         List<Map<String, Object>> lines = in.get("lines") instanceof List<?> l ? (List<Map<String, Object>>) l : List.of();
         if (lines.isEmpty()) {
             throw ApiException.badRequest("Add at least one line to return");
@@ -156,9 +215,11 @@ public class SalesReturnService {
                 throw ApiException.badRequest("Quantity of " + ol.get("description") + " must be between 0 and "
                         + open.stripTrailingZeros().toPlainString() + " (delivered and not yet returned)");
             }
+            String loadLineId = physical ? deliveryOf(ol, str(l.get("loadLineId")), qty) : null;
             db.update("INSERT INTO \"SalesReturnLine\" (id, \"organizationId\", \"returnId\", \"orderLineId\", \"productId\","
-                    + " \"variantId\", description, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", SalesDb.newId(), org(), id,
-                    ol.get("id"), ol.get("productId"), ol.get("variantId"), ol.get("description"), qty);
+                    + " \"variantId\", description, quantity, \"loadLineId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    SalesDb.newId(), org(), id, ol.get("id"), ol.get("productId"), ol.get("variantId"),
+                    ol.get("description"), qty, loadLineId);
         }
         if (!blank(str(in.get("complaintId")))) {
             db.update("UPDATE \"CustomerComplaint\" SET \"returnId\" = ?, status = 'investigating', \"updatedAt\" = now()"
@@ -169,14 +230,50 @@ public class SalesReturnService {
     }
 
     /**
+     * ADR-S094 §7.2: the delivery (load line) a returned quantity comes back from — the one named, else the only delivery
+     * with something left to return; refused above what is left on it. Null for goods delivered without a recorded
+     * delivery (legacy, services).
+     */
+    private String deliveryOf(Map<String, Object> ol, String given, BigDecimal qty) {
+        List<Map<String, Object>> deliveries = deliveries(str(ol.get("id")));
+        Map<String, Object> d;
+        if (!blank(given)) {
+            d = deliveries.stream().filter(x -> given.equals(str(x.get("loadLineId")))).findFirst().orElseThrow(
+                    () -> ApiException.badRequest(ol.get("description") + " was not delivered on that delivery"));
+        } else {
+            List<Map<String, Object>> open = deliveries.stream().filter(x -> dec(x.get("returnable")).signum() > 0)
+                    .toList();
+            if (open.size() > 1) {
+                throw ApiException.badRequest("Choose the delivery " + ol.get("description") + " comes back from");
+            }
+            if (open.isEmpty()) {
+                return null;
+            }
+            d = open.get(0);
+        }
+        if (qty.compareTo(dec(d.get("returnable"))) > 0) {
+            throw ApiException.badRequest("Quantity of " + ol.get("description") + " must not exceed "
+                    + dec(d.get("returnable")).stripTrailingZeros().toPlainString() + " (delivered on " + d.get("loadCode")
+                    + " and not yet returned)");
+        }
+        return str(d.get("loadLineId"));
+    }
+
+    /**
      * What the customer actually holds, minus quantities on other open / done returns. Sales readiness DEL-10: for goods
      * that went out on deliveries that is the accepted quantity (not what is in transit, damaged, short or rejected);
      * otherwise what was delivered or invoiced (net of credits).
      */
+    /** What a return line holds against what the customer has (alias {@code l} line, {@code r} return). */
+    private static final String CLAIMED = "CASE WHEN r.\"physicalReturn\" AND r.status IN ('received', 'inspected', 'closed')"
+            + " THEN l.\"receivedQty\" - COALESCE(l.\"rejectedQty\", 0) ELSE l.quantity END";
+
     private BigDecimal returnable(Map<String, Object> ol) {
         BigDecimal delivered = dec(ol.get("qtyDispatched")).signum() > 0 ? dec(ol.get("qtyAccepted"))
                 : dec(ol.get("qtyDelivered")).max(dec(ol.get("qtyInvoiced")).subtract(dec(ol.get("qtyCredited"))));
-        BigDecimal claimed = dec(db.row("SELECT COALESCE(sum(l.quantity), 0) AS q FROM \"SalesReturnLine\" l JOIN"
+        // once goods are received, what came back and was kept counts (not what was asked for): the rest is still with
+        // the customer and can come back on another return
+        BigDecimal claimed = dec(db.row("SELECT COALESCE(sum(" + CLAIMED + "), 0) AS q FROM \"SalesReturnLine\" l JOIN"
                 + " \"SalesReturn\" r ON r.id = l.\"returnId\" WHERE l.\"orderLineId\" = ? AND r.status NOT IN ('rejected',"
                 + " 'cancelled')", ol.get("id")).get("q"));
         return delivered.subtract(claimed).max(BigDecimal.ZERO);
@@ -185,6 +282,15 @@ public class SalesReturnService {
     @Transactional
     public Map<String, Object> approve(String id) {
         Map<String, Object> r = lock(id, "requested");
+        if (!Boolean.TRUE.equals(r.get("physicalReturn")) && user() != null && user().equals(r.get("requestedById"))) {
+            // ADR-S094 AD-20 / OD-8: a write-off is approved by someone else, unless the organization allows a sales
+            // administrator to approve their own (audited)
+            Map<String, Object> rules = settings.stored();
+            if (!(rules != null && Boolean.TRUE.equals(rules.get("allowSelfApproval"))
+                    && TenantContext.has(Permissions.SALES__CONFIGURE))) {
+                throw ApiException.forbidden("You cannot approve your own claim");
+            }
+        }
         db.update("UPDATE \"SalesReturn\" SET status = 'approved', \"approvedById\" = ?, \"approvedAt\" = now(),"
                 + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?", user(), id, org());
         audit.record(AuditInput.of("SalesReturn", id, "approve", null, Obj.of("number", r.get("number"))));
@@ -200,6 +306,7 @@ public class SalesReturnService {
         db.update("UPDATE \"SalesReturn\" SET status = 'rejected', \"rejectionReason\" = ?, \"updatedAt\" = now() WHERE"
                 + " id = ?", blank(reason) ? "Rejected" : reason, id);
         audit.record(AuditInput.of("SalesReturn", id, "reject", null, Obj.of("reason", reason)));
+        orders.refreshStatus(str(r.get("orderId"))); // ADR-S094 §4.5: no longer holds the order open
         return get(id);
     }
 
@@ -219,21 +326,35 @@ public class SalesReturnService {
             throw ApiException.badRequest("Choose the location the goods are received into");
         }
         Map<String, BigDecimal> given = new LinkedHashMap<>();
+        Map<String, List<String>> serialsGiven = new LinkedHashMap<>();
         if (in.get("lines") instanceof List<?> l) {
             for (Map<String, Object> x : (List<Map<String, Object>>) l) {
-                given.put(str(x.get("lineId")), dec(x.get("receivedQty")));
+                if (x.get("receivedQty") != null) {
+                    given.put(str(x.get("lineId")), dec(x.get("receivedQty")));
+                }
+                serialsGiven.put(str(x.get("lineId")), SalesDb.strings(x.get("serialNumbers")).stream()
+                        .map(String::trim).filter(v -> !v.isEmpty()).toList());
             }
         }
-        for (Map<String, Object> l : db.rows("SELECT rl.*, ol.\"uomId\", ol.\"uomFactor\", p.\"trackInventory\" FROM"
-                + " \"SalesReturnLine\" rl JOIN \"SalesOrderLine\" ol ON ol.id = rl.\"orderLineId\" LEFT JOIN \"Product\" p ON"
-                + " p.id = rl.\"productId\" WHERE rl.\"returnId\" = ?", id)) {
+        for (Map<String, Object> l : db.rows("SELECT rl.*, ol.\"uomId\", ol.\"uomFactor\", p.\"trackInventory\","
+                + " p.\"serialTracking\" FROM \"SalesReturnLine\" rl JOIN \"SalesOrderLine\" ol ON ol.id = rl.\"orderLineId\""
+                + " LEFT JOIN \"Product\" p ON p.id = rl.\"productId\" WHERE rl.\"returnId\" = ?", id)) {
             BigDecimal qty = given.getOrDefault(str(l.get("id")), dec(l.get("quantity")));
             if (qty.signum() < 0 || qty.compareTo(dec(l.get("quantity"))) > 0) {
                 throw ApiException.badRequest("Received quantity of " + l.get("description") + " is out of range");
             }
-            BigDecimal issueCost = issueUnitCost(str(l.get("orderLineId")));
+            String loadLineId = str(l.get("loadLineId"));
+            List<String> serials = serialsGiven.getOrDefault(str(l.get("id")), List.of());
+            if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))
+                    && Boolean.TRUE.equals(l.get("serialTracking"))) {
+                checkSerials(l, qty, serials, loadLineId);
+            }
+            BigDecimal issueCost = loadLineId != null ? loadLineUnitCost(loadLineId) : issueUnitCost(str(l.get(
+                    "orderLineId")));
             if (qty.signum() > 0 && Boolean.TRUE.equals(l.get("trackInventory"))) {
-                List<String> issueCodes = issueLedgerCodes(str(l.get("orderLineId")));
+                // ADR-S094 §7.2: the goods come back against the delivery they left on, when the return names it
+                List<String> issueCodes = loadLineId != null ? loadLineCodes(loadLineId)
+                        : issueLedgerCodes(str(l.get("orderLineId")));
                 if (!issueCodes.isEmpty()) {
                     // R1: the goods come back on the lot, expiry and serial the delivery issued them from, at that
                     // cost, into the receiving location; the delivery's rows are the authority.
@@ -241,7 +362,7 @@ public class SalesReturnService {
                             StockReversalService.IssueSource.ledgerCodes(issueCodes),
                             List.of(new StockReversalService.ReturnLine(str(l.get("productId")),
                                     str(l.get("variantId")), qty, str(l.get("uomId")), dec(l.get("uomFactor")), null,
-                                    null, str(l.get("id")))),
+                                    serials.isEmpty() ? null : serials, str(l.get("id")))),
                             "sales_return", id, str(r.get("number")), null, null, location, true, null));
                 } else {
                     // Goods not delivered through a recorded stock issue (legacy): restock at the delivery cost if
@@ -252,8 +373,8 @@ public class SalesReturnService {
                     stock.receiveReturn(issueCost == null ? m : m.unitCost(issueCost));
                 }
             }
-            db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ? WHERE id = ?"
-                    + " AND \"organizationId\" = ?", qty, issueCost, l.get("id"), org());
+            db.update("UPDATE \"SalesReturnLine\" SET \"receivedQty\" = ?, \"issueUnitCost\" = ?, \"serialNumbers\" = ?"
+                    + " WHERE id = ? AND \"organizationId\" = ?", qty, issueCost, serials, l.get("id"), org());
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'received', \"receiveLocationId\" = ?, \"receivedAt\" = now(),"
                 + " \"updatedAt\" = now() WHERE id = ? AND \"organizationId\" = ?", location, id, org());
@@ -271,6 +392,52 @@ public class SalesReturnService {
                 + " AND"
                 + " ll.\"organizationId\" = ? AND ll.\"stockLedgerCode\" IS NOT NULL", orderLineId, org()).stream()
                 .map(x -> str(x.get("code"))).toList();
+    }
+
+    /** ADR-S094 §7.2: the stock move that issued one delivery (load line). */
+    private List<String> loadLineCodes(String loadLineId) {
+        return db.rows("SELECT \"stockLedgerCode\" AS code FROM \"FleetLoadLine\" WHERE id = ? AND \"organizationId\" = ?"
+                + " AND \"stockLedgerCode\" IS NOT NULL", loadLineId, org()).stream().map(x -> str(x.get("code"))).toList();
+    }
+
+    /** What one delivery's goods cost when they left, per base unit (null when not recorded). */
+    private BigDecimal loadLineUnitCost(String loadLineId) {
+        Map<String, Object> c = db.row("SELECT \"stockValue\" AS v, COALESCE(\"dispatchedQty\", 0) * \"uomFactor\" AS q FROM"
+                + " \"FleetLoadLine\" WHERE id = ? AND \"organizationId\" = ? AND \"stockValue\" IS NOT NULL", loadLineId, org());
+        if (c == null || c.get("v") == null || dec(c.get("q")).signum() <= 0) {
+            return null;
+        }
+        return dec(c.get("v")).divide(dec(c.get("q")), 6, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * ADR-S094 §7.2 RT-3: a serial-tracked product comes back by name — one serial per unit, each issued on the delivery
+     * the return names and not returned before.
+     */
+    private void checkSerials(Map<String, Object> l, BigDecimal qty, List<String> serials, String loadLineId) {
+        BigDecimal units = qty.multiply(l.get("uomFactor") == null ? BigDecimal.ONE : dec(l.get("uomFactor")));
+        if (new BigDecimal(serials.size()).compareTo(units) != 0 || serials.stream().distinct().count() != serials.size()) {
+            throw ApiException.badRequest(units.compareTo(BigDecimal.ONE) == 0 ? "Name the serial number of "
+                    + l.get("description") + " that came back" : "Name the " + units.stripTrailingZeros().toPlainString()
+                    + " serial numbers of " + l.get("description") + " that came back");
+        }
+        if (loadLineId != null) {
+            for (String serial : serials) {
+                if (db.count("SELECT count(*) FROM \"FleetLoadLine\" WHERE id = ? AND \"organizationId\" = ? AND"
+                        + " jsonb_typeof(\"serialNumbers\") = 'array' AND \"serialNumbers\" @> jsonb_build_array(?::text)",
+                        List.of(loadLineId, org(), serial)) == 0) {
+                    throw ApiException.badRequest("Serial number " + serial + " was not delivered on this delivery");
+                }
+            }
+        }
+        for (String serial : serials) {
+            if (db.count("SELECT count(*) FROM \"SalesReturnLine\" rl JOIN \"SalesReturn\" r ON r.id = rl.\"returnId\""
+                    + " WHERE rl.\"orderLineId\" = ? AND rl.id <> ? AND r.status IN ('received', 'inspected', 'closed') AND"
+                    + " ? = ANY (rl.\"serialNumbers\") AND rl.\"organizationId\" = ?", List.of(l.get("orderLineId"),
+                    l.get("id"), serial, org())) > 0) {
+                throw ApiException.badRequest("Serial number " + serial + " was already returned");
+            }
+        }
     }
 
     private StockReversalService stockReturns;
@@ -315,6 +482,19 @@ public class SalesReturnService {
             if (!Set.of("restock", "quarantine", "damaged", "scrap").contains(disposition)) {
                 throw ApiException.badRequest("disposition must be one of: damaged, quarantine, restock, scrap");
             }
+            // ADR-S094 §7.2 / AD-9: the condition found; damaged or defective goods never go back to sellable stock
+            String condition = blank(str(g.get("condition"))) ? switch (disposition) {
+                case "restock" -> "usable";
+                case "scrap" -> "defective";
+                default -> "damaged";
+            } : str(g.get("condition"));
+            if (!Set.of("usable", "damaged", "defective").contains(condition)) {
+                throw ApiException.badRequest("condition must be one of: damaged, defective, usable");
+            }
+            if ("restock".equals(disposition) && !"usable".equals(condition)) {
+                throw ApiException.badRequest("Damaged or defective goods cannot go back to sellable stock: send "
+                        + l.get("description") + " to quarantine or scrap");
+            }
             BigDecimal rejected = dec(g.get("rejectedQty"));
             if (rejected.signum() < 0 || rejected.compareTo(dec(l.get("receivedQty"))) > 0) {
                 throw ApiException.badRequest("Rejected quantity of " + l.get("description") + " is out of range");
@@ -347,12 +527,14 @@ public class SalesReturnService {
                         .notes("Scrapped return " + r.get("number")));
             }
             db.update("UPDATE \"SalesReturnLine\" SET disposition = ?, \"dispositionLocationId\" = ?, \"inspectionNotes\" = ?,"
-                    + " \"rejectedQty\" = ?, \"rejectReason\" = ? WHERE id = ?"
+                    + " \"rejectedQty\" = ?, \"rejectReason\" = ?, condition = ? WHERE id = ?"
                             + " AND \"organizationId\" = ?", disposition, Set.of("quarantine", "damaged").contains(disposition)
-                    ? target : from, str(g.get("notes")), rejected, str(g.get("rejectReason")), l.get("id"), org());
+                    ? target : from, str(g.get("notes")), rejected, str(g.get("rejectReason")), condition, l.get("id"),
+                    org());
         }
         db.update("UPDATE \"SalesReturn\" SET status = 'inspected', \"inspectedAt\" = now(), \"updatedAt\" = now() WHERE"
                 + " id = ?", id);
+        returnedProjection(str(r.get("orderId")));
         audit.record(AuditInput.of("SalesReturn", id, "update", null, Obj.of("status", "inspected")));
         return get(id);
     }
@@ -380,6 +562,7 @@ public class SalesReturnService {
         List<Map<String, Object>> cnLinks = new ArrayList<>();
         String invoiceId = null;
         List<Map<String, Object>> replacement = new ArrayList<>();
+        Set<String> settledLines = new java.util.LinkedHashSet<>();
         for (Map<String, Object> l : db.rows("SELECT rl.*, ol.* , rl.id AS \"returnLineId\", rl.quantity AS \"claimQty\","
                 + " ol.id AS \"lineId\" FROM \"SalesReturnLine\" rl JOIN \"SalesOrderLine\" ol ON ol.id = rl.\"orderLineId\""
                 + " WHERE rl.\"returnId\" = ?", id)) {
@@ -396,8 +579,7 @@ public class SalesReturnService {
                 continue;
             }
             BigDecimal net = dec(l.get("qtyInvoiced")).subtract(dec(l.get("qtyCredited")));
-            BigDecimal credit = qty.min(net);
-            BigDecimal uninvoiced = qty.subtract(credit);
+            BigDecimal credit = qty.min(net).max(BigDecimal.ZERO);
             if (credit.signum() > 0) {
                 cnLines.add(new LineInput(str(l.get("productId")), null, null, null, str(settings.settings().get(
                         "salesReturnsAccountId")), "Return " + r.get("number")
@@ -414,17 +596,9 @@ public class SalesReturnService {
                 db.update("UPDATE \"SalesReturnLine\" SET \"creditQty\" = ? WHERE id = ?"
                         + " AND \"organizationId\" = ?", credit, l.get("returnLineId"), org());
             }
-            if (uninvoiced.signum() > 0) {
-                // not invoiced yet: the returned quantity is no longer billable (recorded decision)
-                BigDecimal before = dec(l.get("qtyBillable"));
-                BigDecimal after = before.subtract(uninvoiced).max(dec(l.get("qtyInvoiced")));
-                db.update("INSERT INTO \"SalesFulfilmentDecision\" (id, \"organizationId\", \"orderId\", \"orderLineId\","
-                        + " basis, quantity, \"previousQty\", reason, \"decidedById\") VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?)",
-                        SalesDb.newId(), org(), orderId, l.get("lineId"), after, before, "Returned on " + r.get("number"),
-                        user());
-                db.update("UPDATE \"SalesOrderLine\" SET \"qtyBillable\" = ? WHERE id = ?"
-                        + " AND \"organizationId\" = ?", after, l.get("lineId"), org());
-            }
+            // ADR-S094 §4.5: the part not invoiced yet needs no credit; it leaves the billable quantity through the
+            // returned-and-credited (R) or written-off (W) quantity, recomputed below.
+            settledLines.add(str(l.get("lineId")));
         }
         String creditNoteId = null;
         String refundId = null;
@@ -445,9 +619,23 @@ public class SalesReturnService {
                 // Posting already applied the credit to the invoice's open balance; only what is left is paid in cash.
                 BigDecimal refundable = creditNotes.takeOpenCredit(creditNoteId).setScale(2, RoundingMode.HALF_UP);
                 if (refundable.signum() > 0) {
+                    // AD-9: over the tender the invoice was paid with, unless one is chosen
+                    String method = str(in.get("paymentMethod"));
+                    String account = str(in.get("accountId"));
+                    if (blank(method) && invoiceId != null) {
+                        Map<String, Object> paid = db.row("SELECT p.\"paymentMethod\", p.\"accountId\" FROM"
+                                + " \"PaymentAllocation\" a JOIN \"Payment\" p ON p.id = a.\"paymentId\" WHERE"
+                                + " COALESCE(a.\"documentId\", a.\"invoiceId\") = ? AND a.\"organizationId\" = ? AND"
+                                + " p.direction = 'inbound' AND p.\"voidedAt\" IS NULL ORDER BY p.\"createdAt\" DESC LIMIT 1",
+                                invoiceId, org());
+                        if (paid != null) {
+                            method = str(paid.get("paymentMethod"));
+                            account = blank(account) ? str(paid.get("accountId")) : account;
+                        }
+                    }
                     // FX-3: a foreign credit is refunded in its own currency at its carrying rate
                     refundId = str(creditFlow.payOut(creditNoteId, str(r.get("partnerId")), refundable,
-                            str(in.get("paymentMethod")), str(in.get("accountId")), in.get("exchangeRate") == null ? null
+                            method, account, in.get("exchangeRate") == null ? null
                                     : new BigDecimal(in.get("exchangeRate").toString()), "Refund " + r.get("number"))
                             .get("id"));
                 }
@@ -466,6 +654,15 @@ public class SalesReturnService {
         db.update("UPDATE \"SalesOrderLine\" l SET \"qtyCredited\" = COALESCE((SELECT sum(k.quantity) FROM"
                 + " \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id = k.\"documentId\" WHERE k.\"orderLineId\" = l.id AND"
                 + " k.kind = 'credit_note' AND d.status::text IN ('posted', 'paid')), 0) WHERE l.\"orderId\" = ?", orderId);
+        // ADR-S094 §4.5: what this return settled by a credit (R) or wrote off (W) leaves the billable quantity
+        Map<String, BigDecimal> settledBefore = settledQty(orderId);
+        returnedProjection(orderId);
+        Map<String, BigDecimal> settledAfter = settledQty(orderId);
+        for (String lineId : settledLines) {
+            fulfilment.lessBillable(orderId, lineId, settledAfter.getOrDefault(lineId, BigDecimal.ZERO).subtract(
+                    settledBefore.getOrDefault(lineId, BigDecimal.ZERO)), (physical ? "Returned on " : "Written off on ")
+                            + r.get("number"));
+        }
         if (r.get("complaintId") != null) {
             db.update("UPDATE \"CustomerComplaint\" SET status = 'resolved', resolution = ?, \"resolvedAt\" = now(),"
                     + " \"updatedAt\" = now() WHERE id = ?"
@@ -492,13 +689,40 @@ public class SalesReturnService {
         db.update("UPDATE \"SalesReturn\" SET status = 'cancelled', \"updatedAt\" = now() WHERE id = ?"
                 + " AND \"organizationId\" = ?", id, org());
         audit.record(AuditInput.of("SalesReturn", id, "cancel"));
+        orders.refreshStatus(str(r.get("orderId"))); // ADR-S094 §4.5: no longer holds the order open
         return get(id);
     }
 
+    /** Per order line: returned and credited plus written off (R + W), as stored. */
+    private Map<String, BigDecimal> settledQty(String orderId) {
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        for (Map<String, Object> l : db.rows("SELECT id, \"qtyReturnCredited\" + \"qtyWrittenOff\" AS q FROM"
+                + " \"SalesOrderLine\" WHERE \"orderId\" = ? AND \"organizationId\" = ?", orderId, org())) {
+            out.put(str(l.get("id")), dec(l.get("q")));
+        }
+        return out;
+    }
+
+    /**
+     * ADR-S094 §4.5 per order line: goods back and kept (received − rejected); of those, the ones settled by a credit; and
+     * quantities credited without a return (closed claims, W).
+     */
     private void returnedProjection(String orderId) {
-        db.update("UPDATE \"SalesOrderLine\" l SET \"qtyReturned\" = COALESCE((SELECT sum(rl.\"receivedQty\") FROM"
-                + " \"SalesReturnLine\" rl JOIN \"SalesReturn\" r ON r.id = rl.\"returnId\" WHERE rl.\"orderLineId\" = l.id"
-                + " AND r.status IN ('received', 'inspected', 'closed')), 0) WHERE l.\"orderId\" = ?", orderId);
+        db.update("""
+                UPDATE "SalesOrderLine" l
+                   SET "qtyReturned" = COALESCE((SELECT sum(rl."receivedQty" - COALESCE(rl."rejectedQty", 0))
+                          FROM "SalesReturnLine" rl JOIN "SalesReturn" r ON r.id = rl."returnId"
+                         WHERE rl."orderLineId" = l.id AND r."physicalReturn"
+                           AND r.status IN ('received', 'inspected', 'closed')), 0),
+                       "qtyReturnCredited" = COALESCE((SELECT sum(rl."receivedQty" - COALESCE(rl."rejectedQty", 0))
+                          FROM "SalesReturnLine" rl JOIN "SalesReturn" r ON r.id = rl."returnId"
+                         WHERE rl."orderLineId" = l.id AND r."physicalReturn" AND r.status = 'closed'
+                           AND r.outcome IN ('credit_note', 'refund')), 0),
+                       "qtyWrittenOff" = COALESCE((SELECT sum(rl.quantity)
+                          FROM "SalesReturnLine" rl JOIN "SalesReturn" r ON r.id = rl."returnId"
+                         WHERE rl."orderLineId" = l.id AND NOT r."physicalReturn" AND r.status = 'closed'
+                           AND r.outcome IN ('credit_note', 'refund')), 0)
+                 WHERE l."orderId" = ?""", orderId);
     }
 
     private Map<String, Object> lock(String id, String expected) {

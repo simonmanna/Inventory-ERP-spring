@@ -514,6 +514,46 @@ credit retention linked to it:
 
 The full history stays on the sale and its timeline. Nothing is collapsed to "not applicable".
 
+**As built (C2, V733; AD-9, AD-19 and AD-20 approved 2026-11-28)**:
+- Stored on `SalesOrder`: the eight amounts, `creditKept`, `paymentStatus`, `creditStatus`, `settlementStatus` and
+  `outcomeAt`. `SalesOutcomeService` computes them from posted documents only.
+- Definitions, where they differ from the table above:
+  - `amountInvoiced` counts posted regular invoices **gross** of their down-payment deductions. A zero-total final
+    invoice after a 100% advance still counts what it sold, so that sale is `paid`, not `no_charge`.
+  - `amountCredited` counts posted credit notes linked to the sale's lines or issued against its regular invoices,
+    of both kinds. Credit notes on its down-payment invoices are left out, because they reduce the advance (AD-15).
+  - Bad-debt write-offs (`POST /sales/invoices/{id}/write-off`) are counted apart, in the new `amountWrittenOff`,
+    with the new payment status `written_off`. They are not credits.
+  - `amountOutstanding` = open invoice balances − the sale's open credit not kept as customer credit. It is negative
+    when the customer is owed money.
+  - `amountReceived` = what settled the sale's invoices (receipts, deposit applications, deductions), plus what was
+    later refunded or kept as credit. Net received (R′ above) = received − refunded − retained.
+  - `amountRetainedAsCredit` = the sale's credit used on other documents, plus credit kept by the explicit action.
+- `paymentStatus` is decided in this order:
+  1. nothing invoiced → `no_charge` when the total is 0 or the sale is done or cancelled, else `not_invoiced`;
+  2. outstanding < 0 → `credit_balance`;
+  3. outstanding > 0 → `partially_paid` when anything was received net, else `unpaid`;
+  4. anything written off → `written_off`;
+  5. net invoiced = 0 → `refunded` when anything was refunded, else `credited`;
+  6. otherwise `paid`.
+- `settlementStatus = settled` ⇔ outstanding = 0 ∧ `advanceHeld = 0` ∧ status not `draft` ∧ payment status not
+  `not_invoiced`.
+- When the outcome is recomputed:
+  - in the transaction of every sales command that changes it (`refreshStatus` stores it);
+  - on the invoicing events `payment.allocated`, `payment.voided` and `creditnote.issued` (`SalesOutcomeSubscriber`;
+    an absolute recompute, safe to run twice; a failure is logged in the sales event inbox);
+  - inside the deposit's own transaction after a receipt, application, refund, void or reversed application, through
+    the new hook `DepositChangeListener` (invoicing calls it and depends on no module);
+  - nightly, for every non-draft sale not settled or never computed (`SalesReconcileJob.refreshOutcomes`). This
+    catches a credit allocated from the invoicing screens, which raises no event;
+  - the order detail computes it live.
+- **Keep as customer credit**: `POST /sales/orders/{id}/keep-credit` with `{reason}`.
+  - Permission `sales:credit_note:write` (no new permission).
+  - It adds the sale's open credit to `creditKept`, and the audit row records the amount and the reason.
+  - The credit notes stay open for the customer's other invoices; the sale becomes settled.
+  - The detail lists `keep_credit` in `actions` when there is open credit and the caller may keep it.
+- The order list filters on `paymentStatus` and `settlementStatus` (comma-separated).
+
 ### 4.5 Quantities and completion
 
 Per sale line, in base units:
@@ -552,6 +592,47 @@ Per sale line, in base units:
 | Zero-value sale | price 0 | B = 0 (unless AD-19) → done when fulfilment is complete; `no_charge`, settled |
 | Short-closed | S = Q − D | invoice for what was delivered; any excess advance is refunded or kept as credit before `done` |
 | Cancel | D = 0, N = 0, `advanceHeld = 0` | `cancelled`; refused otherwise |
+
+**As built (C2, V733)**:
+- R is split in two columns:
+  - `qtyReturned`: goods physically back and kept (received − rejected);
+  - `qtyReturnCredited`: the part of those settled by a credit note or a refund. This is the R of the billable formula.
+
+  Goods returned for a replacement, or with no settlement, stay billable. `qtyWrittenOff` is W.
+- B follows the table, with R = `qtyReturnCredited`. A zero-value line is never billable (AD-19: delivery note only).
+- How B moves:
+  - Closing a return or claim with a credit lowers the line's `qtyBillable` by what that close settled. The decision
+    is recorded as "Returned on RMA-…" or "Written off on RMA-…", on the basis the line follows now.
+  - A manual billable decision stays manual and keeps applying.
+  - Fleet rebuilds compute physical − R − W, so they land on the same figure.
+  - Before C2, a sticky manual decision was recorded for the uninvoiced part only, so later deliveries no longer
+    changed the line.
+- Billing's to-invoice, the invoice post guard and the nightly financial reconciliation all compare B with N = I − C
+  (the invariant `sales.md` already states: gross invoiced − credited ≤ billable). The code compared gross invoiced,
+  which was consistent only while B still counted returned goods. With B net of R and W, a gross comparison would
+  refuse the remainder of a line that was partly invoiced and then partly credited.
+- `qtyCredited` is recomputed absolutely from posted `credit_note` links on every credit path:
+  - return close;
+  - the sales credit flow (post, allocate, refund);
+  - late disputes;
+  - credit notes issued from the invoicing screens (`creditnote.issued`).
+- **Completion as built**: `done` ⇔ every condition below holds.
+  1. The sale is confirmed.
+  2. Every line is delivered to its ordered quantity less what was cancelled or closed short (within tolerance).
+  3. Every line has B = I − C.
+  4. No load of the sale is dispatched or in transit without its proof of delivery.
+  5. No return is open (requested, approved, received or inspected).
+  6. `advanceHeld = 0`.
+  7. For the cash type only: the sale is settled.
+- Condition 4 is new (deviation):
+  - Billing follows what the customer accepted at the POD. While a load waits for its POD, its B is 0, and the sale
+    would otherwise look complete.
+  - This also closes a gap that existed before C2: an order with a second load in transit turned done as soon as the
+    first load was invoiced.
+  - An `ordered`-policy order invoiced at confirm now turns done at the POD, not at dispatch.
+- A done sale with nothing invoiced (zero value, or written off before invoicing) shows `no_charge`.
+- Rejecting or cancelling a return, and every deposit change, recompute the sale at once, because an open return or a
+  held advance keeps it open.
 
 ### 4.6 Compatibility
 - **Backfill**: `pending_approval` → `draft` + `approvalStatus = pending`; `in_fulfilment` → `confirmed`. Outcome
@@ -871,6 +952,53 @@ needs owner approval (OD-14) and an update of `CONTRACT.md` §6 in C1a.
   - late dispute → by dispute type;
   - `POST /credit-notes` → value, unless its lines reference sale lines.
 - **Credit note on a down-payment invoice**: reduces its deposit (J4-A / J4-D, AD-15).
+
+**As built (C2, V733; AD-9 and AD-20 approved 2026-11-28)**:
+- §7.2 delivery reference:
+  - `SalesReturnLine` gains `loadLineId`, `serialNumbers` (text[]) and `condition`.
+  - On create, each line comes back from the delivery it names, which must be a delivered load line of that order
+    line ("X was not delivered on that delivery").
+  - Without a name, it comes back from the only delivery with something left. With several: "Choose the delivery X
+    comes back from".
+  - What can come back from one load line = accepted on it − what other returns hold. Once a return is received,
+    it holds received − rejected; before that, the quantity asked for. The order-line limit uses the same rule, so
+    goods asked for but never received can come back on another return.
+  - Goods delivered without a recorded load keep the earlier behaviour: no load line, and all the line's issues.
+- `GET /sales/returns/returnable?orderId=` (`sales:return:read`) answers, per order line, the quantity that can come
+  back and, per delivery, {loadLineId, loadCode, deliveredAt, delivered, returnable, serialNumbers}.
+- Receipt:
+  - The goods come back against that load line's issue rows only, so they take the cost, lot and expiry of that
+    delivery (`issueUnitCost` from the load line).
+  - Lines accept `receivedQty` and `serialNumbers`.
+  - A serial-tracked line names one serial per base unit. Each serial must be on that load line ("Serial number S was
+    not delivered on this delivery") and not on another received return of the line ("… was already returned").
+  - The serials go to the stock engine, which checks them against its issue rows as well.
+- Lots (deviation): there is no lot entry on a return. The lot and expiry come from the load line's issue rows, so a
+  return cannot name a lot that delivery did not issue.
+- Inspection:
+  - The condition is `usable`, `damaged` or `defective` (deviation: no `missing`; goods that never came back are a
+    claim without goods, AD-20).
+  - It defaults from the disposition: restock → usable, scrap → defective, quarantine or damaged → damaged.
+  - Restocking damaged or defective goods is refused (AD-9).
+- Close:
+  - The credit quantity = received − rejected, up to what is invoiced net. The uninvoiced rest needs no credit: it
+    leaves B (§4.5).
+  - A refund goes out over the tender of the invoice's latest receipt, unless the closer chooses one (AD-9).
+- AD-20 claims (`physicalReturn = false`):
+  - They need the new permission `sales:return:write_off`; V733 grants it to every role holding
+    `sales:return:approve`.
+  - Someone other than the requester approves ("You cannot approve your own claim"). The exception is
+    `allowSelfApproval` with an approver holding `sales:configure`.
+  - W is set when the claim closes. No stock moves, and the credit posts like a return credit (sales returns account).
+- §7.3 credit kinds:
+  - `Document.data.creditKind` is `quantity` or `value`.
+  - Deviation: there is no new `POST /sales/invoices/{id}/credit-note`. Quantity credits go through returns (goods
+    back) and claims (AD-20). Value credits go through the existing `POST /sales/credit-notes` (price_adjustment,
+    goodwill, billing_error) and write-offs.
+  - The credit flow now refuses type `return` against a sale invoice: "Goods returned on a sales order are credited
+    through a sales return, so the stock and the order quantities follow".
+  - A late-dispute credit is a quantity credit.
+- §7.4, the cash Reverse command, is built in C3 with the cash sale.
 
 ### 7.4 Cash "Reverse" command (two-phase)
 1. The wizard pre-fills an RMA with every delivered line and its load reference. The cashier still confirms received

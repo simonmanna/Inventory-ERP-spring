@@ -35,7 +35,7 @@ import {
 } from '@/features/sales/api';
 import { Field } from '@/pages/crm/crm-ui';
 import { PartnerPicker } from '@/pages/crm/crm-dialogs';
-import { INVOICE_LABEL, InlineField, OrderStatusPill, SmartButton, StatusRibbon } from './sales-ui';
+import { INVOICE_LABEL, InlineField, OrderStatusPill, PaymentPill, SmartButton, StatusRibbon } from './sales-ui';
 import { CreditPanel } from './CreditPage';
 import { AvailabilityPanel } from './AvailabilityPanel';
 import { FulfilmentPanel } from './FulfilmentPanel';
@@ -155,6 +155,7 @@ export function SalesOrderPage() {
   });
   const action = useSalesMutation(salesApi.orderAction);
   const close = useSalesMutation(salesApi.closeShort);
+  const keep = useSalesMutation(salesApi.keepCredit);
   const del = useSalesMutation(salesApi.deleteOrder);
 
   const doSave = (then?: () => void) => {
@@ -211,6 +212,12 @@ export function SalesOrderPage() {
     if (dirty) doSave(() => run('submit-approval'));
     else run('submit-approval');
   };
+  // ADR-S094 §4.4: excess credit of a settled sale stays on the customer's account, on purpose and audited
+  const keepCredit = async () => {
+    if (!o) return;
+    const reason = await ask({ title: tx('Keep as customer credit'), description: tx('The open credit of this sale stays on the customer\'s account for later invoices, and the sale is settled.'), label: tx('Reason'), confirmLabel: tx('Keep credit') });
+    if (reason) keep.mutate({ id: o.id, reason }, { onSuccess: () => toast.success(tx('Credit kept on the customer\'s account')), onError: (e) => toast.error(apiErrorMessage(e, tx('Action failed'))) });
+  };
   const ribbon = [tx('Quotation'), tx('Sales order'), tx('Delivered'), tx('Invoiced')];
   const step = !o ? 1 : o.invoiceStatus === 'invoiced' ? 3 : o.deliveryStatus === 'full' ? 2 : 1;
   const currency = o?.currencyCode;
@@ -244,6 +251,7 @@ export function SalesOrderPage() {
           <span className="font-semibold">{o ? o.number : tx('New')}</span>
           {o && o.revision > 0 && <span className="ml-1 text-xs text-muted-foreground">r{o.revision}</span>}
           {o && <span className="ml-3"><OrderStatusPill status={stage} approval={o.approvalStatus} onHold={o.onHold} /></span>}
+          {o && o.status !== 'draft' && <span className="ml-1"><PaymentPill status={o.paymentStatus} /></span>}
         </div>
         {status !== 'cancelled' && <div data-tour="sales.order.ribbon" className="w-full max-w-md"><StatusRibbon steps={ribbon} current={step} /></div>}
       </div>
@@ -449,6 +457,7 @@ export function SalesOrderPage() {
               <Field label={tx('Invoice status')}><p className="py-2 text-sm">{o ? INVOICE_LABEL[o.invoiceStatus] : '—'}</p></Field>
               <Field label={tx('Order total')}><p className="py-2 text-sm font-medium tabular-nums">{money(o && !dirty ? o.total : est, currency)}</p></Field>
             </TabSection>
+            {o && o.status !== 'draft' && o.paymentStatus && <OutcomeSection order={o} currency={currency} onKeepCredit={o.actions?.includes('keep_credit') ? keepCredit : undefined} busy={keep.isPending} />}
             {(o?.partnerId || partnerId) ? (
               <div className="grid items-start gap-4 lg:grid-cols-2">
                 {o && fulfilling && <BillingPanel order={o} />}
@@ -494,6 +503,29 @@ export function SalesOrderPage() {
       {o && dialog === 'revisions' && <RevisionsDialog orderId={o.id} onClose={() => setDialog(null)} />}
       {o && dialog === 'return' && <NewReturnDialog order={o} onClose={() => setDialog(null)} />}
     </div>
+  );
+}
+
+/** ADR-S094 §4.4: what the sale invoiced, credited, received and still owes (or is owed), from its posted documents. */
+function OutcomeSection({ order: o, currency, onKeepCredit, busy }: { order: SalesOrder; currency?: string; onKeepCredit?: () => void; busy: boolean }) {
+  const amt = (v?: number) => money(Number(v ?? 0), currency);
+  const outstanding = Number(o.amountOutstanding ?? 0);
+  return (
+    <TabSection title={tx('Payment')}>
+      <Field label={tx('Payment status')}><p className="flex items-center gap-2 py-2 text-sm"><PaymentPill status={o.paymentStatus} />
+        <span className="text-xs text-muted-foreground">{o.settlementStatus === 'settled' ? tx('Settled') : tx('Open')}</span></p></Field>
+      <div className="space-y-1 text-sm sm:col-span-2">
+        <Row label={tx('Invoiced')} value={amt(o.amountInvoiced)} />
+        {Number(o.amountCredited ?? 0) !== 0 && <Row label={tx('Credited')} value={amt(o.amountCredited)} />}
+        {Number(o.amountWrittenOff ?? 0) !== 0 && <Row label={tx('Written off')} value={amt(o.amountWrittenOff)} />}
+        <Row label={tx('Received')} value={amt(o.amountReceived)} />
+        {Number(o.amountRefunded ?? 0) !== 0 && <Row label={tx('Refunded')} value={amt(o.amountRefunded)} />}
+        {Number(o.amountRetainedAsCredit ?? 0) !== 0 && <Row label={tx('Kept as customer credit')} value={amt(o.amountRetainedAsCredit)} />}
+        {Number(o.advanceHeld ?? 0) !== 0 && <Row label={tx('Advance held')} value={amt(o.advanceHeld)} />}
+        <div className="border-t pt-1"><Row label={outstanding < 0 ? tx('Owed to the customer') : tx('Outstanding')} value={<strong>{amt(Math.abs(outstanding))}</strong>} /></div>
+        {onKeepCredit && <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={onKeepCredit}>{tx('Keep as customer credit')}</Button>}
+      </div>
+    </TabSection>
   );
 }
 

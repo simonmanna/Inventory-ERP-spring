@@ -714,6 +714,7 @@
     "returnRead": "sales:return:read",
     "returnWrite": "sales:return:write",
     "returnApprove": "sales:return:approve",
+    "returnWriteOff": "sales:return:write_off",
     "complaintRead": "sales:complaint:read",
     "complaintWrite": "sales:complaint:write",
     "collectionsRead": "sales:collections:read",

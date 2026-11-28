@@ -10,8 +10,13 @@ export type SalesOrderStatus = 'draft' | 'confirmed' | 'done' | 'cancelled';
 export type SalesOrderStage = 'draft' | 'pending_approval' | 'confirmed' | 'in_fulfilment' | 'done' | 'cancelled';
 /** ADR-S094 §4.2: approval of a draft sale, bound to its content. */
 export type SalesApprovalStatus = 'not_required' | 'required' | 'pending' | 'approved' | 'rejected';
-/** Approval and confirm steps the signed-in user may take on a draft. */
-export type SalesOrderAction = 'submit_approval' | 'withdraw_approval' | 'approve' | 'reject' | 'confirm';
+/** Steps the signed-in user may take now: approval and confirm on a draft; keeping open credit after confirm. */
+export type SalesOrderAction = 'submit_approval' | 'withdraw_approval' | 'approve' | 'reject' | 'confirm' | 'keep_credit';
+/** ADR-S094 §4.4: where the money of a sale stands, from its posted documents. */
+export type SalesPaymentStatus = 'no_charge' | 'not_invoiced' | 'unpaid' | 'partially_paid' | 'paid' | 'credit_balance'
+  | 'refunded' | 'credited' | 'written_off';
+export type SalesCreditStatus = 'none' | 'partial' | 'full';
+export type SalesSettlementStatus = 'open' | 'settled';
 export type DeliveryStatus = 'none' | 'partial' | 'full';
 export type InvoiceStatus = 'nothing' | 'to_invoice' | 'partial' | 'invoiced';
 export type ChangeRequestStatus = 'draft' | 'pending_approval' | 'applied' | 'rejected';
@@ -83,6 +88,21 @@ export interface SalesOrder {
   approvalReasons: string[];
   deliveryStatus: DeliveryStatus;
   invoiceStatus: InvoiceStatus;
+  /** ADR-S094 §4.4 financial outcome (stored; the detail recomputes it live). */
+  paymentStatus?: SalesPaymentStatus;
+  creditStatus?: SalesCreditStatus;
+  settlementStatus?: SalesSettlementStatus;
+  amountInvoiced?: number;
+  amountCredited?: number;
+  amountWrittenOff?: number;
+  amountReceived?: number;
+  amountRefunded?: number;
+  amountRetainedAsCredit?: number;
+  /** Negative when the customer is owed money on this sale. */
+  amountOutstanding?: number;
+  advanceHeld?: number;
+  /** Credit of this sale the customer may still use, be refunded or keep on account (detail only). */
+  openCredit?: number;
   partnerId: string;
   partnerName: string | null;
   quotationId: string | null;
@@ -157,6 +177,8 @@ export const salesApi = {
   deleteOrder: async (id: string) => (await api.delete(`/sales/orders/${id}`)).data,
   orderAction: async ({ id, action, body }: { id: string; action: 'confirm' | 'hold' | 'release' | 'cancel' | 'duplicate' | 'approve' | 'reject' | 'submit-approval' | 'withdraw-approval'; body?: Record<string, unknown> }) =>
     idempotentPost<SalesOrder>(`/sales/orders/${id}/${action}`, body ?? {}),
+  keepCredit: async ({ id, reason }: { id: string; reason: string }) =>
+    (await api.post<SalesOrder>(`/sales/orders/${id}/keep-credit`, { reason })).data,
   closeShort: async ({ id, lineId, reason }: { id: string; lineId: string; reason: string }) =>
     (await api.post<SalesOrder>(`/sales/orders/${id}/lines/${lineId}/close-short`, { reason })).data,
   requestChange: async ({ id, ...body }: { id: string; reason: string; changes: Record<string, unknown> }) =>

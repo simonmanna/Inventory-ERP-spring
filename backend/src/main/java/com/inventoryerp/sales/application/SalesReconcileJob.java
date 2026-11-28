@@ -22,10 +22,16 @@ public class SalesReconcileJob {
     private final SalesFulfilmentService fulfilment;
     private final SalesBillingService billing;
 
-    public SalesReconcileJob(JdbcClient jdbc, SalesFulfilmentService fulfilment, SalesBillingService billing) {
+    private final SalesOrderService orders;
+    private final org.springframework.transaction.support.TransactionTemplate perOrder;
+
+    public SalesReconcileJob(JdbcClient jdbc, SalesFulfilmentService fulfilment, SalesBillingService billing,
+            SalesOrderService orders, org.springframework.transaction.PlatformTransactionManager txm) {
         this.jdbc = jdbc;
         this.fulfilment = fulfilment;
         this.billing = billing;
+        this.orders = orders;
+        this.perOrder = new org.springframework.transaction.support.TransactionTemplate(txm);
     }
 
     @Scheduled(cron = "0 10 3 * * *")
@@ -48,6 +54,40 @@ public class SalesReconcileJob {
                 }
             } catch (RuntimeException e) {
                 log.warn("Sales reconciliation failed for {}: {}", orgId, e.toString());
+            }
+        }
+        refreshOutcomes();
+    }
+
+    /**
+     * ADR-S094 §4.4: recompute the stored outcome of every sale not settled yet (or never computed), one transaction
+     * per sale, so a receipt, allocation or credit that raised no event (or whose event was lost) is caught up.
+     */
+    void refreshOutcomes() {
+        List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"SalesOrder\" WHERE status <> 'draft' AND"
+                + " \"deletedAt\" IS NULL AND (\"outcomeAt\" IS NULL OR \"settlementStatus\" = 'open')").query(String.class)
+                .list();
+        for (String orgId : orgs) {
+            try {
+                int n = TenantContext.run(TenantContext.TenantStore.organization(orgId), () -> {
+                    List<String> ids = jdbc.sql("SELECT id FROM \"SalesOrder\" WHERE \"organizationId\" = ? AND status <>"
+                            + " 'draft' AND \"deletedAt\" IS NULL AND (\"outcomeAt\" IS NULL OR \"settlementStatus\" ="
+                            + " 'open')").param(orgId).query(String.class).list();
+                    int done = 0;
+                    for (String id : ids) {
+                        try {
+                            perOrder.executeWithoutResult(t -> orders.refreshStatus(id));
+                            done++;
+                        } catch (RuntimeException e) {
+                            // one sale that cannot be recomputed must not hold back the others
+                            log.warn("Sales outcome refresh failed for order {}: {}", id, e.toString());
+                        }
+                    }
+                    return done;
+                });
+                log.debug("Sales outcomes refreshed for {}: {}", orgId, n);
+            } catch (RuntimeException e) {
+                log.warn("Sales outcome refresh failed for {}: {}", orgId, e.toString());
             }
         }
     }

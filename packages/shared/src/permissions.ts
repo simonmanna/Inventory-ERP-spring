@@ -849,6 +849,8 @@ export const PERMISSIONS = {
     returnWrite: 'sales:return:write',
     /// Approve a return and settle it (credit note, refund, replacement).
     returnApprove: 'sales:return:approve',
+    /// Credit goods the customer keeps or lost, without a return: a claim (ADR-S094 AD-20).
+    returnWriteOff: 'sales:return:write_off',
     complaintRead: 'sales:complaint:read',
     complaintWrite: 'sales:complaint:write',
     /// Collections worklist, dunning runs, promises to pay (ADR-S011 S8).

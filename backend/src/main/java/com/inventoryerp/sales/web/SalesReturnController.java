@@ -47,6 +47,13 @@ public class SalesReturnController {
         return returns.list(q);
     }
 
+    /** ADR-S094 §7.2: per order line, what can still come back and from which delivery (with its serials). */
+    @GetMapping("/returns/returnable")
+    @RequirePermissions(Permissions.SALES__RETURN_READ)
+    public List<Map<String, Object>> returnable(@RequestParam String orderId) {
+        return returns.returnable(orderId);
+    }
+
     @GetMapping("/returns/{id}")
     @RequirePermissions(Permissions.SALES__RETURN_READ)
     public Map<String, Object> get(@PathVariable String id) {
