@@ -20,14 +20,14 @@ the GL tie-out (`/reports/inventory/gl-tieout` + `gl_tieout_by_account`); #6 ass
 
 | Finding | Root cause (file:line, base) | Fix commit | Regression IT (red → green) | Workflow IT | Integrity / GL asserted | Lock levels | Deviations |
 |---|---|---|---|---|---|---|---|
-| #1 serial+lot transfer naming a lot | `StockService.transferSerials` :1585 → `pickSerials` :2166 only *preferred* the named lot, while the lot loop :1371 decremented only the named lot; `pinnedBatchIds` honoured by `lots()` :2136 but not by `pickSerials` | see §2 | `transferNamedLotStaysInLot` — red: `FAILED …transferNamedLotStaysInLot(): [L2's serial unit stays at the source]` → green | same (transfer, refused serial outside the lot) | yes / yes | unchanged: L3 costing → L3b freeze → L4 both quants (location order) → L5 → L6 lots / serials (read under L4) → L7 | inventory.md (review 3) |
-| #2a take-back of a capture-optional receipt row | C-2 "pick the rest" `StockService.issue` :809-812 applied to reversals: `StockReversalService.reverseLedgerSource` :450-456, `issueBackReceipt` :684 pinned the received serials, then the engine picked other receipts' serials | see §2 | `reversalTakesBackUnserialisedUnits` — red: `[another receipt's serial unit stays]`; `issueBackTakesUnserialisedUnits` — red: `[another receipt's serial unit stays]` → green | same (reverse a GRN; cancel a bill: issue back + caller's journal) | yes / yes | reverseLedgerSource: caller's L1 → engine L3–L7; issueBackReceipt: L1 → L2 receipt rows `FOR UPDATE ORDER BY id` → L3–L7. `pinReceived` reads only | inventory.md (review 3) |
-| #2b two rows of one document | `receivedSerials` :585 scoped by `receiptRef` (whole document); `inStock.size() <= qty` :454 failed per row → nothing pinned → oldest serials | see §2 | `reversalOfTwoRowsPinsEachRow` (strict reversal) — red: `[older receipt's serial unit stays]` → green | same | yes / yes | as #2a | inventory.md (review 3) |
-| #3 issue naming a lot (MANUAL) | `StockService.issue` :812 `pickSerials(…preferLotNumber)` preferred, then other lots' serials before the lot's unserialised part | see §2 | `issueNamedLotStaysInLot` — red: `[L2's serial unit is not released]` → green | same (lot short: falls back to the other lot, noted) | yes / yes | unchanged: L3 → L3b → L4/L5 → L6 → L7 | inventory.md (review 3) |
-| #4 blank cost, STANDARD | `receiveCore` :380 `currentCost` (quant average / last receipt / cost price) used as the *actual* cost against the standard (:498) → false PPV | see §2 | `standardBlankCostAtStandard` — red: `[blank cost = the governing standard (GRNI at 30)]` → green | same (AVCO bought at 12, sold out, switched to STANDARD at 10 — allowed with no stock; the empty quant kept average 12) | yes / yes | unchanged: L3 → L4/L5 → L7 | inventory.md (review 3) |
-| #5 AVCO count gain, negative quant, average ≤ 0 | `StockService.adjust` :1141: gain at current cost, `newAverage` only when `currentQty ≥ 0` → average stays 0, value stranded | see §2 | `avcoCountGainOnNegativeQuant` — red: `[the quant takes the gain's cost]` → green | same (receive at 0, oversell, count up) | yes / yes | unchanged: L3 → L4/L5 → L7 (the cost correction is a value-only ledger row + journal under the same locks) | inventory.md (review 3) |
-| #6 late count correction poisons the late movement | `correctLateCountRows` :1810-1825: pre-check covers variance accounts only; a refusal thrown through the proxied `StockPostingService` / `PostingService` marks the transaction rollback-only (the JDBC savepoint cannot undo it); `publishOnCommit` inside the rolled-back savepoint still fired | see §2 | `lateCorrectionRefusedByPostingKeepsMovement` (lot product; the correction's credit account requires an analytic dimension) — red: `FAILED …(): Transaction silently rolled back because it has been marked as rollback-only` → green (movement commits, no correction, `InventoryException late_count_correction_failed` open, `lateTransactions` shows `uncorrected`, no `stock.received` event from the rolled-back correction) | `CountCutoffIT` (E1 pre-check path, late sale exactly once) | checks / yes | no new level: runs in the late row's transaction under its L3/L4/L5; savepoint; exception row insert | count spec §4.4a |
-| #7 freeze exemption for any session | `freezeExempt` :1724 returned true for any `countSessionId` | see §2 | `freezeExemptsOnlyItsSession` — red: `FAILED …freezeExemptsOnlyItsSession():` (no 409) → green | `CountCutoffIT.freezeRefusesManualMoves` | yes / yes | count posting: no L3b (unchanged, it holds L4), reads `InventoryCountSession` | count spec §6 |
+| #1 serial+lot transfer naming a lot | `StockService.transferSerials` :1585 → `pickSerials` :2166 only *preferred* the named lot, while the lot loop :1371 decremented only the named lot; `pinnedBatchIds` honoured by `lots()` :2136 but not by `pickSerials` | 7a7115f8 | `transferNamedLotStaysInLot` — red: `FAILED …transferNamedLotStaysInLot(): [L2's serial unit stays at the source]` → green | same (transfer, refused serial outside the lot) | yes / yes | unchanged: L3 costing → L3b freeze → L4 both quants (location order) → L5 → L6 lots / serials (read under L4) → L7 | inventory.md (review 3) |
+| #2a take-back of a capture-optional receipt row | C-2 "pick the rest" `StockService.issue` :809-812 applied to reversals: `StockReversalService.reverseLedgerSource` :450-456, `issueBackReceipt` :684 pinned the received serials, then the engine picked other receipts' serials | 7a7115f8 | `reversalTakesBackUnserialisedUnits` — red: `[another receipt's serial unit stays]`; `issueBackTakesUnserialisedUnits` — red: `[another receipt's serial unit stays]` → green | same (reverse a GRN; cancel a bill: issue back + caller's journal) | yes / yes | reverseLedgerSource: caller's L1 → engine L3–L7; issueBackReceipt: L1 → L2 receipt rows `FOR UPDATE ORDER BY id` → L3–L7. `pinReceived` reads only | inventory.md (review 3) |
+| #2b two rows of one document | `receivedSerials` :585 scoped by `receiptRef` (whole document); `inStock.size() <= qty` :454 failed per row → nothing pinned → oldest serials | 7a7115f8 | `reversalOfTwoRowsPinsEachRow` (strict reversal) — red: `[older receipt's serial unit stays]` → green | same | yes / yes | as #2a | inventory.md (review 3) |
+| #3 issue naming a lot (MANUAL) | `StockService.issue` :812 `pickSerials(…preferLotNumber)` preferred, then other lots' serials before the lot's unserialised part | 7a7115f8 | `issueNamedLotStaysInLot` — red: `[L2's serial unit is not released]` → green | same (lot short: falls back to the other lot, noted) | yes / yes | unchanged: L3 → L3b → L4/L5 → L6 → L7 | inventory.md (review 3) |
+| #4 blank cost, STANDARD | `receiveCore` :380 `currentCost` (quant average / last receipt / cost price) used as the *actual* cost against the standard (:498) → false PPV | bfa2cdb5 | `standardBlankCostAtStandard` — red: `[blank cost = the governing standard (GRNI at 30)]` → green | same (AVCO bought at 12, sold out, switched to STANDARD at 10 — allowed with no stock; the empty quant kept average 12) | yes / yes | unchanged: L3 → L4/L5 → L7 | inventory.md (review 3) |
+| #5 AVCO count gain, negative quant, average ≤ 0 | `StockService.adjust` :1141: gain at current cost, `newAverage` only when `currentQty ≥ 0` → average stays 0, value stranded | 59082c32 | `avcoCountGainOnNegativeQuant` — red: `[the quant takes the gain's cost]` → green | same (receive at 0, oversell, count up) | yes / yes | unchanged: L3 → L4/L5 → L7 (the cost correction is a value-only ledger row + journal under the same locks) | inventory.md (review 3) |
+| #6 late count correction poisons the late movement | `correctLateCountRows` :1810-1825: pre-check covers variance accounts only; a refusal thrown through the proxied `StockPostingService` / `PostingService` marks the transaction rollback-only (the JDBC savepoint cannot undo it); `publishOnCommit` inside the rolled-back savepoint still fired | f7001ba2 | `lateCorrectionRefusedByPostingKeepsMovement` (lot product; the correction's credit account requires an analytic dimension) — red: `FAILED …(): Transaction silently rolled back because it has been marked as rollback-only` → green (movement commits, no correction, `InventoryException late_count_correction_failed` open, `lateTransactions` shows `uncorrected`, no `stock.received` event from the rolled-back correction) | `CountCutoffIT` (E1 pre-check path, late sale exactly once) | checks / yes | no new level: runs in the late row's transaction under its L3/L4/L5; savepoint; exception row insert | count spec §4.4a |
+| #7 freeze exemption for any session | `freezeExempt` :1724 returned true for any `countSessionId` | c0ee1715 | `freezeExemptsOnlyItsSession` — red: `FAILED …freezeExemptsOnlyItsSession():` (no 409) → green | `CountCutoffIT.freezeRefusesManualMoves` | yes / yes | count posting: no L3b (unchanged, it holds L4), reads `InventoryCountSession` | count spec §6 |
 
 ## 2. What changed
 
@@ -57,7 +57,35 @@ the GL tie-out (`/reports/inventory/gl-tieout` + `gl_tieout_by_account`); #6 ass
 
 ## 3. Tests (final run, fresh `erp-itdb-ipr3`)
 
-See the stream report for the per-class counts of the final run.
+`fastTest` (fresh DB, one run, BUILD SUCCESSFUL), 22 classes, 232 tests, 0 failed:
+
+| Class | Tests |
+|---|---|
+| IprReview3EngineIT | 9 / 9 |
+| IprSerialRestockIT | 16 / 16 |
+| IprWave3EngineIT | 5 / 5 |
+| IprPosRefundRestockIT | 6 / 6 |
+| CountCutoffIT | 11 / 11 |
+| StockEffectiveTimeIT | 8 / 8 |
+| InventoryConcurrencyIT | 3 / 3 |
+| InventoryEngineGapsIT | 13 / 13 |
+| InventoryEngineHardeningIT | 13 / 13 |
+| InventoryIntegrityP0IT | 16 / 16 |
+| InventoryReturnsIdentityIT | 8 / 8 |
+| StandardCostingIntegrityIT | 5 / 5 |
+| ProcurementIT | 22 / 22 |
+| PurchaseReadinessReceiptsIT | 9 / 9 |
+| PurchaseReadinessBillsIT | 14 / 14 |
+| ReceivingQualityIT | 4 / 4 |
+| QualityLotsIT | 7 / 7 |
+| QualityControlFlowIT | 14 / 14 |
+| QualityControlIT | 10 / 10 |
+| PlmIT | 8 / 8 |
+| ManufacturingLifecycleIT | 11 / 11 |
+| OpeningStockImportIT | 10 / 10 |
+
+`test --tests '*ArchitectureTests' --tests '*ModularityTests'`: ArchitectureTests 5 / 5, ModularityTests 2 / 2. The
+full build was not run.
 
 ## 4. Known limits / notes
 
