@@ -40,6 +40,12 @@ import org.springframework.stereotype.Component;
  * banked to the branch tender account, revenue accrued), not only once head office has invoiced it. Takings are
  * confirmed sales; drafts, cancelled and voided sales never count, and voids are shown separately. Amounts are in the
  * functional currency ({@code amount × exchangeRate}).
+ *
+ * <p>ADR-S094 C7: every report reads both the legacy branch cash sales ({@code source = legacy}) and the cash Sales
+ * ({@code SalesOrder.saleType = cash}, {@code source = sale}) in one shape. A cash Sale is draft, confirmed, voided
+ * (reversed) or cancelled (a discarded draft); it is invoiced at confirm, so its head-office stage is
+ * {@code invoiced} as soon as its invoice is posted. Its tenders count once verified and posted, its cost is the issue
+ * cost of its pickup.
  */
 @Component
 class BranchCashSaleReports implements SalesReportSet {
@@ -52,21 +58,39 @@ class BranchCashSaleReports implements SalesReportSet {
 
     private static final String RATE = "COALESCE(s.\"exchangeRate\", 1)";
 
+    private static final String SALE_RATE = "COALESCE(o.\"exchangeRate\", 1)";
+
+    /** Display name of a tender ({@code x}: the payment row). */
+    private static String tenderName(String x) {
+        return ("CASE WHEN %1$s.method = 'mobile_money' AND %1$s.provider IN ('mtn', 'mtn_momo') THEN 'MTN MoMo'"
+                + " WHEN %1$s.method = 'mobile_money' AND %1$s.provider IN ('airtel', 'airtel_money') THEN 'Airtel Money'"
+                + " WHEN %1$s.method = 'mobile_money' THEN 'Mobile money' WHEN %1$s.method = 'bank' THEN 'Bank'"
+                + " WHEN %1$s.method = 'card' THEN 'Card' ELSE 'Cash' END").formatted(x);
+    }
+
+    /** Execution stage of a cash Sale, in the legacy vocabulary. */
+    private static final String SALE_EXECUTION = "CASE WHEN o.status::text = 'draft' THEN 'draft'"
+            + " WHEN o.\"reversedAt\" IS NOT NULL THEN 'voided' WHEN o.status::text = 'cancelled' THEN 'cancelled'"
+            + " ELSE 'confirmed' END";
+
+    private static final String SALE_DATE = "COALESCE(o.\"saleDate\", o.\"createdAt\"::date)";
+
+    private static final String PERSON = "COALESCE(NULLIF(trim(concat_ws(' ', u.\"firstName\", u.\"lastName\")), ''),"
+            + " u.email, '(none)')";
+
     private static final String SALES = """
-            SELECT s.id, s.number, s."saleDate" AS date, s."branchId", COALESCE(b.name, '(no branch)') AS branch,
-                   s."partnerId", COALESCE(NULLIF(trim(s."customerName"), ''), pt.name, 'Walk-in customer') AS customer,
-                   s."salespersonId",
-                   COALESCE(NULLIF(trim(concat_ws(' ', u."firstName", u."lastName")), ''), u.email, '(none)') AS salesperson,
+            SELECT * FROM (
+            SELECT 'legacy' AS source, s.id, s.number, s."saleDate" AS date, s."branchId",
+                   COALESCE(b.name, '(no branch)') AS branch, s."partnerId", pt."categoryId" AS "customerCategoryId",
+                   COALESCE(NULLIF(trim(s."customerName"), ''), pt.name, 'Walk-in customer') AS customer,
+                   s."salespersonId", %3$s AS salesperson,
                    ROUND(s.subtotal * %1$s, 6) AS net, ROUND(s."discountTotal" * %1$s, 6) AS discount,
                    ROUND(s."taxTotal" * %1$s, 6) AS tax, ROUND(s."grandTotal" * %1$s, 6) AS total,
-                   ROUND(s."paidTotal" * %1$s, 6) AS paid, s."executionStatus" AS execution,
-                   s."processingStatus" AS processing, d."documentNumber" AS invoice, s."rejectionReason",
-                   s."voidReason", s."deliveryStatus",
-                   (SELECT string_agg(DISTINCT CASE WHEN x.method = 'mobile_money' AND x.provider = 'mtn' THEN 'MTN MoMo'
-                                                    WHEN x.method = 'mobile_money' AND x.provider = 'airtel' THEN 'Airtel Money'
-                                                    WHEN x.method = 'mobile_money' THEN 'Mobile money'
-                                                    WHEN x.method = 'bank' THEN 'Bank' ELSE 'Cash' END, ' + ')
-                      FROM "SalesSubmissionPayment" x WHERE x."submissionId" = s.id) AS tender,
+                   ROUND(s."paidTotal" * %1$s, 6) AS paid, s."executionStatus"::text AS execution,
+                   s."processingStatus"::text AS processing, d."documentNumber" AS invoice, s."rejectionReason",
+                   s."voidReason", s."deliveryStatus"::text AS "deliveryStatus",
+                   (SELECT string_agg(DISTINCT %4$s, ' + ') FROM "SalesSubmissionPayment" x
+                     WHERE x."submissionId" = s.id) AS tender,
                    (current_date - s."saleDate") AS "ageDays",
                    (s."invoicedAt"::date - s."saleDate") AS "daysToInvoice",
                    COALESCE(s."voidedAt", s."rejectedAt", s."updatedAt")::date AS "exceptionDate"
@@ -76,20 +100,54 @@ class BranchCashSaleReports implements SalesReportSet {
               LEFT JOIN "User" u ON u.id = s."salespersonId"
               LEFT JOIN "Document" d ON d.id = s."currentInvoiceId"
              WHERE s."organizationId" = ?
-            """.formatted(RATE);
+            UNION ALL
+            SELECT 'sale', o.id, o.number, %6$s, o."branchId", COALESCE(b.name, '(no branch)'), o."partnerId",
+                   pt."categoryId", COALESCE(NULLIF(trim(o."customerName"), ''), pt.name, 'Walk-in customer'),
+                   o."ownerId", %3$s,
+                   ROUND(o.subtotal * %2$s, 6), ROUND(o."discountTotal" * %2$s, 6), ROUND(o."taxAmount" * %2$s, 6),
+                   ROUND(o.total * %2$s, 6),
+                   ROUND(COALESCE((SELECT sum(x.amount) FROM "SalesOrderPayment" x WHERE x."orderId" = o.id
+                                      AND x.status <> 'voided' AND x."verificationStatus" = 'verified'), 0) * %2$s, 6),
+                   %5$s, CASE WHEN inv.id IS NOT NULL THEN 'invoiced' ELSE 'not_submitted' END,
+                   inv."documentNumber", NULL, o."reversalReason", o."deliveryStatus"::text,
+                   (SELECT string_agg(DISTINCT %7$s, ' + ') FROM "SalesOrderPayment" x
+                     WHERE x."orderId" = o.id AND x.status <> 'voided'),
+                   (current_date - %6$s), (inv."issueDate"::date - %6$s),
+                   COALESCE(o."reversedAt", o."cancelledAt", o."updatedAt")::date
+              FROM "SalesOrder" o
+              LEFT JOIN "Branch" b ON b.id = o."branchId"
+              LEFT JOIN "Partner" pt ON pt.id = o."partnerId"
+              LEFT JOIN "User" u ON u.id = o."ownerId"
+              LEFT JOIN LATERAL (SELECT d.id, d."documentNumber", d."issueDate" FROM "Document" d
+                                  WHERE d."sourceType" = 'sales_order' AND d."sourceId" = o.id
+                                    AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
+                                  ORDER BY d."issueDate", d.id LIMIT 1) inv ON true
+             WHERE o."organizationId" = ? AND o."saleType" = 'cash' AND o."deletedAt" IS NULL) s
+             WHERE 1 = 1
+            """.formatted(RATE, SALE_RATE, PERSON, tenderName("x"), SALE_EXECUTION, SALE_DATE, tenderName("x"));
 
-    private static final Scope SCOPE = new Scope("s.\"saleDate\"", "s.\"branchId\"", "s.\"salespersonId\"",
-            "s.\"partnerId\"",
-            "EXISTS (SELECT 1 FROM \"SalesSubmissionLine\" x WHERE x.\"submissionId\" = s.id AND x.\"productId\" = ?)",
-            "EXISTS (SELECT 1 FROM \"SalesSubmissionLine\" x JOIN \"Product\" xp ON xp.id = x.\"productId\" WHERE"
-                    + " x.\"submissionId\" = s.id AND xp.\"categoryId\" = ?)",
-            "pt.\"categoryId\"");
+    /** Products of both kinds of cash sale ({@code s.id} is a submission or a Sale; their ids never collide). */
+    private static final String SALE_PRODUCT = "EXISTS (SELECT 1 FROM (SELECT x.\"submissionId\" AS sale, x.\"productId\""
+            + " FROM \"SalesSubmissionLine\" x UNION ALL SELECT x.\"orderId\", x.\"productId\" FROM \"SalesOrderLine\" x) x"
+            + " WHERE x.sale = s.id AND x.\"productId\" = ?)";
+
+    private static final String SALE_CATEGORY = "EXISTS (SELECT 1 FROM (SELECT x.\"submissionId\" AS sale, x.\"productId\""
+            + " FROM \"SalesSubmissionLine\" x UNION ALL SELECT x.\"orderId\", x.\"productId\" FROM \"SalesOrderLine\" x) x"
+            + " JOIN \"Product\" xp ON xp.id = x.\"productId\" WHERE x.sale = s.id AND xp.\"categoryId\" = ?)";
+
+    private static final Scope SCOPE = new Scope("s.date", "s.\"branchId\"", "s.\"salespersonId\"", "s.\"partnerId\"",
+            SALE_PRODUCT, SALE_CATEGORY, "s.\"customerCategoryId\"");
 
     /** Line scope: product and category filter the lines themselves. */
-    private static final Scope LINE_SCOPE = new Scope("s.\"saleDate\"", "s.\"branchId\"", "s.\"salespersonId\"",
-            "s.\"partnerId\"", "l.\"productId\" = ?", "pr.\"categoryId\" = ?", "pt.\"categoryId\"");
+    private static final Scope LINE_SCOPE = new Scope("l.date", "l.\"branchId\"", "l.\"salespersonId\"",
+            "l.\"partnerId\"", "l.\"productId\" = ?", "l.\"categoryId\" = ?", "l.\"customerCategoryId\"");
 
-    private static final String CONFIRMED = " AND s.\"executionStatus\" = 'confirmed'";
+    private static final String CONFIRMED = " AND s.execution = 'confirmed'";
+
+    /** The register / exception link of a cash sale. */
+    private static String saleRoute(Map<String, Object> r) {
+        return ("legacy".equals(r.get("source")) ? "/sales/cash-sales/" : "/sales/orders/") + r.get("id");
+    }
 
     private final SalesDb db;
 
@@ -130,35 +188,47 @@ class BranchCashSaleReports implements SalesReportSet {
     // ------------------------------------------------------------------ data
 
     private List<Map<String, Object>> sales(Filter f, String where) {
-        Sql s = new Sql(SALES, org()).add(where);
+        Sql s = new Sql(SALES, org(), org()).add(where);
         SalesReportKit.apply(s, f, SCOPE, true);
-        s.add(" ORDER BY s.\"saleDate\", s.number");
+        s.add(" ORDER BY s.date, s.number");
         return db.rows(s.toString(), s.params);
     }
 
     /** Verified payments of confirmed sales grouped by branch, tender and account. */
     private List<Map<String, Object>> tenderRows(Filter f) {
         Sql s = new Sql("""
-                SELECT s."branchId", COALESCE(b.name, '(no branch)') AS branch,
-                       CASE WHEN pm.method = 'mobile_money' AND pm.provider = 'mtn' THEN 'MTN MoMo'
-                            WHEN pm.method = 'mobile_money' AND pm.provider = 'airtel' THEN 'Airtel Money'
-                            WHEN pm.method = 'mobile_money' THEN 'Mobile money'
-                            WHEN pm.method = 'bank' THEN 'Bank' ELSE 'Cash' END AS tender,
-                       COALESCE(a.code || ' ' || a.name, '—') AS account, count(*) AS payments,
-                       sum(ROUND(pm.amount * %s, 6)) AS amount
-                  FROM "SalesSubmissionPayment" pm
-                  JOIN "SalesSubmission" s ON s.id = pm."submissionId"
-                  LEFT JOIN "Branch" b ON b.id = s."branchId"
-                  LEFT JOIN "Partner" pt ON pt.id = s."partnerId"
-                  LEFT JOIN "Account" a ON a.id = pm."accountId"
-                 WHERE s."organizationId" = ? AND pm."verificationStatus" = 'verified'
-                """.formatted(RATE), org()).add(CONFIRMED);
+                SELECT s."branchId", s.branch, s.tender, s.account, count(*) AS payments, sum(s.amount) AS amount
+                  FROM (SELECT x.id, x."saleDate" AS date, x."branchId", COALESCE(b.name, '(no branch)') AS branch,
+                               x."salespersonId", x."partnerId", pt."categoryId" AS "customerCategoryId",
+                               %3$s AS tender, COALESCE(a.code || ' ' || a.name, '—') AS account,
+                               ROUND(pm.amount * COALESCE(x."exchangeRate", 1), 6) AS amount
+                          FROM "SalesSubmissionPayment" pm
+                          JOIN "SalesSubmission" x ON x.id = pm."submissionId"
+                          LEFT JOIN "Branch" b ON b.id = x."branchId"
+                          LEFT JOIN "Partner" pt ON pt.id = x."partnerId"
+                          LEFT JOIN "Account" a ON a.id = pm."accountId"
+                         WHERE x."organizationId" = ? AND pm."verificationStatus" = 'verified'
+                           AND x."executionStatus" = 'confirmed'
+                        UNION ALL
+                        SELECT o.id, %2$s, o."branchId", COALESCE(b.name, '(no branch)'), o."ownerId", o."partnerId",
+                               pt."categoryId", %3$s, COALESCE(a.code || ' ' || a.name, '—'),
+                               ROUND(pm.amount * %1$s, 6)
+                          FROM "SalesOrderPayment" pm
+                          JOIN "SalesOrder" o ON o.id = pm."orderId"
+                          LEFT JOIN "Branch" b ON b.id = o."branchId"
+                          LEFT JOIN "Partner" pt ON pt.id = o."partnerId"
+                          LEFT JOIN "Account" a ON a.id = pm."accountId"
+                         WHERE o."organizationId" = ? AND o."saleType" = 'cash' AND o."deletedAt" IS NULL
+                           AND pm."verificationStatus" = 'verified' AND pm.status = 'posted'
+                           AND o.status::text IN ('confirmed', 'done') AND o."reversedAt" IS NULL) s
+                 WHERE 1 = 1
+                """.formatted(SALE_RATE, SALE_DATE, tenderName("pm")), org(), org());
         SalesReportKit.apply(s, f, SCOPE, true);
         s.add(" GROUP BY 1, 2, 3, 4 ORDER BY 2, 3");
         return db.rows(s.toString(), s.params);
     }
 
-    static final List<String> TENDERS = List.of("Cash", "MTN MoMo", "Airtel Money", "Mobile money", "Bank");
+    static final List<String> TENDERS = List.of("Cash", "MTN MoMo", "Airtel Money", "Mobile money", "Bank", "Card");
 
     private static String tenderKey(String tender) {
         return "t_" + tender.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]", "");
@@ -168,7 +238,7 @@ class BranchCashSaleReports implements SalesReportSet {
 
     Report summary(Filter f) {
         List<Map<String, Object>> rows = sales(f, CONFIRMED);
-        List<Map<String, Object>> voided = sales(f, " AND s.\"executionStatus\" = 'voided'");
+        List<Map<String, Object>> voided = sales(f, " AND s.execution = 'voided'");
         Map<String, Map<String, Object>> by = new LinkedHashMap<>();
         for (Map<String, Object> r : rows) {
             Map<String, Object> g = branchRow(by, r);
@@ -237,8 +307,9 @@ class BranchCashSaleReports implements SalesReportSet {
             rep.kpi("top", "Top branch", out.getFirst().get("share"), "percent", str(out.getFirst().get("label")));
         }
         rep.chart("bar", "label", bar("total", "Takings"), bar("net", "Net sales"));
-        rep.note("Takings are confirmed branch cash sales (goods handed over and money verified), whether or not head"
-                + " office has invoiced them yet. Voided sales are excluded from takings and shown separately.");
+        rep.note("Takings are confirmed cash sales (goods handed over and money verified): cash Sales, invoiced at"
+                + " confirm, and legacy branch cash sales, whether or not head office has invoiced them yet. Voided"
+                + " (reversed) sales are excluded from takings and shown separately.");
         return rep;
     }
 
@@ -349,11 +420,11 @@ class BranchCashSaleReports implements SalesReportSet {
                         + " returned_for_correction, approved, invoiced, rejected, voided");
             }
             switch (f.status()) {
-                case "draft", "voided" -> where = " AND s.\"executionStatus\" = '" + f.status() + "'";
-                default -> where = CONFIRMED + " AND s.\"processingStatus\" = '" + f.status() + "'";
+                case "draft", "voided" -> where = " AND s.execution = '" + f.status() + "'";
+                default -> where = CONFIRMED + " AND s.processing = '" + f.status() + "'";
             }
         } else {
-            where = " AND s.\"executionStatus\" <> 'cancelled'";
+            where = " AND s.execution <> 'cancelled'";
         }
         List<Map<String, Object>> rows = sales(f, where);
         rows = new ArrayList<>(rows.reversed());
@@ -365,7 +436,7 @@ class BranchCashSaleReports implements SalesReportSet {
                     "customer", r.get("customer"), "salesperson", r.get("salesperson"), "net", money(dec(r.get("net"))),
                     "tax", money(dec(r.get("tax"))), "total", money(dec(r.get("total"))), "paid",
                     money(dec(r.get("paid"))), "tender", r.get("tender"), "stage", stage, "invoice",
-                    r.get("invoice")), "/sales/cash-sales/" + r.get("id")));
+                    r.get("invoice")), saleRoute(r)));
         }
         Report rep = table(out, "number|Number|text", "date|Date|date", "branch|Branch|text", "customer|Customer|text",
                 "salesperson|Salesperson|text", "net|Net|money", "tax|VAT|money", "total|Total|money",
@@ -388,19 +459,47 @@ class BranchCashSaleReports implements SalesReportSet {
 
     Report products(Filter f) {
         Sql s = new Sql("""
-                SELECT l."productId", COALESCE(pr.name, l.description) AS product, COALESCE(b.name, '(no branch)') AS branch,
-                       s."branchId", COALESCE(uu.code, pu.code) AS unit, count(DISTINCT s.id) AS sales,
-                       sum(l.quantity) AS quantity, sum(ROUND(l."lineSubtotal" * %1$s, 6)) AS net,
-                       sum(ROUND(COALESCE(l."costSnapshot", 0) * l.quantity * %1$s, 6)) AS cost
-                  FROM "SalesSubmissionLine" l
-                  JOIN "SalesSubmission" s ON s.id = l."submissionId"
-                  LEFT JOIN "Product" pr ON pr.id = l."productId"
-                  LEFT JOIN "UnitOfMeasure" uu ON uu.id = l."uomId"
-                  LEFT JOIN "UnitOfMeasure" pu ON pu.id = pr."uomId"
-                  LEFT JOIN "Branch" b ON b.id = s."branchId"
-                  LEFT JOIN "Partner" pt ON pt.id = s."partnerId"
-                 WHERE s."organizationId" = ?
-                """.formatted(RATE), org()).add(CONFIRMED);
+                SELECT l."productId", l.product, l.branch, l."branchId", l.unit, count(DISTINCT l.sale) AS sales,
+                       sum(l.quantity) AS quantity, sum(l.net) AS net, sum(l.cost) AS cost
+                  FROM (SELECT x.id AS sale, x."executionStatus"::text AS execution, x."saleDate" AS date,
+                               x."branchId", COALESCE(b.name, '(no branch)') AS branch, x."salespersonId",
+                               x."partnerId", pt."categoryId" AS "customerCategoryId", sl."productId",
+                               pr."categoryId", COALESCE(pr.name, sl.description) AS product,
+                               COALESCE(uu.code, pu.code) AS unit, sl.quantity,
+                               ROUND(sl."lineSubtotal" * COALESCE(x."exchangeRate", 1), 6) AS net,
+                               ROUND(COALESCE(sl."costSnapshot", 0) * sl.quantity * COALESCE(x."exchangeRate", 1), 6) AS cost
+                          FROM "SalesSubmissionLine" sl
+                          JOIN "SalesSubmission" x ON x.id = sl."submissionId"
+                          LEFT JOIN "Product" pr ON pr.id = sl."productId"
+                          LEFT JOIN "UnitOfMeasure" uu ON uu.id = sl."uomId"
+                          LEFT JOIN "UnitOfMeasure" pu ON pu.id = pr."uomId"
+                          LEFT JOIN "Branch" b ON b.id = x."branchId"
+                          LEFT JOIN "Partner" pt ON pt.id = x."partnerId"
+                         WHERE x."organizationId" = ?
+                        UNION ALL
+                        SELECT o.id, %2$s, %3$s, o."branchId", COALESCE(b.name, '(no branch)'), o."ownerId",
+                               o."partnerId", pt."categoryId", sl."productId", pr."categoryId",
+                               COALESCE(pr.name, sl.description), COALESCE(uu.code, pu.code), sl.quantity,
+                               ROUND(sl."lineSubtotal" * %1$s, 6),
+                               ROUND(sl.quantity * COALESCE(sl."uomFactor", 1) * COALESCE(ic.unit, sl."costSnapshot", 0), 6)
+                          FROM "SalesOrderLine" sl
+                          JOIN "SalesOrder" o ON o.id = sl."orderId"
+                          LEFT JOIN "Product" pr ON pr.id = sl."productId"
+                          LEFT JOIN "UnitOfMeasure" uu ON uu.id = sl."uomId"
+                          LEFT JOIN "UnitOfMeasure" pu ON pu.id = pr."uomId"
+                          LEFT JOIN "Branch" b ON b.id = o."branchId"
+                          LEFT JOIN "Partner" pt ON pt.id = o."partnerId"
+                          LEFT JOIN (SELECT dor."sourceId" AS sale, il."productId",
+                                            sum(il."totalValue") / NULLIF(-sum(il."quantityChange"), 0) AS unit
+                                       FROM "InventoryLedger" il JOIN "FleetLoad" t ON t.id = il."referenceId"
+                                       JOIN "FleetDeliveryOrder" dor ON dor.id = t."deliveryOrderId"
+                                        AND dor."sourceType" = 'sales_order'
+                                      WHERE il."organizationId" = ? AND il."referenceType" = 'fleet_trip'
+                                        AND il."quantityChange" < 0
+                                      GROUP BY 1, 2) ic ON ic.sale = o.id AND ic."productId" = sl."productId"
+                         WHERE o."organizationId" = ? AND o."saleType" = 'cash' AND o."deletedAt" IS NULL) l
+                 WHERE l.execution = 'confirmed'
+                """.formatted(SALE_RATE, SALE_EXECUTION, SALE_DATE), org(), org(), org());
         SalesReportKit.apply(s, f, LINE_SCOPE, true);
         s.add(" GROUP BY 1, 2, 3, 4, 5 ORDER BY net DESC");
         List<Map<String, Object>> rows = db.rows(s.toString(), s.params);
@@ -428,7 +527,8 @@ class BranchCashSaleReports implements SalesReportSet {
                 .kpi("grossProfit", "Gross profit", rep.totals.get("grossProfit"), "money")
                 .kpi("marginPct", "Gross margin", rep.totals.get("marginPct"), "percent");
         rep.chart("hbar", "product", bar("net", "Net sales"));
-        rep.note("Cost is the issue cost recorded when the sale was confirmed (moving average at the branch location).");
+        rep.note("Cost is the issue cost recorded when the sale was confirmed: the pickup's stock issue for a cash Sale,"
+                + " the moving average at the branch location for a legacy branch cash sale.");
         return rep;
     }
 
@@ -542,8 +642,8 @@ class BranchCashSaleReports implements SalesReportSet {
     }
 
     Report exceptions(Filter f) {
-        List<Map<String, Object>> rows = sales(f, " AND (s.\"executionStatus\" = 'voided' OR (s.\"executionStatus\" ="
-                + " 'confirmed' AND s.\"processingStatus\" IN ('rejected', 'returned_for_correction')))");
+        List<Map<String, Object>> rows = sales(f, " AND (s.execution = 'voided' OR (s.execution = 'confirmed'"
+                + " AND s.processing IN ('rejected', 'returned_for_correction')))");
         Map<String, String> returnReasons = new LinkedHashMap<>();
         List<String> returned = rows.stream().filter(r -> "returned_for_correction".equals(r.get("processing")))
                 .map(r -> str(r.get("id"))).toList();
@@ -563,7 +663,7 @@ class BranchCashSaleReports implements SalesReportSet {
             out.add(route(Obj.of("number", r.get("number"), "date", r.get("date"), "branch", r.get("branch"),
                     "customer", r.get("customer"), "salesperson", r.get("salesperson"), "total",
                     money(dec(r.get("total"))), "status", status, "reason", reason, "on", r.get("exceptionDate")),
-                    "/sales/cash-sales/" + r.get("id")));
+                    saleRoute(r)));
         }
         Report rep = table(out, "number|Number|text", "date|Sale date|date", "branch|Branch|text",
                 "customer|Customer|text", "salesperson|Salesperson|text", "total|Total|money", "status|Status|status",

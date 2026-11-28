@@ -30,6 +30,9 @@ public class BiExportService {
 
     private static final List<Dataset> DATASETS = List.of(
             new Dataset("sales-lines", "Sales lines", "sales_lines", "issueDate"),
+            new Dataset("sales-register", "Sales register (invoices, credit notes and POS, with channel)",
+                    "sales_register", "issueDate"),
+            new Dataset("sales-orders", "Sale lines (order and cash sales)", "sales_orders", "saleDate"),
             new Dataset("purchase-lines", "Purchase lines", "purchase_lines", "orderDate"),
             new Dataset("stock-on-hand", "Stock on hand", "stock_on_hand", null),
             new Dataset("crushing-output", "Crushing output", "crushing_output", "runDate"),

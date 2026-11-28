@@ -51,18 +51,20 @@ class SalesBillingReports implements SalesReportSet {
                    d."dueDate"::date AS "dueDate", d.status::text AS status, d."paymentStatus"::text AS "paymentStatus",
                    d."paymentMode"::text AS "paymentMode", d."partnerId", p.name AS customer,
                    trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson, b.name AS branch,
-                   ROUND(d.subtotal * d."exchangeRate", 6) AS subtotal, ROUND(d."taxAmount" * d."exchangeRate", 6) AS "taxAmount", ROUND(d."totalAmount" * d."exchangeRate", 6) AS "totalAmount",
-                   ROUND(d."amountPaid" * d."exchangeRate", 6) AS "amountPaid", ROUND(d."amountResidual" * d."exchangeRate", 6) AS "amountResidual",
+                   ROUND(d.subtotal * fx.rate, 6) AS subtotal, ROUND(d."taxAmount" * fx.rate, 6) AS "taxAmount", ROUND(d."totalAmount" * fx.rate, 6) AS "totalAmount",
+                   ROUND(d."amountPaid" * fx.rate, 6) AS "amountPaid", ROUND(d."amountResidual" * fx.rate, 6) AS "amountResidual",
                    d."cancelledAt"::date AS "cancelledOn", d.notes, d."sourceType", d.reference,
-                   CASE WHEN ss.id IS NOT NULL THEN 'branch_cash' WHEN so.id IS NOT NULL THEN 'sales_order'
-                        WHEN d."tableId" IS NOT NULL OR d."sourceType" LIKE 'pos%' THEN 'pos' ELSE 'direct' END AS channel
+                   %s AS channel
               FROM "Document" d
+              LEFT JOIN "Document" rd ON rd.id = d."reversedDocumentId"
+             CROSS JOIN LATERAL (SELECT %s AS rate) fx
               LEFT JOIN "Partner" p ON p.id = d."partnerId"
               LEFT JOIN "SalesOrder" so ON d."sourceType" = 'sales_order' AND so.id = d."sourceId"
               LEFT JOIN "SalesSubmission" ss ON ss."organizationId" = d."organizationId" AND ss."currentInvoiceId" = d.id
               LEFT JOIN "User" u ON u.id = COALESCE(d."salespersonId", so."ownerId", p."salespersonId")
               LEFT JOIN "Branch" b ON b.id = d."branchId"
-             WHERE d."organizationId" = ? AND d."documentType" = ?""";
+             WHERE d."organizationId" = ? AND d."documentType" = ?""".formatted(SalesReportFacts.channelSql("d", "rd"),
+                    SalesReportFacts.docRate("d"));
 
     private static final Scope INVOICE_SCOPE = new Scope("d.\"issueDate\"::date", "d.\"branchId\"", SP,
             "d.\"partnerId\"",
@@ -114,11 +116,12 @@ class SalesBillingReports implements SalesReportSet {
                         + " AND d.\"dueDate\"::date < '" + f.asOf() + "'", false, "overdue")));
         d.add(def("credit-sales", INV, "Credit Sales", "Invoices sold on credit terms (not paid at sale).", inv,
                 f -> invoices(f, " AND d.status NOT IN ('draft', 'cancelled') AND (d.\"paymentMode\" IS NULL OR"
-                        + " d.\"paymentMode\" = 'credit') AND ss.id IS NULL", true, "register")));
-        d.add(def("cash-sales", INV, "Cash Sales", "Sales paid at the time of sale (cash, card, mobile money, branch"
-                + " cash sales).", inv, f -> invoices(f, " AND d.status NOT IN ('draft', 'cancelled') AND"
-                        + " (d.\"paymentMode\" IN ('cash', 'card', 'mobile_money', 'mixed') OR ss.id IS NOT NULL)", true,
-                        "register")));
+                        + " d.\"paymentMode\" = 'credit') AND ss.id IS NULL AND COALESCE(so.\"saleType\", 'order') <> 'cash'",
+                        true, "register")));
+        d.add(def("cash-sales", INV, "Cash Sales", "Sales paid at the time of sale (cash, card, mobile money, cash"
+                + " sales).", inv, f -> invoices(f, " AND d.status NOT IN ('draft', 'cancelled') AND"
+                        + " (d.\"paymentMode\" IN ('cash', 'card', 'mobile_money', 'mixed') OR ss.id IS NOT NULL"
+                        + " OR so.\"saleType\" = 'cash')", true, "register")));
         d.add(def("invoice-aging", INV, "Invoice Aging", "Outstanding invoices by customer in aging buckets.",
                 with(SNAPSHOT, "asOf"), this::aging));
         d.add(def("cancelled-invoices", INV, "Cancelled Invoices", "Cancelled or voided invoices.", DOC,
@@ -195,9 +198,8 @@ class SalesBillingReports implements SalesReportSet {
         Sql s = new Sql(INVOICES, org(), type);
         SalesReportKit.apply(s, f, INVOICE_SCOPE, period);
         if (f.channel() != null) {
-            s.add(" AND CASE WHEN ss.id IS NOT NULL THEN 'branch_cash' WHEN so.id IS NOT NULL THEN 'sales_order' WHEN"
-                    + " d.\"tableId\" IS NOT NULL OR d.\"sourceType\" LIKE 'pos%' THEN 'pos' ELSE 'direct' END = ?",
-                    f.channel());
+            s.add(" AND " + SalesReportFacts.channelSql("d", "rd") + " = ?",
+                    SalesReportFacts.CHANNEL_ALIASES.getOrDefault(f.channel(), f.channel()));
         }
         s.add(where == null ? "" : where).add(" ORDER BY d.\"issueDate\" DESC, d.\"documentNumber\" DESC LIMIT 3000");
         List<Map<String, Object>> rows = db.rows(s.toString(), s.params);
@@ -337,7 +339,7 @@ class SalesBillingReports implements SalesReportSet {
     }
 
     Report salesTax(Filter f) {
-        Sql s = new Sql("""
+        Sql s = new Sql(SalesReportFacts.atCarryingRate("""
                 SELECT COALESCE(t.name, 'No tax') AS tax, t.rate, t.code,
                        sum(CASE WHEN d."documentType" = 'credit_note' THEN -l.subtotal ELSE l.subtotal END * d."exchangeRate") AS base,
                        sum(CASE WHEN d."documentType" = 'credit_note' THEN -COALESCE(l."taxAmount", 0)
@@ -348,7 +350,7 @@ class SalesBillingReports implements SalesReportSet {
                   LEFT JOIN "Partner" p ON p.id = d."partnerId"
                   LEFT JOIN "SalesOrder" so ON d."sourceType" = 'sales_order' AND so.id = d."sourceId"
                  WHERE d."organizationId" = ? AND d."documentType" IN ('sales_invoice', 'credit_note')
-                   AND d.status IN ('posted', 'paid')""", org());
+                   AND d.status IN ('posted', 'paid')"""), org());
         SalesReportKit.apply(s, f, INVOICE_SCOPE, true);
         s.add(" GROUP BY 1, 2, 3 ORDER BY 4 DESC");
         List<Map<String, Object>> rows = db.rows(s.toString(), s.params);
@@ -526,7 +528,7 @@ class SalesBillingReports implements SalesReportSet {
     }
 
     Report balances(Filter f) {
-        Sql s = new Sql("""
+        Sql s = new Sql(SalesReportFacts.atCarryingRate("""
                 SELECT p.id AS "partnerId", p.name AS customer, p."creditLimit",
                        trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson,
                        COALESCE((SELECT sum(d."amountResidual" * d."exchangeRate") FROM "Document" d WHERE d."organizationId" = p."organizationId"
@@ -545,7 +547,7 @@ class SalesBillingReports implements SalesReportSet {
                            WHERE cd."organizationId" = p."organizationId" AND cd."partnerId" = p.id
                            AND cd.status = 'open'), 0) AS deposits
                   FROM "Partner" p LEFT JOIN "User" u ON u.id = p."salespersonId"
-                 WHERE p."organizationId" = ? AND p."isCustomer" AND p."deletedAt" IS NULL""", f.asOf(), org());
+                 WHERE p."organizationId" = ? AND p."isCustomer" AND p."deletedAt" IS NULL"""), f.asOf(), org());
         s.eq("p.\"salespersonId\"", f.salespersonId());
         s.eq("p.id", f.partnerId());
         s.eq("p.\"categoryId\"", f.customerCategoryId());
@@ -724,7 +726,7 @@ class SalesBillingReports implements SalesReportSet {
     }
 
     Report allocations(Filter f) {
-        Sql s = new Sql("""
+        Sql s = new Sql(SalesReportFacts.atCarryingRate("""
                 SELECT a.id, pm.id AS "paymentId", pm."paymentNumber" AS payment, a."createdAt"::date AS date,
                        p.name AS customer, d."documentNumber" AS invoice, d."issueDate"::date AS "invoiceDate",
                        d."dueDate"::date AS "dueDate", a.amount * d."exchangeRate" AS amount, COALESCE(a."refundedAmount", 0) * d."exchangeRate" AS refunded
@@ -732,7 +734,7 @@ class SalesBillingReports implements SalesReportSet {
                   JOIN "Document" d ON d.id = COALESCE(a."documentId", a."invoiceId")
                   LEFT JOIN "Partner" p ON p.id = pm."partnerId"
                  WHERE a."organizationId" = ? AND pm.direction = 'inbound' AND d."documentType" = 'sales_invoice'
-                   AND a."createdAt" >= ? AND a."createdAt" < ?""", org(), f.from(), f.to().plusDays(1));
+                   AND a."createdAt" >= ? AND a."createdAt" < ?"""), org(), f.from(), f.to().plusDays(1));
         s.in("d.\"branchId\"", f.branchIds()).eq("pm.\"partnerId\"", f.partnerId())
                 .eq("p.\"salespersonId\"", f.salespersonId()).eq("p.\"categoryId\"", f.customerCategoryId());
         s.add(" ORDER BY a.\"createdAt\" DESC LIMIT 3000");

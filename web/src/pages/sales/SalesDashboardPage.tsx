@@ -286,7 +286,7 @@ export function SalesDashboardPage() {
           <Reveal delay={320}>
             <Panel title={tx('Go deeper')} hint={`${catalog?.count ?? '…'} ${tx('reports, grouped by topic')}`} href="/sales/reports" action={tx('All sales reports')}>
               <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
-                {REPORT_PAGES.map((p) => (
+                {REPORT_PAGES.filter((p) => !catalog || catalog.categories.some((c) => p.categories.includes(c.key) && c.reports.length > 0)).map((p) => (
                   <Link key={p.slug} to={`/sales/reports/${p.slug}`} className="group flex items-center gap-2.5 rounded-xl border p-2.5 text-sm font-medium transition-colors hover:border-primary/40 hover:bg-primary/5">
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><p.icon className="h-4 w-4" /></span>
                     <span className="min-w-0 truncate group-hover:text-primary">{tx(p.title)}</span>

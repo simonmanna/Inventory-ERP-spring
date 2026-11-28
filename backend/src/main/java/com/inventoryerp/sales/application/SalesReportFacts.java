@@ -31,6 +31,10 @@ import org.springframework.stereotype.Component;
  * invoice's own issue, the branch cash sale's issue or the delivery trips of the sales order — and falls back to the
  * product's cost price only where no issue exists ({@code actualCost = false}). Every report that shows revenue reads
  * this one query, so the dashboard and the detailed reports always agree.
+ *
+ * <p>ADR-S094 C7 (§9): POS sales are part of the fact — each product line of a posted POS invoice on its date, and
+ * each refunded or voided line negative on the refund date (a write-off is a bad debt, not a sale). The channel comes
+ * from the document's source ({@link #channelSql}); {@code source} tells a POS row from a document row.
  */
 @Component
 public class SalesReportFacts {
@@ -86,13 +90,93 @@ public class SalesReportFacts {
         }
     }
 
+    /** Sales channels of the measures (ADR-S094 §9.1), in display order. */
     static final Map<String, String> CHANNELS = new LinkedHashMap<>();
 
     static {
-        CHANNELS.put("sales_order", "Sales order");
-        CHANNELS.put("branch_cash", "Branch cash sale");
+        CHANNELS.put("order", "Sales order");
+        CHANNELS.put("cash", "Cash sale");
         CHANNELS.put("pos", "Point of sale");
+        CHANNELS.put("fleet", "Fleet delivery");
+        CHANNELS.put("project", "Project billing");
+        CHANNELS.put("fee", "Collection fee");
+        CHANNELS.put("recurring", "Recurring invoice");
+        CHANNELS.put("intercompany", "Intercompany");
+        CHANNELS.put("counterpart", "Reversal or reissue");
+        CHANNELS.put("opening", "Opening balance");
+        CHANNELS.put("manual", "Manual invoice");
         CHANNELS.put("direct", "Direct invoice");
+    }
+
+    /** Channel keys of the report center before ADR-S094 C7, still accepted in a filter. */
+    static final Map<String, String> CHANNEL_ALIASES = Map.of("sales_order", "order", "branch_cash", "cash");
+
+    /**
+     * The channel of a sales invoice or credit note {@code d} (ADR-S094 §9.1). A credit note belongs to the channel of
+     * the invoice it credits ({@code r}: that invoice's alias, joined on {@code reversedDocumentId}). Otherwise the
+     * document's source decides: a Sale gives its sale type ({@code order} / {@code cash}), a legacy branch cash sale
+     * is a cash sale, a module source its module, a document with no module source is manual (intercompany when it
+     * was mirrored to a group company), and {@code direct} is kept for a row no source was ever recorded for.
+     */
+    /**
+     * Rate converting posted sales document {@code a} (alias of "Document") to the functional currency: its carrying
+     * rate (ADR-S054, {@code DocumentFxRates}), Σ base ÷ Σ transaction amount of its live invoice or credit-note
+     * journal, else its stated rate. A document created through the API stores rate 1 when no rate is stated and
+     * posts at the rate table's rate, so the stated rate alone misstates it (ADR-S094 C7, R5a).
+     */
+    static String docRate(String a) {
+        return carrying(a, a + ".id", "'invoice', 'credit_note'", a + ".\"exchangeRate\"");
+    }
+
+    /** {@link #docRate} for POS invoice {@code a} (alias of "Invoice"), from its {@code pos_invoice} journal. */
+    static String posRate(String a) {
+        return carrying(a, a + ".id", "'pos_invoice'", a + ".\"exchangeRate\"");
+    }
+
+    /** {@link #docRate} for POS refund {@code r} of invoice {@code v}: its own {@code pos_refund} journal, else the invoice's. */
+    static String refundRate(String r, String v) {
+        return carrying(v, r + ".id", "'pos_refund'", posRate(v));
+    }
+
+    private static String carrying(String a, String id, String sources, String fallback) {
+        return ("(CASE WHEN %1$s.\"currencyId\" IS NULL AND %1$s.\"exchangeRate\" = 1 THEN 1 ELSE COALESCE((SELECT"
+                + " sum(fj.\"baseDebit\" + fj.\"baseCredit\") / NULLIF(sum(fj.debit + fj.credit), 0) FROM \"JournalEntry\" fe"
+                + " JOIN \"JournalLine\" fj ON fj.\"journalEntryId\" = fe.id WHERE fe.\"sourceType\" IN (%3$s)"
+                + " AND fe.\"sourceId\" = %2$s AND fe.\"reversedEntryId\" IS NULL), %4$s) END)")
+                .formatted(a, id, sources, fallback);
+    }
+
+    /** {@code sql} with each stated rate {@code d."exchangeRate"} of a sales document read as its {@link #docRate}. */
+    static String atCarryingRate(String sql) {
+        return atCarryingRate(sql, "d", docRate("d"));
+    }
+
+    /** {@code sql} with each {@code <alias>."exchangeRate"} (the whole alias, not a longer one) replaced by {@code rate}. */
+    static String atCarryingRate(String sql, String alias, String rate) {
+        return sql.replaceAll("(?<![\\w\"])" + alias + "\\.\"exchangeRate\"",
+                java.util.regex.Matcher.quoteReplacement(rate));
+    }
+
+    static String channelSql(String d, String r) {
+        return "CASE WHEN " + r + ".id IS NOT NULL THEN " + kindChannel(r) + " ELSE " + kindChannel(d) + " END";
+    }
+
+    private static String kindChannel(String a) {
+        return """
+                (CASE WHEN %1$s."sourceKind" IN ('sale', 'sale_down_payment', 'sale_milestone')
+                           THEN COALESCE((SELECT x."saleType" FROM "SalesOrder" x WHERE x.id = %1$s."sourceId"), 'order')
+                      WHEN %1$s."sourceKind" = 'cash_sale' THEN 'cash'
+                      WHEN %1$s."sourceKind" IN ('fleet_delivery', 'fleet_charges') THEN 'fleet'
+                      WHEN %1$s."sourceKind" = 'project_contract' THEN 'project'
+                      WHEN %1$s."sourceKind" = 'collections_fee' THEN 'fee'
+                      WHEN %1$s."sourceKind" = 'recurring' THEN 'recurring'
+                      WHEN %1$s."sourceKind" = 'counterpart' THEN 'counterpart'
+                      WHEN %1$s."sourceKind" = 'opening_balance' THEN 'opening'
+                      WHEN EXISTS (SELECT 1 FROM "IntercompanyTransaction" x WHERE x."sourceDocumentId" = %1$s.id)
+                           THEN 'intercompany'
+                      WHEN %1$s."tableId" IS NOT NULL OR %1$s."sourceType" LIKE 'pos%%' THEN 'pos'
+                      WHEN %1$s."sourceKind" IS NULL THEN 'direct'
+                      ELSE 'manual' END)""".formatted(a);
     }
 
     private static final String COST_CTES = """
@@ -108,6 +192,18 @@ public class SalesReportFacts {
                           JOIN "FleetDeliveryOrder" o ON o.id = t."deliveryOrderId" AND o."sourceType" = 'sales_order'
                          WHERE il."organizationId" = ? AND il."referenceType" = 'fleet_trip' AND il."quantityChange" < 0
                          GROUP BY 1, 2),
+                 pc AS (SELECT x.ref, x."productId", sum(x.value) / NULLIF(sum(x.qty), 0) AS unit
+                          FROM (SELECT il."referenceId" AS ref, il."productId", il."totalValue" AS value,
+                                       -il."quantityChange" AS qty
+                                  FROM "InventoryLedger" il
+                                 WHERE il."organizationId" = ? AND il."referenceType" = 'pos_invoice'
+                                   AND il."quantityChange" < 0
+                                UNION ALL
+                                SELECT v.id, il."productId", il."totalValue", -il."quantityChange"
+                                  FROM "InventoryLedger" il JOIN "Invoice" v ON v."orderId" = il."referenceId"
+                                 WHERE il."organizationId" = ? AND il."referenceType" = 'pos_order'
+                                   AND il."quantityChange" < 0) x
+                         GROUP BY 1, 2),
             """;
 
     private static final String FACT = """
@@ -118,23 +214,23 @@ public class SalesReportFacts {
                             p."salespersonId") AS "salespersonId",
                    COALESCE(so."teamId", rso."teamId", p."salesTeamId") AS "teamId", COALESCE(so.id, rso.id) AS "orderId",
                    l."productId", pr."categoryId", COALESCE(l."uomId", pr."salesUomId", pr."uomId") AS "uomId",
-                   CASE WHEN ss.id IS NOT NULL OR rss.id IS NOT NULL THEN 'branch_cash'
-                        WHEN so.id IS NOT NULL OR rso.id IS NOT NULL THEN 'sales_order'
-                        WHEN d."tableId" IS NOT NULL OR d."sourceType" LIKE 'pos%' THEN 'pos' ELSE 'direct' END AS channel,
+                   %1$s AS channel,
                    d."paymentMode"::text AS "paymentMode",
                    sg.s * l.quantity AS quantity,
                    sg.s * l.quantity * COALESCE(l."uomFactor", 1) AS "baseQty",
-                   sg.s * l.subtotal * d."exchangeRate" AS revenue,
+                   sg.s * l.subtotal * fx.rate AS revenue,
                    sg.s * CASE WHEN l."discountPercent" > 0 AND l."discountPercent" < 100
-                               THEN l.subtotal * d."exchangeRate" * l."discountPercent" / (100 - l."discountPercent") ELSE 0 END AS discount,
-                   sg.s * COALESCE(l."taxAmount", 0) * d."exchangeRate" AS tax,
+                               THEN l.subtotal * fx.rate * l."discountPercent" / (100 - l."discountPercent") ELSE 0 END AS discount,
+                   sg.s * COALESCE(l."taxAmount", 0) * fx.rate AS tax,
                    sg.s * l.quantity * COALESCE(l."uomFactor", 1)
                         * COALESCE(ic.unit, cc.unit, rcc.unit, tc.unit, pr."costPrice", 0) AS cost,
                    (ic.unit IS NOT NULL OR cc.unit IS NOT NULL OR rcc.unit IS NOT NULL OR tc.unit IS NOT NULL)
                         AS "actualCost",
-                   COALESCE(l."discountPercent", 0) AS "discountPercent", l."unitPrice" * d."exchangeRate" AS "unitPrice", pr."salesPrice" AS "listPrice"
+                   COALESCE(l."discountPercent", 0) AS "discountPercent", l."unitPrice" * fx.rate AS "unitPrice", pr."salesPrice" AS "listPrice",
+                   'document' AS source
               FROM "DocumentLine" l JOIN "Document" d ON d.id = l."documentId"
              CROSS JOIN LATERAL (SELECT CASE WHEN d."documentType" = 'credit_note' THEN -1 ELSE 1 END AS s) sg
+             CROSS JOIN LATERAL (SELECT %2$s AS rate) fx
               LEFT JOIN "Partner" p ON p.id = d."partnerId"
               LEFT JOIN "Product" pr ON pr.id = l."productId"
               LEFT JOIN "SalesOrder" so ON d."sourceType" = 'sales_order' AND so.id = d."sourceId"
@@ -148,8 +244,48 @@ public class SalesReportFacts {
               LEFT JOIN tc ON tc.ref = COALESCE(so.id, rso.id) AND tc."productId" = l."productId"
              WHERE d."organizationId" = ? AND d."documentType" IN ('sales_invoice', 'credit_note')
                AND d.status IN ('posted', 'paid') AND l."productId" IS NOT NULL
-               AND d."issueDate" >= ? AND d."issueDate" < ?)
-            """;
+               AND d."issueDate" >= ? AND d."issueDate" < ?
+            UNION ALL
+            SELECT v.id, v."invoiceNumber", 'sales_invoice', v."issueDate"::date, v."partnerId", p."categoryId",
+                   v."branchId", COALESCE((SELECT u.id FROM "User" u WHERE u.id = v."waiterId"), p."salespersonId"),
+                   p."salesTeamId", NULL, i."productId", pr."categoryId",
+                   COALESCE(i."uomId", pr."salesUomId", pr."uomId"), 'pos', v."paymentMode"::text, i.quantity,
+                   i.quantity * COALESCE(i."uomFactor", 1), i.subtotal * fx.rate,
+                   CASE WHEN i."discountPercent" > 0 AND i."discountPercent" < 100
+                        THEN i.subtotal * fx.rate * i."discountPercent" / (100 - i."discountPercent") ELSE 0 END,
+                   COALESCE(i."taxAmount", 0) * fx.rate,
+                   i.quantity * COALESCE(i."uomFactor", 1) * COALESCE(pc.unit, pr."costPrice", 0), pc.unit IS NOT NULL,
+                   COALESCE(i."discountPercent", 0), i."unitPrice" * fx.rate, pr."salesPrice", 'pos'
+              FROM "InvoiceItem" i JOIN "Invoice" v ON v.id = i."invoiceId"
+             CROSS JOIN LATERAL (SELECT %3$s AS rate) fx
+              LEFT JOIN "Partner" p ON p.id = v."partnerId"
+              LEFT JOIN "Product" pr ON pr.id = i."productId"
+              LEFT JOIN pc ON pc.ref = v.id AND pc."productId" = i."productId"
+             WHERE v."organizationId" = ? AND v.status::text IN ('posted', 'paid', 'refunded')
+               AND i."productId" IS NOT NULL AND v."issueDate" >= ? AND v."issueDate" < ?
+            UNION ALL
+            SELECT r.id, v."invoiceNumber", 'credit_note', r."createdAt"::date, v."partnerId", p."categoryId",
+                   v."branchId", COALESCE((SELECT u.id FROM "User" u WHERE u.id = v."waiterId"), p."salespersonId"),
+                   p."salesTeamId", NULL, i."productId", pr."categoryId",
+                   COALESCE(i."uomId", pr."salesUomId", pr."uomId"), 'pos', v."paymentMode"::text, -rq.qty,
+                   -rq.qty * COALESCE(i."uomFactor", 1), -rq.sub * fx.rate,
+                   CASE WHEN i."discountPercent" > 0 AND i."discountPercent" < 100
+                        THEN -rq.sub * fx.rate * i."discountPercent" / (100 - i."discountPercent") ELSE 0 END,
+                   -rq.tax * fx.rate,
+                   -rq.qty * COALESCE(i."uomFactor", 1) * COALESCE(pc.unit, pr."costPrice", 0), pc.unit IS NOT NULL,
+                   COALESCE(i."discountPercent", 0), i."unitPrice" * fx.rate, pr."salesPrice", 'pos'
+              FROM "PosRefund" r JOIN "Invoice" v ON v.id = r."invoiceId"
+             CROSS JOIN LATERAL (SELECT %4$s AS rate) fx
+             CROSS JOIN LATERAL (SELECT e ->> 'lineId' AS line, COALESCE((e ->> 'quantity')::numeric, 0) AS qty,
+                                        COALESCE((e ->> 'subtotal')::numeric, 0) AS sub,
+                                        COALESCE((e ->> 'taxAmount')::numeric, 0) AS tax
+                                   FROM jsonb_array_elements(r.items::jsonb) e) rq
+              JOIN "InvoiceItem" i ON i.id = rq.line
+              LEFT JOIN "Partner" p ON p.id = v."partnerId"
+              LEFT JOIN "Product" pr ON pr.id = i."productId"
+              LEFT JOIN pc ON pc.ref = v.id AND pc."productId" = i."productId"
+             WHERE r."organizationId" = ? AND i."productId" IS NOT NULL AND r."createdAt" >= ? AND r."createdAt" < ?)
+            """.formatted(channelSql("d", "rd"), docRate("d"), posRate("v"), refundRate("r", "v"));
 
     private static final String MEASURES = """
              sum(f.quantity) AS quantity, sum(f."baseQty") AS "baseQty", sum(f.revenue) AS revenue,
@@ -171,15 +307,16 @@ public class SalesReportFacts {
 
     /** {@code WITH … fact AS (…)} for {@code [from, to]} with the shared filter in the outer WHERE. */
     Sql base(Filter f, String select) {
-        Sql s = new Sql(COST_CTES + FACT + select + " FROM fact f WHERE 1 = 1", org(), org(), org(), org(), f.from(),
-                f.to().plusDays(1));
+        LocalDate end = f.to().plusDays(1);
+        Sql s = new Sql(COST_CTES + FACT + select + " FROM fact f WHERE 1 = 1", org(), org(), org(), org(), org(),
+                org(), f.from(), end, org(), f.from(), end, org(), f.from(), end);
         s.in("f.\"branchId\"", f.branchIds());
         s.eq("f.\"salespersonId\"", f.salespersonId());
         s.eq("f.\"partnerId\"", f.partnerId());
         s.eq("f.\"productId\"", f.productId());
         s.eq("f.\"categoryId\"", f.categoryId());
         s.eq("f.\"customerCategoryId\"", f.customerCategoryId());
-        s.eq("f.channel", f.channel());
+        s.eq("f.channel", f.channel() == null ? null : CHANNEL_ALIASES.getOrDefault(f.channel(), f.channel()));
         return s;
     }
 
@@ -282,7 +419,10 @@ public class SalesReportFacts {
             case BRANCH -> "SELECT id, name FROM \"Branch\"";
             case TEAM -> "SELECT id, name FROM \"CrmTeam\"";
             case UOM -> "SELECT id, COALESCE(symbol, name) AS name FROM \"UnitOfMeasure\"";
-            case DOCUMENT -> "SELECT id, \"documentNumber\" AS name FROM \"Document\"";
+            case DOCUMENT -> "SELECT id, name FROM (SELECT id, \"documentNumber\" AS name, \"organizationId\" FROM"
+                    + " \"Document\" UNION ALL SELECT id, \"invoiceNumber\", \"organizationId\" FROM \"Invoice\" UNION ALL"
+                    + " SELECT r.id, v.\"invoiceNumber\" || ' refund', r.\"organizationId\" FROM \"PosRefund\" r JOIN"
+                    + " \"Invoice\" v ON v.id = r.\"invoiceId\") x";
             default -> "SELECT id, trim(\"firstName\" || ' ' || COALESCE(\"lastName\", '')) AS name FROM \"User\"";
         };
         List<Object> p = new ArrayList<>();

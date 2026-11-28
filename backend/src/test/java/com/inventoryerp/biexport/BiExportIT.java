@@ -28,7 +28,7 @@ class BiExportIT extends ApiTestSupport {
     @DisplayName("every dataset lists its columns without the organization and exports a header")
     void everyDataset() throws Exception {
         JsonNode datasets = ok(200, "GET", "/bi/datasets", null);
-        assertThat(datasets.size()).isEqualTo(8);
+        assertThat(datasets.size()).isEqualTo(10);
         for (JsonNode d : datasets) {
             assertThat(d.get("columns").size()).isPositive();
             for (JsonNode c : d.get("columns")) {

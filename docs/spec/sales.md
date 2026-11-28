@@ -6,10 +6,10 @@ Design: [ADR-S011](../adr/ADR-S011-sales-o2c.md). Postings: [`sales-postings.md`
 Status: **design (Step 0)**. Nothing below is built yet. This is a non-Nest extension: no parity routes are added;
 existing parity routes keep their contract (see "Backward compatibility").
 
-> **ADR-S094 (proposed, not implemented).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) plans to make
+> **ADR-S094 (approved 2026-11-28, built in stages C0–C7b).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) makes
 > `SalesOrder` the one central Sale document (`saleType` `order` | `cash`), with invoices created from the Sale. It
 > separates approval from the commercial status (explicit submit for approval) and defines completion and
-> financial-outcome rules. Nothing below changes until a stage is approved and shipped.
+> financial-outcome rules. Each shipped stage is listed under Deviations below.
 > **Known defect D-VAT-1** (ADR-S094 §3.5): with `depositTaxPoint = receipt`, the final invoice after a taxed
 > down-payment invoice charges VAT on the advance again and leaves a receivable equal to that VAT. The fix (stage C1b)
 > waits for accountant decisions AD-14, AD-15 and AD-17 ([`sales-postings.md`](sales-postings.md) §5a).
@@ -410,7 +410,7 @@ branch scope.
   - The web no longer creates legacy cash sales. A legacy draft can only be discarded; a confirmed legacy sale still
     finishes its head-office processing. The legacy routes are unchanged until C8.
   - Limits: no browser end-to-end test; printed invoices do not show "fiscal pending"; the Branch Cash Sales report
-    reads legacy sales until C7.
+    read legacy sales only until C7.
 - **Every invoice of a Sale is registered with the fiscal authority** (ADR-S094 C4b, V738; AD-5, owner instruction
   2026-11-28). Details in ADR-S094 §5.5, under "As built (C4b)".
   - A posted invoice of an order-type Sale queues a fiscal `issue` in its posting transaction. A posted credit note on
@@ -426,6 +426,18 @@ branch scope.
     - A rejected registration is final (no re-issue).
     - A credit note that names no invoice, or credits an unregistered invoice, is not fiscalised.
     - The EFRIS adapter is still to be written.
+- **Sales reports are central, with POS and a ledger reconciliation** (ADR-S094 C7, V739; owner instruction
+  2026-11-28). Details in ADR-S094 §9.4.
+  - Every billed sale has a channel (12 keys, from the document's source kind). A credit note takes the channel of
+    the invoice it credits. The old filter keys `sales_order` and `branch_cash` still filter.
+  - POS sales and refunds are part of the report center's sales.
+  - Amounts in the functional currency use each document's carrying rate (the rate its journal posted at). Before
+    C7, a foreign-currency document created through the API without a rate was reported at rate 1.
+  - Branch Cash Sales covers cash Sales and legacy submissions together.
+  - New category "Ledger Reconciliation" (`report:accounting`): R5a–R5g per document, the billing-to-revenue bridge,
+    and the documents that differ.
+  - New views `reporting.sales_orders`, `reporting.sales_register` and `bi.sales_orders`; `channel` and
+    `functionalSubtotal` added to `bi.sales_lines`; BI datasets `sales-orders` and `sales-register`.
 - **Revenue invoiced before the goods leave is deferred** (ADR-S094 C2b, V734; AD-2 = contract liability, AD-16 =
   release at dispatch, approved 2026-11-28).
   - A posted invoice that bills more than has been dispatched moves the revenue of the difference to the contract

@@ -388,6 +388,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/sales/reports/team', label: tx('Team Performance'), icon: UsersRound, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/profitability', label: tx('Profitability'), icon: BarChart3, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/reports/forecasting', label: tx('Forecasting & Planning'), icon: Telescope, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
+      { to: '/sales/reports/reconciliation', label: tx('Ledger Reconciliation'), icon: Scale, permission: PERMISSIONS.report.accounting, group: 'Reporting' },
       { to: '/sales/analytics', label: tx('Sales Analytics'), icon: LineChart, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },
       { to: '/sales/commissions', label: tx('Commissions & Targets'), icon: BadgePercent, permission: PERMISSIONS.sales.commissionRead, group: 'Reporting' },
       { to: '/sales/presentation', label: tx('Generate Presentation'), icon: Presentation, permission: PERMISSIONS.sales.reportRead, group: 'Reporting' },

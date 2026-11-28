@@ -1614,6 +1614,83 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
    - RP-2: rehearsal copy;
    - RP-3: live, read-only, after go-live.
 
+### 9.4 As built (C7)
+
+V739; no route changed. Report keys and tests are named in `docs/PORT_STATUS.md` (S094-C7).
+
+**Channels** (`SalesReportFacts.CHANNELS`, 12 keys): `order`, `cash`, `pos`, `fleet`, `project`, `fee`, `recurring`,
+`intercompany`, `counterpart`, `opening`, `manual`, `direct`.
+- A document's channel comes from its `sourceKind` (C4):
+  - a Sale's invoice takes the Sale's `saleType`; a legacy cash-sale invoice is `cash`;
+  - `fleet_delivery` / `fleet_charges` → `fleet`; `project_contract` → `project`; `collections_fee` → `fee`;
+    `recurring` → `recurring`; `counterpart` → `counterpart`; `opening_balance` → `opening`;
+  - otherwise `intercompany` when an `IntercompanyTransaction` names the invoice, and `pos` for a POS-origin document;
+  - no kind → `direct`; any other kind (`manual`, `credit` without an invoice) → `manual`.
+- **Refinement**: a credit note takes the channel of the invoice it credits (`reversedDocumentId`), so returns net
+  within their channel.
+- The pre-C7 filter keys `sales_order` and `branch_cash` still filter, for bookmarked links.
+
+**POS in the report center** (the fact behind most sales reports):
+- POS invoice product lines (posted, paid, refunded) on the issue date. The salesperson is the waiter when the waiter
+  is a user.
+- POS refunds and settled voids are negative lines on the refund date, from `PosRefund.items`.
+- Cost comes from the POS stock issue (`pos_invoice`, `pos_order`), else the product's cost price.
+- POS lines without a product (menu items) stay out of the product-based fact; they are in `reporting.sales_register`.
+- Write-offs are bad debts, not returns. POS rows open `/pos/receipts`.
+
+**Functional amounts at the carrying rate** (refinement of the FX rule in §9.2):
+- A posted document converts at the rate its own journal posted at (Σ base ÷ Σ transaction amount of its live
+  journal), else at its stated rate. A POS refund converts at its own journal's rate.
+- Reason: a document created through the API stores rate 1 when no rate is stated, and posts at the rate-table rate
+  (`DocumentFxRates.effectiveRate`). The stated rate therefore misstated those documents in every sales report. This
+  defect predates ADR-S094; R5a found it on a copy of the test database.
+- Applies to the fact, the invoice and credit-note registers, the tax report, customer balances, allocations,
+  customer revenue and the views. Payments and deposits keep their stored rate, which is the resolved one.
+
+**Branch Cash Sales** reads cash Sales (`saleType = 'cash'`) and legacy submissions together, in the same eight
+reports:
+- A Sale's execution is draft, confirmed, voided (reversed) or cancelled. Its processing is `invoiced` once its invoice
+  is posted.
+- Tenders are the verified `SalesOrderPayment` rows of confirmed sales.
+- Product cost comes from the pickup's stock issue, else the line's cost snapshot.
+- A Sale's row opens `/sales/orders/:id`; a legacy row opens `/sales/cash-sales/:id`.
+
+**Ledger Reconciliation** (new report category `reconciliation`, permission `report:accounting`, hidden from
+branch-restricted users, read-only):
+- `ledger-reconciliation` checks each document against its journal, with a tolerance of 0.01 in the functional
+  currency. Each check shows ok or difference and drills down to the documents that differ.
+  - **R5a**: revenue lines of posted sales invoices and credit notes (lines with no account, or on a revenue account)
+    against the revenue of their live journals. A legacy cash-sale invoice is checked against the revenue accrued at
+    confirm (`revenueAccruedBy`). Down-payment invoices post to the deposit account, so they count as advances.
+  - **R5b**: POS invoices (posted, paid, refunded) and refunds against their `pos_invoice` / `pos_refund` journals.
+  - **R5c**: tax of the same documents against the movement of the tax accounts (`Tax.accountId`, POS
+    `taxAccountId`).
+  - **R5d**: posted receipts (net of withholding), customer refunds and deposits received (`receipt`, `cash_sale`)
+    against the tender account of their journal.
+  - **R5e**: sales stock issues and returns (15 reference types) against the expense lines of their journals.
+  - **R5f** (`revenue-bridge`): billing (documents and POS) bridged to recognised revenue. The bridge lines are:
+    per-document differences; legacy accruals at confirm, less the invoices that carried them; deferrals and releases
+    (C2b); period-end accruals (C7b); cancelled or corrected documents net of their reversals; and posting-date
+    shifts. The unexplained difference must be 0.
+  - **R5g**: for completed order-type Sales, VAT charged on advance lines (liability account) equals the VAT deducted
+    or credited.
+- `reconciliation-exceptions` lists each document that differs, filtered by check (`status` = `r5a` … `r5g`), with a
+  link to open it.
+- Validated on a copy of the large test database: 2,291 invoices and credit notes, 59 POS documents, 1,479 receipts
+  and deposits, and 2,541 stock movements. The only differences left were documents that test fixtures had inserted
+  without a journal. The bridge's unexplained difference was 0.
+
+**Views** (V739):
+- New: `reporting.sales_orders` and `reporting.sales_register`, with BI export datasets `sales-orders` and
+  `sales-register`; `bi.sales_orders`.
+- `bi.sales_lines` gains `channel` and `functionalSubtotal`, appended after its existing columns.
+- The channel rule is written out in each view, because the Superset reader reads only `bi`.
+  `SalesCentralReportingIT` keeps the views in step with the report center.
+
+**Not in C7**:
+- The §9.3 baselines (RP-2 on the rehearsal copy, RP-3 on live) are release tasks.
+- There is no report for the M1 → M3 bridge (bookings to billing) yet.
+
 ---
 
 ## 10. Historical migration

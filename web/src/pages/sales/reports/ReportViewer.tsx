@@ -32,6 +32,7 @@ const STATUS_OPTIONS: Record<string, string[]> = {
   customer: ['active', 'at_risk', 'inactive', 'never'],
   cashSale: ['draft', 'not_submitted', 'submitted', 'under_review', 'returned_for_correction', 'approved', 'invoiced', 'rejected', 'voided'],
   return: ['requested', 'approved', 'received', 'inspected', 'closed', 'rejected', 'cancelled'],
+  reconciliation: ['r5a', 'r5b', 'r5c', 'r5d', 'r5e', 'r5g'],
 };
 
 function statusKind(key: string): string {
@@ -40,6 +41,7 @@ function statusKind(key: string): string {
   if (key === 'customer-activity') return 'customer';
   if (key.startsWith('return')) return 'return';
   if (key.startsWith('branch-cash')) return 'cashSale';
+  if (key.startsWith('reconciliation')) return 'reconciliation';
   return 'order';
 }
 

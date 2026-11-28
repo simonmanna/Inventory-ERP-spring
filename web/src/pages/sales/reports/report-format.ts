@@ -38,9 +38,9 @@ export function statusText(v: string): string {
 /** Tone of a status value (good / warn / bad / info / neutral). */
 export function statusTone(v: string): 'good' | 'warn' | 'bad' | 'info' | 'neutral' {
   const s = v.toLowerCase();
-  if (/(^up$|achieved|on_time|on time|paid|done|full|active|approved|converted|delivered|closed|peak|accepted|posted|actual)/.test(s)) return 'good';
+  if (/(^up$|^ok$|achieved|on_time|on time|paid|done|full|active|approved|converted|delivered|closed|peak|accepted|posted|actual)/.test(s)) return 'good';
   if (/(at_risk|at risk|on_track|partial|pending|sent|in_fulfilment|in transit|in_transit|draft|month to date|normal|flat|expiring)/.test(s)) return 'warn';
-  if (/(^down$|late|overdue|behind|rejected|cancelled|inactive|lost|expired|not_paid|never|low|none|loss)/.test(s)) return 'bad';
+  if (/(^down$|^difference$|late|overdue|behind|rejected|cancelled|inactive|lost|expired|not_paid|never|low|none|loss)/.test(s)) return 'bad';
   if (/(confirmed|projection|open|invoice|sales order|quotation|receipt|delivery)/.test(s)) return 'info';
   return 'neutral';
 }

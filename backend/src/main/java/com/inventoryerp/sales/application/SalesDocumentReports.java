@@ -591,7 +591,7 @@ class SalesDocumentReports implements SalesReportSet {
     }
 
     Report newCustomers(Filter f) {
-        Sql s = new Sql("""
+        Sql s = new Sql(SalesReportFacts.atCarryingRate("""
                 SELECT p.id, p.code, p.name, c.name AS category, p."createdAt"::date AS created,
                        trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson,
                        fi.date AS "firstInvoice", fi.amount AS "firstValue",
@@ -609,7 +609,7 @@ class SalesDocumentReports implements SalesReportSet {
                            AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
                          ORDER BY d."issueDate" LIMIT 1) fi ON true
                  WHERE p."organizationId" = ? AND p."isCustomer" AND p."deletedAt" IS NULL
-                   AND p."createdAt" >= ? AND p."createdAt" < ?""", f.from(), f.to().plusDays(1), f.from(),
+                   AND p."createdAt" >= ? AND p."createdAt" < ?"""), f.from(), f.to().plusDays(1), f.from(),
                 f.to().plusDays(1), org(), f.from(), f.to().plusDays(1));
         s.eq("p.\"salespersonId\"", f.salespersonId());
         s.eq("p.\"categoryId\"", f.customerCategoryId());
@@ -646,7 +646,7 @@ class SalesDocumentReports implements SalesReportSet {
 
     Report customerActivity(Filter f) {
         int days = f.days(90);
-        Sql s = new Sql("""
+        Sql s = new Sql(SalesReportFacts.atCarryingRate("""
                 SELECT p.id, p.code, p.name, c.name AS category,
                        trim(u."firstName" || ' ' || COALESCE(u."lastName", '')) AS salesperson,
                        a.last AS "lastPurchase", a.invoices, a.revenue
@@ -658,7 +658,7 @@ class SalesDocumentReports implements SalesReportSet {
                          FROM "Document" d WHERE d."organizationId" = p."organizationId" AND d."partnerId" = p.id
                           AND d."documentType" = 'sales_invoice' AND d.status IN ('posted', 'paid')
                           AND d."issueDate" < ?) a ON true
-                 WHERE p."organizationId" = ? AND p."isCustomer" AND p."deletedAt" IS NULL""",
+                 WHERE p."organizationId" = ? AND p."isCustomer" AND p."deletedAt" IS NULL"""),
                 f.asOf().minusMonths(12), f.asOf().plusDays(1), org());
         s.eq("p.\"salespersonId\"", f.salespersonId());
         s.eq("p.\"categoryId\"", f.customerCategoryId());

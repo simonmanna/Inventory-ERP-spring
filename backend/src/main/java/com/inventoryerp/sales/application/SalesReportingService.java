@@ -68,7 +68,9 @@ public class SalesReportingService {
         {"profitability", "Profitability", "Gross profit by product, customer, branch and salesperson, margins,"
             + " cost, discount and return impact."},
         {"forecasting", "Forecasting & Planning", "Forecast, projection, targets, growth, demand, seasonality and"
-            + " budget vs actual."}};
+            + " budget vs actual."},
+        {"reconciliation", "Ledger Reconciliation", "Sales reports against the general ledger: revenue, POS, output"
+            + " VAT, receipts, cost of sales and billing to recognised revenue."}};
 
     private final Map<String, Def> defs = new LinkedHashMap<>();
     private final SalesReportFacts facts;
