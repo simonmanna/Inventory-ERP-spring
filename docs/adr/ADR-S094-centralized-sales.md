@@ -12,7 +12,8 @@
 - Spec: [`sales.md`](../spec/sales.md), [`cash-sales.md`](../spec/cash-sales.md),
   [`invoicing.md`](../spec/invoicing.md), [`sales-postings.md`](../spec/sales-postings.md). Planned changes there are
   marked "ADR-S094 (proposed)".
-- Evidence: read-only inspection of `origin/main` 77daa9fb. File references are given where a fact matters.
+- Evidence: read-only inspection of `origin/main` 77daa9fb. File references are given where a fact matters. C0
+  read-only assessment of the 2026-11-28 nightly dump: [report](../audits/2026-11-28-adr-s094-c0-assessment.md).
 - This revision is complete on its own. Revision 2 content that did not change is repeated here, not referenced.
 
 **Review status (architecture review of revision 2, 2026-11-28)**
@@ -56,6 +57,23 @@ make the new sales workflow simpler. Where the two conflict, the workflow is gat
 - 27-creator invoice-source matrix; module-owned billing preserved; manual-invoice restriction off by default.
 - Deterministic migration with collision and integrity checks, and an exceptions report.
 - Five reporting measures; ledgers never rewritten.
+
+### 0.3 Corrections from the C0 assessment (2026-11-28)
+
+The C0 read-only assessment ([report](../audits/2026-11-28-adr-s094-c0-assessment.md)) checked this ADR against the code and a restored copy
+of the live database. These corrections follow from it.
+
+| # | Finding | Correction | Section |
+|---|---|---|---|
+| K-1 | The deposit account is the `customer_deposit` mapping: 2175 on live. 2350 is only the fallback code used when no mapping exists. | Journals and checks name the mapping, not 2350. | §3.3–3.5, AD-6 |
+| K-2 | `DocumentBuilderService` exists and is on the confirm path (`InvoiceService.createCopied` → `createDocument`). Revision 3 removed it from TA-12 as "not found", which was wrong. A NUL byte in that file makes plain `grep` skip it. Re-checked with `grep -a`, it has no independent transaction. | Added to TA-12 and to the audit list. | §5.4 |
+| K-3 | `Document` rows are inserted in only three places: the builder, `RecurringService.generateOne` and `DocumentEngineService.createCounterpart`. | The builder becomes the single entry point; no new factory class. | §8.2 |
+| K-4 | A `NOT VALID` CHECK is still enforced on every UPDATE, so a payment on an old invoice without `sourceKind` would fail. The guard also named a `type` column; it is `documentType`. | Backfill `sourceKind` first, then add and validate the constraint. | §8.2, §12, §13 |
+| K-5 | The stock ledger is `InventoryLedger` (`referenceType`, `referenceId`, `sourceLineId`). `sourceLineId` is empty on 122 of the 137 live cash-sale rows (written before 3d493469, 2026-11-15). `SalesSubmissionLine.issueLedgerCode` maps every line exactly. | Mapping, return linkage and checks use `sourceLineId`, or `issueLedgerCode` for older rows; new check L-2. | §7.2, §10.2, §10.3 |
+| K-6 | Gate-pass and DMS keys are `GatePass.sourceType` / `sourceId` (+ `GatePassLine.sourceLineId`) and `DmsDocumentLink.resType` / `resId`. | Column names corrected. | §10.2, §10.3 |
+| K-7 | Mobile-money providers are free text: `mtn`, `mtn mobile money`, `airtel`, `airtel money`. | The migration normalizes them through an approved mapping. | §10.2 |
+| K-8 | Legacy pickups show `deliveryStatus = pending` although the stock was issued at confirm. 5 legacy cash sales use home delivery, 2 of them still open. There are 4 drafts. | Fulfilment comes from the issue rows; open deliveries and drafts are handled at drain (OD-15). | §10.2, §10.3, §14 |
+| K-9 | WAL archiving is off on live, so recovery is to the last nightly dump only. Lock-release timeouts are off. | Facts recorded under §6 and OD-13. | §6, §14 |
 
 ---
 
@@ -138,6 +156,9 @@ the money is held as a deposit, until E4.
 
 **Common data**: 10 units × 100.00 = net 1,000.00; VAT 18% = 180.00; gross 1,180.00; unit cost 60.00 (COGS 600.00).
 
+**Deposit account**: the `customer_deposit` account mapping. It is 2175 in both live organizations; code 2350 is
+created only when no mapping exists (`CustomerDepositService.depositAccount`). It is written "deposit" below.
+
 | Required scenario | Where |
 |---|---|
 | 100% down payment with a tax invoice | J1 (Mode R); J1-D (Mode D) |
@@ -152,11 +173,11 @@ the money is held as a deposit, until E4.
 | Step | Entry | Dr | Cr |
 |---|---|---|---|
 | 1 Down-payment invoice DP-1 (P3) | AR | 1,180.00 | |
-| | Customer deposit (2350) | | 1,000.00 |
+| | Customer deposit | | 1,000.00 |
 | | Output VAT | | 180.00 |
 | 2 Receipt (P11) | Bank / AR | 1,180.00 | 1,180.00 |
 | 3 Dispatch 10 units (P4) | COGS / Inventory | 600.00 | 600.00 |
-| 4 Final invoice INV-1: goods 1,000.00 + VAT 180.00; deduction −1,000.00 (2350) VAT −180.00 → **total 0.00** | Customer deposit | 1,000.00 | |
+| 4 Final invoice INV-1: goods 1,000.00 + VAT 180.00; deduction −1,000.00 (deposit) VAT −180.00 → **total 0.00** | Customer deposit | 1,000.00 | |
 | | Output VAT (deduction) | 180.00 | |
 | | Revenue | | 1,000.00 |
 | | Output VAT (goods) | | 180.00 |
@@ -218,7 +239,7 @@ Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · CO
 
 **Reconciliation summary** (closing balances; cash = net received after refunds):
 
-| Example | AR open | Deposit (2350) | Output VAT | Revenue (net) | COGS | Cash | Check |
+| Example | AR open | Deposit | Output VAT | Revenue (net) | COGS | Cash | Check |
 |---|---|---|---|---|---|---|---|
 | J1-R, J1-D, J2-R, J2-D, J3 (all variants), J4-D | 0 | 0 | 180 | 1,000 | 600 | 1,180 | VAT = 18% × revenue; cash = revenue + VAT |
 | J4-A, J4-C (cancelled, refunded) | 0 | 0 | 0 | 0 | 0 | 0 | nothing left open |
@@ -227,7 +248,7 @@ Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · CO
 
 ### 3.4 Invariants (asserted in every J test and in nightly reconciliation)
 - **V1**: Σ output VAT over all documents of a sale = VAT on net delivered and invoiced goods. Nothing counted twice.
-- **V2**: Deposit subledger (open deposits) = `customer_deposit` (2350) balance. For every deposit, consumed
+- **V2**: Deposit subledger (open deposits) = `customer_deposit` balance. For every deposit, consumed
   (deductions + applications + credit notes + refunds) ≤ amount.
 - **V3**: AR subledger (open residuals) = AR control. For each sale, outstanding = §4.4 formula.
 - **V4**: Revenue for a sale = Σ goods lines − credit notes (+ deferral releases, §3.6).
@@ -237,7 +258,7 @@ Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · CO
 - **Evidence**:
   - `SalesBillingService.createInvoice` (regular mode, `:213-251`) copies the order lines with full tax and adds no
     deduction line.
-  - When `depositTaxPoint = receipt`, the down payment (`:203-212`) is a tax-inclusive line on 2350.
+  - When `depositTaxPoint = receipt`, the down payment (`:203-212`) is a tax-inclusive line on the deposit account.
   - `CustomerDepositService.registerDownPayment` (`:350-385`) records the **net** subtotal; `applyDeposits`
     (`:591-614`) settles only that net amount.
   - No test covers a taxed down payment followed by the final invoice. `SalesAccountingPolicyIT` only tests the
@@ -262,7 +283,7 @@ Proposed treatment (Option A):
 
 | Event | Entry |
 |---|---|
-| Invoice post | For each line, deferred qty = invoiced qty − delivered qty at post (≥ 0). Dr AR (N + T) / Cr revenue (delivered share) / Cr **contract liability** (deferred share; account role `unearned_revenue`, code `DEFERRED-REVENUE`, ADR-S073) / Cr VAT T (tax point at invoice) |
+| Invoice post | For each line, deferred qty = invoiced qty − delivered qty at post (≥ 0). Dr AR (N + T) / Cr revenue (delivered share) / Cr **contract liability** (deferred share; the `unearned_revenue` mapping, 2400 in both live organizations, fallback code `DEFERRED-REVENUE`, as `DeferralService` uses for ADR-S073) / Cr VAT T (tax point at invoice) |
 | Ownership transfer (current policy: **dispatch**; POD if the policy changes, AD-16) | Per load line: release = min(remaining deferred for the line, dispatched qty × line unit net after discounts). Dr contract liability / Cr revenue. Journal source `sales_revenue_release`, key `srr:<loadLineId>` (once). |
 | Load bring-back after release | Reverse the release: Dr revenue / Cr contract liability |
 | Quantity credit note on the undelivered part | Dr contract liability (not revenue) + Dr VAT / Cr AR |
@@ -546,7 +567,7 @@ posted ──payment void (reversal T2, payment:void, approval if configured)─
    `CompletableFuture`, extra DataSources and transaction managers, and module or transactional listeners.
 2. Trace each hit to its callers.
 3. Check each confirm-path class one by one: `FleetDispatchService`, `FleetDeliveryOrderService`, `StockService`,
-   `StockPostingService`, `StockReversalService`, `InvoicingWorkflowsInitializer`, `PostingService`,
+   `StockPostingService`, `StockReversalService`, `InvoicingWorkflowsInitializer`, `DocumentBuilderService`, `PostingService`,
    `SalesBillingService`, `SalesDeliveryService`, `CustomerDepositService`, `SalesOrderService`,
    `GaplessSequenceService`, `CreditService`. None has an independent transaction or async call.
 
@@ -565,7 +586,7 @@ C0 records the findings; the TP tests prove them before any C3 code.
 | TA-9 | `PaymentService.newTx` (`REQUIRES_NEW`) | declared but never used (verified) | none | remove when the file is next touched |
 | TA-10 | `CreditNoteService.newTx` (`RETRY_SAFE_TX`) | credit-note approval request in its own transaction | reversal T2: a required approval commits its request even if T2 rolls back (retry-safe by design) | reversal handles "approval pending" explicitly (§7.4) |
 | TA-11 | `SalesFulfilmentService.perOrder`, `SalesAtpService.perOrder` | `TransactionTemplate` with default `REQUIRED` (used by jobs) | joins when called inside T1 | — |
-| TA-12 | `InvoiceService.createCopied`, `InvoicingWorkflowsInitializer` (post), `StockService` / `StockPostingService`, `FleetDispatchService.dispatchAt` / `proofOfDelivery`, `SalesBillingService`, `PostingService` | no `REQUIRES_NEW`, template or async call (verified per class) | join T1 | proven by TP-1 |
+| TA-12 | `InvoiceService.createCopied` → `DocumentBuilderService.createDocument`, `InvoicingWorkflowsInitializer` (post), `StockService` / `StockPostingService`, `FleetDispatchService.dispatchAt` / `proofOfDelivery`, `SalesBillingService`, `PostingService` | no `REQUIRES_NEW`, template or async call (verified per class; `DocumentBuilderService` re-checked with `grep -a`, because a NUL byte in that file makes plain `grep` skip it) | join T1 | proven by TP-1 |
 | TA-13 | `IdempotencyService`, `BusinessOutcome.record`, `IdempotencyTransactionListener` | Claim and completion run outside the business transaction, by design. The record is locked only when the outcome or the `beforeCommit` stamp is written, at the end of T1. Takeover after 2 minutes is delete-and-reinsert. Stamp and completion match on (organization, key) only. | **D-IDEM-1** (§6) | lease + fencing |
 | TA-14 | `DetachedWrites` | virtual-thread executor for writes after the transaction completes (users: EventBus, AuditService, Savepoints, POS) | any business write routed through it is not atomic | allowlist: audit and event outbox only; TP-3 enforces it |
 | TA-15 | Not on the T1 path (checked) | `LineageExceptionService` (only its controller); `SalesCollectionsService.afterCommitTx` (dunning delivery status); `SalesQuotationService` / `SalesQuoteLinkService` templates (quotations); the approval / isolation templates of `InventoryCountService`, `SupplierPaymentControls`, `VendorBillService`, `DocumentReversalService`, `DeferralService`, `BankMatchingService` | — | TP-3 catches a later change |
@@ -674,6 +695,10 @@ needs owner approval (OD-14) and an update of `CONTRACT.md` §6 in C1a.
   committed → replay; not committed → takeover after the lease expires.
 - **Bounding the time**: set `idle_in_transaction_session_timeout` and TCP keepalives for the application role so a
   dead worker's locks are released in bounded time. Proposal: 5 minutes and 60 seconds, tuned in rehearsal.
+- **Live today** (C0, read-only): `idle_in_transaction_session_timeout = 0` (off), TCP keepalives at the OS default
+  (7,200 s), and no role-level settings. The API reaches PostgreSQL on the same host (127.0.0.1), so a crashed API
+  process releases its locks at once. A hung one keeps them, and retries get `OPERATION_PENDING`, until a timeout
+  exists. C1a sets the timeouts per role (`ALTER ROLE … SET`), with owner approval.
 
 **Tests**:
 - **IL-1**: T1 stalled beyond the lease by a lock held from another connection, plus a retry with the same key → 409
@@ -728,7 +753,7 @@ IL-1 and IL-2 are first shown failing on today's code (D-IDEM-1), then passing.
 
 | Rule | Detail |
 |---|---|
-| Delivery reference | Each return line references the delivery it reverses: `loadId` + `loadLineId` (new columns), or the migrated cash-sale issue (`sourceType = 'cash_sale'`, `sourceLine` = sale line id; ids preserved by the migration) |
+| Delivery reference | Each return line references the delivery it reverses: `loadId` + `loadLineId` (new columns), or the migrated cash-sale issue (`InventoryLedger.referenceType = 'cash_sale'`, `referenceId` = sale id, and `sourceLineId` = sale line id or, for rows written before 2026-11-15, the line's `issueLedgerCode`; ids preserved by the migration) |
 | Issue rows | The return posts against **that** load line's issue rows only (`IssueSource.ledgerCodes` of the load line), so cost, lot and expiry come from the original issue |
 | Returnable | per load line = delivered (pickup: handed over) − already returned on that load line; `receivedQty` ≤ returnable |
 | Serial-tracked | Serials must be named. Each must have been issued on that load line (`InventorySerial` + the issue rows) to this customer, and not already returned; otherwise refused ("Serial number … was not delivered on this delivery" / "… was already returned"). Passed to `returnFromSource` as `serialNumbers` with the `issueLineId`. |
@@ -736,7 +761,7 @@ IL-1 and IL-2 are first shown failing on today's code (D-IDEM-1), then passing.
 | Receive | Mandatory receiving location (explicit; profile or yard location; quarantine allowed), receivedBy, receivedAt |
 | Inspection | Condition per line (`usable`, `damaged`, `defective`, `missing`) and disposition: restock (P13), quarantine (P13a), scrap (P13b). Photos optional. |
 | Credit | credit qty ≤ received qty (quantity credit, R). Credit without return (W) needs its own permission, a reason and an approval (AD-20). |
-| Migrated cash sales | Resolve issue rows by `cash_sale` source and `sourceLine`, so returns keep lot and serial identity. The legacy fallback stays only for goods with no recorded issue. |
+| Migrated cash sales | Resolve issue rows by `referenceType = 'cash_sale'` and `referenceId`, then `sourceLineId`, or `issueLedgerCode` where `sourceLineId` is empty (122 of 137 rows on live, §10.2), so returns keep lot and serial identity. The legacy fallback stays only for goods with no recorded issue. |
 
 ### 7.3 Credit-note kinds and `qtyCredited`
 - Every credit note linked to a sale invoice carries `creditKind`:
@@ -817,18 +842,27 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
   - `CreditFor(invoiceId, creditKind)`, `Manual()`.
 - **Each kind declares**: owner module, allowed document types, required links, and whether the manual-invoice
   restriction applies (only `Manual` and a standalone `CreditFor`).
-- **One entry point**: `CustomerDocumentFactory.createDraft(SourceRef, DraftSpec)`. Every creator #1–#21 calls it,
-  including `RecurringService.generateOne`, which today inserts directly. POS creators #23–#27 write a different table
-  and are out of scope.
+- **One entry point**: the existing `DocumentBuilderService.createDocument`, extended to require a `SourceRef` for
+  customer document types. `Document` rows are inserted in only three places (C0, searched with `grep -a`): the
+  builder, `RecurringService.generateOne` (#12) and `DocumentEngineService.createCounterpart` (#13). Every other
+  creator already goes through the builder. The two direct inserts move onto it. POS creators #23–#27 write the POS
+  `Invoice` table and are out of scope.
 - **Parity-safe storage**:
   - a new column `Document.sourceKind` holds the kind;
   - `sourceType` keeps today's values (NULL for manual invoices), so no parity response changes;
   - controllers return records, so the new column is not serialized unless mapped.
 - **Enforcement**:
-  1. **Code-scan test** (unit, no Spring context): fails if a class other than the factory inserts a customer
-     `Document` (SQL text or builder call).
-  2. **Database guard**: `CHECK (type NOT IN ('sales_invoice','credit_note') OR "sourceKind" IS NOT NULL) NOT VALID`.
-     It covers new and updated rows; history is not rewritten.
+  1. **Code-scan test** (unit, no Spring context): fails if a class other than the builder inserts a `Document` row.
+     It reads every file as text, because one source file contains a NUL byte and plain `grep` skips it. As a
+     self-check, it must find the builder's own insert.
+  2. **Backfill, then database guard**: first `sourceKind` is set on every existing customer document. It comes from
+     today's `sourceType` and module references: `FleetDeliveryOrder.goodsInvoiceId` / `chargesInvoiceId`,
+     `FleetDeliveryCharge.invoiceId`, `DunningEntry.feeInvoiceId`, `RecurringDocumentRun.documentId`,
+     `DocumentRelation`, and project billing. Rows with no evidence become `Manual` and are listed. This is metadata
+     only: amounts, numbers and ledgers are untouched. Then
+     `CHECK ("documentType" NOT IN ('sales_invoice', 'credit_note') OR "sourceKind" IS NOT NULL)` is added and
+     validated. A `NOT VALID` constraint alone is not enough: PostgreSQL checks it on every UPDATE, so a payment on
+     an old invoice would fail. On live, all 11 customer documents without `sourceType` are manual.
   3. **ITs**: one per creator, asserting its `sourceKind`.
 
 ### 8.3 Manual customer invoices (policy)
@@ -931,12 +965,15 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
 |---|---|---|
 | Sale ← submission | same id (UUID) | collision check C-1 |
 | Sale line ← submission line | same id | collision check C-2 |
-| Stock ledger row → sale line | stored `sourceType = 'cash_sale'`, `sourceId`, `sourceLine` = submission line id (`CashSaleService:930-931`) | exact; ids preserved |
+| Stock ledger row → sale line | `InventoryLedger.referenceType = 'cash_sale'`, `referenceId` = submission id, and `sourceLineId` = submission line id (written since 3d493469, 2026-11-15). Older rows have no `sourceLineId` (122 of 137 on live). For them, `SalesSubmissionLine.issueLedgerCode` = `InventoryLedger.ledgerCode` within the same organization and sale. | exact (L-2); ids preserved |
 | Invoice → sale | `Document.sourceId` = submission id **and** `SalesSubmission.currentInvoiceId` = document id **and** the active `SalesSubmissionInvoice` row = document id | three-way agreement or exception |
 | Invoice line → sale line | pairing by the post-guard ordering (sale lines by `sortOrder, id` ↔ invoice lines by `lineNumber, id`) **plus** equality of product, variant, tax, quantity, unit price, discount %, unit and unit factor, line subtotal / tax / total, **plus** a one-to-one check | persisted in `SalesCentralLineMap` (submissionLineId, documentLineId, basis, checksum); the migration reads only this table |
 | Tender → deposit → application | `SalesSubmissionPayment.customerDepositId` → `CustomerDeposit` → `DepositApplication.documentId` | exact |
 | Fiscal document → sale | `FiscalDocument.submissionId` | exact |
-| Gate pass, DMS attachment → sale | `sourceType` / `resourceType` + id | exact; existence checked |
+| Gate pass, DMS attachment → sale | `GatePass.sourceType` / `sourceId` (+ `GatePassLine.sourceLineId`); `DmsDocumentLink.resType` / `resId` | exact; existence checked |
+| Tender provider | Free text today (live: `mtn`, `mtn mobile money`, `airtel`, `airtel money`). Mapped to provider codes (`mtn_momo`, `airtel_money`) by an owner-approved table; unknown values are exceptions. | D-1 runs on the mapped values |
+| Fulfilment of legacy pickups | From the stock issue rows, not `deliveryStatus`: live pickups show `deliveryStatus = pending` although the stock was issued at confirm (37 of 39 invoiced pickups). | every tracked line has its issue (L-2) |
+| Legacy home-delivery cash sales | Kept as cash Sales with the delivery fields in `legacyData`; fulfilment from `deliveryStatus`. Open ones (live: 1 scheduled, 1 dispatched) are delivered or cancelled during the drain (OD-15). | ST-1 |
 
 ### 10.3 Checks run by preflight and repeated as migration guards
 
@@ -946,11 +983,12 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
 | C-3 | No (org, number) overlap between CSS numbers and `SalesOrder.number`; `css:` sequence keys don't collide with sales-order keys | exception |
 | RI-1 | Every partner, branch, profile, location, product, variant, unit, tax and user referenced exists in the same organization | exception |
 | RI-2 | Invoice three-way agreement for every invoiced submission | exception |
-| RI-3 | Every `CustomerDeposit.cashSaleId`, `FiscalDocument.submissionId`, `GatePass.sourceId`, DMS resource id and stock-ledger `sourceId` / `sourceLine` resolves | exception |
-| ST-1 | Allowed state combinations only; drain complete (no confirmed-not-invoiced; no pending or unknown fiscal operation) | blocks deploy |
+| RI-3 | Every `CustomerDeposit.cashSaleId`, `FiscalDocument.submissionId`, `GatePass.sourceId` / `GatePassLine.sourceLineId`, `DmsDocumentLink.resId` and `InventoryLedger.referenceId` / `sourceLineId` resolve | exception |
+| ST-1 | Allowed state combinations only; drain complete (no confirmed-not-invoiced; no pending or unknown fiscal operation; no open legacy delivery, OD-15) | blocks deploy |
 | M-1 | Submission totals = Σ lines; `paidTotal` = Σ verified tenders; invoice total = submission total; Σ deposit applications = invoice total; `cash_sale` deposits fully applied, refunded or released | exception |
 | M-2 | Accrual entries (1215 / 2216) for each invoiced submission net to zero | exception |
 | L-1 | Line mapping complete, one-to-one and attribute-equal for every invoiced submission | exception |
+| L-2 | Every tracked line of a confirmed submission resolves to its issue rows (by `sourceLineId` or `issueLedgerCode`), with issued base quantity = line quantity × unit factor | exception |
 | D-1 | Tender references unique per (org, method, provider, reference) after re-keying | exception |
 | V-ID-1…4 | Identical lines (§10.4) | exception or owner-approved list |
 
@@ -970,7 +1008,7 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
 | Check | Rule |
 |---|---|
 | V-ID-1 | Aggregate equality per group: Σ qty and Σ amounts of the submission lines = those of the invoice lines |
-| V-ID-2 | Stock: each submission line's ledger rows (by `sourceLine`) match that line's qty and cost, so the stock mapping is exact even when invoice lines are identical |
+| V-ID-2 | Stock: each submission line's ledger rows (by `sourceLineId`, or `issueLedgerCode` for older rows) match that line's qty and cost, so the stock mapping is exact even when invoice lines are identical |
 | V-ID-3 | Downstream references (credit-note lines, return lines, DMS, gate-pass lines) that point at a **specific** document line or submission line force the pairing. Conflicting forced pairings → exception. |
 | V-ID-4 | Unforced identical pairs are mapped by ordinal with `basis = ordinal_identical`, then counted and listed in the report for the owner to approve. Every attribute is equal, so no amount, quantity or tax can differ by pairing. |
 
@@ -1223,8 +1261,8 @@ are dropped after each test.
 |---|---|
 | Returns | RT-1 a return line must reference a delivery load line, or a migrated cash-sale issue line; RT-2 received qty ≤ returnable per load line; RT-3 serial not issued on that load line, or already returned → refused; RT-4 lot qty ≤ issued − returned, lot / expiry / cost restored from the issue rows; RT-5 migrated cash sale return keeps lot and serial identity; RT-6 condition and disposition required; RT-7 credit qty ≤ received qty, credit without return needs permission + approval |
 | Reversal | RV-1…RV-4: injection at return receipt, credit-note post and refund payment, and T2 failing after the fiscal cancel succeeded → "fiscal cancelled, reversal pending", then retry once. Plus the approval-pending case. |
-| Invoice source | IS-1 every creator #1–#21 writes its `sourceKind`; IS-2 the code-scan test fails on a new direct insert; IS-3 the database guard rejects a customer invoice without `sourceKind`; IS-4 `ManualInvoicePolicyIT` (allowed / blocked); IS-5 parity scenarios unchanged |
-| Migration | MG-1 guard failure (seeded collision, broken three-way link, mapping mismatch) → aborts with offenders listed, schema and data unchanged; MG-2 seeded legacy rows of every state → R6 equal, snapshots equal; MG-3 two identical lines + a credit note referencing the second → forced pairing honoured; conflicting references → migration aborts; an invoice edited before the guard → exception |
+| Invoice source | IS-1 every creator #1–#21 writes its `sourceKind`; IS-2 the code-scan test fails on a new direct insert; IS-3 the database guard rejects a customer invoice without `sourceKind`; IS-6 after the backfill every existing customer document has a `sourceKind`, and a payment on an old invoice still posts; IS-4 `ManualInvoicePolicyIT` (allowed / blocked); IS-5 parity scenarios unchanged |
+| Migration | MG-1 guard failure (seeded collision, broken three-way link, mapping mismatch) → aborts with offenders listed, schema and data unchanged; MG-2 seeded legacy rows of every state → R6 equal, snapshots equal; MG-3 two identical lines + a credit note referencing the second → forced pairing honoured; conflicting references → migration aborts; an invoice edited before the guard → exception; MG-4 stock rows without `sourceLineId` map through `issueLedgerCode`, and an unknown tender provider is an exception |
 | Rollout | RB-1…RB-6 (§11.9) |
 | Reporting | RP-1…RP-3, R5a–R5g |
 
@@ -1243,13 +1281,13 @@ redesign.
 
 | Stage | Content | Acceptance |
 |---|---|---|
-| **C0** Docs + assessment (approved to proceed) | ADR rev 3 in `docs/adr`; spec updates (`sales.md`, `cash-sales.md` superseded, `invoicing.md`, `sales-postings.md` with J1–J4, F1–F7, §3.6 and the sign-off table). Read-only on a **restored copy**: preflight, D-VAT-1 assessment, count of invoices posted before the guard (§10.4), credit-note creator classification (§7.3). WAL / PITR status of the live host checked read-only. | Owner approves the ADR · §8 matrix approved · AD and OD answered or gated · reports with zero unexplained items |
+| **C0** Docs + assessment (approved to proceed) | ADR rev 3 in `docs/adr`; spec updates (`sales.md`, `cash-sales.md` superseded, `invoicing.md`, `sales-postings.md` with J1–J4, F1–F7, §3.6 and the sign-off table). Read-only on a **restored copy**: preflight, D-VAT-1 assessment, count of invoices posted before the guard (§10.4), credit-note creator classification (§7.3). WAL / PITR status of the live host checked read-only. **Assessment done 2026-11-28**: [report](../audits/2026-11-28-adr-s094-c0-assessment.md). | Owner approves the ADR · §8 matrix approved · AD and OD answered or gated · reports with zero unexplained items |
 | **C1a** Idempotency lease and fencing (kernel) + TA-6 fix | §6; quarantine location created when the setting is saved and named `RETRY_SAFE_TX` | IL-1…IL-10 green (IL-1 / IL-2 shown failing before the change) · TP-6 · all existing idempotency ITs and parity scenarios unchanged · `CONTRACT.md` §6 updated for the approved deviation only (OD-14) |
 | **C1b** D-VAT-1 correction | §3.5, after AD-14 / 15 / 17 | VAT-J1…J4 green in both modes · V1–V5 hold · historical assessment signed off (AD-18) |
 | **C1** Schema + state dimensions + approval | §4, including the submit button in the web; order behaviour preserved except the approved approval changes | Backfill proof (counts per old status = new combinations) · AP-1…AP-10 · I1–I7 · authorization matrix · tenant isolation · every existing SalesOrder IT green |
 | **C2** Returns / credits / outcome / completion (after AD-9, AD-15, AD-20) | §7, §4.4, §4.5 | RT, CS and FO groups · `qtyCredited` for every credit path · `SalesReturnFlowIT` green |
 | **C3** Cash pickup | §5: payment model, T1, handover, fiscal outbox | Exact F1 journals · PM, PH, FI, TP, RC, FR, CC, RV groups green · R1–R3 = 0 · 20-line confirm p95 < 1.5 s and CC-5 without timeout on the rehearsal DB |
-| **C4** Invoice from sale + typed source contract | §8 | IS group · parity scenarios unchanged · recurring unchanged |
+| **C4** Invoice from sale + typed source contract | §8 | IS group · `sourceKind` backfilled on every existing customer document before the constraint is added and validated · parity scenarios unchanged · recurring unchanged |
 | **C5** Migration + consumers + rollout tooling | §10, §11: freeze switch, job flags, command journal, kill switches, reconciliation reports | MG-1…MG-3 · every consumer proof · snapshot equality on the rehearsal copy · R6 = 0 |
 | **C6** Web | screens incl. approval submit / withdraw, tender panel (card, change), handover block, return serial / lot entry, outcome and settlement badges | build · i18n · e2e smoke F1 / F3 / F5 / F6 · no console errors |
 | **C7** Reporting | §9 | R5a–R5g = 0 · RP-1 and RP-2 bridges explained |
@@ -1273,7 +1311,7 @@ Recorded in `sales-postings.md` with: question · decision · approved treatment
 | AD-3 | Delivered-not-invoiced at period end | period-end accrual / per-delivery P7 |
 | AD-4 | Tax point per scenario (pickup; advances in Mode R vs Mode D; invoice before delivery) under local VAT law | confirm against the VAT Act |
 | AD-5 | EFRIS timing (cash confirm; all sale invoices; credit notes on reversal) and the zero-total invoice | — |
-| AD-6 | Cash postings P4 + P8 + P11 with no 1215 / 2350 / 2216 | approve / amend |
+| AD-6 | Cash postings P4 + P8 + P11 with no unbilled-receivable (1215), deposit or 2216 entries | approve / amend |
 | AD-7 | Branch-issued invoices from the single org gap-free series | — |
 | AD-8 | Walk-in invoicing (walk-in partner per branch, buyer identity, `requireTaxNumberAbove`) | — |
 | AD-9 | Returns accounts, restock cost, damaged / scrap accounts, refund tender rules, credit retention | — |
@@ -1285,7 +1323,7 @@ Recorded in `sales-postings.md` with: question · decision · approved treatment
 | AD-15 | Credit note on a down-payment invoice reduces the deposit; refused once consumed | approve / amend |
 | AD-16 | Contract-liability account and release trigger for F4 | dispatch / POD |
 | AD-17 | Zero-total final invoice after a 100% taxed advance, issued as a tax invoice | — |
-| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred | — |
+| AD-18 | Historical D-VAT-1 corrections (credit notes), if any occurred. C0: none on live (no organization has ever used `receipt`, and no down-payment invoice exists); re-checked at C1b | — |
 | **AD-19** | Zero-value sales (replacement, sample): tax invoice required, or delivery note only? | — |
 | **AD-20** | Quantity credit without a return (write-off): accounts, approval level, stock treatment | — |
 
@@ -1305,8 +1343,9 @@ Recorded in `sales-postings.md` with: question · decision · approved treatment
 | OD-10 | Hypercare length; command-journal retention and storage location |
 | OD-11 | Maximum rollback window (proposal 4 hours) and the time limit before L3 is considered |
 | OD-12 | Commission a separate kernel ADR for an in-transaction event outbox (TA-3, system-wide) |
-| OD-13 | Enable WAL archiving and point-in-time recovery on the live host before release? Without it, L3 is unavailable and only L1 / L2 apply after activation. |
+| OD-13 | Enable WAL archiving and point-in-time recovery on the live host before release? Without it, L3 is unavailable and only L1 / L2 apply after activation. C0: `archive_mode = off` and nothing has ever been archived; backups are 14 nightly logical dumps (02:00 UTC), so recovery today is to the last dump only. |
 | OD-14 | Approve the idempotency fix as a recorded NestJS parity deviation (§6): a retry while the first execution is still running gets `OPERATION_PENDING` instead of a second execution; `CONTRACT.md` §6 updated in C1a. |
+| OD-15 | Legacy cash sales at cutover: migrate drafts as draft cash Sales (proposed), and require open home deliveries to be delivered or cancelled during the drain (proposed)? |
 
 ---
 

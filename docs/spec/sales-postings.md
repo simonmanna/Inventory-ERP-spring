@@ -74,7 +74,7 @@ the same answer settles.
 | AD-3 | Delivered-not-invoiced at period end: period-end accrual / per-delivery P7 | — | pending | | | | | |
 | AD-4 | Tax point per scenario (pickup; advances in Mode R vs Mode D; invoice before delivery) under local VAT law | rows 1, 7 | pending | | | | | |
 | AD-5 | EFRIS timing (cash confirm; all sale invoices; credit notes on reversal) and the zero-total invoice | row 8 | pending | | | | | |
-| AD-6 | Cash postings P4 + P8 + P11 with no 1215 / 2350 / 2216 | row 7 | pending | | | | | |
+| AD-6 | Cash postings P4 + P8 + P11 with no unbilled-receivable (1215), deposit or 2216 entries | row 7 | pending | | | | | |
 | AD-7 | Branch-issued invoices from the single org gap-free series | — | pending | | | | | |
 | AD-8 | Walk-in invoicing (walk-in partner per branch, buyer identity, `requireTaxNumberAbove`) | row 9 | pending | | | | | |
 | AD-9 | Returns accounts, restock cost, damaged / scrap accounts, refund tender rules, credit retention | row 3 | pending | | | | | |
@@ -188,6 +188,9 @@ which is not affected.
 
 **Common data**: 10 units × 100.00 = net 1,000.00; VAT 18% = 180.00; gross 1,180.00; unit cost 60.00 (COGS 600.00).
 
+**Deposit account**: the `customer_deposit` account mapping. It is 2175 in both live organizations; code 2350 is
+created only when no mapping exists (`CustomerDepositService.depositAccount`). It is written "deposit" below.
+
 | Required scenario | Where |
 |---|---|
 | 100% down payment with a tax invoice | J1 (Mode R); J1-D (Mode D) |
@@ -202,11 +205,11 @@ which is not affected.
 | Step | Entry | Dr | Cr |
 |---|---|---|---|
 | 1 Down-payment invoice DP-1 (P3) | AR | 1,180.00 | |
-| | Customer deposit (2350) | | 1,000.00 |
+| | Customer deposit | | 1,000.00 |
 | | Output VAT | | 180.00 |
 | 2 Receipt (P11) | Bank / AR | 1,180.00 | 1,180.00 |
 | 3 Dispatch 10 units (P4) | COGS / Inventory | 600.00 | 600.00 |
-| 4 Final invoice INV-1: goods 1,000.00 + VAT 180.00; deduction −1,000.00 (2350) VAT −180.00 → **total 0.00** | Customer deposit | 1,000.00 | |
+| 4 Final invoice INV-1: goods 1,000.00 + VAT 180.00; deduction −1,000.00 (deposit) VAT −180.00 → **total 0.00** | Customer deposit | 1,000.00 | |
 | | Output VAT (deduction) | 180.00 | |
 | | Revenue | | 1,000.00 |
 | | Output VAT (goods) | | 180.00 |
@@ -268,7 +271,7 @@ Balances: AR 0 · deposit 0 · **VAT 90 + 36 + 54 = 180** · revenue 1,000 · CO
 
 **Reconciliation summary** (closing balances; cash = net received after refunds):
 
-| Example | AR open | Deposit (2350) | Output VAT | Revenue (net) | COGS | Cash | Check |
+| Example | AR open | Deposit | Output VAT | Revenue (net) | COGS | Cash | Check |
 |---|---|---|---|---|---|---|---|
 | J1-R, J1-D, J2-R, J2-D, J3 (all variants), J4-D | 0 | 0 | 180 | 1,000 | 600 | 1,180 | VAT = 18% × revenue; cash = revenue + VAT |
 | J4-A, J4-C (cancelled, refunded) | 0 | 0 | 0 | 0 | 0 | 0 | nothing left open |
