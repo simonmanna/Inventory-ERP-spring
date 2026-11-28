@@ -42,7 +42,7 @@ to migrate or something. just code and develop."
 | AD-1 | Interim path: an order-type Sale with a full advance. | C3d (cash paid now, delivered later) is not built. |
 | AD-2, AD-16 | Contract liability (`unearned_revenue`), released at **dispatch**. | F4 deferral is built (stage C2b). |
 | AD-3 | Period-end accrual for delivered, not invoiced. | Stage C7b, after the core. P7 per delivery stays available where the revenue policy already uses it. |
-| AD-4, AD-5 | Tax points as designed (§3); every sale invoice, the zero-total final invoice and reversal credit notes are fiscalised through the outbox. | — |
+| AD-4, AD-5 | Tax points as designed (§3); every sale invoice, the zero-total final invoice and reversal credit notes are fiscalised through the outbox. | C3a (cash sales); C4b (order-type invoices and credit notes). |
 | AD-6, AD-7, AD-8 | Approved: P4 + P8 + P11 for cash; one gap-free invoice series per organization; walk-in partner per branch with `requireTaxNumberAbove`. | — |
 | AD-9 | Existing returns accounts; restock at the original issue cost; damaged to quarantine, scrap to the scrap account; refund over the original tender by default; customer-credit retention with permission. | — |
 | AD-10, OD-4 | Fleet transport charges stay on their own invoice. | C4f not built. |
@@ -953,7 +953,7 @@ recommended options)**:
   - The mobile-money gateway is not wired to tenders. Mobile money is verified by hand, with its reference.
   - Negative stock follows the inventory policy, as every stock issue does. A confirm above stock on hand is refused
     only where negative stock is off (the legacy cash-sale rule).
-  - Order-type invoices are fiscalised from C4.
+  - Order-type invoices and credit notes are fiscalised from C4b.
   - `SalesOrderEvent` is written for cash sales only.
   - Tender-reference uniqueness does not check the legacy `SalesSubmissionPayment` table.
   - **C3b** (built, V736) brings the cash Reverse, the fiscal gate for a sale's reversal, the fiscal outbox recovery
@@ -1382,6 +1382,87 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
 - **Parity**: Nest scenarios (`invoicing-ar-ap.json`) and the roughly 40 ITs using `POST /invoices` keep working,
   because the default is `allowed`. `ManualInvoicePolicyIT` covers `blocked`.
 
+**As built (C4, V737; AD-13 and OD-3 approved 2026-11-28)**:
+- **`SourceRef`** (`invoicing/application/SourceRef.java`) is a sealed interface with 14 kinds. Each kind declares
+  its owner module and the document types it may create:
+
+| Kind | Record | Owner | Document types | Creators (§8.1) |
+|---|---|---|---|---|
+| `sale` | `Sale(saleId)` | sales | sales_invoice, proforma_invoice | #1, #3, #20, the cash confirm (C3a) |
+| `sale_down_payment` | `SaleDownPayment(saleId)` | sales | sales_invoice | #2 |
+| `sale_milestone` | `SaleMilestone(saleId, milestoneId)` | sales | sales_invoice | #4 |
+| `cash_sale` | `CashSale(submissionId)` | sales | sales_invoice | #5 (legacy, until C8) |
+| `quotation` | `Quotation(quotationId)` | sales | proforma_invoice | #21 |
+| `project_contract` | `ProjectContract(projectId)` | projects | sales_invoice | #7 |
+| `collections_fee` | `CollectionsFee(dunningEntryId)` | sales | sales_invoice | #8 |
+| `opening_balance` | `OpeningBalance(batchId)` | invoicing | sales_invoice | #9 |
+| `fleet_delivery` | `FleetDelivery(deliveryOrderId)` | fleet | sales_invoice | #10 |
+| `fleet_charges` | `FleetCharges(deliveryOrderId, saleId)` | fleet | sales_invoice | #11 |
+| `recurring` | `Recurring(templateId)` | kernel | sales_invoice, credit_note, vendor_bill, debit_note | #12 |
+| `counterpart` | `Counterpart(documentId, relation)` | documents | credit_note, debit_note | #13 |
+| `credit` | `CreditFor(invoiceId, owner)` | the calling module | credit_note | #14 with an invoice, #15–#19, the cash Reverse (C3b) |
+| `manual` | `Manual()` | invoicing | sales_invoice, credit_note | #6, #14 without an invoice |
+
+- **One insert point.** `DocumentBuilderService` is the only class that inserts a `Document` row.
+  - `createDocument(type, SourceRef, header, lines)` creates customer documents. A missing source, or a kind that may
+    not create the type, is a programming error (`IllegalStateException`).
+  - `createDocument(type, header, lines)` remains for vendor bills and refuses customer types.
+  - #12 and #13 reach the builder through ports owned by their modules, so no module cycle appears:
+    `kernel.recurring.spi.RecurringDocumentWriter` and `documents.application.CounterpartWriter`. The rows they write
+    are unchanged (recurring: draft, `DRAFT-<template>-<stamp>` number, tax 0; counterpart: posted, negated totals),
+    plus `sourceKind`.
+- **Storage (V737).** New column `Document.sourceKind`, backfilled from stored evidence in the order given in the
+  migration header.
+  - Rows with no evidence become `manual` and are listed per organization as notices.
+  - Two validated checks: `Document_source_kind_value_check` (one of the 14 kinds) and
+    `Document_customer_source_kind_check` (required on sales invoices and credit notes). Proformas and recurring or
+    counterpart vendor documents carry a kind too, but do not require one.
+  - The column is not serialized, so no response changes (parity).
+- **Manual-invoice policy (§8.3, OD-3).** Organization setting `invoicing.manualCustomerInvoices`, in the accounting
+  group of the settings screen: `allowed` (default, as Nest) or `blocked`. With `blocked`:
+  - `POST /invoices` → 400 "Manual customer invoices are turned off for this organization: create the invoice from a
+    sale";
+  - `POST /credit-notes` without `reversedDocumentId` → 400 "Manual credit notes are turned off for this
+    organization: a credit note must name the invoice it credits";
+  - a credit note that names its invoice, and every module source, are not affected.
+- **Tests.**
+  - IS-1: `DocumentSourceKindIT` (`manual`, `credit`), plus one assertion per creator in that creator's own IT:
+    - `SalesBillingIT`: `sale`, `sale_down_payment`, and a new batch-invoice test (`sale`);
+    - `SalesDeliveryIT`: `sale_milestone`; `SalesCollectionsIT`: `collections_fee`;
+    - `ContractRevenueScenarioIT`: `project_contract` (advance and certified claim);
+    - `FleetDispatchIT`: `fleet_delivery`, plus the discrepancy credit note (`credit`);
+    - `SalesInvoiceabilityIT`: `fleet_charges` (new case: transport only on a sale's delivery order) and `credit`;
+    - `SalesQuoteProformaIT`: `sale` and `quotation`; `CashSaleIT`: `cash_sale`; `SalesCashSaleIT`: `sale`;
+    - `credit` in `SalesReturnFlowIT`, `SalesRevenueDeferralIT`, `SalesOutcomeIT`, `SalesAgreementIT` and
+      `SalesCashReversalIT`;
+    - `AccountingExtensionsIT`: `opening_balance`;
+    - `KernelIT`: `recurring`, with the number, tax and status unchanged; `DocumentsIT`: `counterpart`.
+  - IS-2: `DocumentInsertScanTest`, plain JUnit.
+    - It reads `src/main/java` as bytes and flags SQL inserts, table-helper inserts and `DocumentRepository` outside
+      the builder.
+    - Self-check: it finds exactly the builder's three inserts. A snippet test proves each pattern.
+  - IS-3: `DocumentSourceKindIT.databaseGuard`. A missing or unknown kind is refused on update and on insert; a
+    vendor bill needs none.
+  - IS-4: `ManualInvoicePolicyIT`.
+  - IS-5: Nest parity is unchanged: the default is `allowed` and no response field is added.
+- **Deviations from §8.2, and notes.**
+  - Two kinds were added: `cash_sale` (legacy submissions, until C8) and `quotation` (a proforma before any Sale
+    exists).
+  - `Sale` carries no line ids, because the lines are in `SalesInvoiceLink`. `ProjectContract` is keyed by project,
+    because project billing has no contract id.
+  - `CreditFor(invoiceId, owner)` replaces `CreditFor(invoiceId, creditKind)`; the credit kind stays in
+    `data.creditKind` (C2).
+    - A module credit may name no invoice: a rebate with no open invoice, or a delivery discrepancy whose goods were
+      not invoiced on a `Document`.
+    - Only `Manual` depends on the setting.
+  - The two direct inserts moved onto the builder through ports, not through a call from kernel or documents into
+    invoicing.
+  - Invoicing from the sale itself was built in C1–C3 (#1–#4 and the cash confirm). C4 adds the ownership contract
+    around it.
+  - Backfill: a fleet invoice that carried goods on a sale's delivery order (before Phase A A4) is `fleet_delivery`,
+    because it invoiced goods. `fleet_charges` is used for transport-only invoices.
+  - Fiscalising order-type invoices and credit notes (AD-5) is a separate stage, C4b.
+
 ---
 
 ## 9. Reporting
@@ -1792,7 +1873,8 @@ redesign.
 | **C1** Schema + state dimensions + approval (built, V732) | §4, including the submit button in the web; order behaviour preserved except the approved approval changes | Backfill proof (counts per old status = new combinations) · AP-1…AP-10 · I1–I7 · authorization matrix · tenant isolation · every existing SalesOrder IT green |
 | **C2** Returns / credits / outcome / completion (after AD-9, AD-15, AD-20) | §7, §4.4, §4.5 | RT, CS and FO groups · `qtyCredited` for every credit path · `SalesReturnFlowIT` green |
 | **C3** Cash pickup | §5: payment model, T1, handover, fiscal outbox | Exact F1 journals · PM, PH, FI, TP, RC, FR, CC, RV groups green · R1–R3 = 0 · 20-line confirm p95 < 1.5 s and CC-5 without timeout on the rehearsal DB |
-| **C4** Invoice from sale + typed source contract | §8 | IS group · `sourceKind` backfilled on every existing customer document before the constraint is added and validated · parity scenarios unchanged · recurring unchanged |
+| **C4** Invoice from sale + typed source contract (built, V737) | §8 | IS group · `sourceKind` backfilled on every existing customer document before the constraint is added and validated · parity scenarios unchanged · recurring unchanged |
+| **C4b** Fiscalisation of order-type invoices and credit notes (AD-5) | Each posted sale invoice and credit note queued on the fiscal outbox, owned by its invoice (`FiscalDocument.invoiceId`); provider from the sale's branch profile | FR group for order-type documents · zero-total final invoice fiscalised · reversal and credit-note gates |
 | **C2b** Revenue deferral for invoice-before-delivery (AD-2 = A, AD-16 = dispatch) | §3.6 | DF-1…DF-5 · V1–V5 hold |
 | ~~**C5** Migration + consumers + rollout tooling~~ | **Dropped by the owner (2026-11-28)**: no historical migration; legacy demo data is cleared at deploy. §10 and §11 stay as the reference if a real migration is ever needed. | — |
 | **C6** Web | screens incl. approval submit / withdraw, tender panel (card, change), handover block, return serial / lot entry, outcome and settlement badges | build · i18n · e2e smoke F1 / F3 / F5 / F6 · no console errors |
@@ -1858,6 +1940,6 @@ Recorded in `sales-postings.md` with: question · decision · approved treatment
 
 ## 15. Next steps
 - C0 is done (this ADR, the spec notes and the [assessment](../audits/2026-11-28-adr-s094-c0-assessment.md)).
-- Build order: C1a → C1b → C1 → C2 → C2b → C3 → C4 → C6 → C7 → C7b, one stacked PR each. Web changes ship in the same
+- Build order: C1a → C1b → C1 → C2 → C2b → C3 → C4 → C4b → C6 → C7 → C7b, one stacked PR each. Web changes ship in the same
   PR as the backend change they depend on, so every PR leaves the web working.
 - No deploy until the owner asks for one.

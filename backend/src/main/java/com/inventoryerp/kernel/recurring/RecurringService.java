@@ -6,6 +6,7 @@ import com.inventoryerp.kernel.domain.RecurringDocument;
 import com.inventoryerp.kernel.domain.RecurringFrequency;
 import com.inventoryerp.kernel.domain.RecurringStatus;
 import com.inventoryerp.kernel.events.EventBus;
+import com.inventoryerp.kernel.recurring.spi.RecurringDocumentWriter;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.kernel.tenancy.TenantContext.TenantStore;
 import com.inventoryerp.shared.persistence.DbEnum;
@@ -51,13 +52,16 @@ public class RecurringService {
     private final EventBus events;
     private final AuditService audit;
     private final JsonMapper mapper;
+    private final RecurringDocumentWriter writer;
 
-    public RecurringService(EntityManager em, JdbcClient jdbc, EventBus events, AuditService audit, JsonMapper mapper) {
+    public RecurringService(EntityManager em, JdbcClient jdbc, EventBus events, AuditService audit, JsonMapper mapper,
+            RecurringDocumentWriter writer) {
         this.em = em;
         this.jdbc = jdbc;
         this.events = events;
         this.audit = audit;
         this.mapper = mapper;
+        this.writer = writer;
     }
 
     @Transactional
@@ -156,41 +160,20 @@ public class RecurringService {
         String typeId = jdbc.sql("SELECT id FROM \"DocumentTypeDef\" WHERE code = ?").param(documentType)
                 .query(String.class).optional()
                 .orElseThrow(() -> ApiException.notFound("Unknown document type code: " + documentType));
-        String docId = UUID.randomUUID().toString();
         long stamp = lastRunAt != null ? lastRunAt.toEpochMilli() : now.toEpochMilli();
-        jdbc.sql("""
-                        INSERT INTO "Document" (id, "organizationId", "documentNumber", "documentType", "documentTypeId", "partnerId",
-                          "currencyId", "exchangeRate", "issueDate", status, reference, notes, "sourceType", "sourceId", "updatedAt")
-                        VALUES (?, ?, ?, ?::"DocumentType", ?, ?, ?, ?, ?, 'draft', ?, ?, 'recurring', ?, now())""")
-                .params(docId, orgId, "DRAFT-" + id.substring(0, 8) + "-" + stamp, documentType, typeId,
-                        text(template, "partnerId"), text(template, "currencyId"),
-                        template.hasNonNull("exchangeRate") ? template.get("exchangeRate").decimalValue() : BigDecimal.ONE,
-                        Timestamp.from(now), template.hasNonNull("reference") ? text(template, "reference") : "recurring:" + name,
-                        text(template, "notes"), id)
-                .update();
-        int lineNo = 1;
-        BigDecimal subtotal = BigDecimal.ZERO;
+        // ADR-S094 §8.2: the document row is written by its owner (invoicing), exactly as before.
+        List<RecurringDocumentWriter.Line> lines = new java.util.ArrayList<>();
         for (JsonNode ln : template.path("lines")) {
-            BigDecimal qty = num(ln.get("quantity"));
-            BigDecimal price = num(ln.get("unitPrice"));
-            BigDecimal discount = ln.hasNonNull("discountPercent") ? num(ln.get("discountPercent")) : BigDecimal.ZERO;
-            BigDecimal lineSubtotal = qty.multiply(price)
-                    .multiply(BigDecimal.ONE.subtract(discount.divide(BigDecimal.valueOf(100), 20, RoundingMode.HALF_UP)))
-                    .setScale(6, RoundingMode.HALF_UP);
-            jdbc.sql("""
-                            INSERT INTO "DocumentLine" (id, "organizationId", "documentId", "productId", "accountId", description,
-                              quantity, "unitPrice", "discountPercent", "taxId", subtotal, "taxAmount", total, "lineNumber")
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""")
-                    .params(UUID.randomUUID().toString(), orgId, docId, text(ln, "productId"), text(ln, "accountId"),
-                            text(ln, "description"), qty, price, discount, text(ln, "taxId"), lineSubtotal, lineSubtotal, lineNo++)
-                    .update();
-            subtotal = subtotal.add(lineSubtotal);
+            lines.add(new RecurringDocumentWriter.Line(text(ln, "productId"), text(ln, "accountId"),
+                    text(ln, "description"), num(ln.get("quantity")), num(ln.get("unitPrice")),
+                    ln.hasNonNull("discountPercent") ? num(ln.get("discountPercent")) : BigDecimal.ZERO,
+                    text(ln, "taxId")));
         }
-        jdbc.sql("""
-                        UPDATE "Document" SET subtotal = ?, "discountTotal" = 0, "taxAmount" = 0, "totalAmount" = ?, "amountResidual" = ?,
-                          "updatedAt" = now() WHERE id = ?""")
-                .params(subtotal, subtotal, subtotal, docId)
-                .update();
+        String docId = writer.write(new RecurringDocumentWriter.Draft(orgId, id, documentType, typeId,
+                "DRAFT-" + id.substring(0, 8) + "-" + stamp, text(template, "partnerId"), text(template, "currencyId"),
+                template.hasNonNull("exchangeRate") ? template.get("exchangeRate").decimalValue() : BigDecimal.ONE, now,
+                template.hasNonNull("reference") ? text(template, "reference") : "recurring:" + name,
+                text(template, "notes"), lines));
         jdbc.sql("""
                         INSERT INTO "RecurringDocumentRun" (id, "organizationId", "recurringId", "scheduledFor", "ranAt", "documentId", status)
                         VALUES (?, ?, ?, ?, ?, ?, 'generated')""")

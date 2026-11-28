@@ -233,6 +233,14 @@ public abstract class ApiTestSupport {
         }
     }
 
+    /** ADR-S094 §8.2: the source kind a document was created with (null when the document has none). */
+    protected String sourceKind(String documentId) {
+        List<String> kinds = jdbc.sql("SELECT \"sourceKind\" FROM \"Document\" WHERE id = ?").param(documentId)
+                .query(String.class).list();
+        assertThat(kinds).as("document " + documentId).hasSize(1);
+        return kinds.getFirst();
+    }
+
     /** Admin call that must answer {@code status}. */
     protected JsonNode ok(int status, String method, String path, Object body) {
         Res r = as(method, path, body);

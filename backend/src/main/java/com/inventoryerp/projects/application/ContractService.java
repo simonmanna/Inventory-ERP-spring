@@ -1,5 +1,6 @@
 package com.inventoryerp.projects.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.projects.application.ProjectService.blank;
 import static com.inventoryerp.projects.application.ProjectService.day;
 import static com.inventoryerp.projects.application.ProjectService.money;
@@ -371,7 +372,7 @@ public class ContractService {
         }
         String id = UUID.randomUUID().toString();
         String d = day(date) == null ? today().toString() : day(date);
-        String invoice = invoice(customer, d, null, "Advance · " + p.get("code"), advancesAccount(), a, null);
+        String invoice = invoice(projectId, customer, d, null, "Advance · " + p.get("code"), advancesAccount(), a, null);
         jdbc.sql("INSERT INTO \"CustomerAdvance\" (id, \"organizationId\", \"projectId\", amount, \"recoveryPct\","
                 + " \"invoiceId\", \"createdBy\") VALUES (?, ?, ?, ?, ?, ?, ?)").params(id, org(), projectId, a,
                 recoveryPct, invoice, TenantContext.userId()).update();
@@ -481,14 +482,14 @@ public class ContractService {
         BigDecimal recovery = SqlRows.dec(c, "advanceRecovery");
         String condition = (String) c.get("retentionCondition");
         String billings = billingsAccount();
-        String invoice = net.signum() > 0 ? invoice(customer, date, null, label, billings, net,
+        String invoice = net.signum() > 0 ? invoice(projectId, customer, date, null, label, billings, net,
                 (String) c.get("taxId")) : null;
         String retentionInvoice = null;
         List<Line> lines = new ArrayList<>();
         Map<String, Object> dims = Obj.of("projectId", projectId, "progressClaimId", id);
         if (retention.signum() > 0) {
             if ("date_only".equals(condition)) {
-                retentionInvoice = invoice(customer, date, c.get("retentionReleaseDate").toString(), label
+                retentionInvoice = invoice(projectId, customer, date, c.get("retentionReleaseDate").toString(), label
                         + " · retention", billings, retention, null);
             } else {
                 lines.add(new Line(retentionAssetAccount(), JsNumbers.dec(retention), null, customer, label
@@ -856,7 +857,7 @@ public class ContractService {
         String classification = (String) r.get("classification");
         if ("customer".equals(r.get("side"))) {
             if ("contract_asset".equals(classification) && open.signum() > 0) {
-                doc = invoice((String) r.get("partnerId"), today().toString(), null, label, retentionAssetAccount(),
+                doc = invoice(projectId, (String) r.get("partnerId"), today().toString(), null, label, retentionAssetAccount(),
                         open, null);
                 classification = "receivable";
             }
@@ -1244,11 +1245,11 @@ public class ContractService {
         return c;
     }
 
-    private String invoice(String partner, String date, String dueDate, String label, String account,
-            BigDecimal amount, String taxId) {
+    private String invoice(String projectId, String partner, String date, String dueDate, String label,
+            String account, BigDecimal amount, String taxId) {
         Map<String, Object> doc = invoices.create(new InvoiceInput(partner, date, dueDate, null, null, null, null,
                 null, null, null, null, null, null, null, null, label, label, List.of(LineInput.of(null, account,
-                        label, BigDecimal.ONE, amount, BigDecimal.ZERO, taxId, null))));
+                        label, BigDecimal.ONE, amount, BigDecimal.ZERO, taxId, null))), new SourceRef.ProjectContract(projectId));
         String id = (String) doc.get("id");
         invoices.post(id);
         return id;

@@ -136,6 +136,8 @@ class DocumentsIT extends ApiTestSupport {
         assertThat(counterpart.get("type")).isEqualTo("credit_note");
         assertThat(counterpart.get("reversedDocumentId")).isEqualTo(id);
         assertThat(counterpart.get("status")).isEqualTo("posted");
+        assertThat(sourceKind(cp)).as("ADR-S094 §8.2").isEqualTo("counterpart");
+        assertThat(sourceKind(id)).as("a POST /invoices invoice").isEqualTo("manual");
         assertThat(new java.math.BigDecimal(counterpart.get("totalAmount").toString())).isEqualByComparingTo("-50");
         JsonNode rels = ok(200, "GET", "/documents/" + id + "/relations", null);
         assertThat(rels.get(0).get("relationType").asString()).isEqualTo("CANCELS");

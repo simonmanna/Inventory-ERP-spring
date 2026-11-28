@@ -131,6 +131,8 @@ class SalesReturnFlowIT extends ApiTestSupport {
         assertThat(onHand(yard)).as("6 stay, 4 go back").isEqualByComparingTo(before.add(new BigDecimal("6")));
         JsonNode closed = money("/sales/returns/" + r + "/close", Map.of("outcome", "credit_note"));
         assertThat(closed.get("creditAmount").asDouble()).isEqualTo(600);
+        assertThat(sourceKind(jdbc.sql("SELECT \"creditNoteId\" FROM \"SalesReturn\" WHERE id = ?").param(r)
+                .query(String.class).single())).as("ADR-S094 §8.2").isEqualTo("credit");
     }
 
     @Test

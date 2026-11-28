@@ -166,6 +166,21 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
         assertThat(msg(fleet)).startsWith("Nothing to invoice on delivery order");
         assertThat(jdbc.sql("SELECT count(*) FROM \"FleetDeliveryInvoiceLine\" WHERE \"deliveryOrderId\" = ?")
                 .param(doOf(v.orderId())).query(Long.class).single()).isZero();
+
+        // ADR-S094 §8.2: with a charge rule, the delivery order of a Sales order invoices its transport only.
+        String rule = ok(201, "POST", "/fleet/delivery-charge-rules", Map.of("name", "Transport " + UUID.randomUUID(),
+                "partnerId", customer, "basis", "per_tonne", "rate", 1000)).get("id").asString();
+        try {
+            Res charges = call("POST", "/fleet/delivery-orders/" + doOf(v.orderId()) + "/invoice", Map.of(),
+                    headers(adminToken));
+            assertThat(charges.status()).as(charges.raw().body()).isEqualTo(200);
+            String chargesInvoice = charges.body().get("invoice").get("id").asString();
+            assertThat(sourceKind(chargesInvoice)).isEqualTo("fleet_charges");
+            assertThat(jdbc.sql("SELECT count(*) FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"productId\" IS NOT"
+                    + " NULL").param(chargesInvoice).query(Long.class).single()).as("transport only, no goods").isZero();
+        } finally {
+            assertThat(as("DELETE", "/fleet/delivery-charge-rules/" + rule, null).status()).isLessThan(300);
+        }
     }
 
     @Test
@@ -232,13 +247,15 @@ class SalesInvoiceabilityIT extends ApiTestSupport {
                 + " AND status = 'pending'").param(v.deliveryId()).query(String.class).single();
         money(decider, "/fleet/delivery-discrepancies/" + second + "/approve", Map.of());
         drainOutboxFully();
-        List<Map<String, Object>> credits = jdbc.sql("SELECT k.quantity, d.status::text AS status, d.\"reversedDocumentId\""
+        List<Map<String, Object>> credits = jdbc.sql("SELECT k.quantity, d.status::text AS status, d.\"reversedDocumentId\","
+                + " d.\"sourceKind\""
                 + " FROM \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id = k.\"documentId\" WHERE k.\"orderId\" = ? AND"
                 + " k.kind = 'credit_note'").param(v.orderId()).query().listOfRows();
         assertThat(credits).hasSize(1);
         assertThat(new BigDecimal(credits.get(0).get("quantity").toString())).isEqualByComparingTo("1");
         assertThat(credits.get(0).get("status")).isEqualTo("draft");
         assertThat(credits.get(0).get("reversedDocumentId")).isEqualTo(draft);
+        assertThat(credits.get(0).get("sourceKind")).as("ADR-S094 §8.2").isEqualTo("credit");
     }
 
     @Test

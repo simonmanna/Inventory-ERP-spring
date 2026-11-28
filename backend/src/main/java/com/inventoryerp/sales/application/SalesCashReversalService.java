@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
@@ -311,9 +312,10 @@ public class SalesCashReversalService {
         if (lines.isEmpty()) {
             throw ApiException.badRequest("Nothing on this sale is invoiced to credit");
         }
+        String invoiceId = invoiceOf(id);
         String cn = str(creditNotes.create(new CreditNoteInput(str(sale.get("partnerId")), LocalDate.now(BusinessZone.get())
-                .toString(), null, number, "Reversal of cash sale " + number + ": " + p.reason(), invoiceOf(id), lines))
-                .get("id"));
+                .toString(), null, number, "Reversal of cash sale " + number + ": " + p.reason(), invoiceId, lines),
+                new SourceRef.CreditFor(invoiceId, "sales")).get("id"));
         requested(id, p.reason(), cn);
         return cn;
     }

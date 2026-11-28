@@ -435,6 +435,7 @@ class FleetDispatchIT extends ApiTestSupport {
         assertThat(invNoKey.status()).isEqualTo(400);
         JsonNode invoiced = money("/fleet/delivery-orders/" + doId + "/invoice", null);
         String invoiceId = invoiced.get("invoice").get("id").asString();
+        assertThat(sourceKind(invoiceId)).as("ADR-S094 §8.2").isEqualTo("fleet_delivery");
         assertThat(invoiced.get("goodsInvoiceId").asString()).isEqualTo(invoiceId);
         assertThat(invoiced.get("chargesInvoiceId").asString()).isEqualTo(invoiceId);
         assertThat(invoiced.get("charges")).hasSize(1);
@@ -575,6 +576,7 @@ class FleetDispatchIT extends ApiTestSupport {
                 key(approverToken)).body();
         assertThat(approved.get("status").asString()).isEqualTo("approved");
         String cn = approved.get("creditNoteId").asString();
+        assertThat(sourceKind(cn)).as("ADR-S094 §8.2").isEqualTo("credit");
         assertThat(approved.get("creditNoteNumber").asString()).startsWith("DRAFT-CN-");
         assertThat(dec(approved.get("creditAmount"))).isEqualByComparingTo("60000");
         Map<String, Object> cnRow = jdbc.sql("SELECT status::text AS status, \"reversedDocumentId\", \"partnerId\" FROM"

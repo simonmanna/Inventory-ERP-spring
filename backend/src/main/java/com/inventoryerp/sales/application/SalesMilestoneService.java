@@ -92,7 +92,8 @@ public class SalesMilestoneService {
         if (!"pending".equals(m.get("status"))) {
             throw ApiException.badRequest("This milestone is already invoiced");
         }
-        Map<String, Object> doc = billing.createInvoice(orderId, Obj.of("mode", "down_payment", "amount", m.get("amount")));
+        Map<String, Object> doc = billing.createInvoice(orderId, Obj.of("mode", "down_payment", "amount", m.get("amount")),
+                milestoneId);
         db.update("UPDATE \"SalesOrderMilestone\" SET status = 'invoiced', \"documentId\" = ?, \"updatedAt\" = " + NOW + " WHERE id = ?"
                 + " AND \"organizationId\" = ?",
                 doc.get("id"), milestoneId, org());

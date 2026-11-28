@@ -67,6 +67,7 @@ class SalesCashSaleIT extends CashSaleTestBase {
 
         // invoice: posted and paid, one only; Dr AR 1,180 / Cr revenue 1,000 / Cr VAT 180
         String invoice = invoiceOf(id);
+        assertThat(sourceKind(invoice)).as("ADR-S094 §8.2").isEqualTo("sale");
         Map<String, Object> doc = jdbc.sql("SELECT status::text AS status, \"paymentStatus\"::text AS ps, \"totalAmount\","
                 + " \"amountResidual\" FROM \"Document\" WHERE id = ?").param(invoice).query().singleRow();
         assertThat(doc.get("ps")).isEqualTo("paid");

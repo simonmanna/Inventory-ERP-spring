@@ -16,6 +16,9 @@ Status: **CS-0 design frozen (2026-11-04)**. This is a Spring-native extension w
 > if required, the fiscal cancel, then the return, the credit note and the refund (or credit) in one transaction
 > (ADR-S094 §7.4, "As built (C3b)"). The legacy void and invoice-cancel routes are unchanged.
 
+> **ADR-S094 C4 (built, V737).** A legacy cash-sale invoice is created with source kind `cash_sale`; a cash Sale's
+> invoice with `sale` (ADR-S094 §8, "As built (C4)").
+
 **Production gate.** Before go-live, the accountant must sign off three things:
 
 - the VAT tax point for showroom sales;

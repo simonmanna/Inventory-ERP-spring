@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -618,7 +619,7 @@ public class SalesReturnService {
             } else {
                 Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(r.get("partnerId")), LocalDate.now(
                         BusinessZone.get()).toString(), null, str(r.get("number")), "Return " + r.get("number")
-                                + " of sales order " + o.get("number"), invoiceId, cnLines));
+                                + " of sales order " + o.get("number"), invoiceId, cnLines), new SourceRef.CreditFor(invoiceId, "sales"));
                 creditNoteId = str(cn.get("id"));
             }
             creditNotes.post(creditNoteId, "none");

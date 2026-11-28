@@ -146,9 +146,10 @@ class FinancialReportIntegrityIT extends ApiTestSupport {
         Timestamp nowTs = Timestamp.valueOf(now.atOffset(ZoneOffset.UTC).toLocalDateTime());
         jdbc.sql("INSERT INTO \"Document\" (id, \"organizationId\", \"documentNumber\", \"documentType\", \"partnerId\","
                 + " \"issueDate\", \"dueDate\", status, subtotal, \"taxAmount\", \"totalAmount\", \"amountResidual\","
-                + " \"branchId\", \"updatedAt\", \"documentTypeId\") VALUES (?, ?, 'INV-1', 'sales_invoice', ?, ?, ?,"
-                + " 'posted', 1000, 180, 1180, 1180, ?, now(), (SELECT id FROM \"DocumentTypeDef\" ORDER BY (code ="
-                + " 'sales_invoice') DESC LIMIT 1))").params(doc, org, customer, nowTs, nowTs, branchA).update();
+                + " \"branchId\", \"updatedAt\", \"documentTypeId\", \"sourceKind\") VALUES (?, ?, 'INV-1', 'sales_invoice',"
+                + " ?, ?, ?, 'posted', 1000, 180, 1180, 1180, ?, now(), (SELECT id FROM \"DocumentTypeDef\" ORDER BY"
+                + " (code = 'sales_invoice') DESC LIMIT 1), 'manual')").params(doc, org, customer, nowTs, nowTs, branchA)
+                .update();
         jdbc.sql("INSERT INTO \"DocumentLine\" (id, \"organizationId\", \"documentId\", description, quantity,"
                 + " \"unitPrice\", \"taxId\", subtotal, \"taxAmount\", total) VALUES (?, ?, ?, 'Aggregate 20mm', 10, 100, ?,"
                 + " 1000, 180, 1180)").params(UUID.randomUUID().toString(), org, doc, taxId).update();

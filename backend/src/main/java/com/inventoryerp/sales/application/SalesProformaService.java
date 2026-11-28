@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import com.inventoryerp.kernel.common.BusinessZone;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
@@ -170,7 +171,7 @@ public class SalesProformaService {
                 str(o.get("deliveryAddress")), null, null, str(o.get("number")), cur == null ? null : str(cur.get("id")),
                 dec(o.get("exchangeRate")).signum() > 0 ? dec(o.get("exchangeRate")) : BigDecimal.ONE,
                 str(o.get("customerRef")), str(o.get("notes")), null, "sales_order_proforma", str(o.get("branchId")));
-        Map<String, Object> doc = builder.createDocument(TYPE, h, inputs);
+        Map<String, Object> doc = builder.createDocument(TYPE, new SourceRef.Sale(orderId), h, inputs);
         String id = str(doc.get("id"));
         applyTerms(id, in, orderId);
         audit.record(AuditInput.of("Document", id, "create", null, Obj.of("proformaOf", o.get("number"))));

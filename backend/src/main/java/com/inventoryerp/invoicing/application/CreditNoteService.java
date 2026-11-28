@@ -189,9 +189,12 @@ public class CreditNoteService {
         }
     }
 
-    /** Create a draft credit note. */
+    /**
+     * Create a draft credit note owned by {@code source} (ADR-S094 §8.2): {@link SourceRef.CreditFor} for a module
+     * credit or one that names its invoice, {@link SourceRef.Manual} for a standalone one.
+     */
     @Transactional
-    public Map<String, Object> create(CreditNoteInput dto) {
+    public Map<String, Object> create(CreditNoteInput dto, SourceRef source) {
         builder.assertVariants(dto.lines(), false, true);
         assertVariantResolvable(dto.reversedDocumentId(), dto.lines());
         List<LineInput> lines = withInvoiceUnits(dto.reversedDocumentId(), dto.lines());
@@ -213,7 +216,8 @@ public class CreditNoteService {
         boolean inherit = reversed != null && dto.currencyId() == null;
         String currencyId = inherit ? (String) reversed.get("currencyId") : dto.currencyId();
         BigDecimal rate = inherit ? Money.dec(reversed.get("exchangeRate")) : null;
-        return builder.createDocument("credit_note", new HeaderInput(dto.partnerId(), dto.issueDate(), null, null, null,
+        return builder.createDocument("credit_note", source, new HeaderInput(dto.partnerId(), dto.issueDate(), null,
+                null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, currencyId, rate,
                 dto.reference(), dto.notes(), dto.reversedDocumentId(), null, null), lines);
     }

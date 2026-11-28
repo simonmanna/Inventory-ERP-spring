@@ -640,6 +640,17 @@ class KernelIT {
                         SELECT d."totalAmount" FROM "RecurringDocumentRun" r JOIN "Document" d ON d.id = r."documentId"
                         WHERE r."recurringId" = ?""").param(id).query(java.math.BigDecimal.class).single();
         assertThat(doc).isEqualByComparingTo("90.9");
+        // ADR-S094 §8.2: written by its owner (invoicing), unchanged: draft, template number, no tax, recurring kind.
+        Map<String, Object> row = jdbc.sql("""
+                        SELECT d."sourceKind", d."sourceType", d."sourceId", d."taxAmount", d."documentNumber",
+                          d.status::text AS status FROM "RecurringDocumentRun" r JOIN "Document" d ON d.id = r."documentId"
+                        WHERE r."recurringId" = ?""").param(id).query().singleRow();
+        assertThat(row.get("sourceKind")).isEqualTo("recurring");
+        assertThat(row.get("sourceType")).isEqualTo("recurring");
+        assertThat(row.get("sourceId")).isEqualTo(id);
+        assertThat((java.math.BigDecimal) row.get("taxAmount")).isEqualByComparingTo("0");
+        assertThat(row.get("documentNumber").toString()).startsWith("DRAFT-" + id.substring(0, 8) + "-");
+        assertThat(row.get("status")).isEqualTo("draft");
         assertThat(call("PATCH", "/recurring/" + id + "/pause", null, adminToken).body().get("status").asString()).isEqualTo("paused");
     }
 

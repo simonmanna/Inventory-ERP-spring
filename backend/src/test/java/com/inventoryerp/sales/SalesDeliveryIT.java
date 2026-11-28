@@ -170,6 +170,7 @@ class SalesDeliveryIT extends ApiTestSupport {
         String mid = ms.get(0).get("id").asString();
         JsonNode inv = money("/sales/orders/" + so + "/milestones/" + mid + "/invoice", null);
         assertThat(inv.get("totalAmount").asDouble()).isEqualTo(150);
+        assertThat(sourceKind(inv.get("id").asString())).as("ADR-S094 §8.2").isEqualTo("sale_milestone");
         Map<String, String> h = new LinkedHashMap<>();
         h.put("Authorization", "Bearer " + adminToken);
         h.put("Idempotency-Key", UUID.randomUUID().toString());

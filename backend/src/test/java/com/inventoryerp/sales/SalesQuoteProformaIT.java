@@ -354,6 +354,7 @@ class SalesQuoteProformaIT extends ApiTestSupport {
                 .query(Long.class).single();
         String fromQuote = ok(200, "POST", "/sales/quotations/" + approved(quote(Map.of())) + "/convert", Map.of("target",
                 "proforma")).get("convertedId").asString();
+        assertThat(sourceKind(fromQuote)).as("ADR-S094 §8.2").isEqualTo("quotation");
         JsonNode pq = ok(200, "GET", "/sales/proformas/" + fromQuote, null);
         assertThat(pq.get("advanceAmount").asDouble()).isEqualTo(75);
         assertThat(pq.get("bankDetails").asString()).isEqualTo("ACME Bank 123");
@@ -370,6 +371,7 @@ class SalesQuoteProformaIT extends ApiTestSupport {
         Res made = call("POST", "/sales/orders/" + so + "/proforma", Map.of("advanceAmount", 50), h);
         assertThat(made.status()).isEqualTo(200);
         String pf = made.body().get("id").asString();
+        assertThat(sourceKind(pf)).as("ADR-S094 §8.2").isEqualTo("sale");
         assertThat(made.body().get("advanceAmount").asDouble()).isEqualTo(50);
         assertThat(made.body().get("branchId").asString()).isEqualTo(branch);
         JsonNode list = ok(200, "GET", "/sales/proformas?partnerId=" + customer, null);
