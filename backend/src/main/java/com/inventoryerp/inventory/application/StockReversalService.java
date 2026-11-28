@@ -21,10 +21,13 @@ import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -370,8 +373,8 @@ public class StockReversalService {
         }
         List<Map<String, Object>> rows = SqlRows.list(jdbc.sql("SELECT l.*, b.\"batchNumber\" AS \"_batchNumber\","
                         + " b.\"expiryDate\" AS \"_expiryDate\", s.\"serialNumber\" AS \"_serialNumber\","
-                        + " p.\"batchTracking\" AS \"_batchTracking\", p.\"serialTracking\" AS \"_serialTracking\""
-                        + " FROM \"InventoryLedger\" l"
+                        + " p.\"batchTracking\" AS \"_batchTracking\", p.\"serialTracking\" AS \"_serialTracking\","
+                        + " l.type::text AS \"_type\" FROM \"InventoryLedger\" l"
                         + " LEFT JOIN \"InventoryBatch\" b ON b.id = l.\"batchId\""
                         + " LEFT JOIN \"InventorySerial\" s ON s.id = l.\"serialId\""
                         + " JOIN \"Product\" p ON p.id = l.\"productId\""
@@ -403,6 +406,8 @@ public class StockReversalService {
         boolean strictOnHand = p.shortfallLabel() != null;
         Map<String, BigDecimal> toTakeBack = new LinkedHashMap<>();
         Map<String, BigDecimal> takenBack = new LinkedHashMap<>();
+        // IPR review 3 (#2): serial units of a receipt pool already pinned to an earlier row of this reversal.
+        Map<String, Set<String>> claimed = new HashMap<>();
         if (strictOnHand) {
             rows.stream().filter(r -> dec(r, "quantityChange").signum() > 0)
                     .forEach(r -> toTakeBack.merge(cellKey(r), dec(r, "quantityChange"), BigDecimal::add));
@@ -441,19 +446,21 @@ public class StockReversalService {
                         .people(str(r, "responsibleById"), user).serials(serials).batch(batchNumber)
                         .moveType("reversal_out").strategy(batchNumber != null ? "MANUAL" : null).skipGl()
                         .reverses(str(r, "id")).requireAvailable(strictOnHand);
-                if (serials == null && Boolean.TRUE.equals(r.get("_serialTracking"))) {
-                    // IPR C-1: a receipt row of several serial units takes back the units it received (receiptRef).
-                    List<Map<String, Object>> received = receivedSerials(org, r);
-                    List<String> inStock = received.stream().filter(x -> "in_stock".equals(x.get("status"))
-                            && str(r, "locationId").equals(str(x, "locationId"))).map(x -> str(x, "serialNumber"))
-                            .toList();
-                    if (strictOnHand && inStock.size() < received.size()) {
-                        throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, inStock.size(),
-                                received.size(), p.referenceId());
+                if (serials == null && Boolean.TRUE.equals(r.get("_serialTracking"))
+                        && !"transfer_in".equals(r.get("_type"))) {
+                    // IPR C-1 / review 3 (#2): a receipt row of several serial units takes back the units it received
+                    // (receiptRef), shared out across the rows of one document (each row its own units), and leaves
+                    // with units without a serial for the rest (its unserialised part) instead of picking other
+                    // receipts' serial units.
+                    Pin pin = pinReceived(org, r, qty, claimed);
+                    if (strictOnHand && pin.inStock() < pin.need()) {
+                        throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, pin.inStock(), pin.need(),
+                                p.referenceId());
                     }
-                    if (!inStock.isEmpty() && inStock.size() <= qty.intValue()) {
-                        m.serials(inStock);
+                    if (!pin.serials().isEmpty()) {
+                        m.serials(pin.serials());
                     }
+                    m.unserialisedRestFirst = true;
                 }
                 Issued res;
                 if (strictOnHand) {
@@ -594,6 +601,34 @@ public class StockReversalService {
                 .params(org, str(r, "productId"), ref, str(r, "batchId"), str(r, "batchId"), str(r, "batchId")));
     }
 
+    /** The serial units a take-back of one receipt row pins: how many it needs, how many are there, which. */
+    private record Pin(int need, int inStock, List<String> serials) {}
+
+    /**
+     * IPR review 3 (#2): the serial units a take-back of receipt row {@code r} ({@code qty} units) names. The row's
+     * document received a pool of serial units ({@link #receivedSerials}: same receiptRef, same lot); the rows of one
+     * take-back share it out ({@code claimed} per pool), so two rows of one serial product each take their own units
+     * and never the oldest units of other receipts. A row needs {@code min(qty, pool size − already claimed)} units
+     * (the rest of its quantity is its unserialised part); the units still in stock at the row's location are pinned
+     * in serial-number order. Read under the caller's locks (L2 receipt rows; the engine takes L4/L5 after).
+     */
+    private Pin pinReceived(String org, Map<String, Object> r, BigDecimal qty, Map<String, Set<String>> claimed) {
+        List<Map<String, Object>> received = receivedSerials(org, r);
+        String pool = str(r, "productId") + "|" + str(r, "locationId") + "|" + str(r, "referenceType") + "|"
+                + (r.get("referenceId") != null ? str(r, "referenceId") : str(r, "ledgerCode")) + "|"
+                + (r.get("_batchNumber") != null ? str(r, "_batchNumber") : "");
+        Set<String> taken = claimed.computeIfAbsent(pool, k -> new HashSet<>());
+        int need = Math.max(0, Math.min(qty.intValue(), received.size() - taken.size()));
+        List<Map<String, Object>> inStock = received.stream().filter(x -> "in_stock".equals(x.get("status"))
+                && str(r, "locationId").equals(str(x, "locationId")) && !taken.contains(str(x, "id"))).toList();
+        List<String> serials = new ArrayList<>();
+        for (Map<String, Object> x : inStock.subList(0, Math.min(need, inStock.size()))) {
+            taken.add(str(x, "id"));
+            serials.add(str(x, "serialNumber"));
+        }
+        return new Pin(need, inStock.size(), serials);
+    }
+
     private ApiException serialShortfall(String label, String advice, Map<String, Object> r, int inStock, int received,
             String documentId) {
         String product = jdbc.sql("SELECT name FROM \"Product\" WHERE id = ?").param(str(r, "productId"))
@@ -657,6 +692,7 @@ public class StockReversalService {
                 .thenComparing(r -> r.get("variantId") == null ? "" : str(r, "variantId"))
                 .thenComparing(r -> str(r, "locationId")));
         List<IssuedBack> out = new ArrayList<>();
+        Map<String, Set<String>> claimed = new HashMap<>();
         for (Map<String, Object> r : ordered) {
             BigDecimal qty = left.get(str(r, "id"));
             if (qty == null || qty.signum() <= 0) {
@@ -668,20 +704,26 @@ public class StockReversalService {
                     .requireAvailable(true).reverses(str(r, "id"));
             m.pinnedBatchIds = r.get("batchId") != null ? List.of(str(r, "batchId")) : null;
             if (Boolean.TRUE.equals(r.get("_serialTracking"))) {
-                List<Map<String, Object>> received = receivedSerials(org, r);
-                List<String> inStock = received.stream().filter(x -> "in_stock".equals(x.get("status"))
-                        && str(r, "locationId").equals(str(x, "locationId"))).map(x -> str(x, "serialNumber")).toList();
                 if (r.get("serialId") != null) {
-                    received = List.of(r);
-                    inStock = jdbc.sql("SELECT \"serialNumber\" FROM \"InventorySerial\" WHERE id = ? AND status ="
-                                    + " 'in_stock' AND \"locationId\" = ?").params(str(r, "serialId"), str(r, "locationId"))
-                            .query(String.class).list();
+                    List<String> inStock = jdbc.sql("SELECT \"serialNumber\" FROM \"InventorySerial\" WHERE id = ? AND"
+                                    + " status = 'in_stock' AND \"locationId\" = ?")
+                            .params(str(r, "serialId"), str(r, "locationId")).query(String.class).list();
+                    if (inStock.size() < Math.min(1, qty.intValue())) {
+                        throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, inStock.size(), 1,
+                                p.referenceId());
+                    }
+                    m.serials(inStock.size() > qty.intValue() ? inStock.subList(0, qty.intValue()) : inStock);
+                } else {
+                    // IPR review 3 (#2): the row's own received units (shared out across the document's rows); the
+                    // rest leaves as units without a serial (the row's unserialised part), not other receipts' units.
+                    Pin pin = pinReceived(org, r, qty, claimed);
+                    if (pin.inStock() < pin.need()) {
+                        throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, pin.inStock(), pin.need(),
+                                p.referenceId());
+                    }
+                    m.serials(pin.serials());
+                    m.unserialisedRestFirst = true;
                 }
-                if (inStock.size() < Math.min(received.size(), qty.intValue())) {
-                    throw serialShortfall(p.shortfallLabel(), p.shortfallAdvice(), r, inStock.size(), received.size(),
-                            p.referenceId());
-                }
-                m.serials(inStock.size() > qty.intValue() ? inStock.subList(0, qty.intValue()) : inStock);
             }
             Issued res;
             try {

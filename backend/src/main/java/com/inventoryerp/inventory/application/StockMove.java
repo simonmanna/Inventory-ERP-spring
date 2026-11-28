@@ -165,6 +165,14 @@ public final class StockMove {
      */
     public BigDecimal baseQuantity;
 
+    /**
+     * IPR review 3 (#2): issue only — a take-back of a receipt row (reversal, issue-back). The units beyond the named
+     * serial numbers leave as units without a serial first (the row's unserialised part), and in-stock serial units of
+     * other receipts are picked only for what no unit without a serial covers. False (forward issues): the IPR C-2
+     * rule, the rest is picked from the serial units in stock.
+     */
+    public boolean unserialisedRestFirst;
+
     /** IPR X-3: a manual stock document move (see {@link #manualMove}). */
     public StockMove manual() {
         this.manualMove = true;

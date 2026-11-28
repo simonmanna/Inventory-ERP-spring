@@ -805,13 +805,44 @@ public class StockService {
                 }
             }
             // IPR C-2: fewer serial numbers than units (capture_optional) — the rest are picked from the units in stock
-            // (oldest first, a named lot's units first), so no serial unit stays "in stock" for a unit that left.
+            // (oldest first), so no serial unit stays "in stock" for a unit that left.
+            boolean serialLots = bool(product, "batchTracking");
+            // IPR review 3 (#3): a named lot (MANUAL) of a serial+lot product gives its own serial units, then its own
+            // units without a serial; other lots' serial units only for what the lot lacks (as a lot-only product).
+            String namedLot = serialLots && "MANUAL".equals(strategy) && dto.batchNumber != null
+                    && !dto.batchNumber.isBlank() ? dto.batchNumber : null;
+            Set<String> fromOtherLots = new HashSet<>();
             int toPick = qty.intValue() - serialRows.size();
             if (toPick > 0) {
-                List<String> chosen = serialRows.stream().map(r -> (String) r.get("id")).toList();
-                serialRows.addAll(pickSerials(org, dto, variantId, dto.locationId, toPick, chosen,
-                        bool(product, "batchTracking") && "MANUAL".equals(strategy) ? dto.batchNumber : null));
+                List<String> chosen = new ArrayList<>(serialRows.stream().map(r -> (String) r.get("id")).toList());
+                if (dto.unserialisedRestFirst) {
+                    // IPR review 3 (#2): a take-back leaves with units without a serial first (the receipt row's
+                    // unserialised part); serial units of other receipts only for what those do not cover.
+                    toPick -= Math.min(toPick, unserialisedFree(org, dto, variantId, stockItem, serialLots, namedLot,
+                            pickable));
+                }
+                if (namedLot != null && toPick > 0) {
+                    List<Map<String, Object>> inLot = pickSerials(org, dto, variantId, dto.locationId, toPick, chosen,
+                            namedLot, true);
+                    serialRows.addAll(inLot);
+                    inLot.forEach(r -> chosen.add((String) r.get("id")));
+                    toPick -= inLot.size();
+                    if (toPick > 0 && !dto.unserialisedRestFirst) {
+                        toPick -= Math.min(toPick, unserialisedFree(org, dto, variantId, stockItem, true, namedLot,
+                                pickable));
+                    }
+                }
+                if (toPick > 0) {
+                    List<Map<String, Object>> rest = pickSerials(org, dto, variantId, dto.locationId, toPick, chosen,
+                            null, serialLots);
+                    if (namedLot != null) {
+                        rest.forEach(r -> fromOtherLots.add((String) r.get("id")));
+                    }
+                    serialRows.addAll(rest);
+                }
             }
+            String shortNote = namedLot == null ? ledgerNotes
+                    : joinNotes(ledgerNotes, "LOT " + namedLot + " SHORT: drawn from other lots");
             String issueRef = (dto.sourceType != null ? dto.sourceType : "issue") + ":"
                     + (dto.sourceId != null ? dto.sourceId : ledgerCode);
             BigDecimal running = dec(stockItem, "quantity");
@@ -828,7 +859,7 @@ public class StockService {
                 BigDecimal after = running.subtract(BigDecimal.ONE);
                 decrementStockItem(stockItemId, BigDecimal.ONE);
                 ic.row((String) s.get("batchId"), (String) s.get("id"), running, BigDecimal.ONE.negate(), after, sUnit,
-                        sUnit, ledgerNotes);
+                        sUnit, fromOtherLots.contains((String) s.get("id")) ? shortNote : ledgerNotes);
                 totalValue = totalValue.add(sUnit);
                 running = after;
             }
@@ -844,13 +875,22 @@ public class StockService {
                 BigDecimal overflowUnit = dec(stockItem, "runningAverageCost").signum() > 0
                         ? dec(stockItem, "runningAverageCost") : dec(product, "costPrice");
                 BigDecimal overflowValue = overflowUnit.multiply(remaining);
-                if (bool(product, "batchTracking")) {
+                if (serialLots) {
                     // IPR C-1: units without a serial of a serial+lot product leave the lots' unserialised part (FEFO),
-                    // valued at the average as before; only what no lot covers is a lot-less shortfall row.
-                    BigDecimal drawn = issueUnserialisedFromLots(ic, variantId, remaining, running, overflowUnit,
-                            pickable, ledgerNotes);
-                    running = running.subtract(drawn);
-                    remaining = remaining.subtract(drawn);
+                    // valued at the average as before; only what no lot covers is a lot-less shortfall row. IPR review
+                    // 3 (#3): a named lot's unserialised part first, the other lots only for what it lacks.
+                    if (namedLot != null) {
+                        BigDecimal drawn = issueUnserialisedFromLots(ic, variantId, remaining, running, overflowUnit,
+                                pickable + " AND \"batchNumber\" = ?", namedLot, ledgerNotes);
+                        running = running.subtract(drawn);
+                        remaining = remaining.subtract(drawn);
+                    }
+                    if (remaining.signum() > 0) {
+                        BigDecimal drawn = issueUnserialisedFromLots(ic, variantId, remaining, running, overflowUnit,
+                                pickable, null, shortNote);
+                        running = running.subtract(drawn);
+                        remaining = remaining.subtract(drawn);
+                    }
                 }
                 if (remaining.signum() > 0) {
                     BigDecimal after = running.subtract(remaining);
@@ -1555,7 +1595,7 @@ public class StockService {
     /**
      * IPR C-7 / C-2: the serial units a transfer moves. Named serial numbers ({@link StockMove#serialNumbers}) must all
      * be in stock at the source (400 otherwise) and may not outnumber the units; the remaining units are picked from
-     * the source's in-stock units ({@link #pickSerials}: pins, a named lot's units first, then oldest first). Read under
+     * the source's in-stock units ({@link #pickSerials}: pins, a named lot's units only, then oldest first). Read under
      * both quant locks.
      */
     private List<Map<String, Object>> transferSerials(String org, StockMove dto, String variantId, BigDecimal qty,
@@ -1582,9 +1622,23 @@ public class StockService {
                         + String.join(", ", requested.stream().filter(n -> !found.contains(n)).toList()));
             }
         }
+        // IPR review 3 (#1): a transfer naming a lot moves that lot only (its lot rows are the ones decremented): its
+        // serial units, then its units without a serial — never another lot's serial unit.
+        String lot = batchTracking && dto.batchNumber != null && !dto.batchNumber.isBlank() ? dto.batchNumber : null;
+        if (lot != null && !rows.isEmpty()) {
+            List<String> outside = jdbc.sql("SELECT s.\"serialNumber\" FROM \"InventorySerial\" s LEFT JOIN"
+                            + " \"InventoryBatch\" b ON b.id = s.\"batchId\" AND b.\"organizationId\" = s.\"organizationId\""
+                            + " WHERE s.\"organizationId\" = ? AND s.id = ANY(?::text[]) AND b.\"batchNumber\" IS DISTINCT"
+                            + " FROM ? ORDER BY s.\"serialNumber\"")
+                    .params(org, rows.stream().map(r -> (String) r.get("id")).toArray(String[]::new), lot)
+                    .query(String.class).list();
+            if (!outside.isEmpty()) {
+                throw ApiException.badRequest("Serial number(s) " + String.join(", ", outside) + " are not in batch "
+                        + lot + " at the source location");
+            }
+        }
         rows.addAll(pickSerials(org, dto, variantId, dto.fromLocationId, qty.intValueExact() - rows.size(),
-                rows.stream().map(r -> (String) r.get("id")).toList(),
-                batchTracking && dto.batchNumber != null && !dto.batchNumber.isBlank() ? dto.batchNumber : null));
+                rows.stream().map(r -> (String) r.get("id")).toList(), lot, batchTracking));
         return rows;
     }
 
@@ -2158,13 +2212,16 @@ public class StockService {
 
     /**
      * IPR C-2 / C-7 / C-9: up to {@code limit} in-stock serial units of the move's quant at {@code locationId}, other
-     * than {@code excludeIds}: the move's pinned units only (or first, with {@link StockMove#pinFallback}), then the
-     * units of lots numbered {@code preferLotNumber} (a named lot of a serial+lot product), then oldest receipt first
-     * (C-9: kept, FIFO by receipt is the documented default; ties by serial number so the pick is deterministic).
-     * Read under the quant lock (L4/L5), so a concurrent move of the same cell cannot pick the same units.
+     * than {@code excludeIds}: the move's pinned units only (or first, with {@link StockMove#pinFallback}), then oldest
+     * receipt first (C-9: kept, FIFO by receipt is the documented default; ties by serial number so the pick is
+     * deterministic). IPR review 3 (#1 / #3): with {@code onlyLotNumber} only units of that lot at the location; for a
+     * lot-tracked product ({@code batchTracking}) whose move pins lots ({@link StockMove#pinnedBatchIds}, no serial pins)
+     * only units of those lots (or theirs first, with {@link StockMove#pinFallback}) — the lot rows the move decrements
+     * are the lots of the units it picks. Read under the quant lock (L4/L5), so a concurrent move of the same cell
+     * cannot pick the same units.
      */
     private List<Map<String, Object>> pickSerials(String org, StockMove dto, String variantId, String locationId,
-            int limit, java.util.Collection<String> excludeIds, String preferLotNumber) {
+            int limit, java.util.Collection<String> excludeIds, String onlyLotNumber, boolean batchTracking) {
         if (limit <= 0) {
             return new ArrayList<>();
         }
@@ -2182,20 +2239,57 @@ public class StockService {
             sql.append(" AND id = ANY(?::text[])");
             params.add(dto.pinnedSerialIds.toArray(String[]::new));
         }
+        boolean lotPins = batchTracking && dto.pinnedBatchIds != null && dto.pinnedSerialIds == null;
+        if (lotPins && !dto.pinFallback) {
+            sql.append(" AND \"batchId\" = ANY(?::text[])");
+            params.add(dto.pinnedBatchIds.toArray(String[]::new));
+        }
+        if (onlyLotNumber != null && !onlyLotNumber.isBlank()) {
+            sql.append(" AND \"batchId\" IN (SELECT b.id FROM \"InventoryBatch\" b WHERE b.\"organizationId\" = ? AND"
+                    + " b.\"productId\" = ? AND b.\"variantId\" IS NOT DISTINCT FROM ? AND b.\"locationId\" = ? AND"
+                    + " b.\"batchNumber\" = ?)");
+            params.add(org);
+            params.add(dto.productId);
+            params.add(variantId);
+            params.add(locationId);
+            params.add(onlyLotNumber);
+        }
         sql.append(" ORDER BY ");
         if (dto.pinnedSerialIds != null && dto.pinFallback) {
             sql.append("(id = ANY(?::text[])) DESC, ");
             params.add(dto.pinnedSerialIds.toArray(String[]::new));
         }
-        if (preferLotNumber != null && !preferLotNumber.isBlank()) {
-            sql.append("(\"batchId\" IN (SELECT b.id FROM \"InventoryBatch\" b WHERE b.\"organizationId\" = ? AND"
-                    + " b.\"batchNumber\" = ?)) DESC, ");
-            params.add(org);
-            params.add(preferLotNumber);
+        if (lotPins && dto.pinFallback) {
+            sql.append("COALESCE(\"batchId\" = ANY(?::text[]), false) DESC, ");
+            params.add(dto.pinnedBatchIds.toArray(String[]::new));
         }
         sql.append("\"receivedAt\" ASC, \"serialNumber\" ASC LIMIT ?");
         params.add(limit);
         return new ArrayList<>(SqlRows.list(jdbc.sql(sql.toString()).params(params)));
+    }
+
+    /**
+     * IPR review 3 (#2 / #3): the units without a serial an issue can draw (whole units, never negative). Without lots:
+     * the quant's on-hand less its in-stock serial units. With lots: the unserialised part of the open lots the move may
+     * draw (its pinned lots, lot {@code namedLot} when given; {@code pickable} applied). Read under the quant lock.
+     */
+    private int unserialisedFree(String org, StockMove dto, String variantId, Map<String, Object> stockItem,
+            boolean serialLots, String namedLot, String pickable) {
+        BigDecimal free;
+        if (serialLots) {
+            free = lots(org, dto, variantId, "SELECT COALESCE(SUM(GREATEST(quantity - (SELECT count(*) FROM"
+                            + " \"InventorySerial\" s WHERE s.\"organizationId\" = \"InventoryBatch\".\"organizationId\""
+                            + " AND s.\"batchId\" = \"InventoryBatch\".id AND s.status = 'in_stock'), 0)), 0)",
+                    pickable + (namedLot != null ? " AND \"batchNumber\" = ?" : ""), "", namedLot)
+                    .query(BigDecimal.class).single();
+        } else {
+            long serials = jdbc.sql("SELECT count(*) FROM \"InventorySerial\" WHERE \"organizationId\" = ? AND"
+                            + " \"productId\" = ? AND \"variantId\" IS NOT DISTINCT FROM ? AND \"locationId\" = ? AND"
+                            + " status = 'in_stock'")
+                    .params(org, dto.productId, variantId, dto.locationId).query(Long.class).single();
+            free = dec(stockItem, "quantity").subtract(BigDecimal.valueOf(serials));
+        }
+        return free.signum() <= 0 ? 0 : free.setScale(0, RoundingMode.FLOOR).intValueExact();
     }
 
     /**
@@ -2222,12 +2316,12 @@ public class StockService {
      * {@code unit} (the quant's average, as units without a serial always were). Returns the quantity drawn.
      */
     private BigDecimal issueUnserialisedFromLots(IssueCtx ic, String variantId, BigDecimal remaining,
-            BigDecimal running, BigDecimal unit, String pickable, String notes) {
+            BigDecimal running, BigDecimal unit, String extra, Object extraParam, String notes) {
         List<Map<String, Object>> lots = SqlRows.list(lots(ic.org, ic.dto, variantId, "SELECT id, quantity,"
                         + " quantity - (SELECT count(*) FROM \"InventorySerial\" s WHERE s.\"organizationId\" ="
                         + " \"InventoryBatch\".\"organizationId\" AND s.\"batchId\" = \"InventoryBatch\".id AND s.status ="
-                        + " 'in_stock') AS free", pickable, " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC",
-                null));
+                        + " 'in_stock') AS free", extra, " ORDER BY \"expiryDate\" ASC NULLS LAST, \"receivedAt\" ASC",
+                extraParam));
         BigDecimal drawn = Money.ZERO;
         for (Map<String, Object> lot : lots) {
             BigDecimal left = remaining.subtract(drawn);
