@@ -176,6 +176,10 @@ public class QualityLotService {
             boolean movable = "quality".equals(stockControl) && Q.has(Q.str(lot, "locationId"));
             if ("quarantine".equals(policy) && movable) {
                 quarantineStock(lot, Q.dec(lot, "quantity"), "Hold policy of plan " + plan.get("code"));
+            } else if ("hold".equals(policy) && movable) {
+                // IPR X-2 (D2): a hold moves the stock to QC quarantine.
+                moveToQuarantine(lot, Q.dec(lot, "quantity"), "Hold policy of plan " + plan.get("code"), "hold",
+                        "hold");
             } else if ("quarantine".equals(policy) || "hold".equals(policy)) {
                 db.update(QualityInspectionLot.class, id, Obj.of("status", "hold"));
                 decision(id, "hold", null, null, null, "Hold policy of plan " + plan.get("code"), null, null);
@@ -204,18 +208,34 @@ public class QualityLotService {
 
     /** Move {@code qty} of the lot from its location into QC quarantine and mark it quarantined. */
     void quarantineStock(Map<String, Object> lot, BigDecimal qty, String reason) {
+        moveToQuarantine(lot, qty, reason, "quarantined", "quarantine");
+    }
+
+    /**
+     * Move {@code qty} of the lot from its location into QC quarantine (the existing transfer), set its
+     * {@code quarantineLocationId} and {@code status}, and record {@code decision}. IPR X-2 (owner decision D2): a hold
+     * of a {@code stockControl = quality} lot uses this too ({@code status = hold}), so held stock leaves the sellable
+     * location. A lot whose stock is already in quarantine only changes status.
+     */
+    void moveToQuarantine(Map<String, Object> lot, BigDecimal qty, String reason, String status, String decision) {
         String quarantine = locations.ensure(VirtualLocationService.QC_QUARANTINE, "QC Quarantine");
         String from = Q.str(lot, "locationId");
         String ledger = null;
-        if (!quarantine.equals(from)) {
+        if (quarantine.equals(Q.str(lot, "quarantineLocationId"))) {
+            db.update(QualityInspectionLot.class, Q.str(lot, "id"), Obj.of("status", status, "updatedBy",
+                    TenantContext.userId()));
+            decision(Q.str(lot, "id"), decision, qty, null, null, reason, null, null);
+            return;
+        }
+        if (!quarantine.equals(from) && qty.signum() > 0) {
             ledger = stock.transfer(StockMove.transfer(Q.str(lot, "productId"), from, quarantine, qty)
                     .variant(Q.str(lot, "variantId")).batch(Q.str(lot, "batchNumber"))
                     .source(STOCK_SOURCE, Q.str(lot, "lotNumber"))
                     .notes("Quarantine " + lot.get("lotNumber"))).ledgerCode();
         }
-        db.update(QualityInspectionLot.class, Q.str(lot, "id"), Obj.of("status", "quarantined",
+        db.update(QualityInspectionLot.class, Q.str(lot, "id"), Obj.of("status", status,
                 "quarantineLocationId", quarantine, "updatedBy", TenantContext.userId()));
-        decision(Q.str(lot, "id"), "quarantine", qty, from, quarantine, reason, ledger, null);
+        decision(Q.str(lot, "id"), decision, qty, from, quarantine, reason, ledger, null);
     }
 
     /** Insert a decision row; returns its id. */

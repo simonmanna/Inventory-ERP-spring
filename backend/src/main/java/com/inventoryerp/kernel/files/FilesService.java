@@ -114,8 +114,12 @@ public class FilesService {
 
     /** {@code {url, expiresAt}}; only for a file of the caller's organization (when there is a tenant). */
     public Map<String, Object> signDownload(String fileId) {
-        String fileOrg = jdbc.sql("SELECT \"organizationId\" FROM \"File\" WHERE id = ?").param(fileId)
-                .query(String.class).optional().orElse("");
+        // IPR S-6 (ADR-S093): a connection taken outside a transaction is bound to the caller's tenant, which would hide
+        // another organisation's file and let the foreign-file check below pass. Only the owning organisation id is read,
+        // in system mode, so the check sees the real owner as before (inside a caller's transaction RLS applies as it
+        // always did).
+        String fileOrg = TenantContext.unscoped(() -> jdbc.sql("SELECT \"organizationId\" FROM \"File\" WHERE id = ?")
+                .param(fileId).query(String.class).optional().orElse(""));
         String currentOrg = TenantContext.optionalOrganizationId();
         if (currentOrg != null && !fileOrg.isEmpty() && !fileOrg.equals(currentOrg)) {
             throw ApiException.notFound("File not found");

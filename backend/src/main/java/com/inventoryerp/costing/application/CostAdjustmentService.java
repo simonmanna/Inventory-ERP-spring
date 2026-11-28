@@ -75,7 +75,9 @@ public class CostAdjustmentService {
     /**
      * WIP shares of completed orders not cascaded yet: lineage lines of late costs, and (review 2026-11-17, ACR-14)
      * adjunct released into the order's WIP. Each carries what is still in WIP — its amount less what an accrual
-     * clearing already took back out ({@code clearedAmount}).
+     * clearing already took back out ({@code clearedAmount}). IPR WIP-3 (deviation): also the shares of cancelled and
+     * reversed orders (status {@code cancelled}), which no run picked up, so they stayed in WIP for ever; the run sends
+     * them to the materials the cancel or reversal returned to stock.
      */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> pending() {
@@ -85,13 +87,13 @@ public class CostAdjustmentService {
                 + " amount, o.\"orderCode\", o.status::text AS \"orderStatus\", a.\"adjustmentType\", a.\"sourceType\","
                 + " a.\"sourceId\", 'line' AS kind, x.\"createdAt\" FROM \"CostValueAdjustmentLine\" x JOIN"
                 + " \"CostValueAdjustment\" a ON a.id = x.\"adjustmentId\"" + order + " WHERE x.\"organizationId\" = ? AND"
-                + " x.target = 'wip' AND a.\"reversedAt\" IS NULL AND o.status::text IN ('completed', 'closed') AND NOT"
-                + " EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"adjustmentLineId\" = x.id AND r.status ="
+                + " x.target = 'wip' AND a.\"reversedAt\" IS NULL AND o.status::text IN ('completed', 'closed',"
+                + " 'cancelled') AND NOT EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"adjustmentLineId\" = x.id AND r.status ="
                 + " 'posted') UNION ALL SELECT x.id, x.\"adjustmentId\", x.amount - x.\"clearedAmount\", o.\"orderCode\","
                 + " o.status::text, a.\"adjustmentType\", 'cost_release', x.\"sourceId\", 'release', x.\"createdAt\" FROM"
                 + " \"CostValueAdjustmentRelease\" x JOIN \"CostValueAdjustment\" a ON a.id = x.\"adjustmentId\"" + order
                 + " WHERE x.\"organizationId\" = ? AND x.target = 'wip' AND a.\"reversedAt\" IS NULL AND o.status::text IN"
-                + " ('completed', 'closed') AND NOT EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"releaseId\" ="
+                + " ('completed', 'closed', 'cancelled') AND NOT EXISTS (SELECT 1 FROM \"CostAdjustmentRunLine\" r WHERE r.\"releaseId\" ="
                 + " x.id AND r.status = 'posted')) p WHERE amount <> 0 ORDER BY \"orderCode\", \"createdAt\"")
                 .params(org(), org()));
     }
@@ -123,7 +125,11 @@ public class CostAdjustmentService {
         String number = seq.next("cost_adjustment_run", "CAR/", 5);
         String text = "Cost adjustment run " + number;
         Map<String, BigDecimal> byOrder = new LinkedHashMap<>();
-        rows.forEach(r -> byOrder.merge((String) r.get("orderCode"), SqlRows.dec(r, "amount"), BigDecimal::add));
+        Map<String, String> statusOf = new LinkedHashMap<>();
+        rows.forEach(r -> {
+            byOrder.merge((String) r.get("orderCode"), SqlRows.dec(r, "amount"), BigDecimal::add);
+            statusOf.put((String) r.get("orderCode"), (String) r.get("orderStatus"));
+        });
         List<Line> lines = new ArrayList<>();
         List<Part> allParts = new ArrayList<>();
         String wip = determination.mapped("wip");
@@ -133,7 +139,22 @@ public class CostAdjustmentService {
             if (amount.signum() == 0) {
                 continue;
             }
-            List<Part> parts = capitalisation.spread(amount, capitalisation.orderOutputs(e.getKey()));
+            // IPR WIP-3: a cancelled or reversed order has no output left; its share follows the materials its
+            // cancel / reversal received back into stock (on hand → adjunct, since sold → cost of sales); with none
+            // (legacy rows) it goes to cost of sales. IPR review 2 (R2-4): a multi-stage order's materials come back
+            // through its stage reversals (referenceId = the reversed stage posting).
+            List<LineageCapitalisation.Layer> layers;
+            if ("cancelled".equals(statusOf.get(e.getKey()))) {
+                layers = new ArrayList<>(capitalisation.receipts("production_order_cancel", List.of(e.getKey())));
+                layers.addAll(capitalisation.receipts("production_reversal", List.of(e.getKey())));
+                layers.addAll(capitalisation.receipts("production_stage_reversal", jdbc.sql("SELECT p.id FROM"
+                        + " \"ProductionStagePosting\" p JOIN \"ProductionOrder\" o ON o.id = p.\"orderId\" WHERE"
+                        + " p.\"organizationId\" = ? AND o.\"organizationId\" = ? AND o.\"orderCode\" = ? ORDER BY"
+                        + " p.\"createdAt\", p.id").params(org(), org(), e.getKey()).query(String.class).list()));
+            } else {
+                layers = capitalisation.orderOutputs(e.getKey());
+            }
+            List<Part> parts = capitalisation.spread(amount, layers);
             allParts.addAll(parts);
             Map<String, Object> dims = Obj.of("productionOrderCode", e.getKey(), "costAdjustmentRunId", id);
             for (Map.Entry<String, BigDecimal> d : capitalisation.debits(parts).entrySet()) {

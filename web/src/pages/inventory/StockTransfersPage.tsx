@@ -101,6 +101,10 @@ export function StockTransfersPage() {
   const [recalling, setRecalling] = useState<{ id: string; code: string } | null>(null);
   const [receiving, setReceiving] = useState<{ id: string; code: string; rows: ReceiveRow[] } | null>(null);
   const [receiveNotes, setReceiveNotes] = useState('');
+  // IPR S3: a damaged or short line above the threshold needs a reason and an approver (PIN unless self-approval).
+  const [lossReason, setLossReason] = useState('');
+  const [lossApproverId, setLossApproverId] = useState('');
+  const [lossApproverPin, setLossApproverPin] = useState('');
   const has = useAuthStore((s) => s.hasPermission);
   const canCreate = has('inventory_doc:create');
   const canApprove = has('inventory_doc:approve');
@@ -108,6 +112,9 @@ export function StockTransfersPage() {
 
   const openReceive = (tr: StockTransfer) => {
     setReceiveNotes('');
+    setLossReason('');
+    setLossApproverId('');
+    setLossApproverPin('');
     receiveTransfer.reset();
     setReceiving({
       id: tr.id,
@@ -122,6 +129,7 @@ export function StockTransfersPage() {
     const total = num(r.received) + num(r.damaged) + num(r.short);
     return [r.received, r.damaged, r.short].some((v) => num(v) < 0) || total > r.open + 1e-6;
   }) ?? false;
+  const receiveHasLoss = receiving ? receiving.rows.some((r) => num(r.damaged) + num(r.short) > 0) : false;
   const receiveEmpty = receiving ? receiving.rows.every((r) => num(r.received) + num(r.damaged) + num(r.short) === 0) : true;
 
   const staffOptionsQuery = useStaffOptions();
@@ -566,6 +574,29 @@ export function StockTransfersPage() {
             <label className="text-sm font-medium" htmlFor="receive-notes">{tx('Notes')}</label>
             <Textarea id="receive-notes" value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} placeholder={tx('Delivery note, driver, condition…')} rows={2} />
           </div>
+          {receiveHasLoss && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="text-sm font-medium" htmlFor="receive-loss-reason">{tx('Reason for damaged / short goods')}</label>
+                <Textarea id="receive-loss-reason" value={lossReason} onChange={(e) => setLossReason(e.target.value)} placeholder={tx('Required when the loss is above the approval threshold')} rows={2} maxLength={1000} />
+              </div>
+              <div>
+                <label className="text-sm font-medium">{tx('Loss approved by')}</label>
+                <SearchableSelect
+                  value={lossApproverId}
+                  onValueChange={setLossApproverId}
+                  options={staffOptions}
+                  placeholder={tx('Select staff…')}
+                  searchPlaceholder={tx('Search staff…')}
+                  emptyText={tx('No staff match')}
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium" htmlFor="receive-loss-pin">{tx('Approver PIN')}</label>
+                <Input id="receive-loss-pin" type="password" inputMode="numeric" autoComplete="off" maxLength={128} value={lossApproverPin} onChange={(e) => setLossApproverPin(e.target.value)} />
+              </div>
+            </div>
+          )}
           {receiveTransfer.isError && (
             <p role="alert" className="text-sm text-destructive">{describeApiError(receiveTransfer.error, tx('Failed to receive transfer'))}</p>
           )}
@@ -577,6 +608,11 @@ export function StockTransfersPage() {
                 {
                   id: receiving.id,
                   notes: receiveNotes || undefined,
+                  ...(receiveHasLoss ? {
+                    lossReason: lossReason.trim() || undefined,
+                    approvedById: lossApproverId || undefined,
+                    approverPin: lossApproverPin || undefined,
+                  } : {}),
                   lines: receiving.rows.map((r) => ({ itemId: r.itemId, received: num(r.received), damaged: num(r.damaged), short: num(r.short) })),
                 },
                 { onSuccess: () => setReceiving(null) },

@@ -184,7 +184,8 @@ class InventoryAuditConcurrencyIT extends InventoryAuditSupport {
         String loc = location("CNT-" + UUID.randomUUID().toString().substring(0, 6), "Count store", "warehouse");
         String p = product("RDY-CNT", Map.of("costPrice", 10));
         receive(p, loc, 10, 10, null);
-        JsonNode session = okA(201, "POST", "/inventory/counts/start", Map.of("locationId", loc, "restart", true));
+        JsonNode session = okA(201, "POST", "/inventory/counts/start", Map.of("locationId", loc, "countType", "closing", "restart",
+                true)); // IPR S1: the default type is now cycle (needs a scope)
         String lineId = null;
         for (JsonNode l : session.get("lines")) {
             if (p.equals(l.get("productId").asString())) {

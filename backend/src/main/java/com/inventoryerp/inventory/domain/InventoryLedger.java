@@ -90,6 +90,13 @@ public class InventoryLedger {
     @Column(name = "createdAt", nullable = false)
     private Instant createdAt;
 
+    /**
+     * ADR-S088 (V700): when the goods physically moved; null on rows written before V700 (readers use
+     * {@code COALESCE("effectiveAt", "createdAt")}). Written only by {@code StockService.insertLedger}.
+     */
+    @Column(name = "effectiveAt", insertable = false, updatable = false)
+    private Instant effectiveAt;
+
     /** R1 (V611): the original movement this row returns or reverses (null for an ordinary movement). */
     @Column(name = "reversesLedgerId")
     private String reversesLedgerId;
@@ -278,6 +285,10 @@ public class InventoryLedger {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public Instant getEffectiveAt() {
+        return effectiveAt;
     }
 
     public String getReversesLedgerId() {

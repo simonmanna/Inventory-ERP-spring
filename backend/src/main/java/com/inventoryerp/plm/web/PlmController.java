@@ -5,6 +5,7 @@ import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
 import com.inventoryerp.plm.application.PlmChangeService;
 import com.inventoryerp.plm.application.PlmCommands.ApplyChange;
+import com.inventoryerp.plm.application.PlmCommands.ReworkRelease;
 import com.inventoryerp.plm.application.PlmCommands.Cancel;
 import com.inventoryerp.plm.application.PlmCommands.Comment;
 import com.inventoryerp.plm.application.PlmCommands.ConvertRequest;
@@ -22,6 +23,7 @@ import com.inventoryerp.plm.application.PlmCommands.StageApprovers;
 import com.inventoryerp.plm.application.PlmCommands.Transition;
 import com.inventoryerp.plm.application.PlmCommands.UpdateChange;
 import com.inventoryerp.plm.application.PlmCommands.UpdateItem;
+import com.inventoryerp.plm.application.PlmDispositionService;
 import com.inventoryerp.plm.application.PlmDocumentService;
 import com.inventoryerp.plm.application.PlmLifecycleService;
 import com.inventoryerp.plm.application.PlmModule;
@@ -61,8 +63,11 @@ public class PlmController {
     private final PlmChangeService changes;
     private final PlmDocumentService documents;
 
+    private final PlmDispositionService dispositions;
+
     public PlmController(PlmLifecycleService lifecycle, PlmStageService stages, PlmRequestService requests,
-            PlmChangeService changes, PlmDocumentService documents) {
+            PlmChangeService changes, PlmDocumentService documents, PlmDispositionService dispositions) {
+        this.dispositions = dispositions;
         this.lifecycle = lifecycle;
         this.stages = stages;
         this.requests = requests;
@@ -275,6 +280,18 @@ public class PlmController {
     @RequirePermissions(Permissions.PLM__APPLY)
     public Map<String, Object> apply(@PathVariable String id, @Valid @RequestBody(required = false) ApplyChange dto) {
         return changes.apply(id, dto != null && Boolean.TRUE.equals(dto.force()));
+    }
+
+    /**
+     * IPR X-3 follow-up (new route): stock a rework disposition moved into QC quarantine goes back to the location it
+     * came from — a quality release, so it needs {@code quality:release}.
+     */
+    @PostMapping("/changes/{id}/rework-release")
+    @com.inventoryerp.kernel.idempotency.Idempotent // answers 200, as every Idempotent route
+    @RequirePermissions(Permissions.QUALITY__RELEASE)
+    public Map<String, Object> releaseRework(@PathVariable String id,
+            @Valid @RequestBody(required = false) ReworkRelease dto) {
+        return dispositions.releaseRework(id, dto == null ? null : dto.lines());
     }
 
     @PostMapping("/changes/{id}/cancel")

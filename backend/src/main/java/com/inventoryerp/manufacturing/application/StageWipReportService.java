@@ -41,9 +41,11 @@ public class StageWipReportService {
     public Map<String, Object> report() {
         String org = MfgDb.org();
         String wipAccount = stockPosting.wipAccount();
-        BigDecimal gl = db.jdbc().sql("SELECT coalesce(sum(debit), 0) - coalesce(sum(credit), 0) FROM \"JournalLine\""
-                + " WHERE \"organizationId\" = ? AND \"accountId\" = ?").params(org, wipAccount)
-                .query(BigDecimal.class).single();
+        // IPR WIP-6: base currency, posted / reversed entries only (drafts are not in the ledger).
+        BigDecimal gl = db.jdbc().sql("SELECT coalesce(sum(l.\"baseDebit\"), 0) - coalesce(sum(l.\"baseCredit\"), 0)"
+                + " FROM \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE"
+                + " l.\"organizationId\" = ? AND l.\"accountId\" = ? AND e.status::text IN ('posted', 'reversed')")
+                .params(org, wipAccount).query(BigDecimal.class).single();
 
         List<Map<String, Object>> stageRows = SqlRows.list(db.jdbc().sql("SELECT s.id AS \"stageId\", s.\"orderId\","
                 + " o.\"orderCode\", o.status AS \"orderStatus\", s.sequence, s.name, s.status, s.\"qcStatus\","

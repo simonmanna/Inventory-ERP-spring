@@ -272,6 +272,11 @@ shared fixtures `PlmTestSupport`.
 
 ## Deviations and limitations
 
+- **IPR X-3 follow-up (wave 3, new route, owner sign-off required).** `POST /plm/changes/:id/rework-release`
+  (`quality:release`, optional `lines: [{productId, quantity}]`) moves stock a rework disposition put in QC quarantine
+  back to the location it came from (reference `plm_rework_release` / the change), at most what the change's transfers
+  brought in less earlier releases and what is still in quarantine; 400 `Nothing of <number> is held in QC quarantine
+  for rework` when nothing is left. Lock order: ECO row (L1), then the engine per move.
 - No Nest counterpart; nothing here changes a Nest-ported contract. ECO responses gain fields only.
 - Rebase cannot clear a BOM header field that was set to empty upstream (BOM updates ignore nulls), and after a
   rebase the ECO's draft keeps its version number, so version numbers may not follow apply order.
