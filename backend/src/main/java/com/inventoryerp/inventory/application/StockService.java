@@ -1879,20 +1879,43 @@ public class StockService {
             String problem = stockPosting.adjustmentPostingProblem(str(r, "productId"), change.negate(),
                     k.openingBalance);
             if (problem != null) {
-                log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
-                        line.get("countCode"), problem);
+                flagLateCorrection(org, r, line, change, problem);
                 continue;
             }
-            jdbc.sql("SAVEPOINT late_count_correction").update();
+            // IPR review 3 (#6): the correction runs under an isolated savepoint. A refusal from anywhere inside it
+            // (the engine, or a proxied @Transactional bean such as the posting service: posting rules, dimensions,
+            // cost centres, periods, the goods-in-transit swap, a cost correction or residue sweep) rolls back to the
+            // savepoint without marking the late movement's transaction rollback-only, and the events the correction
+            // registered (publishOnCommit) are dropped with it. A correction that fails is flagged for review.
             try {
-                adjust(k);
-                jdbc.sql("RELEASE SAVEPOINT late_count_correction").update();
+                com.inventoryerp.kernel.common.Savepoints.runIsolated(jdbc, () -> adjust(k));
             } catch (RuntimeException e) {
-                jdbc.sql("ROLLBACK TO SAVEPOINT late_count_correction").update();
-                log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
-                        line.get("countCode"), e.getMessage());
+                flagLateCorrection(org, r, line, change, e.getMessage() == null ? e.getClass().getSimpleName()
+                        : e.getMessage());
             }
         }
+    }
+
+    /**
+     * IPR review 3 (#6): a late count correction the engine could not post is never dropped silently: it stays on the
+     * count's late-transactions list ({@code uncorrected}) and an open {@code InventoryException} of kind
+     * {@code late_count_correction_failed} names the late row, the count line and the reason, for a person to resolve.
+     */
+    private void flagLateCorrection(String org, Map<String, Object> r, Map<String, Object> line, BigDecimal change,
+            String reason) {
+        log.warn("[stock] late count correction of {} against count {} not posted: {}", r.get("ledgerCode"),
+                line.get("countCode"), reason);
+        jdbc.sql("INSERT INTO \"InventoryException\" (id, \"organizationId\", \"locationId\", \"productId\", description,"
+                        + " quantity, kind, reason, payload, status, \"createdAt\") VALUES (?, ?, ?, ?, ?, ?,"
+                        + " 'late_count_correction_failed', ?, ?::jsonb, 'open', " + NOW + ")")
+                .params(UUID.randomUUID().toString(), org, r.get("locationId"), r.get("productId"),
+                        "Late count correction not posted: review count " + line.get("countCode"), change.negate(),
+                        "Late " + r.get("ledgerCode") + " was before count " + line.get("countCode") + "; its count"
+                                + " correction could not be posted: " + reason,
+                        com.inventoryerp.shared.web.EntityJson.toJson(Obj.of("lateLedgerId", r.get("id"), "ledgerCode",
+                                r.get("ledgerCode"), "countLineId", line.get("id"), "countSessionId",
+                                line.get("sessionId"), "countCode", line.get("countCode"))))
+                .update();
     }
 
     /**
