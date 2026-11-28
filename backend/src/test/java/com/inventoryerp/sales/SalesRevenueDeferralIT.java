@@ -7,14 +7,24 @@ import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.sales.application.SalesBillingService;
+import com.inventoryerp.sales.application.SalesFulfilmentService;
 import com.inventoryerp.sales.application.SalesRevenueDeferralService;
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -42,6 +52,15 @@ class SalesRevenueDeferralIT extends ApiTestSupport {
 
     @Autowired
     SalesRevenueDeferralService deferrals;
+
+    @Autowired
+    SalesBillingService billing;
+
+    @Autowired
+    SalesFulfilmentService fulfilment;
+
+    @Autowired
+    DataSource dataSource;
 
     final String sfx = UUID.randomUUID().toString().substring(0, 8);
     SalesLedgerAssertions ledger;
@@ -460,6 +479,70 @@ class SalesRevenueDeferralIT extends ApiTestSupport {
         assertThat(liability(c)).isEqualByComparingTo("0");
         assertThat(revenue(c)).isEqualByComparingTo("-1480000");
         ledger.trialBalanceZero();
+    }
+
+    @Test
+    @DisplayName("LO-1 the event reactions that recompute a sale (invoiced quantities, fulfilment rebuild) take the sale"
+            + " before its lines, the order every sales command locks them in, so they cannot deadlock against one")
+    void reactionsLockTheSaleBeforeItsLines() throws Exception {
+        String c = customer();
+        String so = order(c, goods, 10);
+        invoice(so);
+        // invoice posted or cancelled, payment allocated, credit note issued
+        assertWaitsForTheSale(so, () -> billing.recomputeInvoiced(so));
+
+        issue(trip(so, 4));
+        // a fleet event whose rebuild changes the projections, so it refreshes the sale's status too
+        jdbc.sql("UPDATE \"SalesOrderLine\" SET \"qtyDispatched\" = 0, \"qtyDelivered\" = 0 WHERE \"orderId\" = ?")
+                .param(so).update();
+        assertWaitsForTheSale(so, () -> fulfilment.rebuild(so));
+        assertThat(sale(so).get("lines").get(0).get("qtyDelivered").asDouble()).as("the rebuild ran once released")
+                .isEqualTo(4);
+    }
+
+    /**
+     * Holds the sale's row on its own connection, as a command does ({@code orders.lock}), runs {@code reaction} the way
+     * an event subscriber does, and waits until the reaction is blocked by that lock. It must not hold any line of the
+     * sale by then: a reaction holding the lines and waiting for the sale deadlocks with a command that holds the sale
+     * and then needs the lines (a row lock, or the key-share lock of a child row such as a return line or invoice link).
+     */
+    void assertWaitsForTheSale(String so, Runnable reaction) throws Exception {
+        ExecutorService pool = Executors.newSingleThreadExecutor();
+        try (Connection command = dataSource.getConnection()) {
+            command.setAutoCommit(false);
+            int pid;
+            try (PreparedStatement st = command.prepareStatement("SELECT pg_backend_pid()");
+                    ResultSet r = st.executeQuery()) {
+                r.next();
+                pid = r.getInt(1);
+            }
+            try (PreparedStatement st = command.prepareStatement("SELECT id FROM \"SalesOrder\" WHERE id = ? FOR UPDATE")) {
+                st.setString(1, so);
+                st.executeQuery().close();
+            }
+            Future<?> background = pool.submit(() -> TenantContext.run(TenantContext.TenantStore.organization(demoOrg),
+                    reaction));
+            try {
+                long deadline = System.currentTimeMillis() + 15_000;
+                while (jdbc.sql("SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))").param(pid)
+                        .query(Long.class).single() == 0) {
+                    assertThat(background.isDone()).as("the reaction must wait for the sale the command holds").isFalse();
+                    assertThat(System.currentTimeMillis()).as("the reaction never waited for the sale").isLessThan(deadline);
+                    Thread.sleep(50);
+                }
+                // fails with "could not obtain lock on row" when the reaction took the lines first
+                try (PreparedStatement st = command.prepareStatement("SELECT id FROM \"SalesOrderLine\" WHERE"
+                        + " \"orderId\" = ? FOR UPDATE NOWAIT")) {
+                    st.setString(1, so);
+                    st.executeQuery().close();
+                }
+            } finally {
+                command.rollback();
+            }
+            background.get(30, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

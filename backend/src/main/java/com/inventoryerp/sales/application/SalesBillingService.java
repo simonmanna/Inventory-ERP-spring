@@ -816,6 +816,10 @@ public class SalesBillingService {
      */
     @Transactional
     public void recomputeInvoiced(String orderId) {
+        // Lock order: the sale before its lines, as every sales command takes them (orders.lock, then the lines). This
+        // also runs as an event reaction (invoice posted or cancelled, payment allocated, credit note issued); taking the
+        // lines first deadlocked against a command that held the sale and was writing rows that reference its lines.
+        db.row("SELECT id FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE", orderId, org());
         db.update("""
                 UPDATE "SalesOrderLine" l SET "qtyInvoiced" = COALESCE((SELECT sum(k.quantity) FROM "SalesInvoiceLink" k
                        JOIN "Document" d ON d.id = k."documentId" WHERE k."orderLineId" = l.id AND k.kind = 'regular'

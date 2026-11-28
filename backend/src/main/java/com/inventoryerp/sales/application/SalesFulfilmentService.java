@@ -73,8 +73,10 @@ public class SalesFulfilmentService {
      */
     @Transactional
     public List<Map<String, Object>> rebuild(String orderId) {
-        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ?", orderId,
-                org());
+        // The sale before its lines, the order every sales command locks them in: a rebuild also runs as a fleet event
+        // reaction, and its status refresh needs the sale anyway.
+        Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                orderId, org());
         if (o == null) {
             throw ApiException.notFound("Sales order not found");
         }

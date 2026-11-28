@@ -377,6 +377,18 @@ AD-2 decides. **Nothing is built before AD-2.**
   - **catch-up**: quantity credits (`recomputeInvoiced`), a fulfilment rebuild that changed a line, and the nightly
     `SalesReconcileJob` step. The nightly step re-syncs confirmed sales with posted invoices and any sale still
     holding deferred revenue, one transaction per sale.
+- **Lock order: the sale row, then its lines.** Commands take the sale with `orders.lock` and then its lines. The event
+  reactions that recompute a sale take the same order:
+  - `recomputeInvoiced`, on invoice posted or cancelled, payment allocated and credit note issued;
+  - the fulfilment rebuild.
+
+  Before this fix they took the lines first (their update, then the deferral `resync`) and the sale last, in the
+  status refresh. That deadlocked against a command that held the sale and was writing rows that reference its lines,
+  such as a return line or an invoice link (PostgreSQL `deadlock detected`, HTTP 409; found in the C3 regression run).
+  Fleet's dispatch, POD and return transactions lock only the lines through `deliveryChanged`, never the sale, so the
+  trip → sale order of the delivery commands is unchanged. Test LO-1 holds the sale on a separate connection and shows
+  that each reaction waits for it before it touches a line. Without the fix, the test fails with "could not obtain lock
+  on row".
 - **Credit undelivered.** New route `POST /sales/orders/{id}/lines/{lineId}/credit-undelivered`:
   - needs `sales:order:close_short` **and** `sales:credit_note:write`; Idempotency-Key and reason required.
   - For each posted invoice of the line, newest first, it posts a quantity credit note against that invoice. The credit
