@@ -636,6 +636,16 @@ public class SalesReturnService {
      */
     @Transactional
     public Map<String, Object> close(String id, Map<String, Object> in) {
+        return close(id, in, null);
+    }
+
+    /**
+     * ADR-S094 C3b: close with a credit note prepared ahead of the return (the cash reversal, whose credit note may wait
+     * for approval before the return exists). The draft must be this customer's credit note against the same invoice,
+     * for exactly the lines this return credits; it is posted instead of a new one.
+     */
+    @Transactional
+    public Map<String, Object> close(String id, Map<String, Object> in, String preparedCreditNoteId) {
         Map<String, Object> r = lock(id, null);
         boolean physical = Boolean.TRUE.equals(r.get("physicalReturn"));
         if (physical ? !"inspected".equals(r.get("status")) : !"approved".equals(r.get("status"))) {
@@ -672,11 +682,7 @@ public class SalesReturnService {
             BigDecimal net = dec(l.get("qtyInvoiced")).subtract(dec(l.get("qtyCredited")));
             BigDecimal credit = qty.min(net).max(BigDecimal.ZERO);
             if (credit.signum() > 0) {
-                cnLines.add(new LineInput(str(l.get("productId")), null, null, null, str(settings.settings().get(
-                        "salesReturnsAccountId")), "Return " + r.get("number")
-                        + ": " + l.get("description"), credit, dec(l.get("unitPrice")), dec(l.get("discountPercent")), null,
-                        null, null, "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
-                        str(l.get("uomId"))));
+                cnLines.add(creditLine(l, credit, "Return " + r.get("number")));
                 cnLinks.add(Obj.of("lineId", l.get("lineId"), "qty", credit));
                 if (invoiceId == null) {
                     Map<String, Object> inv = db.row("SELECT k.\"documentId\" FROM \"SalesInvoiceLink\" k JOIN \"Document\" d"
@@ -694,11 +700,18 @@ public class SalesReturnService {
         String creditNoteId = null;
         String refundId = null;
         String replacementId = null;
+        if (preparedCreditNoteId != null) {
+            requirePrepared(preparedCreditNoteId, str(r.get("partnerId")), invoiceId, cnLines);
+        }
         if (!cnLines.isEmpty()) {
-            Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(r.get("partnerId")), LocalDate.now(BusinessZone.get())
-                    .toString(), null, str(r.get("number")), "Return " + r.get("number") + " of sales order " + o.get(
-                            "number"), invoiceId, cnLines));
-            creditNoteId = str(cn.get("id"));
+            if (preparedCreditNoteId != null) {
+                creditNoteId = preparedCreditNoteId;
+            } else {
+                Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(r.get("partnerId")), LocalDate.now(
+                        BusinessZone.get()).toString(), null, str(r.get("number")), "Return " + r.get("number")
+                                + " of sales order " + o.get("number"), invoiceId, cnLines));
+                creditNoteId = str(cn.get("id"));
+            }
             creditNotes.post(creditNoteId, "none");
             creditFlow.markType(creditNoteId, "return");
             for (Map<String, Object> k : cnLinks) {
@@ -769,6 +782,45 @@ public class SalesReturnService {
         out.put("creditAmount", creditNoteId == null ? 0 : JsNumbers.js(dec(creditNotes.findOne(creditNoteId).get(
                 "totalAmount"))));
         return out;
+    }
+
+    /**
+     * The credit-note line for {@code qty} of an order line: at the line's price, discount and tax, on the sales returns
+     * account (the return close and the cash reversal credit alike).
+     */
+    LineInput creditLine(Map<String, Object> orderLine, BigDecimal qty, String label) {
+        return new LineInput(str(orderLine.get("productId")), null, null, null, str(settings.settings().get(
+                "salesReturnsAccountId")), label + ": " + orderLine.get("description"), qty, dec(orderLine.get(
+                        "unitPrice")), dec(orderLine.get("discountPercent")), null, null, null, "manual", str(orderLine.get(
+                                "taxId")), null, Boolean.TRUE.equals(orderLine.get("taxInclusive")), str(orderLine.get(
+                                        "uomId")));
+    }
+
+    /** ADR-S094 C3b: the prepared credit note is still a draft of this customer against this invoice, line for line. */
+    private void requirePrepared(String creditNoteId, String partnerId, String invoiceId, List<LineInput> lines) {
+        Map<String, Object> d = db.row("SELECT \"partnerId\", \"reversedDocumentId\", status::text AS status,"
+                + " \"documentType\"::text AS type FROM \"Document\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
+                creditNoteId, org());
+        List<String> have = db.rows("SELECT \"productId\", quantity, \"unitPrice\", \"discountPercent\" FROM"
+                + " \"DocumentLine\" WHERE \"documentId\" = ? AND \"organizationId\" = ?", creditNoteId, org()).stream()
+                .map(x -> lineKey(str(x.get("productId")), dec(x.get("quantity")), dec(x.get("unitPrice")),
+                        dec(x.get("discountPercent")))).sorted().toList();
+        List<String> want = lines.stream().map(x -> lineKey(x.productId(), x.quantity(), x.unitPrice(),
+                x.discountPercent())).sorted().toList();
+        if (d == null || !"credit_note".equals(d.get("type")) || !"draft".equals(d.get("status"))
+                || !java.util.Objects.equals(partnerId, str(d.get("partnerId")))
+                || !java.util.Objects.equals(invoiceId, str(d.get("reversedDocumentId"))) || !have.equals(want)) {
+            throw ApiException.conflict("The credit note prepared for this sale no longer matches what comes back;"
+                    + " delete the draft credit note and start again");
+        }
+    }
+
+    private static String lineKey(String productId, BigDecimal qty, BigDecimal unitPrice, BigDecimal discount) {
+        return productId + "|" + strip(qty) + "|" + strip(unitPrice) + "|" + strip(discount);
+    }
+
+    private static String strip(BigDecimal v) {
+        return v == null ? "0" : v.stripTrailingZeros().toPlainString();
     }
 
     @Transactional

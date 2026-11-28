@@ -2,32 +2,24 @@ package com.inventoryerp.sales;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.inventoryerp.ApiTestSupport;
-import com.inventoryerp.accounting.application.AccountResolverService;
-import com.inventoryerp.inventory.application.StockMove;
-import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.kernel.security.Permissions;
-import com.inventoryerp.kernel.tenancy.TenantContext;
+import com.inventoryerp.sales.application.SalesBillingService;
+import com.inventoryerp.sales.application.SalesFulfilmentService;
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.ThreadLocalRandom;
-import org.flywaydb.core.Flyway;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
+import java.util.concurrent.ConcurrentHashMap;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.ConfigurableTransactionManager;
+import org.springframework.transaction.TransactionExecution;
+import org.springframework.transaction.TransactionExecutionListener;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -35,276 +27,10 @@ import tools.jackson.databind.JsonNode;
  * profile; tender lines captured and verified; one confirm transaction (F1) that hands the goods over at the counter,
  * posts the invoice, one receipt per tender and the stock issue, and queues the fiscal document. Exact journals per
  * customer (no 1215 / 2216 / deposit movement, AD-6), payment rules (PM), handover (PH), atomicity (FI, TP-1),
+ * propagation (TP-3: no other transaction inside the confirm; TP-4: events lost after the commit change nothing),
  * concurrency (CC) and authorization.
  */
-class SalesCashSaleIT extends ApiTestSupport {
-
-    @Autowired
-    StockService stock;
-
-    @Autowired
-    AccountResolverService accounts;
-
-    @Autowired
-    Flyway flyway;
-
-    final String sfx = UUID.randomUUID().toString().substring(0, 8);
-    SalesLedgerAssertions ledger;
-    String adminId;
-    String income;
-    String category;
-    String cashAccount;
-    String mtnAccount;
-    String bankAccount;
-    String cardAccount;
-    String walkIn;
-    String branch;
-    String location;
-    String profile;
-    String segBranch;
-    String segLocation;
-    String goods;
-    String vat;
-    String vatAccount;
-
-    @BeforeAll
-    void fixtures() {
-        ledger = new SalesLedgerAssertions(jdbc, demoOrg);
-        adminId = jdbc.sql("SELECT id FROM \"User\" WHERE \"organizationId\" = ? AND email = 'admin@demo.test'")
-                .param(demoOrg).query(String.class).single();
-        // A category with its own income account, so revenue per customer is exact.
-        String revenueCategory = jdbc.sql("SELECT \"categoryId\" FROM \"Account\" WHERE id = ?")
-                .param(ledger.mapped("sales_revenue")).query(String.class).single();
-        income = ok(201, "POST", "/accounts", Map.of("code", "4" + rnd(), "name", "Counter sales " + sfx, "categoryId",
-                revenueCategory)).get("id").asString();
-        category = ok(201, "POST", "/product-categories", Map.of("name", "Counter " + sfx, "incomeAccountId", income))
-                .get("id").asString();
-        inTenant(() -> {
-            cashAccount = accounts.ensureByCode("10" + rnd(), "Counter cash " + sfx, "cash", null);
-            mtnAccount = accounts.ensureByCode("10" + rnd(), "Counter MTN " + sfx, "mobile_money", null);
-            bankAccount = accounts.ensureByCode("10" + rnd(), "Counter bank " + sfx, "bank", null);
-            cardAccount = accounts.ensureByCode("10" + rnd(), "Counter card clearing " + sfx, "bank", null);
-        });
-        walkIn = partner("Walk-in " + sfx, null);
-        branch = branch("Counter " + sfx);
-        location = location("Counter floor " + sfx, branch);
-        segBranch = branch("Segregated counter " + sfx);
-        segLocation = location("Segregated floor " + sfx, segBranch);
-        goods = product("Cement " + sfx, "warn");
-        receive(goods, location, 100_000);
-        receive(goods, segLocation, 10_000);
-        profile = profile(branch, location, false);
-        profile(segBranch, segLocation, true);
-    }
-
-    @BeforeEach
-    void freshVat() {
-        String[] id = new String[1];
-        inTenant(() -> id[0] = accounts.ensureByCode("229" + rnd(), "Output VAT CS " + sfx, "current_liability", null));
-        vatAccount = id[0];
-        vat = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Tax\" (id, \"organizationId\", name, code, rate, \"accountId\", \"updatedAt\") VALUES"
-                + " (?, ?, ?, ?, 18, ?, now())").params(vat, demoOrg, "VAT 18 CS " + UUID.randomUUID().toString()
-                        .substring(0, 8), "CS" + UUID.randomUUID().toString().substring(0, 6), vatAccount).update();
-    }
-
-    // ------------------------------------------------------------------ fixtures
-
-    static String rnd() {
-        return String.valueOf(ThreadLocalRandom.current().nextInt(100_000, 1_000_000));
-    }
-
-    void inTenant(Runnable r) {
-        TenantContext.run(TenantContext.TenantStore.user(demoOrg, adminId), () -> new TransactionTemplate(txm)
-                .executeWithoutResult(s -> r.run()));
-    }
-
-    String branch(String name) {
-        String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Branch\" (id, \"organizationId\", code, name, \"updatedAt\") VALUES (?, ?, ?, ?, now())")
-                .params(id, demoOrg, "B-" + UUID.randomUUID().toString().substring(0, 8), name).update();
-        return id;
-    }
-
-    String location(String name, String branchId) {
-        String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"InventoryLocation\" (id, \"organizationId\", code, name, type, \"branchId\", \"updatedAt\")"
-                + " VALUES (?, ?, ?, ?, 'store', ?, now())").params(id, demoOrg, "L-" + UUID.randomUUID().toString()
-                        .substring(0, 8), name, branchId).update();
-        return id;
-    }
-
-    String partner(String name, String tin) {
-        String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Partner\" (id, \"organizationId\", code, name, \"isCustomer\", \"taxNumber\", phone,"
-                + " \"updatedAt\") VALUES (?, ?, ?, ?, true, ?, '0772000111', now())").params(id, demoOrg, "CSC-"
-                        + UUID.randomUUID().toString().substring(0, 8), name, tin).update();
-        return id;
-    }
-
-    String customer() {
-        return partner("Counter customer " + UUID.randomUUID().toString().substring(0, 6), null);
-    }
-
-    String product(String name, String stockPolicy) {
-        String id = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Product\" (id, \"organizationId\", code, name, \"productType\", \"salesPrice\","
-                + " \"costPrice\", \"trackInventory\", \"categoryId\", \"stockPolicy\", \"updatedAt\") VALUES (?, ?, ?, ?,"
-                + " 'stockable', 100, 60, true, ?, ?::\"PosStockPolicy\", now())").params(id, demoOrg, "CSP-"
-                        + UUID.randomUUID().toString().substring(0, 8), name, category, stockPolicy).update();
-        return id;
-    }
-
-    void receive(String product, String loc, int qty) {
-        inTenant(() -> stock.receive(StockMove.of(product, loc, new BigDecimal(qty)).unitCost(new BigDecimal("60"))));
-    }
-
-    String profile(String b, String loc, boolean segregation) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("branchId", b);
-        body.put("locationId", loc);
-        body.put("cashAccountId", cashAccount);
-        body.put("momoMtnAccountId", mtnAccount);
-        body.put("bankClearingAccountId", bankAccount);
-        body.put("walkInPartnerId", walkIn);
-        body.put("numberPrefix", (segregation ? "S" : "C") + sfx.substring(0, 4).toUpperCase().replaceAll("[^A-Z0-9]",
-                "X"));
-        body.put("requireSegregation", segregation);
-        return ok(201, "POST", "/sales/branch-profiles", body).get("id").asString();
-    }
-
-    /** A user holding only {@code permissions}, working at {@code branchId} (null: none); returns the token. */
-    String user(String name, String branchId, String... permissions) {
-        String role = UUID.randomUUID().toString();
-        jdbc.sql("INSERT INTO \"Role\" (id, \"organizationId\", name, \"isSystem\", permissions, \"updatedAt\")"
-                + " VALUES (?, ?, ?, false, ?, now())").params(role, demoOrg, name + " " + sfx, permissions).update();
-        String email = name + "-" + sfx + "@demo.test";
-        String id = createUser(demoOrg, email, "Counter@12345", role);
-        if (branchId != null) {
-            jdbc.sql("UPDATE \"User\" SET \"defaultBranchId\" = ? WHERE id = ?").params(branchId, id).update();
-        }
-        return login("DEMO", email, "Counter@12345");
-    }
-
-    Map<String, String> key(String token) {
-        Map<String, String> h = new LinkedHashMap<>();
-        h.put("Authorization", "Bearer " + token);
-        h.put("Idempotency-Key", UUID.randomUUID().toString());
-        return h;
-    }
-
-    Map<String, Object> saleBody(String b, String customer, String product, int qty) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("saleType", "cash");
-        body.put("branchId", b);
-        if (customer != null) {
-            body.put("partnerId", customer);
-        }
-        body.put("lines", List.of(Map.of("productId", product, "quantity", qty, "unitPrice", 100, "taxId", vat)));
-        return body;
-    }
-
-    /** A draft cash sale of {@code qty} × goods at 100 + VAT 18 %. */
-    String draft(String b, String customer, int qty) {
-        return ok(201, "POST", "/sales/orders", saleBody(b, customer, goods, qty)).get("id").asString();
-    }
-
-    JsonNode sale(String id) {
-        return ok(200, "GET", "/sales/orders/" + id, null);
-    }
-
-    List<String> tenderIds(String id) {
-        return jdbc.sql("SELECT id FROM \"SalesOrderPayment\" WHERE \"orderId\" = ?").param(id).query(String.class).list();
-    }
-
-    /** Capture a tender as {@code token}; returns the new tender line's id. */
-    String pay(String token, String id, Map<String, Object> body) {
-        List<String> before = tenderIds(id);
-        Res r = call("POST", "/sales/orders/" + id + "/payments", body, token);
-        assertThat(r.status()).as("payment → " + r.raw().body()).isLessThan(300);
-        List<String> after = new ArrayList<>(tenderIds(id));
-        after.removeAll(before);
-        assertThat(after).hasSize(1);
-        return after.getFirst();
-    }
-
-    String pay(String id, Map<String, Object> body) {
-        return pay(adminToken, id, body);
-    }
-
-    Res payAttempt(String id, Map<String, Object> body) {
-        return as("POST", "/sales/orders/" + id + "/payments", body);
-    }
-
-    static Map<String, Object> handover() {
-        return Map.of("handover", Map.of("affirmed", true, "receivedByName", "Okello John", "receivedByPhone",
-                "0772123456", "notes", "Loaded at the counter"));
-    }
-
-    Res confirm(String token, String id, Object body) {
-        return call("POST", "/sales/orders/" + id + "/confirm", body, key(token));
-    }
-
-    JsonNode confirmed(String id) {
-        Res r = confirm(adminToken, id, handover());
-        assertThat(r.status()).as("confirm → " + r.raw().body()).isEqualTo(200);
-        return r.body();
-    }
-
-    /** A draft of {@code qty} paid in full in cash, ready to confirm. */
-    String paidDraft(String customer, int qty) {
-        String id = draft(branch, customer, qty);
-        pay(id, Map.of("method", "cash", "amount", sale(id).get("total").decimalValue()));
-        return id;
-    }
-
-    static String message(Res r) {
-        JsonNode m = r.body() == null ? null : r.body().get("message");
-        return m == null ? null : m.isArray() ? m.get(0).asString() : m.asString();
-    }
-
-    long count(String sql, Object... params) {
-        return jdbc.sql(sql).params(params).query(Long.class).single();
-    }
-
-    BigDecimal onHand() {
-        return (BigDecimal) ledger.stock(goods, location).get("qty");
-    }
-
-    /** Posted balance (debit − credit) of an account, for one customer when {@code partner} is given. */
-    BigDecimal balance(String account, String partner) {
-        return jdbc.sql("SELECT COALESCE(SUM(l.\"baseDebit\" - l.\"baseCredit\"), 0) FROM \"JournalLine\" l JOIN"
-                + " \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE e.\"organizationId\" = ? AND e.status::text IN"
-                + " ('posted', 'reversed') AND l.\"accountId\" = ? AND (?::text IS NULL OR l.\"partnerId\" = ?)")
-                .params(demoOrg, account, partner, partner).query(BigDecimal.class).single();
-    }
-
-    /** Net (debit − credit) per account of one journal entry. */
-    Map<String, BigDecimal> net(String entryId) {
-        Map<String, BigDecimal> out = new LinkedHashMap<>();
-        jdbc.sql("SELECT \"accountId\", SUM(debit - credit) AS n FROM \"JournalLine\" WHERE \"journalEntryId\" = ? GROUP BY"
-                + " \"accountId\" HAVING SUM(debit - credit) <> 0").param(entryId).query((rs, i) -> out.put(rs.getString(1),
-                        rs.getBigDecimal(2))).list();
-        return out;
-    }
-
-    String invoiceOf(String id) {
-        List<String> ids = jdbc.sql("SELECT id FROM \"Document\" WHERE \"organizationId\" = ? AND \"sourceId\" = ? AND"
-                + " \"documentType\"::text = 'sales_invoice'").params(demoOrg, id).query(String.class).list();
-        assertThat(ids).as("invoices of sale %s", id).hasSize(1);
-        return ids.getFirst();
-    }
-
-    List<String> loadsOf(String id) {
-        return jdbc.sql("SELECT l.id FROM \"FleetLoad\" l JOIN \"FleetDeliveryOrder\" d ON d.id = l.\"deliveryOrderId\""
-                + " WHERE d.\"organizationId\" = ? AND d.\"sourceType\" = 'sales_order' AND d.\"sourceId\" = ?")
-                .params(demoOrg, id).query(String.class).list();
-    }
-
-    long invoiceCounter() {
-        return count("SELECT COALESCE(SUM(last), 0) FROM \"GaplessCounter\" WHERE \"organizationId\" = ? AND key LIKE"
-                + " 'invoice:%'", demoOrg);
-    }
+class SalesCashSaleIT extends CashSaleTestBase {
 
     // ------------------------------------------------------------------ F1
 
@@ -677,36 +403,6 @@ class SalesCashSaleIT extends ApiTestSupport {
 
     // ------------------------------------------------------------------ atomicity (FI)
 
-    void owner(String... sql) throws Exception {
-        try (Connection c = flyway.getConfiguration().getDataSource().getConnection(); Statement st = c.createStatement()) {
-            c.setAutoCommit(true);
-            for (String s : sql) {
-                st.execute(s);
-            }
-        }
-    }
-
-    /** Raise inside the confirm when a row matching {@code condition} is inserted into {@code table}. */
-    void inject(String table, String condition) throws Exception {
-        // a sequence is not transactional: it proves the fault fired although its transaction rolled back
-        owner("CREATE SEQUENCE IF NOT EXISTS public.it_cash_sale_fault_hits",
-                "GRANT USAGE, SELECT ON SEQUENCE public.it_cash_sale_fault_hits TO PUBLIC",
-                "CREATE OR REPLACE FUNCTION public.it_cash_sale_fault() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN IF "
-                + condition + " THEN PERFORM nextval('public.it_cash_sale_fault_hits'); RAISE EXCEPTION"
-                + " 'injected fault on %', TG_TABLE_NAME; END IF; RETURN NEW; END $f$",
-                "CREATE TRIGGER it_cash_sale_fault BEFORE INSERT ON \"" + table + "\" FOR EACH ROW EXECUTE FUNCTION"
-                        + " public.it_cash_sale_fault()");
-    }
-
-    void clearFault(String table) throws Exception {
-        owner("DROP TRIGGER IF EXISTS it_cash_sale_fault ON \"" + table + "\"",
-                "DROP FUNCTION IF EXISTS public.it_cash_sale_fault()");
-    }
-
-    long hits() {
-        return count("SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM public.it_cash_sale_fault_hits");
-    }
-
     @Test
     void anyFailureInTheConfirmRollsEverythingBack() throws Exception {
         String c = customer();
@@ -769,6 +465,127 @@ class SalesCashSaleIT extends ApiTestSupport {
         assertThat(count("SELECT count(*) FROM \"Payment\" WHERE \"partnerId\" = ?", c)).isEqualTo(2);
     }
 
+    // ------------------------------------------------------------------ propagation (TP-3, TP-4)
+
+    /**
+     * TP-3: records the transactions that begin on a thread while a confirm transaction is open on it. Installed once
+     * on the transaction manager and switched on only around the confirm under test.
+     */
+    static final class ConfirmSpy implements TransactionExecutionListener {
+        volatile boolean recording;
+        final Map<Thread, String> open = new ConcurrentHashMap<>();
+        final List<String> confirms = Collections.synchronizedList(new ArrayList<>());
+        final List<String> inside = Collections.synchronizedList(new ArrayList<>());
+
+        static boolean confirm(TransactionExecution tx) {
+            String name = tx.getTransactionName();
+            return name != null && name.endsWith(".confirm");
+        }
+
+        @Override
+        public void afterBegin(TransactionExecution tx, Throwable failure) {
+            if (!recording || failure != null || !tx.isNewTransaction()) {
+                return;
+            }
+            Thread t = Thread.currentThread();
+            if (open.containsKey(t)) {
+                inside.add(tx.getTransactionName() + (tx.isReadOnly() ? " (read-only)" : ""));
+            } else if (confirm(tx)) {
+                open.put(t, tx.getTransactionName());
+                confirms.add(tx.getTransactionName());
+            }
+        }
+
+        @Override
+        public void afterCommit(TransactionExecution tx, Throwable failure) {
+            end(tx);
+        }
+
+        @Override
+        public void afterRollback(TransactionExecution tx, Throwable failure) {
+            end(tx);
+        }
+
+        private void end(TransactionExecution tx) {
+            if (tx.isNewTransaction() && confirm(tx)) {
+                open.remove(Thread.currentThread());
+            }
+        }
+    }
+
+    static final ConfirmSpy SPY = new ConfirmSpy();
+    static boolean spyInstalled;
+
+    @Autowired
+    SalesFulfilmentService fulfilment;
+
+    @Autowired
+    SalesBillingService billing;
+
+    @Test
+    @DisplayName("TP-3: the confirm is the only transaction: nothing begins on its thread while it runs")
+    void theConfirmIsTheOnlyTransaction() {
+        synchronized (ConfirmSpy.class) {
+            if (!spyInstalled) {
+                ((ConfigurableTransactionManager) txm).addListener(SPY);
+                spyInstalled = true;
+            }
+        }
+        String id = draft(branch, customer(), 4);
+        pay(id, Map.of("method", "cash", "amount", 300));
+        pay(id, Map.of("method", "mobile_money", "provider", "mtn", "amount", 172, "reference", "TP" + UUID.randomUUID()
+                .toString().substring(0, 8)));
+        SPY.confirms.clear();
+        SPY.inside.clear();
+        SPY.recording = true;
+        try {
+            confirmed(id);
+        } finally {
+            SPY.recording = false;
+        }
+        assertThat(SPY.confirms).as("confirm transactions").containsExactly(
+                "com.inventoryerp.sales.application.SalesOrderService.confirm");
+        assertThat(SPY.inside).as("transactions begun inside the confirm").isEmpty();
+    }
+
+    @Test
+    @DisplayName("TP-4 / RC-6: events lost after the commit leave the sale complete; reconciliation finds no drift")
+    void lostEventsLeaveTheSaleComplete() throws Exception {
+        String c = customer();
+        String id = paidDraft(c, 2);
+        inject("EventOutbox", "(to_jsonb(NEW)->>'payload') LIKE '%" + id + "%'");
+        long fired = hits();
+        try {
+            Res r = confirm(adminToken, id, handover());
+            assertThat(r.status()).as(r.raw().body()).isEqualTo(200);
+            // the outbox rows are written after the commit, off the request thread
+            long until = System.currentTimeMillis() + 10_000;
+            while (hits() == fired && System.currentTimeMillis() < until) {
+                Thread.sleep(50);
+            }
+            assertThat(hits()).as("an outbox write of the confirm failed").isGreaterThan(fired);
+        } finally {
+            clearFault("EventOutbox");
+        }
+        assertThat(count("SELECT count(*) FROM \"EventOutbox\" WHERE payload::text LIKE ?", "%" + id + "%")).isZero();
+        // the sale's state was computed inside its transaction, not by the lost event reactions
+        JsonNode s = sale(id);
+        assertThat(s.get("status").asString()).isEqualTo("done");
+        assertThat(s.get("deliveryStatus").asString()).isEqualTo("full");
+        assertThat(s.get("invoiceStatus").asString()).isEqualTo("invoiced");
+        assertThat(s.get("paymentStatus").asString()).isEqualTo("paid");
+        assertThat(s.get("settlementStatus").asString()).isEqualTo("settled");
+        String inv = invoiceOf(id);
+        assertThat(jdbc.sql("SELECT \"amountResidual\" FROM \"Document\" WHERE id = ?").param(inv).query(BigDecimal.class)
+                .single()).isEqualByComparingTo("0");
+        // nothing for the reconciliation to repair
+        assertThat(tenantTx(() -> fulfilment.rebuild(id))).as("fulfilment drift").isEmpty();
+        Map<String, Object> f = tenantTx(billing::financialReconcile);
+        assertThat(((List<?>) f.get("findings")).stream().filter(x -> x instanceof Map<?, ?> m && id.equals(m.get(
+                "orderId"))).toList()).as("financial findings").isEmpty();
+        assertThat(sale(id).get("status").asString()).isEqualTo("done");
+    }
+
     // ------------------------------------------------------------------ concurrency (CC)
 
     @Test
@@ -803,28 +620,6 @@ class SalesCashSaleIT extends ApiTestSupport {
         List<Long> sorted = numbers.stream().sorted().toList();
         assertThat(sorted.getLast() - sorted.getFirst()).as("invoice numbers %s", sorted).isEqualTo(5);
         assertThat(sorted).doesNotHaveDuplicates();
-    }
-
-    List<Res> parallel(List<Callable<Res>> calls) throws Exception {
-        ExecutorService pool = Executors.newFixedThreadPool(calls.size());
-        try {
-            CountDownLatch start = new CountDownLatch(1);
-            List<Future<Res>> futures = new ArrayList<>();
-            for (Callable<Res> c : calls) {
-                futures.add(pool.submit(() -> {
-                    start.await();
-                    return c.call();
-                }));
-            }
-            start.countDown();
-            List<Res> out = new ArrayList<>();
-            for (Future<Res> f : futures) {
-                out.add(f.get());
-            }
-            return out;
-        } finally {
-            pool.shutdownNow();
-        }
     }
 
     @Test

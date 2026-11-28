@@ -956,7 +956,8 @@ recommended options)**:
   - Order-type invoices are fiscalised from C4.
   - `SalesOrderEvent` is written for cash sales only.
   - Tender-reference uniqueness does not check the legacy `SalesSubmissionPayment` table.
-  - **C3b** brings the cash Reverse (§7.4), the fiscal gate for a sale's reversal, and TP-3 / TP-4 / RC / FR / RV.
+  - **C3b** (built, V736) brings the cash Reverse, the fiscal gate for a sale's reversal, the fiscal outbox recovery
+    and TP-3 / TP-4 / RC / FR / RV: see §7.4, "As built (C3b)".
   - No web change. Nothing in the web creates a cash-type sale yet; the screens move in C6.
   - AP-8 moved from `SalesApprovalIT` to `SalesCashSaleIT`. A cash sale now needs its branch profile
     (`SalesOrder_cash_profile_check`), so the old SQL-faked one is refused.
@@ -1180,6 +1181,122 @@ needs owner approval (OD-14) and an update of `CONTRACT.md` §6 in C1a.
 4. Partial returns use the same wizard with edited quantities, through the normal return flow (the sale stays `done`).
 5. If nothing was dispatched (once AD-1 allows delivery later): cancel the delivery order + credit note + settlement;
    no stock return.
+
+**As built (C3b, V736; owner instruction 2026-11-28: recommended options for every AD / OD)**:
+- **Route.** `POST /sales/orders/:id/reverse`: `sales:cash_sale:void`, Idempotency-Key required, an outcome route.
+  - Body: `reason` (required); `settlement` = `refund` (default) or `credit`; `locationId` (default: the sale's);
+    `returnReason` (default `other`); `lines`.
+  - `lines`: every goods line of the sale, once and in full, with `orderLineId`, `quantity`, `serialNumbers`,
+    `condition`, `disposition`, `locationId` and `notes`. Lines without goods are credited with the rest.
+  - Returns the sale detail. The detail gains:
+    - the `reverse` action, on a done cash sale that is not reversed, for a holder of `sales:cash_sale:void`;
+    - `reversalStage`: `approval_pending`, `approval_rejected`, `fiscal_cancel_pending`, `reversal_pending` or
+      `reversed`.
+  - Refused with 400:
+    - the sale is not a cash sale, is not done, or is already reversed;
+    - the sale already has returns or credit notes ("take the rest back through a return");
+    - a line is missing or not in full ("return part of a sale through a return").
+- **Step A, approval (TA-10).** It runs only when posting a credit note needs approval, or when a draft was prepared
+  earlier. The check uses the same empty snapshot as `CreditNoteService.post`.
+  - In a retry-safe transaction of its own, the reversal's credit note is prepared as a draft: every invoiced line, at
+    its invoiced price, against the sale's invoice. The sale stores it in `reversalCreditNoteId`.
+  - Then the credit note's approval is asked for. Result: 409 "Credit note <n> for this reversal needs approval
+    (request <id>); reverse the sale again once it is approved".
+  - The approval comes before the fiscal cancel, so a refused reversal never cancels anything at the authority.
+  - The draft and its request are reused until approved. A rejected request is asked for again.
+- **Stamp.** The fiscal cancel cannot be undone. Before it, the sale records `reversalRequestedAt`,
+  `reversalRequestedById` and `reversalReason`, once.
+- **Step B, phase 1 (TA-5).** `CashSaleFiscalService.gateSaleReversal`:
+  - fiscal status none, failed or cancelled: the gate passes;
+  - pending, including an issue whose outcome is unknown (FR-5): 409 "The fiscal document is still being issued; retry
+    once it is issued or failed";
+  - issued or cancellation pending: the cancel is queued in a retry-safe transaction and sent at once.
+    - There is one live cancel per sale. A failed cancel is asked for again under a new reference.
+    - The gate passes only once the document is cancelled. Otherwise 409 "Fiscal cancellation requested; the reversal
+      runs once it succeeds" (or "... is pending; ...").
+- **Step C, phase 2 (T2).** One transaction; the sale is locked first.
+  1. The checks above run again.
+  2. The return: `SalesReturnService` create → approve → receive → inspect. The goods are received on the pickup's
+     delivery (its cost, lot and serials) at the chosen location.
+  3. The return closes with outcome `credit_note` on the prepared draft (`close(id, in, preparedCreditNoteId)`). The
+     close checks that the draft still credits exactly what comes back. If not: 409 "The credit note prepared for
+     this sale no longer matches what comes back; delete the draft credit note and start again".
+  4. The settlement:
+     - `refund`: the credit must equal the posted tenders (409 otherwise). It is paid back per tender, with that
+       tender's amount, method and account (`SalesCreditFlowService.payOut`).
+     - `credit`: `keepCredit`.
+  5. The sale becomes `cancelled`, with `reversedAt`, `reversedById`, `reversalReturnId` and `reversalCreditNoteId`;
+     its version goes up by one.
+  6. The outcome amounts are kept; a refunded sale shows `refunded` (I6).
+  7. Then the timeline line `reverse` (done → cancelled, with return, credit note, settlement and refunds), the
+     audit record, `sales.order.cancelled` with `reversed: true`, and the business outcome.
+  - Any failure rolls T2 back. After a cancelled fiscal document the sale stays done with `reversal_pending`. The retry
+    with the same key runs once.
+- **Idempotency.**
+  - Steps A and B are retry-safe bookkeeping (`RETRY_SAFE_TX`) and never keep the key.
+  - Their 409 is the final answer for that key. Once the approval or the cancel is through, the reversal is asked for
+    again with a new key.
+  - A 5xx in T2 releases the key.
+- **Database (V736).**
+  - `SalesOrder`: the reversal columns.
+  - Check I6: a confirmed cash sale is cancelled only by its reversal.
+  - Check: `reversedAt` set ⇒ a cancelled cash sale with its return.
+  - `FiscalDocument`: the statuses `sent` and `review`, plus `claimedAt`, `submittedAt`, `submissions`, the resolution
+    fields and `alertedAt`.
+- **Fiscal outbox recovery (§5.5).**
+  - Statuses: pending → sent (claimed) → succeeded | failed | unknown | review.
+  - Claim, in its own transaction: records the attempt and, before a direct send, the submission (`submissions`,
+    `submittedAt`).
+  - Send: the provider is called outside any transaction.
+  - Record, in another transaction, only while the claim is still that attempt's (`status = sent AND attempts = n`).
+  - An unknown outcome is looked up first. Unknown means a timeout, a lookup error, or a `sent` claim older than
+    2 minutes (the worker stopped).
+    - Found: succeeded.
+    - Not found: unknown until the provider's settlement time has passed since the last send. Then it is sent again
+      under the same `requestRef`, the send recorded before it happens.
+  - A provider with neither lookup nor deduplication goes to `review`, and nothing is sent again.
+    `POST /sales/orders/:id/fiscal/:fiscalId/resolve` settles it (`sales:cash_sale:review`):
+    - `resolution` `issued` with the `fiscalNumber`, or `not_received`, which sends it again under the same
+      reference;
+    - a `note` is required.
+  - Adapter capabilities on `FiscalDocumentPort`: `local()`, `supportsLookup()`, `dedupes()`, `settlement()`.
+    - Provider `none` is local: it completes inside the caller's transaction, with no network call.
+    - The mock adapter can accept and lose the answer, lose the request, crash after accepting, lack lookup or
+      deduplication, and delay settlement. It counts submissions and documents per reference.
+  - The stuck alert (`cash-sale-fiscal-alerts`, every 10 minutes) fires once per operation older than 30 minutes that
+    is still unknown, in review, or claimed by a stopped worker. It writes the timeline line `fiscal_<op>_stuck` and
+    sends an in-app notification, under a savepoint, to whoever asked.
+  - The job and the retry route run each operation in transactions of their own.
+- **Evidence.**
+  - `SalesCashReversalIT` (7):
+    - a refund over two tenders: exact credit-note journal, stock and value back, the return, one refund per tender,
+      AR zero and tied out, VAT zero, outcome `refunded`, replay, refused twice;
+    - the credit settlement;
+    - approval before the fiscal cancel (draft and request reused; once approved, the reversal posts that credit
+      note), by a cashier holding only `sales:cash_sale:read` + `sales:cash_sale:void`;
+    - RV-1…RV-4: faults at the return, the stock receipt, the credit note's journal, the refund and the final timeline
+      row. Each: full rollback, fiscal cancel kept, `reversal_pending`; the retry with the key runs once;
+    - FR-5 and phase 1 against the mock authority;
+    - the checks, the key, the permission and the action;
+    - CC-6, parallel reversals.
+  - `SalesFiscalRecoveryIT` (5): FR-1/2, FR-3, FR-4 with resolve (issued, not received), RC-5, the stuck alert.
+  - `SalesCashSaleIT` (+2):
+    - TP-3: no transaction begins on the thread inside the confirm;
+    - TP-4 / RC-6: events lost after the commit leave the sale complete, with no drift.
+- **Deviations and limits** (also in `docs/spec/sales.md`):
+  - New routes, not in Nest: `/sales/orders/:id/reverse` and `/sales/orders/:id/fiscal/:fiscalId/resolve`.
+  - The approval is asked for before the fiscal cancel, on a prepared draft credit note. In the design, T2 stopped on
+    the approval, which would have cancelled at the authority first.
+  - Full reversal only, and only while the sale has no returns or credit notes. Partial returns use the return flow.
+  - The refund goes back over the original tenders. The credit must equal what was paid; anything else goes through a
+    return.
+  - No new event: `sales.order.cancelled` carries `reversed: true`. `DomainEvents` is generated from
+    `packages/shared`.
+  - The reversal's fiscal counterpart is the cancel of the sale's fiscal document. The reversal credit note is not
+    fiscalised on its own.
+  - New fiscal statuses `sent` and `review`. The stuck alert runs every 10 minutes, after 30 minutes.
+  - "Fiscal pending" on printed invoices comes with the screens (C6). A lost notification is only logged.
+  - The tests cover goods lines only. Lines without goods are credited with the rest; no test covers them yet.
 
 ---
 

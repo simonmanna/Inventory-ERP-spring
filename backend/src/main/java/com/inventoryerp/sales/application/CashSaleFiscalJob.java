@@ -12,7 +12,9 @@ import org.springframework.stereotype.Component;
 
 /**
  * Branch cash sales background work (ADR-S056): every minute, send open fiscal operations (outbox) to their
- * provider; hourly, raise the overdue alert of rejected sales left unresolved past their branch threshold.
+ * provider (a claim left by a worker that stopped is taken over once it expires, lookup first); every 10 minutes,
+ * alert on fiscal operations that stay unconfirmed; hourly, raise the overdue alert of rejected sales left unresolved
+ * past their branch threshold.
  */
 @Component
 @ConditionalOnProperty(name = "app.jobs.enabled", havingValue = "true", matchIfMissing = true)
@@ -34,12 +36,30 @@ public class CashSaleFiscalJob {
     @SchedulerLock(name = "cash-sale-fiscal-outbox", lockAtMostFor = "PT55S")
     public void fiscalOutbox() {
         List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"FiscalDocument\" WHERE status IN"
-                + " ('pending', 'unknown')").query(String.class).list();
+                + " ('pending', 'sent', 'unknown')").query(String.class).list();
         for (String orgId : orgs) {
             try {
                 TenantContext.run(TenantContext.TenantStore.organization(orgId), fiscal::processAll);
             } catch (RuntimeException e) {
                 log.warn("Fiscal outbox failed for {}: {}", orgId, e.toString());
+            }
+        }
+    }
+
+    /**
+     * ADR-S094 C3b (§5.5): every 10 minutes, alert once on fiscal operations still not confirmed half an hour after
+     * they were asked for (unknown, in review, or left by a worker that stopped).
+     */
+    @Scheduled(cron = "15 */10 * * * *")
+    @SchedulerLock(name = "cash-sale-fiscal-alerts", lockAtMostFor = "PT9M")
+    public void fiscalAlerts() {
+        List<String> orgs = jdbc.sql("SELECT DISTINCT \"organizationId\" FROM \"FiscalDocument\" WHERE status IN"
+                + " ('sent', 'unknown', 'review') AND \"alertedAt\" IS NULL").query(String.class).list();
+        for (String orgId : orgs) {
+            try {
+                TenantContext.run(TenantContext.TenantStore.organization(orgId), fiscal::alertStuck);
+            } catch (RuntimeException e) {
+                log.warn("Fiscal alerts failed for {}: {}", orgId, e.toString());
             }
         }
     }

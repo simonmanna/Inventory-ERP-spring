@@ -260,6 +260,7 @@ public class SalesOrderService {
             o.put("payments", cashSales.tenders(id));
             o.put("balanceDue", JsNumbers.js("draft".equals(o.get("status")) ? dec(o.get("total")).subtract(
                     cashSales.captured(id)).max(BigDecimal.ZERO) : BigDecimal.ZERO));
+            o.put("reversalStage", reversalStage(o));
         }
         o.put("actions", actions(o));
         return o;
@@ -275,6 +276,10 @@ public class SalesOrderService {
             if (o.get("openCredit") instanceof Number n && n.doubleValue() > 0
                     && TenantContext.has(Permissions.SALES__CREDIT_NOTE_WRITE)) {
                 out.add("keep_credit");
+            }
+            if ("cash".equals(o.get("saleType")) && "done".equals(o.get("status")) && o.get("reversedAt") == null
+                    && TenantContext.has(Permissions.SALES__CASH_SALE_VOID)) {
+                out.add("reverse"); // ADR-S094 C3b (§7.4)
             }
             return out;
         }
@@ -305,6 +310,33 @@ public class SalesOrderService {
             out.add("confirm");
         }
         return out;
+    }
+
+    /**
+     * ADR-S094 C3b (§7.4): where a cash sale's reversal stands. {@code reversed}; {@code approval_pending} (its credit
+     * note awaits approval) or {@code approval_rejected}; {@code fiscal_cancel_pending} (the fiscal document is being
+     * cancelled); {@code reversal_pending} (asked for, and nothing left to wait for: ask again to complete it); null
+     * when no reversal was asked for.
+     */
+    private String reversalStage(Map<String, Object> o) {
+        if (o.get("reversedAt") != null) {
+            return "reversed";
+        }
+        if (o.get("reversalRequestedAt") == null) {
+            return null;
+        }
+        if (o.get("reversalCreditNoteId") != null) {
+            Map<String, Object> r = db.row("SELECT status::text AS status FROM \"ApprovalRequest\" WHERE \"organizationId\" ="
+                    + " ? AND \"entityType\" = 'credit_note' AND \"entityId\" = ? ORDER BY \"createdAt\" DESC LIMIT 1", org(),
+                    o.get("reversalCreditNoteId"));
+            if (r != null && "pending".equals(r.get("status"))) {
+                return "approval_pending";
+            }
+            if (r != null && "rejected".equals(r.get("status"))) {
+                return "approval_rejected";
+            }
+        }
+        return "cancellation_pending".equals(o.get("fiscalStatus")) ? "fiscal_cancel_pending" : "reversal_pending";
     }
 
     List<Map<String, Object>> lines(String orderId) {

@@ -70,7 +70,9 @@ public class IdempotencyService {
             "/(pos/(checkout|tabs/[^/]+/settle|orders/[^/]+/settle|split-bills/[^/]+/settle|invoices/[^/]+/(payments|refund)"
                     + "|sales/[^/]+/void|shift/handover)|cash-sessions/(open|close|movement|tender-settlements"
                     + "|[^/]+/(banking|force-close|reconcile))|accounts/cash-flow/(deposit|withdraw)|treasury/transfer"
-                    + "|expenses(/[^/]+/(pay|void))?|payments(/[^/]+/void)?|supplier-payments)$");
+                    + "|expenses(/[^/]+/(pay|void))?|payments(/[^/]+/void)?|supplier-payments"
+                    // ADR-S094 C3b: the cash Sale's reversal records its outcome in its one money transaction (T2)
+                    + "|sales/orders/[^/]+/reverse)$");
 
     /**
      * Sales readiness R2 (P1-3): money routes whose handlers do not save a business outcome themselves. Every write
