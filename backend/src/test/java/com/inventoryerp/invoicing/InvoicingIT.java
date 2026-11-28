@@ -341,7 +341,8 @@ class InvoicingIT extends ApiTestSupport {
         // Document reversals (2026-11-17): +2 (credit-note reverse, customer-deposit application reverse).
         // FX-2 D (ADR-S082): +2 (deposit classification review, classify).
         // Finance audit B2: +1 (opening-balance batch reverse).
-        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(81);
+        // IPR F1: + POST /invoices/{id}/issue-undelivered.
+        assertThat(assertAuthorizationMatrix("com.inventoryerp.invoicing")).isEqualTo(82);
         // ADR-S052: +2 expense return/submit, +6 limits/settings, +18 claims/advances, +7 petty cash,
         // +14 schedules, +8 reports.
         assertThat(assertAuthorizationMatrix("com.inventoryerp.expenses")).isEqualTo(73);

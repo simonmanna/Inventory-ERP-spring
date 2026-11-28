@@ -1,7 +1,9 @@
 package com.inventoryerp.kernel.common;
 
+import java.util.List;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -30,5 +32,101 @@ public final class Savepoints {
             throw e;
         }
         jdbc.sql("RELEASE SAVEPOINT " + name).update();
+    }
+
+    /** State of one {@link #runIsolated} block on this thread. */
+    private static final class Isolation {
+        /** Transactions begun (REQUIRES_NEW) inside the block and not yet completed: their participants are theirs. */
+        int newTransactions;
+        /** Participant failures absorbed (not marked rollback-only) inside the block. */
+        int absorbed;
+    }
+
+    private static final ThreadLocal<Isolation> ISOLATION = new ThreadLocal<>();
+
+    /**
+     * As {@link #run}, but a failure of a proxied {@code @Transactional} bean called inside {@code body} (a participant of
+     * the caller's transaction) does not mark that transaction rollback-only: the savepoint rolls back what the body did
+     * and the caller's transaction stays committable (IPR review 3 #6: a late count correction that cannot post must not
+     * fail the late movement). A participant failure the body swallowed still fails the block (the savepoint rolls back),
+     * so nothing half-done is kept. Requires the {@code TenantAwareTransactionManager} hooks
+     * ({@link #absorbParticipantRollback}). Without a transaction the body just runs.
+     */
+    public static void runIsolated(JdbcClient jdbc, Runnable body) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            body.run();
+            return;
+        }
+        Isolation previous = ISOLATION.get();
+        Isolation mine = new Isolation();
+        ISOLATION.set(mine);
+        List<TransactionSynchronization> before = TransactionSynchronizationManager.isSynchronizationActive()
+                ? TransactionSynchronizationManager.getSynchronizations() : null;
+        try {
+            run(jdbc, () -> {
+                body.run();
+                if (mine.absorbed > 0) {
+                    throw new IllegalStateException("A transactional call failed inside the isolated block and its"
+                            + " failure was swallowed; the block is rolled back");
+                }
+            });
+        } catch (RuntimeException | Error e) {
+            dropSynchronizationsSince(before);
+            throw e;
+        } finally {
+            if (previous == null) {
+                ISOLATION.remove();
+            } else {
+                ISOLATION.set(previous);
+            }
+        }
+    }
+
+    /**
+     * After-commit callbacks ({@code AfterCommit.run}, e.g. {@code journal.posted}) registered inside a block the
+     * savepoint rolled back announce work that no longer exists: keep only the synchronizations registered before it.
+     * Spring has no unregister, so the list is rebuilt with the earlier ones (it is ordered on read, not on insert).
+     */
+    static void dropSynchronizationsSince(List<TransactionSynchronization> before) {
+        if (before == null || !TransactionSynchronizationManager.isSynchronizationActive()) {
+            return;
+        }
+        List<TransactionSynchronization> now = TransactionSynchronizationManager.getSynchronizations();
+        if (now.size() <= before.size()) {
+            return;
+        }
+        TransactionSynchronizationManager.clearSynchronization();
+        TransactionSynchronizationManager.initSynchronization();
+        before.forEach(TransactionSynchronizationManager::registerSynchronization);
+    }
+
+    /**
+     * Transaction-manager hook: a participant of the current transaction failed. True = inside a {@link #runIsolated}
+     * block of this transaction (not of a transaction begun inside the block), so the failure is absorbed: the block's
+     * savepoint rolls it back instead of the whole transaction being marked rollback-only.
+     */
+    public static boolean absorbParticipantRollback() {
+        Isolation i = ISOLATION.get();
+        if (i == null || i.newTransactions > 0) {
+            return false;
+        }
+        i.absorbed++;
+        return true;
+    }
+
+    /** Transaction-manager hook: a new physical transaction began on this thread. */
+    public static void transactionBegun() {
+        Isolation i = ISOLATION.get();
+        if (i != null) {
+            i.newTransactions++;
+        }
+    }
+
+    /** Transaction-manager hook: a new physical transaction of this thread completed. */
+    public static void transactionCompleted() {
+        Isolation i = ISOLATION.get();
+        if (i != null && i.newTransactions > 0) {
+            i.newTransactions--;
+        }
     }
 }

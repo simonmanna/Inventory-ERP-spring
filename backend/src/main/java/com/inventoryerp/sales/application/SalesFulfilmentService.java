@@ -73,8 +73,9 @@ public class SalesFulfilmentService {
      */
     @Transactional
     public List<Map<String, Object>> rebuild(String orderId) {
-        // The sale before its lines, the order every sales command locks them in: a rebuild also runs as a fleet event
-        // reaction, and its status refresh needs the sale anyway.
+        // Lock order (IPR LK-3, ADR-S094 C2b): the sales order first, then its lines (order → delivery order → trip →
+        // order lines, as every sales route takes them). A rebuild also runs as a fleet event reaction; this keeps it and
+        // a sales delivery route on the same order from deadlocking, and its status refresh needs the sale anyway.
         Map<String, Object> o = db.row("SELECT * FROM \"SalesOrder\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE",
                 orderId, org());
         if (o == null) {

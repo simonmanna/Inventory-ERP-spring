@@ -38,6 +38,13 @@ public class StockReservationService {
     public record Reserve(String productId, String variantId, String locationId, BigDecimal quantity,
             String sourceType, String sourceId, String reason) {}
 
+    /**
+     * IPR C-5 / S-7 / S14: the only source type the manual routes may reserve or consume. Document reservations
+     * (sales orders, invoices, production) belong to their documents; a manual reserve under their source type could
+     * overwrite a document line's reservation (one row per source line and cell).
+     */
+    public static final String MANUAL_SOURCE = "manual";
+
     /** The most rows {@code GET /inventory/reservations} returns when it is not keyed by one source. */
     static final int LIST_MAX = 200;
 
@@ -113,6 +120,37 @@ public class StockReservationService {
                 .params(org, productId, variantId == null ? "" : variantId, locationId).query().listOfRows();
     }
 
+    /** Source type of sales-order line reservations (written by the sales module's ATP service). */
+    public static final String SALES_ORDER_LINE = "sales_order_line";
+
+    /**
+     * IPR F5: an issue of {@code baseQuantity} (base units) from one stock cell by a document that is not the sales
+     * order holding the stock (an invoice, a cash sale, a delivery order that does not come from a sales order) must
+     * leave what active sales-order reservations hold there. The cell is locked first, in the engine's order (L3 → L4 →
+     * L5), so the measure stays true until the issue in the same transaction; a reservation made meanwhile waits.
+     * Refused only when sales-order reservations exist at the cell and the issue would eat into them; without
+     * reservations the engine's own negative-stock policy decides, as before.
+     */
+    @Transactional
+    public void assertNotReservedForSalesOrders(String productId, String variantId, String locationId,
+            BigDecimal baseQuantity) {
+        if (productId == null || locationId == null || baseQuantity == null || baseQuantity.signum() <= 0) {
+            return;
+        }
+        String org = TenantContext.organizationId();
+        String variantKey = variantId == null ? "" : variantId;
+        StockService.lockCellAdvisory(jdbc, org, productId, variantId, locationId);
+        jdbc.sql("SELECT id FROM \"StockItem\" WHERE \"organizationId\" = ? AND \"productId\" = ? AND \"variantKey\" = ?"
+                        + " AND \"locationId\" = ? FOR UPDATE")
+                .params(org, productId, variantKey, locationId).query().listOfRows();
+        BigDecimal onHand = jdbc.sql("SELECT COALESCE(sum(quantity), 0) FROM \"StockItem\" WHERE \"organizationId\" = ?"
+                + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ?").params(org, productId,
+                        variantKey, locationId).query(BigDecimal.class).single();
+        // IPR 1d: one implementation with the engine's own guard (StockMove.honourReservations).
+        StockService.requireFreeOfSalesReservations(jdbc, org, productId, null, variantKey, locationId, baseQuantity,
+                onHand, null);
+    }
+
     /**
      * {@code POST /inventory/reservations}: {@link #reserve} after checking that the product and location exist and
      * that the location is in the caller's scope. A source line's row is keyed by its cell, so the only row a re-reserve
@@ -120,6 +158,7 @@ public class StockReservationService {
      */
     @Transactional
     public Map<String, Object> reserveForUser(Reserve dto) {
+        assertManual(dto.sourceType(), "reserve");
         if (lookups.product(dto.productId()) == null) {
             throw ApiException.notFound("Product not found");
         }
@@ -166,16 +205,48 @@ public class StockReservationService {
         return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt"));
     }
 
-    /** {@code POST /inventory/reservations/release}: {@link #release} limited to the caller's locations. */
+    /**
+     * IPR D-2: mark one source's active reservation on one stock cell consumed (a multi-stage production order consumed
+     * all it planned from that cell). The cell is locked first, in the engine's order (L4 quant advisory → L5
+     * {@code StockItem}), then the reservation row (L6); a caller that just moved stock at the cell already holds both.
+     *
+     * @return how many reservation rows were consumed (0 or 1)
+     */
+    @Transactional
+    public int consumeCell(String sourceType, String sourceId, String productId, String variantId, String locationId) {
+        lockCell(productId, variantId, locationId);
+        return jdbc.sql("UPDATE \"StockReservation\" SET status = 'consumed'::\"StockReservationStatus\", \"consumedAt\" = "
+                + NOW + ", \"updatedAt\" = " + NOW + " WHERE \"organizationId\" = ? AND \"sourceType\" = ? AND \"sourceId\" = ?"
+                + " AND \"productId\" = ? AND \"variantKey\" = ? AND \"locationId\" = ? AND status = 'active'")
+                .params(TenantContext.organizationId(), sourceType, sourceId, productId, variantId == null ? ""
+                        : variantId, locationId).update();
+    }
+
+    /**
+     * {@code POST /inventory/reservations/release}: {@link #release} limited to the caller's locations. IPR review 1
+     * (finding 8): manual reservations only, like reserve and consume; a document's reservations follow the document
+     * (its flows release them through {@link #release}).
+     */
     @Transactional
     public Map<String, Object> releaseForUser(String sourceType, String sourceId) {
+        assertManual(sourceType, "release");
         return Obj.of("released", close(sourceType, sourceId, "released", "releasedAt", scope.current()));
     }
 
     /** {@code POST /inventory/reservations/consume}: {@link #consume} limited to the caller's locations. */
     @Transactional
     public Map<String, Object> consumeForUser(String sourceType, String sourceId) {
+        assertManual(sourceType, "consume");
         return Obj.of("consumed", close(sourceType, sourceId, "consumed", "consumedAt", scope.current()));
+    }
+
+    /** IPR C-5: refuse a manual-route action on a document's reservation. */
+    private static void assertManual(String sourceType, String action) {
+        if (!MANUAL_SOURCE.equals(sourceType)) {
+            throw ApiException.badRequest("Only manual reservations can be " + ("reserve".equals(action)
+                    ? "created" : "release".equals(action) ? "released" : "consumed") + " here (sourceType must be \"manual\"); a document's reservations"
+                    + " follow the document");
+        }
     }
 
     private int close(String sourceType, String sourceId, String status, String stamp) {

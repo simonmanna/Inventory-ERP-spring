@@ -169,15 +169,48 @@ public class InventoryValuationService {
                 + " AND \"inventoryAccountId\" IS NOT NULL").param(org).query(String.class).list());
         ids.addAll(jdbc.sql("SELECT \"inventoryAccountOverrideId\" FROM \"Product\" WHERE \"organizationId\" = ?"
                 + " AND \"inventoryAccountOverrideId\" IS NOT NULL").param(org).query(String.class).list());
+        String transit = transitAccountId();
+        if (transit != null) {
+            ids.add(transit);
+        }
         ids.removeIf(s -> s == null || s.isEmpty());
         return new ArrayList<>(ids);
+    }
+
+    private com.inventoryerp.kernel.settings.SettingResolverService settings;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSettings(com.inventoryerp.kernel.settings.SettingResolverService settings) {
+        this.settings = settings;
+    }
+
+    /**
+     * IPR S13 (goods in transit, opt-in): the account that holds the value of stock at {@code transit} locations — the
+     * {@code stock_in_transit} mapping — when the organisation turned on {@code inventory.transitGlSeparation}; null
+     * otherwise (transit stock stays in the stock valuation account, as before).
+     */
+    public String transitAccountId() {
+        String org = TenantContext.organizationId();
+        if (settings == null || org == null || !settings.resolveBool("inventory.transitGlSeparation",
+                com.inventoryerp.kernel.settings.SettingResolverService.SettingContext.EMPTY)) {
+            return null;
+        }
+        return jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ? AND key ="
+                + " 'stock_in_transit'").param(org).query(String.class).optional().orElse(null);
+    }
+
+    /** Whether {@code locationId} is a {@code transit} location of this organisation. */
+    public boolean isTransitLocation(String locationId) {
+        return locationId != null && jdbc.sql("SELECT count(*) FROM \"InventoryLocation\" WHERE id = ? AND"
+                + " \"organizationId\" = ? AND type::text = 'transit'").params(locationId, TenantContext.organizationId())
+                .query(Long.class).single() > 0;
     }
 
     /**
      * Current remaining value per quant (product, variant, location) by costing method — one statement so quants, lots
      * and serials agree: serial-tracked = in-stock serial costs (+ untracked remainder at the average), FIFO or
      * lot-tracked = open lot costs (+ remainder at the average), STANDARD = quantity × cost price, otherwise quantity ×
-     * running average (cost price when the average is 0). CM-1 (ADR-S031) adjunct carrying-amount components (STANDARD
+     * running average (cost price when the average is 0; not for AVCO, IPR D3). CM-1 (ADR-S031) adjunct (STANDARD
      * price differences, IAS 2 NRV allowances) are added as quantity-0 rows at their ledger location. Rows:
      * {@code product_id, variant_key, location_id, qty, value} (BigDecimal). {@code locationId} null = every location.
      * The inventory reports (valuation) use this so the operational and the accounting valuation always agree.
@@ -205,7 +238,10 @@ public class InventoryValuationService {
         var spec = jdbc.sql("WITH quant AS ("
                 + " SELECT s.\"productId\", s.\"variantKey\", s.\"locationId\", s.\"quantity\" AS qty,"
                 // Phase I2 (audit C-1): with no average yet, a variant falls back to its own cost (STANDARD: product).
-                + " CASE WHEN s.\"runningAverageCost\" > 0 THEN s.\"runningAverageCost\""
+                // IPR C-3 / GL-6 (D3): an AVCO quant is valued at its own average, never at the cost price — the
+                // ledger and the GL carry what the receipts brought in (blank receipt cost = current cost).
+                + " CASE WHEN p.\"costingMethod\"::text = 'AVCO' THEN s.\"runningAverageCost\""
+                + " WHEN s.\"runningAverageCost\" > 0 THEN s.\"runningAverageCost\""
                 + " ELSE COALESCE(pv.\"costPrice\", p.\"costPrice\", 0) END AS avg_cost,"
                 + " COALESCE(p.\"costPrice\", 0) AS std_cost, p.\"costingMethod\"::text AS method, p.\"batchTracking\" AS lots,"
                 + " p.\"serialTracking\" AS serials"
@@ -220,16 +256,31 @@ public class InventoryValuationService {
                 + " COUNT(*)::numeric AS qty, SUM(COALESCE(sr.\"unitCost\", pv.\"costPrice\", p.\"costPrice\", 0)) AS value"
                 + " FROM \"InventorySerial\" sr JOIN \"Product\" p ON p.id = sr.\"productId\""
                 + " LEFT JOIN \"ProductVariant\" pv ON pv.id = sr.\"variantId\""
-                + " WHERE sr.\"organizationId\" = :org AND sr.status = 'in_stock'" + serLoc + " GROUP BY 1, 2, 3)"
+                + " WHERE sr.\"organizationId\" = :org AND sr.status = 'in_stock'" + serLoc + " GROUP BY 1, 2, 3),"
+                // IPR E-1: the ledger value of each plain AVCO quant (no lots, no serials). The average is stored at
+                // 6 dp, so a non-terminating unit cost (1,000,000 / 300,000) leaves qty × average short of what the
+                // ledger and the GL carry; within the rounding limit of the zero-stock residue sweep (1.00, R5b) the
+                // quant is valued at its ledger value. A larger gap is no rounding and stays visible.
+                + " led AS (SELECT a.\"productId\", COALESCE(a.\"variantId\", '') AS \"variantKey\", a.\"locationId\","
+                + " SUM(CASE WHEN a.\"quantityChange\" >= 0 THEN COALESCE(a.\"totalValue\", 0)"
+                + " ELSE -COALESCE(a.\"totalValue\", 0) END) AS value"
+                + " FROM \"InventoryLedger\" a JOIN \"Product\" p ON p.id = a.\"productId\""
+                + " WHERE a.\"organizationId\" = :org AND a.\"valuationComponent\" IS NULL"
+                + " AND p.\"costingMethod\"::text = 'AVCO' AND NOT p.\"batchTracking\" AND NOT p.\"serialTracking\""
+                + adjLoc + " GROUP BY 1, 2, 3)"
                 + " SELECT q.\"productId\" AS product_id, q.\"variantKey\" AS variant_key, q.\"locationId\" AS location_id,"
                 + " q.qty AS qty, CASE"
                 + " WHEN q.serials THEN COALESCE(se.value, 0) + (q.qty - COALESCE(se.qty, 0)) * q.avg_cost"
                 + " WHEN q.method = 'FIFO' OR q.lots THEN COALESCE(l.value, 0) + (q.qty - COALESCE(l.qty, 0)) * q.avg_cost"
                 + " WHEN q.method = 'STANDARD' THEN q.qty * q.std_cost"
+                + " WHEN q.method = 'AVCO' AND q.qty > 0 AND ld.value IS NOT NULL"
+                + " AND abs(ld.value - q.qty * q.avg_cost) < " + RESIDUE_LIMIT + " THEN ld.value"
                 + " ELSE q.qty * q.avg_cost END AS value"
                 + " FROM quant q"
                 + " LEFT JOIN lot l ON l.\"productId\" = q.\"productId\" AND l.\"locationId\" = q.\"locationId\" AND l.\"variantKey\" = q.\"variantKey\""
                 + " LEFT JOIN ser se ON se.\"productId\" = q.\"productId\" AND se.\"locationId\" = q.\"locationId\" AND se.\"variantKey\" = q.\"variantKey\""
+                + " LEFT JOIN led ld ON ld.\"productId\" = q.\"productId\" AND ld.\"locationId\" = q.\"locationId\""
+                + " AND ld.\"variantKey\" = q.\"variantKey\" AND NOT q.lots AND NOT q.serials"
                 // CM-1 (ADR-S031): adjunct carrying-amount components held beside the quant cost — STANDARD price
                 // differences (landed cost, material ledger) and IAS 2 NRV allowances.
                 + " UNION ALL SELECT a.\"productId\", COALESCE(a.\"variantId\", ''), a.\"locationId\", 0, SUM(a.\"totalValue\")"
@@ -243,6 +294,9 @@ public class InventoryValuationService {
         }
         return SqlRows.list(spec);
     }
+
+    /** IPR E-1: below this gap a plain AVCO quant's qty × average vs its ledger value is 6 dp rounding (R5b limit). */
+    static final String RESIDUE_LIMIT = "1.00";
 
     /** {qty, value} per product of {@link #currentValueByQuant(String, java.util.Collection)}, summed over its quants. */
     public Map<String, BigDecimal[]> qtyAndValueByProduct(java.util.Collection<String> productIds, String locationId) {
@@ -363,7 +417,7 @@ public class InventoryValuationService {
         List<Map<String, Object>> accounts = SqlRows.list(jdbc.sql("SELECT id, code, name FROM \"Account\" WHERE id IN (:ids)")
                 .param("ids", accountIds));
         List<Map<String, Object>> glBySource = SqlRows.list(jdbc.sql("SELECT e.\"sourceType\" AS source,"
-                        + " SUM(jl.\"debit\" - jl.\"credit\") AS amount FROM \"JournalLine\" jl"
+                        + " SUM(jl.\"baseDebit\" - jl.\"baseCredit\") AS amount FROM \"JournalLine\" jl"
                         + " JOIN \"JournalEntry\" e ON e.id = jl.\"journalEntryId\""
                         + " WHERE e.\"organizationId\" = :org AND e.status <> 'draft' AND e.\"postingDate\" <= :date"
                         + " AND jl.\"accountId\" IN (:accts) GROUP BY e.\"sourceType\"")

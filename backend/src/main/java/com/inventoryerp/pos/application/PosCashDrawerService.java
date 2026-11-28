@@ -72,7 +72,7 @@ public class PosCashDrawerService {
         if (in.referenceType() != null && !REFERENCE_TABLES.containsKey(in.referenceType())) {
             throw ApiException.badRequest("referenceType must be invoice, refund or cash_movement");
         }
-        Instant resolved = OccurredAt.resolve(in.occurredAt());
+        Instant resolved = OccurredAt.resolveRecorded(in.occurredAt(), "cash_drawer.open");
         Instant occurredAt = resolved != null ? resolved : Instant.now();
         boolean noSale = "no_sale".equals(in.reason());
         return tx.execute(st -> {

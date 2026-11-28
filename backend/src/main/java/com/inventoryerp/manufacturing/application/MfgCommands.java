@@ -160,6 +160,17 @@ public final class MfgCommands {
             @Pattern(regexp = ISO_DATE, message = DATE_MSG) String expiryDate) {}
 
     /**
+     * IPR X-9: one partial receipt of a simple order's main output while it is in progress, in the order's unit. The
+     * order stays in progress; Complete records the last quantity.
+     */
+    public record PartialOutput(
+            @NotNull(message = NUM) @Positive(message = POS) BigDecimal quantity,
+            String batchNumber,
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String expiryDate,
+            @Pattern(regexp = ISO_DATE, message = DATE_MSG) String date,
+            String notes) {}
+
+    /**
      * {@code CompleteProductionDto}. {@code qtyProduced} is {@code @IsPositive} in Nest, so the zero-yield branch is
      * reachable only through the service API (as in Nest).
      */

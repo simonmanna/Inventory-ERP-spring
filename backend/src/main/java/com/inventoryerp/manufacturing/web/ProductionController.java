@@ -4,6 +4,7 @@ import com.inventoryerp.kernel.idempotency.Idempotent;
 import com.inventoryerp.kernel.modules.RequiresModule;
 import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.security.RequirePermissions;
+import com.inventoryerp.manufacturing.application.MfgCommands;
 import com.inventoryerp.manufacturing.application.MfgCommands.CancelOrder;
 import com.inventoryerp.manufacturing.application.MfgCommands.CompleteOrder;
 import com.inventoryerp.manufacturing.application.MfgCommands.CreateOrder;
@@ -78,6 +79,18 @@ public class ProductionController {
     @RequirePermissions(Permissions.PRODUCTION_ORDER__COMPLETE)
     public Map<String, Object> complete(@PathVariable String id, @Valid @RequestBody CompleteOrder dto) {
         return production.completeOrder(id, dto);
+    }
+
+    /**
+     * IPR X-9 (new route, no Nest counterpart): record part of a simple order's output while it is in progress. Money
+     * route: the Idempotency-Key is required, so a retried request never receives the goods twice.
+     */
+    @PostMapping("/{id}/partial-output")
+    @Idempotent(required = true)
+    @RequirePermissions(Permissions.PRODUCTION_ORDER__COMPLETE)
+    public Map<String, Object> partialOutput(@PathVariable String id,
+            @Valid @RequestBody MfgCommands.PartialOutput dto) {
+        return production.recordPartialOutput(id, dto);
     }
 
     @PostMapping("/{id}/cancel")

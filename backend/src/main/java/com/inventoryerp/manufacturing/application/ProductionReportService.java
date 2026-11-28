@@ -40,47 +40,57 @@ public class ProductionReportService {
 
     private final MfgDb db;
     private final BomService boms;
+    private final WipTieOutService wipTieOut;
 
-    public ProductionReportService(MfgDb db, BomService boms) {
+    public ProductionReportService(MfgDb db, BomService boms, WipTieOutService wipTieOut) {
         this.db = db;
         this.boms = boms;
+        this.wipTieOut = wipTieOut;
     }
 
-    /** GL WIP balance vs the material+overhead cost of every order in progress / on QC hold. */
+    /**
+     * GL WIP balance vs the WIP sub-ledger. IPR WIP-6 (deviation from Nest, which expected material + overhead for every
+     * order in progress or on QC hold and summed transaction-currency lines of every status): the same basis as the
+     * WIP tie-out ({@link WipTieOutService}, docs/spec/manufacturing-wip-reconciliation.md) — a single-stage order in
+     * progress carries its materials (overhead reaches WIP only at completion) less its partial outputs, a QC-held one
+     * has already cleared WIP, a multi-stage order carries its stages' WIP, plus process costing and late-cost shares
+     * waiting for a cost adjustment run; GL in base currency over posted entries. The response keeps its fields and adds
+     * {@code processCostingWip}, {@code pendingLateCost} and {@code failingObjects}.
+     */
     public Map<String, Object> wipReconciliation() {
-        String accountId = db.jdbc().sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ?"
-                        + " AND \"deletedAt\" IS NULL AND key = 'wip' LIMIT 1")
-                .param(MfgDb.org()).query(String.class).optional().orElse(null);
-        BigDecimal glBalance = BigDecimal.ZERO;
-        if (accountId != null) {
-            Map<String, Object> agg = SqlRows.one(db.jdbc().sql("SELECT sum(debit) AS debit, sum(credit) AS credit"
-                    + " FROM \"JournalLine\" WHERE \"organizationId\" = ? AND \"accountId\" = ?")
-                    .params(MfgDb.org(), accountId));
-            glBalance = dec(agg, "debit").subtract(dec(agg, "credit"));
-        }
+        WipTieOutService.Result tie = wipTieOut.tieOut();
         List<Map<String, Object>> open = SqlRows.list(db.jdbc().sql("SELECT id, \"orderCode\", status,"
                 + " \"materialCost\", \"overheadCost\" FROM \"ProductionOrder\" WHERE \"organizationId\" = ?"
                 + " AND status IN ('in_progress', 'qc_hold')").param(MfgDb.org()));
-        // ADR-S011: a multi-stage order's WIP is the sum of its stages' WIP (intermediates already left WIP).
-        Map<String, BigDecimal> staged = new java.util.HashMap<>();
-        db.jdbc().sql("SELECT \"orderId\", sum(\"materialCost\" + \"transferredInCost\" + \"conversionCost\""
-                        + " - \"outputCost\" - \"scrapCost\") AS wip FROM \"ProductionOrderStage\""
-                        + " WHERE \"organizationId\" = ? GROUP BY \"orderId\"")
-                .param(MfgDb.org()).query().listOfRows()
-                .forEach(r -> staged.put(String.valueOf(r.get("orderId")), (BigDecimal) r.get("wip")));
-        BigDecimal openWip = BigDecimal.ZERO;
+        Map<String, BigDecimal> expectedByOrder = new java.util.HashMap<>();
+        BigDecimal process = BigDecimal.ZERO;
+        BigDecimal late = BigDecimal.ZERO;
+        for (WipTieOutService.WipObject o : tie.objects()) {
+            if ("order".equals(o.kind())) {
+                expectedByOrder.put(o.orderId(), o.expected());
+            } else if ("process_costing".equals(o.kind())) {
+                process = process.add(o.expected());
+            } else if ("late_cost_and_other".equals(o.kind())) {
+                late = late.add(o.expected());
+            }
+        }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map<String, Object> o : open) {
-            BigDecimal wip = staged.containsKey(str(o, "id")) ? staged.get(str(o, "id"))
-                    : dec(o, "materialCost").add(dec(o, "overheadCost"));
-            openWip = openWip.add(wip);
             Map<String, Object> r = new LinkedHashMap<>(o);
-            r.put("wip", JsNumbers.dec(wip));
+            r.put("wip", JsNumbers.dec(expectedByOrder.getOrDefault(str(o, "id"), BigDecimal.ZERO)));
             rows.add(r);
         }
-        BigDecimal drift = glBalance.subtract(openWip);
-        return Obj.of("glBalance", JsNumbers.dec(glBalance), "openOrdersWip", JsNumbers.dec(openWip),
-                "drift", JsNumbers.dec(drift), "balanced", drift.abs().compareTo(CENT) <= 0, "openOrders", rows);
+        BigDecimal drift = tie.glTotal().subtract(tie.expectedTotal());
+        List<Map<String, Object>> failing = new ArrayList<>();
+        tie.failing().forEach(f -> failing.add(Obj.of("kind", f.kind(), "orderCode", f.orderCode(), "status",
+                f.status(), "glWip", JsNumbers.dec(f.gl()), "expectedWip", JsNumbers.dec(f.expected()))));
+        Map<String, Object> out = Obj.of("glBalance", JsNumbers.dec(tie.glTotal()), "openOrdersWip",
+                JsNumbers.dec(tie.expectedTotal()), "drift", JsNumbers.dec(drift), "balanced",
+                drift.abs().compareTo(CENT) <= 0 && failing.isEmpty(), "openOrders", rows);
+        out.put("processCostingWip", JsNumbers.dec(process));
+        out.put("pendingLateCost", JsNumbers.dec(late));
+        out.put("failingObjects", failing);
+        return out;
     }
 
     /** From a finished batch back to the material lots that made it; {@code null} for an unknown order. */

@@ -23,11 +23,13 @@ import { useAuthStore } from '@/stores/auth.store';
 import { tx } from '@/lib/i18n/tx';
 import { VariantSelect } from '@/features/products/variant-select';
 
-type InLine = { uid: string; productId: string; variantId?: string | null; name: string; quantity: number; unitCost: string; batchNumber: string; expiryDate: string };
+type InLine = { uid: string; productId: string; variantId?: string | null; name: string; quantity: number; unitCost: string; zeroCostReason?: string; batchNumber: string; expiryDate: string };
 type OutLine = { uid: string; productId: string; variantId?: string | null; name: string; quantity: number; distStrategy: string; batchNumber: string };
 
 let lineSeq = 0;
 const lineId = () => `line-${++lineSeq}`;
+/** A cost typed as 0 (not left blank): the backend needs a reason and the valuation-manage permission. */
+const isZeroCost = (v: string) => v.trim() !== '' && Number(v) === 0;
 const blankIn = (): InLine => ({ uid: lineId(), productId: '', name: '', quantity: 1, unitCost: '', batchNumber: '', expiryDate: '' });
 const blankOut = (): OutLine => ({ uid: lineId(), productId: '', name: '', quantity: 1, distStrategy: 'FEFO', batchNumber: '' });
 
@@ -113,6 +115,8 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
           ...(l.variantId ? { variantId: l.variantId } : {}),
           quantity: l.quantity,
           ...(l.unitCost ? { unitCost: Number(l.unitCost) } : {}),
+          // IPR D3: an explicit 0 cost needs a reason; a blank cost uses the current cost.
+          ...(isZeroCost(l.unitCost) && l.zeroCostReason?.trim() ? { zeroCostReason: l.zeroCostReason.trim() } : {}),
           ...(l.batchNumber ? { batchNumber: l.batchNumber } : {}),
           ...(l.expiryDate ? { expiryDate: l.expiryDate } : {}),
         }));
@@ -336,6 +340,11 @@ export function DirectStockActions({ invalidateKeys = [] }: DirectStockActionsPr
                     <td className="px-2 py-2">
                       <Input type="number" step="0.01" min={0} className="text-right tabular-nums" placeholder={tx('Avg cost')} value={line.unitCost}
                         onChange={(e) => updateIn(line.uid, { unitCost: e.target.value })} />
+                      {isZeroCost(line.unitCost) && (
+                        <Input className="mt-1" placeholder={tx('Reason for zero cost')} maxLength={500}
+                          aria-label={tx('Reason for zero cost')} value={line.zeroCostReason ?? ''}
+                          onChange={(e) => updateIn(line.uid, { zeroCostReason: e.target.value })} />
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-xs tabular-nums text-slate-600">
                       {line.unitCost && line.quantity > 0

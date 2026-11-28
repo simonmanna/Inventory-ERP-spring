@@ -153,8 +153,14 @@ export function useDispatchTransfer() {
 
 export function useReceiveTransfer() {
   return useTransferAction(
-    (v: { id: string; lines: ReceiveTransferLine[]; notes?: string }) =>
-      idempotentPost<StockTransfer>(`/inventory/transfers/${v.id}/receive`, { lines: v.lines, notes: v.notes }),
+    (v: {
+      id: string; lines: ReceiveTransferLine[]; notes?: string;
+      /** IPR S3: the transit-loss reason and approver, when damaged or short goods exceed the threshold. */
+      lossReason?: string; approvedById?: string; approverPin?: string;
+    }) =>
+      idempotentPost<StockTransfer>(`/inventory/transfers/${v.id}/receive`, {
+        lines: v.lines, notes: v.notes, lossReason: v.lossReason, approvedById: v.approvedById, approverPin: v.approverPin,
+      }),
     (d) => (d.status === 'completed' ? `${d.transferCode} fully received` : `${d.transferCode} partially received`),
     tx('Failed to receive transfer'),
   );

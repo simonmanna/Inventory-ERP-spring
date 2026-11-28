@@ -433,6 +433,22 @@ branch scope.
   deduction line per posted taxed down payment and consumes its deposit when posted. A regular invoice is refused while
   a taxed down-payment invoice of the order is still a draft. See `sales-postings.md` §5a and the
   [invoicing deviation](invoicing.md#deviations).
+- **IPR Phase 1a (2026-11-27; owner sign-off required).**
+  - **F2: restock only what left stock.** A return line with no recorded stock issue (for example an order-policy
+    line invoiced but never delivered) is a financial credit only. Receive and inspect move no stock. A line with an
+    issue is capped by what that issue still has out, net of every return already linked to it (credit-note restocks
+    included), less what returns not yet received have claimed. Over the cap, `POST /sales/returns` answers 400 with
+    the existing "more than returnable" refusal. Before, a return restocked goods that never left, at the current
+    cost.
+  - **M-27.** `POST /sales/orders/:id/reserve` runs in one transaction. It locks the sales order first, then each
+    line's cell, so two concurrent reserves cannot both take the same free stock.
+  - **LK-3.** The fulfilment rebuild, `recomputeInvoiced` and return receive/close lock the `SalesOrder` row before
+    its `SalesOrderLine` rows, the order every other sales path uses.
+  - **F5.** A cash-sale confirm, an invoice auto-issue or collection, and a fleet delivery that is not the sales
+    order's own are refused when they would take stock reserved for sales orders ("Only X of P is free in L; Y is
+    reserved for sales orders. Release or deliver those reservations first."). POS, stock documents, transfers,
+    production and quarry issues are not covered (see the IPR 1a evidence file).
+
 - **R6 accounting policy settings (2026-11-26, V683, owner to approve).** New `SalesSettings` keys, each defaulting to
   the shipped behaviour: `showroomTaxPoint` (`at_confirm` | `at_invoice`), `overOrderExcess` (`bill` | `absorb`),
   `rebateTaxId` (tax or null). `depositTaxPoint = receipt` now also refuses a plain advance on a taxed order at
@@ -495,6 +511,17 @@ approve):
   unless `orderId` or `all=true` is given (`limit`/`offset` too). The backorder report shows at most 1000 lines and the
   backorder job takes 500 orders per run. Index V682.
 - **X-6** Reads and writes by id in sales, invoicing and fleet services also filter by the organisation.
+
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Returns of goods not issued by fleet (review 2, N2).** Receiving a sales return finds the order line's stock issue
+  on every path: its fleet load lines (also a delivery of the line's invoice), a legacy load line without its code
+  (the trip's `fleet_trip` issue rows of the product), and the line's invoice issue (`sales_invoice` rows of the linked
+  invoice line). The goods come back against those rows, never more than they still have out. When none exists, the
+  line restocks nothing and an open `InventoryException` of kind `sales_return_unmatched` (payload `returnId`,
+  `orderLineId`, `receivedQty`) asks staff to check and restock by hand. Like other open stock exceptions it holds a
+  period close until resolved.
 
 ## Central pricing engine (ADR-S022)
 
