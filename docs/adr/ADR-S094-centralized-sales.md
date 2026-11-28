@@ -42,7 +42,7 @@ to migrate or something. just code and develop."
 | AD-1 | Interim path: an order-type Sale with a full advance. | C3d (cash paid now, delivered later) is not built. |
 | AD-2, AD-16 | Contract liability (`unearned_revenue`), released at **dispatch**. | F4 deferral is built (stage C2b). |
 | AD-3 | Period-end accrual for delivered, not invoiced. | Stage C7b, after the core. P7 per delivery stays available where the revenue policy already uses it. |
-| AD-4, AD-5 | Tax points as designed (§3); every sale invoice, the zero-total final invoice and reversal credit notes are fiscalised through the outbox. | C3a (cash sales); C4b (order-type invoices and credit notes). |
+| AD-4, AD-5 | Tax points as designed (§3); every sale invoice, the zero-total final invoice and reversal credit notes are fiscalised through the outbox. | C3a (cash sales); C4b (order-type invoices and credit notes; built, V738). |
 | AD-6, AD-7, AD-8 | Approved: P4 + P8 + P11 for cash; one gap-free invoice series per organization; walk-in partner per branch with `requireTaxNumberAbove`. | — |
 | AD-9 | Existing returns accounts; restock at the original issue cost; damaged to quarantine, scrap to the scrap account; refund over the original tender by default; customer-credit retention with permission. | — |
 | AD-10, OD-4 | Fleet transport charges stay on their own invoice. | C4f not built. |
@@ -953,14 +953,98 @@ recommended options)**:
   - The mobile-money gateway is not wired to tenders. Mobile money is verified by hand, with its reference.
   - Negative stock follows the inventory policy, as every stock issue does. A confirm above stock on hand is refused
     only where negative stock is off (the legacy cash-sale rule).
-  - Order-type invoices and credit notes are fiscalised from C4b.
-  - `SalesOrderEvent` is written for cash sales only.
+  - Order-type invoices and credit notes are fiscalised from C4b (built, V738): see "As built (C4b)" below.
+  - `SalesOrderEvent` is written for cash sales, and from C4b for the fiscal operations of an order-type sale's
+    documents.
   - Tender-reference uniqueness does not check the legacy `SalesSubmissionPayment` table.
   - **C3b** (built, V736) brings the cash Reverse, the fiscal gate for a sale's reversal, the fiscal outbox recovery
     and TP-3 / TP-4 / RC / FR / RV: see §7.4, "As built (C3b)".
   - No web change. Nothing in the web creates a cash-type sale yet; the screens move in C6.
   - AP-8 moved from `SalesApprovalIT` to `SalesCashSaleIT`. A cash sale now needs its branch profile
     (`SalesOrder_cash_profile_check`), so the old SQL-faked one is refused.
+
+**As built (C4b, V738; AD-5, owner instruction 2026-11-28: recommended options for every AD / OD)**: the fiscal
+documents of a Sale's invoices and credit notes.
+- **What is registered.**
+  - Every posted invoice of an order-type Sale (`sourceKind` `sale`, `sale_down_payment` or `sale_milestone`),
+    including an untaxed down payment and the zero-total final invoice after a 100 % taxed advance (AD-17).
+    - Operation `issue`, queued by `SalesInvoicePostGuard.afterPost` in the posting transaction.
+  - A posted credit note whose credited invoice (`reversedDocumentId`) has a fiscal `issue` that has not failed: an
+    invoice of an order-type Sale, or a cash Sale's invoice.
+    - Operation `credit_note`, queued by the new `InvoicePostGuard.afterCreditNotePost` hook.
+    - `CreditNoteService.post` calls the hook for every posted credit note, after its journal entry, settlement and
+      restock and before `creditnote.issued`.
+    - Every credit path posts through it: returns, the credit flow, rebates, late disputes and
+      `POST /credit-notes/:id/post`.
+  - Not registered:
+    - a cash Sale's invoice: its confirm registers the sale's one document (C3a);
+    - a cash Sale's Reverse credit note: the reversal cancels that document instead (C3b). It is recognised by
+      `reversalRequestedAt` or a fiscal status of `cancellation_pending` / `cancelled`;
+    - the documents of a legacy cash sale (ADR-S056 rows, until C8).
+- **Outbox rows.**
+  - Each row has `FiscalDocument.ownerKind = document`, `salesOrderId` = the sale and `invoiceId` = the invoice or
+    credit note.
+  - Reference `doc:<documentId>:<operation>:<n>`, numbered per document.
+  - One live operation per document and kind (`FiscalDocument_document_live_op_key`), so a sale's invoices are
+    registered side by side. The sale-level key now covers `ownerKind = 'sale'` rows only.
+  - A document's operations never change the sale's `fiscalStatus`, which stays the status of a cash sale's one
+    document. They write `SalesOrderEvent` lines: `fiscal_<operation>_requested`, `_succeeded`, `_failed`, `_review`,
+    `_resolved` and `_stuck`.
+- **Provider.**
+  - The sale's own profile (`profileId`), else its branch's profile (active or not), else `none`.
+  - A credit note goes to the provider that registered its invoice.
+  - `none` completes at once, inside the posting transaction, with no external call.
+  - Every other provider is sent by the job, the retry route or `resolve`, through the C3b protocol: claim, call
+    outside any transaction, record; lookup before any resend.
+- **Credit-note dependency.**
+  - A `credit_note` operation is sent only once the credited invoice's `issue` has succeeded. Its payload then gains
+    `originalFiscalNumber` and `originalRequestRef`.
+  - While the invoice's registration is pending, sent, unknown or in review, the credit note stays pending: nothing is
+    sent and no attempt is counted.
+  - When the invoice's registration failed, the credit note fails with "The credited invoice is not registered with
+    the fiscal authority". Later credit notes on that invoice queue nothing.
+- **Invoice cancel.** `SalesInvoicePostGuard.afterCancel` checks the registration before the deferral release.
+  Throwing rolls the cancel back.
+
+  | Registration of the invoice | Cancel |
+  |---|---|
+  | Open: pending, sent, unknown or review | 409 "The invoice's fiscal registration is still open; retry once it is registered or has failed" |
+  | Registered with an outside provider | 400 "This invoice is registered with the fiscal authority: credit it with a credit note instead of cancelling it" |
+  | Registered with a local provider (`none`) | Allowed; recorded as a `cancel` operation (`doc:<id>:cancel:1`), completed at once |
+  | A cash Sale's document | 400 "This invoice belongs to a cash sale: reverse the sale instead of cancelling its invoice" (the paid-invoice check refuses first in practice) |
+  | None, or failed | Allowed, as before |
+- **Routes.** No new route; responses are unchanged.
+  - `GET /sales/orders/:id/fiscal` and `POST /sales/orders/:id/fiscal/retry`: `sales:order:read` for an order,
+    `sales:cash_sale:read` for a cash sale (cash only before).
+  - `POST /sales/orders/:id/fiscal/:fiscalId/resolve`: `sales:invoice:create` for an order, `sales:cash_sale:review`
+    for a cash sale. Resolving a credit note as `issued` needs its `fiscalNumber`, as an issue does.
+- **Migration V738.**
+  - `ownerKind`: backfilled `submission` / `sale`, then NOT NULL, with a consistency check per kind.
+  - Operation `credit_note`, for document rows only. Document rows allow `issue`, `cancel` and `credit_note`.
+  - Partial unique keys per sale and per document; an index on `invoiceId`.
+- **Tests** (fast loop on the s094 test DB):
+  - `SalesInvoiceFiscalIT` (new, 8 tests):
+    - FI-O1: the issue is queued on post and registered by the retry, with the invoice number and amounts; the sale's
+      status is untouched.
+    - FI-O2: the down payment and the final invoice are registered side by side.
+    - FI-O3: `none` completes at once.
+    - FI-O4: a credit note waits while its invoice's registration is unknown, then goes with the invoice's fiscal
+      number.
+    - FI-O5: the cancel is refused while the registration is open (409) and once registered (400); with `none` it is
+      allowed and recorded.
+    - FI-O6: a cash sale keeps its one sale-level document; its invoice cannot be cancelled; a credit on it is
+      registered once.
+    - FI-O7: a rejected registration fails the queued credit note; later credits queue nothing.
+    - FI-O8: authorization (order permissions; `sales:invoice:create` to reconcile).
+  - `SalesCashReversalIT`: the Reverse credit note queues no document operation (refund path and FR-5 path).
+  - `SalesDownPaymentVatIT` J1: the down payment and the zero-total final invoice are both registered.
+- **Limits** (also in `docs/spec/sales.md`):
+  - Invoices that do not come from a Sale are not fiscalised: manual, project, fees, fleet, recurring, opening
+    balances.
+  - A rejected registration is final; there is no re-issue command. Such an invoice may be cancelled and the sale
+    invoiced again.
+  - A credit note that names no invoice, or credits an invoice that was never registered, is not fiscalised.
+  - The real authority adapter (EFRIS) is still to be written; `none` and `mock` are the adapters.
 
 ---
 
@@ -1461,7 +1545,8 @@ a customer-invoice creator; the source invoice comes from one of the creators ab
     around it.
   - Backfill: a fleet invoice that carried goods on a sale's delivery order (before Phase A A4) is `fleet_delivery`,
     because it invoiced goods. `fleet_charges` is used for transport-only invoices.
-  - Fiscalising order-type invoices and credit notes (AD-5) is a separate stage, C4b.
+  - Fiscalising order-type invoices and credit notes (AD-5) is a separate stage, C4b (built, V738: §5.5, "As built
+    (C4b)").
 
 ---
 
@@ -1874,7 +1959,7 @@ redesign.
 | **C2** Returns / credits / outcome / completion (after AD-9, AD-15, AD-20) | §7, §4.4, §4.5 | RT, CS and FO groups · `qtyCredited` for every credit path · `SalesReturnFlowIT` green |
 | **C3** Cash pickup | §5: payment model, T1, handover, fiscal outbox | Exact F1 journals · PM, PH, FI, TP, RC, FR, CC, RV groups green · R1–R3 = 0 · 20-line confirm p95 < 1.5 s and CC-5 without timeout on the rehearsal DB |
 | **C4** Invoice from sale + typed source contract (built, V737) | §8 | IS group · `sourceKind` backfilled on every existing customer document before the constraint is added and validated · parity scenarios unchanged · recurring unchanged |
-| **C4b** Fiscalisation of order-type invoices and credit notes (AD-5) | Each posted sale invoice and credit note queued on the fiscal outbox, owned by its invoice (`FiscalDocument.invoiceId`); provider from the sale's branch profile | FR group for order-type documents · zero-total final invoice fiscalised · reversal and credit-note gates |
+| **C4b** Fiscalisation of order-type invoices and credit notes (AD-5) (built, V738) | Each posted sale invoice and credit note queued on the fiscal outbox, owned by its invoice (`FiscalDocument.invoiceId`); provider from the sale's branch profile | FR group for order-type documents · zero-total final invoice fiscalised · reversal and credit-note gates |
 | **C2b** Revenue deferral for invoice-before-delivery (AD-2 = A, AD-16 = dispatch) | §3.6 | DF-1…DF-5 · V1–V5 hold |
 | ~~**C5** Migration + consumers + rollout tooling~~ | **Dropped by the owner (2026-11-28)**: no historical migration; legacy demo data is cleared at deploy. §10 and §11 stay as the reference if a real migration is ever needed. | — |
 | **C6** Web | screens incl. approval submit / withdraw, tender panel (card, change), handover block, return serial / lot entry, outcome and settlement badges | build · i18n · e2e smoke F1 / F3 / F5 / F6 · no console errors |

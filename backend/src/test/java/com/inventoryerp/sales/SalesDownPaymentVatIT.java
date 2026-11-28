@@ -218,6 +218,12 @@ class SalesDownPaymentVatIT extends ApiTestSupport {
         assertThat(posted.get("status").asString()).isEqualTo("posted");
         assertThat(posted.get("paymentStatus").asString()).isEqualTo("paid");
         assertThat(posted.get("amountResidual").asDouble()).isZero();
+        // ADR-S094 C4b (AD-17): the zero-total final invoice is a tax invoice, registered like the down payment
+        for (String registered : List.of(dp, inv.get("id").asString())) {
+            assertThat(jdbc.sql("SELECT status FROM \"FiscalDocument\" WHERE \"invoiceId\" = ? AND operation = 'issue'"
+                    + " AND \"ownerKind\" = 'document'").param(registered).query(String.class).single())
+                    .as("fiscal registration of " + registered).isEqualTo("succeeded");
+        }
         Map<String, Object> after = deposit(dp);
         assertThat((BigDecimal) after.get("appliedAmount")).isEqualByComparingTo("1000");
         assertThat(after.get("status")).isEqualTo("closed");

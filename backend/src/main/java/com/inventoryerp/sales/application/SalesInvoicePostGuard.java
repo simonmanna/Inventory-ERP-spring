@@ -23,10 +23,12 @@ class SalesInvoicePostGuard implements InvoicePostGuard {
 
     private final SalesBillingService billing;
     private final SalesDb db;
+    private final SaleDocumentFiscalService documentFiscal;
 
-    SalesInvoicePostGuard(SalesBillingService billing, SalesDb db) {
+    SalesInvoicePostGuard(SalesBillingService billing, SalesDb db, SaleDocumentFiscalService documentFiscal) {
         this.billing = billing;
         this.db = db;
+        this.documentFiscal = documentFiscal;
     }
 
     @Override
@@ -38,16 +40,30 @@ class SalesInvoicePostGuard implements InvoicePostGuard {
         }
     }
 
-    /** ADR-S094 C1b: register a down payment's deposit, or consume the deposits a final invoice deducts. */
+    /**
+     * ADR-S094 C1b: register a down payment's deposit, or consume the deposits a final invoice deducts. C4b: queue the
+     * fiscal registration of an order-type Sale's invoice.
+     */
     @Override
     public void afterPost(String documentId) {
         billing.afterPost(documentId);
+        documentFiscal.invoicePosted(documentId);
     }
 
-    /** ADR-S094 C2b: the revenue a cancelled invoice deferred is dropped with its journal entry. */
+    /**
+     * ADR-S094 C4b: a registered invoice is credited, not cancelled (checked first). C2b: the revenue a cancelled
+     * invoice deferred is dropped with its journal entry.
+     */
     @Override
     public void afterCancel(String documentId) {
+        documentFiscal.invoiceCancelled(documentId);
         billing.afterCancel(documentId);
+    }
+
+    /** ADR-S094 C4b: queue the fiscal credit note of a credit note on a registered sale invoice. */
+    @Override
+    public void afterCreditNotePost(String creditNoteId) {
+        documentFiscal.creditNotePosted(creditNoteId);
     }
 
     /** The invoice of a branch cash sale carries the sale's frozen lines, one for one and in order. */
