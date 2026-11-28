@@ -692,65 +692,73 @@ needs owner approval (OD-14) and an update of `CONTRACT.md` §6 in C1a.
 - A truly abandoned operation is still re-run after the lease expires, as today.
 - Response bodies, status codes, messages and the request hash (`sha256(method + path + rawBody)`) are unchanged.
 
-**Design**:
+**Design** (as built in C1a, migration V730; this replaces the revision 3 table):
 
 | Element | Design |
 |---|---|
-| New columns | `attempt` (fencing token, monotonic), `ownerToken` (UUID per attempt), `leaseExpiresAt` |
-| New table | `IdempotencyEvidence` (organizationId, key, attempt, txid, createdAt): commit evidence from nested transactions |
-| Claim (autocommit) | `INSERT … status = pending, attempt = 1, ownerToken = t, leaseExpiresAt = now() + L ON CONFLICT DO NOTHING` |
+| New columns | `attempt` (fencing token, monotonic), `ownerToken` (UUID per attempt), `leaseExpiresAt`, `committedAttempt` (the attempt whose outermost transaction committed) |
+| New table | `IdempotencyEvidence` (organizationId, key, attempt, createdAt): commit evidence from nested transactions. No foreign key: the key-share lock it would take waits for the outer transaction, the deadlock this table avoids. |
+| Claim (autocommit) | `INSERT … status = pending, attempt = 1, ownerToken = t, leaseExpiresAt = now() + L`; the unique (organization, key) index is the lock, as before |
 | Existing record | hash differs → 409 (unchanged); completed → replay (unchanged) |
-| Classify a pending record | `SELECT … FOR UPDATE NOWAIT` in a short transaction (table below) |
-| Takeover (compare-and-set, never delete) | `UPDATE … SET attempt = attempt + 1, ownerToken = t2, leaseExpiresAt = now() + L WHERE key = ? AND attempt = :seen AND status = 'pending' AND leaseExpiresAt < now()` and no evidence for `:seen`. One row → new owner; zero rows → re-read. |
-| **Fence (outermost write transaction, first statement)** | `SELECT 1 FROM "IdempotencyRecord" WHERE org = ? AND key = ? AND attempt = :mine AND "ownerToken" = :t FOR UPDATE`. Zero rows → LeaseLost → rollback, no effect. The row lock is held until the transaction ends, so no takeover can happen while it runs. Hooked into the existing `IdempotencyTransactionListener` (a new `afterBegin`, next to `beforeCommit`). |
-| Nested write transactions (`REQUIRES_NEW` while the fence is held) | They never lock or update the record, which would self-deadlock against the outer lock. At begin they check attempt and token with a plain read (reads don't block). At commit they insert an `IdempotencyEvidence` row (inserts don't conflict with the lock). `RETRY_SAFE_TX` transactions are exempt, as today. Money-route code uses savepoints, not nested transactions; TP-3 asserts none on cash confirm. |
-| Evidence | outermost: `UPDATE … SET responseJson = {committed: true, attempt: n} WHERE key = ? AND attempt = :mine` (row already locked); nested: the `IdempotencyEvidence` row. Evidence for an attempt = either. |
-| Complete (after commit) | `UPDATE … SET status = 'completed', responseJson = ?, statusCode = ? WHERE key = ? AND attempt = :mine AND "ownerToken" = :t` |
-| Rollback without evidence | release: `leaseExpiresAt = now()` (WHERE attempt and token match), so an immediate retry may take over. A definitive 4xx with no outcome stays cached as `safeToRetry` (existing). |
-| Rollback with nested evidence | no release. The retry gets `OPERATION_PENDING` (recovery), as today. |
+| Pending record | lease running → 409 `OPERATION_PENDING`. Lease ended: a money route (OUTCOME or EVIDENCE route) whose attempt left no commit evidence is taken over; a POS sale route is taken over with its recovery evidence (it resumes from it, as before); anything else → 409. |
+| Takeover (compare-and-set, never delete) | one statement: `UPDATE … SET attempt = attempt + 1, ownerToken = t2, leaseExpiresAt = now() + L WHERE id = (SELECT id … FOR UPDATE NOWAIT) AND attempt = :seen AND status = 'pending' AND leaseExpiresAt < now()` and no evidence. One row → new owner; zero rows → read again once; lock not available (the owner is committing) → 409. |
+| **Fence (every outermost write transaction, just before it commits)** | `UPDATE "IdempotencyRecord" SET "committedAttempt" = :mine WHERE org = ? AND key = ? AND attempt = :mine AND "ownerToken" = :t`. Zero rows → the key was taken over → 409, and the transaction rolls back. The row lock it takes is held through the commit, so no takeover can slip in between. The stamp is also the outermost transaction's commit evidence. Hooked into `IdempotencyTransactionListener.beforeCommit`. |
+| Nested write transactions (`REQUIRES_NEW` inside another transaction of the same attempt) | They never lock or update the record: the outer transaction may hold that lock and is waiting for them, a deadlock PostgreSQL cannot see. Just before commit they check attempt and token with a plain read and insert an `IdempotencyEvidence` row. `RETRY_SAFE_TX` transactions are exempt, as before. |
+| Evidence | a saved outcome or `committed` stamp in `responseJson`, `committedAttempt`, or an evidence row |
+| Complete, `safeToRetry` cache, release, sync `releaseStale` | Only the record of the operation's own attempt (`attempt` and `ownerToken` in the `WHERE`). Release and `releaseStale` never delete a record with evidence; `releaseStale` skips a locked record. |
+| Superseded attempt | Its fence fails: it answers 409 `OPERATION_PENDING` ("A retry with the same Idempotency-Key took this operation over; nothing of this attempt was saved. Retry with the same key."), or the winner's stored response if the winner has completed. |
 | External side effects | none before or inside T1. Network calls go only through outboxes, after commit (fiscal, notifications). |
 | Defence in depth | business guards stay: sale row lock + state precondition; unique constraints (one active sale invoice link per mode, tender reference uniqueness); the gap-free counter |
-| Lease length `L` | configurable, default 120 s. No heartbeat is needed, because the row lock covers long transactions. |
+| Lease length `L` | `erp.idempotency.lease-seconds`, default 120 s (the old abandonment age) |
 
-**Executing vs abandoned** (decided from the row, never from age alone):
+**Why the fence runs at commit, not as the first statement** (changed from revision 3):
+- A lock taken at the first statement is held for the whole transaction. A nested `REQUIRES_NEW` transaction that
+  writes the record (an outcome save, for example) would then wait for its own outer transaction: a deadlock
+  PostgreSQL cannot detect, and `lock_timeout` is 0 on live.
+- Spring's `afterBegin` hook cannot fail a transaction cleanly: the transaction is already bound to the thread.
+- A fence at commit gives the same guarantee, at most one attempt commits, with the lock held only for the commit
+  itself. The trade-off: a stalled attempt does not block a retry once its lease has ended. The retry takes over and
+  runs, and the stalled attempt fails at its fence and rolls back. Either way exactly one execution commits.
 
-| Observation | Meaning | Answer |
-|---|---|---|
-| Row locked (`NOWAIT` fails) | the owner is inside its transaction | 409 `OPERATION_PENDING` |
-| Unlocked, lease valid | the owner is between steps | 409 `OPERATION_PENDING` |
-| Unlocked, lease expired, evidence present | committed; completion missing | replay the saved outcome, or `OPERATION_PENDING` with recovery evidence |
-| Unlocked, lease expired, no evidence | abandoned; nothing committed | takeover (attempt + 1), run once |
-| Completed | done | replay |
+**Pending record, decided from the record** (never from age alone):
+
+| Observation | Answer |
+|---|---|
+| Completed | replay |
+| Pending, lease running | 409 `OPERATION_PENDING` (the owner may still be running) |
+| Pending, lease ended, commit evidence | 409 `OPERATION_PENDING` with the recovery evidence: never a second execution |
+| Pending, lease ended, no evidence | takeover (attempt + 1), run once; the old attempt, if still alive, is fenced out |
+| The owner is committing (record locked) | 409 `OPERATION_PENDING` |
 
 **Lost connection**:
-- **Worker dies or its connection drops inside T1**: PostgreSQL aborts the transaction when it notices, and the lock is
-  released. Until then, retries get `OPERATION_PENDING`, which is safe. The dead worker can never commit.
-- **Connection lost during COMMIT**: the outcome is unknown to the worker. The retry decides from the evidence:
-  committed → replay; not committed → takeover after the lease expires.
-- **Bounding the time**: set `idle_in_transaction_session_timeout` and TCP keepalives for the application role so a
-  dead worker's locks are released in bounded time. Proposal: 5 minutes and 60 seconds, tuned in rehearsal.
-- **Live today** (C0, read-only): `idle_in_transaction_session_timeout = 0` (off), TCP keepalives at the OS default
-  (7,200 s), and no role-level settings. The API reaches PostgreSQL on the same host (127.0.0.1), so a crashed API
-  process releases its locks at once. A hung one keeps them, and retries get `OPERATION_PENDING`, until a timeout
-  exists. C1a sets the timeouts per role (`ALTER ROLE … SET`), with owner approval.
+- **Worker dies or its connection drops inside T1**: PostgreSQL aborts the transaction; nothing is stamped. Retries get
+  `OPERATION_PENDING` until the lease ends, then one takes over and runs once.
+- **Connection lost during COMMIT**: if the commit happened, `committedAttempt` is set and there is no takeover; if it
+  did not, a retry takes over after the lease.
+- **Timeouts**: the fence decides correctness, so database timeouts are no longer needed for it. They would only free
+  the business-row locks of a hung worker sooner. Live has them off (C0: `idle_in_transaction_session_timeout = 0`,
+  keepalives at the OS default of 7,200 s, no role settings); setting them per role stays an ops decision for the next
+  deploy, and C1a does not change them.
 
-**Tests**:
-- **IL-1**: T1 stalled beyond the lease by a lock held from another connection, plus a retry with the same key → 409
-  `OPERATION_PENDING`, no second execution. Once released, the original completes and the retry replays.
-- **IL-2**: worker stopped before T1 → after the lease expires, the retry takes over (attempt 2) and runs once. The
-  stale worker then starts T1 → LeaseLost, rollback, no effect.
-- **IL-3**: crash after commit, before completion → the retry replays; no second effect.
-- **IL-4**: simultaneous first requests → one owner; the other gets `OPERATION_PENDING`.
+**Tests** (`IdempotencyLeaseIT`, all through the production transaction manager and listener):
+- **IL-1**: T1 stalled beyond the lease. A retry inside the lease → 409 `OPERATION_PENDING`, no execution. After the
+  lease, the retry takes over (attempt 2) and runs once; the stalled original then fails at its fence, rolls back and
+  answers with the winner's result. One effect.
+- **IL-2**: worker stopped before T1 → after the lease the retry takes over and runs once; the stale worker then runs
+  T1 → fenced, rolled back, no effect. **IL-2b**: the same while the retry is still running → the stale worker gets
+  the 409 "took this operation over".
+- **IL-3**: crash after commit, before completion → the retry gets `OPERATION_PENDING`, also after the lease; no second
+  effect (before C1a the record was deleted and the operation ran again).
+- **IL-4**: simultaneous first requests → one owner; the other gets 409.
 - **IL-5**: same key with a different body → 409 (unchanged).
 - **IL-6**: two takeovers racing → exactly one compare-and-set wins.
-- **IL-7**: rollback releases the lease → an immediate retry runs once.
-- **IL-8**: all existing idempotency ITs and Nest parity scenarios unchanged, apart from the approved deviation (OD-14).
-- **IL-9**: a nested `REQUIRES_NEW` write inside a fenced operation → no self-deadlock; evidence row inserted; outer
-  rollback → retry gets `OPERATION_PENDING`, not a re-run.
-- **IL-10**: connection killed (`pg_terminate_backend`) inside T1 → rollback; the retry gets `OPERATION_PENDING` until
-  the lease expires, then runs once.
-
-IL-1 and IL-2 are first shown failing on today's code (D-IDEM-1), then passing.
+- **IL-7**: a failed attempt whose work rolled back releases the key → an immediate retry runs once (HTTP).
+- **IL-8**: existing idempotency, sync, POS and sales money-route ITs unchanged.
+- **IL-9**: a nested `REQUIRES_NEW` write inside a fenced attempt whose outer transaction holds the record lock → no
+  self-deadlock; evidence row inserted; outer rollback → retry gets `OPERATION_PENDING`, also over HTTP.
+- **IL-10**: connection killed (`pg_terminate_backend`) inside T1 → nothing commits; the retry gets
+  `OPERATION_PENDING` until the lease ends, then runs once.
+- **TP-6**: a retry-safe find-or-create inside a failed keyed request (TA-6) leaves no evidence; the retry runs.
 
 ---
 

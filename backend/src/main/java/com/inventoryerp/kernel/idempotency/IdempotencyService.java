@@ -3,6 +3,7 @@ package com.inventoryerp.kernel.idempotency;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -13,6 +14,8 @@ import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -32,13 +35,27 @@ import tools.jackson.databind.node.ObjectNode;
  *   <li>Existing completed record + same request hash: replay the stored status and body.
  *   <li>Existing record + different hash: 409.
  *   <li>Existing pending record: 409 {@code OPERATION_PENDING} with the saved recovery evidence, except
- *       an abandoned money operation (no outcome after 2 minutes), which is released and re-run.
+ *       an abandoned money operation, which a retry takes over (below).
  *   <li>None: insert a pending row (the unique (organizationId, key) is the lock), run the handler,
  *       store the response. A failure keeps the row for recovery, except a definitive 4xx on a money
  *       route with no saved outcome, which is cached with {@code safeToRetry: true}.
  * </ol>
  * Records are written outside the business transaction (each statement commits on its own), exactly
  * like the Nest calls on the non-transactional Prisma client.
+ *
+ * <p>ADR-S094 C1a (D-IDEM-1, approved deviation OD-14): each execution of a key is an <em>attempt</em> with an owner
+ * token and a lease ({@code erp.idempotency.lease-seconds}, default 120 s, the old abandonment age). Nest deleted an
+ * abandoned money record and ran the handler again even when the first execution was still running, so a request
+ * slower than 2 minutes could post twice. Now:
+ * <ul>
+ *   <li>a retry inside the lease answers {@code OPERATION_PENDING};
+ *   <li>after the lease, a retry of a money route that left no evidence of a commit takes the key over by
+ *       compare-and-set ({@code attempt + 1}, new token), never by deleting it; a POS sale route still resumes from its
+ *       saved recovery evidence, once the lease has ended;
+ *   <li>every write transaction of an attempt must still own the key when it commits
+ *       ({@link IdempotencyTransactionListener}), so a superseded attempt rolls back instead of posting twice;
+ *   <li>completion, failure caching and release touch only the record of their own attempt.
+ * </ul>
  */
 @Service
 public class IdempotencyService {
@@ -73,7 +90,8 @@ public class IdempotencyService {
 
     private static final Pattern RECOVERABLE_SALE = Pattern.compile("/pos/(checkout|tabs/[^/]+/settle|orders/[^/]+/settle)$");
     private static final Pattern PIN_STRIPPED = Pattern.compile("/cash-sessions/|/pos/shift/handover$");
-    private static final long ABANDONED_AFTER_MS = 2 * 60_000L;
+    /** PostgreSQL {@code lock_not_available}: a NOWAIT lock met a row another transaction holds. */
+    private static final String LOCK_NOT_AVAILABLE = "55P03";
 
     /** Outcome of {@link #begin}: either a replay or permission to run the handler. */
     public sealed interface Begin permits Replay, Proceed {}
@@ -97,6 +115,8 @@ public class IdempotencyService {
      * replay answers {@code "debit": 1000} where the first response said {@code "debit": "1000"} (Nest parity).
      */
     private final JsonMapper cacheMapper;
+    /** ADR-S094 C1a: how long an attempt owns its key before a retry may take it over. */
+    private long leaseSeconds = 120;
 
     public IdempotencyService(JdbcClient jdbc, JsonMapper mapper) {
         this.jdbc = jdbc;
@@ -110,6 +130,12 @@ public class IdempotencyService {
             }
         });
         this.cacheMapper = mapper.rebuild().addModule(prismaJson).build();
+    }
+
+    /** ADR-S094 C1a: the lease of an attempt, in seconds. */
+    @Value("${erp.idempotency.lease-seconds:120}")
+    void setLeaseSeconds(long leaseSeconds) {
+        this.leaseSeconds = leaseSeconds;
     }
 
     /** Read + validate the {@code Idempotency-Key} header value; null when absent/blank. */
@@ -155,72 +181,80 @@ public class IdempotencyService {
         }
         String key = req.key();
         boolean recoverableSale = RECOVERABLE_SALE.matcher(req.path()).find();
-        JsonNode recovery = null;
-
-        Optional<Row> existing = find(organizationId, key);
-        if (existing.isPresent()) {
+        for (int round = 0; ; round++) {
+            Optional<Row> existing = find(organizationId, key);
+            if (existing.isEmpty()) {
+                String token = UUID.randomUUID().toString();
+                try {
+                    jdbc.sql("""
+                                    INSERT INTO "IdempotencyRecord" (id, "organizationId", key, "requestHash", method, path,
+                                      "statusCode", "responseJson", status, "createdAt", attempt, "ownerToken",
+                                      "leaseExpiresAt")
+                                    VALUES (?, ?, ?, ?, ?, ?, 0, '{}'::jsonb, 'pending', now(), 1, ?,
+                                      now() + make_interval(secs => ?))""")
+                            .params(UUID.randomUUID().toString(), organizationId, key, req.requestHash(), req.method(),
+                                    req.path(), token, (double) leaseSeconds)
+                            .update();
+                    return proceed(organizationId, req, null, 1, token);
+                } catch (DuplicateKeyException race) {
+                    Row winner = find(organizationId, key).orElse(null);
+                    if (winner != null && !winner.requestHash().equals(req.requestHash())) {
+                        throw ApiException.conflict("Idempotency key was used with a different request");
+                    }
+                    if (winner != null && ("completed".equals(winner.status())
+                            || "business_completed".equals(winner.status()))) {
+                        return new Replay(winner.statusCode(), winner.responseJson());
+                    }
+                    throw ApiException.conflict(
+                            "Idempotency-Key '" + key + "' is being processed concurrently; retry shortly");
+                }
+            }
             Row row = existing.get();
             if (!row.requestHash().equals(req.requestHash())) {
                 throw ApiException.conflict(
                         "Idempotency-Key '" + key + "' was previously used with a different request body");
             }
-            if ("pending".equals(row.status()) || "indeterminate".equals(row.status())) {
-                boolean noOutcome = row.responseJson() == null || row.responseJson().isEmpty();
-                boolean abandoned = recordsOutcome(req.path()) && noOutcome
-                        && System.currentTimeMillis() - row.createdAt().toEpochMilli() > ABANDONED_AFTER_MS;
-                if (recoverableSale) {
-                    recovery = row.responseJson();
-                } else if (abandoned) {
-                    jdbc.sql("""
-                                    DELETE FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ? AND status = ?
-                                      AND "responseJson" = '{}'::jsonb""")
-                            .params(organizationId, key, row.status())
-                            .update();
-                    log.warn("Operation {} on {} was abandoned without an outcome; re-running", key, req.path());
-                    return begin(req);
-                } else {
-                    Map<String, Object> body = new LinkedHashMap<>();
-                    body.put("code", "OPERATION_PENDING");
-                    body.put("message", "This operation needs recovery; do not submit it with a new key. Retry with the same key.");
-                    body.put("operationKey", key);
-                    body.put("recovery", row.responseJson());
-                    throw ApiException.withBody(HttpStatus.CONFLICT, body);
-                }
-            } else {
+            if (!"pending".equals(row.status()) && !"indeterminate".equals(row.status())) {
                 return new Replay(row.statusCode(), row.responseJson());
             }
-        } else {
-            try {
-                jdbc.sql("""
-                                INSERT INTO "IdempotencyRecord" (id, "organizationId", key, "requestHash", method, path,
-                                  "statusCode", "responseJson", status, "createdAt")
-                                VALUES (?, ?, ?, ?, ?, ?, 0, '{}'::jsonb, 'pending', now())""")
-                        .params(UUID.randomUUID().toString(), organizationId, key, req.requestHash(), req.method(),
-                                req.path())
-                        .update();
-            } catch (DuplicateKeyException race) {
-                Row winner = find(organizationId, key).orElse(null);
-                if (winner != null && !winner.requestHash().equals(req.requestHash())) {
-                    throw ApiException.conflict("Idempotency key was used with a different request");
+            // ADR-S094 C1a: a POS sale resumes from its saved recovery evidence; any other money route runs again only
+            // when no write of the earlier attempt committed. Either way, only once that attempt's lease has ended.
+            boolean mayTakeOver = recoverableSale || (recordsOutcome(req.path()) && !hasEvidence(organizationId, row));
+            if (mayTakeOver) {
+                String token = UUID.randomUUID().toString();
+                Boolean took = takeOver(organizationId, key, row.attempt(), token, recoverableSale);
+                if (Boolean.TRUE.equals(took)) {
+                    log.warn("Operation {} on {}: attempt {} left the key without an outcome; attempt {} takes it over",
+                            key, req.path(), row.attempt(), row.attempt() + 1);
+                    return proceed(organizationId, req, recoverableSale ? row.responseJson() : null,
+                            row.attempt() + 1, token);
                 }
-                if (winner != null && ("completed".equals(winner.status()) || "business_completed".equals(winner.status()))) {
-                    return new Replay(winner.statusCode(), winner.responseJson());
+                if (took != null && round == 0 && changed(organizationId, row)) {
+                    continue; // the record changed between the read and the takeover: look at it again once
                 }
-                throw ApiException.conflict(
-                        "Idempotency-Key '" + key + "' is being processed concurrently; retry shortly");
             }
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("code", "OPERATION_PENDING");
+            body.put("message", "This operation needs recovery; do not submit it with a new key. Retry with the same key.");
+            body.put("operationKey", key);
+            body.put("recovery", row.responseJson());
+            throw ApiException.withBody(HttpStatus.CONFLICT, body);
         }
+    }
 
+    /** The approval-token check of a request allowed to run, and its operation: attempt {@code attempt} of the key. */
+    private Proceed proceed(String organizationId, Request req, JsonNode recovery, int attempt, String token) {
+        String key = req.key();
         String approvedById = null;
         String approvedKind = null;
-        JsonNode token = req.payload() == null ? null : req.payload().get("approvalToken");
-        if (token != null && !token.isNull() && !token.asString("").isEmpty()) {
+        JsonNode approvalToken = req.payload() == null ? null : req.payload().get("approvalToken");
+        if (approvalToken != null && !approvalToken.isNull() && !approvalToken.asString("").isEmpty()) {
             final JsonNode rec = recovery;
             var grant = jdbc.sql("""
                             SELECT "cashierId", "operationKey", endpoint, "payloadHash", "expiresAt", "managerId",
                                    "overrideKind"::text AS "overrideKind"
                             FROM "PosApprovalGrant" WHERE "organizationId" = ? AND "tokenHash" = ? LIMIT 1""")
-                    .params(organizationId, BusinessOutcome.sha256(token.asString()))
+                    .params(organizationId, BusinessOutcome.sha256(approvalToken.asString()))
                     .query((rs, n) -> Map.of(
                             "cashierId", String.valueOf(rs.getString("cashierId")),
                             "operationKey", String.valueOf(rs.getString("operationKey")),
@@ -243,17 +277,90 @@ public class IdempotencyService {
             approvedKind = (String) grant.get().get("overrideKind");
         }
         return new Proceed(new BusinessOutcome.Operation(organizationId, key, req.path(), approvedById, approvedKind,
-                recovery), true);
+                recovery, attempt, token), true);
     }
 
-    /** Store the handler's response and mark the record completed. */
+    /**
+     * ADR-S094 C1a: take the key over from attempt {@code seen}, whose lease has ended, by compare-and-set. True when
+     * this request now owns attempt {@code seen + 1}; false when the record does not qualify (its lease is still
+     * running, an outcome or commit evidence exists, or another retry took it first); {@code null} when the owner
+     * holds the record's lock right now (it is committing). {@code evenWithEvidence} takes over a record whose earlier
+     * attempt saved recovery evidence (a POS sale resumes from it).
+     */
+    private Boolean takeOver(String organizationId, String key, int seen, String token, boolean evenWithEvidence) {
+        try {
+            int taken = jdbc.sql("""
+                            UPDATE "IdempotencyRecord" r
+                            SET attempt = r.attempt + 1, "ownerToken" = ?,
+                                "leaseExpiresAt" = now() + make_interval(secs => ?)
+                            WHERE r.id = (SELECT id FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ?
+                                          FOR UPDATE NOWAIT)
+                              AND r.attempt = ? AND r.status IN ('pending', 'indeterminate')
+                              AND coalesce(r."leaseExpiresAt", r."createdAt" + interval '2 minutes') < now()
+                              AND (? OR (r."committedAttempt" IS NULL AND r."responseJson" = '{}'::jsonb
+                                    AND NOT EXISTS (SELECT 1 FROM "IdempotencyEvidence" e
+                                                    WHERE e."organizationId" = r."organizationId" AND e.key = r.key)))""")
+                    .params(token, (double) leaseSeconds, organizationId, key, seen, evenWithEvidence)
+                    .update();
+            return taken == 1;
+        } catch (DataAccessException e) {
+            if (lockNotAvailable(e)) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    /** True when the record no longer matches what {@code seen} showed (another attempt, status or evidence). */
+    private boolean changed(String organizationId, Row seen) {
+        Row now = find(organizationId, seen.key()).orElse(null);
+        return now == null || now.attempt() != seen.attempt() || !now.status().equals(seen.status())
+                || !java.util.Objects.equals(now.committedAttempt(), seen.committedAttempt())
+                || !java.util.Objects.equals(now.responseJson(), seen.responseJson());
+    }
+
+    private static boolean lockNotAvailable(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof SQLException sql && LOCK_NOT_AVAILABLE.equals(sql.getSQLState())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * ADR-S094 C1a: true when an attempt of the key committed a write: a saved outcome or {@code committed} stamp, the
+     * commit stamp of an outermost transaction, or the evidence row of a nested one.
+     */
+    private boolean hasEvidence(String organizationId, Row row) {
+        if ((row.responseJson() != null && !row.responseJson().isEmpty()) || row.committedAttempt() != null) {
+            return true;
+        }
+        return Boolean.TRUE.equals(jdbc.sql(
+                        "SELECT EXISTS (SELECT 1 FROM \"IdempotencyEvidence\" WHERE \"organizationId\" = ? AND key = ?)")
+                .params(organizationId, row.key())
+                .query(Boolean.class)
+                .single());
+    }
+
+    /** True when {@code row} is still the record of {@code op}'s attempt (always, for an unfenced operation). */
+    private static boolean owns(BusinessOutcome.Operation op, Row row) {
+        return !op.fenced() || (row.attempt() == op.attempt() && op.ownerToken().equals(row.ownerToken()));
+    }
+
+    /** Store the handler's response and mark the record completed (only the record of the operation's attempt). */
     public void complete(BusinessOutcome.Operation op, int statusCode, Object body) {
-        jdbc.sql("""
+        int stored = jdbc.sql("""
                         UPDATE "IdempotencyRecord" SET "statusCode" = ?, "responseJson" = ?::jsonb, status = 'completed',
                                "completedAt" = now()
-                        WHERE "organizationId" = ? AND key = ?""")
-                .params(statusCode, cacheMapper.writeValueAsString(body), op.organizationId(), op.key())
+                        WHERE "organizationId" = ? AND key = ?""" + BusinessOutcome.owned(op))
+                .params(BusinessOutcome.ownedParams(op, statusCode, cacheMapper.writeValueAsString(body),
+                        op.organizationId(), op.key()))
                 .update();
+        if (stored == 0 && op.fenced()) {
+            log.warn("Operation {} on {}: attempt {} no longer owns the key; its response was not stored", op.key(),
+                    op.path(), op.attempt());
+        }
     }
 
     /**
@@ -271,8 +378,14 @@ public class IdempotencyService {
         if (saved != null && ("business_completed".equals(saved.status()) || "completed".equals(saved.status()))) {
             return new Replay(saved.statusCode(), saved.responseJson());
         }
+        if (saved != null && !owns(op, saved)) {
+            // ADR-S094 C1a: a retry took the key over; its record is not this attempt's to settle.
+            log.warn("Operation {} on {}: attempt {} failed after losing the key to attempt {}", op.key(), op.path(),
+                    op.attempt(), saved.attempt());
+            return null;
+        }
         if (recordsOutcome(op.path()) && httpException && errorStatus < 500
-                && saved != null && (saved.responseJson() == null || saved.responseJson().isEmpty())) {
+                && saved != null && !hasEvidence(op.organizationId(), saved)) {
             ObjectNode body = mapper.createObjectNode();
             JsonNode err = mapper.valueToTree(errorBody);
             if (err instanceof ObjectNode o) {
@@ -281,12 +394,16 @@ public class IdempotencyService {
                 body.set("message", err);
             }
             body.put("safeToRetry", true);
-            jdbc.sql("""
+            int cached = jdbc.sql("""
                             UPDATE "IdempotencyRecord" SET status = 'completed', "statusCode" = ?, "responseJson" = ?::jsonb,
                                    "completedAt" = now()
-                            WHERE "organizationId" = ? AND key = ?""")
-                    .params(errorStatus, mapper.writeValueAsString(body), op.organizationId(), op.key())
+                            WHERE "organizationId" = ? AND key = ?""" + BusinessOutcome.owned(op))
+                    .params(BusinessOutcome.ownedParams(op, errorStatus, mapper.writeValueAsString(body),
+                            op.organizationId(), op.key()))
                     .update();
+            if (cached == 0 && op.fenced()) {
+                return null;
+            }
             return new Replay(errorStatus, body);
         }
         log.warn("Operation {} retained for recovery after failure", op.key());
@@ -296,13 +413,17 @@ public class IdempotencyService {
     /**
      * Gaps h-06 F7: forget a pending key whose handler failed without committing anything (every write transaction it
      * opened rolled back and no outcome was saved), so a retry with the same key runs the operation again instead of
-     * answering {@code OPERATION_PENDING} until the key is abandoned.
+     * answering {@code OPERATION_PENDING} until the key is abandoned. Only the record of the operation's own attempt,
+     * and never one that holds commit evidence (ADR-S094 C1a).
      */
     public void release(BusinessOutcome.Operation op) {
+        String owned = op.fenced() ? " AND r.attempt = ? AND r.\"ownerToken\" = ?" : "";
         int deleted = jdbc.sql("""
-                        DELETE FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ? AND status = 'pending'
-                          AND "responseJson" = '{}'::jsonb""")
-                .params(op.organizationId(), op.key())
+                        DELETE FROM "IdempotencyRecord" r WHERE r."organizationId" = ? AND r.key = ?
+                          AND r.status = 'pending' AND r."responseJson" = '{}'::jsonb AND r."committedAttempt" IS NULL
+                          AND NOT EXISTS (SELECT 1 FROM "IdempotencyEvidence" e
+                                          WHERE e."organizationId" = r."organizationId" AND e.key = r.key)""" + owned)
+                .params(BusinessOutcome.ownedParams(op, op.organizationId(), op.key()))
                 .update();
         if (deleted > 0) {
             log.info("Operation {} on {} failed and committed nothing; key released for a retry", op.key(), op.path());
@@ -363,7 +484,9 @@ public class IdempotencyService {
     /**
      * ADR-S083 S1: forget a sync op's pending key that saved no outcome and is older than {@code olderThanMs}. The caller
      * has proved through the applied-op ledger that the earlier attempt committed nothing, so the same opId may run
-     * again; the age guard keeps an attempt that is still in flight from being run twice.
+     * again; the age guard keeps an attempt that is still in flight from being run twice. ADR-S094 C1a: never a record
+     * holding commit evidence or locked right now (its attempt is committing); an attempt still running when its record
+     * goes can no longer commit, because its fence finds no record of its own.
      */
     public boolean releaseStale(String key, long olderThanMs) {
         String organizationId = TenantContext.optionalOrganizationId();
@@ -371,25 +494,34 @@ public class IdempotencyService {
             return false;
         }
         return jdbc.sql("""
-                        DELETE FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ?
-                          AND status IN ('pending', 'indeterminate') AND "responseJson" = '{}'::jsonb
-                          AND "createdAt" < now() - make_interval(secs => ?)""")
+                        DELETE FROM "IdempotencyRecord" WHERE id = (
+                          SELECT r.id FROM "IdempotencyRecord" r WHERE r."organizationId" = ? AND r.key = ?
+                            AND r.status IN ('pending', 'indeterminate') AND r."responseJson" = '{}'::jsonb
+                            AND r."committedAttempt" IS NULL AND r."createdAt" < now() - make_interval(secs => ?)
+                            AND NOT EXISTS (SELECT 1 FROM "IdempotencyEvidence" e
+                                            WHERE e."organizationId" = r."organizationId" AND e.key = r.key)
+                          FOR UPDATE OF r SKIP LOCKED)""")
                 .params(organizationId, key, olderThanMs / 1000.0)
                 .update() > 0;
     }
 
-    private record Row(String requestHash, String status, int statusCode, JsonNode responseJson, Instant createdAt) {}
+    private record Row(String key, String requestHash, String status, int statusCode, JsonNode responseJson,
+            Instant createdAt, int attempt, String ownerToken, Integer committedAttempt) {}
 
     private Optional<Row> find(String organizationId, String key) {
         return jdbc.sql("""
-                        SELECT "requestHash", status, "statusCode", "responseJson"::text AS "responseJson", "createdAt"
+                        SELECT key, "requestHash", status, "statusCode", "responseJson"::text AS "responseJson",
+                               "createdAt", attempt, "ownerToken", "committedAttempt"
                         FROM "IdempotencyRecord" WHERE "organizationId" = ? AND key = ?""")
                 .params(organizationId, key)
                 .query((rs, n) -> {
                     Timestamp created = rs.getTimestamp("createdAt");
                     String json = rs.getString("responseJson");
-                    return new Row(rs.getString("requestHash"), rs.getString("status"), rs.getInt("statusCode"),
-                            json == null ? null : mapper.readTree(json), created.toInstant());
+                    int committed = rs.getInt("committedAttempt");
+                    boolean noCommit = rs.wasNull();
+                    return new Row(rs.getString("key"), rs.getString("requestHash"), rs.getString("status"),
+                            rs.getInt("statusCode"), json == null ? null : mapper.readTree(json), created.toInstant(),
+                            rs.getInt("attempt"), rs.getString("ownerToken"), noCommit ? null : committed);
                 })
                 .optional();
     }

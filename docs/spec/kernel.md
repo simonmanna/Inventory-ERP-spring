@@ -132,6 +132,24 @@ SG-0 stabilization (2026-11-06), pending owner approval:
   also finds sales orders and quotations. Scope is checked after the per-type limit, so a restricted user can see fewer
   than five hits of a type.
 
+Idempotency lease and fencing (owner-approved deviation OD-14, 2026-11-28, [ADR-S094](../adr/ADR-S094-centralized-sales.md)
+§6, C1a, V730):
+
+- **D-IDEM-1 fixed.** Nest deleted a money operation's pending record after 2 minutes without an outcome and ran the
+  handler again, even while the first execution was still running. Spring gives every execution an attempt number,
+  an owner token and a lease (120 s by default, `erp.idempotency.lease-seconds`). A retry inside the lease answers
+  `OPERATION_PENDING` as before. After the lease, a retry takes the key over by compare-and-set only when the earlier
+  attempt left no commit evidence (POS sale routes resume from their recovery evidence as before). Every write
+  transaction of an attempt must still own the key when it commits (`IdempotencyTransactionListener`): the outermost
+  one stamps `committedAttempt` under the record's row lock, a nested `REQUIRES_NEW` one writes an
+  `IdempotencyEvidence` row (no lock, so no self-deadlock). A superseded attempt rolls back and answers 409
+  `OPERATION_PENDING` with a "took this operation over" message, or the winner's stored response. Completion, the
+  `safeToRetry` cache, release and the sync `releaseStale` only touch the record of their own attempt, never one with
+  commit evidence. Contract text: `docs/CONTRACT.md` §6. Tests: `IdempotencyLeaseIT` (IL-1…IL-10, TP-6).
+- **TA-6.** `VirtualLocationService.ensure` (find-or-create of system locations) runs its `REQUIRES_NEW` transaction as
+  `RETRY_SAFE_TX`, so it neither holds a failed request's key nor passes through the fence. Saving the sales settings
+  creates the default `SALES-QUARANTINE` location up front, so the first rejecting proof of delivery does not.
+
 Owner-requested extension (2026-11-13), no Nest counterpart:
 
 - **Sidebar tagline.** `PUT /settings/developer` accepts `sidebarTagline` (string, at most 60 characters after
