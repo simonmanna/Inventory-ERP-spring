@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import com.inventoryerp.fleet.application.DispatchCommands.DiscrepancyQuery;
 import com.inventoryerp.fleet.domain.FleetDeliveryDiscrepancy;
 import com.inventoryerp.fleet.domain.FleetLoadLine;
@@ -509,7 +510,7 @@ public class FleetDiscrepancyService {
                 FleetDeliveryOrderService.today().toString(), null, (String) order.get("code"), notes,
                 document ? (String) order.get("goodsInvoiceId") : null,
                 List.of(LineInput.of(null, (String) line.get("incomeAccountId"), description, qty, price,
-                        (BigDecimal) line.get("discountPercent"), (String) line.get("taxId"), null))));
+                        (BigDecimal) line.get("discountPercent"), (String) line.get("taxId"), null))), new SourceRef.CreditFor(document ? (String) order.get("goodsInvoiceId") : null, "fleet"));
     }
 
     private static String kindLabel(String kind) {

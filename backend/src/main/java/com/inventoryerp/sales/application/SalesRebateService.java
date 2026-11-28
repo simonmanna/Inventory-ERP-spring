@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -359,7 +360,7 @@ public class SalesRebateService {
                 : new LineInput(null, null, null, null, accrualAccount(), desc, BigDecimal.ONE, amount, BigDecimal.ZERO,
                         null, null, null, "manual", taxId, null, true);
         Map<String, Object> cn = creditNotes.create(new CreditNoteInput(str(a.get("partnerId")), LocalDate.now(BusinessZone.get())
-                .toString(), null, "REBATE", desc, open == null ? null : str(open.get("id")), List.of(line)));
+                .toString(), null, "REBATE", desc, open == null ? null : str(open.get("id")), List.of(line)), new SourceRef.CreditFor(open == null ? null : str(open.get("id")), "sales"));
         String cnId = str(cn.get("id"));
         creditNotes.post(cnId, "none");
         if (taxId != null) {

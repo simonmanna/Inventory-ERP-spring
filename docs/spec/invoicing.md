@@ -8,10 +8,11 @@
 | Feature flag | always on |
 | Java package | `com.inventoryerp.invoicing` |
 
-> **ADR-S094 (proposed, not implemented).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) §8 lists the 27
-> creators of customer invoices and credit notes. It plans a typed source contract (`SourceRef`, one creation entry
-> point, a `Document.sourceKind` column) and an optional per-organization restriction on manual customer invoices,
-> off by default. Parity routes (`POST /invoices`, `POST /credit-notes`, `/recurring`) keep their contract.
+> **ADR-S094 C4 (built, V737).** [ADR-S094](../adr/ADR-S094-centralized-sales.md) §8 lists the 27 creators of
+> customer invoices and credit notes. Each one now creates its documents through `DocumentBuilderService` with a
+> typed `SourceRef`, stored in `Document.sourceKind`. An organization setting can block manual customer invoices; it
+> is off by default. Parity routes (`POST /invoices`, `POST /credit-notes`, `/recurring`) keep their contract. See
+> Deviations.
 
 ## Purpose
 
@@ -63,6 +64,21 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+- **Customer documents name their source; manual invoices can be blocked** (ADR-S094 C4, V737; AD-13 and OD-3, owner
+  instruction 2026-11-28). Details in ADR-S094 §8, under "As built (C4)".
+  - New column `Document.sourceKind`, written by `DocumentBuilderService`, the only class that inserts a `Document`
+    row (a code-scan test enforces this). A database check requires it on sales invoices and credit notes. It is not
+    serialized.
+  - `POST /invoices` is `manual`. `POST /credit-notes` is `credit` when it names `reversedDocumentId`, otherwise
+    `manual`.
+  - The recurring job and the documents engine write their rows through ports implemented by the builder. The rows
+    are unchanged.
+  - Organization setting `invoicing.manualCustomerInvoices`: `allowed` (default, the Nest behaviour) or `blocked`.
+    With `blocked`:
+    - `POST /invoices` → 400 "Manual customer invoices are turned off for this organization: create the invoice
+      from a sale";
+    - `POST /credit-notes` without `reversedDocumentId` → 400 "Manual credit notes are turned off for this
+      organization: a credit note must name the invoice it credits".
 - **Taxed down payments are deducted, not applied** (ADR-S094 C1b, V731; accountant decisions AD-14, AD-15, AD-17
   recorded 2026-11-28 under the owner's recommended-option instruction). Nest has no down-payment invoices; these rules
   extend the Spring-only billing of sales orders. Details in `sales-postings.md` §5a.

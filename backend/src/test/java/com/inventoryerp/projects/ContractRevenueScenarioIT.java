@@ -129,6 +129,8 @@ class ContractRevenueScenarioIT extends ApiTestSupport {
         posted("/projects/" + pid + "/advances", Map.of("amount", 20000, "recoveryPct", 10));
         JsonNode advances = ok(200, "GET", "/projects/" + pid + "/advances", null);
         assertThat(advances.size()).isEqualTo(1);
+        assertThat(sourceKind(advances.get(0).get("invoiceId").asString())).as("ADR-S094 §8.2")
+                .isEqualTo("project_contract");
         assertThat(num(advances.get(0).get("outstanding"))).isEqualByComparingTo("20000");
         posted("/projects/" + pid + "/costs/equipment", Map.of("wbsId", w, "equipmentRef", "CRANE", "hours", 300,
                 "ratePerHour", 100));
@@ -139,6 +141,8 @@ class ContractRevenueScenarioIT extends ApiTestSupport {
         String c1 = ok(201, "POST", "/projects/" + pid + "/claims", Map.of("cumulativeCertified", 40000,
                 "retentionPct", 10)).get("id").asString();
         JsonNode cert1 = posted("/projects/claims/" + c1 + "/certify", null);
+        assertThat(sourceKind(jdbc.sql("SELECT \"invoiceId\" FROM \"ProgressClaim\" WHERE id = ?").param(c1)
+                .query(String.class).single())).as("ADR-S094 §8.2").isEqualTo("project_contract");
         assertThat(num(cert1.get("netAmount"))).isEqualByComparingTo("32000");
         assertThat(entry(cert1.get("journalEntryId").asString(), "1475")).isEqualByComparingTo("4000");
         assertThat(entry(cert1.get("journalEntryId").asString(), "2480")).isEqualByComparingTo("4000");

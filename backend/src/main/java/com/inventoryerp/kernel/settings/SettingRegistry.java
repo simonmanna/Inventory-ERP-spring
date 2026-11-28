@@ -228,6 +228,13 @@ public final class SettingRegistry {
                 "DEPRECATED — the posting engine never read this key. Account determination uses the product category expenseAccountId, then the AccountMapping key `default_expense`.");
         def("accounting.allCurrencyCodes", "accounting", "json", "Enabled Currencies",
                 "List of currency codes enabled for this organization.", List.of(), null, false, ORG_ONLY);
+        // ADR-S094 §8.3 (OD-3): customer invoices from a Sale or a module source only, per organization.
+        def("invoicing.manualCustomerInvoices", "accounting", "enum", "Manual Customer Invoices",
+                "allowed = invoices can be created by hand (New invoice) and credit notes without naming an invoice"
+                        + " (default); blocked = customer invoices come only from a sale or a module (projects,"
+                        + " fleet, dunning, recurring, opening balances) and every credit note names the invoice it"
+                        + " credits.",
+                "allowed", List.of("allowed", "blocked"), false, ORG_ONLY);
         // Finance readiness audit A6 (P2-12): a posting key replayed with other lines.
         def("accounting.postingKeyReuse", "accounting", "enum", "Posting Key Reused With Other Lines",
                 "warn = the posted entry of the key is returned as before, the difference is logged and listed by the"

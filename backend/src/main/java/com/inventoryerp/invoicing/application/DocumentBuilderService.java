@@ -12,6 +12,7 @@ import static com.inventoryerp.kernel.common.Money.ZERO;
 import com.inventoryerp.accounting.application.AccountDeterminationService;
 import com.inventoryerp.accounting.application.ControlAccountGuards;
 import com.inventoryerp.documents.application.DmsTypeResolver;
+import com.inventoryerp.documents.application.CounterpartWriter;
 import com.inventoryerp.documents.domain.Document;
 import com.inventoryerp.documents.domain.DocumentLine;
 import com.inventoryerp.invoicing.application.TaxCalculationService.LineTaxResult;
@@ -20,9 +21,12 @@ import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.ReadMemo;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
+import com.inventoryerp.kernel.recurring.spi.RecurringDocumentWriter;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -36,9 +40,13 @@ import org.springframework.stereotype.Service;
 /**
  * Shared document logic for invoices, credit notes and vendor bills (port of {@code document-builder.service.ts},
  * ADR-010): the server computes line subtotals / tax / totals and resolves the accounts each line posts to.
+ *
+ * <p>ADR-S094 §8.2: the only place a {@code Document} row is inserted (a code-scan test enforces it). A sales invoice,
+ * credit note or proforma needs its {@link SourceRef}, stored as {@code sourceKind}; the recurring job and the
+ * documents engine write theirs through {@link RecurringDocumentWriter} and {@link CounterpartWriter}.
  */
 @Service
-public class DocumentBuilderService {
+public class DocumentBuilderService implements RecurringDocumentWriter, CounterpartWriter {
 
 
     private com.inventoryerp.core.application.SaleableProducts saleable;
@@ -651,7 +659,61 @@ public class DocumentBuilderService {
         }
     }
 
+    /** Customer document types that need a {@link SourceRef} (ADR-S094 §8.2). */
+    public static final java.util.Set<String> CUSTOMER_TYPES = java.util.Set.of("sales_invoice", "credit_note",
+            "proforma_invoice");
+
+    /** Organization setting deciding whether {@link SourceRef.Manual} documents may be created (ADR-S094 §8.3). */
+    public static final String MANUAL_SETTING = "invoicing.manualCustomerInvoices";
+
+    private com.inventoryerp.kernel.settings.SettingResolverService settings;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSettings(com.inventoryerp.kernel.settings.SettingResolverService settings) {
+        this.settings = settings;
+    }
+
+    /** A vendor-side document (no source kind). Customer documents name their source. */
     public Map<String, Object> createDocument(String documentType, HeaderInput h, List<LineInput> lines) {
+        if (CUSTOMER_TYPES.contains(documentType)) {
+            throw new IllegalStateException("A " + documentType + " needs its source (ADR-S094 §8.2)");
+        }
+        return insertDocument(documentType, null, h, lines);
+    }
+
+    /**
+     * Create a draft customer document owned by {@code source} (ADR-S094 §8.2). A manual document is refused while
+     * the organization blocks manual customer invoices (§8.3).
+     */
+    public Map<String, Object> createDocument(String documentType, SourceRef source, HeaderInput h,
+            List<LineInput> lines) {
+        requireSource(documentType, source);
+        return insertDocument(documentType, source, h, lines);
+    }
+
+    /** True while the organization blocks manual customer invoices and standalone credit notes (§8.3). */
+    public boolean manualBlocked() {
+        return settings != null && "blocked".equals(settings.resolveString(MANUAL_SETTING,
+                com.inventoryerp.kernel.settings.SettingResolverService.SettingContext.EMPTY));
+    }
+
+    private void requireSource(String documentType, SourceRef source) {
+        if (source == null) {
+            throw new IllegalStateException("A " + documentType + " needs its source (ADR-S094 §8.2)");
+        }
+        if (!source.documentTypes().contains(documentType)) {
+            throw new IllegalStateException("Source " + source.kind() + " cannot create a " + documentType);
+        }
+        if (source.manual() && manualBlocked()) {
+            throw ApiException.badRequest("credit_note".equals(documentType)
+                    ? "Manual credit notes are turned off for this organization: a credit note must name the invoice"
+                            + " it credits"
+                    : "Manual customer invoices are turned off for this organization: create the invoice from a sale");
+        }
+    }
+
+    private Map<String, Object> insertDocument(String documentType, SourceRef source, HeaderInput h,
+            List<LineInput> lines) {
         if ("sales_invoice".equals(documentType)) {
             assertSaleable(lines);
         }
@@ -691,9 +753,9 @@ public class DocumentBuilderService {
                         + " \"deliveryDate\", \"deliveryAddress\", incoterm, \"incotermLocation\", \"sourceDocument\", status,"
                         + " reference, notes, \"reversedDocumentId\", \"sourceType\", \"branchId\", subtotal, \"discountTotal\","
                         + " \"taxAmount\", \"totalAmount\", \"amountResidual\", \"amountPaid\", \"paymentStatus\", \"createdAt\","
-                        + " \"updatedAt\", \"withholdingAmount\") VALUES (?, ?, ?, ?::\"DocumentType\", ?, ?, ?, ?, ?, ?, ?, ?,"
-                        + " ?::\"InvoicePaymentMode\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0,"
-                        + " 'not_paid', " + NOW + ", " + NOW + ", ?)")
+                        + " \"updatedAt\", \"withholdingAmount\", \"sourceKind\") VALUES (?, ?, ?, ?::\"DocumentType\", ?, ?, ?, ?, ?,"
+                        + " ?, ?, ?, ?::\"InvoicePaymentMode\", ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+                        + " 0, 'not_paid', " + NOW + ", " + NOW + ", ?, ?)")
                 .params(id, org(), number, documentType, dmsTypes.resolveIdByCode(documentType), h.partnerId(),
                         h.currencyId(), h.exchangeRate() != null ? h.exchangeRate() : BigDecimal.ONE, ts(h.issueDate()),
                         ts(h.dueDate()), h.paymentTermId(), h.paymentTermName(), h.paymentMode(), h.fiscalPositionId(),
@@ -701,7 +763,7 @@ public class DocumentBuilderService {
                         h.salespersonName(), ts(h.deliveryDate()), h.deliveryAddress(), h.incoterm(), h.incotermLocation(),
                         h.sourceDocument(), h.reference(), h.notes(), h.reversedDocumentId(), h.sourceType(), h.branchId(),
                         totals.subtotal(), totals.discountTotal(), totals.taxAmount(), totals.total(), totals.residual(),
-                        totals.withholdingAmount())
+                        totals.withholdingAmount(), source == null ? null : source.kind())
                 .update();
         insertLines(id, totals.prepared(), true);
         Map<String, Object> doc = document(id);
@@ -910,6 +972,67 @@ public class DocumentBuilderService {
     }
 
     // ------------------------------------------------------------------ rows
+
+    /**
+     * ADR-S094 §8.2: a document generated by the recurring job (kernel), written exactly as that job always has (Nest
+     * parity): a draft with the template's number and lines, no tax, linked to its template. Its kind is
+     * {@link SourceRef.Recurring}.
+     */
+    @Override
+    public String write(RecurringDocumentWriter.Draft d) {
+        SourceRef source = new SourceRef.Recurring(d.templateId());
+        String docId = UUID.randomUUID().toString();
+        jdbc.sql("INSERT INTO \"Document\" (id, \"organizationId\", \"documentNumber\", \"documentType\", \"documentTypeId\","
+                        + " \"partnerId\", \"currencyId\", \"exchangeRate\", \"issueDate\", status, reference, notes, \"sourceType\","
+                        + " \"sourceId\", \"updatedAt\", \"sourceKind\") VALUES (?, ?, ?, ?::\"DocumentType\", ?, ?, ?, ?, ?, 'draft', ?, ?,"
+                        + " 'recurring', ?, now(), ?)")
+                .params(docId, d.organizationId(), d.number(), d.documentType(), d.documentTypeId(), d.partnerId(),
+                        d.currencyId(), d.exchangeRate(), Timestamp.from(d.issueDate()), d.reference(), d.notes(),
+                        d.templateId(), source.kind())
+                .update();
+        int lineNo = 1;
+        BigDecimal subtotal = BigDecimal.ZERO;
+        for (RecurringDocumentWriter.Line ln : d.lines()) {
+            BigDecimal lineSubtotal = ln.quantity().multiply(ln.unitPrice())
+                    .multiply(BigDecimal.ONE.subtract(ln.discountPercent().divide(BigDecimal.valueOf(100), 20,
+                            RoundingMode.HALF_UP)))
+                    .setScale(6, RoundingMode.HALF_UP);
+            jdbc.sql("INSERT INTO \"DocumentLine\" (id, \"organizationId\", \"documentId\", \"productId\", \"accountId\","
+                            + " description, quantity, \"unitPrice\", \"discountPercent\", \"taxId\", subtotal, \"taxAmount\", total,"
+                            + " \"lineNumber\") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)")
+                    .params(UUID.randomUUID().toString(), d.organizationId(), docId, ln.productId(), ln.accountId(),
+                            ln.description(), ln.quantity(), ln.unitPrice(), ln.discountPercent(), ln.taxId(),
+                            lineSubtotal, lineSubtotal, lineNo++)
+                    .update();
+            subtotal = subtotal.add(lineSubtotal);
+        }
+        jdbc.sql("UPDATE \"Document\" SET subtotal = ?, \"discountTotal\" = 0, \"taxAmount\" = 0, \"totalAmount\" = ?,"
+                        + " \"amountResidual\" = ?, \"updatedAt\" = now() WHERE id = ?")
+                .params(subtotal, subtotal, subtotal, docId)
+                .update();
+        return docId;
+    }
+
+    /**
+     * ADR-S094 §8.2: a reversal or reissue counterpart built by the documents engine, written exactly as the engine
+     * always has (Nest parity). Its kind is {@link SourceRef.Counterpart}.
+     */
+    @Override
+    public void write(CounterpartWriter.Counterpart c) {
+        SourceRef source = new SourceRef.Counterpart(String.valueOf(c.reversedDocumentId()), c.relation());
+        jdbc.sql("INSERT INTO \"Document\" (id, \"organizationId\", \"documentNumber\", \"documentType\","
+                        + " \"documentTypeId\", \"partnerId\", \"currencyId\", \"exchangeRate\", \"issueDate\", \"dueDate\","
+                        + " \"sourceDocument\", status, subtotal, \"discountTotal\", \"taxAmount\", \"totalAmount\","
+                        + " \"amountPaid\", \"amountResidual\", \"reversedDocumentId\", \"sourceType\", \"sourceId\","
+                        + " \"branchId\", \"postedAt\", \"createdBy\", \"updatedAt\", \"sourceKind\") VALUES (?, ?, ?,"
+                        + " ?::\"DocumentType\", ?, ?, ?, ?, ?, ?, ?, 'posted', ?::numeric, ?::numeric, ?::numeric, ?::numeric, 0,"
+                        + " ?::numeric, ?, ?, ?, ?, ?, ?, " + NOW + ", ?)")
+                .params(c.id(), c.organizationId(), c.number(), c.documentType(), c.documentTypeId(), c.partnerId(),
+                        c.currencyId(), c.exchangeRate(), c.issueDate(), c.dueDate(), c.sourceDocument(), c.subtotal(),
+                        c.discountTotal(), c.taxAmount(), c.totalAmount(), c.amountResidual(), c.reversedDocumentId(),
+                        c.sourceType(), c.sourceId(), c.branchId(), c.postedAt(), c.createdBy(), source.kind())
+                .update();
+    }
 
     static final String NOW = "date_trunc('milliseconds', clock_timestamp())::timestamp(3)";
 

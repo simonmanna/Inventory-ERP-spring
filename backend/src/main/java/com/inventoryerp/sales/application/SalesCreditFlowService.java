@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
@@ -134,7 +135,7 @@ public class SalesCreditFlowService {
 
     private Map<String, Object> post(String partner, String invoiceId, String type, String reason, List<LineInput> lines) {
         Map<String, Object> cn = creditNotes.create(new CreditNoteInput(partner, LocalDate.now(BusinessZone.get()).toString(), null, null, reason,
-                blank(invoiceId) ? null : invoiceId, lines));
+                blank(invoiceId) ? null : invoiceId, lines), new SourceRef.CreditFor(blank(invoiceId) ? null : invoiceId, "sales"));
         String id = str(cn.get("id"));
         creditNotes.post(id, "none");
         markType(id, type);

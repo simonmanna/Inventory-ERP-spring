@@ -204,7 +204,7 @@ public class OpeningBalanceService {
                     null, null, null, null, null, null, null, null, ccy, ccy == null ? null : c.exchangeRate(),
                     ref(c, label), label,
                     List.of(LineInput.of(null, equity, label, BigDecimal.ONE, c.amount(), BigDecimal.ZERO, null,
-                            null))));
+                            null))), new SourceRef.OpeningBalance(batchId));
             String id = (String) doc.get("id");
             tag(id, batchId);
             Map<String, Object> posted = invoices.post(id);

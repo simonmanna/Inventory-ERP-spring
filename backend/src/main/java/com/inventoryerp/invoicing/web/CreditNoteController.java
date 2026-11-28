@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.web;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.DATE_MSG;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.ISO_DATE;
@@ -64,7 +65,8 @@ public class CreditNoteController {
     @RequirePermissions(Permissions.CREDIT_NOTE__CREATE)
     public Map<String, Object> create(@Valid @RequestBody CreateCreditNoteRequest dto) {
         return creditNotes.create(new CreditNoteInput(dto.partnerId(), dto.issueDate(), dto.currencyId(), dto.reference(),
-                dto.notes(), dto.reversedDocumentId(), InvoicingDtos.lines(dto.lines())));
+                dto.notes(), dto.reversedDocumentId(), InvoicingDtos.lines(dto.lines())), dto.reversedDocumentId() == null ? new SourceRef.Manual()
+                : new SourceRef.CreditFor(dto.reversedDocumentId(), "invoicing"));
     }
 
     @PostMapping("/{id}/post")

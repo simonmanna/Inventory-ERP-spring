@@ -283,6 +283,7 @@ class SalesOutcomeIT extends ApiTestSupport {
         String cn = money("/sales/credit-notes", Map.of("partnerId", customer, "invoiceId", inv, "type", "goodwill",
                 "reason", "Goodwill", "lines", List.of(Map.of("description", "Goodwill", "quantity", 1, "unitPrice",
                         1000)))).get("id").asString();
+        assertThat(sourceKind(cn)).as("ADR-S094 §8.2").isEqualTo("credit");
         money("/sales/credit-notes/" + cn + "/refund", Map.of("paymentMethod", "bank"));
         drainOutboxFully();
         JsonNode s = sale(so);

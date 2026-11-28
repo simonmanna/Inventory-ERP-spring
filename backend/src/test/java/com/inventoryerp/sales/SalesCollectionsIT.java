@@ -87,6 +87,7 @@ class SalesCollectionsIT extends ApiTestSupport {
         assertThat(ea.get("levelSequence").asInt()).isEqualTo(2);
         assertThat(ea.get("delivery").asString()).isEqualTo("letter");
         String fee = ea.get("feeInvoiceId").asString();
+        assertThat(sourceKind(fee)).as("ADR-S094 §8.2").isEqualTo("collections_fee");
         assertThat(ok(200, "GET", "/invoices/" + fee, null).get("totalAmount").asDouble()).isEqualTo(5000);
         JsonNode eb = entryFor(run, b);
         assertThat(eb.get("levelSequence").asInt()).isEqualTo(1);

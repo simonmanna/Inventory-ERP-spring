@@ -257,6 +257,7 @@ class CashSaleIT extends ApiTestSupport {
         JsonNode inv = money("/sales/cash-sales/" + id + "/generate-invoice", null, 200);
         assertThat(inv.get("processingStatus").asString()).isEqualTo("invoiced");
         String invoiceId = inv.get("currentInvoiceId").asString();
+        assertThat(sourceKind(invoiceId)).as("ADR-S094 §8.2").isEqualTo("cash_sale");
         JsonNode doc = ok(200, "GET", "/invoices/" + invoiceId, null);
         assertThat(doc.get("totalAmount").asDouble()).isEqualTo(413_000);
         assertThat(doc.get("amountResidual").asDouble()).isZero();

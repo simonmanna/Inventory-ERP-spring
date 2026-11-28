@@ -1,5 +1,6 @@
 package com.inventoryerp.fleet.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import com.inventoryerp.accounting.application.AccountResolverService;
 import com.inventoryerp.fleet.application.DispatchCommands.InvoiceRequest;
 import com.inventoryerp.fleet.domain.FleetDeliveryCharge;
@@ -171,7 +172,8 @@ public class FleetDeliveryInvoiceService {
         Map<String, Object> inv = invoices.createCopied(new InvoiceInput((String) o.get("partnerId"), issue.toString(), null,
                 null, null, null, null, null, delivered == null ? null : JsonConfig.toJsIso(delivered), address, null,
                 null, code, null, null, code, "Delivery order " + code + (o.get("sourceNumber") == null ? ""
-                        : " (from " + o.get("sourceNumber") + ")"), lines));
+                        : " (from " + o.get("sourceNumber") + ")"), lines), goods ? new SourceRef.FleetDelivery(deliveryOrderId)
+                        : new SourceRef.FleetCharges(deliveryOrderId, (String) o.get("sourceId")));
         String invoiceId = (String) inv.get("id");
         String number = (String) inv.get("documentNumber");
         // ADR-S075: an invoice to a customer site carries the site and its project.

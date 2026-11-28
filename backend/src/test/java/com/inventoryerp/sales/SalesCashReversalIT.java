@@ -139,6 +139,7 @@ class SalesCashReversalIT extends CashSaleTestBase {
         // the credit note against the sale's invoice: Dr returns 1000, Dr VAT 180 / Cr AR 1180
         String cn = col(id, "reversalCreditNoteId");
         assertThat(ret.get("creditNoteId")).isEqualTo(cn);
+        assertThat(sourceKind(cn)).as("ADR-S094 §8.2").isEqualTo("credit");
         Map<String, Object> doc = jdbc.sql("SELECT status::text AS status, \"reversedDocumentId\", \"totalAmount\","
                 + " \"journalEntryId\" FROM \"Document\" WHERE id = ?").param(cn).query().singleRow();
         assertThat(doc.get("status")).isIn("posted", "paid");

@@ -377,8 +377,9 @@ class SalesRevenueDeferralIT extends ApiTestSupport {
         assertThat(s.get("lines").get(0).get("qtyCredited").asDouble()).isEqualTo(4);
         assertThat(s.get("status").asString()).isEqualTo("done");
         Map<String, Object> cn = jdbc.sql("SELECT d.status::text AS status, d.\"reversedDocumentId\", d.\"totalAmount\","
-                + " d.data ->> 'creditKind' AS kind, k.quantity FROM \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id ="
+                + " d.data ->> 'creditKind' AS kind, d.\"sourceKind\", k.quantity FROM \"SalesInvoiceLink\" k JOIN \"Document\" d ON d.id ="
                 + " k.\"documentId\" WHERE k.\"orderId\" = ? AND k.kind = 'credit_note'").param(so).query().singleRow();
+        assertThat(cn).containsEntry("sourceKind", "credit");
         assertThat(cn).containsEntry("status", "posted").containsEntry("reversedDocumentId", inv)
                 .containsEntry("kind", "quantity");
         assertThat((BigDecimal) cn.get("totalAmount")).isEqualByComparingTo("472");

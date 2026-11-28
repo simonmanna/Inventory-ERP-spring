@@ -192,6 +192,8 @@ class AccountingExtensionsIT extends ApiTestSupport {
         assertThat(lines.get(2).get("code")).isEqualTo("3100");
         assertThat((BigDecimal) lines.get(2).get("credit")).isEqualByComparingTo("800");
         assertThat(posted.body().get("invoices")).hasSize(1);
+        assertThat(sourceKind(posted.body().get("invoices").get(0).get("id").asString())).as("ADR-S094 §8.2")
+                .isEqualTo("opening_balance");
         assertThat(posted.body().get("bills")).hasSize(1);
 
         Res arRefused = call("POST", "/opening-balances", Map.of("date", today, "accounts",

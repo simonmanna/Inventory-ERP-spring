@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import com.inventoryerp.core.application.ProductLifecycleGuard;
 import static com.inventoryerp.sales.application.SalesDb.NOW;
 import static com.inventoryerp.sales.application.SalesDb.blank;
@@ -1094,7 +1095,7 @@ public class SalesQuotationService {
                     str(q.get("number")), cur == null ? null : str(cur.get("id")), rate.signum() > 0 ? rate
                             : BigDecimal.ONE, str(q.get("number")), str(q.get("notes")), null, "crm_quotation",
                     str(q.get("branchId")));
-            Map<String, Object> doc = builder.createDocument("proforma_invoice", h, inputs);
+            Map<String, Object> doc = builder.createDocument("proforma_invoice", new SourceRef.Quotation(id), h, inputs);
             convertedId = str(doc.get("id"));
             proformas.applyTerms(convertedId, in, null);
             convertedNumber = str(doc.get("documentNumber"));

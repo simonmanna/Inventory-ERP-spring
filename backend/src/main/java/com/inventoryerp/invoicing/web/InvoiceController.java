@@ -1,5 +1,6 @@
 package com.inventoryerp.invoicing.web;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import com.inventoryerp.shared.validation.ArrayMinSize;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.DATE_MSG;
 import static com.inventoryerp.invoicing.web.InvoicingDtos.ISO_DATE;
@@ -95,7 +96,7 @@ public class InvoiceController {
     @Idempotent(required = true)
     @RequirePermissions(Permissions.INVOICE__CREATE)
     public Map<String, Object> create(@Valid @RequestBody CreateInvoiceRequest dto) {
-        return invoices.create(dto.toInput());
+        return invoices.create(dto.toInput(), new SourceRef.Manual());
     }
 
     @PostMapping("/journal-preview")

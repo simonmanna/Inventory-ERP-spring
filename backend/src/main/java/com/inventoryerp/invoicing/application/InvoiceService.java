@@ -420,10 +420,10 @@ public class InvoiceService {
      * products.
      */
     @Transactional
-    public Map<String, Object> create(InvoiceInput dto) {
+    public Map<String, Object> create(InvoiceInput dto, SourceRef source) {
         builder.assertVariants(dto.lines(), false, false);
         requireSellable(dto.lines(), null);
-        return createDraft(dto);
+        return createDraft(dto, source);
     }
 
     /**
@@ -450,16 +450,16 @@ public class InvoiceService {
      * archived since then is kept, as on the source document (Phase I2, D2).
      */
     @Transactional
-    public Map<String, Object> createCopied(InvoiceInput dto) {
+    public Map<String, Object> createCopied(InvoiceInput dto, SourceRef source) {
         builder.assertVariants(dto.lines(), false, true);
-        return createDraft(dto);
+        return createDraft(dto, source);
     }
 
-    private Map<String, Object> createDraft(InvoiceInput dto) {
+    private Map<String, Object> createDraft(InvoiceInput dto, SourceRef source) {
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
         String branchId = scopes.documentBranch(null);
-        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names, branchId),
+        Map<String, Object> doc = builder.createDocument("sales_invoice", source, header(dto, term, names, branchId),
                 priced(dto, branchId));
         publish("invoice.created", doc);
         return doc;
@@ -476,7 +476,8 @@ public class InvoiceService {
             String cashSaleNumber, String accrualEntryId) {
         Term term = resolveTerm(dto.paymentTermId(), dto.dueDate(), dto.issueDate());
         Names names = resolveNames(dto.fiscalPositionId(), dto.invoicingJournalId(), dto.salespersonId());
-        Map<String, Object> doc = builder.createDocument("sales_invoice", header(dto, term, names, branchId), dto.lines());
+        Map<String, Object> doc = builder.createDocument("sales_invoice", new SourceRef.CashSale(cashSaleId),
+                header(dto, term, names, branchId), dto.lines());
         String id = (String) doc.get("id");
         jdbc.sql("UPDATE \"Document\" SET \"sourceType\" = 'cash_sale', \"sourceId\" = ?, data = COALESCE(data,"
                         + " '{}'::jsonb) || jsonb_build_object('stockIssuedBy', ?::text, 'revenueAccruedBy', ?::text),"

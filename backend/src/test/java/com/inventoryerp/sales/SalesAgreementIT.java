@@ -162,6 +162,7 @@ class SalesAgreementIT extends ApiTestSupport {
         JsonNode settled = call("POST", "/sales/rebates/accruals/" + accId + "/settle", null, settleKey).body();
         assertThat(settled.get("status").asString()).isEqualTo("settled");
         String cn = settled.get("creditNoteId").asString();
+        assertThat(sourceKind(cn)).as("ADR-S094 §8.2").isEqualTo("credit");
         // a retry with the same key replays the settlement: same credit note, no second one
         JsonNode replay = call("POST", "/sales/rebates/accruals/" + accId + "/settle", null, settleKey).body();
         assertThat(replay.get("creditNoteId").asString()).isEqualTo(cn);

@@ -360,7 +360,7 @@ branch scope.
     - Receipts carry no cash session.
     - Mobile money is verified by hand.
     - Negative stock follows the inventory policy.
-    - Order-type invoices are fiscalised from C4.
+    - Order-type invoices and credit notes are fiscalised from C4b.
     - The cash Reverse: see the next item (C3b).
     - The legacy `/sales/cash-sales` flow is unchanged until it is retired.
 - **A cash sale is reversed in two phases** (ADR-S094 C3b, V736; owner instruction 2026-11-28). The flow is in ADR-S094
@@ -390,6 +390,15 @@ branch scope.
     - The reversal's fiscal counterpart is the cancel of the sale's fiscal document.
     - New `FiscalDocument` statuses `sent` and `review`.
     - "Fiscal pending" on printed invoices comes in C6.
+- **Every customer document names its source** (ADR-S094 C4, V737; AD-13 and OD-3, owner instruction 2026-11-28).
+  Details in ADR-S094 §8, under "As built (C4)".
+  - Sales creates its documents with a typed `SourceRef`, stored in `Document.sourceKind`:
+    - sale invoices: `sale`, `sale_down_payment` or `sale_milestone`;
+    - proformas: `sale` (from an order) or `quotation`;
+    - sales credit notes (returns, credit flow, disputes, rebates, the cash Reverse): `credit`;
+    - the dunning fee: `collections_fee`; legacy cash-sale invoices: `cash_sale`.
+  - A database check requires a kind on every sales invoice and credit note.
+  - `sourceType` / `sourceId` keep their values and no response changes.
 - **Revenue invoiced before the goods leave is deferred** (ADR-S094 C2b, V734; AD-2 = contract liability, AD-16 =
   release at dispatch, approved 2026-11-28).
   - A posted invoice that bills more than has been dispatched moves the revenue of the difference to the contract

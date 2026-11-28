@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -194,6 +195,11 @@ public class SalesBillingService {
     @Transactional
     @SuppressWarnings("unchecked")
     public Map<String, Object> createInvoice(String orderId, Map<String, Object> in) {
+        return createInvoice(orderId, in, null);
+    }
+
+    /** As {@link #createInvoice(String, Map)}; a down payment billed for {@code milestoneId} is owned by it (§8.2). */
+    Map<String, Object> createInvoice(String orderId, Map<String, Object> in, String milestoneId) {
         Map<String, Object> o = orders.lock(orderId);
         if (!SalesOrderService.OPEN.contains(o.get("status")) && !"done".equals(o.get("status"))) {
             throw ApiException.badRequest("Only confirmed orders can be invoiced");
@@ -229,7 +235,8 @@ public class SalesBillingService {
             LineInput line = new LineInput(null, null, null, null, deposits.depositAccount(), "Down payment for sales order "
                     + number, BigDecimal.ONE, amount, BigDecimal.ZERO, null, null, null, "manual", taxId, null,
                     taxId != null, null);
-            doc = create(o, issue, List.of(line), "Down payment — " + number);
+            doc = create(o, issue, List.of(line), "Down payment — " + number, milestoneId == null
+                    ? new SourceRef.SaleDownPayment(orderId) : new SourceRef.SaleMilestone(orderId, milestoneId));
             invoices.linkSource(str(doc.get("id")), "sales_order", orderId, true);
             link(orderId, null, str(doc.get("id")), "down_payment", BigDecimal.ZERO, amount, null);
         } else if ("regular".equals(mode)) {
@@ -260,7 +267,7 @@ public class SalesBillingService {
             // ADR-S094 C1b (D-VAT-1): taxed down payments are deducted on this invoice, with their VAT.
             List<Deduction> deductions = deductions(o, items);
             deductions.forEach(d -> lines.add(d.line()));
-            doc = create(o, issue, lines, "Sales order " + number);
+            doc = create(o, issue, lines, "Sales order " + number, new SourceRef.Sale(orderId));
             String docId = str(doc.get("id"));
             invoices.linkSource(docId, "sales_order", orderId, false);
             if (goods) {
@@ -320,7 +327,8 @@ public class SalesBillingService {
         return out;
     }
 
-    private Map<String, Object> create(Map<String, Object> o, String issue, List<LineInput> lines, String notes) {
+    private Map<String, Object> create(Map<String, Object> o, String issue, List<LineInput> lines, String notes,
+            SourceRef source) {
         Map<String, Object> site = o.get("siteId") == null ? null : db.row("SELECT name, address, city, \"projectId\""
                 + " FROM \"FleetCustomerSite\" WHERE id = ? AND \"organizationId\" = ?", o.get("siteId"), org());
         String address = site != null ? String.join(", ", java.util.stream.Stream.of(site.get("name"), site.get(
@@ -334,7 +342,7 @@ public class SalesBillingService {
         Map<String, Object> inv = invoices.createCopied(new InvoiceInput(str(o.get("partnerId")), issue, null,
                 str(o.get("paymentTermId")), null, null, null, str(o.get("ownerId")), null, address,
                 str(o.get("incoterm")), null, str(o.get("number")), currencyId, rate, str(o.get("customerRef")), notes,
-                lines));
+                lines), source);
         // ADR-S075: an invoice to a customer site carries the site and its project.
         invoices.setSiteReference(str(inv.get("id")), str(o.get("siteId")), site == null ? null
                 : str(site.get("projectId")));
@@ -528,7 +536,7 @@ public class SalesBillingService {
                             + "). The line carries no product, so posting does not move stock.", str(inv.get("id")),
                     List.of(new LineInput(null, null, null, null, account, "Not delivered: " + l.get("description"), qty,
                             dec(inv.get("unitPrice")), dec(inv.get("discountPercent")), null, null, null, "manual",
-                            str(inv.get("taxId")), null, Boolean.TRUE.equals(inv.get("taxInclusive")), null))));
+                            str(inv.get("taxId")), null, Boolean.TRUE.equals(inv.get("taxInclusive")), null))), new SourceRef.CreditFor(str(inv.get("id")), "sales"));
             String id = str(cn.get("id"));
             String cnLineId = str(db.row("SELECT id FROM \"DocumentLine\" WHERE \"documentId\" = ? AND \"organizationId\""
                     + " = ? ORDER BY \"lineNumber\" LIMIT 1", id, org()).get("id"));
@@ -783,7 +791,7 @@ public class SalesBillingService {
                 List.of(new LineInput(null, null, null, null, account, "Delivery " + x.get("kind") + " " + x.get("code")
                         + ": " + l.get("description"), qty, dec(l.get("unitPrice")), dec(l.get("discountPercent")), null,
                         null, null, "manual", str(l.get("taxId")), null, Boolean.TRUE.equals(l.get("taxInclusive")),
-                        null))));
+                        null))), new SourceRef.CreditFor(str(inv.get("id")), "sales"));
         link(orderId, lineId, str(cn.get("id")), "credit_note", qty, BigDecimal.ZERO, null);
         db.update(SalesCreditFlowService.MARK_KIND, "quantity", str(cn.get("id")), org());
         audit.record(AuditInput.of("SalesOrder", orderId, "update", null, Obj.of("lateDisputeCredit",

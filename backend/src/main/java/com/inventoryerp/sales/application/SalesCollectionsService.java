@@ -1,5 +1,6 @@
 package com.inventoryerp.sales.application;
 
+import com.inventoryerp.invoicing.application.SourceRef;
 import static com.inventoryerp.sales.application.SalesDb.blank;
 import static com.inventoryerp.sales.application.SalesDb.dec;
 import static com.inventoryerp.sales.application.SalesDb.org;
@@ -261,7 +262,7 @@ public class SalesCollectionsService {
             Map<String, Object> inv = invoices.create(new InvoiceInput(partnerId, asOf.toString(), null, null, null, null,
                     null, null, null, null, null, null, "Dunning " + level.get("name"), null, null, null,
                     "Late payment fee — " + level.get("name"), List.of(LineInput.of(null, feeAccount, "Late payment fee ("
-                            + level.get("name") + ")", BigDecimal.ONE, fee, null, null, null))));
+                            + level.get("name") + ")", BigDecimal.ONE, fee, null, null, null))), new SourceRef.CollectionsFee(entryId));
             feeInvoiceId = str(inv.get("id"));
         }
         boolean hold = firstForCustomer && Boolean.TRUE.equals(level.get("setCreditHold"));

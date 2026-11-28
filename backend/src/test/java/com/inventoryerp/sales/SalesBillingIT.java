@@ -121,6 +121,7 @@ class SalesBillingIT extends ApiTestSupport {
         assertThat(preview.get("lines").get(0).get("quantity").asDouble()).isEqualTo(100);
         JsonNode inv = money("POST", "/sales/orders/" + so + "/invoices", Map.of("mode", "regular"), 200);
         String invId = inv.get("id").asString();
+        assertThat(sourceKind(invId)).as("ADR-S094 §8.2").isEqualTo("sale");
         assertThat(inv.get("totalAmount").asDouble()).isEqualTo(100_000_000);
         assertThat(ok(200, "GET", "/sales/orders/" + so + "/billing", null).get("lines").size()).isZero();
         assertThat(call("POST", "/sales/orders/" + so + "/invoices", Map.of("mode", "regular"), key()).status())
@@ -307,6 +308,7 @@ class SalesBillingIT extends ApiTestSupport {
         String so = order(c, ordered, 10);
         JsonNode dp = money("POST", "/sales/orders/" + so + "/invoices", Map.of("mode", "down_payment", "percent", 30), 200);
         assertThat(dp.get("totalAmount").asDouble()).isEqualTo(3_000_000);
+        assertThat(sourceKind(dp.get("id").asString())).as("ADR-S094 §8.2").isEqualTo("sale_down_payment");
         assertThat(call("POST", "/sales/orders/" + so + "/invoices", Map.of("mode", "down_payment", "amount",
                 20_000_000), key()).status()).isEqualTo(400);
         ok(200, "POST", "/invoices/" + dp.get("id").asString() + "/post", null);
@@ -350,5 +352,14 @@ class SalesBillingIT extends ApiTestSupport {
         assertThat(depositBalance(c)).isEqualByComparingTo(depositSubledger(c));
         assertThat(call("POST", "/payments", Map.of("partnerId", c, "paymentDate", today, "amount", 1, "paymentMethod",
                 "customer_deposit"), key()).status()).isEqualTo(400);
+    }
+
+    @Test
+    @DisplayName("[ADR-S094 §8.2] a batch invoice is owned by its sale")
+    void batchInvoiceIsOwnedByItsSale() {
+        String so = order(customer(), ordered, 3);
+        JsonNode out = money("POST", "/sales/invoices/batch", Map.of("orderIds", List.of(so)), 200);
+        assertThat(out).hasSize(1);
+        assertThat(sourceKind(out.get(0).get("id").asString())).isEqualTo("sale");
     }
 }

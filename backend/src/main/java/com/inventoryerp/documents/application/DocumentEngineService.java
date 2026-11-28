@@ -52,15 +52,17 @@ public class DocumentEngineService {
     private final AuditService audit;
     private final EventOutboxService outbox;
     private final TransactionTemplate tx;
+    private final CounterpartWriter counterparts;
 
     public DocumentEngineService(JdbcClient jdbc, DmsStore store, SequenceService sequence, AuditService audit,
-            EventOutboxService outbox, PlatformTransactionManager txm) {
+            EventOutboxService outbox, PlatformTransactionManager txm, CounterpartWriter counterparts) {
         this.jdbc = jdbc;
         this.store = store;
         this.sequence = sequence;
         this.audit = audit;
         this.outbox = outbox;
         this.tx = new TransactionTemplate(txm);
+        this.counterparts = counterparts;
     }
 
     /** Execute a lifecycle action with idempotency + optimistic locking. */
@@ -171,7 +173,7 @@ public class DocumentEngineService {
             if (reissueCode == null) {
                 throw ApiException.badRequest("Type '" + code + "' has no reissue counterpart configured (Phase 6)");
             }
-            reissueCounterpartId = createCounterpart(doc, reissueCode, input.userId());
+            reissueCounterpartId = createCounterpart(doc, reissueCode, input.userId(), "REISSUES");
             relate(org, docId, reissueCounterpartId, "REISSUES", Obj.of("reversedDocumentId",
                     doc.get("reversedDocumentId"), "engine", true), input.userId(), false);
         }
@@ -231,7 +233,7 @@ public class DocumentEngineService {
         // --- Reversal counterpart + CANCELS mirror
         String counterpartId = null;
         if ("reverse".equals(action) && counterpartCode != null) {
-            counterpartId = createCounterpart(doc, counterpartCode, input.userId());
+            counterpartId = createCounterpart(doc, counterpartCode, input.userId(), "CANCELS");
             relate(org, docId, counterpartId, "CANCELS", Obj.of("reversedDocumentId", docId, "engine", true),
                     input.userId(), true);
         }
@@ -389,7 +391,7 @@ public class DocumentEngineService {
      * Reversal counterpart (§3.6): header mirrored, money negated, posted. Nest maps {@code doc.lines}, which the
      * engine never loads, so the counterpart carries no lines.
      */
-    private String createCounterpart(Map<String, Object> doc, String counterpartCode, String userId) {
+    private String createCounterpart(Map<String, Object> doc, String counterpartCode, String userId, String relation) {
         int year = LocalDate.now(BusinessZone.get()).getYear();
         Map<String, Object> cpDef = store.rawDefByCode(counterpartCode);
         if (cpDef == null) {
@@ -402,20 +404,13 @@ public class DocumentEngineService {
         String id = UUID.randomUUID().toString();
         Instant now = Instant.now();
         BigDecimal residual = new BigDecimal(String.valueOf(doc.get("amountResidual")));
-        jdbc.sql("INSERT INTO \"Document\" (id, \"organizationId\", \"documentNumber\", \"documentType\","
-                        + " \"documentTypeId\", \"partnerId\", \"currencyId\", \"exchangeRate\", \"issueDate\", \"dueDate\","
-                        + " \"sourceDocument\", status, subtotal, \"discountTotal\", \"taxAmount\", \"totalAmount\","
-                        + " \"amountPaid\", \"amountResidual\", \"reversedDocumentId\", \"sourceType\", \"sourceId\","
-                        + " \"branchId\", \"postedAt\", \"createdBy\", \"updatedAt\") VALUES (?, ?, ?, ?::\"DocumentType\", ?,"
-                        + " ?, ?, ?, ?, ?, ?, 'posted', ?::numeric, ?::numeric, ?::numeric, ?::numeric, 0, ?::numeric, ?, ?, ?,"
-                        + " ?, ?, ?, " + DmsStore.NOW + ")")
-                .params(id, doc.get("organizationId"), number, counterpartCode, cpDef.get("id"), doc.get("partnerId"),
-                        doc.get("currencyId"), doc.get("exchangeRate"), SqlRows.ts(now), doc.get("dueDate"),
-                        doc.get("documentNumber"), neg(doc.get("subtotal")), neg(doc.get("discountTotal")),
-                        neg(doc.get("taxAmount")), neg(doc.get("totalAmount")),
-                        residual.signum() > 0 ? neg(residual) : neg(doc.get("totalAmount")), doc.get("id"),
-                        doc.get("sourceType"), doc.get("sourceId"), doc.get("branchId"), SqlRows.ts(now), userId)
-                .update();
+        // ADR-S094 §8.2: the row is written by the owner of the Document table (invoicing), exactly as built here.
+        counterparts.write(new CounterpartWriter.Counterpart(id, doc.get("organizationId"), number, counterpartCode,
+                cpDef.get("id"), doc.get("partnerId"), doc.get("currencyId"), doc.get("exchangeRate"), SqlRows.ts(now),
+                doc.get("dueDate"), doc.get("documentNumber"), neg(doc.get("subtotal")), neg(doc.get("discountTotal")),
+                neg(doc.get("taxAmount")), neg(doc.get("totalAmount")),
+                residual.signum() > 0 ? neg(residual) : neg(doc.get("totalAmount")), doc.get("id"),
+                doc.get("sourceType"), doc.get("sourceId"), doc.get("branchId"), SqlRows.ts(now), userId, relation));
         if (DmsRules.shouldCaptureSnapshot(captureOn(cpDef), "post", "posted")) {
             captureSnapshot(store.rawDoc(id, (String) doc.get("organizationId")), (String) cpDef.get("code"),
                     (String) cpDef.get("name"), "posted", "reverse", userId);
