@@ -1,5 +1,5 @@
 import {
-  BadgePercent, BarChart3, Banknote, ClipboardList, FileText, LineChart, Package, Receipt, Telescope, TrendingUp, Users, UsersRound,
+  BadgePercent, BarChart3, Banknote, ClipboardList, FileText, LineChart, Package, Receipt, Scale, Telescope, TrendingUp, Users, UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReportCatalog, ReportParams } from '@/features/sales/report-center-api';
@@ -19,6 +19,7 @@ export const REPORT_PAGES: ReportPage[] = [
   { slug: 'team', title: 'Team Performance', description: 'Representatives: sales, targets, ranking, acquisition, retention, collections, commission and activity.', icon: UsersRound, categories: ['team'] },
   { slug: 'profitability', title: 'Profitability', description: 'Gross profit on actual inventory cost by product, customer, branch and salesperson; margin and price analysis.', icon: BarChart3, categories: ['profitability'] },
   { slug: 'forecasting', title: 'Forecasting & Planning', description: 'Forecast, projection, targets, growth, demand trends, seasonality and budget vs actual.', icon: Telescope, categories: ['forecasting'] },
+  { slug: 'reconciliation', title: 'Ledger Reconciliation', description: 'Sales reports against the general ledger: invoice and POS revenue, output VAT, receipts, cost of sales and billing to recognised revenue, with every document that differs.', icon: Scale, categories: ['reconciliation'] },
 ];
 
 export const HUB_ICON = LineChart;
