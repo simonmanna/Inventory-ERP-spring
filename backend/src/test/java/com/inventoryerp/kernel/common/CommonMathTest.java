@@ -110,9 +110,8 @@ class CommonMathTest {
     void occurredAt() {
         assertThat(OccurredAt.resolve(null)).isNull();
         assertThatThrownBy(() -> OccurredAt.resolve("nope")).hasMessage("occurredAt is not a valid ISO-8601 timestamp");
-        assertThatThrownBy(() -> OccurredAt.resolve("2999-01-01T00:00:00Z"))
-                .hasMessage("occurredAt is in the future — check the device clock");
-        assertThatThrownBy(() -> OccurredAt.resolve("2000-01-01T00:00:00Z"))
-                .hasMessage("occurredAt is more than 7 days old — check the device clock");
+        // IPR SW-7 (owner decision P15-1): too far ahead → the receive time; too old → kept. Never refused.
+        assertThat(OccurredAt.resolve("2999-01-01T00:00:00Z")).isBefore(java.time.Instant.now().plusSeconds(1));
+        assertThat(OccurredAt.resolve("2000-01-01T00:00:00Z")).isEqualTo(java.time.Instant.parse("2000-01-01T00:00:00Z"));
     }
 }

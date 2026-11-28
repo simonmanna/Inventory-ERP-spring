@@ -338,10 +338,21 @@ first: big inputs, fuel / condition buttons, damage chips, camera capture), Driv
 
 ## Deviations
 
+- **IPR wave 3 (stream E3; owner sign-off required).** A sales-order delivery's issue is checked by the engine
+  against other sales-order reservations under its cell lock (`honourReservations([its line])`); a delivery order from
+  an awaiting invoice takes the undelivered quantity rounded down (never above what is undelivered).
+
 None from any parity contract (new module). Autonomous decisions are listed in `docs/DECISIONS_FOR_OWNER.md`
 (1.1 and 1.2 rows). Against the ADR-S009 §3 table names: the planned `FleetDriverLicence` is folded into `FleetDriver`
 (one current licence per profile; changes are audited), `FleetCheckout` also stores check-in, and the planned
 `FleetDriverAllowance` is `FleetDriverClaim` + `FleetDriverClaimLine` (+ `FleetClaimReceipt`).
+
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Legacy part lines return (review 2, N3).** A work-order part line issued before its `stockLedgerCode` was recorded
+  returns against the work order's own issue rows of that part (`fleet_work_order` / work-order code), capped by what
+  they still have out and by the line's remaining quantity; with no issue row the return is a 400 (was a 500).
 
 ## Status
 
@@ -1562,3 +1573,58 @@ run.
 - Transporter rates accept `per_m3` and `per_tonne_km` and an optional `minimumCharge`; trips record `emptyKm`.
 - Own-fleet delivery cost runs (`/costing/delivery-cost-runs`) charge delivered trips to 6460 with the customer,
   under the `empty_leg_policy` election. Branch transfers live under `/costing/branch-transfers`.
+
+## IPR Phase 1a — delivery orders of invoices and put-backs (2026-11-27, F1 / F3 / F5, no migration)
+
+Owner decision D4: when a delivery order that carried an invoice's goods is cancelled or closed short, the goods
+it did not deliver go back to the invoice. The invoice then waits for delivery (`Document.data.stockAwaitingDelivery`,
+which holds the released order's code). A new delivery order (stock mode `dispatch`) or a collection
+(`POST /invoices/:id/issue-undelivered`, see `invoicing.md`) issues the rest, once.
+
+### Behaviour table: delivery order state × invoice state → stock effect
+
+| Delivery order (source invoice, stock mode `dispatch`) | Invoice | Stock effect |
+|---|---|---|
+| Created from a draft invoice | draft → marked `stockIssuedBy` = DO code | None. Each trip issues its load at dispatch (`fleet_trip`). |
+| Open, trips dispatched or delivered | posted while marked | Posting issues nothing (the delivery does). |
+| Cancelled (refused once any trip was dispatched) | draft, nothing issued yet | The mark is cleared; posting issues everything (unchanged). |
+| Cancelled or closed short | draft or posted/paid, something left undelivered | The mark becomes `stockAwaitingDelivery`. Nothing moves. Posting a draft in this state issues nothing. |
+| Cancelled or closed short | everything delivered (net of credit notes) | The mark is kept. Nothing moves. |
+| New `POST /fleet/delivery-orders/from-invoice` | awaiting delivery (draft or posted) | A dispatch-mode order for the undelivered quantity (invoiced − posted credit notes − net issued). It takes over the mark and issues at dispatch. 409 while another order of the invoice is open. |
+| — | awaiting delivery, posted/paid: `issue-undelivered` | Issues the undelivered quantity (`sales_invoice`, invoice line ids) from the chosen location, or the last delivery order's location. Clears the flag. Refused while an order is open, or when the invoice is not awaiting. |
+| Created from a posted invoice that was never marked | posted | Stock mode `invoiced`; trips move no stock (unchanged). |
+| Proof-of-delivery or trip return put-back | any | `returnFromSource` against the trip's own issue row (`FleetLoadLine.stockLedgerCode`). In stock mode `invoiced` it returns against the invoice's issue of that line (`sales_invoice` + `sourceLineId`; a POS invoice: its `pos_invoice`/`pos_order` rows). The row is linked (`reversesLedgerId`) and keeps its lot, serial and cost. Refused when those units already came back (credit note, return, invoice cancel). Nothing is restocked when nothing was issued. |
+| — | invoice cancelled | Returns the invoice's own `sales_invoice` rows (post auto-issue or collection), net of returns. Units delivered by fleet trips stay delivered (unchanged). |
+| — | credit note with restock | Returns against every issue of the invoice at once: `sales_invoice`, `cash_sale`, and `fleet_trip` rows of the loads of its delivery orders (from the invoice, its sales order, or allocated to it). Net of every linked return, put-backs included. |
+
+Lock order (R2): delivery order (L1) → invoice `Document` FOR UPDATE (L1) → original issue rows (L2) → stock cells
+(L3–L6) → journal (L7). `from-invoice` locks the invoice row first, so a collection and a new order never both take the
+same goods.
+
+**F5:** a delivery that is not a sales order's own (manual, invoice or POS-order source) leaves stock reserved for sales
+orders alone. At dispatch it is refused when the cell's free quantity (on hand − active `sales_order_line`
+reservations) is short. The same guard runs for invoice auto-issue, `issue-undelivered` and cash-sale confirm.
+
+### Deviations (IPR Phase 1a, owner sign-off required)
+
+- A posted invoice whose delivery order is cancelled or closed short now waits for delivery
+  (`data.stockAwaitingDelivery`). Before, it kept `stockIssuedBy` and the goods were never issued.
+- `from-invoice` on an invoice awaiting delivery creates a `dispatch`-mode order for the undelivered quantity, even
+  when the invoice is posted. It answers 409 while another order of the invoice is open.
+- A put-back whose units already came back is refused (400, "Cannot put back ... Cannot return more than was issued
+  ..."). Before, it restocked them a second time.
+- F5 refusal at dispatch: "Only X of P is free in L; Y is reserved for sales orders. Release or deliver those
+  reservations first."
+- **IPR residual (stream H, owner sign-off required): `from-invoice` on an invoice whose stock issue belongs to
+  another document is refused.** An invoice of a sales order is marked by the order (`data.stockIssuedBy` = the order
+  number): its goods leave through the order's deliveries, which may already have issued them. A delivery-order
+  invoice is marked by that delivery order. `POST /fleet/delivery-orders/from-invoice` used to create a delivery
+  order anyway — stock mode `invoiced` for a posted invoice, so the goods were delivered without ever leaving stock,
+  or `dispatch` for a draft, which overwrote the mark and issued the goods a second time. Now it answers 409:
+  - sales-order invoice: "Invoice <n> bills sales order <SO>, whose deliveries issue its goods. Create the delivery
+    order from the sales order.";
+  - any other marked invoice: "Invoice <n>'s goods leave stock through <mark>; deliver them there.".
+  A cash-sale invoice (its goods left stock at the sale's handover) still gets a delivery order, now in stock mode
+  `invoiced` for a draft too, and keeps the cash sale's mark. An invoice awaiting delivery (D4) is unchanged.
+  Lock levels: invoice `Document` FOR UPDATE (L1), then reads only.
+

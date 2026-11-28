@@ -545,11 +545,17 @@ public abstract class InventoryAuditSupport extends ApiTestSupport {
         return () -> owner("DROP TRIGGER IF EXISTS " + name + " ON \"" + table + "\"");
     }
 
-    /** Statements run as the schema owner (DDL the application role may not run). */
+    /**
+     * Statements run as the schema owner (DDL the application role may not run). On an external test DB
+     * ({@code IT_EXTERNAL_DB}) the owner connection details may carry no URL or credentials: each falls back to the
+     * environment ({@code JDBC_DATABASE_URL}, {@code FLYWAY_USER}, {@code FLYWAY_PASSWORD}).
+     */
     protected void owner(String... statements) {
-        FlywayConnectionDetails o = ownerDetails.getObject();
-        try (Connection c = DriverManager.getConnection(o.getJdbcUrl(), o.getUsername(), o.getPassword());
-                Statement s = c.createStatement()) {
+        FlywayConnectionDetails o = ownerDetails.getIfAvailable();
+        String url = o != null && o.getJdbcUrl() != null ? o.getJdbcUrl() : System.getenv("JDBC_DATABASE_URL");
+        String user = o != null && o.getUsername() != null ? o.getUsername() : System.getenv("FLYWAY_USER");
+        String password = o != null && o.getPassword() != null ? o.getPassword() : System.getenv("FLYWAY_PASSWORD");
+        try (Connection c = DriverManager.getConnection(url, user, password); Statement s = c.createStatement()) {
             for (String sql : statements) {
                 s.execute(sql);
             }

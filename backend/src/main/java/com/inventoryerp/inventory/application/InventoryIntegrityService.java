@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
 import java.util.Set;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -73,17 +74,22 @@ public class InventoryIntegrityService {
     public static final String QUALITY_HOLD_UNQUARANTINED = "quality_hold_unquarantined";
     public static final String PERIOD_SHIFTED = "period_shifted";
     public static final String FEATURE_RISK = "feature_risk";
+    /**
+     * IPR GL-11 / R4: per manufacturing cost object, GL WIP (base currency) = its sub-ledger on the basis of
+     * docs/spec/manufacturing-wip-reconciliation.md. Report-only until the owner promotes it to a value check.
+     */
+    public static final String WIP_TIEOUT = "wip_tieout";
 
     /** Every report-only check, in report order. */
     public static final List<String> REPORT_ONLY_CHECKS = List.of(NEGATIVE_QUANTS, ISSUED_SERIAL_LOCATED, OVER_RETURNED,
             UNLINKED_RESTOCKS, GL_TIEOUT_BY_ACCOUNT, STOCK_POSTING_JOBS, TRANSIT_AGE, INVOICE_UNDELIVERED,
-            DELIVERY_RETURN_OVERLAP, QUALITY_HOLD_UNQUARANTINED, PERIOD_SHIFTED, FEATURE_RISK);
+            DELIVERY_RETURN_OVERLAP, QUALITY_HOLD_UNQUARANTINED, PERIOD_SHIFTED, FEATURE_RISK, WIP_TIEOUT);
 
     /**
      * Report-only checks that only inform: always ok (so the monitor never raises them), their rows show the scale of a
-     * known gap (unlinked restocks: P1 1d; period-shifted movements: R3).
+     * known gap (period-shifted movements: R3). Unlinked restocks left this list in IPR 1d: they fail for new rows.
      */
-    public static final List<String> INFORMATIONAL_CHECKS = List.of(UNLINKED_RESTOCKS, PERIOD_SHIFTED);
+    public static final List<String> INFORMATIONAL_CHECKS = List.of(PERIOD_SHIFTED);
 
     /** Age after which a pending or processing stock-posting job is stale. */
     public static final Duration STOCK_JOB_MAX_AGE = Duration.ofHours(6);
@@ -174,11 +180,56 @@ public class InventoryIntegrityService {
 
     /**
      * The integrity report for the caller: {@code locationId} (optional) goes through the user's data scope like the
-     * stock reconciliation (a restricted user's blank filter becomes their one location).
+     * stock reconciliation. IPR S-1: a restricted user's blank filter covers every location of their access; with
+     * several, each location is checked and the results are merged ({@link #merge}), instead of a 400.
      */
     @Transactional(readOnly = true)
     public IntegrityReport report(String locationId) {
-        return run(scope.resolve(locationId));
+        List<String> locations = scope.readLocations(locationId);
+        if (locations == null || locations.size() == 1) {
+            return run(LocationScope.single(locations));
+        }
+        return merge(locations.stream().map(this::run).toList());
+    }
+
+    /**
+     * One report from several single-location reports, check by check: a check passes when it passes everywhere, is
+     * skipped when it is skipped everywhere, and lists the failures of every location (at most {@link #ROW_LIMIT}
+     * rows). The merged report has no single {@code locationId}.
+     */
+    static IntegrityReport merge(List<IntegrityReport> reports) {
+        IntegrityReport first = reports.getFirst();
+        List<IntegrityCheck> checks = mergeChecks(reports.stream().map(IntegrityReport::checks).toList());
+        List<IntegrityCheck> reportOnly = mergeChecks(reports.stream().map(IntegrityReport::reportOnlyChecks).toList());
+        return new IntegrityReport(first.checkedAt(), null, checks.stream().allMatch(IntegrityCheck::ok),
+                first.rowLimit(), checks, reportOnly.stream().allMatch(IntegrityCheck::ok), reportOnly);
+    }
+
+    private static List<IntegrityCheck> mergeChecks(List<List<IntegrityCheck>> perLocation) {
+        List<IntegrityCheck> out = new ArrayList<>();
+        for (int i = 0; i < perLocation.getFirst().size(); i++) {
+            int index = i;
+            List<IntegrityCheck> same = perLocation.stream().map(l -> l.get(index)).toList();
+            IntegrityCheck c = same.getFirst();
+            List<Map<String, Object>> rows = new ArrayList<>();
+            long failures = 0;
+            boolean truncated = false;
+            for (IntegrityCheck s : same) {
+                failures += s.failures();
+                truncated |= s.truncated();
+                for (Map<String, Object> r : s.rows()) {
+                    if (rows.size() < ROW_LIMIT) {
+                        rows.add(r);
+                    } else {
+                        truncated = true;
+                    }
+                }
+            }
+            out.add(new IntegrityCheck(c.key(), same.stream().allMatch(IntegrityCheck::ok),
+                    same.stream().allMatch(IntegrityCheck::skipped), c.invariant(), c.tolerance(), failures, truncated,
+                    rows, c.note()));
+        }
+        return out;
     }
 
     /**
@@ -204,6 +255,36 @@ public class InventoryIntegrityService {
                 checks, reportOnly.stream().allMatch(IntegrityCheck::ok), reportOnly);
     }
 
+    /**
+     * IPR GL-3 / GL-10: only the checks on stock value ({@link #VALUE_CHECKS}), organisation level, run now. The period
+     * close and the resolution of a value finding re-run these instead of trusting an earlier finding.
+     */
+    @Transactional(readOnly = true)
+    public List<IntegrityCheck> valueChecks() {
+        return List.of(valuationVsSubledger(null), valuationVsGl(null), valuationVsGlByProduct(null));
+    }
+
+    /**
+     * IPR review 2 (R2-1): the checks on stock value as of {@code asOf} (a period end; {@code null} = now, as
+     * {@link #valueChecks()}). {@code valuation_vs_gl}: the stock value from the stock ledger (rows dated by their
+     * journal, as the historical valuation report) against the GL with {@code postingDate <= asOf};
+     * {@code valuation_vs_gl_by_product}: GL lines and ledger rows dated up to {@code asOf}. {@code valuation_vs_subledger}
+     * compares the current quants with the ledger and has no history: it runs while {@code asOf} is not in the past and
+     * is skipped (with a note) for a past {@code asOf}.
+     */
+    @Transactional(readOnly = true)
+    public List<IntegrityCheck> valueChecks(Instant asOf) {
+        if (asOf == null) {
+            return valueChecks();
+        }
+        IntegrityCheck subledger = asOf.isBefore(Instant.now().minus(Duration.ofMinutes(1)))
+                ? new IntegrityCheck(VALUATION_VS_SUBLEDGER, true, true, "per product: current valuation (by costing"
+                        + " method) = Σ signed InventoryLedger.totalValue", VALUE_TOLERANCE, 0, false, List.of(),
+                        "Current-state check (quants against the ledger): no history to run it as of " + asOf)
+                : valuationVsSubledger(null);
+        return List.of(subledger, valuationVsGl(null, asOf), valuationVsGlByProduct(null, asOf));
+    }
+
     /** IPR Phase 0: the report-only checks, in {@link #REPORT_ONLY_CHECKS} order. */
     private List<IntegrityCheck> reportOnly(String loc) {
         List<IntegrityCheck> checks = new ArrayList<>();
@@ -219,6 +300,7 @@ public class InventoryIntegrityService {
         checks.add(qualityHoldUnquarantined(loc));
         checks.add(periodShifted(loc));
         checks.add(featureRisk(loc));
+        checks.add(wipTieOut(loc));
         return checks;
     }
 
@@ -392,16 +474,23 @@ public class InventoryIntegrityService {
     /** The inventory-to-GL tie-out (organisation level, every inventory control account together). */
     @SuppressWarnings("unchecked")
     private IntegrityCheck valuationVsGl(String loc) {
+        return valuationVsGl(loc, null);
+    }
+
+    /** As {@link #valuationVsGl(String)}, as of {@code asOf} ({@code null} = now). */
+    @SuppressWarnings("unchecked")
+    private IntegrityCheck valuationVsGl(String loc, Instant asOf) {
         String invariant = "stock valuation = balance of the inventory control account(s) (the GL tie-out)";
         BigDecimal tolerance = tieOutTolerance();
         if (loc != null) {
             return new IntegrityCheck(VALUATION_VS_GL, true, true, invariant, tolerance, 0, false, List.of(),
                     "Organisation-level check: run the report without a location filter");
         }
-        Map<String, Object> t = valuation.glTieOut(null, tolerance.doubleValue());
+        Map<String, Object> t = valuation.glTieOut(asOf == null ? null : asOf.toString(), tolerance.doubleValue());
         boolean within = Boolean.TRUE.equals(t.get("withinTolerance"));
         String note = "variance " + t.get("variance") + " (sub-ledger " + t.get("subledgerValue") + ", GL "
-                + t.get("glBalance") + ")" + (t.get("warning") != null ? "; " + t.get("warning") : "");
+                + t.get("glBalance") + ")" + (asOf != null ? " as of " + asOf : "")
+                + (t.get("warning") != null ? "; " + t.get("warning") : "");
         List<Map<String, Object>> rows = within ? List.of() : List.of(new LinkedHashMap<>(t));
         return check(VALUATION_VS_GL, invariant, tolerance, new Found(within ? 0 : 1, rows), note);
     }
@@ -419,6 +508,26 @@ public class InventoryIntegrityService {
      * filter, and while no stamped line exists.
      */
     private IntegrityCheck valuationVsGlByProduct(String loc) {
+        return valuationVsGlByProduct(loc, null);
+    }
+
+    /**
+     * IPR review 2 (R2-1): ledger rows dated as {@code InventoryValuationService} dates them for a historical
+     * valuation — by the posting date of the stock-account journal of their ledger code or reference when that journal
+     * is on one day, else by {@code createdAt}.
+     */
+    private static final String AS_OF_JE_DATES = "je_dates AS (SELECT e.\"sourceId\" AS sid, MIN(e.\"postingDate\") AS pd,"
+            + " MAX(e.\"postingDate\") AS pd_max FROM \"JournalEntry\" e WHERE e.\"organizationId\" = :org"
+            + " AND e.status <> 'draft' AND e.\"sourceId\" IS NOT NULL AND EXISTS (SELECT 1 FROM \"JournalLine\" jl"
+            + " WHERE jl.\"journalEntryId\" = e.id AND jl.\"accountId\" IN (:dateAccts)) GROUP BY e.\"sourceId\")";
+    private static final String AS_OF_JE_JOIN = " LEFT JOIN je_dates jc ON jc.sid = l.\"ledgerCode\""
+            + " LEFT JOIN je_dates jr ON jr.sid = l.\"referenceId\"";
+    private static final String AS_OF_LEDGER_DATE = "COALESCE("
+            + "CASE WHEN date_trunc('day', jc.pd) = date_trunc('day', jc.pd_max) THEN jc.pd END,"
+            + " CASE WHEN date_trunc('day', jr.pd) = date_trunc('day', jr.pd_max) THEN jr.pd END, l.\"createdAt\")";
+
+    /** As {@link #valuationVsGlByProduct(String)}, as of {@code asOf} ({@code null} = now, no date filter). */
+    private IntegrityCheck valuationVsGlByProduct(String loc, Instant asOf) {
         String invariant = "per product since the cutover: Σ stock-account GL (debit − credit) = Σ signed"
                 + " InventoryLedger.totalValue";
         if (loc != null) {
@@ -434,7 +543,7 @@ public class InventoryIntegrityService {
         accounts.removeAll(jdbc.sql("SELECT \"accountId\" FROM \"AccountMapping\" WHERE \"organizationId\" = ?"
                 + " AND key IN ('inventory_price_difference', 'inventory_nrv_allowance')").param(org)
                 .query(String.class).list());
-        String note = "cutover " + cutover;
+        String note = "cutover " + cutover + (asOf != null ? ", as of " + asOf : "");
         if (accounts.isEmpty()) {
             return new IntegrityCheck(VALUATION_VS_GL_BY_PRODUCT, true, true, invariant, VALUE_TOLERANCE, 0, false,
                     List.of(), "No inventory control account is mapped");
@@ -444,15 +553,28 @@ public class InventoryIntegrityService {
         p.put("cut", cutover);
         p.put("accts", List.copyOf(accounts));
         p.put("key", InventoryValuationService.PRODUCT_DIMENSION);
+        String glAsOf = "";
+        String ledgerWith = "";
+        String ledgerJoin = "";
+        String ledgerAsOf = "";
+        if (asOf != null) {
+            p.put("asOf", SqlRows.ts(asOf));
+            p.put("dateAccts", valuation.inventoryAccountIds());
+            glAsOf = " AND e.\"postingDate\" <= :asOf";
+            ledgerWith = "WITH " + AS_OF_JE_DATES + " ";
+            ledgerJoin = AS_OF_JE_JOIN;
+            ledgerAsOf = " AND " + AS_OF_LEDGER_DATE + " <= :asOf";
+        }
         Map<String, BigDecimal> gl = new LinkedHashMap<>();
         BigDecimal unattributed = BigDecimal.ZERO;
         long unattributedLines = 0;
         boolean anyStamped = false;
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("""
-                WITH gl AS (SELECT e."sourceId" AS sid, jl.dimensions ->> :key AS pid, jl.debit - jl.credit AS amt
+                WITH gl AS (SELECT e."sourceId" AS sid, jl.dimensions ->> :key AS pid,
+                                   jl."baseDebit" - jl."baseCredit" AS amt
                               FROM "JournalLine" jl JOIN "JournalEntry" e ON e.id = jl."journalEntryId"
                              WHERE e."organizationId" = :org AND e.status::text <> 'draft'
-                               AND jl."accountId" IN (:accts) AND e."createdAt" >= CAST(:cut AS timestamp)),
+                               AND jl."accountId" IN (:accts) AND e."createdAt" >= CAST(:cut AS timestamp)%s),
                      src AS (SELECT x.sid, MIN(x.pid) AS pid FROM (
                                SELECT l."referenceId" AS sid, l."productId" AS pid FROM "InventoryLedger" l
                                 WHERE l."organizationId" = :org AND l."createdAt" >= CAST(:cut AS timestamp)
@@ -465,7 +587,7 @@ public class InventoryIntegrityService {
                 SELECT COALESCE(g.pid, s.pid) AS product_id, SUM(g.amt) AS amount, COUNT(*) AS lines,
                        BOOL_OR(g.pid IS NOT NULL) AS stamped
                   FROM gl g LEFT JOIN src s ON g.pid IS NULL AND s.sid = g.sid
-                 GROUP BY 1""").params(p))) {
+                 GROUP BY 1""".formatted(glAsOf)).params(p))) {
             String pid = (String) r.get("product_id");
             if (Boolean.TRUE.equals(r.get("stamped"))) {
                 anyStamped = true;
@@ -483,11 +605,11 @@ public class InventoryIntegrityService {
         }
         Map<String, BigDecimal> ledger = new LinkedHashMap<>();
         for (Map<String, Object> r : SqlRows.list(jdbc.sql("""
-                SELECT l."productId" AS product_id, SUM(CASE WHEN l."quantityChange" >= 0
+                %sSELECT l."productId" AS product_id, SUM(CASE WHEN l."quantityChange" >= 0
                        THEN COALESCE(l."totalValue", 0) ELSE -COALESCE(l."totalValue", 0) END) AS value
-                  FROM "InventoryLedger" l WHERE l."organizationId" = :org
-                   AND l."createdAt" >= CAST(:cut AS timestamp) AND l."valuationComponent" IS NULL
-                 GROUP BY 1""").params(p))) {
+                  FROM "InventoryLedger" l%s WHERE l."organizationId" = :org
+                   AND l."createdAt" >= CAST(:cut AS timestamp) AND l."valuationComponent" IS NULL%s
+                 GROUP BY 1""".formatted(ledgerWith, ledgerJoin, ledgerAsOf)).params(p))) {
             ledger.put((String) r.get("product_id"), SqlRows.dec(r, "value"));
         }
         Set<String> ids = new LinkedHashSet<>(ledger.keySet());
@@ -792,7 +914,9 @@ public class InventoryIntegrityService {
                 WITH r AS (SELECT r.id, r."reversesLedgerId" AS oid, r."quantityChange" AS q
                              FROM "InventoryLedger" r
                             WHERE r."organizationId" = :org AND r."reversesLedgerId" IS NOT NULL
-                              AND r."quantityChange" <> 0),
+                              AND r."quantityChange" <> 0
+                              -- IPR 1b (count spec 3.1): a late count correction may exceed its variance row by design
+                              AND COALESCE(r."referenceType", '') <> 'inventory_count_late_correction'),
                      rr AS (SELECT oid, SUM(q) AS q FROM r GROUP BY oid),
                      net AS (SELECT r.oid, SUM(r.q + COALESCE(rr.q, 0)) AS back
                                FROM r LEFT JOIN rr ON rr.oid = r.id GROUP BY r.oid)
@@ -810,28 +934,42 @@ public class InventoryIntegrityService {
                 QTY_TOLERANCE, f, null);
     }
 
-    /** Informational (P1 1d gap): undo/restock rows without {@code reversesLedgerId}, per source type. */
+    /**
+     * Undo / restock rows without {@code reversesLedgerId}, per source type and direction (all of them listed, history
+     * included). IPR 1d: a source type is linked once it has written a linked row; from then on an unlinked row of that
+     * type written after its first linked one ({@code afterLinked}) is a regression and fails the check. Rows written
+     * before (history, never repaired) and source types still unlinked (deferred: vendor-bill cancel, production
+     * reversal) are listed only. Self-calibrating: no cut-off date to configure.
+     */
     private IntegrityCheck unlinkedRestocks(String loc) {
         String locL = loc == null ? "" : " AND l.\"locationId\" = :loc";
         String in = types(1);
         String out = types(-1);
         String both = types(0);
         Found f = find("""
+                WITH firsts AS (SELECT x."referenceType" AS rt, MIN(x."createdAt") AS at FROM "InventoryLedger" x
+                                 WHERE x."organizationId" = :org AND x."reversesLedgerId" IS NOT NULL
+                                   AND x."referenceType" IN (%s, %s, %s, 'fleet_work_order')
+                                 GROUP BY 1)
                 SELECT l."referenceType", CASE WHEN l."quantityChange" > 0 THEN 'inflow' ELSE 'outflow' END AS direction,
                        count(*) AS rows, SUM(abs(l."quantityChange")) AS quantity, MIN(l."createdAt") AS "firstAt",
-                       MAX(l."createdAt") AS "lastAt", count(*) OVER () AS failures_total
-                  FROM "InventoryLedger" l
+                       MAX(l."createdAt") AS "lastAt", MIN(fi.at) AS "linkedSince",
+                       count(*) FILTER (WHERE fi.at IS NOT NULL AND l."createdAt" > fi.at) AS "afterLinked",
+                       count(*) OVER () AS failures_total
+                  FROM "InventoryLedger" l LEFT JOIN firsts fi ON fi.rt = l."referenceType"
                  WHERE l."organizationId" = :org AND l."reversesLedgerId" IS NULL AND l."quantityChange" <> 0
                    AND ((l."referenceType" IN (%s) AND l."quantityChange" > 0)
                      OR (l."referenceType" IN (%s) AND l."quantityChange" < 0)
                      OR l."referenceType" IN (%s)
                      OR (l."referenceType" = 'fleet_work_order' AND l.type::text = 'return_in'))%s
                  GROUP BY 1, 2
-                 ORDER BY count(*) DESC, 1, 2""".formatted(in, out, both, locL), params(loc, null));
+                 ORDER BY count(*) DESC, 1, 2""".formatted(in, out, both, in, out, both, locL), params(loc, null));
         long rows = f.rows().stream().mapToLong(r -> ((Number) r.get("rows")).longValue()).sum();
-        return informational(UNLINKED_RESTOCKS, "informational: restock / undo rows (by source type) that do not link"
-                + " the movement they undo (reversesLedgerId)", f, rows + " unlinked row(s) in " + f.total()
-                + " (source type, direction) group(s)");
+        long after = f.rows().stream().mapToLong(r -> ((Number) r.get("afterLinked")).longValue()).sum();
+        return new IntegrityCheck(UNLINKED_RESTOCKS, after == 0, false, "restock / undo rows (by source type) link the"
+                + " movement they undo (reversesLedgerId); an unlinked row written after its source type's first linked"
+                + " row fails", null, after, f.total() > f.rows().size(), f.rows(), rows + " unlinked row(s) in "
+                + f.total() + " (source type, direction) group(s); " + after + " written after their type was linked");
     }
 
     private static String types(int direction) {
@@ -859,7 +997,17 @@ public class InventoryIntegrityService {
                     "No inventory control account is mapped");
         }
         Map<String, BigDecimal> productValue = new HashMap<>();
+        // IPR S13 (opt-in): the value of stock at transit locations sits in the goods-in-transit account.
+        String transitAccount = valuation.transitAccountId();
+        Set<String> transitLocations = transitAccount == null ? Set.of() : new HashSet<>(jdbc.sql("SELECT id FROM"
+                + " \"InventoryLocation\" WHERE \"organizationId\" = ? AND type::text = 'transit'").param(org)
+                .query(String.class).list());
+        Map<String, BigDecimal> transitValue = new LinkedHashMap<>();
         for (Map<String, Object> q : valuation.currentValueByQuant(null)) {
+            if (transitLocations.contains((String) q.get("location_id"))) {
+                transitValue.merge(transitAccount, SqlRows.dec(q, "value"), BigDecimal::add);
+                continue;
+            }
             productValue.merge((String) q.get("product_id"), SqlRows.dec(q, "value"), BigDecimal::add);
         }
         Map<String, String> mapped = new HashMap<>();
@@ -880,6 +1028,7 @@ public class InventoryIntegrityService {
         }
         Map<String, BigDecimal> byAccount = new LinkedHashMap<>();
         componentByAccountKey.forEach((a, v) -> byAccount.merge(a, v, BigDecimal::add));
+        transitValue.forEach((a, v) -> byAccount.merge(a, v, BigDecimal::add));
         List<String> ids = productValue.entrySet().stream().filter(e -> e.getValue()
                 .subtract(componentByProduct.getOrDefault(e.getKey(), BigDecimal.ZERO)).signum() != 0)
                 .map(Map.Entry::getKey).toList();
@@ -977,7 +1126,9 @@ public class InventoryIntegrityService {
 
     /**
      * F1 detector. A posted sales invoice whose stock issue was handed to a delivery ({@code data.stockIssuedBy}; cash
-     * sales excluded) whose delivery orders are all finished (none open, planned or in progress) with at least one
+     * sales excluded), or that is awaiting delivery after its delivery order was cancelled or closed short (IPR F1,
+     * {@code data.stockAwaitingDelivery}: listed until a new delivery order or a collection issues the goods), whose
+     * delivery orders are all finished (none open, planned or in progress) with at least one
      * cancelled or closed, and, per product (base units), invoiced − credited (posted credit notes of the invoice) >
      * delivered (net {@code fleet_trip} issues − {@code fleet_trip_return} put-backs of the loads of those orders, plus
      * any {@code sales_invoice} issue of its own). The delivery orders of an invoice are found as
@@ -995,7 +1146,8 @@ public class InventoryIntegrityService {
                                FROM "Document" d
                               WHERE d."organizationId" = :org AND d."documentType" = 'sales_invoice'
                                 AND d.status::text NOT IN ('draft', 'cancelled')
-                                AND d.data->>'stockIssuedBy' IS NOT NULL
+                                AND (d.data->>'stockIssuedBy' IS NOT NULL
+                                     OR d.data->>'stockAwaitingDelivery' IS NOT NULL)
                                 AND d."sourceType" IS DISTINCT FROM 'cash_sale'),
                      dos AS (SELECT inv.id AS iid, o.id AS oid, o.status FROM inv JOIN "FleetDeliveryOrder" o
                                  ON o."organizationId" = :org AND o."sourceType" = 'invoice' AND o."sourceId" = inv.id
@@ -1066,8 +1218,8 @@ public class InventoryIntegrityService {
 
     /**
      * F3 detector. Per delivery group (the sales order, else the invoice, else the delivery order of dispatch-mode
-     * delivery orders) and product: put-backs ({@code fleet_trip_return}, written without {@code reversesLedgerId})
-     * plus returns linked to the trips' issue rows (credit-note restock, invoice cancel, sales return; net of their own
+     * delivery orders) and product: put-backs ({@code fleet_trip_return}, written without {@code reversesLedgerId}
+     * before IPR F3; a linked put-back counts once, with the linked returns) plus returns linked to the trips' issue rows (credit-note restock, invoice cancel, sales return; net of their own
      * reversals) ≤ the quantity the trips issued.
      */
     private IntegrityCheck deliveryReturnOverlap(String loc) {
@@ -1090,6 +1242,7 @@ public class InventoryIntegrityService {
                      put_back AS (SELECT trips.grp, g."productId" AS pid, SUM(g."quantityChange") AS qty
                                     FROM trips JOIN "InventoryLedger" g ON g."organizationId" = :org
                                          AND g."referenceType" = 'fleet_trip_return' AND g."referenceId" = trips.tid
+                                         AND g."reversesLedgerId" IS NULL
                                    GROUP BY 1, 2),
                      linked AS (SELECT iss.grp, iss.pid, SUM(r."quantityChange" + COALESCE(x.q, 0)) AS qty
                                   FROM iss JOIN "InventoryLedger" r ON r."organizationId" = :org
@@ -1110,6 +1263,27 @@ public class InventoryIntegrityService {
                  ORDER BY 1, p.name""".formatted(locI), params(loc, QTY_TOLERANCE));
         return check(DELIVERY_RETURN_OVERLAP, "per delivery group and product: put-backs + linked returns ≤ quantity"
                 + " the trips issued", QTY_TOLERANCE, f, null);
+    }
+
+    private WipTieOutProvider wip;
+
+    /** IPR GL-11: the manufacturing module's WIP tie-out (absent without it). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setWipTieOut(WipTieOutProvider wip) {
+        this.wip = wip;
+    }
+
+    /** IPR GL-11 / R4: the WIP tie-out per cost object (organisation level; manufacturing implements it). */
+    private IntegrityCheck wipTieOut(String loc) {
+        String invariant = "per production order / process / late cost: GL WIP (base currency) = its sub-ledger";
+        if (loc != null) {
+            return orgLevelSkipped(WIP_TIEOUT, invariant, VALUE_TOLERANCE);
+        }
+        if (wip == null) {
+            return new IntegrityCheck(WIP_TIEOUT, true, true, invariant, VALUE_TOLERANCE, 0, false, List.of(),
+                    "Manufacturing is not part of this build");
+        }
+        return wip.wipTieOut();
     }
 
     /** Quality-module lots on hold (stock under quality control) whose stock was never moved to quarantine. */
@@ -1139,7 +1313,8 @@ public class InventoryIntegrityService {
 
     /**
      * Informational (R3): ledger rows of the last {@link #PERIOD_SHIFT_LOOKBACK} whose inventory journal is dated in
-     * another period than the movement was recorded (createdAt in the organisation's zone). The journal is matched as
+     * another period than the movement happened (IPR 1b / ADR-S088: its effective time, else createdAt for rows before
+     * V700, in the organisation's zone): effective period vs posting period. The journal is matched as
      * the GL tie-out dates rows (ledger code, else reference id, when that source's entries fall on one day). A period
      * is the shortest fiscal period holding the date, else its calendar month. Grouped by source type and period pair.
      */
@@ -1155,7 +1330,8 @@ public class InventoryIntegrityService {
                                AND e."createdAt" >= CAST(:since AS timestamp) - interval '1 day'
                              GROUP BY 1),
                      x AS (SELECT l."referenceType",
-                                  ((l."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE :tz)::date AS moved_on,
+                                  ((COALESCE(l."effectiveAt", l."createdAt") AT TIME ZONE 'UTC') AT TIME ZONE :tz)::date
+                                      AS moved_on,
                                   COALESCE(CASE WHEN date_trunc('day', jc.pd) = date_trunc('day', jc.pd_max) THEN jc.pd END,
                                            CASE WHEN date_trunc('day', jr.pd) = date_trunc('day', jr.pd_max) THEN jr.pd END
                                   )::date AS posted_on

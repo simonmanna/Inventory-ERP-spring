@@ -127,6 +127,12 @@ view, at most 25 locations, and the screen warns when that limit or the report's
 Availability's denominator is every tracked product, even in a branch-limited view, so a branch that does not stock a
 product counts it as unavailable. Ledger drift has no value because the reconciliation reports quantities only.
 
+**Cost visibility (IPR review 2, S-2; deviation, pending owner sign-off).** Every money figure of this dashboard is stock
+cost. A caller without `inventory_valuation:read` gets them as `null` (the screen shows "—"): the money tiles (stock
+value, aged over 90 days, slow / dead stock, discrepancy value), the aging chart values, the `value` column of both
+tables, and the `amount` of the `below-minimum` and `stockpile-surveys` drill-downs. Counts, quantities and
+availability stay. Same rule as `CostVisibility` in the inventory module.
+
 ## Procurement
 
 `partnerId` is the supplier. Spend and prices are plain SQL over `PurchaseOrderLine`, on orders that are not draft or

@@ -510,11 +510,22 @@ public class ReplenishmentService {
         BigDecimal suggested = ReplenishmentCalculator.suggest(available.add(incoming), min,
                 rule.get("maxQty") == null ? null : SqlRows.dec(rule, "maxQty"),
                 rule.get("reorderQty") == null ? null : SqlRows.dec(rule, "reorderQty"));
-        Map<String, Object> live = SqlRows.one(jdbc.sql("SELECT id, status FROM \"InventoryReplenishmentAlert\""
-                + " WHERE"
+        Map<String, Object> live = SqlRows.one(jdbc.sql("SELECT id, status, \"documentType\", \"documentId\","
+                + " \"documentNumber\" FROM \"InventoryReplenishmentAlert\" WHERE"
                 + " \"ruleId\" = ? AND \"organizationId\" = ? AND status IN " + LIVE + " FOR UPDATE")
                 .params(ruleId, org()));
         boolean shortOnHand = available.compareTo(min) < 0;
+        if (live != null && !"open".equals(live.get("status")) && suggested.signum() > 0 && answerDied(live)) {
+            // IPR S5: the transfer or request that answered the alert was cancelled or rejected: its incoming supply
+            // is gone, so the alert opens again (refreshed) and counts as raised (automatic request, notification).
+            jdbc.sql("UPDATE \"InventoryReplenishmentAlert\" SET status = 'open', \"statusReason\" = ?, \"onHand\" = ?,"
+                    + " reserved = ?, available = ?, incoming = ?, \"suggestedQty\" = ?, \"updatedAt\" = " + NOW
+                    + " WHERE id = ?")
+                    .params("Re-opened: " + humanDocument(live) + " was cancelled or rejected", onHand, reserved,
+                            available, incoming, suggested, live.get("id"))
+                    .update();
+            return new Checked((String) live.get("id"), false, 0);
+        }
         if (suggested.signum() == 0 && shortOnHand && live != null && !"open".equals(live.get("status"))) {
             // Covered by what this alert already ordered: keep it until the goods arrive.
             return Checked.NOTHING;
@@ -547,6 +558,36 @@ public class ReplenishmentService {
                 .params(id, org(), ruleId, rule.get("productId"), rule.get("locationId"), onHand, reserved,
                         available, incoming, min, suggested, rule.get("route"), variantId).update();
         return inserted > 0 ? new Checked(id, false, 0) : Checked.NOTHING;
+    }
+
+    /**
+     * IPR S5: whether the document that answered an alert is cancelled, rejected or gone. Only the documents this
+     * module raises or hears about are known: a stock transfer, a purchase request, a production request.
+     */
+    private boolean answerDied(Map<String, Object> alert) {
+        String type = (String) alert.get("documentType");
+        String id = (String) alert.get("documentId");
+        if (type == null || id == null) {
+            return false;
+        }
+        String table = switch (type) {
+            case "stock_transfer" -> "StockTransfer";
+            case "purchase_request" -> "PurchaseRequest";
+            case "production_request" -> "ProductionRequest";
+            default -> null;
+        };
+        if (table == null) {
+            return false;
+        }
+        List<String> status = jdbc.sql("SELECT status::text FROM \"" + table + "\" WHERE id = ? AND \"organizationId\" = ?")
+                .params(id, org()).query(String.class).list();
+        return status.isEmpty() || "cancelled".equals(status.getFirst()) || "rejected".equals(status.getFirst());
+    }
+
+    private static String humanDocument(Map<String, Object> alert) {
+        String type = String.valueOf(alert.get("documentType")).replace('_', ' ');
+        Object number = alert.get("documentNumber");
+        return number == null ? "the " + type : type + " " + number;
     }
 
     /** An automatic request failed: its alerts stay open, with the reason for the planner. */

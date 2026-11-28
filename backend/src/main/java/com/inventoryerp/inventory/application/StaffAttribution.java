@@ -86,11 +86,15 @@ public class StaffAttribution {
             }
             return;
         }
-        // Prisma drops an undefined id from the where clause: a missing approvedById matches any active user.
+        // IPR S-4 (deviation from Nest): Prisma dropped an undefined id from the where clause, so a missing
+        // approvedById matched any active user. The approver is now required.
+        if (approvedById == null || approvedById.isBlank()) {
+            throw ApiException.badRequest("Name the approver (approvedById) to post a direct stock movement");
+        }
         List<Map<String, Object>> rows = jdbc.sql("SELECT id, email, \"passwordHash\", \"pinHash\" FROM \"User\""
                         + " WHERE \"organizationId\" = ? AND \"isActive\" = true AND \"deletedAt\" IS NULL"
-                        + (approvedById != null ? " AND id = ?" : "") + " LIMIT 1")
-                .params(approvedById != null ? List.of(organizationId, approvedById) : List.of(organizationId))
+                        + " AND id = ? LIMIT 1")
+                .params(organizationId, approvedById)
                 .query().listOfRows();
         if (rows.isEmpty()) {
             throw ApiException.badRequest("approvedById must be an active user of this organization");

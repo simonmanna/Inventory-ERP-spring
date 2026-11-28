@@ -767,6 +767,41 @@ public class InvoiceService {
     }
 
     /**
+     * IPR F1 (owner decision D4): the delivery order {@code deliveryReference} that carried a sales invoice's goods
+     * (draft or posted) was cancelled or closed short with goods still undelivered. Its mark is replaced by
+     * {@code data.stockAwaitingDelivery} (the released delivery order's code): posting skips the automatic issue as
+     * before, and the rest leaves stock through a new delivery order (stock mode dispatch) or a collection
+     * ({@code POST /invoices/:id/issue-undelivered}). Only the mark that names this delivery order is released.
+     *
+     * @return whether the invoice was marked by that delivery order
+     */
+    @Transactional
+    public boolean releaseStockToAwaitingDelivery(String id, String deliveryReference) {
+        return jdbc.sql("UPDATE \"Document\" SET data = (COALESCE(data, '{}'::jsonb) - 'stockIssuedBy') ||"
+                        + " jsonb_build_object('" + InvoiceGoodsService.AWAITING + "', ?::text), \"updatedAt\" = " + NOW
+                        + " WHERE id = ? AND \"organizationId\" = ? AND \"documentType\" = 'sales_invoice' AND status::text"
+                        + " IN ('draft', 'posted', 'paid') AND data->>'stockIssuedBy' = ?")
+                .params(deliveryReference, id, org(), deliveryReference).update() > 0;
+    }
+
+    /**
+     * IPR F1: a new delivery order ({@code deliveryReference}) takes over the stock issue of a sales invoice awaiting
+     * delivery, draft or posted: it issues the rest at dispatch. Refused when the invoice is not awaiting delivery.
+     */
+    @Transactional
+    public void assignStockToDelivery(String id, String deliveryReference) {
+        int n = jdbc.sql("UPDATE \"Document\" SET data = (COALESCE(data, '{}'::jsonb) - '" + InvoiceGoodsService.AWAITING
+                        + "') || jsonb_build_object('stockIssuedBy', ?::text), \"updatedAt\" = " + NOW + " WHERE id = ? AND"
+                        + " \"organizationId\" = ? AND \"documentType\" = 'sales_invoice' AND status::text IN ('draft',"
+                        + " 'posted', 'paid') AND data->>'" + InvoiceGoodsService.AWAITING + "' IS NOT NULL")
+                .params(deliveryReference, id, org()).update();
+        if (n == 0) {
+            throw ApiException.badRequest("Only an invoice awaiting delivery can hand its remaining goods to a new"
+                    + " delivery order");
+        }
+    }
+
+    /**
      * Record the commercial source of a draft sales invoice (ADR-S011: a sales order) and, for a down-payment
      * invoice, the order it is an advance for ({@code data.downPaymentFor}).
      */

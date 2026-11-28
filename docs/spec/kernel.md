@@ -139,6 +139,43 @@ Owner-requested extension (2026-11-13), no Nest counterpart:
   `GET /settings/features` return it (`null` when unset). The web sidebar shows it under the organization name and
   falls back to "Point of Sale". Tests in `SidebarTaglineIT`.
 
+
+IPR Phase 3 (2026-11-27, awaiting owner approval; evidence `docs/audits/ipr-evidence/3-security-controls.md`):
+
+- **S9: SoD approval aliases.** `assertSeparated` is also cleared by an approval through the engine whose entity type
+  maps to the pair, when at least one approver made none of the document. The mappings are: stock write-off ←
+  `stock_out`, `waste`, `stock_transfer_loss`; stock adjustment ← `inventory_count_submit`. Before, the exemption only
+  matched when the entity type equalled the pair key, which never happened for these documents.
+- **S2 (P15-6): default SoD pairs for new organisations.** `POST /organizations/bootstrap` seeds `stock_adjustment`,
+  `stock_write_off` and `inventory_valuation` active. The list is set by property `erp.sod.new-org-active-pairs`.
+  Existing organisations and the DEMO seed are unchanged; switching them on is an owner decision.
+- **OPS-1: notifications without a user.** The fiscal period coverage alert and the fleet reminders are now sent to
+  the active holders of `fiscal_period:create` and `fleet:report` (`NotificationsService.sendToPermission`). Before,
+  they were one notification row with no `userId`, which reached no inbox. `FleetReminderLog.notificationId` keeps the
+  first notification id.
+- **OPS-2: approver notifications** skip inactive and deleted users.
+- **Setting** `inventory.transitLossApprovalThreshold` (number, default 0, cascades): see `docs/spec/inventory.md`
+  S3.
+
+IPR Phase 4 (2026-11-27, awaiting owner approval; evidence `docs/audits/ipr-evidence/4-golive-p2.md`):
+
+- **S-6: tenant-bound connections (ADR-S093).** Every pooled connection gets `app.org_id` set to the caller's tenant
+  (or `''` without one) when it is taken from the pool, so row-level security also restricts a tenant's statements
+  outside a transaction. Before, only `TenantAwareTransactionManager` set it, so non-transactional reads ran
+  unrestricted. Work without a tenant keeps the system mode (unrestricted): the remaining gap, an owner sign-off item.
+  Property `app.tenancy.bind-connections` (default `true`) switches it off for an emergency. No API change.
+
+
+### IPR review 1 (2026-11-27, awaiting owner approval)
+
+- **Tenant data source unwrap (finding 6).** `TenantBindingDataSource.unwrap(DataSource.class)` answers the wrapper,
+  not the raw Hikari pool (pool types and MXBeans still unwrap to the pool; Spring Boot reaches the pool for Flyway via
+  `getTargetDataSource()`).
+- **Alias approvals (finding 7).** `SegregationOfDutiesService.approvedByAlias` only considers the latest approved
+  request not yet consumed (`consumedAt IS NULL`); an approval used by an earlier action no longer clears the pair.
+- **`inventory.maxBackdateDays` text (finding 1).** The setting description states that till and device times (sync
+  ops, POS sales and payments, cash sessions, cash drawer) are accepted and flagged, never refused.
+
 ## Status
 
 P1 done: 79/79 routes (+17 routes the generator missed). `/procurement/three-way-match/*` (3 routes) moved to P4.

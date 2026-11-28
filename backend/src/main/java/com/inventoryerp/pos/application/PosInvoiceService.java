@@ -17,6 +17,7 @@ import com.inventoryerp.core.domain.Product;
 import com.inventoryerp.inventory.application.PosStockLocation;
 import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockReservationService;
+import com.inventoryerp.inventory.application.StockReversalService;
 import com.inventoryerp.inventory.application.StockService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService;
 import com.inventoryerp.invoicing.application.DocumentBuilderService.Grouped;
@@ -93,9 +94,14 @@ public class PosInvoiceService {
      * Drain context. {@code stockDate}: the sale's date for the stock moves and their COGS (null = now);
      * {@code stockDateNote}: ledger note when that date had to move out of a closed period.
      */
-    record Ctx(String invoiceId, String invoiceNumber, String orderId, Instant stockDate, String stockDateNote) {
+    /**
+     * {@code stockDate}: the posting date of the sale's stock moves (clamped to an open date); {@code saleAt}: when the
+     * sale happened, unclamped (ADR-S088 effective time).
+     */
+    record Ctx(String invoiceId, String invoiceNumber, String orderId, Instant stockDate, String stockDateNote,
+            Instant saleAt) {
         Ctx(String invoiceId, String invoiceNumber, String orderId) {
-            this(invoiceId, invoiceNumber, orderId, null, null);
+            this(invoiceId, invoiceNumber, orderId, null, null, null);
         }
     }
 
@@ -360,6 +366,42 @@ public class PosInvoiceService {
         }
     }
 
+    /** Trigger of a job enqueued because the sale's own timing trigger was missed (IPR X-8). */
+    static final String TIMING_CATCH_UP = "timing_catch_up";
+
+    /**
+     * IPR X-8: a billed order whose stock trigger was missed because the timing changed in between (billed under
+     * {@code at_payment} or an order-level timing, closed under {@code at_invoice}; billed under {@code at_invoice} is
+     * enqueued at once) gets its one job when it closes: every automatic timing has passed by then, except the
+     * fulfilment ones (their own event still comes) and {@code manual} (the organisation deducts by hand). No-op when
+     * the sale already has a job (R4: one per sale). Returns whether a job was enqueued.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public boolean ensureSaleStockJob(String orderId) {
+        if (orderId == null) {
+            return false;
+        }
+        String timing = stockPostingTiming();
+        if ("manual".equals(timing) || "at_fulfillment_complete".equals(timing)
+                || "at_fulfillment_start".equals(timing)) {
+            return false;
+        }
+        String orgId = org();
+        Map<String, Object> order = SqlRows.one(jdbc.sql("SELECT o.\"invoiceId\", i.\"invoiceNumber\" FROM \"Order\" o"
+                + " LEFT JOIN \"Invoice\" i ON i.id = o.\"invoiceId\" WHERE o.id = ? AND o.\"organizationId\" = ?")
+                .params(orderId, orgId));
+        if (order == null || order.get("invoiceId") == null) {
+            return false;
+        }
+        String invoiceId = (String) order.get("invoiceId");
+        if (saleHasJob(orgId, orderId, invoiceId)) {
+            return false;
+        }
+        log.warn("[stock] order {} closed with no stock posting job (timing changed to {}): enqueued", orderId, timing);
+        enqueueStockPosting(orderId, invoiceId, (String) order.get("invoiceNumber"), TIMING_CATCH_UP);
+        return true;
+    }
+
     /** R4: the stock-posting job key of a sale — its order, else its invoice — independent of the trigger. */
     static String saleJobKey(String orderId, String invoiceId) {
         return "sale:" + (orderId != null ? orderId : invoiceId);
@@ -478,7 +520,7 @@ public class PosInvoiceService {
         pricing.assertAuthority(fullLineInputs, discountInput);
         List<Map<String, Object>> lineInputs = PricingPolicy.discountedLines(fullLineInputs, discountInput);
         int year = Instant.now().atOffset(ZoneOffset.UTC).getYear();
-        Instant occurredAt = OccurredAt.resolve((String) dto.get("occurredAt"));
+        Instant occurredAt = OccurredAt.resolveRecorded((String) dto.get("occurredAt"), "pos.invoice");
 
         Map<String, Object> invoice = tx.execute(st -> {
             String cashSessionId = order.get("cashSessionId") != null ? (String) order.get("cashSessionId")
@@ -889,7 +931,7 @@ public class PosInvoiceService {
                     throw ApiException.badRequest("Cash handed over is invalid for these tenders");
                 }
             }
-            Instant occurredAt = OccurredAt.resolve((String) dto.get("occurredAt"));
+            Instant occurredAt = OccurredAt.resolveRecorded((String) dto.get("occurredAt"), "pos.payment");
             String paymentDate = JsonConfig.toJsIso(occurredAt != null ? occurredAt : Instant.now());
             boolean shared = sharedDrawer();
             String lastPaymentId = null;
@@ -1361,6 +1403,10 @@ public class PosInvoiceService {
 
     private void restockLine(Map<String, Object> inv, List<Map<String, Object>> invItems, Map<String, Object> src,
             BigDecimal quantity, String refundId) {
+        if (restockLinked(inv, src, quantity, refundId)) {
+            return;
+        }
+        // A line issued before R4 (its issue rows carry no sourceLineId): the proportional restock it always had.
         String orgId = org();
         List<Map<String, Object>> ingredients = db.list(InvoiceItemRecipeIngredient.class,
                 "\"invoiceItemId\" = ? AND \"organizationId\" = ?", src.get("id"), orgId);
@@ -1376,6 +1422,11 @@ public class PosInvoiceService {
                                 ? Money.div(SqlRows.dec(ing, "totalValue"), SqlRows.dec(ing, "unitCost"))
                                 : SqlRows.dec(ing, "quantity");
                 BigDecimal returnQty = baseQty.multiply(fraction).setScale(6, RoundingMode.HALF_UP);
+                String ingVariant = src.get("menuItemId") == null && ing.get("componentType") == null
+                        && java.util.Objects.equals(ing.get("productId"), src.get("productId"))
+                        ? issuedVariant(inv, src.get("productId"), (String) src.get("variantId")) : null;
+                // IPR 1d: never more than the sale still has out of the product (earlier voids, refunds, cancels).
+                returnQty = Money.min(returnQty, stillOut(inv, (String) ing.get("productId"), ingVariant));
                 if (returnQty.signum() <= 0) {
                     continue;
                 }
@@ -1428,6 +1479,12 @@ public class PosInvoiceService {
             }
         }
         BigDecimal returned = Money.div(issuedQty.multiply(quantity), soldQty).setScale(6, RoundingMode.HALF_UP);
+        // IPR 1d: capped by what the sale still has out (net of every earlier void, refund or cancel row), so a void
+        // and a refund of the same line never bring back more than was issued.
+        returned = Money.min(returned, stillOut(inv, (String) src.get("productId"), issuedVariant));
+        if (returned.signum() <= 0) {
+            return;
+        }
         StockMove mv = StockMove.of((String) src.get("productId"), (String) locs.iterator().next(),
                 PosSql.decOf(returned.doubleValue()));
         mv.variantId = issuedVariant;
@@ -1436,6 +1493,130 @@ public class PosInvoiceService {
         mv.sourceType = "pos_refund";
         mv.sourceId = refundId;
         stock.receiveReturn(mv);
+    }
+
+    /**
+     * IPR 1d (lines issued before R4, restocked proportionally): what a sale still has out of one product and variant —
+     * Σ of its issue rows (every sale issue type, keyed by the invoice, the order, or an order / invoice line) net of
+     * every row that brought units back: rows linked to those issue rows ({@code reversesLedgerId}: voids, cancels,
+     * linked refunds) and unlinked refunds of this invoice, voids of its order lines and cancels of its order. Never
+     * below 0.
+     */
+    private BigDecimal stillOut(Map<String, Object> inv, String productId, String variantId) {
+        String orgId = org();
+        String orderId = orderKey(inv);
+        List<String> keys = new ArrayList<>(List.of((String) inv.get("id")));
+        List<String> orderItems = orderId.isEmpty() ? List.of() : jdbc.sql("SELECT id FROM \"OrderItem\" WHERE"
+                + " \"orderId\" = ? AND \"organizationId\" = ?").params(orderId, orgId).query(String.class).list();
+        if (!orderId.isEmpty()) {
+            keys.add(orderId);
+        }
+        keys.addAll(orderItems);
+        keys.addAll(jdbc.sql("SELECT id FROM \"InvoiceItem\" WHERE \"invoiceId\" = ?").param(inv.get("id"))
+                .query(String.class).list());
+        String[] keyArr = keys.toArray(String[]::new);
+        String issues = "SELECT id FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND \"productId\" = ?"
+                + " AND \"variantId\" IS NOT DISTINCT FROM ? AND \"quantityChange\" < 0 AND \"referenceType\" ="
+                + " ANY(?::text[]) AND (\"referenceId\" = ANY(?::text[]) OR split_part(\"referenceId\", ':', 1) ="
+                + " ANY(?::text[]))";
+        BigDecimal issued = jdbc.sql("SELECT COALESCE(SUM(-\"quantityChange\"), 0) FROM \"InventoryLedger\" WHERE id IN ("
+                        + issues + ")")
+                .params(orgId, productId, variantId, SALE_ISSUE_TYPES, keyArr, keyArr).query(BigDecimal.class).single();
+        BigDecimal back = jdbc.sql("SELECT COALESCE(SUM(r.\"quantityChange\"), 0) FROM \"InventoryLedger\" r WHERE"
+                        + " r.\"organizationId\" = ? AND r.\"productId\" = ? AND r.\"variantId\" IS NOT DISTINCT FROM ?"
+                        + " AND r.\"quantityChange\" > 0 AND (r.\"reversesLedgerId\" IN (" + issues + ")"
+                        + " OR (r.\"reversesLedgerId\" IS NULL AND ((r.\"referenceType\" = 'pos_refund' AND"
+                        + " r.\"referenceId\" IN (SELECT id FROM \"PosRefund\" WHERE \"invoiceId\" = ?))"
+                        + " OR (r.\"referenceType\" = 'pos_order_void' AND r.\"referenceId\" = ANY(?::text[]))"
+                        + " OR (r.\"referenceType\" = 'pos_order_cancel' AND r.\"referenceId\" = ?))))")
+                .params(orgId, productId, variantId, orgId, productId, variantId, SALE_ISSUE_TYPES, keyArr, keyArr,
+                        inv.get("id"), orderItems.toArray(String[]::new), orderId)
+                .query(BigDecimal.class).single();
+        return issued.subtract(back).max(BigDecimal.ZERO);
+    }
+
+    /** Ledger reference types of a POS sale's stock issue rows (product, recipe, combo and extra components). */
+    private static final String[] SALE_ISSUE_TYPES = {"pos_invoice", "pos_order", "menu_recipe", "pos_invoice_combo",
+            "pos_invoice_extra"};
+
+    /**
+     * IPR SW-1 / X-5: restock a refunded line against the issue rows of that very line (their {@code sourceLineId}: the
+     * order line it was sold on, or the invoice item) through {@link StockReversalService#returnFromSource}: each
+     * product and component comes back with the lot, serial, location and cost it left with, the new rows name their
+     * issue row ({@code reversesLedgerId}), and what earlier returns already brought back (an order-line void, an
+     * earlier refund) is not returned again. The share returned is {@code quantity} of the line's not yet refunded
+     * quantity (all of what is still returnable for the last part). A plain serial-tracked line is only restocked
+     * whole: which units a part refund brings back cannot be told. Returns false when the line has no linked issue
+     * row (sold before R4); nothing is posted then.
+     */
+    private boolean restockLinked(Map<String, Object> inv, Map<String, Object> src, BigDecimal quantity,
+            String refundId) {
+        String orgId = org();
+        List<String> lineIds = new ArrayList<>(List.of((String) src.get("id")));
+        if (inv.get("orderId") != null && src.get("lineNumber") != null) {
+            lineIds.addAll(jdbc.sql("SELECT id FROM \"OrderItem\" WHERE \"orderId\" = ? AND \"organizationId\" = ? AND"
+                    + " \"lineNumber\" = ?").params(inv.get("orderId"), orgId, PosSql.intOf(src.get("lineNumber")))
+                    .query(String.class).list());
+        }
+        List<String> codes = jdbc.sql("SELECT l.\"ledgerCode\" FROM \"InventoryLedger\" l WHERE l.\"organizationId\" = ?"
+                        + " AND l.\"quantityChange\" < 0 AND l.\"sourceLineId\" = ANY(?::text[]) AND l.\"referenceType\" ="
+                        + " ANY(?::text[]) GROUP BY l.\"ledgerCode\" ORDER BY min(l.\"createdAt\"), l.\"ledgerCode\"")
+                .params(orgId, lineIds.toArray(String[]::new), SALE_ISSUE_TYPES).query(String.class).list();
+        if (codes.isEmpty()) {
+            return false;
+        }
+        BigDecimal lineQty = SqlRows.dec(src, "quantity");
+        BigDecimal lineLeft = lineQty.subtract(SqlRows.dec(src, "refundedQty"));
+        // IPR review (POS refund over-restock): a waste / no_return refund counts in refundedQty but restocked nothing,
+        // so its units stay returnable on the issue rows. The last part is "whole" (everything still returnable) only
+        // when every earlier refund of the line was a restock; otherwise the share is of the quantity issued for the
+        // line (issued × quantity / line quantity), never more than is still returnable.
+        BigDecimal notRestocked = jdbc.sql("SELECT COALESCE(SUM((i ->> 'quantity')::numeric), 0) FROM \"PosRefund\" r"
+                        + " CROSS JOIN LATERAL jsonb_array_elements(r.items) i WHERE r.\"organizationId\" = ? AND"
+                        + " r.\"invoiceId\" = ? AND r.id <> ? AND r.\"stockDisposition\" <> 'restock' AND i ->> 'lineId' = ?")
+                .params(orgId, inv.get("id"), refundId, src.get("id")).query(BigDecimal.class).single();
+        boolean lastPart = lineLeft.signum() <= 0 || quantity.compareTo(lineLeft) >= 0;
+        boolean whole = lastPart && notRestocked.signum() == 0;
+        if (!lastPart && src.get("menuItemId") == null && src.get("productId") != null) {
+            Map<String, Object> product = db.first(Product.class, "id = ? AND \"organizationId\" = ?", src.get("productId"),
+                    orgId);
+            if (product != null && Boolean.TRUE.equals(product.get("serialTracking"))) {
+                throw ApiException.badRequest("Tracked returns require an identified stock return; choose no return and"
+                        + " record the stock disposition separately");
+            }
+        }
+        StockReversalService.IssueSource source = StockReversalService.IssueSource.ledgerCodes(codes);
+        Map<String, BigDecimal> issuedBy = new HashMap<>();
+        for (Map<String, Object> row : SqlRows.list(jdbc.sql("SELECT \"productId\", COALESCE(\"variantId\", '') AS v,"
+                + " SUM(-\"quantityChange\") AS q FROM \"InventoryLedger\" WHERE \"organizationId\" = ? AND"
+                + " \"ledgerCode\" = ANY(?::text[]) AND \"quantityChange\" < 0 GROUP BY 1, 2")
+                .params(orgId, codes.toArray(String[]::new)))) {
+            issuedBy.put(row.get("productId") + "|" + row.get("v"), SqlRows.dec(row, "q"));
+        }
+        List<StockReversalService.ReturnLine> lines = new ArrayList<>();
+        for (StockReversalService.Returnable r : reversals.returnableByProduct(source)) {
+            BigDecimal issued = issuedBy.getOrDefault(r.productId() + "|" + (r.variantId() == null ? "" : r.variantId()),
+                    r.quantity());
+            BigDecimal q = whole || lineQty.signum() <= 0 ? r.quantity()
+                    : Money.min(r.quantity(), issued.multiply(quantity).divide(lineQty, 6, RoundingMode.HALF_UP));
+            if (q.signum() > 0) {
+                lines.add(new StockReversalService.ReturnLine(r.productId(), r.variantId(), q, null, null, null, null,
+                        (String) src.get("id")));
+            }
+        }
+        if (!lines.isEmpty()) {
+            reversals.returnFromSource(new StockReversalService.ReturnFromSource(source, lines, "pos_refund", refundId,
+                    "Refund " + refundId, null, null, null, true, null));
+        }
+        return true;
+    }
+
+    private StockReversalService reversals;
+
+    /** IPR SW-1: the engine's linked return (setter: keeps the constructor as it is). */
+    @org.springframework.beans.factory.annotation.Autowired
+    void setReversals(StockReversalService reversals) {
+        this.reversals = reversals;
     }
 
     private String saleLocation(Map<String, Object> inv) {
@@ -1909,7 +2090,7 @@ public class PosInvoiceService {
         if (note != null) {
             log.warn("[stock] {} on {}", note, ctx.invoiceNumber());
         }
-        return new Ctx(ctx.invoiceId(), ctx.invoiceNumber(), ctx.orderId(), date, note);
+        return new Ctx(ctx.invoiceId(), ctx.invoiceNumber(), ctx.orderId(), date, note, sale);
     }
 
     private static Instant utc(java.sql.Timestamp t) {
@@ -1923,6 +2104,8 @@ public class PosInvoiceService {
     /** Date a drain move at the sale (see {@link #datedForStock}). */
     private static void dated(StockMove mv, Ctx ctx) {
         mv.date = ctx.stockDate();
+        // ADR-S088: the goods left at the sale (checkout / device occurredAt), even when the posting date moved.
+        mv.effectiveAt = ctx.saleAt();
         if (ctx.stockDateNote() != null) {
             mv.notes = mv.notes == null ? ctx.stockDateNote() : mv.notes + " · " + ctx.stockDateNote();
         }
@@ -2123,6 +2306,7 @@ public class PosInvoiceService {
                 mv.sourceType = "pos_invoice_combo";
                 mv.sourceId = it.get("id") + ":" + c.get("id");
                 mv.sourceLineId = (String) it.get("id"); // R4: the order line it was issued for
+                mv.honourSalesReservations = true; // IPR E-1a: refused only as a block-policy sale
                 dated(mv, ctx);
                 StockMove.Issued r = stock.issue(mv);
                 if (invoiceItemId != null) {
@@ -2153,6 +2337,7 @@ public class PosInvoiceService {
                 mv.sourceType = ctx.invoiceId() != null ? "pos_invoice" : "pos_order";
                 mv.sourceId = ctx.invoiceId() != null ? ctx.invoiceId() : ctx.orderId();
                 mv.sourceLineId = (String) it.get("id"); // R4: the order line it was issued for
+                mv.honourSalesReservations = true; // IPR E-1a: refused only as a block-policy sale
                 dated(mv, ctx);
                 StockMove.Issued r = stock.issue(mv);
                 if (invoiceItemId != null) {
@@ -2232,6 +2417,7 @@ public class PosInvoiceService {
             mv.sourceId = ctx.invoiceId() != null ? ctx.invoiceId() : ctx.orderId();
             mv.sourceLineId = orderItemId; // R4: the order line it was issued for
             mv.notes = name + " → " + ref;
+            mv.honourSalesReservations = true; // IPR E-1a: refused only as a block-policy sale
             dated(mv, ctx);
             StockMove.Issued r = stock.issue(mv);
             if (invoiceItemId != null) {
@@ -2338,6 +2524,7 @@ public class PosInvoiceService {
             mv.sourceType = "pos_invoice_extra";
             mv.sourceId = componentKey;
             mv.sourceLineId = (String) item.get("id"); // R4: the order line it was issued for
+            mv.honourSalesReservations = true; // IPR E-1a: refused only as a block-policy sale
             dated(mv, ctx);
             StockMove.Issued r = stock.issue(mv);
             if (invoiceItemId != null) {

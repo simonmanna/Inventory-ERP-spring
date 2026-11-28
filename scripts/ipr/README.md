@@ -49,5 +49,11 @@ CANDIDATE_JAR=/opt/inventory-erp/dist/inventory-erp.jar PREVIOUS_JAR=/opt/invent
   turns every scheduled job off (`APP_JOBS_ENABLED=false`). It runs as the throwaway container's superuser `owner`.
   `afterMigrate` creates the API role `erp_app` there, so RLS applies to the rehearsal API as it does on live.
 - Validated in Phase 0 with `bash -n`. `restore-copy.sh` and `run-data-checks.sh` were also run for real against a
-  dump of a test database. `rehearse-migration.sh` was checked with `bash -n` only; its first real run is the Phase 5
-  rehearsal.
+  dump of a test database. `rehearse-migration.sh` was checked with `bash -n` only in Phase 0.
+- Phase 5 (2026-11-28): both rehearsals ran on restored copies of the live backup and passed
+  (`docs/audits/ipr-evidence/5-r7-rehearsals.md`). The first real runs found three defects in
+  `rehearse-migration.sh`, all fixed: the heap was too small for a copy of live (`JAVA_HEAP`, default 1536m), a
+  stopped API kept running so a later step could pass against the wrong jar (the jar is stopped and the port waited
+  for), and the additivity scan flagged `countType` and `NOT NULL DEFAULT` columns.
+- `ENV_FILE` is sourced by bash: quote values with spaces (`JAVA_TOOL_OPTIONS="…"`). The Phase 5 runs used an env file
+  with the live `ENABLE_*` flags and fresh random secrets, not the live secrets.

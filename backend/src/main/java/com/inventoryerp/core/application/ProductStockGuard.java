@@ -14,6 +14,17 @@ public interface ProductStockGuard {
     /** True when any quant (location / variant) of the product has a non-zero quantity. */
     boolean hasStockOnHand(String productId);
 
+    /**
+     * IPR C-8: before a tracking (batch / expiry / serial) or costing-method change, take the product's exclusive costing
+     * lock (L3, held until the caller's transaction ends, so no stock move of the product runs meanwhile) and say what
+     * still blocks the change: {@code "stock"} (a quant holds a non-zero quantity), {@code "reservations"} (active stock
+     * reservations), {@code "pending_pos"} (a not-done POS stock posting job sells the product), or null. The default
+     * (no inventory module) only reads the stock on hand.
+     */
+    default String lockForConfigChange(String productId) {
+        return hasStockOnHand(productId) ? "stock" : null;
+    }
+
     /** True when an active standard cost record governs the product's cost. */
     boolean standardGoverned(String productId);
 

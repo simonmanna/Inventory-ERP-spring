@@ -7,7 +7,8 @@ export interface StockLevel {
   name: string;
   uom: string | null;
   totalQuantity: number;
-  averageCost: number;
+  /** Null without inventory_valuation:read (IPR S-2). */
+  averageCost: number | null;
   batchTracking?: boolean;
 }
 

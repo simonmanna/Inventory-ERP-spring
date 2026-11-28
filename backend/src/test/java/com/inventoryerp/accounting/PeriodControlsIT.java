@@ -95,8 +95,9 @@ class PeriodControlsIT extends AccountingFixtures {
         return TenantContext.run(TenantStore.organization(b.org()), coverage::run);
     }
 
+    /** IPR OPS-1: only notifications addressed to a user count (a null-user row reached no inbox). */
     private long notifications(Books b, String action) {
-        return jdbc.sql("SELECT count(*) FROM \"Notification\" WHERE \"organizationId\" = ?"
+        return jdbc.sql("SELECT count(*) FROM \"Notification\" WHERE \"organizationId\" = ? AND \"userId\" IS NOT NULL"
                         + " AND payload->>'kind' = 'fiscal_period_coverage' AND payload->>'action' = ?")
                 .params(b.org(), action).query(Long.class).single();
     }

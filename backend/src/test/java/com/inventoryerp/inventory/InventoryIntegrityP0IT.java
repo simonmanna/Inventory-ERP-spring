@@ -22,8 +22,10 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -330,8 +332,9 @@ class InventoryIntegrityP0IT extends InventoryAuditSupport {
         assertThat(reportOnlyFailing(integrityReport())).isEmpty();
         okA(201, "POST", "/fleet/delivery-orders/" + d.deliveryOrder() + "/cancel", Map.of("reason",
                 "Customer collects"));
-        assertThat(jdbc.sql("SELECT data->>'stockIssuedBy' FROM \"Document\" WHERE id = ?").param(d.invoice())
-                .query(String.class).single()).as("the posted invoice keeps its hand-off").isNotNull();
+        // IPR F1: the posted invoice goes back to awaiting delivery (listed until a new delivery or a collection).
+        assertThat(jdbc.sql("SELECT data->>'stockAwaitingDelivery' FROM \"Document\" WHERE id = ?").param(d.invoice())
+                .query(String.class).optional().orElse(null)).as("the posted invoice awaits delivery").isNotNull();
         JsonNode c = onlyReportOnlyFailing("invoice_undelivered");
         JsonNode row = c.get("rows").get(0);
         assertThat(row.get("invoiceId").asString()).isEqualTo(d.invoice());
@@ -344,8 +347,8 @@ class InventoryIntegrityP0IT extends InventoryAuditSupport {
     }
 
     @Test
-    @DisplayName("F3 detector: a put-back at proof of delivery plus a full credit-note restock return more than the"
-            + " trip issued")
+    @DisplayName("F3 detector: a put-back written before IPR F3 (no reversal link) plus a full credit-note restock"
+            + " return more than the trip issued")
     void deliveryReturnOverlap() {
         fresh();
         Delivered d = invoiceWithDeliveryOrder(10);
@@ -361,22 +364,26 @@ class InventoryIntegrityP0IT extends InventoryAuditSupport {
         assertThat(onHand(d.product(), main)).isEqualByComparingTo("40");
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("loadLineId", dispatched.get("lines").get(0).get("id").asString());
-        line.put("deliveredQty", 8);
-        line.put("returnedQty", 2);
-        line.put("reason", "other");
+        line.put("deliveredQty", 10);
+        line.put("returnedQty", 0);
         money("/fleet/trips/" + trip + "/proof-of-delivery", Map.of("receiverName", "Site agent", "latitude", 0.3137,
                 "longitude", 32.5812, "signature", PNG, "lines", List.of(line)));
-        assertThat(onHand(d.product(), main)).isEqualByComparingTo("42");
         okA(200, "POST", "/invoices/" + d.invoice() + "/post", null);
-        assertThat(reportOnlyFailing(integrityReport())).as("8 delivered, 2 back: consistent").isEmpty();
+        assertThat(reportOnlyFailing(integrityReport())).as("10 delivered: consistent").isEmpty();
 
-        // The customer is credited the full 10: the restock returns 10 against the trip's issue, ignoring the 2 put back.
+        // The customer is credited the full 10: the restock returns 10 against the trip's issue.
         String cn = okA(200, "POST", "/credit-notes", Map.of("partnerId", jdbc.sql("SELECT \"partnerId\" FROM"
                 + " \"Document\" WHERE id = ?").param(d.invoice()).query(String.class).single(), "issueDate", today(),
                 "reversedDocumentId", d.invoice(), "lines", List.of(Map.of("productId", d.product(), "quantity", 10,
                         "unitPrice", 200)))).get("id").asString();
         okA(200, "POST", "/credit-notes/" + cn + "/post", null);
-        assertThat(onHand(d.product(), main)).as("12 came back for 10 issued").isEqualByComparingTo("52");
+        assertThat(onHand(d.product(), main)).isEqualByComparingTo("50");
+        assertThat(reportOnlyFailing(integrityReport())).as("a linked restock alone is consistent").isEmpty();
+
+        // A put-back of 2 as written before IPR F3: no reversal link (fixture row, INSERT only).
+        Map<String, Object> legacy = ledgerFixture(d.product(), main, "return_in", 2, "fleet_trip_return", null, null);
+        legacy.put("referenceId", trip);
+        insertLedger(legacy);
         JsonNode c = onlyReportOnlyFailing("delivery_return_overlap");
         JsonNode row = c.get("rows").get(0);
         assertThat(row.get("deliveryGroup").asString()).isEqualTo("invoice:" + d.invoice());
@@ -479,7 +486,14 @@ class InventoryIntegrityP0IT extends InventoryAuditSupport {
                 .containsEntry("lot_products", false).containsEntry("fleet_delivery_orders", false);
         List<String> p2 = new ArrayList<>();
         used.get("promotedP2s").forEach(x -> p2.add(x.get("id").asString()));
-        assertThat(p2).containsExactly("C-4", "C-8", "C-9", "S13", "S-6", "S-8");
+        // The P2s these features promote, less those fixed in the programme (R6: a fixed P2 is never promoted).
+        Set<String> fixed = InventoryFeatureUsageService.P2_FEATURES.stream().filter(r -> !r.open())
+                .map(InventoryFeatureUsageService.P2Rule::id).collect(java.util.stream.Collectors.toSet());
+        assertThat(p2).containsExactlyElementsOf(Stream.of("C-4", "C-8", "C-9", "S13", "S-6", "S-8")
+                .filter(id -> !fixed.contains(id)).toList());
+        List<String> fixedListed = new ArrayList<>();
+        used.get("fixedP2s").forEach(x -> fixedListed.add(x.get("id").asString()));
+        assertThat(fixedListed).containsExactlyInAnyOrderElementsOf(fixed);
 
         // The report-only feature_risk check lists the same P2s.
         JsonNode risk = integrityCheck(integrityReport(), "feature_risk");

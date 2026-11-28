@@ -207,7 +207,7 @@ public class InventoryRegisterService {
                         + " notes FROM f ORDER BY created_at DESC, seq ASC LIMIT :cap")
                 .params(cur.params()).param("cap", Math.max(0, rowCap)));
         List<Map<String, Object>> rendered = rows.stream().map(InventoryRegisterService::renderRow).toList();
-        return Obj.of("kind", kind,
+        Map<String, Object> out = Obj.of("kind", kind,
                 "range", Obj.of("start", localIso(start), "end", localIso(end), "days", days),
                 "previousRange", Obj.of("start", localIso(prevStart), "end", localIso(prevEnd)),
                 "summary", summary(signed, total, prevTotal, agg.getOrDefault("name", List.of()), gross, days),
@@ -222,7 +222,16 @@ public class InventoryRegisterService {
                 "byWeekday", byWeekday, "byHour", byHour,
                 "facets", Obj.of("sources", sources, "reasons", reasons, "staff", staffFacet),
                 "rows", rendered, "truncated", lines > rowCap);
+        if (!CostVisibility.seesCost()) {
+            // IPR S-2: unit costs, values and value shares need inventory_valuation:read (null otherwise).
+            CostVisibility.hideCostDeep(out, COST_KEYS);
+        }
+        return out;
     }
+
+    /** IPR S-2: the register's cost and value fields, at any depth (rows, summary, trend, breakdowns). */
+    static final Set<String> COST_KEYS = Set.of("unitCost", "value", "netValue", "avgUnitCost", "sharePct",
+            "grossValue", "avgValuePerDay", "avgValuePerLine", "gainValue", "lossValue", "gain", "loss");
 
     private static Map<String, Object> renderRow(Map<String, Object> r) {
         return Obj.of("id", r.get("id"), "date", r.get("created_at"), "ledgerCode", r.get("ledger_code"), "docRef",

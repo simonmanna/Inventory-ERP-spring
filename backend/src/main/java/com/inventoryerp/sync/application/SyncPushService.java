@@ -509,6 +509,18 @@ public class SyncPushService {
         if (entry == null) {
             throw http("Unsupported sync op type: " + op.type(), 400);
         }
+        if ("stock.count".equals(op.type())) {
+            // IPR review 1 (N1, count spec section 5): the sale stock postings of the counted location are drained
+            // before the op's transaction opens (each job commits on its own; claimed, so safe to repeat), never on a
+            // second connection inside it. Its commits do not anchor the op's ledger row.
+            Object loc = op.payload() == null ? null : op.payload().get("locationId");
+            if (loc instanceof String locationId && !locationId.isBlank()) {
+                ledger.outside(() -> {
+                    counts.drainSales(locationId);
+                    return null;
+                });
+            }
+        }
         Map<String, Object> out = entry.boundary() == SyncOpCatalog.Boundary.OP_TRANSACTION
                 ? opTx.execute(st -> {
                     Map<String, Object> r = runOp(device, op, clientIdMap);
@@ -774,8 +786,30 @@ public class SyncPushService {
         return v instanceof Map<?, ?> m ? (Map<String, Object>) m : null;
     }
 
-    private Map<String, Object> runOp(Device device, Op op, Map<String, String> clientIdMap) {
-        OccurredAt.resolve(op.occurredAt());
+    /**
+     * IPR SW-7 / ADR-S088 (owner decision P15-1): the op's device time is accepted and flagged, never refused — a time
+     * too far ahead is replaced by the server receive time ({@code clockSkew}), an old one is kept ({@code lateSync}).
+     * Both raise a report-only discrepancy row. The op then runs with its (clamped) device time bound as the effective
+     * time of every stock move it makes (IPR M-1). Duplicate protection by op id is unchanged.
+     */
+    private Map<String, Object> runOp(Device device, Op received, Map<String, String> clientIdMap) {
+        OccurredAt.Resolved occ = OccurredAt.resolveFlagged(received.occurredAt());
+        Op op = occ != null && occ.clockSkew() ? new Op(received.opId(), received.deviceSeq(), received.type(),
+                received.actorUserId(), com.inventoryerp.kernel.web.JsonConfig.toJsIso(occ.at()), received.payload(),
+                received.originChain(), received.supersedesOpId()) : received;
+        if (occ != null && occ.flagged()) {
+            // IPR review 1: report-only, so its commit never anchors the op's ledger row (a service op that then
+            // fails must stay retryable).
+            ledger.outside(() -> {
+                stockOps.flagTime(stockCtx(device, received), occ);
+                return null;
+            });
+        }
+        return com.inventoryerp.kernel.common.EffectiveTime.offline(occ == null ? null : occ.at(),
+                () -> runOpBody(device, op, clientIdMap));
+    }
+
+    private Map<String, Object> runOpBody(Device device, Op op, Map<String, String> clientIdMap) {
         Map<String, Object> payload = resolveRefsDurable(device, op.payload() == null ? Map.of() : op.payload(),
                 clientIdMap);
         String occurredAt = op.occurredAt();
@@ -1092,8 +1126,14 @@ public class SyncPushService {
                 List<DirectStockService.Line> items = new ArrayList<>();
                 for (Object o : PosSql.list(payload.get("items"))) {
                     Map<String, Object> it = PosSql.map(o);
+                    // IPR C-3 / GL-6 (D3): a device cannot give the reason and permission an explicit 0 needs, so
+                    // an offline stock-in at 0 is taken as no cost given (the current cost), never refused.
+                    BigDecimal unitCost = decimal(it.get("unitCost"));
+                    if (unitCost != null && unitCost.signum() == 0) {
+                        unitCost = null;
+                    }
                     items.add(new DirectStockService.Line(str(it.get("productId")), str(it.get("variantId")),
-                            decimal(it.get("quantity")), decimal(it.get("unitCost")), str(it.get("batchNumber")),
+                            decimal(it.get("quantity")), unitCost, str(it.get("batchNumber")),
                             str(it.get("expiryDate")), str(it.get("distStrategy")), str(it.get("notes"))));
                 }
                 DirectStockService.Request req = new DirectStockService.Request(str(payload.get("locationId")),
@@ -1113,7 +1153,8 @@ public class SyncPushService {
             }
             // Audit S-5: opening the count, entering the figures and submitting are one transaction, so a refused
             // count leaves no open count behind.
-            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(payload, op.occurredAt())));
+            case "stock.count" -> m.putAll(tx.execute(st -> applyStockCount(stockCtx(device, op), payload,
+                    op.occurredAt())));
             // ADR-S083 O4 (S4): warehouse work recorded offline.
             case "transfer.dispatch" -> m.putAll(stockOps.dispatch(stockCtx(device, op), payload));
             case "transfer.receive" -> m.putAll(stockOps.receive(stockCtx(device, op), payload));
@@ -1517,7 +1558,8 @@ public class SyncPushService {
                 op.occurredAt());
     }
 
-    private Map<String, Object> applyStockCount(Map<String, Object> payload, String occurredAt) {
+    private Map<String, Object> applyStockCount(SyncStockService.OpContext ctx, Map<String, Object> payload,
+            String occurredAt) {
         List<Map<String, Object>> lines = new ArrayList<>();
         if (payload.get("lines") instanceof List<?> l) {
             l.forEach(o -> lines.add(PosSql.map(o)));
@@ -1527,6 +1569,15 @@ public class SyncPushService {
         }
         LinkedHashSet<String> productIds = new LinkedHashSet<>();
         lines.forEach(l -> productIds.add(String.valueOf(l.get("productId"))));
+        // IPR review 1 (N5): another type of count is open on the location (S4: one open draft per location). The
+        // device's count is a physical fact, so the op is applied and held for staff (report row with the counted
+        // lines), never failed and never a second draft.
+        Map<String, Object> blocking = counts.blockingDraft(str(payload.get("locationId")), "spot");
+        if (blocking != null) {
+            String exceptionId = stockOps.holdCount(ctx, str(payload.get("locationId")), lines,
+                    String.valueOf(blocking.get("countCode")), String.valueOf(blocking.get("countType")));
+            return mapOf("id", exceptionId, "held", true, "mapping", mapOf("countHeldId", exceptionId));
+        }
         Map<String, Object> session = counts.start(str(payload.get("locationId")), "spot", str(payload.get("notes")), null,
                 null, new ArrayList<>(productIds), null);
         // Phase I2 (audit V-4): a device counts a product's total, or one variant of a product with variants (the
@@ -1556,18 +1607,18 @@ public class SyncPushService {
                     + " cancel it in the back office, then retry", 409);
         }
         List<InventoryCountService.DraftLine> draft = new ArrayList<>();
+        java.time.Instant at = OccurredAt.resolve(occurredAt);
         for (Map<String, Object> l : lines) {
             String reason = l.get("reason") instanceof String r && !r.trim().isEmpty() ? r.trim()
                     : payload.get("reason") instanceof String pr && !pr.trim().isEmpty() ? pr.trim() : "Device count";
             // ADR-S083 S4 (deviation, owner-approved): the variance is counted − on-hand when the device counted.
-            // The session compares with today's on-hand, so movements posted after the count carry the figure forward.
+            // IPR X-1c (ADR-S088): the line's cut-off is the device time, so the count carries forward exactly the
+            // movements that happened after it (by effective time), and a sale made before it but synced later is a
+            // late transaction of this count (count spec section 4), not a second loss.
             BigDecimal counted = PosSql.dec(l.get("countedQty"));
-            if (counted != null) {
-                counted = counted.add(stockOps.movedSince(str(payload.get("locationId")), str(l.get("productId")),
-                        PosSql.truthy(l.get("variantId")) ? str(l.get("variantId")) : null, occurredAt));
-            }
-            draft.add(new InventoryCountService.DraftLine(String.valueOf(lineByCell.get(countCell(l.get("productId"),
-                    l.get("variantId"))).get("id")), counted, reason));
+            String lineId = String.valueOf(lineByCell.get(countCell(l.get("productId"), l.get("variantId"))).get("id"));
+            draft.add(at == null ? new InventoryCountService.DraftLine(lineId, counted, reason)
+                    : InventoryCountService.DraftLine.countedAt(lineId, counted, reason, at));
         }
         String sessionId = String.valueOf(session.get("id"));
         counts.saveDraft(sessionId, draft, null, null);

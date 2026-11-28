@@ -66,6 +66,36 @@ Error messages: copy verbatim from the "Error messages" table in the generated s
 
 ## Deviations
 
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; evidence
+[2-accounting-mfg](../audits/ipr-evidence/2-accounting-mfg.md)):
+
+- **GL-4: posting fallbacks.** Without a matching posting rule, an issue of type `RETURN_TO_SUPPLIER` debits GRNI
+  (`grni_accrued`) and `PRODUCTION_CONSUME` debits WIP (`wip`, else stock valuation) instead of COGS; a movement type
+  with no known default fails closed (400 "No posting rule or default account is configured for stock movements of
+  type <T>; add a posting rule for it under Inventory > Posting rules"). Nest fell back to COGS for every type.
+- **GL-4: system posting rules.** `DELETE /inventory/posting-rules/:id` refuses an organisation-wide rule that matches
+  a system default (movement type, line, side): 400 "This is a system default posting rule for <T> and cannot be
+  deleted. Change its account instead, or use Restore defaults." Product and category rules delete as before.
+- **GL-1 / GL-5: base currency.** `GET /reports/inventory/gl-tieout` and the integrity checks `valuation_vs_gl` /
+  `valuation_vs_gl_by_product` sum `baseDebit − baseCredit` (Nest summed the transaction-currency `debit − credit`).
+- **GL-11: `wip_tieout` report-only integrity check** (new key at the end of `reportOnlyChecks`): GL WIP per cost
+  object against the WIP sub-ledger (docs/spec/manufacturing-wip-reconciliation.md). Report-only until the owner
+  promotes it to a value check.
+- **GL-11 refinement (stream H): WIP accounts of the tie-out.** `wip_tieout` reads the mapped `wip` account plus every
+  account the active `PRODUCTION_CONSUME` (debit) / `PRODUCTION_OUTPUT` (credit) rules resolve to, resolved as the
+  postings resolve them (`InventoryPostingRuleService.ruleAccounts`): a `category_field` rule per category of the
+  products it covers, a `product_field` rule per product (override, category field, mapping). Accounts that are stock
+  accounts (the `stock_valuation` mapping, a category's inventory account, a product's inventory override) are left
+  out: a rule falling back to them is a misconfiguration the stock tie-outs report.
+- **D-1 (stream H): the base seed journals its opening stock.** `InventorySeedContributor` (order 300) posts the
+  journal of the widget's opening stock (Dr stock valuation / Cr retained earnings, 600, entry `SEED-OPEN-INV-STK`,
+  posting key `seed_opening_inventory:<org>:inventory`) in the same step as the ledger row, so an organisation seeded
+  through `SeedRunner.base()` ties out. `PosSeedContributor` (order 400) journals only the opening stock it seeds
+  (`SEED-OPEN-INV`). A fully seeded new organisation therefore has two opening-stock entries instead of one. Existing
+  organisations are not touched (no auto-repair); the GQDEMO repair is an owner action (evidence 12-residuals §D-1).
+- **GL-10: setting `inventory.closeGate.liveValueChecks`** (organisation, default on): the period close runs the
+  inventory value checks live, as of the period end (IPR review 2 R2-1; see accounting.md).
+
 Approved by the owner 2026-11-17 (inventory and procurement readiness blockers,
 [audit](../audits/2026-11-17-inventory-procurement-readiness.md)):
 
@@ -444,6 +474,134 @@ P2-1 / P2-2 / P2-3 / P2-7 / P2-11, no migration). Spring-only; Nest has the same
     it now also writes a value-only `cost_adjustment` ledger row (quantity 0, value = −correction, balance = the quant
     balance) with the same reference, as the AVCO residue sweep does, so Σ ledger value = valuation = GL. Reversals
     skip zero-quantity rows and keep not mirroring the journal.
+55. **Effective time and count cut-off (IPR 1b, ADR-S088, count spec; integrator decisions P15-1/P15-2, owner
+    sign-off pending).** Every new ledger row records `effectiveAt` (when the goods moved; ADR-S088 "Implementation").
+    Counts carry movements forward by `COALESCE("effectiveAt","createdAt")` instead of `createdAt`
+    (`InventoryCountService.postings`, `SyncStockService.movedSince`, `BeverageCountService.submit`, fleet tank dip
+    `levelAt`). `adjust` / `transfer` post their journals on `StockMove.date` (default now) and their memos end with
+    the ledger code (SW-6).
+56. **Count submit drains, measures and reconciles late rows (IPR 1b T11).** `POST /inventory/counts/:id/submit` first
+    processes the location's not-done POS stock-posting jobs (each in its own transactions, before any lock), then
+    locks the session row and the cells, and answers **409** "`<n>` sale stock posting(s) at this location are not
+    done; resolve them in the Posting Monitor, then submit the count again" while a job of the location that sells a
+    counted product (or a menu item) is failed or retrying; a device count (offline op) is not refused for this — the
+    stuck sale becomes a late row of the count and is corrected when it finally posts. Each counted line stores `measuredSeq`. A movement that happened before a submitted count's cut-off but
+    is written after the count was measured gets exactly one linked correction row (`referenceType`
+    `inventory_count_late_correction`, `referenceId` = the late row, `sourceLineId` = the count line,
+    `reversesLedgerId` = the count variance row; V701 unique index). Not corrected, listed for a person: serial cells
+    (P15-2), lot/FIFO receipts, reversals, clock-skewed rows, counts submitted before V700. `GET /inventory/counts/:id`
+    adds `lateTransactions` for a submitted count (additive). Spec deviations: the correction is valued at the
+    current AVCO (not the variance row's unit cost, so valuation stays = sub-ledger) and posted today (not on the count
+    date); forced lines are corrected like any other line.
+57. **Count freeze (IPR 1b).** `POST /inventory/counts/start` accepts `freezeLocation` (additive). While such a draft is
+    open, a server-side manual move at the location (direct stock, adjustment, transfer from/to, GRN, any engine move)
+    answers 409 "Location `<name>` is frozen for count `<code>`; submit or cancel the count before moving stock there".
+    Exempt: the session's own posting, sales (POS jobs: `pos*` / `menu_recipe`; back-office sales, deliveries and
+    returns: `cash_sale`, `sales_invoice`, `sales_order(_line)`, `invoice`, `delivery_order`, `sales_delivery`,
+    `sales_return`, `credit_note(_cancel)`; P15-2), late count corrections and offline device work. Lock level L3b `freeze:<org>:<location>` (shared per move, exclusive at
+    start).
+58. **Count guards (IPR 1b T12).** S4: one draft count per location, any type (V701 unique index); starting another
+    type answers 409 "Location `<name>` already has an open `<type>` count `<code>`; submit or cancel it before
+    starting another count there", and `POST /inventory/adjustments/:id/approve` answers 409 while a count is open at
+    the location. S1: the default count type is `cycle` (was `opening`; a start without type and scope now answers 400
+    "A cycle count needs a scope: pick categories or products."); an `opening` count needs
+    `inventory_valuation:manage`, a location with no ledger rows, and no earlier submitted opening count (400
+    otherwise). S7: `saveDraft` and `submit` lock the session row.
+59. **Goods receipt backdating limit (ADR-S088 limit 2, P15-6).** A goods receipt dated more than
+    `inventory.maxBackdateDays` (default 7, 0 = off) before today answers 400 "Goods receipt date is more than N days in
+    the past". Offline receipts are exempt (flagged `lateSync` instead).
+
+60. **Serial + lot integrity (IPR 1c C-1, C-2, C-7, C-9; awaiting owner approval).** Evidence:
+    [1cd-serial-restock.md](../audits/ipr-evidence/1cd-serial-restock.md). A serial issue of a product that is also
+    lot-tracked takes the unit off the serial's own lot (it used to leave the lot untouched and draw the overflow from
+    another lot). Units issued without a serial number are drawn only from the unserialised part of the lots. A
+    transfer moves the named serials (`serialNumbers` was ignored) and their lots follow them. Giving more serial numbers
+    than units is 400 "Issuing N base unit(s) of P but M serial number(s) were given; give at most one serial number per
+    unit" (transfer: "Transferring …"); fewer serial numbers than units picks the rest from the units in stock, oldest
+    receipt first (ties by serial number). A named serial not in stock at the location is 400 "Serial number(s) not
+    available at this location: …"; a serial issued concurrently is 409 "Serial number X was issued concurrently". A
+    reversal of a serial receipt names the receipt's serials and is refused when they are no longer in stock.
+61. **Quarantine and rental locations are guarded (IPR 1c X-3; awaiting owner approval).** A manual stock document
+    (stock-out, waste, adjustment, direct in / out, transfer, transit receipt) cannot move stock into or out of
+    `QC-QUARANTINE`, `SALES-QUARANTINE` or the rental custody locations (`RENT-OUT`, `RENT-CLEAN`, `RENT-REPAIR`,
+    `RENT-DAMAGED`): 400 "<location> is managed by the quality and returns|rental flows: a manual stock document cannot
+    move stock into or out of it". A manual transfer **into** quarantine (a hold, e.g. PLM rework) stays allowed. Stock
+    in quarantine leaves only through the owning flows (quality lot / downgrade / check, production QC / stage, sales
+    return inspection, reversals, counts): a sale, issue or consumption from it is 400 "Stock in <location> is on hold:
+    it leaves only through a quality release, rejection or downgrade, or the returns inspection, never through a sale,
+    issue or consumption". Owner sign-off: PLM rework has no release flow, so stock held there by a manual transfer can
+    leave only through a quality flow; count variances at these locations are allowed; the location codes are
+    constants, not settings.
+62. **Unknown move types fail closed (IPR 1c, stream C request).** An issue that posts its own stock journal with a move
+    type outside the posting map (`issue`, `waste`, `expiry_write_off`, `return_to_supplier`, `internal_use`,
+    `promo_sample`, `production_consume`) is 400 "Stock move type "<t>" has no stock posting rule; …" instead of posting
+    as COGS. Quantity-only moves (the caller posts the journal) keep any move type.
+63. **Product setup changes wait for pending stock work (IPR 1c C-8).** A costing-method or tracking change takes the
+    product's exclusive costing lock and, besides stock on hand, is refused while stock of the product is reserved
+    (400 "The <what> of <name> cannot be changed while stock of it is reserved; release or fulfil the reservations
+    first") or a POS sale of it waits for its stock posting (400 "… while a POS sale of it is waiting for its stock
+    posting; let the stock postings finish first").
+64. **Sales-order reservations honoured by other issuers (IPR E-1a; awaiting owner approval).** Opt-in per caller
+    (`StockMove.honourReservations`): approved stock-outs, immediate and dispatched transfers, direct stock-out, project
+    issues, quarry explosive issues and fleet work-order part issues refuse to take stock reserved for sales orders: 400
+    "Only F of P is free in L; R is reserved for sales orders. Release or deliver those reservations first." A POS sale
+    is refused only where its own availability rule refuses (block stock policy, `requireAvailable`, lot block);
+    under the default policy it is never blocked. Waste, adjustments, counts and reversals do not check (physical
+    events). Production consumption and sales-order delivery are not opted in yet (other streams own those callers).
+65. **Linked restocks (IPR 1d SW-3, SW-5).** Fleet work-order part returns, quarry explosive returns and project cost
+    reversals bring stock back against the issue row (`reversesLedgerId`), with its lot, serial and cost; they refuse
+    to return more than the issue still holds ("Cannot return more than was issued"); the journals carry the returned
+    rows' value (was quantity × the stored unit cost). Quarry returns no longer open a `RET-<code>` lot. A bill receipt
+    (`receiveFromBill`) records the bill line (`sourceLineId`). `unlinked_restocks` is no longer informational: an
+    unlinked restock written after its source type's first linked row fails the check.
+
+66. **AVCO residue swept on every move (IPR GL-7).** The rounding residue of an AVCO quant that reaches zero is swept
+    also when the caller posts the move's journal itself (`skipGl`: fleet fuel / tyres, production, quality downgrade,
+    branch transfer, …), for issues and for the source quant of transfers. Its value-only row and `COGS_CORRECTION`
+    journal are the only posting of that residue; callers' journals carry the issue row's value only.
+
+67. **Receipt cost policy (IPR C-3 / GL-6, owner decision D3; awaiting owner approval).** A receipt with no unit
+    cost takes the quant's current cost (its average when positive, else the last positive receipt cost at the
+    location, else the cost price) instead of 0 / the cost price. An explicit 0 on a direct stock-in needs
+    `zeroCostReason` (400 `Unit cost of "<name>" is 0: give a reason (zeroCostReason) …`) and
+    `inventory_valuation:manage` (403); the reason goes on the ledger notes. Offline `stock.in` / `stock.out` items with
+    unit cost 0 are read as blank (a device cannot give a reason). Goods receipts without a PO line cost and PO receipts
+    without a price receive at current cost. AVCO quants are valued at their own average only (no cost-price fallback
+    when the average is 0); a count gain on an AVCO quant with no average is valued at current cost and sets the
+    average. The web stock-in form has no reason input yet (follow-up).
+
+68. **Waste / expiry accounts and goods in transit (IPR S13; awaiting owner approval).** New optional account mappings
+    `stock_waste_expense` and `stock_expiry_expense` (registry, not required): a `WASTE` / `EXPIRY_WRITE_OFF` issue
+    without a posting rule debits them when mapped, else `stock_adjustment_expense` as before. New setting
+    `inventory.transitGlSeparation` (bool, default off, organisation only): when on and `stock_in_transit` is mapped,
+    stock-account lines of moves at a `transit` location post to Stock In Transit — a transfer without transfer posting
+    rules into a transit location posts Dr transit / Cr stock (and the reverse out of it), transit losses and shortages
+    credit it — and `inventoryAccountIds` / `gl_tieout_by_account` count transit quants in that account. Turn it on only
+    with no stock in transit (no reclassification is posted). Limits: an AVCO residue sweep or a reversal cost
+    difference at a transit location still posts to the stock account; price-difference components of a transit quant
+    stay on the adjunct.
+
+69. **Plain AVCO quants valued at ledger value within rounding (IPR E-1).** The average is stored at 6 dp, so a
+    non-terminating unit cost (1,000,000 / 300,000) left qty × average short of the ledger and GL (999,999.90) while the
+    stock was on hand. `currentValueByQuant` now values a plain AVCO quant (no lots, no serials, quantity > 0) at its
+    ledger value when that differs from qty × average by less than 1.00 (the R5b residue-sweep limit); a larger gap is
+    no rounding and stays visible in `valuation_vs_subledger`. At zero the residue sweep (66) clears what is left.
+
+70. **Late count correction that cannot post (IPR E1).** `correctLateCountRows` checks the correction's journal first
+    (posting rule or mappings, accounts that accept postings) without throwing; when it cannot post, the correction is
+    skipped and logged and stays listed on the count, and the late movement applies. Before, a refusal thrown by the
+    posting bean marked the whole transaction rollback-only and the late movement itself failed at commit. Residual: a
+    refusal raised later inside `PostingService.checkLines` (period, dimensions, cost-centre rules) still fails the move.
+
+71. **One sales-order reservation guard (IPR 1d).** `StockReservationService.assertNotReservedForSalesOrders` and the
+    engine's `honourReservations` share `StockService.requireFreeOfSalesReservations` (same message). Production
+    consumption (`honourReservations(null)`) and sales-order deliveries by fleet (`honourReservations([its line])`) are
+    now checked inside the engine's cell lock: production can no longer consume stock reserved for sales orders.
+
+72. **Bill cancel issues its receipt back (IPR 1d F6).** Cancelling an auto-received vendor bill issues its receipt
+    rows back through `issueBackReceipt` (pinned lots, linked `reversesLedgerId`, journal at the receipt's cost plus
+    the PPV difference); it is refused when the goods are no longer on hand (`Bill <n> cannot be cancelled: …`), where
+    before it issued whatever FIFO / average picked. GRN, PO receive and bill auto-receive rows carry `sourceLineId`.
 
 ### Negative stock policy (as built; R5a evidence for gate G3)
 
@@ -492,6 +650,142 @@ Same as Nest, kept on purpose:
 Kernel fix found while porting: `SequenceService` now creates per-org sequences outside the caller's transaction
 (Nest uses the raw client). A business rollback used to drop a freshly created sequence while the in-memory
 cache still considered it present (500 on the next `nextval`).
+
+### IPR Phase 3: security and operational controls (2026-11-27, awaiting owner approval)
+
+Evidence: [3-security-controls.md](../audits/ipr-evidence/3-security-controls.md). These items differ from Nest. None
+of them changes a path, verb, permission string or response shape. Refusals are new 400/403 messages.
+
+- **S-1: branch-restricted reads cover the caller's locations.** A user restricted to two or more locations who sends
+  no `locationId` no longer gets 400 "Choose a location". The read covers all of their locations instead: stock
+  levels, item detail, ledger, every `/inventory/reports/*` read and the integrity report. A `locationId` outside the
+  access is 403 "This location is outside your data access". A restricted user with no location at all is 403
+  "Your data access has no location".
+  - The integrity report for several locations is the merge of the per-location reports: a check is ok only if it is
+    ok everywhere, and its `locationId` is null.
+  - Valuation over several locations is read org-wide and then filtered by location (`ScopedValuation`).
+  - The register (`/inventory/reports/register/{kind}`) still refuses restricted users with 403, as before.
+- **S-2: costs hidden without `inventory_valuation:read`.** The cost and value fields come back as `null`, with the
+  same keys:
+  - item list `runningAverageCost`;
+  - stock levels `averageCost` and `totalValue`;
+  - item detail: product `costPrice`, item costs, batch and ledger costs, PO line prices and `totalValue`;
+  - the register's value fields;
+  - waste and stock-out lists, detail and summary: `unitCost`, `totalCost`, `totalValue`, ledger values and journal
+    debit/credit;
+  - transfer detail.
+
+  Quantities stay. The web hides the stock-level cost columns and shows a dash, never a zero.
+- **S-4: direct stock needs a named approver.** `POST /inventory/direct-stock/in|out` without `approvedById` is 400
+  "Name the approver (approvedById) to post a direct stock movement". In Nest, a null approver plus a PIN matched any
+  active user holding that PIN.
+  - When the SoD pair is on (stock adjustment for in, stock write-off for out), self-approval is 403 "Separation of
+    duties: you cannot approve your own direct stock movement; name another approver and enter their PIN".
+- **S3: transit loss approval.** `POST /inventory/transfers/{id}/receive` takes the optional fields `lossReason`,
+  `approvedById` and `approverPin`. A damaged plus short value above the setting
+  `inventory.transitLossApprovalThreshold` (default 0, base currency, value at the transit location's cost) needs:
+  - a reason;
+  - an approval: either the engine workflow `stock_transfer_loss` (single-use, consumed with the receipt code), or a
+    named approver (self with `inventory_doc:approve`, otherwise PIN).
+
+  Under the stock write-off pair the receiver cannot approve their own loss. The receipt notes carry "Transit loss X:
+  reason". The audit row carries the loss value, reason, approver and request.
+  - An offline `transfer.receive` (sync) carries no approval. A loss above the threshold is refused, and the push is
+    held for review like any other refusal. Below the threshold it posts as before.
+- **C-5 / S-7 / S14: manual reservations only.** `POST /inventory/reservations` and `/reservations/consume` accept
+  only `sourceType: "manual"`. Any other source type is 400 "Only manual reservations can be created|consumed here
+  (sourceType must be "manual"); a document's reservations follow the document". `/release` still accepts any source
+  type, so an operator can free a stuck document reservation; that choice needs owner confirmation. The web offers
+  Consume only on active manual rows.
+- **S5: a replenishment alert re-opens.** When the transfer, purchase request or production request answering an
+  alert is cancelled, rejected or gone, the next scan sets the alert back to `open`. It refreshes the figures, sets
+  `statusReason` "Re-opened: <doc> was cancelled or rejected", and counts the alert as raised (automatic request and
+  notification again). Before, the alert stayed `requisitioned` forever and the rule never fired again.
+- **S-8 (web): CSV export** keeps plain numbers such as `-3` or `-12.50` as numbers. Text that starts like a formula
+  is still prefixed with `'`.
+
+### IPR Phase 4: go-live readiness (2026-11-27, awaiting owner approval)
+
+Evidence: `docs/audits/ipr-evidence/4-golive-p2.md`.
+
+- **T33 integrity page (web only).** Inventory → Reporting → Integrity & Reconciliation (`/inventory/integrity`,
+  `inventory_valuation:read`) shows every integrity and report-only check with its rows, the GL tie-out (needs
+  `report:accounting`), the feature-usage table with the promoted and fixed P2s, and links each failing check to its
+  Posting Monitor findings (`/inventory/posting-monitor?kind=integrity_<check>`; the Posting Monitor now reads
+  `?kind=`). No new route.
+- **Feature usage (additive).** `GET /inventory/reports/feature-usage` adds `fixedP2s: [{id, title, fixedBy}]`: P2s
+  fixed in the programme are never promoted (`P2Rule.fixed(...)`, `docs/spec/inventory-feature-risk-map.md`).
+- **Go-live checklist:** `docs/OPERATIONS.md` §8c.
+
+### IPR Phase 4: opening-stock import (2026-11-27, awaiting owner approval)
+
+Evidence: [4-opening-stock.md](../audits/ipr-evidence/4-opening-stock.md); design: ADR-S090. New routes only, no Nest
+counterpart (an extension, labelled as such); nothing existing changes.
+
+- **New routes** under `/inventory/opening-stock`: `POST preview` (`inventory_valuation:manage`), `POST import` and
+  `POST runs/{id}/batches/{batchId}/retry` (`inventory_valuation:post`, Idempotency-Key required, answer 200),
+  `GET runs`, `GET runs/{id}`, `GET runs/{id}/batches/{batchId}`, `GET runs/{id}/reconciliation`
+  (`inventory_valuation:read`). Inventory route matrix 146 → 153.
+- **Only for empty locations.** A row whose location has any ledger row (other than an earlier batch of the same run)
+  or an open count is a row error; the import of a file with any row error is 400.
+- **Posting:** `StockService.receive` per row (ledger type `opening_balance`, reference `opening_stock_import` / batch
+  id), then one journal per batch Dr the product's stock account (STOCK_IN rule, else `stock_valuation`) / Cr the
+  `retained_earnings` mapping. The opening count takes its inventory side from the ADJUSTMENT_GAIN rule; with the
+  default rules both are `stock_valuation`.
+- **Refusals (new messages):** 409 "Preview is stale — preview and approve again"; 409 "This file was already imported
+  (run OSI-…)"; 409 "Batch n of run OSI-… is already posted"; 400 "Approve the previewed opening-stock journal
+  (approve: true) to import it"; 403 "Opening stock import requires approval. Request ID: …" (only when an
+  `opening_stock_import` approval workflow is configured).
+- **Choices for owner sign-off:** zero unit cost refused; a STANDARD product enters at its standard (a different file
+  cost is refused); posting dated now; approval by the poster unless a workflow is configured; at most 20,000 rows per
+  file and 2,000 per batch.
+
+### IPR review 1: fixes from the independent reviews (2026-11-27, awaiting owner approval)
+
+Evidence: [review1-fixes.md](../audits/ipr-evidence/review1-fixes.md). Branch `fix/ipr-review1`.
+
+- **Transit-loss threshold is cumulative (finding 2).** `inventory.transitLossApprovalThreshold` is compared with the
+  transfer's total written-off loss (its earlier `stock_transfer_loss` ledger rows plus this receipt), so splitting
+  a loss over partial receipts no longer avoids the reason and approval. The refusal message quotes that total; the
+  approval snapshot `amount` is the total, `receiptAmount` this receipt's part.
+- **Transit-loss value (finding 3).** The loss is valued at the transfer's own dispatch cost (`StockTransferLayer`),
+  else the transit location's valuation (FIFO / STANDARD layers), else the running average / cost price as before.
+- **Loss gate before the transfer lock (review 2, N4).** The `stock_transfer_loss` approval gate runs on an unlocked
+  read before `lockTransfer` (L1); under the lock the loss is measured again and a change that the gate could judge
+  differently is refused: 409 "The transit loss of <code> changed while the receipt was being recorded; record the
+  receipt again."
+- **Movement analysis hides values (finding 4).** Without `inventory_valuation:read`, `GET
+  /inventory/reports/movement-analysis` answers `null` for `summary.valueIn/valueOut/valueAdjusted/consumedValue/
+  lostValue/lossRatePct`, `byType[].value`, `trend[].valueIn/valueOut/valueAdjusted` and `top*[].value`.
+- **Opening-import separation of duties (finding 5).** `POST /inventory/opening-stock/preview` records who previewed
+  the journal (`OpeningStockImportPreview`, V722). With no approval workflow, under the `inventory_valuation` pair the
+  previewer cannot import: 403 "Separation of duties: the person who made this document cannot also clear it
+  (Inventory valuation change)". The approval snapshot carries `makerIds`. Pair off: one person may still do both.
+- **Manual release only (finding 8).** `POST /inventory/reservations/release` refuses a non-`manual` source: 400
+  "Only manual reservations can be released here (sourceType must be \"manual\"); a document's reservations follow
+  the document". Document flows release through the service and are unchanged.
+- **Count drain outside a transaction (review 2, N1).** The screen submit (`POST /inventory/counts/{id}/submit`) and
+  the device `stock.count` op drain the location's sale stock postings with no transaction open, before the submit's
+  transaction; `InventoryCountService.submit` itself no longer drains (a stuck posting is still refused).
+
+IPR review 3, stream R3 (branch `fix/ipr-review3`, **pending owner sign-off**; evidence
+[review3-engine](../audits/ipr-evidence/review3-engine.md)):
+
+- **A named lot of a serial+lot product (#1, #3).** A transfer naming a lot moves that lot's serial units, then its
+  units without a serial; never another lot's serial unit. Naming serial numbers outside the named lot is refused:
+  400 "Serial number(s) <list> are not in batch <lot> at the source location". An issue naming a lot (MANUAL) takes
+  the lot's serial units, then its units without a serial, and other lots only for what the lot lacks (rows noted
+  "LOT <lot> SHORT: drawn from other lots", as for lot-only products). Moves that pin lots (transit, take-backs) pick
+  serial units of those lots only.
+- **Take-backs of a serial product's receipt (#2).** A reversal / issue-back pins each receipt row's own serial units
+  (the document's received units shared out across its rows) and takes the row's unserialised part as units without
+  a serial; other receipts' serial units are picked only when no unit without a serial is left. The forward-issue
+  rule (IPR C-2: the rest is picked from the serial units in stock) is unchanged.
+- **Blank receipt cost of a STANDARD product (#4).** It enters at the governing standard, and GRNI / AP carry the
+  standard too: no purchase price variance (D3: blank = current cost).
+- **AVCO count gain on a negative quant (#5).** As a receipt: the quant takes the gain's cost and the short units are
+  squared by a negative-stock cost correction (value-only ledger row, Dr cost of sales / Cr stock).
+- **Count freeze (#7) and late corrections (#6):** see the count spec §6 and §4.4a.
 
 ## Status
 

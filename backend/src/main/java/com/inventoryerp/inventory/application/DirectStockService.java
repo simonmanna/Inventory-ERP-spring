@@ -2,12 +2,14 @@ package com.inventoryerp.inventory.application;
 
 import com.inventoryerp.inventory.application.StockMove.Issued;
 import com.inventoryerp.inventory.application.StockMove.Received;
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.common.JsNumbers;
 import com.inventoryerp.kernel.common.Money;
 import com.inventoryerp.kernel.common.Obj;
 import com.inventoryerp.kernel.sequence.SequenceService;
 import com.inventoryerp.kernel.settings.SettingResolverService;
 import com.inventoryerp.kernel.settings.SettingResolverService.SettingContext;
+import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
@@ -30,7 +32,14 @@ public class DirectStockService {
 
     /** One direct-stock line. */
     public record Line(String productId, String variantId, BigDecimal quantity, BigDecimal unitCost,
-            String batchNumber, String expiryDate, String distStrategy, String notes) {}
+            String batchNumber, String expiryDate, String distStrategy, String notes, String zeroCostReason) {
+
+        /** A line without a zero-cost reason (stock-outs, offline sync). */
+        public Line(String productId, String variantId, BigDecimal quantity, BigDecimal unitCost, String batchNumber,
+                String expiryDate, String distStrategy, String notes) {
+            this(productId, variantId, quantity, unitCost, batchNumber, expiryDate, distStrategy, notes, null);
+        }
+    }
 
     /** Request body common to in and out. */
     public record Request(String locationId, String responsibleById, String approvedById, String approverPin,
@@ -43,10 +52,13 @@ public class DirectStockService {
     private final SettingResolverService settings;
     private final StaffAttribution staff;
     private final LocationScope scope;
+    private final SegregationOfDutiesService sod;
 
     public DirectStockService(JdbcClient jdbc, InventoryLookups lookups, SequenceService seq, StockService stock,
-            SettingResolverService settings, StaffAttribution staff, LocationScope scope) {
+            SettingResolverService settings, StaffAttribution staff, LocationScope scope,
+            SegregationOfDutiesService sod) {
         this.scope = scope;
+        this.sod = sod;
         this.jdbc = jdbc;
         this.lookups = lookups;
         this.seq = seq;
@@ -55,13 +67,24 @@ public class DirectStockService {
         this.staff = staff;
     }
 
-    private void assertAttribution(Request dto, boolean approvalNeeded) {
+    /**
+     * Attribution and approval proof. IPR S-4: under the separation-of-duties pair of the move ({@code
+     * stock_adjustment} for a stock-in, {@code stock_write_off} for a stock-out) the person posting cannot name
+     * themselves as approver, even with the approver permission.
+     */
+    private void assertAttribution(Request dto, boolean approvalNeeded, String pairKey, String kind) {
         String org = TenantContext.organizationId();
         staff.assertActiveStaff(org, StaffAttribution.people(dto.responsibleById(), dto.approvedById()));
         if (!approvalNeeded) {
             return;
         }
-        staff.assertDirectStockApproval(org, TenantContext.userId(), TenantContext.permissions(), dto.approvedById(),
+        String actor = TenantContext.userId();
+        if (actor != null && actor.equals(dto.approvedById()) && sod.enforced(pairKey)) {
+            sod.recordBlocked(pairKey, kind, dto.locationId(), actor, List.of(actor));
+            throw ApiException.forbidden("Separation of duties: you cannot approve your own direct stock movement;"
+                    + " name another approver and enter their PIN");
+        }
+        staff.assertDirectStockApproval(org, actor, TenantContext.permissions(), dto.approvedById(),
                 dto.approverPin());
     }
 
@@ -85,7 +108,7 @@ public class DirectStockService {
         lookups.requireLocation(dto.locationId());
         boolean approvalNeeded = settings.resolveBool("inventory.stockInApprovalNeeded",
                 new SettingContext(null, null, dto.locationId()));
-        assertAttribution(dto, approvalNeeded);
+        assertAttribution(dto, approvalNeeded, SegregationOfDutiesService.STOCK_ADJUSTMENT, "DirectStockIn");
         Map<String, Map<String, Object>> products = products(dto.items());
         for (Line item : dto.items()) {
             Map<String, Object> prod = products.get(item.productId());
@@ -105,6 +128,7 @@ public class DirectStockService {
                 throw ApiException.badRequest("Unit cost of \"" + prod.get("name") + "\" cannot be negative; enter 0 or"
                         + " more");
             }
+            assertZeroCostAllowed(item, prod);
         }
         String code = seq.next("direct_stock_in", "DSI-", 5);
         BigDecimal total = Money.ZERO;
@@ -115,10 +139,15 @@ public class DirectStockService {
                 .thenComparing(l -> l.variantId() == null ? "" : l.variantId()));
         Map<Line, Map<String, Object>> byLine = new java.util.IdentityHashMap<>();
         for (Line item : ordered) {
+            String notes = item.notes() != null ? item.notes() : dto.notes();
+            if (zeroCost(item, products.get(item.productId()))) {
+                notes = (notes == null || notes.isBlank() ? "" : notes + " · ") + "Zero cost: "
+                        + item.zeroCostReason().trim();
+            }
             StockMove m = StockMove.of(item.productId(), dto.locationId(), item.quantity()).variant(item.variantId())
                     .unitCost(item.unitCost()).batch(item.batchNumber()).expiry(item.expiryDate())
-                    .source("direct_stock_in", code).notes(item.notes() != null ? item.notes() : dto.notes())
-                    .people(dto.responsibleById(), dto.approvedById());
+                    .source("direct_stock_in", code).notes(notes)
+                    .people(dto.responsibleById(), dto.approvedById()).manual(); // IPR X-3
             Received res = stock.receiveForDocument(m,
                     StockService.GlReceiptContext.stockGain("direct_stock_in", code, Instant.now()));
             BigDecimal uc = res.unitCost() == null ? Money.ZERO : res.unitCost();
@@ -132,13 +161,39 @@ public class DirectStockService {
                 "items", results, "notes", dto.notes(), "timestamp", Instant.now());
     }
 
+    /** IPR C-3 / GL-6: an explicit 0 cost on a product valued at its receipts (not STANDARD). */
+    private static boolean zeroCost(Line item, Map<String, Object> prod) {
+        return item.unitCost() != null && item.unitCost().signum() == 0 && prod != null
+                && !"STANDARD".equals(String.valueOf(prod.get("costingMethod")));
+    }
+
+    /**
+     * IPR C-3 / GL-6 (owner decision D3): a blank unit cost enters at the current cost (the engine resolves it); an
+     * explicit 0 takes stock in at no value, so it needs a reason (kept on the ledger row) and
+     * {@code inventory_valuation:manage}.
+     */
+    private static void assertZeroCostAllowed(Line item, Map<String, Object> prod) {
+        if (!zeroCost(item, prod)) {
+            return;
+        }
+        if (item.zeroCostReason() == null || item.zeroCostReason().isBlank()) {
+            throw ApiException.badRequest("Unit cost of \"" + prod.get("name") + "\" is 0: give a reason"
+                    + " (zeroCostReason) to receive it at no cost, or leave the cost blank to use the current cost");
+        }
+        if (!TenantContext.permissions().contains(Permissions.INVENTORY_VALUATION__MANAGE)) {
+            throw ApiException.forbidden("Receiving \"" + prod.get("name") + "\" at no cost needs the "
+                    + Permissions.INVENTORY_VALUATION__MANAGE + " permission; leave the cost blank to use the current"
+                    + " cost");
+        }
+    }
+
     /** Direct stock-out: a plain issue, refused when short unless negative stock is allowed. */
     @Transactional
     public Map<String, Object> directOut(Request dto) {
         lookups.requireLocation(dto.locationId());
         SettingContext ctx = new SettingContext(null, null, dto.locationId());
         boolean approvalNeeded = settings.resolveBool("inventory.stockOutApprovalNeeded", ctx);
-        assertAttribution(dto, approvalNeeded);
+        assertAttribution(dto, approvalNeeded, SegregationOfDutiesService.STOCK_WRITE_OFF, "DirectStockOut");
         Map<String, Map<String, Object>> products = products(dto.items());
         for (Line item : dto.items()) {
             if (!products.containsKey(item.productId())) {
@@ -157,7 +212,7 @@ public class DirectStockService {
                     .moveType("issue").strategy(item.distStrategy() != null ? item.distStrategy() : "FEFO")
                     .batch(item.batchNumber()).source("direct_stock_out", code).requireAvailable(!allowNegative)
                     .notes(item.notes() != null ? item.notes() : dto.notes())
-                    .people(dto.responsibleById(), dto.approvedById());
+                    .people(dto.responsibleById(), dto.approvedById()).manual().honourReservations(null);
             Issued res = stock.issue(m);
             total = total.add(res.totalValue());
             results.add(Obj.of("productId", item.productId(), "quantity", JsNumbers.js(item.quantity()),
@@ -171,7 +226,8 @@ public class DirectStockService {
         LinkedHashSet<String> ids = new LinkedHashSet<>();
         items.forEach(i -> ids.add(i.productId()));
         Map<String, Map<String, Object>> out = new java.util.HashMap<>();
-        for (Map<String, Object> p : jdbc.sql("SELECT id, name, \"batchTracking\", \"expiryTracking\" FROM \"Product\""
+        for (Map<String, Object> p : jdbc.sql("SELECT id, name, \"batchTracking\", \"expiryTracking\","
+                        + " \"costingMethod\"::text AS \"costingMethod\" FROM \"Product\""
                         + " WHERE id IN (:ids) AND \"organizationId\" = :org AND \"deletedAt\" IS NULL")
                 .param("ids", List.copyOf(ids)).param("org", TenantContext.organizationId()).query().listOfRows()) {
             out.put((String) p.get("id"), p);

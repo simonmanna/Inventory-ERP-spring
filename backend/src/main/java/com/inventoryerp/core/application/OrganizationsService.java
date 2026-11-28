@@ -1,5 +1,6 @@
 package com.inventoryerp.core.application;
 
+import com.inventoryerp.kernel.approvals.SegregationOfDutiesService;
 import com.inventoryerp.kernel.auth.OneTimeTokenService;
 import com.inventoryerp.kernel.auth.PasswordService;
 import com.inventoryerp.kernel.common.InventoryPostingRuleDefaults;
@@ -21,6 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -60,10 +62,17 @@ public class OrganizationsService {
     private final NotificationsService notifications;
     private final ObjectProvider<AccountingBootstrap> accountingBootstrap;
     private final TransactionTemplate tx;
+    private final SegregationOfDutiesService sod;
+    private final List<String> sodDefaults;
 
     public OrganizationsService(JdbcClient jdbc, jakarta.persistence.EntityManager em, PasswordService passwords, OneTimeTokenService tokens,
             NotificationsService notifications, ObjectProvider<AccountingBootstrap> accountingBootstrap,
-            PlatformTransactionManager txm) {
+            PlatformTransactionManager txm, SegregationOfDutiesService sod,
+            @Value("${erp.sod.new-org-active-pairs:" + SegregationOfDutiesService.NEW_ORG_DEFAULTS + "}")
+            String sodDefaults) {
+        this.sod = sod;
+        this.sodDefaults = java.util.Arrays.stream(sodDefaults.split(",")).map(String::trim)
+                .filter(s -> !s.isEmpty()).toList();
         this.jdbc = jdbc;
         this.em = em;
         this.passwords = passwords;
@@ -108,6 +117,8 @@ public class OrganizationsService {
             }
             seedAdminRoleAndMappings(orgId);
             seedPostingRules(orgId);
+            // IPR S2 (owner decision P15-6): the inventory separation-of-duties pairs start switched on.
+            sod.seedNewOrganization(orgId, sodDefaults);
 
             String userId = UUID.randomUUID().toString();
             String email = p.adminEmail().toLowerCase();

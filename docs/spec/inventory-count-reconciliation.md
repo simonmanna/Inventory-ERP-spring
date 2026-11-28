@@ -216,6 +216,18 @@ Lines from before V700 have `measuredSeq` null and are never corrected (no relia
 - The correction runs inside the late row's own transaction, after the engine holds the cell's L4 lock and the
   `StockItem` row (L5). No new lock level.
 
+### 4.4a A correction that cannot post (IPR review 3 #6)
+
+- The correction runs under an **isolated savepoint** (`Savepoints.runIsolated`). Whatever refuses inside it — the
+  engine itself, or a proxied `@Transactional` bean such as the posting service (posting rules, account postability,
+  analytic dimension and cost-centre rules, fiscal period, the goods-in-transit swap, a negative-stock cost correction
+  or residue sweep) — rolls back to the savepoint without marking the late movement's transaction rollback-only, and
+  the events the correction registered (`publishOnCommit`) are dropped with it. The late movement always commits.
+- The cheap pre-check (`StockPostingService.adjustmentPostingProblem`) still runs first.
+- A failed correction is **flagged for manual review**: it stays `uncorrected` on the count's late-transactions list
+  and an open `InventoryException` of kind `late_count_correction_failed` names the late row, the count line, the
+  count and the reason.
+
 ### 4.5 Visibility
 
 - `GET /inventory/counts/{id}` gains an additive `lateTransactions` array: late rows of the count's cells (corrected
@@ -240,7 +252,9 @@ is locked, so the job → invoice lock order is not inverted.
 - While a **draft** session with the flag exists, server-side moves at that location are refused by the engine with
   409 "Location `<name>` is frozen for count `<countCode>`": transfers in or out, adjustments, stock-out, waste,
   direct stock, GRN posting, production consumption and output, fleet dispatch.
-- Exempt: the session's own variance posting; POS sale stock jobs and sync sale ops (a sale is never refused or
+- Exempt: the session's own variance posting (only the session that holds the freeze: a posting carrying another
+  session's id is refused like any manual move — IPR review 3 #7; it is checked against the committed freeze without
+  taking L3b, as it already holds L4); POS sale stock jobs and sync sale ops (a sale is never refused or
   dead-lettered); reversals of a sale (refund restock). Exempt moves are handled by §3.
 - Lock: L3b `freeze:<org>:<location>`, shared for moves, exclusive while the freeze starts or ends (IPR R2 table).
 - One draft session per location (V701 partial unique index, S4) so two freezes never overlap.

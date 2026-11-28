@@ -36,12 +36,38 @@ public class InventoryFeatureUsageService {
     /** One deferred P2 promoted for this organisation because a feature it depends on is in use. */
     public record PromotedP2(String id, String title, List<String> matchedFeatures) {}
 
-    /** The map of one organisation. */
-    public record FeatureUsage(Instant checkedAt, String organizationId, List<Feature> features,
-            List<PromotedP2> promotedP2s) {}
+    /** A P2 fixed in the IPR programme: never promoted again; {@code fixedBy} is its evidence file. */
+    public record FixedP2(String id, String title, String fixedBy) {}
 
-    /** A deferred P2 and its feature predicate: promoted when every feature of any one group is in use. */
-    public record P2Rule(String id, String title, List<List<String>> anyOf) {}
+    /**
+     * The map of one organisation. {@code fixedP2s} (additive, IPR Phase 4) lists the P2s fixed in the programme, for
+     * every organisation alike, so a reader sees why one is no longer promoted.
+     */
+    public record FeatureUsage(Instant checkedAt, String organizationId, List<Feature> features,
+            List<PromotedP2> promotedP2s, List<FixedP2> fixedP2s) {}
+
+    /**
+     * A deferred P2 and its feature predicate: promoted when every feature of any one group is in use, unless
+     * {@code fixedBy} names the evidence file of its fix (then it is never promoted).
+     */
+    public record P2Rule(String id, String title, List<List<String>> anyOf, String fixedBy) {
+
+        /** Still open: promoted when its predicate holds. */
+        public boolean open() {
+            return fixedBy == null;
+        }
+
+        /** This P2, marked fixed by the evidence file {@code evidence} (a path under {@code docs/audits/}). */
+        public P2Rule fixed(String evidence) {
+            return new P2Rule(id, title, anyOf, evidence);
+        }
+    }
+
+    /** Evidence of IPR Phase 3 (stream D: security and operational controls). */
+    static final String EVIDENCE_PHASE3 = "docs/audits/ipr-evidence/3-security-controls.md";
+
+    /** Evidence of IPR Phase 4 (stream F: go-live readiness and the promoted P2s). */
+    static final String EVIDENCE_PHASE4 = "docs/audits/ipr-evidence/4-golive-p2.md";
 
     private record Def(String key, String label, String sql) {}
 
@@ -141,8 +167,10 @@ public class InventoryFeatureUsageService {
             "csv_exports", "CSV exports (no usage trail: assumed whenever stock is kept)");
 
     /**
-     * The open deferred P2 findings of the 2026-11-27 inventory audit and the features that promote each to a go-live
-     * blocker (IPR R6). Mirrors {@code docs/spec/inventory-feature-risk-map.md}; when a P2 is closed, remove it in both.
+     * The deferred P2 findings of the 2026-11-27 inventory audit and the features that promote each to a go-live
+     * blocker (IPR R6). Mirrors the P2 table of {@code docs/spec/inventory-feature-risk-map.md}
+     * ({@code InventoryFeatureRiskMapDocTest} keeps the two identical). When a P2 is fixed, append
+     * {@code .fixed(<evidence file>)} here and set its Status and Evidence columns in the doc; keep the row.
      */
     public static final List<P2Rule> P2_FEATURES = List.of(
             p2("X-3", "Manual moves out of QC quarantine or rental locations", List.of("qc_checks"),
@@ -176,18 +204,18 @@ public class InventoryFeatureUsageService {
             p2("S11", "Warehouse bins", List.of("warehouse_bins")),
             p2("S12", "Count sessions", List.of("count_sessions")),
             p2("S13", "Any inventory use", List.of("inventory_in_use")),
-            p2("S14", "Reservations", List.of("reservations")),
+            p2("S14", "Reservations", List.of("reservations")).fixed(EVIDENCE_PHASE3),
             p2("GL-7", "AVCO with returns to supplier, claims or stage postings", List.of("avco_products",
                     "rtv_claims_stage")),
             p2("GL-9", "Revaluations", List.of("revaluations")),
-            p2("S-6", "Any inventory use", List.of("inventory_in_use")),
-            p2("S-8", "CSV exports", List.of("csv_exports")),
+            p2("S-6", "Any inventory use", List.of("inventory_in_use")).fixed(EVIDENCE_PHASE4),
+            p2("S-8", "CSV exports", List.of("csv_exports")).fixed(EVIDENCE_PHASE3),
             p2("S-9", "Large catalogue (more than 10,000 products)", List.of("large_catalogue")),
             p2("S-10", "Large catalogue (more than 10,000 products)", List.of("large_catalogue")));
 
     @SafeVarargs
     private static P2Rule p2(String id, String title, List<String>... anyOf) {
-        return new P2Rule(id, title, List.of(anyOf));
+        return new P2Rule(id, title, List.of(anyOf), null);
     }
 
     private final JdbcClient jdbc;
@@ -241,15 +269,24 @@ public class InventoryFeatureUsageService {
                 "assumed from inventory_in_use");
         features.add(csv);
         byKey.put(csv.key(), csv);
-        return new FeatureUsage(Instant.now(), org, features, promoted(byKey));
+        return new FeatureUsage(Instant.now(), org, features, promoted(byKey), fixed());
     }
 
-    /** The P2s whose predicate holds for these features. */
+    /** The P2s fixed in the programme (never promoted). */
+    static List<FixedP2> fixed() {
+        return P2_FEATURES.stream().filter(r -> !r.open()).map(r -> new FixedP2(r.id(), r.title(), r.fixedBy()))
+                .toList();
+    }
+
+    /** The open P2s whose predicate holds for these features. */
     static List<PromotedP2> promoted(Map<String, Feature> byKey) {
         Set<String> used = byKey.values().stream().filter(Feature::inUse).map(Feature::key)
                 .collect(Collectors.toSet());
         List<PromotedP2> out = new ArrayList<>();
         for (P2Rule rule : P2_FEATURES) {
+            if (!rule.open()) {
+                continue;
+            }
             for (List<String> group : rule.anyOf()) {
                 if (used.containsAll(group)) {
                     out.add(new PromotedP2(rule.id(), rule.title(), group));

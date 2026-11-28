@@ -1,13 +1,15 @@
 # ADR-S088 — Stock movement effective time
 
-- Status: **Proposed (Phase 0); implementation Phase 1b** (IPR task T10). Not built. Needs owner acceptance of
-  Phase 0 before any code or migration is written.
+- Status: **Accepted (2026-11-27, IPR Phase 1b, integrator decision P15-1)**; built in Phase 1b (IPR task T10) on
+  branch `fix/ipr-1b`. P15-1: offline ops that are too old or too far ahead are **accepted and flagged**
+  (`lateSync` / `clockSkew`), never refused; a sale is never dead-lettered for its time. P15-6: defaults future
+  5 minutes, back-office backdating 7 days (settings, not hard-coded). Both stay on the owner sign-off list.
 - Source: IPR plan rev 3, requirement R3; audit finding X-1 (counts compare against row write time). Owner decision
   D1 (2026-11-27): effective time on every movement, and counts compare against it.
 - Extension: no NestJS counterpart. Nest has no effective time either; this is an improvement labelled as such.
   Existing routes and responses do not change. New JSON fields are additive.
-- Migration: `V700` (reserved in `docs/adr/migration-registry.md`): `InventoryLedger."effectiveAt"` timestamp(3),
-  **nullable, no default, no backfill**. Not written in Phase 0.
+- Migration: `V700__stock_effective_time.sql` (written in 1b): `InventoryLedger."effectiveAt"` timestamp(3),
+  **nullable, no default, no backfill**; `V701__count_session_guards.sql` (count guards, count spec §4.4 / S4).
 - Spec: `docs/spec/inventory-count-reconciliation.md` (how counts use the effective time).
 - Related: ADR-S070 (org-local accounting day), ADR-S072 (POS stock posting job), ADR-S083 (offline hybrid, device
   `occurredAt`).
@@ -185,3 +187,32 @@ CREATE INDEX CONCURRENTLY ... ON "InventoryLedger" ("organizationId", "locationI
   note and memo present, row listed by the period-shifted report.
 - Future `occurredAt` beyond the limit: clamped, flagged, sale accepted (no dead letter).
 - V700 trigger test and the old-image-on-new-schema check (R7).
+
+## Implementation (Phase 1b, 2026-11-27)
+
+What was built, and where it differs from the text above. Paths relative to `backend/src/main/java/com/inventoryerp/`.
+
+- `StockService.insertLedger` writes `"effectiveAt" = COALESCE(<effective time>, NOW)` on every new row, so new rows
+  always carry it (old rows stay null; readers use `COALESCE("effectiveAt","createdAt")`). Value-only rows (cost
+  correction, AVCO residue) carry NOW.
+- Sources: `StockMove.effectiveAt` (explicit) wins; else the offline op time bound by `kernel/common/EffectiveTime`
+  (a `ScopedValue` set by `SyncPushService.runOp` around every op, and by `SyncStockService.applyAwaiting` for a
+  receipt applied when its dispatch arrives); else NOW. Explicit sources: POS stock job (`Invoice.issueDate`,
+  unclamped, via `PosInvoiceService.datedForStock`), GRN `receivedAt` (`StockService.documentEffectiveAt`: a
+  date-only past day is the end of that day; today or later is NOW), fleet fuel `fuelledAt`, count variances (the
+  line's cut-off), late count corrections (the count's cut-off), offline adjustments approved later (their
+  `occurredAt`).
+- `kernel/common/OccurredAt`: never refuses for time any more (malformed is still 400). `resolveFlagged` returns the
+  flags; the limits come from the settings `inventory.maxFutureEffectiveMinutes` (5) and `inventory.maxBackdateDays`
+  (7) through `kernel/settings/OccurredAtSettings`. **Deviation:** the clamp-and-flag applies to every sync op type,
+  not only sales (the sign-off row "for non-sale ops the owner decides" is answered with clamp, P15-1).
+- Flags: `InventoryException` kinds `offline_clock_skew` and `offline_late_sync` (report-only), plus a `clockSkew`
+  ledger note when a move's time was ahead.
+- Back-office backdating limit: enforced for goods receipts (`GoodsReceiptsService.post`). **Not yet** for direct
+  stock, adjustments and transfers created from the back office: their routes carry no document date today (they post
+  now), so there is nothing to backdate; the limit helper `StockService.assertWithinBackdateLimit` is ready for them.
+- SW-6: `adjust` and `transfer` use `StockMove.date` for the period check and every journal; adjustment and transfer
+  journal memos end with the ledger code.
+- Ledger note "occurred X, posted Y" when the posting day differs from the effective day (UTC days).
+- `period_shifted` (report-only, informational) now compares the effective period with the posting period.
+

@@ -157,11 +157,17 @@ public class NotificationsService {
      */
     public int sendToPermission(String organizationId, String permission, String category, String title, String body,
             Map<String, Object> payload, String dedupeKey) {
+        return sendToPermissionIds(organizationId, permission, category, title, body, payload, dedupeKey).size();
+    }
+
+    /** {@link #sendToPermission} returning the ids of the notifications written (IPR OPS-1: callers that log one). */
+    public List<String> sendToPermissionIds(String organizationId, String permission, String category, String title,
+            String body, Map<String, Object> payload, String dedupeKey) {
         List<String> users = permissionHolders(organizationId, permission);
         if (users.isEmpty()) {
             log.warn("No active user of org {} holds {}: notification \"{}\" reached nobody", organizationId,
                     permission, title);
-            return 0;
+            return List.of();
         }
         Set<String> already = dedupeKey == null ? Set.of() : new HashSet<>(jdbc.sql("""
                         SELECT "userId" FROM "Notification" WHERE "organizationId" = :org AND "userId" IN (:users)
@@ -175,14 +181,14 @@ public class NotificationsService {
         if (dedupeKey != null) {
             p.put("dedupeKey", dedupeKey);
         }
-        int sent = 0;
+        List<String> sent = new java.util.ArrayList<>();
         for (String user : users) {
             if (already.contains(user)) {
                 continue;
             }
             try {
-                send(new SendInput(organizationId, user, "in_app", category, title, body, p));
-                sent++;
+                Map<String, Object> n = send(new SendInput(organizationId, user, "in_app", category, title, body, p));
+                sent.add(n == null || n.get("id") == null ? null : n.get("id").toString());
             } catch (RuntimeException e) {
                 log.warn("Notification \"{}\" to user {} not written: {}", title, user, e.toString());
             }
