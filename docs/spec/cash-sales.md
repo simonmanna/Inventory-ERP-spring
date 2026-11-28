@@ -11,6 +11,10 @@ Status: **CS-0 design frozen (2026-11-04)**. This is a Spring-native extension w
 > - The flow below (`/sales/cash-sales`, `SalesSubmission`) is unchanged and stays readable.
 > - C5 (migration) was dropped. Legacy cash sales are demo data, cleared at deploy only after the owner confirms.
 > - The web moves to the new flow in C6.
+>
+> **ADR-S094 C3b (built, V736).** A cash Sale is reversed with `POST /sales/orders/:id/reverse`: credit-note approval
+> if required, the fiscal cancel, then the return, the credit note and the refund (or credit) in one transaction
+> (ADR-S094 §7.4, "As built (C3b)"). The legacy void and invoice-cancel routes are unchanged.
 
 **Production gate.** Before go-live, the accountant must sign off three things:
 

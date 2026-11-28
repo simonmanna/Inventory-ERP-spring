@@ -361,8 +361,35 @@ branch scope.
     - Mobile money is verified by hand.
     - Negative stock follows the inventory policy.
     - Order-type invoices are fiscalised from C4.
-    - The cash Reverse comes in C3b.
+    - The cash Reverse: see the next item (C3b).
     - The legacy `/sales/cash-sales` flow is unchanged until it is retired.
+- **A cash sale is reversed in two phases** (ADR-S094 C3b, V736; owner instruction 2026-11-28). The flow is in ADR-S094
+  §7.4, under "As built (C3b)".
+  - `POST /sales/orders/:id/reverse` (new): `sales:cash_sale:void`, an Idempotency-Key, `{reason, settlement, lines,
+    ...}`.
+  - It takes every line back in full, credits the invoice and pays each tender back, or keeps the money as customer
+    credit. The sale ends `cancelled` with `reversedAt`; its outcome amounts are kept.
+  - Order of the steps:
+    1. credit-note approval, if required (409 until approved);
+    2. the fiscal cancel (409 until cancelled);
+    3. one transaction for the return, the credit note, the settlement and the cancel.
+  - The detail shows the `reverse` action and `reversalStage`.
+  - `POST /sales/orders/:id/fiscal/:fiscalId/resolve` (new, `sales:cash_sale:review`) settles by hand a fiscal
+    operation in `review` or `unknown`.
+  - Fiscal outbox:
+    - the provider is called outside any transaction;
+    - an unknown outcome is looked up before anything is sent again;
+    - a resend keeps its request reference;
+    - a provider without lookup or deduplication goes to `review`;
+    - an operation stuck for 30 minutes raises one alert.
+  - Limits:
+    - Full reversal only, while the sale has no returns or credit notes; partial returns use the return flow.
+    - The refund goes back over the original tenders and must equal what was paid.
+    - The approval is asked for before the fiscal cancel, on a prepared draft credit note.
+    - No new event: `sales.order.cancelled` carries `reversed: true`.
+    - The reversal's fiscal counterpart is the cancel of the sale's fiscal document.
+    - New `FiscalDocument` statuses `sent` and `review`.
+    - "Fiscal pending" on printed invoices comes in C6.
 - **Revenue invoiced before the goods leave is deferred** (ADR-S094 C2b, V734; AD-2 = contract liability, AD-16 =
   release at dispatch, approved 2026-11-28).
   - A posted invoice that bills more than has been dispatched moves the revenue of the difference to the contract

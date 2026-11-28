@@ -7,6 +7,7 @@ import com.inventoryerp.invoicing.application.CustomerDepositService;
 import com.inventoryerp.sales.application.SalesAtpService;
 import com.inventoryerp.sales.application.CashSaleFiscalService;
 import com.inventoryerp.sales.application.SalesBillingService;
+import com.inventoryerp.sales.application.SalesCashReversalService;
 import com.inventoryerp.sales.application.SalesCashSaleService;
 import com.inventoryerp.sales.application.SalesFulfilmentService;
 import com.inventoryerp.sales.application.SalesOrderChangeService;
@@ -224,14 +225,16 @@ public final class SalesController {
         private final CustomerDepositService deposits;
         private final SalesCashSaleService cashSales;
         private final CashSaleFiscalService fiscal;
+        private final SalesCashReversalService reversals;
 
         public OrderController(SalesOrderService svc, SalesOrderChangeService changes, SalesAtpService atp,
                 SalesFulfilmentService fulfilment, SalesBillingService billing, CustomerDepositService deposits,
-                SalesCashSaleService cashSales, CashSaleFiscalService fiscal) {
+                SalesCashSaleService cashSales, CashSaleFiscalService fiscal, SalesCashReversalService reversals) {
             this.billing = billing;
             this.deposits = deposits;
             this.cashSales = cashSales;
             this.fiscal = fiscal;
+            this.reversals = reversals;
             this.svc = svc;
             this.changes = changes;
             this.atp = atp;
@@ -343,6 +346,31 @@ public final class SalesController {
         public List<Map<String, Object>> retryFiscal(@PathVariable String id) {
             svc.require(id);
             return fiscal.retryForSale(id);
+        }
+
+        /**
+         * ADR-S094 C3b (§5.5): settle a fiscal operation whose outcome is unknown by hand, after checking with the
+         * provider ({@code resolution}: {@code issued} with its {@code fiscalNumber}, or {@code not_received}: sent
+         * again under the same reference; a {@code note}).
+         */
+        @PostMapping("/{id}/fiscal/{fiscalId}/resolve")
+        @RequirePermissions(Permissions.SALES__CASH_SALE_REVIEW)
+        public Map<String, Object> resolveFiscal(@PathVariable String id, @PathVariable String fiscalId,
+                @RequestBody Map<String, Object> b) {
+            svc.require(id);
+            return fiscal.resolve(id, fiscalId, body(b));
+        }
+
+        /**
+         * ADR-S094 C3b (§7.4): reverse a completed cash sale — credit-note approval if required, the fiscal cancel, then
+         * in one transaction the return of every line, the credit note, the refund over the tenders (or the credit kept)
+         * and the sale cancelled as reversed. A money route: an Idempotency-Key is required.
+         */
+        @PostMapping("/{id}/reverse")
+        @Idempotent(required = true)
+        @RequirePermissions(Permissions.SALES__CASH_SALE_VOID)
+        public Map<String, Object> reverse(@PathVariable String id, @RequestBody Map<String, Object> b) {
+            return reversals.reverse(id, body(b));
         }
 
         /** ADR-S094 §4.2: send a draft that needs approval to its approvers (explicit; never done by confirm). */

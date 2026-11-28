@@ -164,7 +164,7 @@ public abstract class ApiTestSupport {
                     + "|invoices(/[^/]+/(post|cancel))?|credit-notes(/[^/]+/(post|allocate|reverse))?"
                     + "|customer-deposits(/[^/]+/(classify|apply|refund|void|applications/[^/]+/reverse))?"
                     + "|payments/[^/]+/allocations|payments/mobile-money"
-                    + "|sales/(orders/[^/]+/(confirm|approve|invoices|deposits|apply-deposits|deliveries"
+                    + "|sales/(orders/[^/]+/(confirm|approve|reverse|invoices|deposits|apply-deposits|deliveries"
                     + "|milestones/[^/]+/invoice)|change-requests/[^/]+/approve|invoices/(batch|[^/]+/write-off)"
                     + "|credit-notes(/[^/]+/(allocate|refund))?"
                     + "|cash-sales/[^/]+/(confirm|approve-and-invoice|generate-invoice|cancel-invoice|void)"
