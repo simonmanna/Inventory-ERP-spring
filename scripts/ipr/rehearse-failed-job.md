@@ -33,7 +33,7 @@ How the engine guarantees it (code references are for the reviewer):
      DB_BACKUP_USER= DB_BACKUP_PASSWORD= PGUSER=owner PGPASSWORD=owner PGHOST=127.0.0.1 PGPORT=5711
      APP_JOBS_ENABLED=true BACKUP_CRON_ENABLED=false BACKUP_DIR=$WORK/backups STORAGE_LOCAL_DIR=$WORK/storage
      SMTP_HOST= TWILIO_ACCOUNT_SID= TWILIO_AUTH_TOKEN= SUPERSET_URL= SUPERSET_PUBLIC_URL= METRICS_TOKEN=rehearsal
-     set +a; exec /opt/inventory-erp/jdk/bin/java -Xmx700m -jar /opt/inventory-erp/dist/inventory-erp.jar
+     set +a; exec /opt/inventory-erp/jdk/bin/java -Xmx1536m -jar /opt/inventory-erp/dist/inventory-erp.jar
    ) > "$WORK/api.log" 2>&1 &
    echo $! > "$WORK/api.pid"
    until curl -fsS http://127.0.0.1:3911/api/v1/health/ready; do sleep 5; done
@@ -63,18 +63,30 @@ VALUES (gen_random_uuid()::text, (SELECT id FROM "Organization" WHERE code = 'DE
 RETURNING id;
 ```
 
-To shorten the rehearsal, lower the attempts on the copy:
-`UPDATE "StockPostingJob" SET "maxAttempts" = 2 WHERE status = 'pending';`
-Run it after the sale below; new jobs default to 5 attempts.
+Give M a catalog price (`UPDATE "MenuItem" SET "basePrice" = 500 WHERE id = '<M>'`); without one the checkout is refused
+with "Configure a catalog selling price before selling this item".
+
+To shorten the rehearsal, lower the attempts on the copy, for the rehearsal's own job only:
+`UPDATE "StockPostingJob" SET "maxAttempts" = 2 WHERE "invoiceNumber" = '<invoice>' AND status = 'pending';`
+Run it right after the sale below (the worker's first attempt comes within 30 s); new jobs default to 5 attempts.
 
 ## 2. Sell, and kill the API mid-drain
 
 Sell from a till of the copy: one line of A (qty 5) and one line of M (qty 2). Use the POS screen pointed at port
-3911, or `POST $API/pos/checkout`. Note the order and invoice numbers. The sale enqueues one `StockPostingJob`.
+3911, or `POST $API/pos/checkout` (an `Idempotency-Key` header is required; cash tenders must equal the amount due:
+more is refused with "Tenders sum … exceeds amount due …"). Note the order and invoice numbers. The sale enqueues one
+`StockPostingJob`.
 
 **Real crash (B).** For a backlog, sell about 30 such tickets, then wait until the worker has started draining:
 `$PSQL -c "SELECT status, count(*) FROM \"StockPostingJob\" GROUP BY 1"` shows `processing`. Then
 `kill -9 $(cat $WORK/api.pid)`. Restart the API (step 0.2) and keep the new pid.
+
+Expect a pause before the takeover. The drain runs under the ShedLock lock `stock-posting-drain`
+(`lockAtMostFor = PT5M`), and the killed process still holds it: no runner drains until it expires, up to **5 minutes**
+after the run the process was killed in started (`SELECT * FROM shedlock WHERE name = 'stock-posting-drain'` shows
+`lock_until`). Then the claims, older than 60 s by then, are taken over in the next drain. Nobody needs to act. On
+2026-11-28 the kill came at 05:08:00 with 15 jobs `processing`; the lock expired at 05:13:00 and all 15 posted at
+05:13:03, one issue row each.
 
 **Deterministic crash (A).** When the timing of a real kill misses, simulate the state a dead runner leaves behind
 (its claim and the lines it already committed):
@@ -97,19 +109,33 @@ Expected:
 
 ## 3. Retry from the Posting Monitor
 
-1. Fix the cause. Give M a recipe: back office, or
-   `INSERT INTO "MenuProduct" (id, "organizationId", "menuItemId", "productId", quantity) VALUES (gen_random_uuid()::text, <DEMO>, <M>, <B>, 1);`
-2. `POST $API/pos/posting-monitor/jobs/<id>/retry`. Expected: `201`, `status: pending`, attempts reset.
-3. Within 30 s the worker posts **only** the missing line. The job is `done`, and M's exception is `resolved` with
+**Retry does not pick up a recipe added after the sale.** The job carries the recipe as it was at checkout
+(`StockPostingJob.recipeSnapshot`, the same as Nest `pos-invoice.service.ts`), and a retry reads that snapshot. A
+menu line that failed for "no recipe" has a snapshot with `"ingredients": []`, so adding the recipe and retrying fails
+again (rehearsed 2026-11-28: the retried job went back to `failed`, and the A line was still not issued twice). The exit
+for that job is **abandon** (step 4) plus a manual stock-out adjustment for the ingredients. Retry is for causes that
+are fixed outside the sale: stock that arrived late, a product that was blocked, a closed period that was reopened.
+
+Rehearse retry with such a cause, on a product line:
+
+1. On the copy: turn negative stock off (`PUT $API/costing/settings` `{"allowNegativeStock": false}`), set a product
+   B with on-hand `n` to the `block` stock policy (`UPDATE "Product" SET "stockPolicy" = 'block' WHERE id = '<B>'`),
+   and sell `n + 50` of B. The sale is kept, and each attempt fails with "Insufficient stock for … on hand n,
+   requested n + 50". Let the job reach `failed`.
+2. Fix the cause: an adjustment that brings B to at least the sold quantity (`POST $API/inventory/adjustments`, then
+   `POST $API/inventory/adjustments/<id>/approve`).
+3. `POST $API/pos/posting-monitor/jobs/<id>/retry`. Expected: `201`, `status: pending`, attempts reset.
+4. Within 30 s the worker posts **only** the missing line. The job is `done`, and B's exception is `resolved` with
    the note "Posted automatically when the stock posting job retried this line".
-4. Retry again → `400 Only failed or pending jobs can be retried (this one is done)`.
+5. Retry again → `400 Only failed or pending jobs can be retried (this one is done)`.
+6. Turn negative stock back on.
 
-## 4. Abandon a second job
+## 4. Abandon the job that cannot post
 
-Repeat steps 1–2 with a new menu item M2 (no recipe) and a product C, until the job is `failed`. Then
-`POST $API/pos/posting-monitor/jobs/<id>/abandon` with `{"note": "R7 rehearsal: stock corrected by adjustment"}`.
-Expected: `201`, `status: abandoned`, `exceptionsDiscarded: 1`. Add a recipe to M2 afterwards: the job never runs
-again, and C's posted line stays posted once.
+Abandon the "no recipe" job from step 2: `POST $API/pos/posting-monitor/jobs/<id>/abandon` with
+`{"note": "R7 rehearsal: stock corrected by adjustment"}`. Expected: a note under 10 characters → `400`; then `201`,
+`status: abandoned`, `exceptionsDiscarded: 1`; a retry of it → `400 … (this one is abandoned)`. The job is never
+claimed again, and A's posted line stays posted once.
 
 ## 5. Verify exactly once
 
@@ -127,12 +153,13 @@ SELECT "invoiceNumber", status, attempts, "postedLineKeys" FROM "StockPostingJob
 ```
 
 Pass criteria:
-- A: one issue row, qty −5. B: one issue row, qty −2 (from the retried M line). C: one issue row. No issue row for M2.
-- On-hand of A, B and C moved by exactly those quantities from the baseline.
-- `GET $API/inventory/reports/integrity` → `integrity-after.json`. No check lists A, B or C that did not already list
+- A: one issue row, qty −5 (and one row per crash ticket). B: one issue row for the retried sale. No issue row for M.
+- On-hand of A and B moved by exactly those quantities (plus B's adjustment) from the baseline.
+- `GET $API/inventory/reports/integrity` → `integrity-after.json`. No check lists A or B that did not already list
   them in `integrity-before.json`. (Compare with `jq`: for each failing check, the product ids in its rows.)
 - `GET /pos/posting-monitor/counts`: no job of the rehearsal is `pending`, `processing` or `failed`.
-- `api.log` holds no ERROR line other than the expected "issue failed … has no recipe" lines.
+- `api.log` holds no ERROR line other than the expected "issue failed …" lines for M and B, and the health
+  monitor's "stock posting unhealthy … 1 failed" while a job was failed.
 
 Record the outcome, the invoice numbers and the files in `$WORK` in the Phase 5 gate evidence. Then stop the API
 (`kill $(cat $WORK/api.pid)`) and remove the copy (`docker rm -f ierp-ipr-restore-5711`).

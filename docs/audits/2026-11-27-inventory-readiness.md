@@ -207,6 +207,7 @@ accounting, engine core). Every review finding was fixed by a follow-up stream w
 | 17 | New mapping keys `stock_waste_expense`, `stock_expiry_expense`; setting `inventory.transitGlSeparation` (off) |
 | 18 | Promote `wip_tieout` from report-only to a close-blocking value check |
 | 19 | Every Deviations entry added to `docs/spec/*.md` by the streams |
+| 20 | Optional, not built: let a Posting Monitor retry refresh an empty recipe snapshot from the current recipe (deviation from Nest). Today a "no recipe" job can only be abandoned plus a manual adjustment (R7 rehearsal) |
 
 ## Release gates
 
@@ -219,7 +220,7 @@ per organisation) are defined in the plan. Their status is filled in at each gat
 | G2 | met on test evidence; owner review pending | Valuation, GL and GRNI asserted per scenario (`assertGlTieOut`); WIP tie-out (`ManufacturingLifecycleIT` 11/11); `wip_tieout` is still report-only (sign-off item 18) |
 | G3 | met on test evidence; owner review pending | Branch, cost and SoD ITs (`IprBranchScopeCostIT`, `IprStockControlsIT`); R2 races; exactly-once POS/sync (`PosStockPostingRecoveryIT`, `CountCutoffIT`) |
 | G4 | met on test evidence; owner review pending | `OpeningStockImportIT` (atomic, idempotent, stale preview, reconciliation); OPERATIONS §8c checklist; alerts to permission holders (Phase 0) |
-| G5 | partly met | Full `./gradlew build` green on Testcontainers (2026-11-28, 3,832 tests, 0 failed; see below). Not done yet: parity scenarios, the DEMO browser test, the R7 rehearsals on a restored live copy |
+| G5 | partly met | Full `./gradlew build` green on Testcontainers (2026-11-28, 3,832 tests, 0 failed; see below). R7 rehearsals on restored copies of the 2026-11-28 live backup passed (`ipr-evidence/5-r7-rehearsals.md`): migration apply V696 → V722, the previous jar on the new schema, restore-db rollback with identical row counts, failed-job crash/takeover/retry/abandon exactly once. Not done yet: parity scenarios, the DEMO browser test, `dr-drill.mjs` (needs a compose stack) |
 | G6 | open (owner actions) | Live-copy checks reviewed in Phase 0. GQDEMO 600 needs the owner-approved compensating journal; negative quants (DEMO 2, GQDEMO 8) and the 2 pre-R1 `cash_sale_void` rows need accept-or-repair decisions; the DEMO GL-1 line is a report fix (no data change) |
 
 ### Full build evidence (2026-11-28)

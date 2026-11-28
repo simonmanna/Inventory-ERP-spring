@@ -30,6 +30,8 @@
 #   ORG_CODE / ADMIN_EMAIL / ADMIN_PASSWORD   optional smoke login (DEMO by default; use the copy's credentials)
 #   WORK_DIR    default ./var/ipr-rehearsal/<stamp> (logs, dumps, evidence)
 #   READY_TIMEOUT seconds per API start, default 400 (startup is ~100 s on the shared host)
+#   JAVA_HEAP   -Xmx for every jar run, default 1536m (the live api.env value; 700m runs out of heap at startup
+#               on a copy of live, found by the first Phase 5 rehearsal)
 #   BACKUP_ENCRYPTION_PASSWORD   when <dump> is a .dump.enc
 #
 # Exit 0 = every step passed. Evidence: $WORK_DIR/summary.txt plus one log per step.
@@ -51,6 +53,7 @@ JAVA=${JAVA:-/opt/inventory-erp/jdk/bin/java}
 DB_PORT=${DB_PORT:-5711}
 API_PORT=${API_PORT:-3911}
 READY_TIMEOUT=${READY_TIMEOUT:-400}
+JAVA_HEAP=${JAVA_HEAP:-1536m}
 CONTAINER=${CONTAINER:-ierp-ipr-rehearsal-$DB_PORT}
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 WORK_DIR=${WORK_DIR:-$ROOT/var/ipr-rehearsal/$STAMP}
@@ -64,7 +67,11 @@ log "work dir $WORK_DIR; candidate $(basename "$CANDIDATE_JAR"), previous $(base
 
 APP_PID=""
 cleanup() {
-  [[ -n "$APP_PID" ]] && kill "$APP_PID" 2>/dev/null && wait "$APP_PID" 2>/dev/null || true
+  if [[ -n "$APP_PID" ]]; then
+    pkill -TERM -P "$APP_PID" 2>/dev/null || true
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+  fi
   if [[ "${KEEP:-}" == "yes" ]]; then
     log "KEEP=yes: container $CONTAINER left running on 127.0.0.1:$DB_PORT"
   else
@@ -113,9 +120,13 @@ app_env() {
   )
 }
 
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$API_PORT") 2>/dev/null; }
+
 start_api() { # <jar> <flyway true|false> <label>
   local jar=$1 flyway=$2 label=$3
-  app_env "$flyway" "$JAVA" -Xmx700m -jar "$jar" > "$WORK_DIR/$label.log" 2>&1 &
+  # A server still answering here would make this step "pass" against the wrong jar (first Phase 5 run).
+  port_open && die "$label: port $API_PORT already answers (an earlier API is still running)"
+  app_env "$flyway" "$JAVA" -Xmx"$JAVA_HEAP" -jar "$jar" > "$WORK_DIR/$label.log" 2>&1 &
   APP_PID=$!
   local deadline=$(( $(date +%s) + READY_TIMEOUT ))
   until curl -fsS "http://127.0.0.1:$API_PORT/api/v1/health/ready" > "$WORK_DIR/$label.ready.json" 2>/dev/null; do
@@ -130,9 +141,16 @@ start_api() { # <jar> <flyway true|false> <label>
 
 stop_api() {
   [[ -n "$APP_PID" ]] || return 0
+  # APP_PID is the background wrapper shell; the jar is its child (app_env's subshell exec), so stop the child too.
+  pkill -TERM -P "$APP_PID" 2>/dev/null || true
   kill "$APP_PID" 2>/dev/null || true
   wait "$APP_PID" 2>/dev/null || true
   APP_PID=""
+  local deadline=$(( $(date +%s) + 90 ))
+  while port_open; do
+    (( $(date +%s) < deadline )) || die "the API on port $API_PORT did not stop"
+    sleep 1
+  done
 }
 
 smoke() { # <label>
@@ -177,10 +195,13 @@ else
   log "3 new migrations: ${NEW[*]}"
   flagged=0
   for f in "${NEW[@]}"; do
-    hits=$(sed -e 's/--.*$//' "$WORK_DIR/migrations/$f" | grep -Eni \
-      -e 'drop[[:space:]]+(table|column|type|schema)|alter[[:space:]]+column[^;]*(type|set[[:space:]]+not[[:space:]]+null)' \
-      -e '^[[:space:]]*(update|delete|truncate)[[:space:]]|add[[:space:]]+column[^;]*not[[:space:]]+null([^;]*default)?|rename[[:space:]]' \
-      || true)
+    # A column TYPE change needs the keyword on its own (not "countType"). ADD COLUMN ... NOT NULL is flagged only
+    # without a DEFAULT: with one, the previous jar's inserts still succeed and Postgres 11+ does not rewrite rows.
+    hits=$( { sed -e 's/--.*$//' "$WORK_DIR/migrations/$f" | grep -Eni \
+      -e 'drop[[:space:]]+(table|column|type|schema)|alter[[:space:]]+column[^;]*([[:space:]]type[[:space:]]|set[[:space:]]+not[[:space:]]+null)' \
+      -e '^[[:space:]]*(update|delete|truncate)[[:space:]]|rename[[:space:]]' || true
+      sed -e 's/--.*$//' "$WORK_DIR/migrations/$f" | grep -Eni 'add[[:space:]]+column[^;]*not[[:space:]]+null' \
+        | grep -Evi 'default' || true; } )
     if [[ -n "$hits" ]]; then
       flagged=1
       log "   NOT ADDITIVE? $f:"; sed 's/^/      /' <<< "$hits" | tee -a "$SUMMARY" >&2
@@ -192,7 +213,7 @@ fi
 
 # 4. candidate migrate-only
 set +e
-app_env true "$JAVA" -Xmx700m -jar "$CANDIDATE_JAR" --migrate-only > "$WORK_DIR/4-migrate.log" 2>&1
+app_env true "$JAVA" -Xmx"$JAVA_HEAP" -jar "$CANDIDATE_JAR" --migrate-only > "$WORK_DIR/4-migrate.log" 2>&1
 rc=$?
 set -e
 [[ $rc -eq 0 ]] || { tail -n 40 "$WORK_DIR/4-migrate.log" >&2; die "4 candidate --migrate-only exited $rc"; }
@@ -226,7 +247,7 @@ pass "7 restore-db on the copy: head V$H2, row counts identical to step 1"
 
 # 8. previous jar on the restored copy
 set +e
-app_env true "$JAVA" -Xmx700m -jar "$PREVIOUS_JAR" --migrate-only > "$WORK_DIR/8-migrate.log" 2>&1
+app_env true "$JAVA" -Xmx"$JAVA_HEAP" -jar "$PREVIOUS_JAR" --migrate-only > "$WORK_DIR/8-migrate.log" 2>&1
 rc=$?
 set -e
 [[ $rc -eq 0 ]] || { tail -n 40 "$WORK_DIR/8-migrate.log" >&2; die "8 previous --migrate-only exited $rc"; }
