@@ -197,7 +197,17 @@ traceability explorer (tree), reports.
 
 ## Deviations
 
-None (new module).
+IPR Phase 2, stream C (branch `fix/ipr-2`, **pending owner sign-off**; owner decision D2):
+
+- **X-2: a hold quarantines.** `POST /quality/inspection-lots/:id/hold` on a lot with a stock location and
+  `stockControl = quality` moves its open quantity to QC quarantine with the existing transfer (as quarantine does);
+  the lot keeps status `hold`, `quarantineLocationId` is set, and release / reject / downgrade take the stock from
+  quarantine. A plan with hold policy `hold` does the same when a lot opens. Held stock can no longer be issued, sold
+  or consumed from the sellable location. Quarantining a held lot later only changes its status.
+- **GL-2: downgrade to a standard-costed product.** The second-grade product is received at its standard; the
+  difference to the downgrade value goes to the variance account (`StandardCostService.postReturnVariance`).
+
+Otherwise none (new module).
 
 ## Status
 

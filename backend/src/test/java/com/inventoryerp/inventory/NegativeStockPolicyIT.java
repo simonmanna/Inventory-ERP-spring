@@ -240,7 +240,7 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         receive(p, 5, 4);
         String so = "SO-" + sfx();
         okA(201, "POST", "/inventory/reservations", Map.of("productId", p, "locationId", main, "quantity", 4,
-                "sourceType", "order", "sourceId", so));
+                "sourceType", "manual", "sourceId", so));
         String id = transitTransfer(p, 3);
         JsonNode dispatched = okA(200, "POST", "/inventory/transfers/" + id + "/dispatch", null);
         assertThat(dispatched.get("status").asString()).isEqualTo("in_transit");
@@ -263,7 +263,7 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         assertThat(refused.status()).isEqualTo(400);
         assertThat(refused.body().get("message").asString()).startsWith("Insufficient stock at source");
         assertThat(onHand(p, main)).isEqualByComparingTo("2");
-        okA(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", so));
+        okA(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "manual", "sourceId", so));
         assertIntegrityGreen("reservation released");
     }
 
@@ -284,7 +284,8 @@ class NegativeStockPolicyIT extends InventoryAuditSupport {
         assertIntegrityGreen("received 3");
 
         JsonNode second = okA(200, "POST", "/inventory/transfers/" + id + "/receive", Map.of("lines",
-                List.of(Map.of("itemId", itemId, "received", 1, "damaged", 1, "short", 1))));
+                List.of(Map.of("itemId", itemId, "received", 1, "damaged", 1, "short", 1)), "lossReason", "damaged in"
+                        + " transit", "approvedById", auditUserId));
         assertThat(second.get("status").asString()).isEqualTo("partially_received");
         assertIntegrityGreen("received 1, damaged 1, short 1");
         assertThat(onHand(p, alt)).isEqualByComparingTo("4");

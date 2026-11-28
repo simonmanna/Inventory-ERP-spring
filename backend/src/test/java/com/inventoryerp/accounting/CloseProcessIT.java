@@ -161,6 +161,29 @@ class CloseProcessIT extends AccountingFixtures {
     }
 
     @Test
+    @DisplayName("IPR R2: an expense account with a net credit (a refund) is closed on the debit side, not refused")
+    void abnormalBalanceAccountCloses() {
+        Books b = freshBooks();
+        LocalDate m = month(2);
+        String period = monthlyPeriods(b, m).get(0);
+        String revenue = accountCodeOfSection(b.org(), "revenue");
+        String expense = accountCodeOfSection(b.org(), "operating_expense");
+        String day = m.withDayOfMonth(10).toString();
+        postJe(b, day, List.of(dr(CASH, 500), cr(revenue, 500)));
+        // Only a refund hits the expense account this period: its balance sits on the credit (abnormal) side.
+        postJe(b, day, List.of(dr(CASH, 100), cr(expense, 100)));
+
+        Res close = as(b, "POST", "/fiscal-periods/" + period + "/close", null);
+        assertThat(close.status()).as(close.raw().body()).isEqualTo(200);
+        assertThat(close.body().get("netIncome").asString()).isEqualTo("600");
+        List<Map<String, Object>> lines = lines(close.body().get("journalEntryId").asString());
+        assertThat(lines).extracting(l -> l.get("code")).contains(revenue, expense);
+        assertThat(openProfitAndLoss(b.org(), m, lastDay(m))).isEmpty();
+        assertThat(periodStatus(period)).isEqualTo("closed");
+        LedgerInvariants.entriesBalanced(jdbc, b.org(), null);
+    }
+
+    @Test
     @DisplayName("A3 (P2-1): the year close closes periods with no profit and loss to close; only open P&L holds it")
     void yearCloseClosesZeroProfitAndLossPeriods() {
         Books b = freshBooks();

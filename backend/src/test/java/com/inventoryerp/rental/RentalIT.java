@@ -788,9 +788,12 @@ class RentalIT extends ApiTestSupport {
         }
         assertThat(unitStatus(u.get(1))).isEqualTo("damaged");
         assertThat(unitStatus(u.get(2))).isEqualTo("available");
+        // IPR M-7 (deviation from Nest): the counter return took both units out of RENT-OUT (→ RENT-CLEAN), and the
+        // inspection moved them on from RENT-CLEAN. The unit swapped out earlier is still in cleaning (never inspected).
+        // Nest left RENT-OUT at 1 and consumed the swapped unit's cleaning stock for the clean line.
         assertThat(onHand(p, "damaged")).isEqualByComparingTo("1");
-        assertThat(onHand(p, "out")).isEqualByComparingTo("1");
-        assertThat(onHand(p, "cleaning")).isEqualByComparingTo("0");
+        assertThat(onHand(p, "out")).isEqualByComparingTo("0");
+        assertThat(onHand(p, "cleaning")).isEqualByComparingTo("1");
         assertThat(onHand(p, "stock")).isEqualByComparingTo("8");
 
         JsonNode waived = ok(201, "POST", "/rental/damages/" + dentId + "/waive", Map.of("reason", "goodwill"));

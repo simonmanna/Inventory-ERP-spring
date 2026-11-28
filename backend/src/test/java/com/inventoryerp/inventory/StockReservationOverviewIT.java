@@ -27,9 +27,11 @@ class StockReservationOverviewIT extends ApiTestSupport {
                 "warehouse")).get("id").asString();
         ok(201, "POST", "/inventory/reservations", Map.of("productId", product, "locationId", location, "quantity", 5,
                 "sourceType", "manual", "sourceId", "A-" + sfx, "reason", "Site order"));
-        ok(201, "POST", "/inventory/reservations", Map.of("productId", product, "locationId", location, "quantity", 2,
-                "sourceType", "order", "sourceId", "B-" + sfx));
-        ok(201, "POST", "/inventory/reservations/release", Map.of("sourceType", "order", "sourceId", "B-" + sfx));
+        // IPR C-5: the manual route reserves only manual sources; a document's reservation (released) is seeded.
+        jdbc.sql("INSERT INTO \"StockReservation\" (id, \"organizationId\", \"productId\", \"variantKey\","
+                + " \"locationId\", quantity, \"sourceType\", \"sourceId\", status, \"releasedAt\", \"createdAt\","
+                + " \"updatedAt\") VALUES (?, ?, ?, '', ?, 2, 'order', ?, 'released', now(), now(), now())")
+                .params(java.util.UUID.randomUUID().toString(), demoOrg, product, location, "B-" + sfx).update();
     }
 
     @Test

@@ -102,7 +102,11 @@ public class RentalReturnService {
 
     // ------------------------------------------------------------------ counter return
 
-    /** Log what came back ({@code items: [{agreementLineId, quantity, quantityMissing, conditionGrade, notes}]}). */
+    /**
+     * Log what came back ({@code items: [{agreementLineId, quantity, quantityMissing, conditionGrade, notes}]}). IPR M-7
+     * (deviation from Nest): what physically came back moves RENT-OUT → RENT-CLEAN here, so RENT-OUT is decremented
+     * once per return; a line cannot be returned beyond what is still out (M-8).
+     */
     @Transactional
     public Map<String, Object> createReturn(Map<String, Object> dto) {
         String orgId = RentalRows.org();
@@ -111,6 +115,9 @@ public class RentalReturnService {
             throw ApiException.badRequest("At least one returned item is required");
         }
         String agreementId = RentalRows.str(dto, "agreementId");
+        // IPR M-7 / M-8: the agreement row is locked (L1) before the status check and the returnable cap, so two
+        // counter returns of one line run one after the other.
+        lockAgreement(agreementId, orgId);
         Map<String, Object> agreement = db.first(RentalAgreement.class, BY_ID, agreementId, orgId);
         if (agreement == null) {
             throw ApiException.notFound("Agreement not found");
@@ -137,14 +144,27 @@ public class RentalReturnService {
             double quantityMissing = RentalRows.numOr(item, "quantityMissing", 0);
             double quantity = RentalRows.numOr(item, "quantity", 1);
             boolean isMissing = quantityMissing >= quantity || quantityMissing == PosSql.num(line.get("quantity"));
+            double back = physicallyBack(quantity, quantityMissing, isMissing);
+            double stillOut = stillOut(line);
+            if (back > stillOut + 1e-9) {
+                throw ApiException.badRequest("Cannot return " + RentalRows.dec(back).stripTrailingZeros().toPlainString()
+                        + " on agreement line " + line.get("id") + ": only "
+                        + RentalRows.dec(Math.max(0, stillOut)).stripTrailingZeros().toPlainString() + " still out");
+            }
             int lateDays = RentalMath.lateDays(now, (Instant) line.get("dueAt"));
             double lateFee = RentalMath.lateFee(lateDays, lateFeePerDay, quantity);
-            db.insert(RentalReturnLine.class, Obj.of("organizationId", orgId, "returnId", ret.get("id"),
+            Map<String, Object> retLine = db.insert(RentalReturnLine.class, Obj.of("organizationId", orgId,
+                    "returnId", ret.get("id"),
                     "agreementLineId", line.get("id"), "unitId", line.get("unitId"),
                     "quantity", RentalRows.dec(quantity), "quantityMissing", RentalRows.dec(quantityMissing),
                     "returnedAt", isMissing ? null : now, "conditionGrade", item.get("conditionGrade"),
                     "isMissing", isMissing, "lateDays", lateDays, "lateFeeAmount", RentalRows.dec(lateFee),
                     "notes", item.get("notes")));
+            if (back > 0) {
+                // IPR M-7: what came back leaves RENT-OUT now, once (RENT-OUT → RENT-CLEAN); missing units stay out.
+                posting.counterReturnTransfer(agreementId, (String) line.get("productId"), back,
+                        (String) line.get("unitId"), (String) retLine.get("id"));
+            }
         }
         Set<Object> returned = new HashSet<>();
         for (Map<String, Object> i : items) {
@@ -161,8 +181,9 @@ public class RentalReturnService {
     // ------------------------------------------------------------------ inspection
 
     /**
-     * Grade each returned line, record damages, move stock (clean: RENT-CLEAN → RENT-STOCK, damaged: RENT-OUT →
-     * RENT-DAMAGED) and set the unit status (damaged / available).
+     * Grade each returned line, record damages, move stock (clean: RENT-CLEAN → RENT-STOCK, damaged: RENT-CLEAN →
+     * RENT-DAMAGED; IPR M-7, see {@code docs/spec/rental.md} Deviations) and set the unit status (damaged /
+     * available). A return line is inspected once.
      */
     @Transactional
     public Map<String, Object> inspect(String returnId, Map<String, Object> dto) {
@@ -176,6 +197,9 @@ public class RentalReturnService {
         // before this call. Kept for parity (docs/spec/rental.md).
         Map<String, Object> committed = get(returnId);
         String agreementId = (String) ret.get("agreementId");
+        // IPR M-7 / M-8: lock the return row (L1) so a return line is inspected, and its stock moved, exactly once.
+        db.jdbc().sql("SELECT id FROM \"RentalReturn\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(returnId, orgId).query(String.class).list();
         List<Map<String, Object>> retLines = db.list(RentalReturnLine.class, "\"returnId\" = ? ORDER BY id", returnId);
         Object rawItems = dto.get("items");
         if (!(rawItems instanceof List<?>)) {
@@ -186,6 +210,9 @@ public class RentalReturnService {
                     .findFirst().orElse(null);
             if (line == null) {
                 throw ApiException.badRequest("Unknown return line " + item.get("returnLineId"));
+            }
+            if (line.get("inspectedAt") != null) {
+                throw ApiException.badRequest("Return line " + line.get("id") + " has already been inspected");
             }
             Object grade = item.get("conditionGrade") != null ? item.get("conditionGrade")
                     : line.get("conditionGrade") != null ? line.get("conditionGrade") : "good";
@@ -201,15 +228,25 @@ public class RentalReturnService {
                         "chargeAmount", RentalRows.dec(RentalRows.numOr(dmg, "chargeAmount", 0))));
             }
             boolean missing = Boolean.TRUE.equals(line.get("isMissing"));
-            double quantity = PosSql.num(line.get("quantity"));
             Object unitId = line.get("unitId");
             String stockUnit = unitId != null ? (String) unitId : lineUnit(line.get("agreementLineId"));
-            if (!damaged && !missing) {
-                posting.cleaningCompleteTransfer(agreementId, lineProduct(line.get("agreementLineId")), quantity,
-                        stockUnit);
-            } else if (damaged) {
-                posting.returnTransfer(agreementId, lineProduct(line.get("agreementLineId")), quantity, "damaged",
-                        stockUnit);
+            String productId = lineProduct(line.get("agreementLineId"));
+            // IPR M-7: a line whose counter return moved its stock to RENT-CLEAN moves on from there; a line returned
+            // before that fix still sits in RENT-OUT and moves from RENT-OUT (so RENT-OUT is decremented once either
+            // way). Nest moved clean returns RENT-CLEAN → RENT-STOCK although nothing had left RENT-OUT.
+            boolean inCleaning = posting.counterReturned((String) line.get("id"));
+            double quantity = inCleaning ? posting.counterReturnedQuantity((String) line.get("id"))
+                    : PosSql.num(line.get("quantity"));
+            if (!damaged && !missing && quantity > 0) {
+                if (inCleaning) {
+                    posting.cleaningCompleteTransfer(agreementId, productId, quantity, stockUnit);
+                } else {
+                    posting.legacyReturnToStockTransfer(agreementId, productId, quantity, stockUnit);
+                }
+            } else if (damaged && !missing && quantity > 0) {
+                // a missing line brought nothing back: it stays in RENT-OUT until a later return finds it, so it is
+                // never moved to RENT-DAMAGED here (that would decrement RENT-OUT twice once it is found)
+                posting.returnTransfer(agreementId, productId, quantity, "damaged", stockUnit, inCleaning);
             }
             if (unitId != null) {
                 String live = "id = ? AND \"organizationId\" = ? AND \"deletedAt\" IS NULL";
@@ -227,6 +264,34 @@ public class RentalReturnService {
             }
         }
         return committed;
+    }
+
+    /** {@code SELECT ... FOR UPDATE} on the agreement row (IPR M-7 / M-8, lock level L1). */
+    private void lockAgreement(String agreementId, String orgId) {
+        db.jdbc().sql("SELECT id FROM \"RentalAgreement\" WHERE id = ? AND \"organizationId\" = ? FOR UPDATE")
+                .params(agreementId, orgId).query(String.class).list();
+    }
+
+    /** What physically came back on a counter-return line: nothing when the line is missing. */
+    static double physicallyBack(double quantity, double quantityMissing, boolean isMissing) {
+        return isMissing ? 0 : Math.max(0, quantity - Math.max(0, quantityMissing));
+    }
+
+    /**
+     * IPR M-7 / M-8: what of an agreement line is still out: the quantity checked out (as the checkout transfer reads
+     * it: 0 or missing counts as 1) less what earlier counter returns brought back.
+     */
+    private double stillOut(Map<String, Object> agreementLine) {
+        double q = agreementLine.get("quantity") == null ? 0 : PosSql.num(agreementLine.get("quantity"));
+        double checkedOut = q == 0 || Double.isNaN(q) ? 1 : q;
+        double back = 0;
+        for (Map<String, Object> l : db.list(RentalReturnLine.class, "\"agreementLineId\" = ? AND"
+                + " \"organizationId\" = ?", agreementLine.get("id"), RentalRows.org())) {
+            double quantity = l.get("quantity") == null ? 1 : PosSql.num(l.get("quantity"));
+            double missing = l.get("quantityMissing") == null ? 0 : PosSql.num(l.get("quantityMissing"));
+            back += physicallyBack(quantity, missing, Boolean.TRUE.equals(l.get("isMissing")));
+        }
+        return checkedOut - back;
     }
 
     /** The rental unit of an agreement line (null when the line names none). */

@@ -139,10 +139,38 @@ public final class SettingRegistry {
                         + " tie-out report does); a variance above the tolerance raises an inventory exception in the"
                         + " Posting Monitor and an in-app alert.",
                 true, null, false, ORG_ONLY);
+        // IPR GL-10 (owner sign-off item): the period close re-runs the inventory value checks live.
+        def("inventory.closeGate.liveValueChecks", "inventory", "bool", "Period Close Re-runs Inventory Value Checks",
+                "When on, closing a fiscal period re-runs the inventory checks on stock value (valuation vs stock"
+                        + " ledger, and vs the GL while the daily tie-out is on) and refuses the close while one fails,"
+                        + " whenever the finding was raised.",
+                true, null, false, ORG_ONLY);
         def("inventory.glTieOut.tolerance", "inventory", "number", "Inventory–GL Tie-out Tolerance",
                 "Largest absolute difference (base currency) between stock valuation and the inventory GL balance that"
                         + " the daily check accepts.",
                 1, null, false, ORG_ONLY);
+        // IPR S13: goods in transit kept in their own GL account (opt-in; needs the stock_in_transit mapping).
+        def("inventory.transitGlSeparation", "inventory", "bool", "Separate Goods In Transit In The GL",
+                "When on, stock at transit locations is valued in the Stock In Transit account: a transfer through"
+                        + " transit moves its value there on dispatch and back on receipt, and transit losses credit it."
+                        + " Turn on only while no stock is in transit.",
+                false, null, false, ORG_ONLY);
+        // IPR S3: a transit receipt that writes off more than this needs a reason and an approval.
+        def("inventory.transitLossApprovalThreshold", "inventory", "number", "Transit Loss Approval Threshold",
+                "Largest value (base currency, at the transit location's cost) of damaged and short goods that a"
+                        + " transfer receipt may write off without a reason and an approval. 0 = every loss with a value"
+                        + " needs them.",
+                0, null, true, ALL_LEVELS);
+        // ---- IPR Phase 1b (ADR-S088): stock movement time limits (owner decision P15-6 defaults) ----
+        def("inventory.maxFutureEffectiveMinutes", "inventory", "number", "Furthest Movement Time Ahead (Minutes)",
+                "A movement or offline op stamped more than this many minutes after the server time is stored at the"
+                        + " server receive time and flagged clockSkew for review. It is never refused.",
+                5, null, false, ORG_ONLY);
+        def("inventory.maxBackdateDays", "inventory", "number", "Furthest Back-office Backdating (Days)",
+                "A back-office goods receipt dated more than this many days in the past is refused. Times sent by a"
+                        + " till or device (offline sync ops, POS sales and payments, cash sessions, cash drawer) are"
+                        + " exempt: an older one is accepted and flagged lateSync for review, never refused.",
+                7, null, false, ORG_ONLY);
         def("inventory.defaultBatchTracking", "inventory", "bool", "Default Batch Tracking (new products)", null,
                 false, null, false, ORG_ONLY);
         def("inventory.defaultExpiryTracking", "inventory", "bool", "Default Expiry Tracking (new products)", null,

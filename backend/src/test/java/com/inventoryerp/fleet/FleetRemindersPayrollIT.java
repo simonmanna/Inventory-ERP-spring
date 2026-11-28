@@ -141,8 +141,9 @@ class FleetRemindersPayrollIT extends ApiTestSupport {
                 + " \"itemKey\" = ?").param(doc).query().singleRow();
         assertThat(logRow.get("state")).isEqualTo("expiring");
         assertThat((String) logRow.get("title")).contains("Road licence").contains(today.plusDays(5).toString());
-        assertThat(jdbc.sql("SELECT category FROM \"Notification\" WHERE id = ?").param(logRow.get("notificationId"))
-                .query(String.class).single()).isEqualTo("fleet");
+        // IPR OPS-1: the reminder reaches the fleet report holders' inboxes (was one row with no user).
+        assertThat(jdbc.sql("SELECT category FROM \"Notification\" WHERE id = ? AND \"userId\" IS NOT NULL")
+                .param(logRow.get("notificationId")).query(String.class).single()).isEqualTo("fleet");
         assertThat(jdbc.sql("SELECT count(*) FROM \"EventOutbox\" WHERE \"eventName\" = 'fleet.reminder.due' AND"
                 + " payload->>'itemId' = ?").param(doc).query(Long.class).single()).isEqualTo(1);
 

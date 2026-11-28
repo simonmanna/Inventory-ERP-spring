@@ -244,8 +244,15 @@ class InventoryHardeningIT extends ApiTestSupport {
             jdbc.sql("UPDATE \"InventoryLedger\" SET notes = 'tampered' WHERE id = ?").param(ledgerId).update();
         })).hasStackTraceContaining("is posted stock evidence");
 
-        FlywayConnectionDetails owner = ownerDetails.getObject();
-        try (Connection c = DriverManager.getConnection(owner.getJdbcUrl(), owner.getUsername(), owner.getPassword())) {
+        // IPR wave 3: on an external test DB the owner details carry no URL; fall back to the environment.
+        FlywayConnectionDetails owner = ownerDetails.getIfAvailable();
+        String ownerUrl = owner != null && owner.getJdbcUrl() != null ? owner.getJdbcUrl()
+                : System.getenv("JDBC_DATABASE_URL");
+        String ownerUser = owner != null && owner.getUsername() != null ? owner.getUsername()
+                : System.getenv("FLYWAY_USER");
+        String ownerPassword = owner != null && owner.getPassword() != null ? owner.getPassword()
+                : System.getenv("FLYWAY_PASSWORD");
+        try (Connection c = DriverManager.getConnection(ownerUrl, ownerUser, ownerPassword)) {
             c.setAutoCommit(false);
             c.createStatement().execute("SET LOCAL app.evidence_purge = 'on'");
             try (PreparedStatement ps = c.prepareStatement("UPDATE \"InventoryLedger\" SET notes = 'purge test'"

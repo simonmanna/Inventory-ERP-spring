@@ -142,3 +142,27 @@ All use ShedLock (`@SchedulerLock`) so multiple instances never double-run.
 - Logback JSON (logstash encoder) in `prod` profile; MDC: `requestId`, `organizationId`, `userId`.
 - Micrometer: HTTP server metrics, JVM, Hikari, custom gauges for job backlogs.
 - Modulith observability for event flows; optional OpenTelemetry exporter via env.
+
+## 11. Shared engine core ownership
+
+The stock engine is shared by every module that moves goods (POS, sales, invoicing, procurement, fleet,
+manufacturing, quarry, repair, rental, quality). A change there can break all of them at once. Since the
+Inventory Production Readiness program (IPR, requirement R8) these files have **one owner**:
+
+| Part | Paths |
+|---|---|
+| Engine services | `inventory/application/StockService`, `StockMove`, `StockReversalService`, `StockPostingService`, `CostResolver`, `LayerCostWriter` |
+| Stock ledger entity | `inventory/domain/InventoryLedger*` |
+| Migrations | `backend/src/main/resources/db/migration/**` |
+
+- **Owner.** The engine owner (the IPR integrator stream) writes changes to these files. `@simonmanna` is the
+  required reviewer through `.github/CODEOWNERS`; the 'Protect Main' ruleset already needs one review.
+- **One open PR at a time.** Only one open PR may touch the core. A second one waits, or is rebased onto the first
+  after it merges. This keeps lock order, costing and ledger semantics reviewable as one change.
+- **Engine requests.** A feature stream that needs an engine change does not edit the core. It writes an engine
+  request in its brief or PR description: the call site, the behaviour needed, the lock levels it takes (see the
+  IPR lock hierarchy, L1 document → L2 original ledger rows → L3 costing advisory → L4 quant advisory → L5
+  `StockItem` → L6 lot/serial/reservation/bin → L7 journal), and the test that proves it. The engine owner builds it.
+- **Ledger is append-only.** No code or migration updates or deletes `"InventoryLedger"` rows; the trigger
+  `inventory_ledger_append_only` refuses it (`V1__baseline.sql:17176`). Every correction is a compensating row.
+- **Migration numbers** come only from `docs/adr/migration-registry.md`, rescanned across all refs before use.

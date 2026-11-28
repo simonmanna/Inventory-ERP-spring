@@ -491,6 +491,15 @@ public class GoodsReceiptsService {
 
             Map<String, Object> po = null;
             OrderLines orderLines = null;
+            // IPR LK-1: the supplier lock before any purchase-order row, the order a bill post takes (supplier → PO
+            // line → PO), so a receipt and a bill on the same order cannot deadlock. Taken again below (re-entrant).
+            if (billMatcher != null) {
+                String supplierFirst = updated.get("partnerId") != null ? (String) updated.get("partnerId")
+                        : grn.get("purchaseOrderId") == null ? null : jdbc.sql("SELECT \"partnerId\" FROM"
+                                + " \"PurchaseOrder\" WHERE id = ? AND \"organizationId\" = ?")
+                                .params(grn.get("purchaseOrderId"), orgId).query(String.class).optional().orElse(null);
+                billMatcher.lockSupplier(orgId, supplierFirst);
+            }
             if (grn.get("purchaseOrderId") != null) {
                 List<PurchaseOrdersService.ReceiptLine> applied = new ArrayList<>();
                 for (Map<String, Object> l : updatedLines) {
@@ -536,6 +545,10 @@ public class GoodsReceiptsService {
 
             Instant date = grn.get("receivedAt") != null ? (Instant) grn.get("receivedAt")
                     : Instant.now().truncatedTo(ChronoUnit.MILLIS);
+            // ADR-S088 limit 2 (IPR 1b): a back-office receipt is not backdated past inventory.maxBackdateDays
+            // (offline device receipts are exempt); the closed-period rule stays the engine's period check.
+            stock.assertWithinBackdateLimit(date, "Goods receipt");
+            Instant effectiveAt = StockService.documentEffectiveAt(date);
             BigDecimal receiptNet = Money.ZERO;
             BigDecimal receiptTax = Money.ZERO;
             // P0-5: a PO-backed receipt is priced in the PO currency; stock / GRNI / AP carry the functional value.
@@ -566,17 +579,18 @@ public class GoodsReceiptsService {
                 Map<String, Object> poLine = orderLines == null ? null
                         : orderLines.resolve((String) ln.get("purchaseOrderLineId"), (String) ln.get("productId"));
                 // An order line is valued at its (possibly zero) order price, as the PO receive route does; a line
-                // without one falls back to the product cost when it carries no cost.
+                // without one and without a cost enters at the current cost (IPR C-3 / GL-6, owner decision D3:
+                // location average, then last receipt, then cost price; it took the cost price).
                 StockMove move = StockMove.of((String) ln.get("productId"), (String) grn.get("warehouseId"),
                                 stockQty).variant((String) ln.get("variantId"))
-                        .unitCost(poLine != null || unitCost.signum() > 0 ? unitCost.multiply(rate)
-                                : Money.dec(product.get("costPrice")))
+                        .unitCost(poLine != null || unitCost.signum() > 0 ? unitCost.multiply(rate) : null)
                         .uom(PurchaseOrdersService.stockUnit(new LineUnit((String) ln.get("uomId"),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor"))), product),
                                 ln.get("uomFactor") == null ? null : Money.dec(ln.get("uomFactor")))
                         .batch((String) ln.get("batchNumber"))
                         .expiry(ln.get("expiryDate") == null ? null : ln.get("expiryDate").toString())
-                        .reference("GRN " + grn.get("receiptNumber"));
+                        .reference("GRN " + grn.get("receiptNumber")).effectiveAt(effectiveAt)
+                        .sourceLine((String) ln.get("id")); // IPR 1d: the receipt line on its ledger row
                 Received received = stock.receiveForDocument(move, GlReceiptContext.grni("goods_receipt", id, date));
                 BigDecimal lineNet = Money.dec(received.actualValue());
                 receiptNet = receiptNet.add(lineNet);

@@ -4,6 +4,7 @@ import static com.inventoryerp.kernel.crud.SqlRows.dec;
 import static com.inventoryerp.kernel.crud.SqlRows.str;
 
 import com.inventoryerp.inventory.application.StockDocService.DocInput;
+import com.inventoryerp.inventory.application.StockMove;
 import com.inventoryerp.inventory.application.StockDocService.DocLine;
 import com.inventoryerp.inventory.application.VirtualLocationService;
 import com.inventoryerp.inventory.application.StockDocService;
@@ -17,6 +18,7 @@ import com.inventoryerp.manufacturing.domain.ProductionOrder;
 import com.inventoryerp.procurement.application.DebitNotesService.CreateInput;
 import com.inventoryerp.procurement.application.DebitNotesService.LineInput;
 import com.inventoryerp.procurement.application.DebitNotesService;
+import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -62,10 +64,12 @@ public class PlmDispositionService {
     private final StockDocService stockDocs;
     private final DebitNotesService debitNotes;
     private final VirtualLocationService virtualLocations;
+    private final com.inventoryerp.inventory.application.StockService stock;
 
     public PlmDispositionService(PlmDb db, PlmSupport plm, EngineeringService engineering,
             ProductionService production, StockDocService stockDocs, DebitNotesService debitNotes,
-            VirtualLocationService virtualLocations) {
+            VirtualLocationService virtualLocations, com.inventoryerp.inventory.application.StockService stock) {
+        this.stock = stock;
         this.virtualLocations = virtualLocations;
         this.db = db;
         this.plm = plm;
@@ -177,6 +181,87 @@ public class PlmDispositionService {
         }
         return Obj.of("stockDisposition", stock, "wipDisposition", eco.get("wipDisposition"), "stock", stockRows,
                 "keptComponents", affected.get("kept"), "orders", orders, "useUpPending", useUpPending(eco));
+    }
+
+    // ================================================================== rework release
+
+    /** Ledger reference type of a rework release (the move out of QC quarantine back to the source location). */
+    static final String REWORK_RELEASE = "plm_rework_release";
+
+    /**
+     * IPR X-3 follow-up: the {@code rework} stock disposition moves components into QC quarantine with a transfer, and
+     * the engine lets nothing manual move them out again. This releases them: per product, variant and source location,
+     * what the change's rework transfers brought into quarantine, less what earlier releases took back (and never more
+     * than is still in quarantine), goes back to the location it came from — a transfer at carried cost, reference
+     * {@value #REWORK_RELEASE} / the change. {@code lines} null or empty = all of it; otherwise up to each line's
+     * quantity of that product. Lock order: the change row (L1), then the engine per move in product order (L3 → L6).
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public Map<String, Object> releaseRework(String ecoId, List<PlmCommands.ReworkReleaseLine> lines) {
+        String org = PlmDb.org();
+        Map<String, Object> eco = plm.lockChange(ecoId);
+        if (eco == null) {
+            throw ApiException.notFound("Engineering change not found");
+        }
+        String number = str(eco, "number");
+        String quarantine = virtualLocations.ensure(VirtualLocationService.QC_QUARANTINE, "QC Quarantine");
+        List<Map<String, Object>> held = SqlRows.list(db.jdbc().sql("""
+                WITH trf AS (SELECT t."transferCode" AS code, t."fromLocId" AS src
+                               FROM "EngineeringChange" e
+                               CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e."dispositionResult"::jsonb
+                                    -> 'documents', '[]'::jsonb)) d
+                               JOIN "StockTransfer" t ON t.id = d ->> 'id' AND t."organizationId" = e."organizationId"
+                              WHERE e.id = :eco AND e."organizationId" = :org AND d ->> 'kind' = 'stock_transfer'),
+                     arrived AS (SELECT l."productId", l."variantId", trf.src, SUM(l."quantityChange") AS q
+                                   FROM "InventoryLedger" l JOIN trf ON l."referenceId" = trf.code
+                                  WHERE l."organizationId" = :org AND l."referenceType" = 'stock_transfer'
+                                    AND l."locationId" = :q AND l."quantityChange" > 0 GROUP BY 1, 2, 3),
+                     released AS (SELECT l."productId", l."variantId", l."locationId" AS src,
+                                         SUM(l."quantityChange") AS q
+                                    FROM "InventoryLedger" l
+                                   WHERE l."organizationId" = :org AND l."referenceType" = :rt
+                                     AND l."referenceId" = :eco AND l."quantityChange" > 0 AND l."locationId" <> :q
+                                   GROUP BY 1, 2, 3)
+                SELECT a."productId", a."variantId", a.src, a.q - COALESCE(r.q, 0) AS held,
+                       COALESCE((SELECT s.quantity FROM "StockItem" s WHERE s."organizationId" = :org
+                                    AND s."productId" = a."productId" AND s."variantKey" = COALESCE(a."variantId", '')
+                                    AND s."locationId" = :q), 0) AS "inQuarantine"
+                  FROM arrived a LEFT JOIN released r ON r."productId" = a."productId"
+                   AND r."variantId" IS NOT DISTINCT FROM a."variantId" AND r.src = a.src
+                 ORDER BY a."productId", COALESCE(a."variantId", ''), a.src""")
+                .param("eco", ecoId).param("org", org).param("q", quarantine).param("rt", REWORK_RELEASE));
+        Map<String, BigDecimal> wanted = new LinkedHashMap<>();
+        if (lines != null) {
+            lines.forEach(l -> wanted.merge(l.productId(), l.quantity(), BigDecimal::add));
+        }
+        Map<String, BigDecimal> leftInQuarantine = new LinkedHashMap<>();
+        List<Map<String, Object>> released = new ArrayList<>();
+        for (Map<String, Object> h : held) {
+            String productId = str(h, "productId");
+            String variantId = str(h, "variantId");
+            String cell = productId + "|" + (variantId == null ? "" : variantId);
+            BigDecimal available = leftInQuarantine.computeIfAbsent(cell, k -> SqlRows.dec(h, "inQuarantine"));
+            BigDecimal qty = SqlRows.dec(h, "held").min(available);
+            if (!wanted.isEmpty()) {
+                qty = qty.min(wanted.getOrDefault(productId, BigDecimal.ZERO));
+            }
+            if (qty.signum() <= 0) {
+                continue;
+            }
+            StockMove.Transferred t = stock.transfer(StockMove.transfer(productId, quarantine, str(h, "src"), qty)
+                    .variant(variantId).source(REWORK_RELEASE, ecoId).reference(number)
+                    .notes("Released from rework hold: " + number).quarantineFlow());
+            leftInQuarantine.put(cell, available.subtract(qty));
+            if (!wanted.isEmpty()) {
+                wanted.merge(productId, qty.negate(), BigDecimal::add);
+            }
+            released.add(Obj.of("productId", productId, "variantId", variantId, "locationId", str(h, "src"),
+                    "quantity", qty, "ledgerCode", t.ledgerCode()));
+        }
+        if (released.isEmpty()) {
+            throw ApiException.badRequest("Nothing of " + number + " is held in QC quarantine for rework");
+        }
+        return Obj.of("changeId", ecoId, "number", number, "released", released);
     }
 
     // ================================================================== execution
