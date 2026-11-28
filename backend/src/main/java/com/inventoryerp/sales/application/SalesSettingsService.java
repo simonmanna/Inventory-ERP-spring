@@ -6,6 +6,7 @@ import static com.inventoryerp.sales.application.SalesDb.org;
 import static com.inventoryerp.sales.application.SalesDb.str;
 import static com.inventoryerp.sales.application.SalesDb.user;
 
+import com.inventoryerp.inventory.application.VirtualLocationService;
 import com.inventoryerp.kernel.audit.AuditService;
 import com.inventoryerp.kernel.audit.AuditService.AuditInput;
 import com.inventoryerp.shared.web.ApiException;
@@ -46,10 +47,12 @@ public class SalesSettingsService {
 
     private final SalesDb db;
     private final AuditService audit;
+    private final VirtualLocationService locations;
 
-    public SalesSettingsService(SalesDb db, AuditService audit) {
+    public SalesSettingsService(SalesDb db, AuditService audit, VirtualLocationService locations) {
         this.db = db;
         this.audit = audit;
+        this.locations = locations;
     }
 
     /** Settings of the current organization (created with defaults on first read). */
@@ -283,6 +286,12 @@ public class SalesSettingsService {
                     + " WHERE \"organizationId\" = ?").params(params.stream().map(SalesDb::param).toList()).update();
             audit.record(AuditInput.of("SalesSettings", org(), "update", before, in));
         }
-        return settings();
+        Map<String, Object> saved = settings();
+        if (!Boolean.FALSE.equals(saved.get("rejectedToQuarantine")) && saved.get("rejectedQuarantineLocationId") == null) {
+            // ADR-S094 TA-6: create the default quarantine location now, not inside the first proof of delivery that
+            // rejects goods (a second transaction inside a keyed money request).
+            locations.ensure(SalesDeliverySource.DEFAULT_QUARANTINE_CODE, SalesDeliverySource.DEFAULT_QUARANTINE_NAME);
+        }
+        return saved;
     }
 }

@@ -1,5 +1,6 @@
 package com.inventoryerp.inventory.application;
 
+import com.inventoryerp.kernel.idempotency.BusinessOutcome;
 import com.inventoryerp.kernel.tenancy.TenantContext;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -26,6 +27,9 @@ public class VirtualLocationService {
         this.jdbc = jdbc;
         this.newTx = new TransactionTemplate(txm);
         this.newTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // ADR-S094 TA-6: a find-or-create that is safe to run again. Named retry-safe so a keyed request that creates the
+        // location still releases its key when its own work rolls back, and so the idempotency fence leaves it alone.
+        this.newTx.setName(BusinessOutcome.RETRY_SAFE_TX);
     }
 
     /** Id of the live location {@code code} of the current organization, created as a virtual location if absent. */

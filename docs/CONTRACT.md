@@ -110,10 +110,21 @@ Timestamps should be emitted with millisecond precision to match Prisma (`Instan
   1. Existing **completed** + same hash → replay stored `statusCode` + body; handler not run.
   2. Existing completed + **different hash** → 409.
   3. Existing **pending** → 409 `{ "code": "OPERATION_PENDING", "message": "This operation needs recovery; do not submit it with a new key. Retry with the same key.", "operationKey": key, "recovery": <stored responseJson> }`.
-     Money route pending > 2 min with empty outcome = abandoned → delete and re-run.
-     Known issue D-IDEM-1 ([ADR-S094](adr/ADR-S094-centralized-sales.md) §6): if the first execution is still
-     running after 2 min, a retry runs it a second time. The proposed fix (lease + fencing) is a parity deviation
-     awaiting owner approval (OD-14). Until then, this rule is the contract.
+     Nest: a money route pending > 2 min with an empty outcome is abandoned → delete and re-run, even when the first
+     execution is still running (D-IDEM-1, so a slow request could post twice).
+     **Spring (approved deviation OD-14, [ADR-S094](adr/ADR-S094-centralized-sales.md) §6, V730):** each execution
+     is an attempt with an owner token and a lease (`erp.idempotency.lease-seconds`, default 120 s = the old age).
+     - Inside the lease → 409 `OPERATION_PENDING` (unchanged body).
+     - After the lease, a money route (OUTCOME or EVIDENCE route) whose attempt left no commit evidence is taken over
+       by compare-and-set (`attempt + 1`, new token; never deleted) and run once. A POS sale route
+       (`/pos/checkout`, tab / order settle) still resumes from its saved recovery evidence, once the lease has ended.
+     - Commit evidence = a saved outcome or `committed` stamp, the outermost write transaction's `committedAttempt`
+       stamp, or an `IdempotencyEvidence` row left by a nested transaction. With evidence → 409 `OPERATION_PENDING`.
+     - Every write transaction of an attempt is fenced just before it commits: if a retry took the key over, the old
+       attempt rolls back and answers 409 `{ "code": "OPERATION_PENDING", "message": "A retry with the same
+       Idempotency-Key took this operation over; nothing of this attempt was saved. Retry with the same key.",
+       "operationKey": key }`, or the winning attempt's stored response when it has already completed.
+     The request hash, replay, 409-on-different-body and `safeToRetry` rules are unchanged.
   4. None → insert pending row (unique constraint = lock), run handler, store response, mark completed.
      Handler failure → the pending row is **kept** for recovery (same key again → 409 `OPERATION_PENDING`),
      except a definitive 4xx on an OUTCOME route with no saved outcome, cached as completed with `safeToRetry: true`.

@@ -79,6 +79,11 @@ public class SalesDeliverySource implements DeliverySourcePort {
         }
     }
 
+    /** DEL-9b: code of the default quarantine location for rejected goods. */
+    public static final String DEFAULT_QUARANTINE_CODE = "SALES-QUARANTINE";
+    /** DEL-9b: name of the default quarantine location for rejected goods. */
+    public static final String DEFAULT_QUARANTINE_NAME = "Sales rejections quarantine";
+
     /** DEL-9b (owner decision 2026-11-26): rejected goods go to quarantine unless the organisation turned it off. */
     @Override
     public String rejectedGoodsLocation(String dispatchLocationId) {
@@ -89,7 +94,7 @@ public class SalesDeliverySource implements DeliverySourcePort {
         if (s != null && s.get("rejectedQuarantineLocationId") != null) {
             return str(s.get("rejectedQuarantineLocationId"));
         }
-        return locations == null ? dispatchLocationId : locations.ensure("SALES-QUARANTINE", "Sales rejections quarantine");
+        return locations == null ? dispatchLocationId : locations.ensure(DEFAULT_QUARANTINE_CODE, DEFAULT_QUARANTINE_NAME);
     }
 
     /** DEL-9a (owner decision 2026-11-26): delivery losses leave COGS unless the organisation turned it off. */
