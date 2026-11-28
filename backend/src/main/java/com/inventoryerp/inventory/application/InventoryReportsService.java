@@ -15,7 +15,6 @@ import com.inventoryerp.kernel.crud.BaseCrudService;
 import com.inventoryerp.kernel.crud.EntityPatch;
 import com.inventoryerp.kernel.crud.SqlRows;
 import com.inventoryerp.kernel.tenancy.TenantContext;
-import com.inventoryerp.kernel.security.Permissions;
 import com.inventoryerp.shared.web.ApiException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -244,7 +243,8 @@ public class InventoryReportsService {
 
     /** Stock card summary per item over local days [start, end]. */
     public Map<String, Object> itemMovements(Map<String, String> query) {
-        Map<String, String> q = scope.apply(query);
+        Map<String, String> q = query;
+        List<String> locs = scope.readLocations(q.get("locationId"));
         Range r = range(q);
         List<String> types = moveTypes(q);
         List<String> productIds = scopedProductIds(q);
@@ -254,9 +254,9 @@ public class InventoryReportsService {
         Map<String, Object> base = new HashMap<>();
         StringBuilder baseSql = new StringBuilder("\"organizationId\" = :org");
         base.put("org", org());
-        if (notBlank(q.get("locationId"))) {
-            baseSql.append(" AND \"locationId\" = :loc");
-            base.put("loc", q.get("locationId"));
+        if (locs != null) {
+            baseSql.append(" AND \"locationId\" IN (:locs)");
+            base.put("locs", locs);
         }
         if (productIds != null) {
             baseSql.append(" AND \"productId\" IN (:pids)");
@@ -342,17 +342,17 @@ public class InventoryReportsService {
         if (!universe.isEmpty()) {
             var spec = jdbc.sql("SELECT \"productId\", quantity, \"runningAverageCost\" FROM \"StockItem\" WHERE"
                             + " \"organizationId\" = :org AND \"productId\" IN (:ids)"
-                            + (notBlank(q.get("locationId")) ? " AND \"locationId\" = :loc" : ""))
+                            + (locs != null ? " AND \"locationId\" IN (:locs)" : ""))
                     .param("org", org()).param("ids", List.copyOf(universe));
-            if (notBlank(q.get("locationId"))) {
-                spec = spec.param("loc", q.get("locationId"));
+            if (locs != null) {
+                spec = spec.param("locs", locs);
             }
             for (Map<String, Object> si : spec.query().listOfRows()) {
                 onHand.merge((String) si.get("productId"), d(si.get("quantity")), BigDecimal::add);
             }
             // Phase I2 (audit C-2): unit cost from the value by costing method (FIFO lots, serials, STANDARD), not the
             // running average that FIFO and STANDARD receipts never set.
-            accountingValuation.qtyAndValueByProduct(universe, notBlank(q.get("locationId")) ? q.get("locationId") : null)
+            ScopedValuation.byProduct(accountingValuation, universe, locs)
                     .forEach((pid, qv) -> {
                         if (qv[0].signum() > 0) {
                             costAgg.put(pid, qv);
@@ -452,11 +452,7 @@ public class InventoryReportsService {
 
     /** Null the given cost / value fields of a row (hardening R5a / R5b: callers without the valuation permission). */
     static void hideCost(Map<String, Object> row, String... keys) {
-        for (String k : keys) {
-            if (row.containsKey(k)) {
-                row.put(k, null);
-            }
-        }
+        CostVisibility.hideCost(row, keys);
     }
 
     private static final class Agg {
@@ -483,28 +479,29 @@ public class InventoryReportsService {
      * the products, one for the quants, one for the values.
      */
     public Map<String, Object> valuation(Map<String, String> query) {
-        Map<String, String> q = scope.apply(query);
+        Map<String, String> q = query;
+        List<String> locs = scope.readLocations(q.get("locationId"));
         String status = q.get("status") == null || q.get("status").isEmpty() ? "all" : q.get("status");
         if (!STOCK_STATUSES.contains(status)) {
             throw ApiException.badRequest("Unknown status: " + status);
         }
-        String loc = notBlank(q.get("locationId")) ? q.get("locationId") : null;
+        boolean loc = locs != null;
         Map<String, Object> params = new HashMap<>();
         String where = productWhere(q, params);
-        if (loc != null) {
-            params.put("loc", loc);
+        if (loc) {
+            params.put("locs", locs);
         }
         List<Map<String, Object>> products = SqlRows.list(jdbc.sql("SELECT p.id, p.code, p.name, p.sku, p.\"costPrice\","
                 + " p.\"salesPrice\", p.\"minQuantity\", p.\"reorderQty\", p.\"isActive\", u.code AS uom, c.id AS cid,"
                 + " c.name AS cname FROM \"Product\" p LEFT JOIN \"UnitOfMeasure\" u ON u.id = p.\"uomId\""
                 + " LEFT JOIN \"ProductCategory\" c ON c.id = p.\"categoryId\" WHERE " + where
                 + " AND (p.\"trackInventory\" = true OR EXISTS (SELECT 1 FROM \"StockItem\" si WHERE si.\"productId\" = p.id"
-                + " AND si.\"organizationId\" = :org" + (loc != null ? " AND si.\"locationId\" = :loc" : "")
+                + " AND si.\"organizationId\" = :org" + (loc ? " AND si.\"locationId\" IN (:locs)" : "")
                 + ")) ORDER BY p.name ASC").params(params));
 
         // Method-correct value per quant (product | variant | location), adjunct components merged in.
         Map<String, Map<String, BigDecimal>> values = new HashMap<>();
-        for (Map<String, Object> v : accountingValuation.currentValueByQuant(loc)) {
+        for (Map<String, Object> v : ScopedValuation.byQuant(accountingValuation, locs, null)) {
             values.computeIfAbsent(str(v, "product_id"), k -> new LinkedHashMap<>())
                     .merge(str(v, "variant_key") + "|" + str(v, "location_id"), SqlRows.dec(v, "value"),
                             BigDecimal::add);
@@ -512,10 +509,10 @@ public class InventoryReportsService {
         Map<String, List<Map<String, Object>>> quants = new HashMap<>();
         var spec = jdbc.sql("SELECT si.\"productId\", si.\"variantKey\", si.\"locationId\", si.quantity,"
                 + " si.\"updatedAt\", l.code, l.name FROM \"StockItem\" si JOIN \"InventoryLocation\" l ON l.id = si.\"locationId\""
-                + " WHERE si.\"organizationId\" = :org" + (loc != null ? " AND si.\"locationId\" = :loc" : "")
+                + " WHERE si.\"organizationId\" = :org" + (loc ? " AND si.\"locationId\" IN (:locs)" : "")
                 + " ORDER BY l.name ASC, l.id ASC").param("org", org());
-        if (loc != null) {
-            spec = spec.param("loc", loc);
+        if (loc) {
+            spec = spec.param("locs", locs);
         }
         for (Map<String, Object> si : SqlRows.list(spec)) {
             quants.computeIfAbsent(str(si, "productId"), k -> new ArrayList<>()).add(si);
@@ -643,7 +640,8 @@ public class InventoryReportsService {
 
     /** Totals by move type, daily trend, top consumed / lost / received items (default: last 30 days). */
     public Map<String, Object> movementAnalysis(Map<String, String> query) {
-        Map<String, String> q = scope.apply(query);
+        Map<String, String> q = query;
+        List<String> locs = scope.readLocations(q.get("locationId"));
         Range r = range(q);
         List<String> types = moveTypes(q);
         List<String> productIds = scopedProductIds(q);
@@ -658,9 +656,9 @@ public class InventoryReportsService {
         params.put("org", org());
         params.put("start", SqlRows.ts(effStart));
         params.put("end", SqlRows.ts(effEnd));
-        if (notBlank(q.get("locationId"))) {
-            where.append(" AND \"locationId\" = :loc");
-            params.put("loc", q.get("locationId"));
+        if (locs != null) {
+            where.append(" AND \"locationId\" IN (:locs)");
+            params.put("locs", locs);
         }
         if (productIds != null) {
             where.append(" AND \"productId\" IN (:pids)");
@@ -749,9 +747,22 @@ public class InventoryReportsService {
                 "consumedValue", js(consumed, 2), "lostValue", js(lost, 2),
                 "lossRatePct", consumed.signum() > 0
                         ? js(lost.multiply(HUNDRED).divide(consumed.add(lost), 10, RoundingMode.HALF_UP), 1) : null);
+        List<Map<String, Object>> topConsumed = top(perProduct, meta, 0, 3);
+        List<Map<String, Object>> topLost = top(perProduct, meta, 1, 4);
+        List<Map<String, Object>> topReceived = top(perProduct, meta, 2, -1);
+        if (!seesCost()) {
+            // IPR review 1 (finding 4, S-2): values and the loss rate (a ratio of values) need inventory_valuation:read;
+            // quantities and movement counts stay visible under inventory:read.
+            hideCost(summary, "valueIn", "valueOut", "valueAdjusted", "consumedValue", "lostValue", "lossRatePct");
+            byType.forEach(t -> hideCost(t, "value"));
+            trend.forEach(t -> hideCost(t, "valueIn", "valueOut", "valueAdjusted"));
+            for (List<Map<String, Object>> list : List.of(topConsumed, topLost, topReceived)) {
+                list.forEach(t -> hideCost(t, "value"));
+            }
+        }
         return Obj.of("range", Obj.of("start", localIso(effStart), "end", localIso(effEnd)), "summary", summary,
-                "byType", byType, "trend", trend, "topConsumed", top(perProduct, meta, 0, 3),
-                "topLost", top(perProduct, meta, 1, 4), "topReceived", top(perProduct, meta, 2, -1));
+                "byType", byType, "trend", trend, "topConsumed", topConsumed, "topLost", topLost, "topReceived",
+                topReceived);
     }
 
     /** Σ of the rendered (2 dp) {@code value} of the rows whose {@code key} equals {@code match}. */
@@ -802,6 +813,7 @@ public class InventoryReportsService {
         List<Map<String, Object>> scoped = ids == null ? rows : rows.stream().filter(r -> ids.contains(r.get("productId")))
                 .toList();
         Map<String, Map<String, Object>> meta = productMeta(scoped.stream().map(r -> (String) r.get("productId")).toList());
+        boolean cost = seesCost();
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : scoped) {
             Map<String, Object> p = meta.get((String) r.get("productId"));
@@ -810,8 +822,8 @@ public class InventoryReportsService {
             row.put("shortfall", js(Money.max(Money.ZERO, d(r.get("par")).subtract(d(r.get("onHand")))), 6));
             row.put("category", p == null ? null : p.get("cname"));
             row.put("uom", p == null ? null : p.get("uom"));
-            row.put("unitCost", js(unitCost));
-            row.put("estimatedCost", js(d(r.get("suggestedOrderQty")).multiply(unitCost), 2));
+            row.put("unitCost", cost ? js(unitCost) : null);
+            row.put("estimatedCost", cost ? js(d(r.get("suggestedOrderQty")).multiply(unitCost), 2) : null);
             out.add(row);
         }
         out.sort((a, b) -> d(b.get("shortfall")).compareTo(d(a.get("shortfall"))));
@@ -823,6 +835,7 @@ public class InventoryReportsService {
         List<Map<String, Object>> rows = queries.getExpiringBatches(q.get("days"), q.get("locationId"));
         List<String> scopedIds = scopedProductIds(q);
         Set<String> ids = scopedIds == null ? null : new java.util.HashSet<>(scopedIds);
+        boolean cost = seesCost();
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> b : rows) {
             if (ids != null && !ids.contains(b.get("productId"))) {
@@ -839,7 +852,8 @@ public class InventoryReportsService {
             out.add(Obj.of("id", b.get("id"), "batchNumber", b.get("batchNumber"), "productId", b.get("productId"),
                     "code", product == null ? null : product.get("code"), "name", product == null ? null : product.get("name"),
                     "uom", uom == null ? null : uom.get("code"), "location", location == null ? null : location.get("name"),
-                    "quantity", js(qty), "unitCost", js(unit), "value", js(qty.multiply(unit), 2), "expiryDate",
+                    "quantity", js(qty), "unitCost", cost ? js(unit) : null, "value", cost ? js(qty.multiply(unit), 2)
+                            : null, "expiryDate",
                     b.get("expiryDate"), "daysToExpiry", b.get("daysToExpiry"), "expired", b.get("expired")));
         }
         return out;
@@ -858,10 +872,11 @@ public class InventoryReportsService {
         List<Map<String, Object>> rows = all.stream().filter(r -> ids.contains(r.get("productId"))).toList();
         BigDecimal total = BigDecimal.ZERO;
         for (Map<String, Object> r : rows) {
-            total = total.add(new BigDecimal((String) r.get("valuationExposure")));
+            Object exposure = r.get("valuationExposure");
+            total = exposure == null ? total : total.add(new BigDecimal((String) exposure));
         }
         return Obj.of("summary", Obj.of("cells", rows.size(), "clean", rows.isEmpty(), "totalValuationExposure",
-                JsNumbers.dec(total), "zeroCostBasisCells", rows.stream().filter(r -> Boolean.TRUE.equals(
+                seesCost() ? JsNumbers.dec(total) : null, "zeroCostBasisCells", rows.stream().filter(r -> Boolean.TRUE.equals(
                         r.get("zeroCostBasis"))).count()), "rows", rows);
     }
 
@@ -881,7 +896,8 @@ public class InventoryReportsService {
     }
 
     private Map<String, Object> stockHealth(Map<String, String> query, boolean cost) {
-        Map<String, String> q = scope.apply(query);
+        Map<String, String> q = query;
+        List<String> locs = scope.readLocations(q.get("locationId"));
         Instant now = Instant.now();
         double sd = JsNumbers.number(q.getOrDefault("slowDays", "90"));
         int slowDays = (int) Math.max(1, Math.min(3650, Double.isNaN(sd) || sd == 0 ? 90 : sd));
@@ -904,9 +920,9 @@ public class InventoryReportsService {
         Instant horizon = now.minusMillis(deadDays * 86_400_000L);
         params.put("horizon", SqlRows.ts(start.isBefore(horizon) ? start : horizon));
         String scope = "";
-        if (notBlank(q.get("locationId"))) {
-            params.put("loc", q.get("locationId"));
-            scope += " AND si.\"locationId\" = :loc";
+        if (locs != null) {
+            params.put("locs", locs);
+            scope += " AND si.\"locationId\" IN (:locs)";
         }
         if (ids != null) {
             params.put("ids", ids);
@@ -988,8 +1004,7 @@ public class InventoryReportsService {
         if (!rows.isEmpty()) {
             LinkedHashSet<String> productIds = new LinkedHashSet<>();
             rows.forEach(r -> productIds.add((String) r.get("productId")));
-            for (Map<String, Object> v : accountingValuation.currentValueByQuant(
-                    notBlank(q.get("locationId")) ? q.get("locationId") : null, productIds)) {
+            for (Map<String, Object> v : ScopedValuation.byQuant(accountingValuation, locs, productIds)) {
                 quantValue.merge(v.get("product_id") + "|" + v.get("variant_key") + "|" + v.get("location_id"),
                         d(v.get("value")), BigDecimal::add);
             }
@@ -1071,7 +1086,7 @@ public class InventoryReportsService {
      * fields come back {@code null} and the screens show a dash. Quantities stay visible under {@code inventory:read}.
      */
     static boolean seesCost() {
-        return TenantContext.has(Permissions.INVENTORY_VALUATION__READ);
+        return CostVisibility.seesCost();
     }
 
     private static Map<String, Object> emptyHealthSummary(int slowDays, int deadDays, Instant start, Instant end,

@@ -1244,9 +1244,10 @@ export interface InventoryGlTieOut {
   warning?: string;
 }
 
-export function useInventoryGlTieOut(asOf?: string) {
+export function useInventoryGlTieOut(asOf?: string, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['inventory-gl-tieout', asOf],
+    enabled: opts.enabled ?? true,
     queryFn: async () =>
       (await api.get<InventoryGlTieOut>('/reports/inventory/gl-tieout', { params: asOf ? { asOf } : {} })).data,
   });

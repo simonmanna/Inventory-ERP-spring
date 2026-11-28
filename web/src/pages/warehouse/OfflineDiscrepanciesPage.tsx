@@ -46,7 +46,7 @@ export function OfflineDiscrepanciesPage() {
           <h1 className="text-2xl font-semibold">{tx('Offline stock discrepancies')}</h1>
           <p className="text-muted-foreground">{tx('Stock work recorded offline that went below zero, was held, or waits for its dispatch.')}</p>
         </div>
-        <Link className="text-sm underline" to="/pos/posting-monitor">{tx('Resolve in the Posting Monitor')}</Link>
+        <Link className="text-sm underline" to="/inventory/posting-monitor">{tx('Resolve in the Posting Monitor')}</Link>
       </div>
       <div className="flex flex-wrap gap-3">
         <div className="grid gap-1"><Label>{tx('Kind')}</Label>

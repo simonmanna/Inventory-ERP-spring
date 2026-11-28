@@ -149,7 +149,11 @@ public class GrniReconciliationService {
         return out;
     }
 
-    /** GRNI is a liability: credit − debit, returned positive. Zero when the mapping is missing. */
+    /**
+     * GRNI is a liability: credit − debit, returned positive, in base currency (IPR GL-1: the sub-ledger is valued in
+     * base currency, so the GL side sums {@code baseDebit}/{@code baseCredit}, not the transaction-currency amounts of a
+     * foreign-currency receipt). Zero when the mapping is missing.
+     */
     private BigDecimal grniGlBalance(String organizationId, Instant asOf) {
         String accountId;
         try {
@@ -157,7 +161,7 @@ public class GrniReconciliationService {
         } catch (RuntimeException e) {
             return Money.ZERO;
         }
-        Map<String, Object> agg = SqlRows.one(jdbc.sql("SELECT sum(l.debit) AS debit, sum(l.credit) AS credit FROM"
+        Map<String, Object> agg = SqlRows.one(jdbc.sql("SELECT sum(l.\"baseDebit\") AS debit, sum(l.\"baseCredit\") AS credit FROM"
                 + " \"JournalLine\" l JOIN \"JournalEntry\" e ON e.id = l.\"journalEntryId\" WHERE l.\"organizationId\" = ?"
                 + " AND l.\"accountId\" = ? AND e.status IN ('posted', 'reversed') AND e.\"postingDate\" <= ?")
                 .params(organizationId, accountId, SqlRows.ts(asOf)));

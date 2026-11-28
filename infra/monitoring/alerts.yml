@@ -68,6 +68,30 @@ groups:
           summary: "POS sales are not reaching stock"
           description: "Pending stock-posting jobs keep growing; shift close will be refused. See runbook: stock-posting."
 
+      - alert: StockPostingJobsFailed
+        expr: max(erp_stock_posting_jobs_failed{job="inventory-erp-api"}) > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "POS stock-posting jobs failed every attempt"
+          description: "On-hand is behind actual sales for those invoices. Retry or abandon them in Inventory → Posting Monitor (Jobs). See runbook: stock-posting."
+
+      - alert: InventoryIntegrityFindingsOpen
+        expr: max by (kind) (erp_inventory_integrity_open{job="inventory-erp-api",kind!~"integrity_valuation_.*"}) > 0
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Inventory integrity check {{ $labels.kind }} has open findings"
+          description: "The daily integrity monitor found rows breaking a stock invariant. GET /api/v1/inventory/reports/integrity lists them; the finding is in the Posting Monitor. Nothing was corrected."
+
+      - alert: InventoryIntegrityValueFindingsOpen
+        expr: max by (kind) (erp_inventory_integrity_open{job="inventory-erp-api",kind=~"integrity_valuation_.*"}) > 0
+        for: 1h
+        labels: { severity: critical }
+        annotations:
+          summary: "Stock value does not reconcile ({{ $labels.kind }})"
+          description: "A valuation integrity finding is open: the period close is held until it is resolved. Compare GET /api/v1/inventory/reports/integrity with GET /api/v1/reports/inventory/gl-tieout."
+
       - alert: OfflineSyncDeadLetters
         expr: max(erp_sync_dead_letters_open{job="inventory-erp-api"}) > 0
         for: 30m

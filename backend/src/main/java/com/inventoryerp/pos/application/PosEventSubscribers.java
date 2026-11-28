@@ -30,7 +30,10 @@ public class PosEventSubscribers {
     @PostConstruct
     void subscribe() {
         events.subscribe(DomainEvents.ORDER_CONFIRMED, p -> enqueueIf(p, "at_confirmation"));
-        events.subscribe(DomainEvents.ORDER_CLOSED, p -> enqueueIf(p, "at_payment"));
+        events.subscribe(DomainEvents.ORDER_CLOSED, p -> {
+            enqueueIf(p, "at_payment");
+            catchUp(p);
+        });
         events.subscribe(DomainEvents.FULFILLMENT_COMPLETED, this::onFulfillmentCompleted);
     }
 
@@ -47,6 +50,12 @@ public class PosEventSubscribers {
             }
             billing.enqueueStockPosting(text(p, "orderId"), null, null, timing);
         });
+    }
+
+    /** IPR X-8: a closed, billed order whose timing trigger was missed (timing changed) still issues once. */
+    private void catchUp(JsonNode p) {
+        TenantContext.run(TenantStore.organization(text(p, "organizationId")),
+                () -> billing.ensureSaleStockJob(text(p, "orderId")));
     }
 
     private void onFulfillmentCompleted(JsonNode p) {

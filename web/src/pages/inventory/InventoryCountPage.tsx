@@ -82,8 +82,12 @@ export function InventoryCountPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'count' | 'history'>('count');
   const [locationId, setLocationId] = useState('');
-  const [countType, setCountType] = useState<CountType>('opening');
+  // IPR S1: a cycle count is the safe default; an opening count (valued against opening equity) is only for a
+  // location with no stock history and is chosen on purpose.
+  const [countType, setCountType] = useState<CountType>('cycle');
   const [blind, setBlind] = useState(false);
+  // IPR 1b: freeze the location while the draft is open (manual moves refused; sales still post).
+  const [freezeLocation, setFreezeLocation] = useState(false);
   const [scopeCategoryId, setScopeCategoryId] = useState('');
   const [scopeProductIds, setScopeProductIds] = useState<string[]>([]);
   const canReview = useAuthStore((st) => st.hasPermission)('inventory_count:submit');
@@ -174,7 +178,7 @@ export function InventoryCountPage() {
 
   /**
    * Pick an unfinished draft up from the History tab. A partial unique index
-   * allows only ONE draft per (org, location, countType), so pointing the
+   * allows only ONE draft per (org, location) (IPR S4), so pointing the
    * location + type selectors at the draft is enough — the sheet query below
    * resolves to that very session and the Count tab becomes editable again,
    * with Save Draft and Submit Count both available.
@@ -224,6 +228,7 @@ export function InventoryCountPage() {
         locationId,
         countType,
         blind,
+        ...(freezeLocation ? { freezeLocation: true } : {}),
         ...(partial && countType === 'cycle' && scopeCategoryId ? { scopeCategoryIds: [scopeCategoryId] } : {}),
         ...(partial && scopeProductIds.length ? { scopeProductIds } : {}),
         ...(restart ? { restart: true } : {}),
@@ -465,6 +470,10 @@ export function InventoryCountPage() {
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={blind} disabled={isDraft} onChange={(e) => setBlind(e.target.checked)} />
                 {tx('Blind count')} <span className="text-xs text-muted-foreground">{tx('(hide system quantities from counters)')}</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={freezeLocation} disabled={isDraft} onChange={(e) => setFreezeLocation(e.target.checked)} />
+                {tx('Freeze location')} <span className="text-xs text-muted-foreground">{tx('(no manual stock moves until the count is submitted; sales still post)')}</span>
               </label>
               {countType === 'cycle' && (
                 <div className="min-w-[220px]">

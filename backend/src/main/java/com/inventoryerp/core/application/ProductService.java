@@ -537,11 +537,13 @@ public class ProductService extends BaseCrudService<Product> {
                 || requested.equals(enumValue(existing.getCostingMethod()))) {
             return;
         }
-        if (guard.hasStockOnHand(existing.getId())) {
+        String blocker = guard.lockForConfigChange(existing.getId());
+        if ("stock".equals(blocker)) {
             throw ApiException.badRequest("The costing method of " + existing.getName() + " cannot be changed while it"
                     + " has stock on hand; re-cost the stock through a cost policy (/inventory/cost-policies) or a"
                     + " standard cost (/inventory/standard-costs) instead");
         }
+        assertNoPendingStockWork(existing, "costing method", blocker);
     }
 
     /**
@@ -566,10 +568,30 @@ public class ProductService extends BaseCrudService<Product> {
         if (flagChanged(data, "serialTracking", existing.getSerialTracking())) {
             changed.add("serial");
         }
-        if (!changed.isEmpty() && guard.hasStockOnHand(existing.getId())) {
+        if (changed.isEmpty()) {
+            return;
+        }
+        String blocker = guard.lockForConfigChange(existing.getId());
+        if ("stock".equals(blocker)) {
             throw ApiException.badRequest("The " + String.join(" / ", changed) + " tracking of " + existing.getName()
                     + " cannot be changed while it has stock on hand; issue or transfer the stock out first (or set"
                     + " it up on a new product)");
+        }
+        assertNoPendingStockWork(existing, String.join(" / ", changed) + " tracking", blocker);
+    }
+
+    /**
+     * IPR C-8: open reservations or a sale whose stock posting is still pending would move stock under the old setup
+     * after the change, so the change waits for them too.
+     */
+    private static void assertNoPendingStockWork(Product existing, String what, String blocker) {
+        if ("reservations".equals(blocker)) {
+            throw ApiException.badRequest("The " + what + " of " + existing.getName() + " cannot be changed while stock"
+                    + " of it is reserved; release or fulfil the reservations first");
+        }
+        if ("pending_pos".equals(blocker)) {
+            throw ApiException.badRequest("The " + what + " of " + existing.getName() + " cannot be changed while a POS"
+                    + " sale of it is waiting for its stock posting; let the stock postings finish first");
         }
     }
 
